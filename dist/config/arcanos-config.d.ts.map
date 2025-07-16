@@ -1,1 +1,0 @@
-{"version":3,"file":"arcanos-config.d.ts","sourceRoot":"","sources":["../../server/config/arcanos-config.ts"],"names":[],"mappings":"AAAA,qBAAa,aAAa;IACjB,IAAI,SAAmB;IACvB,MAAM,EAAE,QAAQ,GAAG,UAAU,GAAG,OAAO,CAAY;IAC1D,OAAO,CAAC,MAAM,CAIZ;IAEI,UAAU;IAKhB,SAAS;;;;;IAIT,iBAAiB;IAIjB,YAAY,CAAC,MAAM,EAAE,GAAG,EAAE,MAAM,EAAE,MAAM;;;;;CAIzC"}

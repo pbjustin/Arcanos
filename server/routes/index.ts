@@ -3,7 +3,7 @@ import type { MemoryStorage } from '../storage/memory-storage';
 import type { ArcanosRAG } from '../modules/rag';
 import type { HRCCore } from '../modules/hrc';
 import type { ArcanosConfig } from '../config/arcanos-config';
-import { requireAuth, requireRole } from '../middleware/index';
+import { HARDCODED_USER } from '../types/index';
 
 interface ServerComponents {
   memoryStorage: MemoryStorage;
@@ -14,35 +14,6 @@ interface ServerComponents {
 
 export function registerRoutes(app: Application, components: ServerComponents) {
   const { memoryStorage, arcanosConfig, ragModule, hrcCore } = components;
-
-  // Authentication routes
-  app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.body;
-    try {
-      const user = await memoryStorage.authenticateUser(username, password);
-      if (user) {
-        req.login(user, (err) => {
-          if (err) {
-            return res.status(500).json({ error: 'Login failed' });
-          }
-          res.json({ success: true, user: { id: user.id, username: user.username, role: user.role } });
-        });
-      } else {
-        res.status(401).json({ error: 'Invalid credentials' });
-      }
-    } catch (error) {
-      res.status(500).json({ error: 'Authentication error' });
-    }
-  });
-
-  app.post('/api/auth/logout', (req, res) => {
-    req.logout((err) => {
-      if (err) {
-        return res.status(500).json({ error: 'Logout failed' });
-      }
-      res.json({ success: true });
-    });
-  });
 
   // Main ARCANOS endpoint
   app.post('/api/ask', async (req, res) => {
@@ -60,8 +31,8 @@ export function registerRoutes(app: Application, components: ServerComponents) {
         const ragResponse = await ragModule.query({
           query: message,
           domain,
-          userId: req.user?.id,
-          sessionId: req.sessionID
+          userId: HARDCODED_USER.id,
+          sessionId: 'single-session'
         });
         if (ragResponse.success) {
           ragContext = ragResponse.data;
@@ -74,8 +45,8 @@ export function registerRoutes(app: Application, components: ServerComponents) {
         const validation = await hrcCore.validate(response, {
           query: message,
           domain,
-          userId: req.user?.id,
-          sessionId: req.sessionID
+          userId: HARDCODED_USER.id,
+          sessionId: 'single-session'
         });
         if (validation.success) {
           hrcValidation = validation.data;
@@ -86,8 +57,8 @@ export function registerRoutes(app: Application, components: ServerComponents) {
       await memoryStorage.logRequest({
         method: req.method,
         endpoint: req.originalUrl,
-        userId: req.user?.id,
-        sessionId: req.sessionID,
+        userId: HARDCODED_USER.id,
+        sessionId: 'single-session',
         timestamp: new Date(),
         responseTime: 0,
         statusCode: 200,
@@ -132,21 +103,21 @@ export function registerRoutes(app: Application, components: ServerComponents) {
   });
 
   // Memory management
-  app.get('/api/memory', requireAuth, async (req, res) => {
+  app.get('/api/memory', async (req, res) => {
     try {
-      const memories = await memoryStorage.getMemoriesByUser(req.user.id);
+      const memories = await memoryStorage.getMemoriesByUser(HARDCODED_USER.id);
       res.json({ success: true, memories });
     } catch (error) {
       res.status(500).json({ error: 'Failed to retrieve memories' });
     }
   });
 
-  app.post('/api/memory', requireAuth, async (req, res) => {
+  app.post('/api/memory', async (req, res) => {
     const { key, value, type = 'context', tags = [], ttl } = req.body;
     try {
       const memory = await memoryStorage.storeMemory(
-        req.user.id,
-        req.sessionID,
+        HARDCODED_USER.id,
+        'single-session',
         type,
         key,
         value,
@@ -160,14 +131,14 @@ export function registerRoutes(app: Application, components: ServerComponents) {
   });
 
   // Configuration endpoints
-  app.get('/api/config', requireAuth, requireRole('admin'), (req, res) => {
+  app.get('/api/config', (req, res) => {
     res.json({
       success: true,
       config: arcanosConfig.getConfig()
     });
   });
 
-  app.post('/api/config', requireAuth, requireRole('admin'), (req, res) => {
+  app.post('/api/config', (req, res) => {
     const { config, reason = 'API update' } = req.body;
     const result = arcanosConfig.updateConfig(config, reason);
     res.json(result);
@@ -182,13 +153,13 @@ export function registerRoutes(app: Application, components: ServerComponents) {
     const result = await ragModule.query({
       query,
       domain,
-      userId: req.user?.id,
-      sessionId: req.sessionID
+      userId: HARDCODED_USER.id,
+      sessionId: 'single-session'
     });
     res.json(result);
   });
 
-  app.post('/api/rag/documents', requireAuth, requireRole('admin'), async (req, res) => {
+  app.post('/api/rag/documents', async (req, res) => {
     const { content, metadata } = req.body;
     const result = await ragModule.addDocument(content, metadata);
     res.json(result);
@@ -205,7 +176,7 @@ export function registerRoutes(app: Application, components: ServerComponents) {
   });
 
   // Logs and analytics
-  app.get('/api/logs', requireAuth, requireRole('admin'), async (req, res) => {
+  app.get('/api/logs', async (req, res) => {
     const { limit = 100 } = req.query;
     try {
       const requests = await memoryStorage.getRequests(Number(limit));
@@ -216,7 +187,7 @@ export function registerRoutes(app: Application, components: ServerComponents) {
   });
 
   // Admin endpoints
-  app.get('/api/admin/stats', requireAuth, requireRole('admin'), (req, res) => {
+  app.get('/api/admin/stats', (req, res) => {
     res.json({
       success: true,
       stats: memoryStorage.getStorageStats(),

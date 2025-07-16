@@ -1,8 +1,5 @@
 import express from "express";
-import session from "express-session";
-import passport from "passport";
 import rateLimit from "express-rate-limit";
-import { Strategy as LocalStrategy } from "passport-local";
 import { createServer } from "http";
 import { registerRoutes } from "./routes/index";
 import { MemoryStorage } from "./storage/memory-storage";
@@ -10,7 +7,6 @@ import { ArcanosRAG } from "./modules/rag";
 import { HRCCore } from "./modules/hrc";
 import { ArcanosConfig } from "./config/arcanos-config";
 import { errorHandler, requestLogger, securityHeaders } from "./middleware/index";
-import type { User } from "./types";
 
 const app = express();
 const server = createServer(app);
@@ -33,48 +29,6 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api/', limiter);
-
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'arcanos-session-key-2025',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000
-  }
-}));
-
-app.use(passport.initialize());
-app.use(passport.session());
-
-passport.use(new LocalStrategy(
-  async (username: string, password: string, done) => {
-    try {
-      const user = await memoryStorage.authenticateUser(username, password);
-      if (user) {
-        return done(null, user);
-      } else {
-        return done(null, false, { message: 'Invalid credentials' });
-      }
-    } catch (error) {
-      return done(error);
-    }
-  }
-));
-
-passport.serializeUser((user: any, done) => {
-  done(null, user.id);
-});
-
-passport.deserializeUser(async (id: string, done) => {
-  try {
-    const user = await memoryStorage.getUserById(id);
-    done(null, user);
-  } catch (error) {
-    done(error);
-  }
-});
 
 async function initializeModules() {
   console.log('[ARCANOS] Initializing server modules...');
@@ -111,6 +65,7 @@ async function startServer() {
     server.listen(PORT, () => {
       console.log(`[ARCANOS] Server running on port ${PORT}`);
       console.log(`[ARCANOS] Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`[ARCANOS] Single-user mode for: pbjustin`);
       console.log(`[ARCANOS] Memory storage initialized`);
       console.log(`[ARCANOS] RAG module ready`);
       console.log(`[ARCANOS] HRC module active`);
