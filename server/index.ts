@@ -33,7 +33,7 @@ app.use('/api/', limiter);
 async function initializeModules() {
   console.log('[ARCANOS] Initializing server modules...');
   await arcanosConfig.initialize();
-  await ragModule.initialize();
+  await ragModule.initialize(arcanosConfig.getConfig());
   await hrcCore.initialize();
   console.log('[ARCANOS] All modules initialized successfully');
 }
