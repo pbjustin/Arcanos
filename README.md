@@ -58,6 +58,33 @@ The system operates with a single hardcoded user:
 - **Modular design** with RAG, HRC, and configuration modules
 - **No authentication** - simplified for single-user use
 
+## OpenAI Integration
+
+Arcanos includes full OpenAI API integration with support for:
+- **Fine-tuned Models**: Your custom model `ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox`
+- **Smart Fallback**: Falls back to `gpt-4-turbo` with interactive permission
+- **Model Selection**: Toggle between fine-tuned and base models via `USE_FINE_TUNED` environment variable
+
+### Environment Configuration
+```bash
+OPENAI_API_KEY=your_api_key_here
+OPENAI_FINE_TUNE_MODEL=ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox
+USE_FINE_TUNED=true
+```
+
+## Custom GPT Integration
+
+For complete instructions on integrating Arcanos with ChatGPT Custom GPTs and native applications, see:
+
+📖 **[Custom GPT Integration Guide](./CUSTOM_GPT_INTEGRATION.md)**
+
+This guide covers:
+- Setting up Custom GPTs with Arcanos API
+- Actions configuration for ChatGPT
+- Native app integration examples
+- Model management and fallback handling
+- Troubleshooting and debugging
+
 ## Development Notes
 
 - No user registration, login, or session management
