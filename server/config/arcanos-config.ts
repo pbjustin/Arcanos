@@ -8,7 +8,7 @@ export class ArcanosConfig {
     openai: {
       apiKey: process.env.OPENAI_API_KEY || "",
       fineTuneModel: process.env.OPENAI_FINE_TUNE_MODEL || "",
-      defaultModel: "gpt-3.5-turbo",
+      defaultModel: "gpt-4-turbo",
       useFineTuned: process.env.USE_FINE_TUNED === "true"
     }
   };

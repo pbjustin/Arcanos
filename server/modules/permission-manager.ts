@@ -57,15 +57,15 @@ export class PermissionManager {
       console.log('='.repeat(80));
       console.log(`Issue: ${reason}`);
       console.log('I cannot access your fine-tune model.');
-      console.log('Would you like me to fall back to the default model (gpt-3.5-turbo)?');
+      console.log('Would you like me to fall back to the best available model (gpt-4-turbo)?');
       console.log('='.repeat(80));
       
       const askQuestion = () => {
-        rl.question('Allow fallback to default model? (yes/no): ', (answer) => {
+        rl.question('Allow fallback to best available model? (yes/no): ', (answer) => {
           const normalizedAnswer = answer.toLowerCase().trim();
           
           if (normalizedAnswer === 'yes' || normalizedAnswer === 'y') {
-            console.log('✅ Permission granted - Using default model for this session');
+            console.log('✅ Permission granted - Using best available model for this session');
             rl.close();
             resolve(true);
           } else if (normalizedAnswer === 'no' || normalizedAnswer === 'n') {
