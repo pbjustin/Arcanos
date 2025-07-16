@@ -20,9 +20,9 @@ export class ArcanosRAG {
         });
         console.log('[ArcanosRAG] OpenAI client initialized successfully');
       } else {
-        console.warn('[ArcanosRAG] No OpenAI API key found, using fallback responses');
+        console.error('[ArcanosRAG] No OpenAI API key found - cannot initialize');
         this.status = "error";
-        return;
+        throw new Error('OpenAI API key is required for RAG module initialization');
       }
     }
     
@@ -31,69 +31,34 @@ export class ArcanosRAG {
 
   async query(context: QueryContext): Promise<{ success: boolean; data: RAGResponse }> {
     if (!this.openai || !this.config) {
-      return {
-        success: true,
-        data: {
-          answer: "RAG response placeholder - OpenAI not configured",
-          sources: [],
-          confidence: 1,
-          reasoning: "N/A",
-          metadata: {
-            processingTime: 0,
-            tokensUsed: 0,
-            model: "rag-fallback"
-          }
-        }
-      };
+      throw new Error('RAG module not properly initialized - OpenAI client or config missing');
     }
 
     try {
       const startTime = Date.now();
       const openaiConfig = this.config.getOpenAIConfig();
       
-      // Try to use the fine-tune model first, fall back to default if it fails
-      let model = openaiConfig.fineTuneModel || openaiConfig.defaultModel;
-      let response;
-      
-      try {
-        response = await this.openai.chat.completions.create({
-          model: model,
-          messages: [
-            {
-              role: "system",
-              content: "You are Arcanos, an AI assistant that provides helpful, accurate, and concise responses. Use the provided context to enhance your answers when relevant."
-            },
-            {
-              role: "user",
-              content: context.query
-            }
-          ],
-          max_tokens: 1000,
-          temperature: 0.7,
-        });
-      } catch (modelError: any) {
-        if (modelError.code === 'model_not_found' && model !== openaiConfig.defaultModel) {
-          console.warn(`[ArcanosRAG] Fine-tune model ${model} not found, falling back to ${openaiConfig.defaultModel}`);
-          model = openaiConfig.defaultModel;
-          response = await this.openai.chat.completions.create({
-            model: model,
-            messages: [
-              {
-                role: "system",
-                content: "You are Arcanos, an AI assistant that provides helpful, accurate, and concise responses. Use the provided context to enhance your answers when relevant."
-              },
-              {
-                role: "user",
-                content: context.query
-              }
-            ],
-            max_tokens: 1000,
-            temperature: 0.7,
-          });
-        } else {
-          throw modelError;
-        }
+      // Use only the fine-tune model - no fallback to default
+      const model = openaiConfig.fineTuneModel;
+      if (!model) {
+        throw new Error('Fine-tune model not configured');
       }
+      
+      const response = await this.openai.chat.completions.create({
+        model: model,
+        messages: [
+          {
+            role: "system",
+            content: "You are Arcanos, an AI assistant that provides helpful, accurate, and concise responses. Use the provided context to enhance your answers when relevant."
+          },
+          {
+            role: "user",
+            content: context.query
+          }
+        ],
+        max_tokens: 1000,
+        temperature: 0.7,
+      });
 
       const processingTime = Date.now() - startTime;
       const answer = response.choices[0]?.message?.content || "No response generated";
