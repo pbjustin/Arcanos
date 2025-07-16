@@ -8,7 +8,8 @@ export class ArcanosConfig {
     openai: {
       apiKey: process.env.OPENAI_API_KEY || "",
       fineTuneModel: process.env.OPENAI_FINE_TUNE_MODEL || "",
-      defaultModel: "gpt-3.5-turbo"
+      defaultModel: "gpt-3.5-turbo",
+      useFineTuned: process.env.USE_FINE_TUNED === "true"
     }
   };
 
@@ -19,14 +20,18 @@ export class ArcanosConfig {
       this.status = "error";
       throw new Error('OpenAI API key is required');
     }
-    if (!this.config.openai.fineTuneModel) {
+    
+    // Validate fine-tune model if USE_FINE_TUNED is true
+    if (this.config.openai.useFineTuned && !this.config.openai.fineTuneModel) {
       console.error('[ArcanosConfig] OpenAI fine-tune model not found in environment variables');
       this.status = "error";
-      throw new Error('OpenAI fine-tune model is required');
+      throw new Error('OpenAI fine-tune model is required when USE_FINE_TUNED is true');
     }
+    
     this.status = "active";
     console.log('[ArcanosConfig] OpenAI configuration loaded successfully');
-    console.log(`[ArcanosConfig] Using fine-tune model: ${this.config.openai.fineTuneModel}`);
+    console.log(`[ArcanosConfig] Using model: ${this.getModel()}`);
+    console.log(`[ArcanosConfig] Fine-tuned mode: ${this.config.openai.useFineTuned ? 'enabled' : 'disabled'}`);
   }
 
   getConfig() {
@@ -35,6 +40,16 @@ export class ArcanosConfig {
 
   getOpenAIConfig() {
     return this.config.openai;
+  }
+
+  /**
+   * Returns the model to use based on USE_FINE_TUNED environment variable
+   * @returns {string} The model name to use for OpenAI API calls
+   */
+  getModel(): string {
+    return this.config.openai.useFineTuned 
+      ? this.config.openai.fineTuneModel 
+      : this.config.openai.defaultModel;
   }
 
   getEnabledModules() {
