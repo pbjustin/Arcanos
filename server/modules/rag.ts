@@ -36,12 +36,11 @@ export class ArcanosRAG {
 
     try {
       const startTime = Date.now();
-      const openaiConfig = this.config.getOpenAIConfig();
       
-      // Use only the fine-tune model - no fallback to default
-      const model = openaiConfig.fineTuneModel;
+      // Use the model selection logic from config
+      const model = this.config.getModel();
       if (!model) {
-        throw new Error('Fine-tune model not configured');
+        throw new Error('No model configured');
       }
       
       const response = await this.openai.chat.completions.create({
@@ -86,20 +85,7 @@ export class ArcanosRAG {
       };
     } catch (error) {
       console.error('[ArcanosRAG] OpenAI API error:', error);
-      return {
-        success: false,
-        data: {
-          answer: "Sorry, I encountered an error processing your request.",
-          sources: [],
-          confidence: 0,
-          reasoning: "API Error",
-          metadata: {
-            processingTime: 0,
-            tokensUsed: 0,
-            model: "error"
-          }
-        }
-      };
+      throw error; // Re-throw error instead of returning success: false to ensure no fallback
     }
   }
 
