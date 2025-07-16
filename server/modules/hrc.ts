@@ -1,4 +1,4 @@
-import type { HRCValidation } from '../types';
+import type { HRCValidation } from '../types/index.js';
 
 export class HRCCore {
   public name = "HRCCore";

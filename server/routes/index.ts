@@ -1,9 +1,9 @@
 import type { Application } from 'express';
-import type { MemoryStorage } from '../storage/memory-storage';
-import type { ArcanosRAG } from '../modules/rag';
-import type { HRCCore } from '../modules/hrc';
-import type { ArcanosConfig } from '../config/arcanos-config';
-import { HARDCODED_USER } from '../types/index';
+import type { MemoryStorage } from '../storage/memory-storage.js';
+import type { ArcanosRAG } from '../modules/rag.js';
+import type { HRCCore } from '../modules/hrc.js';
+import type { ArcanosConfig } from '../config/arcanos-config.js';
+import { HARDCODED_USER } from '../types/index.js';
 
 interface ServerComponents {
   memoryStorage: MemoryStorage;

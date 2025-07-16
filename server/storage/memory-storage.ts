@@ -5,8 +5,8 @@ import type {
   CacheEntry,
   LogEntry,
   SystemEvent
-} from '../types';
-import { HARDCODED_USER as SINGLE_USER } from '../types';
+} from '../types/index.js';
+import { HARDCODED_USER as SINGLE_USER } from '../types/index.js';
 
 export class MemoryStorage {
   private memories: Map<string, MemoryEntry> = new Map();

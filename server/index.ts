@@ -1,12 +1,12 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { createServer } from "http";
-import { registerRoutes } from "./routes/index";
-import { MemoryStorage } from "./storage/memory-storage";
-import { ArcanosRAG } from "./modules/rag";
-import { HRCCore } from "./modules/hrc";
-import { ArcanosConfig } from "./config/arcanos-config";
-import { errorHandler, requestLogger, securityHeaders } from "./middleware/index";
+import { registerRoutes } from "./routes/index.js";
+import { MemoryStorage } from "./storage/memory-storage.js";
+import { ArcanosRAG } from "./modules/rag.js";
+import { HRCCore } from "./modules/hrc.js";
+import { ArcanosConfig } from "./config/arcanos-config.js";
+import { errorHandler, requestLogger, securityHeaders } from "./middleware/index.js";
 
 const app = express();
 const server = createServer(app);
