@@ -3,6 +3,7 @@ import type { MemoryStorage } from '../storage/memory-storage';
 import type { ArcanosRAG } from '../modules/rag';
 import type { HRCCore } from '../modules/hrc';
 import type { ArcanosConfig } from '../config/arcanos-config';
+import { PermissionManager } from '../modules/permission-manager';
 import { HARDCODED_USER } from '../types/index';
 
 interface ServerComponents {
@@ -14,6 +15,7 @@ interface ServerComponents {
 
 export function registerRoutes(app: Application, components: ServerComponents) {
   const { memoryStorage, arcanosConfig, ragModule, hrcCore } = components;
+  const permissionManager = PermissionManager.getInstance();
 
   // Main ARCANOS endpoint
   app.post('/api/ask', async (req, res) => {
@@ -183,6 +185,53 @@ export function registerRoutes(app: Application, components: ServerComponents) {
       res.json({ success: true, requests });
     } catch (error) {
       res.status(500).json({ error: 'Failed to retrieve logs' });
+    }
+  });
+
+  // Permission management endpoints
+  app.get('/api/permissions/status', (req, res) => {
+    try {
+      const status = permissionManager.getPermissionStatus();
+      res.json({
+        success: true,
+        ...status
+      });
+    } catch (error) {
+      console.error('[API] Error getting permission status:', error);
+      res.status(500).json({ error: 'Failed to get permission status' });
+    }
+  });
+
+  app.post('/api/permissions/fallback', (req, res) => {
+    const { granted } = req.body;
+    if (typeof granted !== 'boolean') {
+      return res.status(400).json({ error: 'granted parameter must be a boolean' });
+    }
+    
+    try {
+      permissionManager.setFallbackPermission(granted);
+      res.json({
+        success: true,
+        message: `Fallback permission ${granted ? 'granted' : 'denied'}`,
+        status: permissionManager.getPermissionStatus()
+      });
+    } catch (error) {
+      console.error('[API] Error setting fallback permission:', error);
+      res.status(500).json({ error: 'Failed to set fallback permission' });
+    }
+  });
+
+  app.post('/api/permissions/reset', (req, res) => {
+    try {
+      permissionManager.resetPermissions();
+      res.json({
+        success: true,
+        message: 'All permissions reset',
+        status: permissionManager.getPermissionStatus()
+      });
+    } catch (error) {
+      console.error('[API] Error resetting permissions:', error);
+      res.status(500).json({ error: 'Failed to reset permissions' });
     }
   });
 
