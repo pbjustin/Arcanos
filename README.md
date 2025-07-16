@@ -17,7 +17,7 @@ The system operates with a single hardcoded user:
 ## Features
 
 - **RAG (Retrieval Augmented Generation)**: Query and document management
-- **HRC (Human-Readable Code)**: Text validation and processing
+- **HRC (Hallucination Resilient Core)**: Text validation and processing
 - **Memory Storage**: Persistent memory management for conversations and context
 - **Configuration Management**: System configuration and module management
 - **Request Logging**: Activity tracking and analytics
