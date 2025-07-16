@@ -8,7 +8,7 @@ export class HRCCore {
     this.status = "active";
   }
 
-  async validate(text: string, context: any, options: any): Promise<{ success: boolean; data: HRCValidation }> {
+  async validate(text: string, context?: any, options?: any): Promise<{ success: boolean; data: HRCValidation }> {
     return {
       success: true,
       data: {

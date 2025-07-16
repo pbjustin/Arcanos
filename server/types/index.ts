@@ -1,21 +1,17 @@
 export interface User {
   id: string;
   username: string;
-  password: string;
-  role: 'user' | 'admin' | 'superadmin';
-  createdAt: Date;
-  lastLogin?: Date;
-  sessions: string[];
-  preferences: UserPreferences;
+  email: string;
+  role: 'admin';
 }
 
-export interface UserPreferences {
-  theme: 'light' | 'dark';
-  language: string;
-  timezone: string;
-  notifications: boolean;
-  apiAccess: boolean;
-}
+// Hardcoded single user for simplified system
+export const HARDCODED_USER: User = {
+  id: 'pbjustin',
+  username: 'pbjustin',
+  email: 'pbjustin@example.com',
+  role: 'admin'
+};
 
 export interface Session {
   id: string;

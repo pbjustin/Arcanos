@@ -27,19 +27,3 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
     timestamp: new Date().toISOString()
   });
 }
-
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (!req.isAuthenticated?.() || !req.user) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-  next();
-}
-
-export function requireRole(role: string) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.user || (req.user as any).role !== role) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
