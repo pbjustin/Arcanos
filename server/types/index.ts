@@ -133,6 +133,9 @@ export interface RAGResponse {
     processingTime: number;
     tokensUsed: number;
     model: string;
+    wasFineTuneAttempt?: boolean;
+    permissionRequested?: boolean;
+    originalError?: string;
   };
 }
 

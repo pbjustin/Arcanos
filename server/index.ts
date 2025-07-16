@@ -1,3 +1,6 @@
+import { config } from "dotenv";
+config();
+
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { createServer } from "http";
@@ -33,7 +36,7 @@ app.use('/api/', limiter);
 async function initializeModules() {
   console.log('[ARCANOS] Initializing server modules...');
   await arcanosConfig.initialize();
-  await ragModule.initialize();
+  await ragModule.initialize(arcanosConfig);
   await hrcCore.initialize();
   console.log('[ARCANOS] All modules initialized successfully');
 }
