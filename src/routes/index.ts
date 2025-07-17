@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { OpenAIService, ChatMessage } from '../services/openai.js';
+import askRoute from './ask.js';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
@@ -165,5 +166,7 @@ router.get('/model-status', (req, res) => {
     });
   }
 });
+
+router.use('/api', askRoute);
 
 export default router;
