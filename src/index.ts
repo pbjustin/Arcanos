@@ -1,9 +1,9 @@
 import express from 'express';
-import { config } from 'dotenv';
+import dotenv from 'dotenv';
 import router from './routes/index.js';
 
 // Load environment variables
-config();
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
