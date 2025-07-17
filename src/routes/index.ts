@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { OpenAIService, ChatMessage } from '../services/openai.js';
 import askRoute from './ask.js';
+import { HRCCore } from '../modules/hrc.js';
+import { MemoryStorage } from '../storage/memory-storage.js';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
+const memoryStorage = new MemoryStorage();
 
 // Lazy initialize OpenAI service
 function getOpenAIService(): OpenAIService {
@@ -165,6 +168,27 @@ router.get('/model-status', (req, res) => {
       details: error.message
     });
   }
+});
+
+// HRCCore-based ask endpoint
+router.post('/ask-hrc', async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: 'Message required' });
+  const hrc = new HRCCore();
+  const validation = await hrc.validate(message, {});
+  res.json({ success: true, response: message, hrc: validation });
+});
+
+// Memory storage endpoints
+router.post('/memory', async (req, res) => {
+  const sessionId = (req as any).sessionID || 'default-session';
+  const mem = await memoryStorage.storeMemory('user', sessionId, 'context', 'key', req.body.value);
+  res.json({ success: true, memory: mem });
+});
+
+router.get('/memory', async (req, res) => {
+  const list = await memoryStorage.getMemoriesByUser('user');
+  res.json({ success: true, memories: list });
 });
 
 router.use('/api', askRoute);
