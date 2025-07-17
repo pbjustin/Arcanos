@@ -171,6 +171,7 @@ router.get('/model-status', (req, res) => {
 });
 
 // HRCCore-based ask endpoint
+// This route provides the functionality that would be added by: app.post('/api/ask', ...)
 router.post('/ask-hrc', async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'Message required' });
@@ -179,7 +180,8 @@ router.post('/ask-hrc', async (req, res) => {
   res.json({ success: true, response: message, hrc: validation });
 });
 
-// Memory storage endpoints
+// Memory storage endpoints  
+// These routes provide the functionality that would be added by: app.post('/api/memory', ...) and app.get('/api/memory', ...)
 router.post('/memory', async (req, res) => {
   const sessionId = (req as any).sessionID || 'default-session';
   const mem = await memoryStorage.storeMemory('user', sessionId, 'context', 'key', req.body.value);
