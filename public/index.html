@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Arcanos Chat UI</title>
+<style>
+body { font-family: sans-serif; background: #f9f9f9; }
+.chat { max-width: 800px; margin: auto; padding: 20px; }
+.msg { margin: 10px 0; padding: 10px; border-radius: 5px; }
+.user { background: #c8e6c9; text-align: right; }
+.assistant { background: #e3f2fd; }
+</style>
+</head>
+<body>
+<div class="chat">
+<h2>Arcanos Interface</h2>
+<div id="log"></div>
+<input id="input" placeholder="Say something..." style="width: 70%;" />
+<button onclick="go()">Send</button>
+</div>
+<script>
+const API = 'http://localhost:3000/api/ask';
+async function go() {
+const input = document.getElementById('input');
+const msg = input.value.trim();
+if (!msg) return;
+input.value = '';
+add(msg, 'user');
+const res = await fetch(API, {
+method: 'POST',
+headers: {'Content-Type': 'application/json'},
+body: JSON.stringify({ message: msg })
+});
+const data = await res.json();
+add(data.response || '[No reply]', 'assistant');
+}
+function add(text, role) {
+const div = document.createElement('div');
+div.className = 'msg ' + role;
+div.innerText = text;
+document.getElementById('log').appendChild(div);
+}
+</script>
+</body>
+</html>
