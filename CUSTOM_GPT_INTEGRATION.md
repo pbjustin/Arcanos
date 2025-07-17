@@ -56,23 +56,56 @@ Always provide helpful, accurate responses while leveraging the advanced capabil
 - **Authentication**: No authentication required (single-user system)
 - **Content Type**: `application/json`
 
+### Project Structure
+The new Arcanos backend uses a clean TypeScript + Express structure:
+
+```
+/src/
+  index.ts         # Main Express server
+  routes/
+    index.ts       # API routes
+package.json       # Dependencies and scripts
+tsconfig.json      # TypeScript configuration
+.env.example       # Environment template
+dist/              # Compiled JavaScript (generated)
+```
+
 ### Environment Variables
-Ensure your Arcanos deployment has the following environment variables set:
+Create a `.env` file in the project root with the following variables:
 
 ```bash
 # OpenAI Configuration
 OPENAI_API_KEY=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
-OPENAI_FINE_TUNE_MODEL=ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox
+FINE_TUNED_MODEL=ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox
 
-# Model Selection
-USE_FINE_TUNED=true
+# Server Configuration
+PORT=3000
+NODE_ENV=production
+```
+
+### Development Setup
+```bash
+# Install dependencies
+npm install
+
+# Development mode (with hot reloading)
+npm run dev
+
+# Production build
+npm run build
+npm start
+
+# Health check
+curl http://localhost:3000/health
 ```
 
 ## Actions Configuration
 
 Add these actions to your Custom GPT to enable full Arcanos integration:
 
-### 1. Main AI Query Action
+### Current Available Endpoints
+
+The new backend structure provides these base endpoints:
 
 ```yaml
 openapi: 3.0.0
@@ -82,6 +115,73 @@ info:
 servers:
   - url: https://your-arcanos-deployment.com
 paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check endpoint
+      responses:
+        '200':
+          description: System health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  timestamp:
+                    type: string
+                  uptime:
+                    type: number
+  /api:
+    get:
+      operationId: getWelcome
+      summary: API welcome message
+      responses:
+        '200':
+          description: Welcome response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  timestamp:
+                    type: string
+                  version:
+                    type: string
+  /api/echo:
+    post:
+      operationId: echoTest
+      summary: Echo test endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Echo response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    type: object
+                  timestamp:
+                    type: string
+```
+
+### Future Endpoints (To Be Implemented)
+
+These are the endpoints you'll want to implement for full Arcanos functionality:
+
+```yaml
   /api/ask:
     post:
       operationId: askArcanos
@@ -119,11 +219,7 @@ paths:
                     type: string
                   metadata:
                     type: object
-```
 
-### 2. Memory Management Action
-
-```yaml
   /api/memory:
     get:
       operationId: getMemories
@@ -152,11 +248,7 @@ paths:
                   enum: [low, medium, high]
               required:
                 - content
-```
 
-### 3. System Status Action
-
-```yaml
   /api/status:
     get:
       operationId: getSystemStatus
@@ -164,6 +256,7 @@ paths:
       responses:
         '200':
           description: System status information
+  
   /api/config:
     get:
       operationId: getConfiguration
@@ -218,6 +311,18 @@ For native app integration, you can create a simple frontend that communicates w
             input.value = '';
             
             try {
+                // For now, use the echo endpoint since /api/ask isn't implemented yet
+                const response = await fetch(`${API_BASE}/api/echo`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: message, message: message })
+                });
+                
+                const data = await response.json();
+                addMessage(data.message || 'Echo: ' + message, 'assistant');
+                
+                // TODO: Implement /api/ask endpoint and update to:
+                /*
                 const response = await fetch(`${API_BASE}/api/ask`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -239,6 +344,7 @@ For native app integration, you can create a simple frontend that communicates w
                         })
                     });
                 }
+                */
             } catch (error) {
                 addMessage('Error: Could not connect to Arcanos', 'assistant');
             }
@@ -281,6 +387,27 @@ const ArcanosChat = () => {
         setLoading(true);
         
         try {
+            // For now, use the echo endpoint since /api/ask isn't implemented yet
+            const response = await fetch(`${API_BASE}/api/echo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    query: input, 
+                    message: input 
+                })
+            });
+            
+            const data = await response.json();
+            const assistantMessage = { 
+                text: data.message || `Echo: ${input}`, 
+                sender: 'assistant',
+                metadata: data.metadata || {} 
+            };
+            
+            setMessages(prev => [...prev, assistantMessage]);
+            
+            // TODO: Implement /api/ask endpoint and update to:
+            /*
             const response = await fetch(`${API_BASE}/api/ask`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -298,6 +425,7 @@ const ArcanosChat = () => {
             };
             
             setMessages(prev => [...prev, assistantMessage]);
+            */
         } catch (error) {
             setMessages(prev => [...prev, { 
                 text: 'Error connecting to Arcanos', 
@@ -317,7 +445,7 @@ const ArcanosChat = () => {
                         {msg.text}
                         {msg.metadata && (
                             <div className="metadata">
-                                Model: {msg.metadata.ragContext?.metadata?.model}
+                                Timestamp: {msg.metadata.timestamp}
                             </div>
                         )}
                     </div>
@@ -401,17 +529,21 @@ await fetch('/api/permission/revoke', { method: 'POST' });
 Use these endpoints to debug your integration:
 
 ```bash
-# Check system health
+# Check system health (available now)
 GET /health
 
+# Test API connection (available now)
+GET /api
+
+# Test echo functionality (available now)
+POST /api/echo
+
+# Future endpoints (to be implemented):
 # Get detailed system status
 GET /api/status
 
 # View current configuration
 GET /api/config
-
-# Check recent logs
-GET /api/admin/stats
 ```
 
 ### Logs and Monitoring

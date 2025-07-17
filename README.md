@@ -1,93 +1,110 @@
-# Arcanos
+# Arcanos Backend
 
-AI operating system - Single User Edition
+A minimal TypeScript + Express backend for the Arcanos project.
 
-## Overview
+## Setup
 
-Arcanos is a simplified AI operating system designed for single-user use. All functionality operates with a hardcoded user account for the repository owner.
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd Arcanos
+   ```
 
-## User Configuration
-
-The system operates with a single hardcoded user:
-- **ID**: `pbjustin`
-- **Username**: `pbjustin`
-- **Email**: `pbjustin@example.com`
-- **Role**: `admin`
-
-## Features
-
-- **RAG (Retrieval Augmented Generation)**: Query and document management
-- **HRC (Hallucination Resilient Core)**: Text validation and processing
-- **Memory Storage**: Persistent memory management for conversations and context
-- **Configuration Management**: System configuration and module management
-- **Request Logging**: Activity tracking and analytics
-
-## Quick Start
-
-1. **Install dependencies**:
+2. **Install dependencies**
    ```bash
    npm install
    ```
 
-2. **Development mode**:
+3. **Environment configuration**
    ```bash
-   npm run dev
+   cp .env.example .env
+   # Edit .env with your actual values
    ```
 
-3. **Production build**:
+4. **Build the project**
    ```bash
    npm run build
-   npm start
    ```
+
+## Running the Application
+
+### Development Mode
+```bash
+npm run dev
+```
+This starts the server with hot reloading using tsx.
+
+### Production Mode
+```bash
+npm run build
+npm start
+```
 
 ## API Endpoints
 
-- `GET /health` - Health check
-- `GET /api/status` - System status
-- `POST /api/ask` - Main AI query endpoint
-- `GET /api/memory` - Retrieve memories
-- `POST /api/memory` - Store new memory
-- `GET /api/config` - Get configuration
-- `POST /api/config` - Update configuration
-- `GET /api/admin/stats` - System statistics
+### General Endpoints
+- `GET /health` - Health check endpoint
+- `GET /api` - Welcome message with model status
+- `POST /api/echo` - Echo endpoint for testing
 
-## Architecture
+### OpenAI Chat Endpoints
+- `GET /api/model-status` - Get current model configuration
+- `POST /api/ask` - Chat without fallback permission (asks for permission if fine-tuned model fails)
+- `POST /api/ask-with-fallback` - Chat with fallback permission granted
 
-- **Express.js** server with TypeScript
-- **Memory-based storage** (no external database required)
-- **Modular design** with RAG, HRC, and configuration modules
-- **No authentication** - simplified for single-user use
-
-## OpenAI Integration
-
-Arcanos includes full OpenAI API integration with support for:
-- **Fine-tuned Models**: Your custom model `ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox`
-- **Smart Fallback**: Falls back to `gpt-4-turbo` with interactive permission
-- **Model Selection**: Toggle between fine-tuned and base models via `USE_FINE_TUNED` environment variable
-
-### Environment Configuration
-```bash
-OPENAI_API_KEY=your_api_key_here
-OPENAI_FINE_TUNE_MODEL=ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox
-USE_FINE_TUNED=true
+### Chat Request Format
+```json
+{
+  "message": "Your message here"
+}
+```
+or
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Your message here"},
+    {"role": "assistant", "content": "Previous response"}
+  ]
+}
 ```
 
-## Custom GPT Integration
+### Chat Response Format
+```json
+{
+  "response": "AI response",
+  "model": "model-used",
+  "error": "error details if any",
+  "fallbackRequested": true, // if permission needed for fallback
+  "fallbackUsed": true, // if fallback model was used
+  "timestamp": "2023-..."
+}
+```
 
-For complete instructions on integrating Arcanos with ChatGPT Custom GPTs and native applications, see:
+## OpenAI Model Behavior
 
-📖 **[Custom GPT Integration Guide](./CUSTOM_GPT_INTEGRATION.md)**
+The backend implements a permission-based fallback system for OpenAI models:
 
-This guide covers:
-- Setting up Custom GPTs with Arcanos API
-- Actions configuration for ChatGPT
-- Native app integration examples
-- Model management and fallback handling
-- Troubleshooting and debugging
+1. **Primary Model**: Always attempts to use your fine-tuned model first
+2. **Permission Required**: If the fine-tuned model fails, `/api/ask` will ask for permission before falling back
+3. **Fallback Allowed**: Use `/api/ask-with-fallback` when you grant permission to use the default model
+4. **Error Transparency**: All errors are logged and returned to inform you of any issues
 
-## Development Notes
+## Environment Variables
 
-- No user registration, login, or session management
-- All requests automatically use the hardcoded user
-- Simplified codebase for easy maintenance
-- Direct integration ready for ChatGPT and Codesphere environments
+- `NODE_ENV` - Environment (development/production)
+- `PORT` - Server port (default: 3000)
+- `OPENAI_API_KEY` - Your OpenAI API key
+- `FINE_TUNED_MODEL` - Your fine-tuned model name
+
+## Project Structure
+
+```
+./src/index.ts              # Main server file
+./src/routes/index.ts       # API routes
+./src/services/openai.ts    # OpenAI service with permission-based fallback
+package.json                # Dependencies and scripts
+tsconfig.json               # TypeScript configuration
+.gitignore                 # Git ignore rules
+.env.example               # Environment variables template
+README.md                  # This file
+```
