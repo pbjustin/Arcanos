@@ -2,9 +2,21 @@
 
 This guide describes how to integrate a Custom GPT with the ARCANOS system. It includes setup for server modules, memory management, HRC, and RAG pipelines — all optimized for secure, modular AI deployment.
 
+## Table of Contents
+
+- [🧠 ARCANOS Modular Overview](#-arcanos-modular-overview)
+- [📡 Endpoint Architecture](#-endpoint-architecture)
+- [⚙️ OpenAI Custom GPT Instructions](#️-openai-custom-gpt-instructions)
+- [🔗 Fine-Tuned Model Integration](#-fine-tuned-model-integration)
+- [🔐 Token + Authorization](#-token--authorization)
+- [🛠 Deployment Note](#-deployment-note)
+- [📁 Related Files](#-related-files)
+- [✅ Status](#-status)
+- [🧩 Contribute](#-contribute)
+
 ⸻
 
-🧠 ARCANOS Modular Overview
+## 🧠 ARCANOS Modular Overview
 
 ARCANOS is a universal operating intelligence designed for creative, operational, and logic-heavy workflows. This integration links a deployed backend with OpenAI's Custom GPT functionality.
 
@@ -16,7 +28,7 @@ ARCANOS is a universal operating intelligence designed for creative, operational
 
 ⸻
 
-📡 Endpoint Architecture
+## 📡 Endpoint Architecture
 
 Available APIs:
 
@@ -30,7 +42,7 @@ Endpoint	Method	Description
 
 ⸻
 
-⚙️ OpenAI Custom GPT Instructions
+## ⚙️ OpenAI Custom GPT Instructions
 
 Paste the following into your GPT Builder "Instructions":
 
@@ -77,7 +89,7 @@ Safeguards:
 
 ⸻
 
-🔗 Fine-Tuned Model Integration
+## 🔗 Fine-Tuned Model Integration
 
 To use your fine-tuned OpenAI model within ARCANOS:
 	1.	Update your .env file:
@@ -99,7 +111,7 @@ const response = await openai.chat.completions.create({
 
 ⸻
 
-🔐 Token + Authorization
+## 🔐 Token + Authorization
 
 To access protected routes:
 &nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;Use session-based login /api/auth/login
@@ -107,7 +119,7 @@ To access protected routes:
 
 ⸻
 
-🛠 Deployment Note
+## 🛠 Deployment Note
 
 This guide assumes you're using the full backend stack (including the MemoryStorage, ArcanosRAG, HRCCore, and middleware pipeline).
 
@@ -120,7 +132,7 @@ But for production, always switch to /api/ask.
 
 ⸻
 
-📁 Related Files
+## 📁 Related Files
 &nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;server/index.ts → Entry point
 &nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;server/routes/index.ts → Route registration
 &nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;server/storage/memory-storage.ts → In-memory store
@@ -128,7 +140,7 @@ But for production, always switch to /api/ask.
 
 ⸻
 
-✅ Status
+## ✅ Status
 
 Integration: ✅ Stable
 Custom GPT Sync: ✅ Ready
@@ -139,7 +151,7 @@ Fine-Tuned Model: ✅ Supported
 
 ⸻
 
-🧩 Contribute
+## 🧩 Contribute
 
 Have a module, tool, or agent to embed? Fork the arcanos-modules directory and submit a PR.
 
