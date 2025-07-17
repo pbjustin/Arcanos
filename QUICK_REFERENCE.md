@@ -1,17 +1,31 @@
 # Arcanos Quick Reference
 
+## New Project Structure
+
+```
+/src/
+  index.ts         # Main Express server
+  routes/
+    index.ts       # API routes
+package.json       # Dependencies and scripts  
+tsconfig.json      # TypeScript configuration
+.env.example       # Environment template
+dist/              # Compiled output (generated)
+```
+
 ## API Endpoints
 
-### Core Functionality
+### Currently Available
+- `GET /health` - System health check
+- `GET /api` - Welcome message  
+- `POST /api/echo` - Echo test endpoint
+
+### To Be Implemented
 - `POST /api/ask` - Main AI query endpoint with RAG
 - `GET /api/status` - System status and health
 - `GET /api/config` - Current configuration
-
-### Memory Management
 - `GET /api/memory` - Retrieve stored memories
 - `POST /api/memory` - Store new memory
-
-### Permission Management
 - `GET /api/permission/status` - Check permission status
 - `POST /api/permission/grant` - Grant fallback permission
 - `POST /api/permission/revoke` - Revoke permission
@@ -21,11 +35,11 @@
 ```bash
 # Required
 OPENAI_API_KEY=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
-OPENAI_FINE_TUNE_MODEL=ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox
+FINE_TUNED_MODEL=ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox
 
-# Model Selection
-USE_FINE_TUNED=true  # Use fine-tuned model
-USE_FINE_TUNED=false # Use base gpt-3.5-turbo
+# Server Configuration
+PORT=3000
+NODE_ENV=production
 ```
 
 ## Model Hierarchy
@@ -39,40 +53,60 @@ USE_FINE_TUNED=false # Use base gpt-3.5-turbo
 ```bash
 # Development
 npm install
-npm run dev
+npm run dev      # Starts development server with hot reloading
 
 # Production
-npm run build
-npm start
+npm run build    # Compile TypeScript to JavaScript
+npm start        # Start production server
 
 # Health Check
+curl http://localhost:3000/health
 curl https://your-server.com/health
 ```
 
 ## Sample API Calls
 
-### Ask Question
+### Health Check
+```bash
+curl http://localhost:3000/health
+```
+
+### Welcome Message
+```bash
+curl http://localhost:3000/api
+```
+
+### Echo Test
+```bash
+curl -X POST http://localhost:3000/api/echo \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello Arcanos", "test": true}'
+```
+
+### Future Endpoints (To Be Implemented)
+
+#### Ask Question
 ```bash
 curl -X POST https://your-server.com/api/ask \
   -H "Content-Type: application/json" \
   -d '{"query": "Hello Arcanos", "options": {"useRAG": true}}'
 ```
 
-### Store Memory
+#### Store Memory
 ```bash
 curl -X POST https://your-server.com/api/memory \
   -H "Content-Type: application/json" \
   -d '{"content": "Important information", "priority": "high"}'
 ```
 
-### Check Status
+#### Check Status
 ```bash
 curl https://your-server.com/api/status
 ```
 
 ## Custom GPT Actions Schema
 
-Use this OpenAPI schema in your Custom GPT:
+Use this OpenAPI schema in your Custom GPT for the current available endpoints:
 
 ```yaml
 openapi: 3.0.0
@@ -82,6 +116,38 @@ info:
 servers:
   - url: https://your-server.com
 paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Check system health
+      responses:
+        '200':
+          description: Health status
+  /api:
+    get:
+      operationId: getWelcome
+      summary: Get welcome message
+      responses:
+        '200':
+          description: Welcome response
+  /api/echo:
+    post:
+      operationId: echoTest
+      summary: Echo test endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Echo response
+```
+
+### Future Schema (To Be Implemented)
+
+```yaml
   /api/ask:
     post:
       operationId: askArcanos
