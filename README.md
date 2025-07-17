@@ -52,6 +52,13 @@ npm start
 - `POST /api/ask` - Chat without fallback permission (asks for permission if fine-tuned model fails)
 - `POST /api/ask-with-fallback` - Chat with fallback permission granted
 
+### HRCCore Endpoints
+- `POST /api/ask-hrc` - Message validation using HRCCore
+
+### Memory Storage Endpoints
+- `POST /api/memory` - Store a memory entry
+- `GET /api/memory` - Retrieve all memory entries
+
 ### Chat Request Format
 ```json
 {
@@ -77,6 +84,50 @@ or
   "fallbackRequested": true, // if permission needed for fallback
   "fallbackUsed": true, // if fallback model was used
   "timestamp": "2023-..."
+}
+```
+
+### HRCCore Request Format
+```json
+{
+  "message": "Text to validate"
+}
+```
+
+### HRCCore Response Format
+```json
+{
+  "success": true,
+  "response": "Original message",
+  "hrc": {
+    "success": true,
+    "data": null
+  }
+}
+```
+
+### Memory Request Format
+```json
+{
+  "value": "Memory content to store"
+}
+```
+
+### Memory Response Format
+```json
+{
+  "success": true,
+  "memory": {
+    "id": "unique-id",
+    "userId": "user",
+    "sessionId": "session-id",
+    "type": "context",
+    "key": "key",
+    "value": "stored value",
+    "timestamp": "2023-...",
+    "tags": [],
+    "metadata": { ... }
+  }
 }
 ```
 
