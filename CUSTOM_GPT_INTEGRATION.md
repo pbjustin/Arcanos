@@ -7,6 +7,7 @@ This guide describes how to integrate a Custom GPT with the ARCANOS system. It i
 - [🧠 ARCANOS Modular Overview](#-arcanos-modular-overview)
 - [📡 Endpoint Architecture](#-endpoint-architecture)
 - [⚙️ OpenAI Custom GPT Instructions](#️-openai-custom-gpt-instructions)
+- [🎛️ Custom GPT Actions Configuration](#️-custom-gpt-actions-configuration)
 - [🔗 Fine-Tuned Model Integration](#-fine-tuned-model-integration)
 - [🔐 Token + Authorization](#-token--authorization)
 - [🛠 Deployment Note](#-deployment-note)
@@ -86,6 +87,62 @@ Safeguards:
 - Honor user-pinned memory tasks
 - Domain packs and overlays activated only by explicit user command
 
+
+⸻
+
+## 🎛️ Custom GPT Actions Configuration
+
+Add the following JSON configuration to your Custom GPT's "Actions" section in GPT Builder:
+
+```json
+{
+  "actions": [
+    {
+      "name": "Ask ARCANOS",
+      "description": "Send user query to ARCANOS backend with optional RAG and HRC processing",
+      "url": "https://your-deployment-url/api/ask",
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "message": "{{user_input}}",
+        "domain": "general",
+        "useRAG": true,
+        "useHRC": true
+      },
+      "response": {
+        "field": "response"
+      }
+    },
+    {
+      "name": "Store memory entry",
+      "description": "Store memory to ARCANOS memory system",
+      "url": "https://your-deployment-url/api/memory",
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "key": "{{memory_key}}",
+        "value": "{{memory_value}}",
+        "type": "context",
+        "tags": []
+      },
+      "response": {
+        "field": "success"
+      }
+    }
+  ]
+}
+```
+
+**Setup Instructions:**
+1. Copy the JSON configuration above
+2. In GPT Builder, go to the "Actions" tab
+3. Paste the configuration
+4. Replace `https://your-deployment-url` with your actual ARCANOS deployment URL
+5. Test the actions to ensure proper connectivity
 
 ⸻
 
