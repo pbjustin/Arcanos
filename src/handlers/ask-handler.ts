@@ -31,7 +31,7 @@ function getMemoryStorage(): MemoryStorage {
 
 export const askHandler = async (req: Request, res: Response) => {
   try {
-    const { message, domain = "general", useRAG = true, useHRC = true } = req.body;
+    const { message, domain = "general", useRAG = true, useHRC = true, allowFallback = false } = req.body;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ 
@@ -40,7 +40,7 @@ export const askHandler = async (req: Request, res: Response) => {
       });
     }
 
-    console.log("Processing ARCANOS request:", { message, domain, useRAG, useHRC });
+    console.log("Processing ARCANOS request:", { message, domain, useRAG, useHRC, allowFallback });
 
     let response = message;
     let hrcValidation = null;
@@ -92,10 +92,17 @@ export const askHandler = async (req: Request, res: Response) => {
         }
       ];
 
-      // Use OpenAI service to generate response
-      const openaiResponse = await openai.chat(chatMessages, true); // Allow fallback
+      // Use OpenAI service to generate response (respect permission for fallback)
+      const openaiResponse = await openai.chat(chatMessages, allowFallback);
       aiResponse = openaiResponse;
-      response = openaiResponse.message;
+      
+      // Handle fallback permission request
+      if (openaiResponse.fallbackRequested) {
+        response = openaiResponse.message;
+        errors.push('Fine-tuned model unavailable. Add "allowFallback": true to use default model.');
+      } else {
+        response = openaiResponse.message;
+      }
 
       // Store interaction in memory if RAG is enabled
       if (useRAG) {
@@ -134,9 +141,11 @@ export const askHandler = async (req: Request, res: Response) => {
       domain,
       useRAG,
       useHRC,
+      allowFallback,
       hrcValidation,
       ragContextCount: ragContext?.length || 0,
       aiModel: aiResponse?.model || 'none',
+      fallbackRequested: aiResponse?.fallbackRequested || false,
       errors: errors.length > 0 ? errors : undefined,
       timestamp: new Date().toISOString()
     });
