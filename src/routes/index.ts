@@ -51,7 +51,7 @@ router.post('/echo', (req, res) => {
 // ARCANOS ask endpoint
 router.post('/ask', askHandler);
 
-// Chat endpoint with fallback permission granted
+// Chat endpoint with explicit fallback permission (requires explicit user consent)
 router.post('/ask-with-fallback', async (req, res) => {
   let service: OpenAIService;
   
@@ -64,7 +64,7 @@ router.post('/ask-with-fallback', async (req, res) => {
     });
   }
 
-  const { message, messages } = req.body;
+  const { message, messages, explicitFallbackConsent } = req.body;
 
   if (!message && !messages) {
     return res.status(400).json({
@@ -85,15 +85,29 @@ router.post('/ask-with-fallback', async (req, res) => {
       ];
     }
 
-    // Call with fallback permission granted
-    const response = await service.chat(chatMessages, true);
+    // First try with fine-tuned model (never auto-fallback)
+    const response = await service.chat(chatMessages, false);
+    
+    // If fallback is requested and user gave explicit consent, use fallback
+    if (response.fallbackRequested && explicitFallbackConsent === true) {
+      const fallbackResponse = await service.chatWithFallback(chatMessages);
+      return res.json({
+        response: fallbackResponse.message,
+        model: fallbackResponse.model,
+        error: fallbackResponse.error,
+        fallbackUsed: true,
+        timestamp: new Date().toISOString()
+      });
+    }
     
     res.json({
       response: response.message,
       model: response.model,
       error: response.error,
-      fallbackUsed: response.model !== service.getFinetuneModel(),
-      timestamp: new Date().toISOString()
+      fallbackRequested: response.fallbackRequested,
+      fallbackUsed: false,
+      timestamp: new Date().toISOString(),
+      notice: response.fallbackRequested ? 'Add "explicitFallbackConsent": true to use fallback model' : undefined
     });
   } catch (error: any) {
     res.status(500).json({
