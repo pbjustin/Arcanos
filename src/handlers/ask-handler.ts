@@ -99,7 +99,7 @@ export const askHandler = async (req: Request, res: Response) => {
       // Handle fallback permission request
       if (openaiResponse.fallbackRequested) {
         response = openaiResponse.message;
-        errors.push('Fine-tuned model unavailable. Add "allowFallback": true to use default model.');
+        errors.push('Fine-tuned model unavailable. To use fallback model, call /ask-with-fallback endpoint with "explicitFallbackConsent": true.');
       } else {
         response = openaiResponse.message;
       }
