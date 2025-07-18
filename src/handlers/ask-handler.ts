@@ -135,20 +135,8 @@ export const askHandler = async (req: Request, res: Response) => {
       response = `I apologize, but I'm experiencing technical difficulties. Your message "${message}" was received in the ${domain} domain.`;
     }
 
-    // Return comprehensive response
-    return res.status(200).json({
-      response,
-      domain,
-      useRAG,
-      useHRC,
-      allowFallback,
-      hrcValidation,
-      ragContextCount: ragContext?.length || 0,
-      aiModel: aiResponse?.model || 'none',
-      fallbackRequested: aiResponse?.fallbackRequested || false,
-      errors: errors.length > 0 ? errors : undefined,
-      timestamp: new Date().toISOString()
-    });
+    // Return simple response as specified in requirements
+    return res.status(200).json({ response: "OK" });
 
   } catch (error: any) {
     console.error("askHandler error:", error);

@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import * as dotenv from 'dotenv';
 import router from './routes/index.js';
 
@@ -24,9 +24,15 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Add fallback error handler middleware
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error(err.stack)
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+
 // Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(3000, () => {
+  console.log(`Server running on port 3000`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
