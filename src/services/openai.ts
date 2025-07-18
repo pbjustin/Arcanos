@@ -54,43 +54,45 @@ export class OpenAIService {
     } catch (error: any) {
       console.error('Fine-tuned model error:', error.message);
 
-      // If fine-tuned model fails and fallback is not allowed, request permission
-      if (!allowFallback) {
-        return {
-          message: 'Fine-tuned model is not available. Would you like to use the default model instead?',
-          model: this.finetuneModel,
-          error: error.message,
-          fallbackRequested: true,
-        };
-      }
+      // NEVER automatically fall back - always request permission first
+      return {
+        message: 'Fine-tuned model is not available. Would you like to use the default model instead?',
+        model: this.finetuneModel,
+        error: error.message,
+        fallbackRequested: true,
+      };
+    }
+  }
 
-      // Fallback to default model if allowed
-      try {
-        console.log(`Falling back to ${this.fallbackModel} due to fine-tuned model error`);
-        
-        const fallbackResponse = await this.client.chat.completions.create({
+  /**
+   * Use fallback model after explicit permission is granted
+   */
+  async chatWithFallback(messages: ChatMessage[]): Promise<ChatResponse> {
+    try {
+      console.log(`Using fallback model ${this.fallbackModel} with explicit permission`);
+      
+      const fallbackResponse = await this.client.chat.completions.create({
+        model: this.fallbackModel,
+        messages: messages,
+        max_tokens: 1000,
+        temperature: 0.7,
+      });
+
+      if (fallbackResponse.choices && fallbackResponse.choices.length > 0) {
+        return {
+          message: fallbackResponse.choices[0].message?.content || 'No response',
           model: this.fallbackModel,
-          messages: messages,
-          max_tokens: 1000,
-          temperature: 0.7,
-        });
-
-        if (fallbackResponse.choices && fallbackResponse.choices.length > 0) {
-          return {
-            message: fallbackResponse.choices[0].message?.content || 'No response',
-            model: this.fallbackModel,
-            error: `Fine-tuned model failed: ${error.message}. Used fallback.`,
-          };
-        }
-
-        throw new Error('No response from fallback model');
-      } catch (fallbackError: any) {
-        return {
-          message: 'Both fine-tuned and fallback models failed',
-          model: 'none',
-          error: `Fine-tuned: ${error.message}, Fallback: ${fallbackError.message}`,
+          error: 'Using fallback model with explicit permission',
         };
       }
+
+      throw new Error('No response from fallback model');
+    } catch (fallbackError: any) {
+      return {
+        message: 'Fallback model failed',
+        model: 'none',
+        error: `Fallback model error: ${fallbackError.message}`,
+      };
     }
   }
 
