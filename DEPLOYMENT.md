@@ -66,8 +66,18 @@ npm install
 npm run build
 
 # Start the production server
+# Note: The prestart script automatically runs npm install before starting
 npm start
 ```
+
+### Package.json Scripts
+
+The following scripts are available:
+- `npm run dev` - Start development server with hot reload
+- `npm run build` - Build TypeScript to JavaScript
+- `npm start` - Build and start production server (includes prestart dependency check)
+
+**Important**: The `prestart` script automatically runs `npm install` to ensure all dependencies are installed before starting the server.
 
 ## Deployment Verification
 
@@ -94,6 +104,50 @@ After deployment, verify these endpoints work:
 
 ## Troubleshooting
 
-- **Build fails**: Check `tsconfig.json` and ensure all TypeScript files compile
-- **Server won't start**: Verify all required environment variables are set
-- **API errors**: Check that `OPENAI_API_KEY` is valid and `FINE_TUNED_MODEL` exists
+### Common Issues and Solutions
+
+**npm error: "command failed" / "signal SIGTERM"**
+- **Cause**: Missing dependencies in `node_modules` directory
+- **Solution**: Run `npm install` to ensure all dependencies are installed
+- **Prevention**: The `prestart` script now automatically runs `npm install` before starting
+
+**Build fails**
+- **Cause**: TypeScript compilation errors or missing dependencies
+- **Solution**: 
+  1. Run `npm install` to ensure dependencies are present
+  2. Check `tsconfig.json` and ensure all TypeScript files compile
+  3. Run `npm run build` manually to see specific errors
+
+**Server won't start**
+- **Cause**: Missing environment variables or build output
+- **Solution**: 
+  1. Verify all required environment variables are set
+  2. Ensure `dist/index.js` exists (run `npm run build` if missing)
+  3. Check for runtime errors in the console
+
+**API errors**
+- **Cause**: Invalid configuration or missing API keys
+- **Solution**: Check that `OPENAI_API_KEY` is valid and `FINE_TUNED_MODEL` exists
+
+### Dependency Installation Issues
+
+If you encounter missing dependency errors:
+
+```bash
+# Clean install all dependencies
+rm -rf node_modules package-lock.json
+npm install
+
+# Or force reinstall specific packages
+npm install dotenv openai express tsx typescript
+```
+
+### Build Process Verification
+
+```bash
+# Complete build verification
+npm install
+npm run build
+ls dist/index.js  # Should exist
+npm start  # Should start successfully
+```
