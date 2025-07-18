@@ -58,3 +58,6 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# NPM log directory
+npm_logs/
