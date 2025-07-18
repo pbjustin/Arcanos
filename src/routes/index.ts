@@ -3,6 +3,7 @@ import { OpenAIService, ChatMessage } from '../services/openai.js';
 import askRoute from './ask.js';
 import { HRCCore } from '../modules/hrc.js';
 import { MemoryStorage } from '../storage/memory-storage.js';
+import { askHandler } from '../handlers/ask-handler.js';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
@@ -47,57 +48,8 @@ router.post('/echo', (req, res) => {
   });
 });
 
-// Chat endpoint without fallback (requires permission)
-router.post('/ask', async (req, res) => {
-  let service: OpenAIService;
-  
-  try {
-    service = getOpenAIService();
-  } catch (error: any) {
-    return res.status(500).json({
-      error: 'OpenAI service not initialized. Check API key and fine-tuned model configuration.',
-      details: error.message
-    });
-  }
-
-  const { message, messages } = req.body;
-
-  if (!message && !messages) {
-    return res.status(400).json({
-      error: 'Either "message" (string) or "messages" (array) is required'
-    });
-  }
-
-  try {
-    let chatMessages: ChatMessage[];
-
-    if (messages) {
-      // Use provided messages array
-      chatMessages = messages;
-    } else {
-      // Convert single message to messages array
-      chatMessages = [
-        { role: 'user', content: message }
-      ];
-    }
-
-    // Call without fallback permission - will ask for permission if fine-tuned model fails
-    const response = await service.chat(chatMessages, false);
-    
-    res.json({
-      response: response.message,
-      model: response.model,
-      error: response.error,
-      fallbackRequested: response.fallbackRequested,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error: any) {
-    res.status(500).json({
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
+// ARCANOS ask endpoint
+router.post('/ask', askHandler);
 
 // Chat endpoint with fallback permission granted
 router.post('/ask-with-fallback', async (req, res) => {
