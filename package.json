@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon --exec tsx src/index.ts",
     "build": "tsc",
+    "prestart": "npm install",
     "start": "npm run build && NODE_ENV=production node dist/index.js"
   },
   "dependencies": {
