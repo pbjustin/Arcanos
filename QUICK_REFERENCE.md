@@ -35,7 +35,7 @@ dist/              # Compiled output (generated)
 ```bash
 # Required
 OPENAI_API_KEY=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
-FINE_TUNED_MODEL=ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox
+FINE_TUNED_MODEL=your-fine-tuned-model-id-here
 
 # Server Configuration
 PORT=3000
@@ -44,7 +44,7 @@ NODE_ENV=production
 
 ## Model Hierarchy
 
-1. **Primary**: Fine-tuned model (`ft:gpt-3.5-turbo-0125:personal:arc_v1-1106:BpYtP0ox`)
+1. **Primary**: Fine-tuned model (configured via `FINE_TUNED_MODEL` environment variable)
 2. **Fallback**: GPT-4 Turbo (with permission)
 3. **Error**: No fallback without permission
 
