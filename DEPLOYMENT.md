@@ -41,6 +41,7 @@ NODE_ENV=production node dist/index.js
 # Final tip: Make sure your 'start' script in package.json is correct
 echo "Ensure this exists in package.json scripts block:"
 echo '"start": "node dist/index.js"'
+echo "Note: NODE_ENV should be set as an environment variable, not in the start script"
 ```
 
 ## Environment Variables
@@ -81,8 +82,15 @@ After deployment, verify these endpoints work:
 1. Install Railway CLI: `npm install -g @railway/cli`
 2. Login: `railway login`
 3. Initialize project: `railway init`
-4. Set environment variables in Railway dashboard
+4. Set environment variables in Railway dashboard:
+   - `NODE_ENV=production`
+   - `PORT=3000` (or let Railway auto-assign)
+   - `OPENAI_API_KEY=your-openai-api-key`
+   - `SESSION_SECRET=your-session-secret`
+   - `FINE_TUNED_MODEL=your-fine-tuned-model-id`
 5. Deploy: `railway up`
+
+**Important**: Set `NODE_ENV=production` as an environment variable in Railway's dashboard, not in the start script.
 
 ## Troubleshooting
 
