@@ -47,12 +47,12 @@ COPY --from=builder /app/dist ./dist
 RUN chown -R arcanos:nodejs /app
 USER arcanos
 
-# Expose the port (Railway will assign the actual port)
-EXPOSE 3000
+# Expose the port (Railway default is 8080)
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 3000) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
+    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 8080) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
 # Start the application
 CMD ["node", "dist/index.js"]

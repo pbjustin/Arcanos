@@ -110,8 +110,8 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ error: err.message });
 });
 
-// Start server
-const port = Number(process.env.PORT) || 3000;
+// Start server - Railway uses port 8080 by default
+const port = Number(process.env.PORT) || 8080;
 const host = process.env.HOST || '0.0.0.0';
 
 const server = app.listen(port, host, () => {
