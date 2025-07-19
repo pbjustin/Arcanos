@@ -7,7 +7,7 @@ export class ArcanosConfig {
     modules: ["rag", "hrc"],
     openai: {
       apiKey: process.env.OPENAI_API_KEY || "",
-      fineTuneModel: process.env.FINE_TUNED_MODEL || "",
+      fineTuneModel: process.env.OPENAI_FINE_TUNED_MODEL || "",
       defaultModel: "gpt-4-turbo",
       useFineTuned: process.env.USE_FINE_TUNED === "true"
     }

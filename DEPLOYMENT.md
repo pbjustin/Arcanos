@@ -53,7 +53,7 @@ NODE_ENV=production
 PORT=3000
 OPENAI_API_KEY=your-openai-api-key-here
 SESSION_SECRET=your-session-secret-here
-FINE_TUNED_MODEL=your-fine-tuned-model-id
+OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id
 ```
 
 ## Build and Start
@@ -97,7 +97,7 @@ After deployment, verify these endpoints work:
    - `PORT=3000` (or let Railway auto-assign)
    - `OPENAI_API_KEY=your-openai-api-key`
    - `SESSION_SECRET=your-session-secret`
-   - `FINE_TUNED_MODEL=your-fine-tuned-model-id`
+   - `OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id`
 5. Deploy: `railway up`
 
 **Important**: Set `NODE_ENV=production` as an environment variable in Railway's dashboard, not in the start script.
@@ -127,7 +127,7 @@ After deployment, verify these endpoints work:
 
 **API errors**
 - **Cause**: Invalid configuration or missing API keys
-- **Solution**: Check that `OPENAI_API_KEY` is valid and `FINE_TUNED_MODEL` exists
+- **Solution**: Check that `OPENAI_API_KEY` is valid and `OPENAI_FINE_TUNED_MODEL` exists
 
 ### Dependency Installation Issues
 
