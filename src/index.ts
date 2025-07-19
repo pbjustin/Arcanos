@@ -11,6 +11,14 @@ import router from './routes/index';
 // Load environment variables
 dotenv.config();
 
+// 1. VERIFY: Environment variable loading
+console.log("Model:", process.env.FINE_TUNED_MODEL);
+
+// 3. FAIL FAST if model is not available
+if (!process.env.FINE_TUNED_MODEL) {
+  throw new Error("❌ Missing fine-tuned model from environment");
+}
+
 const app = express();
 const PORT = Number(process.env.PORT) || 8080;
 
@@ -83,21 +91,15 @@ app.post('/', async (req, res) => {
 
 // Keep process alive with HTTP server
 const server = http.createServer(app);
+
+// 4. KEEP SERVER ALIVE
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ Server listening on port ${PORT}`);
   
   // Railway-specific logging
   if (process.env.RAILWAY_ENVIRONMENT) {
     console.log(`🚂 Railway Environment: ${process.env.RAILWAY_ENVIRONMENT}`);
     console.log(`🔧 Railway Service: ${process.env.RAILWAY_SERVICE_NAME || 'Unknown'}`);
-  }
-  
-  // Fine-tuned model validation
-  const fineTunedModel = process.env.OPENAI_FINE_TUNED_MODEL;
-  if (!fineTunedModel) {
-    console.warn("⚠️ No fine-tuned model configured or available.");
-  } else {
-    console.log(`✅ Fine-tuned model loaded: ${fineTunedModel}`);
   }
 });
 

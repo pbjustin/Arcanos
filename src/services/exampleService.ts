@@ -19,10 +19,7 @@ export async function processPrompt(prompt: string, options = {}) {
       { role: 'user', content: prompt }
     ];
     
-    // Use options to determine if fallback is allowed
-    const allowFallback = (options as any)?.allowFallback || false;
-    
-    const response = await service.chat(messages, allowFallback);
+    const response = await service.chat(messages);
     
     return {
       message: response.message,
