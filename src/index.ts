@@ -106,32 +106,45 @@ app.post('/', async (req, res) => {
 // Keep process alive with HTTP server
 const server = http.createServer(app);
 
-// 4. KEEP SERVER ALIVE
+// ========= GLOBAL PROCESS MONITORS =========
+process.on("exit", (code) => {
+  console.log(`[EXIT] Process is exiting with code ${code}`);
+});
+process.on("SIGTERM", () => {
+  console.log("[SIGNAL] SIGTERM received. Gracefully shutting down...");
+  server.close(() => {
+    console.log('✅ Server closed successfully');
+    process.exit(0);
+  });
+});
+process.on("SIGINT", () => {
+  console.log("[SIGNAL] SIGINT received (e.g. Ctrl+C)");
+  server.close(() => {
+    console.log('✅ Server closed successfully');
+    process.exit(0);
+  });
+});
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught Exception:", err);
+});
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[FATAL] Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+// ========= ADD INSIDE YOUR SERVER STARTUP =========
 server.listen(PORT, () => {
-  console.log(`✅ Server listening on port ${PORT}`);
+  console.log(`[SERVER] Running on port ${PORT}`);
+  console.log(`[INFO] ENV:`, {
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT,
+    MODEL: process.env.FINE_TUNED_MODEL,
+  });
   
   // Railway-specific logging
   if (process.env.RAILWAY_ENVIRONMENT) {
     console.log(`🚂 Railway Environment: ${process.env.RAILWAY_ENVIRONMENT}`);
     console.log(`🔧 Railway Service: ${process.env.RAILWAY_SERVICE_NAME || 'Unknown'}`);
   }
-});
-
-// Graceful Shutdown Logic
-process.on('SIGTERM', () => {
-  console.log('📦 SIGTERM received, shutting down...');
-  server.close(() => {
-    console.log('✅ Server closed successfully');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('📦 SIGINT received, shutting down...');
-  server.close(() => {
-    console.log('✅ Server closed successfully');
-    process.exit(0);
-  });
 });
 
 // --- RAILWAY SERVICE CONFIG VALIDATION ✅ ---
