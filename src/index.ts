@@ -6,10 +6,10 @@ import router from './routes/index';
 dotenv.config();
 
 // Check for fine-tuned model but allow startup without it
-if (!process.env.FINE_TUNED_MODEL || process.env.FINE_TUNED_MODEL.trim() === '') {
+if (!process.env.FINE_TUNE_MODEL || process.env.FINE_TUNE_MODEL.trim() === '') {
   console.info("ℹ️ No fine-tuned model configured.");
 } else {
-  console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNED_MODEL);
+  console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNE_MODEL);
 }
 if (!process.env.OPENAI_API_KEY) {
   console.warn("⚠️ Warning: OPENAI_API_KEY not found. OpenAI features will be disabled.");
@@ -21,9 +21,9 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
-app.get('/', (req, res) => {
-  res.send('Arcanos backend running');
+// Basic heartbeat endpoint to keep the container alive
+app.get('/', (_req, res) => {
+  res.send('Arcanos backend is running 🚀');
 });
 
 app.use('/api', router);
@@ -46,27 +46,20 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // Start server
 const port = Number(process.env.PORT) || 8080;
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log('Server running on port', port);
+  console.log(`✅ Fine-tuned model loaded: ${process.env.FINE_TUNE_MODEL}`);
+  console.log(`🌐 Server running on port ${port}`);
 });
 
-// Prevent container shutdown in production
-setInterval(() => {}, 1 << 30);
+// Dummy `setInterval` to prevent silent exit
+setInterval(() => {
+  // keep event loop busy, no-op
+}, 60_000);
 
-// Graceful shutdown
-const gracefulShutdown = (signal: string) => {
-  console.log(`\n🛑 Received ${signal}. Gracefully shutting down...`);
-  server.close((err) => {
-    if (err) {
-      console.error('❌ Error during server shutdown:', err);
-    } else {
-      console.log('✅ Server closed successfully');
-    }
-  });
-};
-
-// Handle shutdown signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// Handle shutdown signals gracefully
+process.on('SIGTERM', () => {
+  console.log('📦 SIGTERM received, shutting down gracefully…');
+  server.close(() => process.exit(0));
+});
 
 // Add global error handlers to prevent crashes
 process.on('uncaughtException', (error) => {
