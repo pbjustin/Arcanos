@@ -7,7 +7,10 @@ dotenv.config();
 
 // Force strict env variable requirement
 if (!process.env.FINE_TUNED_MODEL) {
+  console.error("❌ FINE_TUNED_MODEL is missing from environment variables.");
   throw new Error("❌ Missing FINE_TUNED_MODEL in environment variables.");
+} else {
+  console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNED_MODEL);
 }
 if (!process.env.OPENAI_API_KEY) {
   throw new Error("❌ Missing OPENAI_API_KEY in environment variables.");
