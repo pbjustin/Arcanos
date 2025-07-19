@@ -41,9 +41,26 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
+
+// Graceful shutdown
+const gracefulShutdown = (signal: string) => {
+  console.log(`\n🛑 Received ${signal}. Gracefully shutting down...`);
+  server.close((err) => {
+    if (err) {
+      console.error('❌ Error during server shutdown:', err);
+      process.exit(1);
+    }
+    console.log('✅ Server closed successfully');
+    process.exit(0);
+  });
+};
+
+// Handle shutdown signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export default app;
