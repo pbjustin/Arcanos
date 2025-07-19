@@ -26,10 +26,10 @@ export class OpenAIService {
       apiKey: process.env.OPENAI_API_KEY,
     });
 
-    this.finetuneModel = process.env.FINE_TUNED_MODEL || '';
+    this.finetuneModel = process.env.FINE_TUNED_MODEL || this.fallbackModel;
     
-    if (!this.finetuneModel) {
-      throw new Error('FINE_TUNED_MODEL is required');
+    if (!process.env.FINE_TUNED_MODEL) {
+      console.warn('⚠️ FINE_TUNED_MODEL not set, using fallback model:', this.fallbackModel);
     }
   }
 
