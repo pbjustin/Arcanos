@@ -5,6 +5,16 @@ import router from './routes/index';
 // Load environment variables
 dotenv.config();
 
+// Railway-specific environment handling
+if (process.env.RAILWAY_ENVIRONMENT) {
+  console.log(`🚂 Running on Railway environment: ${process.env.RAILWAY_ENVIRONMENT}`);
+}
+
+// Ensure NODE_ENV is set for Railway
+if (!process.env.NODE_ENV && process.env.RAILWAY_ENVIRONMENT) {
+  process.env.NODE_ENV = 'production';
+}
+
 // Instead of blindly assigning or defaulting to "undefined", guard the load:
 const fineTunedModel = process.env.OPENAI_FINE_TUNED_MODEL;
 
@@ -79,11 +89,19 @@ app.use('/api', router);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({
+  res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0',
+    port: port
   });
+});
+
+// Basic readiness check for Railway
+app.get('/ready', (req, res) => {
+  res.status(200).send('OK');
 });
 
 // Add fallback error handler middleware
@@ -94,18 +112,53 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 // Start server
 const port = Number(process.env.PORT) || 8080;
-const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`✅ Server running on port ${port}`);
+const host = process.env.HOST || '0.0.0.0';
+
+const server = app.listen(port, host, () => {
+  console.log(`✅ Server running on ${host}:${port}`);
+  console.log(`🔗 Health check: http://${host}:${port}/health`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  
+  // Railway-specific logging
+  if (process.env.RAILWAY_ENVIRONMENT) {
+    console.log(`🚂 Railway Environment: ${process.env.RAILWAY_ENVIRONMENT}`);
+    console.log(`🔧 Railway Service: ${process.env.RAILWAY_SERVICE_NAME || 'Unknown'}`);
+  }
 });
 
 // Prevent premature exit
 process.stdin.resume();
 
 // Handle shutdown signals gracefully
-process.on('SIGTERM', () => {
-  console.log('📦 SIGTERM received, shutting down gracefully…');
-  server.close(() => process.exit(0));
-});
+let isShuttingDown = false;
+
+const gracefulShutdown = (signal: string) => {
+  if (isShuttingDown) {
+    console.log(`📦 ${signal} received again, forcing exit...`);
+    process.exit(1);
+  }
+  
+  isShuttingDown = true;
+  console.log(`📦 ${signal} received, shutting down gracefully...`);
+  
+  server.close((err) => {
+    if (err) {
+      console.error('❌ Error during graceful shutdown:', err);
+      process.exit(1);
+    }
+    console.log('✅ Server closed successfully');
+    process.exit(0);
+  });
+  
+  // Force exit after 10 seconds if graceful shutdown doesn't complete
+  setTimeout(() => {
+    console.error('⚠️ Graceful shutdown timeout, forcing exit...');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Add global error handlers to prevent crashes
 process.on('uncaughtException', (error) => {
