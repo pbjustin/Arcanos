@@ -26,7 +26,7 @@ export class OpenAIService {
       apiKey: process.env.OPENAI_API_KEY,
     });
 
-    this.finetuneModel = (process.env.FINE_TUNED_MODEL || '').trim();
+    this.finetuneModel = (process.env.OPENAI_FINE_TUNED_MODEL || '').trim();
     
     // Don't throw error on startup - let the service ask permission when needed
   }
@@ -37,7 +37,7 @@ export class OpenAIService {
       return {
         message: 'Fine-tuned model is not configured. Would you like to use the default model (gpt-3.5-turbo) instead?',
         model: 'none',
-        error: 'FINE_TUNED_MODEL not configured',
+        error: 'OPENAI_FINE_TUNED_MODEL not configured',
         fallbackRequested: true,
       };
     }
