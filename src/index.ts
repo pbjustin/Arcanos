@@ -6,9 +6,8 @@ import router from './routes/index';
 dotenv.config();
 
 // Check for fine-tuned model but allow startup without it
-if (!process.env.FINE_TUNED_MODEL) {
-  console.warn("⚠️ FINE_TUNED_MODEL is missing from environment variables.");
-  console.info("ℹ️ The application will ask for permission before using a fallback model.");
+if (!process.env.FINE_TUNED_MODEL || process.env.FINE_TUNED_MODEL.trim() === '') {
+  console.info("ℹ️ No fine-tuned model configured.");
 } else {
   console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNED_MODEL);
 }
