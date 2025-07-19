@@ -5,7 +5,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "start:railway": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "prestart": "npm run build"
   },
   "dependencies": {
     "dotenv": "^16.0.0",
