@@ -78,6 +78,9 @@ export const askHandler = async (req: Request, res: Response) => {
     try {
       const openai = getOpenAIService();
       
+      // Log the fine-tuned model being used
+      console.log("🔍 Using fine-tuned model:", process.env.FINE_TUNED_MODEL);
+      
       // Build chat messages with context
       const chatMessages: ChatMessage[] = [
         {
