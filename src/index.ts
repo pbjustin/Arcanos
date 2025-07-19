@@ -49,6 +49,9 @@ const server = app.listen(port, '0.0.0.0', () => {
   console.log('Server running on port', port);
 });
 
+// Prevent container shutdown in production
+setInterval(() => {}, 1 << 30);
+
 // Graceful shutdown
 const gracefulShutdown = (signal: string) => {
   console.log(`\n🛑 Received ${signal}. Gracefully shutting down...`);
