@@ -12,17 +12,21 @@ if (!process.env.FINE_TUNED_MODEL || process.env.FINE_TUNED_MODEL.trim() === '')
   console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNED_MODEL);
 }
 if (!process.env.OPENAI_API_KEY) {
-  throw new Error("❌ Missing OPENAI_API_KEY in environment variables.");
+  console.warn("⚠️ Warning: OPENAI_API_KEY not found. OpenAI features will be disabled.");
 }
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8080;
 
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
+app.get('/', (req, res) => {
+  res.send('Arcanos backend running');
+});
+
 app.use('/api', router);
 
 // Health check endpoint
