@@ -55,10 +55,9 @@ const gracefulShutdown = (signal: string) => {
   server.close((err) => {
     if (err) {
       console.error('❌ Error during server shutdown:', err);
-      process.exit(1);
+    } else {
+      console.log('✅ Server closed successfully');
     }
-    console.log('✅ Server closed successfully');
-    process.exit(0);
   });
 };
 
