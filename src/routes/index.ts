@@ -3,7 +3,6 @@ import { OpenAIService, ChatMessage } from '../services/openai';
 import askRoute from './ask';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
-import { askHandler } from '../handlers/ask-handler';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
@@ -45,8 +44,29 @@ router.post('/echo', (req, res) => {
   });
 });
 
-// ARCANOS ask endpoint
-router.post('/ask', askHandler);
+// ARCANOS ask endpoint - exact implementation from specification
+router.post('/ask', async (req, res) => {
+  const { message, domain = "general", useRAG = true, useHRC = true } = req.body;
+
+  if (!process.env.FINE_TUNED_MODEL) {
+    return res.status(500).json({
+      error: "Fine-tuned model is missing. Fallback not allowed without user permission.",
+    });
+  }
+
+  try {
+    // Import OpenAI to use the new API format while maintaining compatibility
+    const openai = getOpenAIService();
+    
+    const completion = await openai.chat([{ role: "user", content: message }]);
+
+    return res.json({ response: completion.message });
+  } catch (err) {
+    return res.status(500).json({
+      error: "Model invocation failed. Fine-tuned model may be unavailable.",
+    });
+  }
+});
 
 // Chat endpoint with explicit fallback permission (requires explicit user consent)
 router.post('/ask-with-fallback', async (req, res) => {
