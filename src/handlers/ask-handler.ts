@@ -79,7 +79,8 @@ export const askHandler = async (req: Request, res: Response) => {
       const openai = getOpenAIService();
       
       // Log the fine-tuned model being used
-      console.log("🔍 Using fine-tuned model:", process.env.OPENAI_FINE_TUNED_MODEL);
+      console.log('🔍 Using fine-tuned model:', process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || 'default');
+      console.log('🎯 Processing message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
       
       // Build chat messages with context
       const chatMessages: ChatMessage[] = [
@@ -96,14 +97,18 @@ export const askHandler = async (req: Request, res: Response) => {
       ];
 
       // Use OpenAI service to generate response
+      console.log('🚀 Sending request to OpenAI service...');
       const openaiResponse = await openai.chat(chatMessages);
       aiResponse = openaiResponse;
+      console.log('📥 Received response from OpenAI service');
       
       // Handle error cases
       if (openaiResponse.error) {
+        console.warn('⚠️ OpenAI service returned an error:', openaiResponse.error);
         response = openaiResponse.message;
         errors.push(`OpenAI error: ${openaiResponse.error}`);
       } else {
+        console.log('✅ Successfully generated AI response');
         response = openaiResponse.message;
       }
 
@@ -138,8 +143,20 @@ export const askHandler = async (req: Request, res: Response) => {
       response = `I apologize, but I'm experiencing technical difficulties. Your message "${message}" was received in the ${domain} domain.`;
     }
 
-    // Return simple response as specified in requirements
-    return res.status(200).json({ response: "OK" });
+    // Return the actual response with metadata
+    return res.status(200).json({ 
+      response,
+      metadata: {
+        model: aiResponse?.model || 'unknown',
+        domain,
+        useHRC,
+        useRAG,
+        hrcValidation,
+        ragContextEntries: ragContext?.length || 0,
+        errors: errors.length > 0 ? errors : undefined,
+        timestamp: new Date().toISOString()
+      }
+    });
 
   } catch (error: any) {
     console.error("askHandler error:", error);
