@@ -16,7 +16,6 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const app = express();
-const PORT = process.env.PORT || 8080;
 
 // Middleware
 app.use(express.json());
@@ -45,9 +44,9 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Start server
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+const port = process.env.PORT || 8080;
+const server = app.listen(port, () => {
+  console.log('Server running on port', port);
 });
 
 // Graceful shutdown
