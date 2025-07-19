@@ -12,11 +12,14 @@ import router from './routes/index';
 dotenv.config();
 
 // 1. VERIFY: Environment variable loading
-console.log("Model:", process.env.FINE_TUNED_MODEL);
+console.log("Model (FINE_TUNED_MODEL):", process.env.FINE_TUNED_MODEL);
+console.log("Model (OPENAI_FINE_TUNED_MODEL):", process.env.OPENAI_FINE_TUNED_MODEL);
+console.log("OpenAI API Key configured:", !!process.env.OPENAI_API_KEY);
 
 // 3. FAIL FAST if model is not available
-if (!process.env.FINE_TUNED_MODEL) {
-  throw new Error("❌ Missing fine-tuned model from environment");
+const fineTunedModel = process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
+if (!fineTunedModel) {
+  console.warn("⚠️ No fine-tuned model configured, using default model");
 }
 
 const app = express();
@@ -46,12 +49,13 @@ app.post('/', async (req, res) => {
   }
 
   try {
-    // --- FINE-TUNE FALLBACK BLOCK ---
-    // Example for integrating OpenAI fine-tune safely
-    // (Wrap in try/catch and validate keys/models explicitly)
+    // --- IMPROVED OPENAI INTEGRATION WITH AUDIT LOGGING ---
+    console.log('🔍 POST / endpoint called with message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
+    console.log('🔧 OPENAI_API_KEY configured:', !!process.env.OPENAI_API_KEY);
+    console.log('🎯 Fine-tuned model:', fineTunedModel || 'default');
     
     if (!process.env.OPENAI_API_KEY) {
-      console.warn("⚠️ No fine-tuned model configured or available.");
+      console.warn("⚠️ No OpenAI API key configured.");
       return res.status(500).json({ 
         error: 'OpenAI service not configured',
         response: `Echo: ${message}` // Fallback response
@@ -62,10 +66,18 @@ app.post('/', async (req, res) => {
     const { OpenAIService } = await import('./services/openai');
     const openaiService = new OpenAIService();
     
+    console.log('🚀 Creating chat completion with OpenAI service...');
+    
     // Simple chat request using the fine-tuned model
     const response = await openaiService.chat([
       { role: 'user', content: message }
     ]);
+    
+    console.log('📥 Received response from OpenAI:', {
+      hasError: !!response.error,
+      model: response.model,
+      messageLength: response.message?.length || 0
+    });
     
     // Return the response - if successful, just the message; if error, structured response
     if (response.error || response.fallbackRequested) {
@@ -79,8 +91,12 @@ app.post('/', async (req, res) => {
     }
     
   } catch (error: any) {
-    console.error('Error processing message:', error);
-    console.warn("⚠️ No fine-tuned model configured or available.");
+    console.error('❌ Error processing message:', error);
+    console.error('🔍 Error details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack?.split('\n')[0]
+    });
     
     res.status(500).json({ 
       error: 'Internal server error',
@@ -103,9 +119,15 @@ server.listen(PORT, () => {
   }
 });
 
+// Keep-alive loop (temporary workaround for shutdown as requested)
+const keepAliveInterval = setInterval(() => {
+  console.log("💓 Still alive... Server uptime:", process.uptime(), "seconds");
+}, 10000);
+
 // Graceful Shutdown Logic
 process.on('SIGTERM', () => {
   console.log('📦 SIGTERM received, shutting down...');
+  clearInterval(keepAliveInterval);
   server.close(() => {
     console.log('✅ Server closed successfully');
     process.exit(0);
@@ -114,6 +136,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('📦 SIGINT received, shutting down...');
+  clearInterval(keepAliveInterval);
   server.close(() => {
     console.log('✅ Server closed successfully');
     process.exit(0);
