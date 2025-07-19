@@ -44,8 +44,16 @@ app.post('/', async (req, res) => {
       { role: 'user', content: message }
     ]);
     
-    // Return just the response text for simple integration
-    res.json({ response: response.message });
+    // Return the response - if successful, just the message; if error, structured response
+    if (response.error || response.fallbackRequested) {
+      res.json({ 
+        error: response.error,
+        response: response.message 
+      });
+    } else {
+      // Success case - return just the message content
+      res.send(response.message);
+    }
     
   } catch (error: any) {
     console.error('Error processing message:', error);
