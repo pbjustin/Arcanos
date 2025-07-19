@@ -26,6 +26,53 @@ app.get('/', (_req, res) => {
   res.send('Arcanos backend is running 🚀');
 });
 
+// POST endpoint for natural language inputs
+app.post('/', async (req, res) => {
+  const { message } = req.body;
+  
+  if (!message) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  try {
+    // Import OpenAI service dynamically to avoid startup dependency
+    const { OpenAIService } = await import('./services/openai');
+    const openaiService = new OpenAIService();
+    
+    // Simple chat request using the fine-tuned model
+    const response = await openaiService.chat([
+      { role: 'user', content: message }
+    ]);
+    
+    // Return the response - if successful, just the message; if error, structured response
+    if (response.error || response.fallbackRequested) {
+      res.json({ 
+        error: response.error,
+        response: response.message 
+      });
+    } else {
+      // Success case - return just the message content
+      res.send(response.message);
+    }
+    
+  } catch (error: any) {
+    console.error('Error processing message:', error);
+    
+    // Handle case where OpenAI is not configured
+    if (error.message.includes('OPENAI_API_KEY')) {
+      return res.status(500).json({ 
+        error: 'OpenAI service not configured',
+        response: `Echo: ${message}` // Fallback response
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message 
+    });
+  }
+});
+
 app.use('/api', router);
 
 // Health check endpoint
