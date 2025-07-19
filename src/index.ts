@@ -5,6 +5,14 @@ import router from './routes/index';
 // Load environment variables
 dotenv.config();
 
+// Force strict env variable requirement
+if (!process.env.FINE_TUNED_MODEL) {
+  throw new Error("❌ Missing FINE_TUNED_MODEL in environment variables.");
+}
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error("❌ Missing OPENAI_API_KEY in environment variables.");
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -26,8 +34,8 @@ app.get('/health', (req, res) => {
 
 // Add fallback error handler middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error(err.stack)
-  res.status(500).json({ error: 'Internal Server Error' });
+  console.error("🔥 Fatal Error:", err);
+  res.status(500).json({ error: err.message });
 });
 
 // Start server
