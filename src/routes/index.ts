@@ -50,11 +50,14 @@ router.post('/ask', askHandler);
 
 // Chat endpoint with explicit fallback permission (requires explicit user consent)
 router.post('/ask-with-fallback', async (req, res) => {
+  console.log('🔄 /api/ask-with-fallback endpoint called');
   let service: OpenAIService;
   
   try {
     service = getOpenAIService();
+    console.log('✅ OpenAI service initialized for ask-with-fallback');
   } catch (error: any) {
+    console.error('❌ Failed to initialize OpenAI service:', error.message);
     return res.status(500).json({
       error: 'OpenAI service not initialized. Check API key and fine-tuned model configuration.',
       details: error.message
@@ -75,15 +78,19 @@ router.post('/ask-with-fallback', async (req, res) => {
     if (messages) {
       // Use provided messages array
       chatMessages = messages;
+      console.log('📝 Using provided messages array, count:', messages.length);
     } else {
       // Convert single message to messages array
       chatMessages = [
         { role: 'user', content: message }
       ];
+      console.log('📝 Converted single message to chat format');
     }
 
+    console.log('🚀 Calling OpenAI service for ask-with-fallback...');
     // Use simplified chat interface
     const response = await service.chat(chatMessages);
+    console.log('📥 Received response from OpenAI service');
     
     res.json({
       response: response.message,
@@ -92,6 +99,7 @@ router.post('/ask-with-fallback', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
+    console.error('❌ Error in ask-with-fallback:', error);
     res.status(500).json({
       error: error.message,
       timestamp: new Date().toISOString()
@@ -101,14 +109,18 @@ router.post('/ask-with-fallback', async (req, res) => {
 
 // Get model status
 router.get('/model-status', (req, res) => {
+  console.log('🔍 Model status endpoint called');
   try {
     const service = getOpenAIService();
+    const modelName = service.getModel();
+    console.log('✅ Model status check successful, model:', modelName);
     res.json({
       configured: true,
-      model: service.getModel(),
+      model: modelName,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
+    console.error('❌ Model status check failed:', error.message);
     res.status(500).json({
       error: 'OpenAI service not initialized',
       configured: false,
