@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcanos Frontend Test</title>
+</head>
+<body>
+    <h1>Arcanos AI Test</h1>
+    <div>
+        <input type="text" id="messageInput" placeholder="Enter your message..." style="width: 300px; padding: 8px;">
+        <button onclick="testSendMessage()" style="padding: 8px 16px;">Send Message</button>
+    </div>
+    <div id="output" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc; min-height: 100px;"></div>
+
+    <script src="arcanos-frontend.js"></script>
+    <script>
+        async function testSendMessage() {
+            const input = document.getElementById('messageInput');
+            const output = document.getElementById('output');
+            
+            if (!input.value.trim()) {
+                alert('Please enter a message');
+                return;
+            }
+            
+            output.innerHTML = 'Sending message...';
+            
+            try {
+                await sendMessage(input.value);
+                output.innerHTML += '<br>Message sent successfully. Check console for details.';
+            } catch (error) {
+                output.innerHTML += '<br>Error: ' + error.message;
+            }
+        }
+        
+        // Override console.log to also display in the output div
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const output = document.getElementById('output');
+            output.innerHTML += '<br>' + args.join(' ');
+        };
+    </script>
+</body>
+</html>

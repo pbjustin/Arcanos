@@ -29,16 +29,14 @@ const PORT = Number(process.env.PORT) || 8080;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Serve static files for frontend testing
+app.use(express.static('public'));
+
 // Basic Healthcheck
 app.get('/health', (_, res) => res.send('✅ OK'));
 
 // Mount core logic or routes here
 app.use('/api', router);
-
-// Basic heartbeat endpoint to keep the container alive
-app.get('/', (_req, res) => {
-  res.send('Arcanos backend running');
-});
 
 // POST endpoint for natural language inputs with improved error handling
 app.post('/', async (req, res) => {
@@ -119,15 +117,9 @@ server.listen(PORT, () => {
   }
 });
 
-// Keep-alive loop (temporary workaround for shutdown as requested)
-const keepAliveInterval = setInterval(() => {
-  console.log("💓 Still alive... Server uptime:", process.uptime(), "seconds");
-}, 10000);
-
 // Graceful Shutdown Logic
 process.on('SIGTERM', () => {
   console.log('📦 SIGTERM received, shutting down...');
-  clearInterval(keepAliveInterval);
   server.close(() => {
     console.log('✅ Server closed successfully');
     process.exit(0);
@@ -136,7 +128,6 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('📦 SIGINT received, shutting down...');
-  clearInterval(keepAliveInterval);
   server.close(() => {
     console.log('✅ Server closed successfully');
     process.exit(0);
