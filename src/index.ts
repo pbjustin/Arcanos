@@ -44,8 +44,9 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Start server
-const server = app.listen(process.env.PORT || 8080, () => {
-  console.log('Server running on port', process.env.PORT || 8080);
+const port = process.env.PORT || 8080;
+const server = app.listen(port, () => {
+  console.log('Server running on port', port);
 });
 
 // Graceful shutdown
