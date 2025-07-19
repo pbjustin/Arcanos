@@ -28,12 +28,20 @@ export class OpenAIService {
 
     this.finetuneModel = process.env.FINE_TUNED_MODEL || '';
     
-    if (!this.finetuneModel) {
-      throw new Error('FINE_TUNED_MODEL is required');
-    }
+    // Don't throw error on startup - let the service ask permission when needed
   }
 
   async chat(messages: ChatMessage[], allowFallback: boolean = false): Promise<ChatResponse> {
+    // Check if fine-tuned model is configured
+    if (!this.finetuneModel) {
+      return {
+        message: 'Fine-tuned model is not configured. Would you like to use the default model (gpt-3.5-turbo) instead?',
+        model: 'none',
+        error: 'FINE_TUNED_MODEL not configured',
+        fallbackRequested: true,
+      };
+    }
+
     try {
       // First attempt with fine-tuned model
       const response = await this.client.chat.completions.create({
@@ -54,7 +62,7 @@ export class OpenAIService {
     } catch (error: any) {
       console.error('Fine-tuned model error:', error.message);
 
-      // NEVER automatically fall back - always request permission first
+      // Ask for permission to use fallback model
       return {
         message: 'Fine-tuned model is not available. Would you like to use the default model instead?',
         model: this.finetuneModel,
