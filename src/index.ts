@@ -5,10 +5,10 @@ import router from './routes/index';
 // Load environment variables
 dotenv.config();
 
-// Force strict env variable requirement
+// Check for fine-tuned model configuration
 if (!process.env.FINE_TUNED_MODEL) {
-  console.error("❌ FINE_TUNED_MODEL is missing from environment variables.");
-  throw new Error("❌ Missing FINE_TUNED_MODEL in environment variables.");
+  console.warn("⚠️ FINE_TUNED_MODEL is missing from environment variables. Using fallback model.");
+  console.warn("ℹ️ Set FINE_TUNED_MODEL environment variable to use your custom fine-tuned model.");
 } else {
   console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNED_MODEL);
 }
