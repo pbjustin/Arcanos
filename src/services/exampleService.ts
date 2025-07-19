@@ -1,4 +1,4 @@
-import { OpenAIService, ChatMessage } from './openai.js';
+import { OpenAIService, ChatMessage } from './openai';
 
 let openaiService: OpenAIService | null = null;
 

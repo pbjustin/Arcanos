@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { OpenAIService, ChatMessage } from '../services/openai.js';
-import askRoute from './ask.js';
-import { HRCCore } from '../modules/hrc.js';
-import { MemoryStorage } from '../storage/memory-storage.js';
-import { askHandler } from '../handlers/ask-handler.js';
+import { OpenAIService, ChatMessage } from '../services/openai';
+import askRoute from './ask';
+import { HRCCore } from '../modules/hrc';
+import { MemoryStorage } from '../storage/memory-storage';
+import { askHandler } from '../handlers/ask-handler';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
