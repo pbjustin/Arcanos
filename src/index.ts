@@ -5,11 +5,13 @@ import router from './routes/index';
 // Load environment variables
 dotenv.config();
 
-// Check for fine-tuned model but allow startup without it
-if (!process.env.FINE_TUNE_MODEL || process.env.FINE_TUNE_MODEL.trim() === '') {
-  console.info("ℹ️ No fine-tuned model configured.");
+// Instead of blindly assigning or defaulting to "undefined", guard the load:
+const fineTunedModel = process.env.OPENAI_FINE_TUNED_MODEL;
+
+if (!fineTunedModel) {
+  console.warn("No fine-tuned model configured.");
 } else {
-  console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNE_MODEL);
+  console.log(`✅ Fine-tuned model loaded: ${fineTunedModel}`);
 }
 if (!process.env.OPENAI_API_KEY) {
   console.warn("⚠️ Warning: OPENAI_API_KEY not found. OpenAI features will be disabled.");
@@ -93,7 +95,6 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // Start server
 const port = Number(process.env.PORT) || 8080;
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`✅ Fine-tuned model loaded: ${process.env.FINE_TUNE_MODEL}`);
   console.log(`🌐 Server running on port ${port}`);
 });
 
