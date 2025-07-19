@@ -25,7 +25,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Basic heartbeat endpoint to keep the container alive
 app.get('/', (_req, res) => {
-  res.send('Arcanos backend is running 🚀');
+  res.send('Arcanos backend running');
 });
 
 // POST endpoint for natural language inputs
@@ -95,13 +95,11 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // Start server
 const port = Number(process.env.PORT) || 8080;
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`🌐 Server running on port ${port}`);
+  console.log(`✅ Server running on port ${port}`);
 });
 
-// Dummy `setInterval` to prevent silent exit
-setInterval(() => {
-  // keep event loop busy, no-op
-}, 60_000);
+// Prevent premature exit
+process.stdin.resume();
 
 // Handle shutdown signals gracefully
 process.on('SIGTERM', () => {
