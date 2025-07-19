@@ -14,8 +14,7 @@ export interface ChatResponse {
 
 export class OpenAIService {
   private client: OpenAI;
-  private finetuneModel: string;
-  private fallbackModel: string = 'gpt-3.5-turbo';
+  private model: string;
 
   constructor() {
     if (!process.env.OPENAI_API_KEY) {
@@ -26,89 +25,39 @@ export class OpenAIService {
       apiKey: process.env.OPENAI_API_KEY,
     });
 
-    this.finetuneModel = (process.env.OPENAI_FINE_TUNED_MODEL || '').trim();
-    
-    // Don't throw error on startup - let the service ask permission when needed
+    // 2. USE IT PROPERLY in the OpenAI API
+    this.model = process.env.FINE_TUNED_MODEL || "gpt-3.5-turbo";
   }
 
-  async chat(messages: ChatMessage[], allowFallback: boolean = false): Promise<ChatResponse> {
-    // Check if fine-tuned model is configured
-    if (!this.finetuneModel) {
-      return {
-        message: 'Fine-tuned model is not configured. Would you like to use the default model (gpt-3.5-turbo) instead?',
-        model: 'none',
-        error: 'OPENAI_FINE_TUNED_MODEL not configured',
-        fallbackRequested: true,
-      };
-    }
-
+  async chat(messages: ChatMessage[]): Promise<ChatResponse> {
     try {
-      // First attempt with fine-tuned model
-      const response = await this.client.chat.completions.create({
-        model: this.finetuneModel,
-        messages: messages,
+      // Use the model from environment variable or fallback
+      const completion = await this.client.chat.completions.create({
+        model: this.model,
+        messages,
         max_tokens: 1000,
         temperature: 0.7,
       });
 
-      if (response.choices && response.choices.length > 0) {
+      if (completion.choices && completion.choices.length > 0) {
         return {
-          message: response.choices[0].message?.content || 'No response',
-          model: this.finetuneModel,
+          message: completion.choices[0].message?.content || 'No response',
+          model: this.model,
         };
       }
 
       throw new Error('No response from OpenAI');
     } catch (error: any) {
-      console.error('Fine-tuned model error:', error.message);
-
-      // Ask for permission to use fallback model
+      console.error('OpenAI API error:', error.message);
       return {
-        message: 'Fine-tuned model is not available. Would you like to use the default model instead?',
-        model: this.finetuneModel,
+        message: 'OpenAI service temporarily unavailable',
+        model: this.model,
         error: error.message,
-        fallbackRequested: true,
       };
     }
   }
 
-  /**
-   * Use fallback model after explicit permission is granted
-   */
-  async chatWithFallback(messages: ChatMessage[]): Promise<ChatResponse> {
-    try {
-      console.log(`Using fallback model ${this.fallbackModel} with explicit permission`);
-      
-      const fallbackResponse = await this.client.chat.completions.create({
-        model: this.fallbackModel,
-        messages: messages,
-        max_tokens: 1000,
-        temperature: 0.7,
-      });
-
-      if (fallbackResponse.choices && fallbackResponse.choices.length > 0) {
-        return {
-          message: fallbackResponse.choices[0].message?.content || 'No response',
-          model: this.fallbackModel,
-          error: 'Using fallback model with explicit permission',
-        };
-      }
-
-      throw new Error('No response from fallback model');
-    } catch (fallbackError: any) {
-      return {
-        message: 'Fallback model failed',
-        model: 'none',
-        error: `Fallback model error: ${fallbackError.message}`,
-      };
-    }
-  }
-
-  getFinetuneModel(): string {
-    return this.finetuneModel;
-  }
-
-  getFallbackModel(): string {
-    return this.fallbackModel;
+  getModel(): string {
+    return this.model;
   }
 }

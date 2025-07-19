@@ -95,14 +95,14 @@ export const askHandler = async (req: Request, res: Response) => {
         }
       ];
 
-      // Use OpenAI service to generate response (respect permission for fallback)
-      const openaiResponse = await openai.chat(chatMessages, allowFallback);
+      // Use OpenAI service to generate response
+      const openaiResponse = await openai.chat(chatMessages);
       aiResponse = openaiResponse;
       
-      // Handle fallback permission request
-      if (openaiResponse.fallbackRequested) {
+      // Handle error cases
+      if (openaiResponse.error) {
         response = openaiResponse.message;
-        errors.push('Fine-tuned model unavailable. To use fallback model, call /ask-with-fallback endpoint with "explicitFallbackConsent": true.');
+        errors.push(`OpenAI error: ${openaiResponse.error}`);
       } else {
         response = openaiResponse.message;
       }
