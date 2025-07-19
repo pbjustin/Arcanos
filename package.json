@@ -2,12 +2,11 @@
   "name": "arcanos-backend",
   "version": "1.0.0",
   "main": "dist/index.js",
-  "type": "module",
   "scripts": {
     "dev": "nodemon --exec tsx src/index.ts",
+    "prestart": "npm run build",
     "build": "tsc",
-    "prestart": "npm install --omit=dev",
-    "start": "node dist/index.js"
+    "start": "NODE_ENV=production node dist/index.js"
   },
   "dependencies": {
     "dotenv": "^16.0.0",
