@@ -26,7 +26,7 @@ export class OpenAIService {
       apiKey: process.env.OPENAI_API_KEY,
     });
 
-    this.finetuneModel = process.env.FINE_TUNED_MODEL || '';
+    this.finetuneModel = (process.env.FINE_TUNED_MODEL || '').trim();
     
     // Don't throw error on startup - let the service ask permission when needed
   }
