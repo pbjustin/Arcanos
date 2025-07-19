@@ -44,8 +44,8 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Start server
-const port = process.env.PORT || 8080;
-const server = app.listen(port, () => {
+const port = Number(process.env.PORT) || 8080;
+const server = app.listen(port, '0.0.0.0', () => {
   console.log('Server running on port', port);
 });
 
@@ -65,5 +65,17 @@ const gracefulShutdown = (signal: string) => {
 // Handle shutdown signals
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Add global error handlers to prevent crashes
+process.on('uncaughtException', (error) => {
+  console.error('🚨 Uncaught Exception:', error);
+  // Log the error but don't exit - let the server continue running
+  // Only exit if it's a fatal error that prevents server operation
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+  // Log the error but don't exit - let the server continue running
+});
 
 export default app;
