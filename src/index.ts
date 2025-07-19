@@ -7,7 +7,7 @@ dotenv.config();
 
 // Check for fine-tuned model but allow startup without it
 if (!process.env.FINE_TUNED_MODEL || process.env.FINE_TUNED_MODEL.trim() === '') {
-  console.info("ℹ️ No fine-tuned model configured. Using fallback model when needed.");
+  console.info("ℹ️ No fine-tuned model configured.");
 } else {
   console.log("✅ Fine-tuned model loaded:", process.env.FINE_TUNED_MODEL);
 }
