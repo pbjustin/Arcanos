@@ -19,13 +19,11 @@ function getOpenAIService(): OpenAIService {
 
 // Sample GET endpoint
 router.get('/', (req, res) => {
-  let finetuneModel = 'Not configured';
-  let fallbackModel = 'Not configured';
+  let model = 'Not configured';
   
   try {
     const service = getOpenAIService();
-    finetuneModel = service.getFinetuneModel();
-    fallbackModel = service.getFallbackModel();
+    model = service.getModel();
   } catch (error) {
     // Service not available
   }
@@ -34,8 +32,7 @@ router.get('/', (req, res) => {
     message: 'Welcome to Arcanos API',
     timestamp: new Date().toISOString(),
     version: '1.0.0',
-    finetuneModel,
-    fallbackModel
+    model
   });
 });
 
@@ -85,29 +82,14 @@ router.post('/ask-with-fallback', async (req, res) => {
       ];
     }
 
-    // First try with fine-tuned model (never auto-fallback)
-    const response = await service.chat(chatMessages, false);
-    
-    // If fallback is requested and user gave explicit consent, use fallback
-    if (response.fallbackRequested && explicitFallbackConsent === true) {
-      const fallbackResponse = await service.chatWithFallback(chatMessages);
-      return res.json({
-        response: fallbackResponse.message,
-        model: fallbackResponse.model,
-        error: fallbackResponse.error,
-        fallbackUsed: true,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Use simplified chat interface
+    const response = await service.chat(chatMessages);
     
     res.json({
       response: response.message,
       model: response.model,
       error: response.error,
-      fallbackRequested: response.fallbackRequested,
-      fallbackUsed: false,
-      timestamp: new Date().toISOString(),
-      notice: response.fallbackRequested ? 'Add "explicitFallbackConsent": true to use fallback model' : undefined
+      timestamp: new Date().toISOString()
     });
   } catch (error: any) {
     res.status(500).json({
@@ -123,8 +105,7 @@ router.get('/model-status', (req, res) => {
     const service = getOpenAIService();
     res.json({
       configured: true,
-      finetuneModel: service.getFinetuneModel(),
-      fallbackModel: service.getFallbackModel(),
+      model: service.getModel(),
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
