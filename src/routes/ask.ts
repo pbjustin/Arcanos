@@ -1,5 +1,5 @@
 import express from 'express';
-import { processPrompt } from '../services/exampleService.js';
+import { processPrompt } from '../services/exampleService';
 
 const router = express.Router();
 

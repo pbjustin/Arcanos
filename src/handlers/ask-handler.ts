@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import { OpenAIService, ChatMessage } from '../services/openai.js';
-import { HRCCore } from '../modules/hrc.js';
-import { MemoryStorage } from '../storage/memory-storage.js';
+import { OpenAIService, ChatMessage } from '../services/openai';
+import { HRCCore } from '../modules/hrc';
+import { MemoryStorage } from '../storage/memory-storage';
 
 let openaiService: OpenAIService | null = null;
 let hrcCore: HRCCore | null = null;
