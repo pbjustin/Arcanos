@@ -42,7 +42,20 @@ const sendMessage = async (userInput) => {
   }
 };
 
+// ======== FRONTEND: Sleep Schedule Utility =========
+// 🛌 FRONTEND USAGE
+export async function getSleepSchedule() {
+  try {
+    const res = await fetch('/api/config/sleep');
+    if (!res.ok) throw new Error('Sleep config unavailable');
+    return await res.json();
+  } catch (e) {
+    console.error('Error fetching sleep config:', e);
+    return { enabled: false };
+  }
+}
+
 // Export for use in other modules if needed
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { sendMessage };
+  module.exports = { sendMessage, getSleepSchedule };
 }
