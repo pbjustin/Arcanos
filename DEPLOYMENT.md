@@ -50,7 +50,7 @@ Create a `.env` file with the following required variables:
 
 ```env
 NODE_ENV=production
-PORT=3000
+PORT=8080
 OPENAI_API_KEY=your-openai-api-key-here
 SESSION_SECRET=your-session-secret-here
 OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id
@@ -94,7 +94,7 @@ After deployment, verify these endpoints work:
 3. Initialize project: `railway init`
 4. Set environment variables in Railway dashboard:
    - `NODE_ENV=production`
-   - `PORT=3000` (or let Railway auto-assign)
+   - `PORT=8080` (or let Railway auto-assign)
    - `OPENAI_API_KEY=your-openai-api-key`
    - `SESSION_SECRET=your-session-secret`
    - `OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id`
