@@ -87,6 +87,9 @@ test_endpoint "Ask Endpoint (Error Test)" "POST" "/api/ask" '{"message": "Test m
 # Test 11: Ask with Fallback (will fail without API key - testing error handling)
 test_endpoint "Ask with Fallback (Error Test)" "POST" "/api/ask-with-fallback" '{"message": "Test message"}'
 
+# Test 12: Core Worker Status (new endpoint as per COPILOT COMMAND BLOCK requirements)
+test_endpoint "Core Worker Status" "GET" "/api/core/workers/status" ""
+
 echo "=================================================="
 echo "                 Test Summary"
 echo "=================================================="
