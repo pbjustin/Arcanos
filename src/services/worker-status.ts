@@ -140,6 +140,9 @@ export class WorkerStatusService {
     }
     worker.cpu = `${workerCpuUsage}%`;
 
+    // Apply high load simulation for testing
+    this.simulateHighLoad(worker);
+
     // Check if worker is still active (if no activity in last 5 minutes, mark as idle)
     const lastActivity = worker.lastActivity || currentTime;
     const timeSinceActivity = currentTime - lastActivity;
@@ -178,6 +181,23 @@ export class WorkerStatusService {
     this.registerWorker('worker-3', 'health_monitoring', 'running');
     this.registerWorker('worker-4', 'maintenance_sweep', 'idle');
     this.registerWorker('worker-5', 'model_probe', 'idle');
+  }
+
+  /**
+   * Add a high-load worker for testing purposes
+   */
+  addHighLoadWorker(): void {
+    this.registerWorker('worker-test-high-load', 'heavy_computation', 'running');
+  }
+
+  /**
+   * Simulate high CPU load for testing - override CPU values for specific workers
+   */
+  private simulateHighLoad(worker: WorkerInfo): void {
+    if (worker.id === 'worker-test-high-load') {
+      // Force high CPU usage for testing
+      worker.cpu = `${(75 + Math.random() * 20).toFixed(2)}%`; // 75-95% CPU
+    }
   }
 }
 
