@@ -8,9 +8,6 @@ GitHub Sync provides automated CI/CD workflows that integrate the GitHub reposit
 
 ## 📊 Workflow Status
 
-[![CI](https://github.com/pbjustin/Arcanos/actions/workflows/ci.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/ci.yml)
-[![Deploy to Railway](https://github.com/pbjustin/Arcanos/actions/workflows/deploy.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/deploy.yml)
-[![Code Quality & Security](https://github.com/pbjustin/Arcanos/actions/workflows/quality.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/quality.yml)
 [![Test Suite](https://github.com/pbjustin/Arcanos/actions/workflows/test.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/test.yml)
 [![Dependency Management](https://github.com/pbjustin/Arcanos/actions/workflows/dependencies.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/dependencies.yml)
 [![Health & Monitoring](https://github.com/pbjustin/Arcanos/actions/workflows/monitoring.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/monitoring.yml)
