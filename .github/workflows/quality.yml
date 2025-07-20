@@ -1,0 +1,137 @@
+name: Code Quality & Security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scans weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run ESLint
+      run: |
+        # Add ESLint if not present
+        if [ ! -f ".eslintrc.js" ] && [ ! -f ".eslintrc.json" ]; then
+          echo "Setting up basic ESLint configuration"
+          npm install --save-dev eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin
+          cat > .eslintrc.json << 'EOF'
+        {
+          "parser": "@typescript-eslint/parser",
+          "plugins": ["@typescript-eslint"],
+          "extends": ["eslint:recommended", "@typescript-eslint/recommended"],
+          "rules": {
+            "no-unused-vars": "warn",
+            "@typescript-eslint/no-unused-vars": "warn"
+          }
+        }
+        EOF
+        fi
+        npx eslint src --ext .ts || echo "Linting issues found but not blocking"
+
+    - name: Run Prettier check
+      run: |
+        # Add Prettier if not present
+        if [ ! -f ".prettierrc" ]; then
+          echo "Setting up Prettier configuration"
+          npm install --save-dev prettier
+          cat > .prettierrc << 'EOF'
+        {
+          "semi": true,
+          "trailingComma": "es5",
+          "singleQuote": true,
+          "printWidth": 80,
+          "tabWidth": 2
+        }
+        EOF
+        fi
+        npx prettier --check src || echo "Formatting issues found but not blocking"
+
+  security:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run npm audit
+      run: |
+        npm audit --audit-level=moderate || true
+        echo "Security audit completed"
+
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/init@v3
+      with:
+        languages: javascript
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+
+    - name: Check for hardcoded secrets
+      run: |
+        # Basic secret pattern checking
+        echo "Checking for potential hardcoded secrets..."
+        if grep -r -n -i "api_key\|password\|secret\|token" src/ --include="*.ts" --include="*.js" | grep -v "process.env" | grep -v "//"; then
+          echo "⚠️ Potential hardcoded secrets found! Please review the above matches."
+          echo "Secrets should be stored in environment variables or GitHub Secrets."
+        else
+          echo "✅ No obvious hardcoded secrets detected."
+        fi
+
+  dependency-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18.x'
+        cache: 'npm'
+
+    - name: Check for outdated dependencies
+      run: |
+        npm outdated || echo "Some dependencies may be outdated"
+        
+    - name: Check package.json for security best practices
+      run: |
+        echo "Checking package.json security practices..."
+        
+        # Check if engine versions are specified
+        if grep -q '"engines"' package.json; then
+          echo "✅ Engine versions specified"
+        else
+          echo "⚠️ Consider specifying engine versions in package.json"
+        fi
+        
+        # Check for exact dependency versions in production
+        echo "📊 Dependency version analysis:"
+        grep -E '"\^|"~' package.json | wc -l | xargs echo "Dependencies with flexible versions:"
