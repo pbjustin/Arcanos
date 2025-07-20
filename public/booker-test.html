@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backstage Booker - Worker Status Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .status { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        .running { border-color: #4CAF50; background-color: #f9fff9; }
+        .idle { border-color: #FFC107; background-color: #fffef9; }
+        .error { border-color: #f44336; background-color: #fff9f9; }
+        .high-load { border-color: #ff5722; background-color: #fff3f0; }
+        button { margin: 5px; padding: 10px 15px; cursor: pointer; }
+        #console { background: #f0f0f0; padding: 10px; border-radius: 5px; margin-top: 20px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>🧠 Backstage Booker - Worker Status Monitor</h1>
+    <p>This page tests the background worker status monitoring functionality.</p>
+    
+    <div>
+        <button onclick="fetchWorkerStatus()">Fetch Worker Status</button>
+        <button onclick="startMonitoring()">Start Monitoring (60s)</button>
+        <button onclick="stopMonitoring()">Stop Monitoring</button>
+        <button onclick="manualLoadCheck()">Manual Load Check</button>
+        <button onclick="clearConsole()">Clear Console</button>
+    </div>
+
+    <div id="workers-container">
+        <h3>Current Workers:</h3>
+        <div id="workers-list"></div>
+    </div>
+
+    <div id="console">
+        <h3>Console Output:</h3>
+        <div id="console-output"></div>
+    </div>
+
+    <script type="module">
+        // Import the backstage booker functions
+        import { getWorkerStatus, monitorLoad, startMonitoring as startMon, stopMonitoring as stopMon } from './backstage-booker.js';
+
+        // Override console methods to capture output
+        const originalConsoleLog = console.log;
+        const originalConsoleWarn = console.warn;
+        const originalConsoleError = console.error;
+        
+        function addToConsole(type, message) {
+            const output = document.getElementById('console-output');
+            const timestamp = new Date().toLocaleTimeString();
+            output.innerHTML += `<div style="color: ${type === 'error' ? 'red' : type === 'warn' ? 'orange' : 'black'}">
+                [${timestamp}] ${type.toUpperCase()}: ${message}
+            </div>`;
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        console.log = function(...args) {
+            originalConsoleLog.apply(console, args);
+            addToConsole('log', args.join(' '));
+        };
+        
+        console.warn = function(...args) {
+            originalConsoleWarn.apply(console, args);
+            addToConsole('warn', args.join(' '));
+        };
+        
+        console.error = function(...args) {
+            originalConsoleError.apply(console, args);
+            addToConsole('error', args.join(' '));
+        };
+
+        // Make functions available globally
+        window.getWorkerStatus = getWorkerStatus;
+        window.monitorLoad = monitorLoad;
+        window.startMonitoring = startMon;
+        window.stopMonitoring = stopMon;
+
+        window.fetchWorkerStatus = async function() {
+            console.log('🔍 Fetching worker status...');
+            const workers = await getWorkerStatus();
+            displayWorkers(workers);
+        };
+
+        window.manualLoadCheck = async function() {
+            console.log('📊 Running manual load check...');
+            await monitorLoad();
+        };
+
+        window.clearConsole = function() {
+            document.getElementById('console-output').innerHTML = '';
+        };
+
+        function displayWorkers(workers) {
+            const container = document.getElementById('workers-list');
+            container.innerHTML = '';
+            
+            if (workers.length === 0) {
+                container.innerHTML = '<p>No workers found</p>';
+                return;
+            }
+
+            workers.forEach(worker => {
+                const div = document.createElement('div');
+                const cpuValue = parseFloat(worker.cpu);
+                let className = worker.status;
+                if (worker.status === 'running' && cpuValue > 70) {
+                    className += ' high-load';
+                }
+                
+                div.className = `status ${className}`;
+                div.innerHTML = `
+                    <strong>${worker.id}</strong> - ${worker.task}<br>
+                    Status: ${worker.status} | CPU: ${worker.cpu} | RAM: ${worker.ram} | Uptime: ${worker.uptime}
+                    ${cpuValue > 70 ? '<br><strong style="color: red;">⚠️ HIGH CPU LOAD</strong>' : ''}
+                `;
+                container.appendChild(div);
+            });
+            
+            console.log(`📊 Displayed ${workers.length} workers`);
+        }
+
+        // Auto-fetch on page load
+        window.onload = function() {
+            console.log('🎯 Backstage Booker test page loaded');
+            fetchWorkerStatus();
+        };
+    </script>
+</body>
+</html>
