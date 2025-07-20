@@ -9,6 +9,16 @@ This guide helps you deploy the ARCANOS backend application successfully.
 - OpenAI API key
 - Railway CLI (for Railway deployment)
 
+## Memory Configuration for 8GB Hobby Plan
+
+**✅ OPTIMIZED**: This application is configured to utilize the full 8GB RAM available on Railway's Hobby Plan.
+
+- **Node.js heap limit**: 7GB (via `--max-old-space-size=7168`)
+- **System overhead**: 1GB reserved
+- **Monitoring**: Real-time memory usage logging enabled
+
+See [MEMORY_OPTIMIZATION.md](MEMORY_OPTIMIZATION.md) for detailed configuration and monitoring information.
+
 ## Quick Deployment Check
 
 Run this script to verify your deployment readiness:
