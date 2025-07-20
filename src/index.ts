@@ -281,4 +281,7 @@ export default app;
 // Export the ARCANOS V1 Safe Interface for direct usage
 export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arcanos-v1-interface';
 
+// Export sleep schedule functions for copilot integration
+export { getActiveSleepSchedule, getCoreSleepWindow } from './services/sleep-config';
+
 // 🔧 End of Audit Block - ALL REQUIREMENTS IMPLEMENTED ✅

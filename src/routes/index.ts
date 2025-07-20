@@ -439,6 +439,29 @@ router.get('/config/sleep/processed', (req, res) => {
   }
 });
 
+// NEW: Active Sleep Schedule API endpoint
+// This endpoint provides the exact format specified in the problem statement
+router.get('/v1/sleep_schedule/active_sleep_schedule', (req, res) => {
+  try {
+    // Get configuration from environment variables (Railway compatible)
+    const sleepConfig = {
+      enabled: process.env.SLEEP_ENABLED === 'true',
+      start_time_utc: process.env.SLEEP_START || '02:00',
+      duration_hours: parseInt(process.env.SLEEP_DURATION || '7', 10),
+      timezone: process.env.SLEEP_TZ || 'America/New_York'
+    };
+
+    console.log('🛌 Active sleep schedule requested:', sleepConfig);
+    res.json(sleepConfig);
+  } catch (error) {
+    console.error('❌ Error fetching active sleep schedule:', error);
+    res.status(500).json({
+      error: 'Failed to fetch sleep schedule',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 router.use('/api', askRoute);
 
 export default router;
