@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  arcanos-core:
+    build: .
+    image: arcanos-core
+    container_name: arcanos-core
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    networks:
+      - arcanos-net
+
+  backstage-booker:
+    image: backstage-booker
+    container_name: backstage-booker
+    ports:
+      - "8090:8090"
+    deploy:
+      resources:
+        limits:
+          memory: 800M
+        reservations:
+          memory: 512M
+    networks:
+      - arcanos-net
+
+networks:
+  arcanos-net:
+    driver: bridge
