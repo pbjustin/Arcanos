@@ -142,7 +142,7 @@ ARCANOS now supports natural language diagnostic commands for comprehensive syst
     "activeConnections": [
       {
         "protocol": "tcp",
-        "localAddress": "0.0.0.0:3000",
+        "localAddress": "0.0.0.0:8080",
         "state": "LISTEN"
       }
     ],
