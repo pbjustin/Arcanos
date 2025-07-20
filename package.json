@@ -10,7 +10,7 @@
     "build": "tsc",
     "start": "node --max-old-space-size=7168 dist/index.js",
     "start:railway": "node --max-old-space-size=7168 dist/index.js",
-    "dev": "ts-node --max-old-space-size=7168 src/index.ts",
+    "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
     "prestart": "npm run build"
   },
   "dependencies": {

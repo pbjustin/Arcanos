@@ -6,6 +6,7 @@
 import express from 'express';
 import * as http from 'http';
 import * as dotenv from 'dotenv';
+import axios from 'axios';
 import router from './routes/index';
 // Worker initialization will be handled by worker-init.js
 // import { startCronWorker } from './services/cron-worker';
@@ -39,6 +40,67 @@ app.use(express.static('public'));
 
 // Basic Healthcheck
 app.get('/health', (_, res) => res.send('✅ OK'));
+
+// GitHub webhook endpoint
+app.post('/webhook', async (req, res) => {
+  try {
+    const { repository, head_commit } = req.body;
+    
+    // Validate required webhook data
+    if (!repository || !head_commit) {
+      console.log('❌ Webhook missing required fields:', { 
+        hasRepository: !!repository, 
+        hasHeadCommit: !!head_commit 
+      });
+      return res.status(400).json({ error: 'Missing required webhook data' });
+    }
+
+    const payload = {
+      key: 'github_sync',
+      value: JSON.stringify({
+        repo: repository.full_name,
+        message: head_commit.message,
+        url: head_commit.url,
+        timestamp: new Date().toISOString()
+      }),
+      type: 'context',
+      tags: ['git', 'sync']
+    };
+
+    console.log('🔗 GitHub webhook received:', {
+      repo: repository.full_name,
+      commit: head_commit.id?.substring(0, 7),
+      message: head_commit.message?.substring(0, 50) + '...'
+    });
+
+    // Send data to ARCANOS memory endpoint using axios
+    try {
+      const memoryUrl = process.env.ARCANOS_MEMORY_URL || 'https://arcanos-production-426d.up.railway.app/memory';
+      const response = await axios.post(memoryUrl, payload);
+      
+      console.log('✅ GitHub sync sent to ARCANOS memory endpoint');
+      res.status(200).json({ 
+        success: true, 
+        message: 'GitHub sync sent to ARCANOS' 
+      });
+    } catch (memoryError: any) {
+      console.error('❌ Failed to send to memory endpoint:', memoryError.message);
+      // Fallback: still return success since webhook was received
+      res.status(200).json({ 
+        success: true, 
+        message: 'GitHub sync received but memory storage failed',
+        warning: 'Could not store in memory endpoint'
+      });
+    }
+
+  } catch (err: any) {
+    console.error('❌ Webhook error:', err);
+    res.status(500).json({ 
+      error: 'Internal webhook error',
+      details: err.message 
+    });
+  }
+});
 
 // Mount core logic or routes here
 app.use('/api', router);
