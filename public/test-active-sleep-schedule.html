@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Active Sleep Schedule API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+        pre { margin: 0; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        .info { background: #d1ecf1; border: 1px solid #bee5eb; padding: 10px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🛌 ARCANOS Active Sleep Schedule API Test</h1>
+    <p>This page tests the new active sleep schedule API endpoint and getActiveSleepSchedule() function as specified in the requirements.</p>
+    
+    <div class="info">
+        <strong>Endpoint:</strong> GET /api/v1/sleep_schedule/active_sleep_schedule<br>
+        <strong>Function:</strong> getActiveSleepSchedule()<br>
+        <strong>Purpose:</strong> Retrieve and interpret the backend's active sleep schedule from a live API
+    </div>
+    
+    <button onclick="testNewEndpoint()">Test New API Endpoint</button>
+    <button onclick="testGetActiveSleepSchedule()">Test getActiveSleepSchedule() Function</button>
+    <button onclick="testErrorHandling()">Test Error Handling</button>
+    <button onclick="testBothApis()">Compare Both APIs</button>
+    
+    <div id="results"></div>
+
+    <script>
+        // 🛌 SYSTEM CORE — COPILOT COMMAND BLOCK: AUTO-CONNECT TO SLEEP SCHEDULE
+        // Purpose: Retrieve and interpret the backend's active sleep schedule from a live API
+
+        // ✅ FETCH FUNCTION
+        async function getActiveSleepSchedule() {
+          try {
+            const res = await fetch('/api/v1/sleep_schedule/active_sleep_schedule');
+            if (!res.ok) throw new Error('Failed to fetch sleep schedule');
+            const config = await res.json();
+
+            const [startH, startM] = config.start_time_utc.split(':').map(Number);
+            const duration = config.duration_hours;
+            const endH = (startH + duration) % 24;
+            const endTimeUTC = `${String(endH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
+
+            return {
+              active: config.enabled,
+              startUTC: config.start_time_utc,
+              endUTC: endTimeUTC,
+              duration,
+              timezone: config.timezone || 'UTC'
+            };
+          } catch (err) {
+            console.error('Error loading sleep schedule:', err);
+            return { active: false };
+          }
+        }
+
+        function addResult(title, content, isSuccess = true) {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `result ${isSuccess ? 'success' : 'error'}`;
+            div.innerHTML = `<h3>${title}</h3><pre>${JSON.stringify(content, null, 2)}</pre>`;
+            results.appendChild(div);
+        }
+
+        async function testNewEndpoint() {
+            try {
+                const response = await fetch('/api/v1/sleep_schedule/active_sleep_schedule');
+                const data = await response.json();
+                addResult('✅ New API Endpoint Test', {
+                    endpoint: '/api/v1/sleep_schedule/active_sleep_schedule',
+                    status: response.status,
+                    data: data
+                }, true);
+            } catch (error) {
+                addResult('❌ New API Endpoint Test Failed', { error: error.message }, false);
+            }
+        }
+
+        async function testGetActiveSleepSchedule() {
+            try {
+                const result = await getActiveSleepSchedule();
+                addResult('✅ getActiveSleepSchedule() Function Test', result, true);
+                
+                // Validate the structure
+                const hasRequired = result.hasOwnProperty('active') && 
+                                  (result.active === false || 
+                                   (result.hasOwnProperty('startUTC') && 
+                                    result.hasOwnProperty('endUTC') && 
+                                    result.hasOwnProperty('duration')));
+                
+                addResult('✅ Function Structure Validation', {
+                    hasRequiredProperties: hasRequired,
+                    properties: Object.keys(result)
+                }, hasRequired);
+                
+            } catch (error) {
+                addResult('❌ getActiveSleepSchedule() Function Test Failed', { error: error.message }, false);
+            }
+        }
+
+        async function testErrorHandling() {
+            // Test by trying to fetch from non-existent endpoint
+            const originalFetch = window.fetch;
+            window.fetch = async (url) => {
+                if (url.includes('sleep_schedule')) {
+                    throw new Error('Network error simulation');
+                }
+                return originalFetch(url);
+            };
+
+            try {
+                const result = await getActiveSleepSchedule();
+                addResult('✅ Error Handling Test', result, true);
+            } catch (error) {
+                addResult('❌ Error Handling Test Failed', { error: error.message }, false);
+            } finally {
+                // Restore original fetch
+                window.fetch = originalFetch;
+            }
+        }
+
+        async function testBothApis() {
+            try {
+                // Test old API
+                const oldResponse = await fetch('/api/config/sleep');
+                const oldData = await oldResponse.json();
+                
+                // Test new API  
+                const newResponse = await fetch('/api/v1/sleep_schedule/active_sleep_schedule');
+                const newData = await newResponse.json();
+                
+                // Test function
+                const functionResult = await getActiveSleepSchedule();
+
+                addResult('✅ API Comparison', {
+                    oldAPI: {
+                        endpoint: '/api/config/sleep',
+                        data: oldData
+                    },
+                    newAPI: {
+                        endpoint: '/api/v1/sleep_schedule/active_sleep_schedule', 
+                        data: newData
+                    },
+                    functionResult: functionResult
+                }, true);
+                
+            } catch (error) {
+                addResult('❌ API Comparison Failed', { error: error.message }, false);
+            }
+        }
+
+        // Auto-run basic tests on page load
+        window.addEventListener('load', () => {
+            console.log('🧪 Running automatic tests...');
+            testNewEndpoint();
+            setTimeout(() => testGetActiveSleepSchedule(), 100);
+        });
+    </script>
+</body>
+</html>
