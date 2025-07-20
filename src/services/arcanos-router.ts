@@ -4,6 +4,7 @@
 import { IntentAnalyzer, IntentType } from './intent-analyzer';
 import { ArcanosWriteService, WriteRequest, WriteResponse } from './arcanos-write';
 import { ArcanosAuditService, AuditRequest, AuditResponse } from './arcanos-audit';
+import { diagnosticsService } from './diagnostics';
 
 export interface RouterRequest {
   message: string;
@@ -21,7 +22,7 @@ export interface RouterResponse {
   model?: string;
   error?: string;
   metadata?: {
-    service: 'ARCANOS:WRITE' | 'ARCANOS:AUDIT' | 'FALLBACK';
+    service: 'ARCANOS:WRITE' | 'ARCANOS:AUDIT' | 'ARCANOS:DIAGNOSTIC' | 'FALLBACK';
     domain: string;
     timestamp: string;
   };
@@ -58,10 +59,47 @@ export class ArcanosRouter {
       console.log(`💭 Reasoning: ${intentAnalysis.reasoning}`);
 
       let serviceResponse: any;
-      let serviceName: 'ARCANOS:WRITE' | 'ARCANOS:AUDIT' | 'FALLBACK';
+      let serviceName: 'ARCANOS:WRITE' | 'ARCANOS:AUDIT' | 'ARCANOS:DIAGNOSTIC' | 'FALLBACK';
 
       // Step 2: Route to appropriate service based on intent
-      if (intentAnalysis.intent === 'WRITE') {
+      if (intentAnalysis.intent === 'DIAGNOSTIC') {
+        console.log('🔍 Routing to ARCANOS:DIAGNOSTIC service');
+        serviceName = 'ARCANOS:DIAGNOSTIC';
+        
+        try {
+          const diagnosticResult = await diagnosticsService.executeDiagnosticCommand(message);
+          
+          return {
+            success: diagnosticResult.success,
+            intent: intentAnalysis.intent,
+            confidence: intentAnalysis.confidence,
+            reasoning: intentAnalysis.reasoning,
+            response: JSON.stringify(diagnosticResult.data, null, 2),
+            model: 'ARCANOS:DIAGNOSTIC',
+            error: diagnosticResult.error,
+            metadata: {
+              service: serviceName,
+              domain,
+              timestamp: new Date().toISOString()
+            }
+          };
+        } catch (error: any) {
+          return {
+            success: false,
+            intent: intentAnalysis.intent,
+            confidence: intentAnalysis.confidence,
+            reasoning: intentAnalysis.reasoning,
+            response: 'ARCANOS:DIAGNOSTIC service error',
+            error: error.message,
+            metadata: {
+              service: serviceName,
+              domain,
+              timestamp: new Date().toISOString()
+            }
+          };
+        }
+
+      } else if (intentAnalysis.intent === 'WRITE') {
         console.log('📝 Routing to ARCANOS:WRITE service');
         serviceName = 'ARCANOS:WRITE';
         
