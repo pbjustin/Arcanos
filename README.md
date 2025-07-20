@@ -147,6 +147,37 @@ The backend implements a permission-based fallback system for OpenAI models:
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `OPENAI_FINE_TUNED_MODEL` - Your fine-tuned model name
 
+## 📚 Documentation
+
+- **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start instructions
+- **[📖 Prompt API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive guide to using prompts with all API endpoints
+- **[💡 Practical Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use examples and code snippets
+- **[🔧 Test Script](./test-api-endpoints.sh)** - Automated endpoint testing
+
+## Quick Reference
+
+### Essential Commands
+```bash
+# Setup
+npm install
+cp .env.example .env
+# Edit .env with your OpenAI credentials
+
+# Run
+npm run build
+npm start
+
+# Test
+./test-api-endpoints.sh
+```
+
+### Key Endpoints for Prompts
+- `POST /api/ask` - Direct fine-tuned model interaction
+- `POST /api/ask-with-fallback` - AI chat with GPT-4 fallback
+- `POST /api/ask-v1-safe` - Safe interface with RAG/HRC features
+- `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT)
+- `POST /api/memory` - Context storage for better responses
+
 ## Project Structure
 
 ```
@@ -158,4 +189,8 @@ tsconfig.json               # TypeScript configuration
 .gitignore                 # Git ignore rules
 .env.example               # Environment variables template
 README.md                  # This file
+PROMPT_API_GUIDE.md        # Comprehensive prompt usage guide
+PROMPT_API_EXAMPLES.md     # Practical examples and code snippets
+SETUP_GUIDE.md             # Quick setup instructions
+test-api-endpoints.sh      # Automated endpoint testing script
 ```
