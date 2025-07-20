@@ -60,10 +60,14 @@ router.post('/ask', async (req, res) => {
     
     const completion = await openai.chat([{ role: "user", content: message }]);
 
-    return res.json({ response: completion.message });
+    return res.json({ 
+      response: completion.message,
+      model: completion.model
+    });
   } catch (err) {
     return res.status(500).json({
       error: "Model invocation failed. Fine-tuned model may be unavailable.",
+      model: process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL
     });
   }
 });
@@ -144,6 +148,33 @@ router.get('/model-status', (req, res) => {
     res.status(500).json({
       error: 'OpenAI service not initialized',
       configured: false,
+      details: error.message
+    });
+  }
+});
+
+// Get model info - dedicated endpoint for model metadata
+router.get('/model/info', (req, res) => {
+  console.log('🔍 Model info endpoint called');
+  try {
+    const service = getOpenAIService();
+    const modelName = service.getModel();
+    console.log('✅ Model info check successful, model:', modelName);
+    res.json({
+      model: modelName,
+      configured: true,
+      environment: {
+        fine_tuned_model: process.env.FINE_TUNED_MODEL || null,
+        openai_fine_tuned_model: process.env.OPENAI_FINE_TUNED_MODEL || null
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    console.error('❌ Model info check failed:', error.message);
+    res.status(500).json({
+      error: 'OpenAI service not initialized',
+      configured: false,
+      model: null,
       details: error.message
     });
   }
