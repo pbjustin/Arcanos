@@ -7,6 +7,7 @@ import express from 'express';
 import * as http from 'http';
 import * as dotenv from 'dotenv';
 import router from './routes/index';
+import { startCronWorker } from './services/cron-worker';
 
 // Load environment variables
 dotenv.config();
@@ -145,6 +146,9 @@ server.listen(PORT, () => {
     console.log(`🚂 Railway Environment: ${process.env.RAILWAY_ENVIRONMENT}`);
     console.log(`🔧 Railway Service: ${process.env.RAILWAY_SERVICE_NAME || 'Unknown'}`);
   }
+
+  // Start the cron worker service
+  startCronWorker();
 });
 
 // --- RAILWAY SERVICE CONFIG VALIDATION ✅ ---
