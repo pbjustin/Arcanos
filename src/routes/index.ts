@@ -172,6 +172,32 @@ router.get('/memory', async (req, res) => {
   res.json({ success: true, memories: list });
 });
 
+// ARCANOS V1 Safe Interface endpoint
+router.post('/ask-v1-safe', async (req, res) => {
+  try {
+    const { askArcanosV1_Safe } = await import('../services/arcanos-v1-interface');
+    const { message, domain, useRAG, useHRC } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const result = await askArcanosV1_Safe({
+      message,
+      domain,
+      useRAG,
+      useHRC
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('askArcanosV1_Safe error:', error);
+    res.status(500).json({ 
+      response: "❌ Error: Internal server error in V1 Safe interface." 
+    });
+  }
+});
+
 router.use('/api', askRoute);
 
 export default router;
