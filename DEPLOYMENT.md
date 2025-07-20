@@ -157,8 +157,15 @@ The docker-compose configuration includes memory limits:
 
 ### Environment Variables
 
-The `backstage-booker` service is pre-configured with:
-- **BACKSTAGE_BOOKER_PROMPT**: Complete wrestling creative professional persona and operational instructions
+The `backstage-booker` service is pre-configured with comprehensive canon-first logic enforcement:
+
+- **BACKSTAGE_BOOKER_SYSTEM_DIRECTIVE**: Canon-first logic enforcement rules requiring WWE 2K25 canon memory compliance
+- **BACKSTAGE_BOOKER_PROMPT_INJECTION**: System prompt allowing real-world wrestling patterns but deferring to internal WWE 2K25 canon
+- **BACKSTAGE_BOOKER_CANON_VALIDATION**: Pseudo-code for character, alignment, and title validation against canon
+- **BACKSTAGE_BOOKER_REAL_LOGIC_MODE**: Developer flag enabling real-world analog logic patterns
+- **BACKSTAGE_BOOKER_USE_CASES**: Examples of valid and invalid operations based on canon compliance
+- **BACKSTAGE_BOOKER_DATA_PRIORITY**: Priority hierarchy for data sources (canon.json/canon.db first)
+- **BACKSTAGE_BOOKER_CORE_PROMPT**: Core wrestling creative professional persona and operational instructions
 
 ### Building Images
 
