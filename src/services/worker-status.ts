@@ -203,3 +203,12 @@ export class WorkerStatusService {
 
 // Export singleton instance
 export const workerStatusService = new WorkerStatusService();
+
+/**
+ * getCoreWorkerStatus - Function as specified in the problem statement
+ * This is a convenience function that wraps the worker status service
+ * Returns the exact format specified in the requirements
+ */
+export async function getCoreWorkerStatus(): Promise<WorkerInfo[]> {
+  return await workerStatusService.getAllWorkersStatus();
+}

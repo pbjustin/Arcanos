@@ -5,7 +5,7 @@ import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { processArcanosRequest } from '../services/arcanos-router';
 import { diagnosticsService } from '../services/diagnostics';
-import { workerStatusService } from '../services/worker-status';
+import { workerStatusService, getCoreWorkerStatus } from '../services/worker-status';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
@@ -436,6 +436,23 @@ router.get('/config/sleep/processed', (req, res) => {
   } catch (err) {
     console.error('Sleep window processing error:', err);
     res.json({ active: false });
+  }
+});
+
+// 🧠 CORE BACKEND — COPILOT COMMAND BLOCK: WORKER STATUS API
+// Purpose: Expose live worker state (task, status, CPU/RAM, uptime) via REST endpoint
+router.get('/core/workers/status', async (req, res) => {
+  try {
+    console.log('🔍 Core worker status endpoint called');
+    
+    const workers = await getCoreWorkerStatus(); // pull from internal registry or telemetry
+    
+    console.log('📊 Retrieved status for', workers.length, 'core workers');
+    
+    res.status(200).json(workers);
+  } catch (err: any) {
+    console.error('Worker status error:', err);
+    res.status(500).json({ error: 'Worker status unavailable' });
   }
 });
 
