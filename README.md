@@ -1,10 +1,6 @@
 # Arcanos Backend
 
-[![CI](https://github.com/pbjustin/Arcanos/actions/workflows/ci.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/ci.yml)
-[![Deploy to Railway](https://github.com/pbjustin/Arcanos/actions/workflows/deploy.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/deploy.yml)
-[![Code Quality & Security](https://github.com/pbjustin/Arcanos/actions/workflows/quality.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/quality.yml)
-
-A minimal TypeScript + Express backend for the Arcanos project with comprehensive CI/CD automation.
+A minimal TypeScript + Express backend for the Arcanos project.
 
 ## Setup
 
@@ -157,23 +153,9 @@ The backend implements a permission-based fallback system for OpenAI models:
 ./src/index.ts              # Main server file
 ./src/routes/index.ts       # API routes
 ./src/services/openai.ts    # OpenAI service with permission-based fallback
-./.github/workflows/        # CI/CD automation workflows
 package.json                # Dependencies and scripts
 tsconfig.json               # TypeScript configuration
 .gitignore                 # Git ignore rules
 .env.example               # Environment variables template
 README.md                  # This file
-GITHUB_SYNC.md             # CI/CD documentation
 ```
-
-## 🔄 GitHub Sync
-
-This project includes comprehensive CI/CD automation with GitHub Actions:
-
-- **Automated Testing**: Multi-version Node.js testing on every PR
-- **Continuous Deployment**: Automatic Railway deployment on main branch
-- **Code Quality**: ESLint, Prettier, and security scanning
-- **Dependency Management**: Automated security updates
-- **Health Monitoring**: Production uptime and performance monitoring
-
-See [GITHUB_SYNC.md](./GITHUB_SYNC.md) for detailed CI/CD documentation.

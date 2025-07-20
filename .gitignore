@@ -63,12 +63,4 @@ temp/
 npm_logs/
 
 # CI/CD artifacts
-audit-report.json
-full-audit.json
-health_response.json
-server.pid
-uptime-report.md
-
-# Test artifacts
-tests/coverage/
-jest_coverage/
+*.lcov

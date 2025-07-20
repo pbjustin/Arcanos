@@ -12,11 +12,7 @@
     "start:railway": "node --max-old-space-size=7168 dist/index.js",
     "dev": "ts-node --max-old-space-size=7168 src/index.ts",
     "prestart": "npm run build",
-    "test": "jest --coverage || echo 'Jest not configured yet - will be set up automatically in CI'",
-    "lint": "eslint src --ext .ts || echo 'ESLint not configured yet - will be set up automatically in CI'",
-    "lint:fix": "eslint src --ext .ts --fix || echo 'ESLint not configured yet'",
-    "format": "prettier --write src || echo 'Prettier not configured yet'",
-    "format:check": "prettier --check src || echo 'Prettier not configured yet'"
+    "test": "jest --coverage || echo 'Jest not configured yet - will be set up automatically in CI'"
   },
   "dependencies": {
     "axios": "^1.10.0",
