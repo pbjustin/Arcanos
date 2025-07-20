@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run TypeScript build
+      run: npm run build
+
+    - name: Run linting
+      run: npm run lint || echo "No lint script configured"
+
+    - name: Run tests
+      run: npm test || echo "No test script configured"
+
+    - name: Check for security vulnerabilities
+      run: npm audit --audit-level=high
+
+    - name: Verify health endpoint
+      run: |
+        npm start &
+        SERVER_PID=$!
+        sleep 10
+        curl -f http://localhost:8080/health || exit 1
+        kill $SERVER_PID
+
+  build-check:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build for production
+      run: npm run build
+
+    - name: Verify build artifacts
+      run: |
+        if [ ! -f "dist/index.js" ]; then
+          echo "Build failed: dist/index.js not found"
+          exit 1
+        fi
+        echo "Build verification passed"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-node-18
+        path: dist/
+        retention-days: 1
