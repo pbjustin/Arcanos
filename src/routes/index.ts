@@ -397,10 +397,10 @@ router.post('/booker/workers/add-high-load', async (req, res) => {
 router.get('/config/sleep', (req, res) => {
   // Core backend sleep configuration
   const sleepConfig = {
-    enabled: process.env.SLEEP_ENABLED !== 'false', // Default to enabled unless explicitly set to 'false'
-    start_time_utc: process.env.SLEEP_START_TIME_UTC || '02:00',
-    duration_hours: parseInt(process.env.SLEEP_DURATION_HOURS || '7', 10),
-    timezone: process.env.SLEEP_TIMEZONE || 'America/New_York'
+    enabled: process.env.SLEEP_ENABLED === 'true',
+    start_time_utc: process.env.SLEEP_START || '02:00',
+    duration_hours: parseInt(process.env.SLEEP_DURATION || '7', 10),
+    timezone: process.env.SLEEP_TZ || 'UTC'
   };
 
   console.log('🛏️ Sleep config requested:', sleepConfig);
@@ -411,10 +411,10 @@ router.get('/config/sleep', (req, res) => {
 router.get('/config/sleep/processed', (req, res) => {
   // Get the raw config
   const sleepConfig = {
-    enabled: process.env.SLEEP_ENABLED !== 'false',
-    start_time_utc: process.env.SLEEP_START_TIME_UTC || '02:00',
-    duration_hours: parseInt(process.env.SLEEP_DURATION_HOURS || '7', 10),
-    timezone: process.env.SLEEP_TIMEZONE || 'America/New_York'
+    enabled: process.env.SLEEP_ENABLED === 'true',
+    start_time_utc: process.env.SLEEP_START || '02:00',
+    duration_hours: parseInt(process.env.SLEEP_DURATION || '7', 10),
+    timezone: process.env.SLEEP_TZ || 'UTC'
   };
 
   // Process it using the same logic as getCoreSleepWindow

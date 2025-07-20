@@ -87,6 +87,9 @@ test_endpoint "Ask Endpoint (Error Test)" "POST" "/api/ask" '{"message": "Test m
 # Test 11: Ask with Fallback (will fail without API key - testing error handling)
 test_endpoint "Ask with Fallback (Error Test)" "POST" "/api/ask-with-fallback" '{"message": "Test message"}'
 
+# Test 12: Sleep Configuration
+test_endpoint "Sleep Configuration" "GET" "/api/config/sleep" ""
+
 echo "=================================================="
 echo "                 Test Summary"
 echo "=================================================="
