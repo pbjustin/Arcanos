@@ -4,6 +4,7 @@ import askRoute from './ask';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { processArcanosRequest } from '../services/arcanos-router';
+import { diagnosticsService } from '../services/diagnostics';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
@@ -272,6 +273,54 @@ router.post('/arcanos', async (req, res) => {
       error: 'Internal server error in ARCANOS router',
       details: error.message,
       timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// GPT Diagnostics Prompt Language endpoint
+// Accepts natural language diagnostic commands
+router.post('/diagnostics', async (req, res) => {
+  const { command, message } = req.body;
+  
+  // Accept either 'command' or 'message' field for flexibility
+  const diagnosticCommand = command || message;
+  
+  if (!diagnosticCommand || typeof diagnosticCommand !== 'string') {
+    return res.status(400).json({
+      error: 'Diagnostic command is required',
+      examples: [
+        'Check available memory',
+        'Show RAM usage', 
+        'Run CPU performance check',
+        'Disk usage report',
+        'Full system health check'
+      ],
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  try {
+    console.log('🔍 Diagnostics endpoint called with command:', diagnosticCommand);
+    
+    const result = await diagnosticsService.executeDiagnosticCommand(diagnosticCommand);
+    
+    console.log('📊 Diagnostic result:', {
+      success: result.success,
+      category: result.category,
+      hasData: !!result.data
+    });
+    
+    res.json(result);
+    
+  } catch (error: any) {
+    console.error('❌ Diagnostics endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      command: diagnosticCommand,
+      category: 'error',
+      data: {},
+      timestamp: new Date().toISOString(),
+      error: error.message
     });
   }
 });
