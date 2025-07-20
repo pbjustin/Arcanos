@@ -3,6 +3,7 @@ import { OpenAIService, ChatMessage } from '../services/openai';
 import askRoute from './ask';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
+import { processArcanosRequest } from '../services/arcanos-router';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
@@ -225,6 +226,52 @@ router.post('/ask-v1-safe', async (req, res) => {
     console.error('askArcanosV1_Safe error:', error);
     res.status(500).json({ 
       response: "❌ Error: Internal server error in V1 Safe interface." 
+    });
+  }
+});
+
+// ARCANOS Intent-Based Routing endpoint
+// Routes inputs to ARCANOS:WRITE or ARCANOS:AUDIT based on intent analysis
+router.post('/arcanos', async (req, res) => {
+  const { message, domain = "general", useRAG = true, useHRC = true } = req.body;
+
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ 
+      error: "Message is required and must be a string",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  try {
+    console.log('🎯 ARCANOS endpoint called with message:', message.substring(0, 100) + '...');
+    
+    const routerRequest = {
+      message,
+      domain,
+      useRAG,
+      useHRC
+    };
+
+    const result = await processArcanosRequest(routerRequest);
+    
+    // Return the routed response
+    res.json({
+      success: result.success,
+      response: result.response,
+      intent: result.intent,
+      confidence: result.confidence,
+      reasoning: result.reasoning,
+      model: result.model,
+      error: result.error,
+      metadata: result.metadata
+    });
+
+  } catch (error: any) {
+    console.error('❌ ARCANOS endpoint error:', error);
+    res.status(500).json({
+      error: 'Internal server error in ARCANOS router',
+      details: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
