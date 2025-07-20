@@ -7,6 +7,9 @@ import express from 'express';
 import * as http from 'http';
 import * as dotenv from 'dotenv';
 import axios from 'axios';
+import * as os from 'os';
+import * as fs from 'fs';
+import { exec } from 'child_process';
 import router from './routes/index';
 // Worker initialization will be handled by worker-init.js
 // import { startCronWorker } from './services/cron-worker';
@@ -100,6 +103,43 @@ app.post('/webhook', async (req, res) => {
       details: err.message 
     });
   }
+});
+
+// @ARCANOS: Diagnostic sync endpoint for GPT access
+// This exposes live server health metrics: memory, CPU, disk, uptime
+app.get('/sync/diagnostics', async (req, res) => {
+  const token = req.headers['authorization'];
+  if (token !== `Bearer ${process.env.GPT_TOKEN}`) {
+    return res.status(403).json({ error: "Unauthorized GPT access" });
+  }
+
+  // Memory usage
+  const memory = process.memoryUsage();
+
+  // CPU usage (load average over 1, 5, 15 minutes)
+  const cpuLoad = os.loadavg();
+
+  // Uptime in seconds
+  const uptime = process.uptime();
+
+  // Disk usage (Linux/Unix only)
+  exec('df -h /', (error, stdout) => {
+    const diskUsage = error ? "Unavailable" : stdout;
+
+    res.json({
+      status: 'healthy',
+      env: process.env.NODE_ENV,
+      memory,
+      cpuLoad: {
+        '1min': cpuLoad[0],
+        '5min': cpuLoad[1],
+        '15min': cpuLoad[2]
+      },
+      uptime,
+      diskUsage,
+      timestamp: new Date().toISOString()
+    });
+  });
 });
 
 // Mount core logic or routes here
