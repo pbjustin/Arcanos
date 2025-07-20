@@ -7,7 +7,11 @@ import express from 'express';
 import * as http from 'http';
 import * as dotenv from 'dotenv';
 import router from './routes/index';
-import { startCronWorker } from './services/cron-worker';
+// Worker initialization will be handled by worker-init.js
+// import { startCronWorker } from './services/cron-worker';
+
+// Import worker initialization module (will run conditionally)
+import './worker-init';
 
 // Load environment variables
 dotenv.config();
@@ -147,8 +151,9 @@ server.listen(PORT, () => {
     console.log(`🔧 Railway Service: ${process.env.RAILWAY_SERVICE_NAME || 'Unknown'}`);
   }
 
-  // Start the cron worker service
-  startCronWorker();
+  // Worker initialization is now handled by worker-init.js
+  // which conditionally starts workers based on RUN_WORKERS env var
+  console.log('[SERVER] Worker initialization handled by worker-init.js module');
 });
 
 // --- RAILWAY SERVICE CONFIG VALIDATION ✅ ---
