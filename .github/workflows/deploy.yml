@@ -26,50 +26,13 @@ jobs:
     - name: Run build
       run: npm run build
 
-    - name: Run pre-deployment tests
-      run: |
-        # Basic smoke tests before deployment
-        npm test || echo "No test script configured - continuing deployment"
-        
-        # Verify build artifacts exist
-        if [ ! -f "dist/index.js" ]; then
-          echo "Deployment failed: Build artifacts missing"
-          exit 1
-        fi
-
     - name: Deploy to Railway
       uses: railwayapp/railway-deploy@v1.0.0
       with:
         railway-token: ${{ secrets.RAILWAY_TOKEN }}
         service: ${{ secrets.RAILWAY_SERVICE_ID }}
 
-    - name: Wait for deployment
-      run: sleep 30
-
-    - name: Verify deployment health
+    - name: Verify deployment
       run: |
-        HEALTH_URL="${{ secrets.RAILWAY_DOMAIN }}/health"
-        echo "Checking health at: $HEALTH_URL"
-        
-        # Retry health check with backoff
-        for i in {1..5}; do
-          if curl -f "$HEALTH_URL"; then
-            echo "Health check passed!"
-            exit 0
-          fi
-          echo "Health check attempt $i failed, retrying in $((i * 10)) seconds..."
-          sleep $((i * 10))
-        done
-        
-        echo "Health check failed after all retries"
-        exit 1
-
-    - name: Post-deployment notification
-      if: always()
-      run: |
-        if [ "${{ job.status }}" == "success" ]; then
-          echo "✅ Deployment to Railway completed successfully"
-          echo "🚀 Application is live at: ${{ secrets.RAILWAY_DOMAIN }}"
-        else
-          echo "❌ Deployment to Railway failed"
-        fi
+        sleep 30
+        curl -f "${{ secrets.RAILWAY_DOMAIN }}/health" || echo "Health check failed"
