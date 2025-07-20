@@ -119,7 +119,10 @@ The application includes a `docker-compose.yml` file for containerized deploymen
 ### Services
 
 - **arcanos-core**: The main ARCANOS backend service (port 8080)
-- **backstage-booker**: Additional service for backstage booking functionality (port 8090)
+- **backstage-booker**: Wrestling creative professional service for backstage booking functionality (port 8090)
+  - Configured with wrestling creative prompt via `BACKSTAGE_BOOKER_PROMPT` environment variable
+  - Operates as a simulated pro wrestling creative department professional
+  - Supports booking, writing, producing, and decision-making for wrestling storylines
 
 ### Usage
 
@@ -151,6 +154,11 @@ The docker-compose configuration includes memory limits:
 - Docker and Docker Compose installed
 - `backstage-booker` image available (for the complete setup)
 - Environment variables configured if needed
+
+### Environment Variables
+
+The `backstage-booker` service is pre-configured with:
+- **BACKSTAGE_BOOKER_PROMPT**: Complete wrestling creative professional persona and operational instructions
 
 ### Building Images
 
