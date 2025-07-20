@@ -348,6 +348,51 @@ router.get('/workers/status', async (req, res) => {
   }
 });
 
+// Booker namespace - Worker Status endpoint
+// Provides the specific API path expected by the booker integration
+router.get('/booker/workers/status', async (req, res) => {
+  try {
+    console.log('🔍 Booker worker status endpoint called');
+    
+    const workersStatus = await workerStatusService.getAllWorkersStatus();
+    
+    console.log('📊 Retrieved status for', workersStatus.length, 'workers');
+    
+    res.json(workersStatus);
+    
+  } catch (error: any) {
+    console.error('❌ Booker worker status endpoint error:', error);
+    res.status(500).json({
+      error: 'Failed to retrieve worker status',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Test endpoint to add high-load worker for testing CPU alerts
+router.post('/booker/workers/add-high-load', async (req, res) => {
+  try {
+    console.log('🔧 Adding high-load worker for testing');
+    
+    workerStatusService.addHighLoadWorker();
+    
+    res.json({ 
+      success: true, 
+      message: 'High-load worker added for testing',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error: any) {
+    console.error('❌ Error adding high-load worker:', error);
+    res.status(500).json({
+      error: 'Failed to add high-load worker',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 router.use('/api', askRoute);
 
 export default router;
