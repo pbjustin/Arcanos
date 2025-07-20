@@ -3,7 +3,7 @@
     "command": "npm ci && npm run build"
   },
   "deploy": {
-    "startCommand": "npm start",
+    "startCommand": "node --max-old-space-size=7168 dist/index.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
