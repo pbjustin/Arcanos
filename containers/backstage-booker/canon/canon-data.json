@@ -1,0 +1,35 @@
+{
+  "championship_holders": {
+    "heavyweight": {
+      "current_champion": "Character A",
+      "title_history": [
+        {
+          "champion": "Character A",
+          "date_won": "2024-01-01",
+          "method": "defeated Character B"
+        }
+      ]
+    },
+    "tag_team": {
+      "current_champions": "Tag Team X",
+      "title_history": []
+    }
+  },
+  "active_storylines": [
+    {
+      "id": "rivalry_001",
+      "participants": ["Character A", "Character B"],
+      "type": "personal_feud",
+      "status": "active",
+      "key_events": [
+        "betrayal_at_ppv",
+        "challenge_issued"
+      ]
+    }
+  ],
+  "roster_status": {
+    "active": ["Character A", "Character B", "Character C"],
+    "injured": [],
+    "suspended": []
+  }
+}

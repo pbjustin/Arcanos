@@ -64,3 +64,7 @@ npm_logs/
 
 # Test files
 test-webhook.js
+
+# Test-generated canon files (exclude from commits)
+containers/backstage-booker/canon/test-*.txt
+containers/backstage-booker/canon/test-*.json
