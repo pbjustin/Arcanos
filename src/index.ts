@@ -154,45 +154,39 @@ app.post('/', async (req, res) => {
   }
 
   try {
-    // --- IMPROVED OPENAI INTEGRATION WITH AUDIT LOGGING ---
-    console.log('🔍 POST / endpoint called with message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
-    console.log('🔧 OPENAI_API_KEY configured:', !!process.env.OPENAI_API_KEY);
-    console.log('🎯 Fine-tuned model:', fineTunedModel || 'default');
+    // --- ARCANOS INTENT-BASED ROUTING ---
+    console.log('🎯 POST / endpoint called with message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
     
-    if (!process.env.OPENAI_API_KEY) {
-      console.warn("⚠️ No OpenAI API key configured.");
-      return res.status(500).json({ 
-        error: 'OpenAI service not configured',
-        response: `Echo: ${message}` // Fallback response
-      });
-    }
+    // Import the router service
+    const { processArcanosRequest } = await import('./services/arcanos-router');
+    
+    // Process request through intent-based router
+    const routerRequest = {
+      message,
+      domain: 'general',
+      useRAG: true,
+      useHRC: true
+    };
 
-    // Import OpenAI service dynamically to avoid startup dependency
-    const { OpenAIService } = await import('./services/openai');
-    const openaiService = new OpenAIService();
+    console.log('🚀 Processing request through ARCANOS router...');
+    const result = await processArcanosRequest(routerRequest);
     
-    console.log('🚀 Creating chat completion with OpenAI service...');
-    
-    // Simple chat request using the fine-tuned model
-    const response = await openaiService.chat([
-      { role: 'user', content: message }
-    ]);
-    
-    console.log('📥 Received response from OpenAI:', {
-      hasError: !!response.error,
-      model: response.model,
-      messageLength: response.message?.length || 0
+    console.log('📥 Received response from ARCANOS router:', {
+      success: result.success,
+      intent: result.intent,
+      confidence: result.confidence,
+      service: result.metadata?.service
     });
     
-    // Return the response - if successful, just the message; if error, structured response
-    if (response.error || response.fallbackRequested) {
-      res.json({ 
-        error: response.error,
-        response: response.message 
-      });
+    // Return response based on success
+    if (result.success) {
+      // Success case - return just the message content for simple API compatibility
+      res.send(result.response);
     } else {
-      // Success case - return just the message content
-      res.send(response.message);
+      res.json({ 
+        error: result.error,
+        response: result.response 
+      });
     }
     
   } catch (error: any) {
