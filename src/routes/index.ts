@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { OpenAIService, ChatMessage } from '../services/openai';
 import askRoute from './ask';
 import canonRoute from './canon';
+import containersRoute from './containers';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { processArcanosRequest } from '../services/arcanos-router';
@@ -467,5 +468,8 @@ router.use('/api', askRoute);
 
 // Canon API routes - Clean Canon Access API for Backstage Booker
 router.use('/canon', canonRoute);
+
+// Container management routes - ARCANOS Container Manager
+router.use('/containers', containersRoute);
 
 export default router;
