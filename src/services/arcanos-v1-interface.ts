@@ -171,18 +171,30 @@ export async function askArcanosV1_Safe({
   domain?: string;
   useRAG?: boolean;
   useHRC?: boolean;
-}): Promise<{ response: string }> {
+}): Promise<{ response: string; model?: string }> {
+  // Get the actual model name from environment (if available)
+  const modelName = process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
+  
   const model = await getActiveModel(); // ← Your current backend model hook
 
   if (!model) {
-    return { response: "❌ Error: No active model found. Fallback blocked." };
+    return { 
+      response: "❌ Error: No active model found. Fallback blocked.",
+      model: modelName || undefined
+    };
   }
 
   const result = await model.respond(message, { domain, useRAG, useHRC });
 
   if (result.status === "fallback" || result.status === "error") {
-    return { response: "❌ Error: Fallback triggered or invalid model response." };
+    return { 
+      response: "❌ Error: Fallback triggered or invalid model response.",
+      model: modelName || undefined
+    };
   }
 
-  return { response: result.text };
+  return { 
+    response: result.text,
+    model: modelName || undefined
+  };
 }
