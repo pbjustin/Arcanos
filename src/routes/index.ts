@@ -5,6 +5,7 @@ import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { processArcanosRequest } from '../services/arcanos-router';
 import { diagnosticsService } from '../services/diagnostics';
+import { workerStatusService } from '../services/worker-status';
 
 const router = Router();
 let openaiService: OpenAIService | null = null;
@@ -321,6 +322,28 @@ router.post('/diagnostics', async (req, res) => {
       data: {},
       timestamp: new Date().toISOString(),
       error: error.message
+    });
+  }
+});
+
+// Worker Diagnostics endpoint
+// Get real-time status of all background workers
+router.get('/workers/status', async (req, res) => {
+  try {
+    console.log('🔍 Worker status endpoint called');
+    
+    const workersStatus = await workerStatusService.getAllWorkersStatus();
+    
+    console.log('📊 Retrieved status for', workersStatus.length, 'workers');
+    
+    res.json(workersStatus);
+    
+  } catch (error: any) {
+    console.error('❌ Worker status endpoint error:', error);
+    res.status(500).json({
+      error: 'Failed to retrieve worker status',
+      details: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
