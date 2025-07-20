@@ -143,7 +143,7 @@ The backend implements a permission-based fallback system for OpenAI models:
 ## Environment Variables
 
 - `NODE_ENV` - Environment (development/production)
-- `PORT` - Server port (default: 3000)
+- `PORT` - Server port (default: 8080)
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `OPENAI_FINE_TUNED_MODEL` - Your fine-tuned model name
 
