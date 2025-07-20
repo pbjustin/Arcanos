@@ -393,6 +393,52 @@ router.post('/booker/workers/add-high-load', async (req, res) => {
   }
 });
 
+// Sleep configuration endpoint for core backend sleep window
+router.get('/config/sleep', (req, res) => {
+  // Core backend sleep configuration
+  const sleepConfig = {
+    enabled: process.env.SLEEP_ENABLED !== 'false', // Default to enabled unless explicitly set to 'false'
+    start_time_utc: process.env.SLEEP_START_TIME_UTC || '02:00',
+    duration_hours: parseInt(process.env.SLEEP_DURATION_HOURS || '7', 10),
+    timezone: process.env.SLEEP_TIMEZONE || 'America/New_York'
+  };
+
+  console.log('🛏️ Sleep config requested:', sleepConfig);
+  res.json(sleepConfig);
+});
+
+// Test endpoint to verify sleep window processing logic
+router.get('/config/sleep/processed', (req, res) => {
+  // Get the raw config
+  const sleepConfig = {
+    enabled: process.env.SLEEP_ENABLED !== 'false',
+    start_time_utc: process.env.SLEEP_START_TIME_UTC || '02:00',
+    duration_hours: parseInt(process.env.SLEEP_DURATION_HOURS || '7', 10),
+    timezone: process.env.SLEEP_TIMEZONE || 'America/New_York'
+  };
+
+  // Process it using the same logic as getCoreSleepWindow
+  try {
+    const { start_time_utc, duration_hours, enabled } = sleepConfig;
+    const [startH, startM] = start_time_utc.split(':').map(Number);
+    const endH = (startH + duration_hours) % 24;
+    const endTimeUTC = `${String(endH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
+
+    const processedResult = {
+      active: enabled,
+      startUTC: start_time_utc,
+      endUTC: endTimeUTC,
+      duration: duration_hours
+    };
+
+    console.log('🛏️ Processed sleep window:', processedResult);
+    res.json(processedResult);
+  } catch (err) {
+    console.error('Sleep window processing error:', err);
+    res.json({ active: false });
+  }
+});
+
 router.use('/api', askRoute);
 
 export default router;
