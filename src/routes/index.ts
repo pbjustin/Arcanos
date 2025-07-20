@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { OpenAIService, ChatMessage } from '../services/openai';
 import askRoute from './ask';
+import canonRoute from './canon';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { processArcanosRequest } from '../services/arcanos-router';
@@ -463,5 +464,8 @@ router.get('/v1/sleep_schedule/active_sleep_schedule', (req, res) => {
 });
 
 router.use('/api', askRoute);
+
+// Canon API routes - Clean Canon Access API for Backstage Booker
+router.use('/canon', canonRoute);
 
 export default router;
