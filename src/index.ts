@@ -145,6 +145,16 @@ server.listen(PORT, () => {
     MODEL: process.env.FINE_TUNED_MODEL,
   });
   
+  // Memory optimization logging for 8GB Railway Hobby Plan
+  const memStats = process.memoryUsage();
+  const v8Stats = require('v8').getHeapStatistics();
+  console.log('🧠 [MEMORY] Node.js Memory Configuration for 8GB Hobby Plan:');
+  console.log(`   📊 Heap Size Limit: ${(v8Stats.heap_size_limit / 1024 / 1024 / 1024).toFixed(2)} GB`);
+  console.log(`   📈 Current RSS: ${(memStats.rss / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`   🔄 Heap Used: ${(memStats.heapUsed / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`   💾 Heap Total: ${(memStats.heapTotal / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`   🎯 Target: Using ~7GB of 8GB available on Railway Hobby Plan`);
+  
   // Railway-specific logging
   if (process.env.RAILWAY_ENVIRONMENT) {
     console.log(`🚂 Railway Environment: ${process.env.RAILWAY_ENVIRONMENT}`);
@@ -154,6 +164,13 @@ server.listen(PORT, () => {
   // Worker initialization is now handled by worker-init.js
   // which conditionally starts workers based on RUN_WORKERS env var
   console.log('[SERVER] Worker initialization handled by worker-init.js module');
+  
+  // Memory monitoring interval
+  setInterval(() => {
+    const currentMem = process.memoryUsage();
+    const currentV8 = require('v8').getHeapStatistics();
+    console.log(`🧠 [MEMORY_MONITOR] RSS: ${(currentMem.rss / 1024 / 1024).toFixed(2)}MB, Heap: ${(currentMem.heapUsed / 1024 / 1024).toFixed(2)}MB/${(currentV8.heap_size_limit / 1024 / 1024 / 1024).toFixed(2)}GB`);
+  }, 300000); // Log every 5 minutes
 });
 
 // --- RAILWAY SERVICE CONFIG VALIDATION ✅ ---

@@ -8,9 +8,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "start:railway": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start": "node --max-old-space-size=7168 dist/index.js",
+    "start:railway": "node --max-old-space-size=7168 dist/index.js",
+    "dev": "ts-node --max-old-space-size=7168 src/index.ts",
     "prestart": "npm run build"
   },
   "dependencies": {

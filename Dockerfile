@@ -54,5 +54,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 8080) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
-# Start the application
-CMD ["node", "dist/index.js"]
+# Start the application with optimized memory settings for 8GB Railway Hobby Plan
+CMD ["node", "--max-old-space-size=7168", "dist/index.js"]
