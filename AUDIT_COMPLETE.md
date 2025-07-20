@@ -48,7 +48,6 @@ The backend entry point audit has been completed successfully. All requirements 
 ## 📁 File Structure
 ```
 src/index.ts          # Main entry point (AUDIT COMPLIANT)
-server/               # Legacy implementation (DEPRECATED)
 .railway/config.json  # Railway deployment config
 railway.json          # Railway service config  
 package.json          # NPM scripts and dependencies

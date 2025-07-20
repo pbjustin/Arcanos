@@ -100,7 +100,7 @@ curl -X POST http://localhost:8080/api/echo \
 lsof -ti:8080 | xargs kill -9
 
 # Or use different port
-PORT=3000 npm start
+PORT=9000 npm start
 ```
 
 ### Permission Errors
