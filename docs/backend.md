@@ -111,7 +111,6 @@ process.on("SIGTERM", () => {
 ### Entry Points
 - **Primary**: `src/index.ts` → `dist/index.js`
 - **Worker Init**: `src/worker-init.ts` → `dist/worker-init.js`
-- **Legacy**: `index.js` (deprecated, use TypeScript version)
 
 ## 🔧 Technical Architecture
 

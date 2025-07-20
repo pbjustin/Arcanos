@@ -190,10 +190,10 @@ But for production, always switch to /api/ask.
 ⸻
 
 ## 📁 Related Files
-&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;server/index.ts → Entry point
-&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;server/routes/index.ts → Route registration
-&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;server/storage/memory-storage.ts → In-memory store
-&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;.env → Add SESSION_SECRET, OPENAI_API_KEY, NODE_ENV, PORT
+&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;src/index.ts → Main entry point
+&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;src/routes/index.ts → Route registration  
+&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;src/storage/ → Memory storage system
+&nbsp;&nbsp;&nbsp;•&nbsp;&nbsp;&nbsp;.env → Add OPENAI_API_KEY, NODE_ENV, PORT
 
 ⸻
 
