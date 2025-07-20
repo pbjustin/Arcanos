@@ -64,7 +64,7 @@
 - **IMPLEMENTED**: Permission-based fallback system
 
 ### Legacy Notes
-- **DEPRECATED**: `server/` directory implementation
+- **REMOVED**: `server/` directory implementation (deleted as deprecated)
 - **DEPRECATED**: Simple HTTP server in `index.js`
 - **MIGRATED**: All functionality to TypeScript implementation
 - **MAINTAINED**: Backward compatibility for existing deployments
