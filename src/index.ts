@@ -13,6 +13,8 @@ import { exec } from 'child_process';
 import bodyParser from 'body-parser';
 import cors from 'cors';
 import router from './routes/index';
+import memoryRouter from './routes/memory';
+import { databaseService } from './services/database';
 // Worker initialization will be handled by worker-init.js
 // import { startCronWorker } from './services/cron-worker';
 
@@ -171,6 +173,9 @@ app.get('/', (req, res) => {
 // Mount core logic or routes here
 app.use('/api', router);
 
+// Mount memory routes - Universal Memory Archetype
+app.use('/memory', memoryRouter);
+
 // POST endpoint for natural language inputs with improved error handling
 app.post('/', async (req, res) => {
   const { message } = req.body;
@@ -259,13 +264,23 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 // ========= ADD INSIDE YOUR SERVER STARTUP =========
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`[SERVER] Running on port ${PORT}`);
   console.log(`[INFO] ENV:`, {
     NODE_ENV: process.env.NODE_ENV,
     PORT: process.env.PORT,
     MODEL: process.env.FINE_TUNED_MODEL,
+    DATABASE: !!process.env.DATABASE_URL
   });
+  
+  // Initialize database schema
+  try {
+    await databaseService.initialize();
+    console.log('✅ Universal Memory Archetype initialized');
+  } catch (error) {
+    console.error('❌ Failed to initialize Universal Memory Archetype:', error);
+    console.warn('⚠️ Memory service will run in degraded mode');
+  }
   
   // Memory optimization logging for 8GB Railway Hobby Plan
   const memStats = process.memoryUsage();
