@@ -1,17 +1,16 @@
 {
   "name": "arcanos-backend",
   "version": "1.0.0",
-  "main": "dist/index.js",
+  "main": "index.js",
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=8.0.0"
   },
   "scripts": {
     "build": "tsc",
-    "start": "node --max-old-space-size=7168 dist/index.js",
-    "start:railway": "node --max-old-space-size=7168 dist/index.js",
-    "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
-    "prestart": "npm run build"
+    "start": "node index.js",
+    "start:railway": "node index.js",
+    "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts"
   },
   "dependencies": {
     "axios": "^1.10.0",
