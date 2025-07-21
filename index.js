@@ -26,16 +26,16 @@ const queryRouter = require('./routes/query');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Diagnostics module logic
-let errorLogs = [];
+// Optional: ring buffer to store up to 50 error logs
+let errorLog = [];
 
-function logError(err) {
-  errorLogs.push({
-    message: err.message || 'Unknown error',
-    timestamp: new Date().toISOString(),
+const logError = (err) => {
+  errorLog.push({
+    message: err.message || 'Uncaught error',
+    time: new Date().toISOString(),
   });
-  if (errorLogs.length > 100) errorLogs.shift();
-}
+  if (errorLog.length > 50) errorLog.shift();
+};
 
 // Middleware
 app.use(cors());
@@ -52,32 +52,22 @@ app.get('/health', (req, res) => {
   });
 });
 
-// System diagnostics endpoint
 app.get('/status', (req, res) => {
-  const memory = process.memoryUsage();
-  const uptime = process.uptime();
+  const mem = process.memoryUsage();
 
-  const diagnostics = {
-    system: {
-      cpuLoad: os.loadavg(),
-      totalMemory: os.totalmem(),
-      freeMemory: os.freemem(),
-      uptime: `${Math.floor(uptime)}s`,
-      platform: os.platform(),
-      arch: os.arch(),
-    },
-    api: {
-      status: 'online',
-      endpoints: ['/query', '/health', '/status'],
+  res.json({
+    route: '/status',
+    timestamp: new Date().toISOString(),
+    uptime: `${Math.floor(process.uptime())}s`,
+    memory: {
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
     },
     errors: {
-      count: errorLogs.length,
-      recent: errorLogs.slice(-5),
+      recent: errorLog.length,
     },
-    timestamp: new Date().toISOString(),
-  };
-
-  res.status(200).json(diagnostics);
+  });
 });
 
 // Root endpoint
@@ -107,24 +97,10 @@ app.use('*', (req, res) => {
   });
 });
 
-// Error handler
+// Global error handler
 app.use((err, req, res, next) => {
-  console.error('❌ Unhandled error:', err);
   logError(err);
-  res.status(500).json({
-    error: 'Internal server error',
-    timestamp: new Date().toISOString()
-  });
+  res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`🚀 ARCANOS Router is running on port ${PORT}`);
-  console.log(`🎯 Target model: gpt-3.5-turbo-0125:personal:arcanos-v1-1106`);
-  console.log(`📡 Fine-tune endpoint: https://arcanos-production-426d.up.railway.app/query-finetune`);
-  console.log(`🚫 Fallback behavior: DISABLED`);
-  
-  if (process.env.RAILWAY_ENVIRONMENT) {
-    console.log(`🚂 Railway Environment: ${process.env.RAILWAY_ENVIRONMENT}`);
-  }
-});
+app.listen(PORT, () => console.log(`✅ Running on port ${PORT}`));
