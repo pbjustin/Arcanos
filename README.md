@@ -17,6 +17,10 @@ A comprehensive TypeScript + Express backend for the Arcanos AI project, featuri
 
 3. **Environment configuration**
    ```bash
+   # Quick setup (recommended)
+   ./setup-dev.sh
+   
+   # Manual setup
    cp .env.example .env
    # Edit .env with your actual values
    ```
@@ -25,6 +29,26 @@ A comprehensive TypeScript + Express backend for the Arcanos AI project, featuri
    ```bash
    npm run build
    ```
+
+## Database Setup
+
+The application uses PostgreSQL for persistent memory storage. You have several options:
+
+1. **Quick Development Setup (Docker)**
+   ```bash
+   ./setup-dev.sh  # Automatically sets up PostgreSQL with Docker
+   ```
+
+2. **Manual Docker Setup**
+   ```bash
+   docker-compose up -d postgres  # Start PostgreSQL database
+   ```
+
+3. **Use existing PostgreSQL**
+   Edit `.env` and set `DATABASE_URL` to your PostgreSQL connection string.
+
+4. **In-memory fallback**
+   Comment out `DATABASE_URL` in `.env` to use in-memory storage (data won't persist).
 
 ## Running the Application
 
