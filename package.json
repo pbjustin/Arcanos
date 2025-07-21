@@ -10,9 +10,13 @@
     "build": "tsc",
     "start": "node index.js",
     "start:railway": "node index.js",
-    "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts"
+    "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio"
   },
   "dependencies": {
+    "@prisma/client": "^6.12.0",
     "axios": "^1.10.0",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
@@ -21,7 +25,8 @@
     "iconv-lite": "^0.6.3",
     "node-cron": "^4.2.1",
     "openai": "^5.10.1",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "prisma": "^6.12.0"
   },
   "devDependencies": {
     "@types/axios": "^0.9.36",
