@@ -69,3 +69,5 @@ test-webhook.js
 storage/canon/*.txt
 !storage/canon/sample-storyline.txt
 storage/canon/test-logger.json
+
+/src/generated/prisma
