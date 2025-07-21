@@ -106,7 +106,7 @@ export class DatabaseService {
       return {
         id: row.id,
         memory_key: row.memory_key,
-        memory_value: JSON.parse(row.memory_value),
+        memory_value: row.memory_value,
         container_id: row.container_id,
         created_at: row.created_at,
         updated_at: row.updated_at
@@ -144,7 +144,7 @@ export class DatabaseService {
       return {
         id: row.id,
         memory_key: row.memory_key,
-        memory_value: JSON.parse(row.memory_value),
+        memory_value: row.memory_value,
         container_id: row.container_id,
         created_at: row.created_at,
         updated_at: row.updated_at
@@ -171,10 +171,10 @@ export class DatabaseService {
       const result = await client.query(query, [container_id]);
       client.release();
       
-      return result.rows.map(row => ({
+      return result.rows.map((row: any) => ({
         id: row.id,
         memory_key: row.memory_key,
-        memory_value: JSON.parse(row.memory_value),
+        memory_value: row.memory_value,
         container_id: row.container_id,
         created_at: row.created_at,
         updated_at: row.updated_at
