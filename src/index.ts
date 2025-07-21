@@ -239,6 +239,48 @@ app.post('/', async (req, res) => {
   }
 
   try {
+    // --- ARCANOS FINE-TUNE PREFIX DETECTION ---
+    // Check for query-finetune: prefix and route directly to fine-tuned model
+    if (typeof message === 'string' && message.trim().toLowerCase().startsWith('query-finetune:')) {
+      const query = message.trim().substring('query-finetune:'.length).trim();
+      
+      if (!query) {
+        return res.status(400).json({ 
+          error: 'Query cannot be empty after query-finetune: prefix',
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      console.log('🎯 Fine-tune routing activated via prefix:', query.substring(0, 100) + (query.length > 100 ? '...' : ''));
+      
+      try {
+        // Import OpenAI service for fine-tuned model access
+        const { OpenAIService } = await import('./services/openai');
+        const openaiService = new OpenAIService();
+        
+        console.log('🚀 Processing query with fine-tuned model (mirror mode):', openaiService.getModel());
+        
+        // Call the fine-tuned model directly (mirror mode - raw response)
+        const response = await openaiService.chat([
+          { role: 'user', content: query }
+        ]);
+
+        console.log('✅ Fine-tuned model response received (mirror mode)');
+        
+        // Mirror mode: Return raw model response without additional formatting
+        return res.send(response.message);
+
+      } catch (error: any) {
+        console.error('❌ Error in fine-tune routing:', error.message);
+        
+        return res.status(500).json({
+          error: 'Fine-tuned model invocation failed',
+          details: error.message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+    
     // --- ARCANOS INTENT-BASED ROUTING ---
     console.log('🎯 POST / endpoint called with message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
     
