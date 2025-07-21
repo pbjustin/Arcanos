@@ -62,8 +62,10 @@ Create a `.env` file with the following required variables:
 NODE_ENV=production
 PORT=8080
 OPENAI_API_KEY=your-openai-api-key-here
-SESSION_SECRET=your-session-secret-here
-OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id
+FINE_TUNED_MODEL=your-fine-tuned-model-id
+RUN_WORKERS=true
+SERVER_URL=https://your-app.railway.app
+GPT_TOKEN=your-gpt-diagnostic-token
 ```
 
 ## Build and Start
