@@ -14,7 +14,8 @@
   "environments": {
     "production": {
       "variables": {
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "PORT": "3000"
       }
     }
   }

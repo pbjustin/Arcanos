@@ -1,0 +1,113 @@
+### ARCANOS API - GitHub Copilot Compatible HTTP Requests
+### Use these examples with GitHub Copilot and REST Client extensions
+
+@baseUrl = https://arcanos-production-426d.up.railway.app
+@localUrl = http://localhost:8080
+
+### Health Check - Verify Railway deployment is active
+GET {{baseUrl}}/health
+Content-Type: application/json
+
+### Health Check - Local development
+GET {{localUrl}}/health
+Content-Type: application/json
+
+### Query Fine-Tuned Model - Main production endpoint
+POST {{baseUrl}}/query-finetune
+Content-Type: application/json
+
+{
+  "query": "What is ARCANOS?",
+  "metadata": {
+    "source": "github-copilot",
+    "timestamp": "{{$datetime iso8601}}"
+  }
+}
+
+### Query Fine-Tuned Model - Local testing
+POST {{localUrl}}/query-finetune
+Content-Type: application/json
+
+{
+  "query": "What is ARCANOS?",
+  "metadata": {
+    "source": "github-copilot-local",
+    "timestamp": "{{$datetime iso8601}}"
+  }
+}
+
+### Ask Endpoint - Fallback logic route
+POST {{baseUrl}}/ask
+Content-Type: application/json
+
+{
+  "query": "Test fallback logic",
+  "mode": "logic"
+}
+
+### Ask Endpoint - Local fallback testing
+POST {{localUrl}}/ask
+Content-Type: application/json
+
+{
+  "query": "Test fallback logic",
+  "mode": "logic"
+}
+
+### API Welcome - General information
+GET {{baseUrl}}/api
+Content-Type: application/json
+
+### API Welcome - Local
+GET {{localUrl}}/api
+Content-Type: application/json
+
+### Model Status - Check configured model
+GET {{baseUrl}}/api/model-status
+Content-Type: application/json
+
+### Model Status - Local
+GET {{localUrl}}/api/model-status
+Content-Type: application/json
+
+### ARCANOS Router - Intent-based routing
+POST {{baseUrl}}/api/arcanos
+Content-Type: application/json
+
+{
+  "message": "Test ARCANOS intent routing",
+  "domain": "general",
+  "useRAG": true,
+  "useHRC": true
+}
+
+### Memory Storage - Universal Memory Archetype
+POST {{baseUrl}}/memory
+Content-Type: application/json
+
+{
+  "key": "test_memory",
+  "value": "GitHub Copilot test memory",
+  "type": "context",
+  "tags": ["github", "copilot", "test"]
+}
+
+### Memory Retrieval
+GET {{baseUrl}}/memory
+Content-Type: application/json
+
+### Diagnostics - System health check
+POST {{baseUrl}}/api/diagnostics
+Content-Type: application/json
+
+{
+  "command": "Check available memory"
+}
+
+### Workers Status - Background worker monitoring
+GET {{baseUrl}}/api/workers/status
+Content-Type: application/json
+
+### Sleep Configuration - Core backend sleep window
+GET {{baseUrl}}/api/config/sleep
+Content-Type: application/json

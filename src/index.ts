@@ -149,7 +149,61 @@ app.get('/sync/diagnostics', async (req, res) => {
   });
 });
 
-// POST /ask endpoint - matches problem statement specification
+// POST /query-finetune endpoint - Railway + GitHub Copilot compliant fine-tuned model access
+app.post('/query-finetune', async (req, res) => {
+  console.log('🎯 /query-finetune endpoint called');
+  
+  const { query, metadata } = req.body;
+
+  if (!query) {
+    return res.status(400).json({ 
+      error: 'Query field is required',
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  if (typeof query !== 'string') {
+    return res.status(400).json({ 
+      error: 'Query must be a string',
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  try {
+    // Import OpenAI service for fine-tuned model access
+    const { OpenAIService } = await import('./services/openai');
+    const openaiService = new OpenAIService();
+    
+    console.log('🚀 Processing query with fine-tuned model:', openaiService.getModel());
+    
+    // Call the fine-tuned model
+    const response = await openaiService.chat([
+      { role: 'user', content: query }
+    ]);
+
+    console.log('✅ Fine-tuned model response received');
+    
+    return res.json({
+      response: response.message,
+      model: response.model,
+      success: true,
+      timestamp: new Date().toISOString(),
+      metadata: metadata || {}
+    });
+
+  } catch (error: any) {
+    console.error('❌ Error in /query-finetune:', error.message);
+    
+    return res.status(500).json({
+      error: 'Fine-tuned model invocation failed',
+      details: error.message,
+      success: false,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// POST /ask endpoint - matches problem statement specification (fallback route)
 app.post('/ask', (req, res) => {
   const { query, mode = 'logic' } = req.body;
 
