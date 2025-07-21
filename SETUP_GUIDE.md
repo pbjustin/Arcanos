@@ -28,12 +28,14 @@ Edit `.env` file with your configuration:
 ```bash
 # Required for AI features
 OPENAI_API_KEY=your-openai-api-key-here
-OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id
+FINE_TUNED_MODEL=your-fine-tuned-model-id
 
 # Optional settings
 PORT=8080
 NODE_ENV=production
 RUN_WORKERS=false
+SERVER_URL=http://localhost:8080
+GPT_TOKEN=your-gpt-diagnostic-token
 ```
 
 **Note**: The API will work partially without OpenAI credentials for testing basic functionality.

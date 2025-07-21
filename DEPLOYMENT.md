@@ -42,7 +42,7 @@ npm run build || echo "❌ Build failed – check your tsconfig.json and src/ind
 
 # Verify required .env keys are set
 echo "Verifying .env variables..."
-cat .env | grep -E 'OPENAI_API_KEY|SESSION_SECRET|NODE_ENV|PORT' || echo "⚠️ Missing one or more required environment variables."
+cat .env | grep -E 'OPENAI_API_KEY|FINE_TUNED_MODEL|NODE_ENV|PORT' || echo "⚠️ Missing one or more required environment variables."
 
 # Try running the app manually to catch runtime errors
 echo "Starting server manually to catch errors..."
@@ -62,8 +62,10 @@ Create a `.env` file with the following required variables:
 NODE_ENV=production
 PORT=8080
 OPENAI_API_KEY=your-openai-api-key-here
-SESSION_SECRET=your-session-secret-here
-OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id
+FINE_TUNED_MODEL=your-fine-tuned-model-id
+RUN_WORKERS=true
+SERVER_URL=https://your-app.railway.app
+GPT_TOKEN=your-gpt-diagnostic-token
 ```
 
 ## Build and Start
@@ -106,8 +108,9 @@ After deployment, verify these endpoints work:
    - `NODE_ENV=production`
    - `PORT=8080` (or let Railway auto-assign)
    - `OPENAI_API_KEY=your-openai-api-key`
-   - `SESSION_SECRET=your-session-secret`
-   - `OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id`
+   - `FINE_TUNED_MODEL=your-fine-tuned-model-id`
+   - `RUN_WORKERS=true`
+   - `SERVER_URL=https://your-app.railway.app`
 5. Deploy: `railway up`
 
 **Important**: Set `NODE_ENV=production` as an environment variable in Railway's dashboard, not in the start script.
@@ -196,7 +199,7 @@ The `arcanos-core` service builds from the local Dockerfile. For the `backstage-
 
 **API errors**
 - **Cause**: Invalid configuration or missing API keys
-- **Solution**: Check that `OPENAI_API_KEY` is valid and `OPENAI_FINE_TUNED_MODEL` exists
+- **Solution**: Check that `OPENAI_API_KEY` is valid and `FINE_TUNED_MODEL` exists
 
 ### Dependency Installation Issues
 

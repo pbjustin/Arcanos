@@ -33,12 +33,20 @@ ARCANOS is a universal operating intelligence designed for creative, operational
 
 Available APIs:
 
-Endpoint	Method	Description
-/api/ask	POST	Main ARCANOS GPT interface with RAG+HRC
-/api/memory	GET/POST	Memory logs & context injection
-/api/config	GET/POST	View/update module settings (admin)
-/api/hrc/validate	POST	Hallucination-Resistant Core audit
-/api/rag/query	POST	RAG-enhanced document response
+Available APIs:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | POST | Main chat with intent routing |
+| `/api/ask` | POST | Fine-tuned model chat (no fallback) |
+| `/api/ask-with-fallback` | POST | Chat with GPT fallback permission |
+| `/api/ask-v1-safe` | POST | Safe interface with RAG/HRC features |
+| `/api/arcanos` | POST | Intent-based routing (WRITE/AUDIT) |
+| `/api/memory` | GET/POST | Memory storage and retrieval |
+| `/api/ask-hrc` | POST | Message validation using HRCCore |
+| `/api/diagnostics` | POST | Natural language system diagnostics |
+| `/api/canon/files` | GET/POST | Canon storyline file management |
+| `/health` | GET | Health check endpoint |
 
 
 ⸻
