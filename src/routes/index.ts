@@ -3,6 +3,7 @@ import { OpenAIService, ChatMessage } from '../services/openai';
 import askRoute from './ask';
 import canonRoute from './canon';
 import containersRoute from './containers';
+import queryRouter from './query-router';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { processArcanosRequest } from '../services/arcanos-router';
@@ -471,5 +472,8 @@ router.use('/canon', canonRoute);
 
 // Container management routes - ARCANOS Container Manager
 router.use('/containers', containersRoute);
+
+// Query routing - Intelligent routing between fine-tune and regular endpoints
+router.use('/', queryRouter);
 
 export default router;
