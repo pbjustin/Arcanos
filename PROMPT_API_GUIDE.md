@@ -20,8 +20,10 @@ This comprehensive guide explains how to use prompts to interact with all availa
 1. Ensure your `.env` file is configured with:
    ```bash
    OPENAI_API_KEY=your-openai-api-key
-   OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id
+   FINE_TUNED_MODEL=your-fine-tuned-model-id
    PORT=8080
+   NODE_ENV=production
+   RUN_WORKERS=false
    ```
 
 2. Start the server:
@@ -41,12 +43,17 @@ curl -X POST http://localhost:8080/api/echo \
 
 | Endpoint | Purpose | Prompt Type | Fallback |
 |----------|---------|-------------|----------|
-| `/api/ask` | Standard AI chat with fine-tuned model | Conversational | ❌ No fallback |
+| `/` | Main chat with intent routing | Natural language | Auto-routed |
+| `/ask` | Simple query processing | Query/response | No |
+| `/api/ask` | Fine-tuned model chat | Conversational | ❌ No fallback |
 | `/api/ask-with-fallback` | AI chat with GPT-4 fallback | Conversational | ✅ GPT-4 fallback |
 | `/api/ask-hrc` | Message validation using HRCCore | Text validation | N/A |
 | `/api/ask-v1-safe` | Safe interface with RAG/HRC | Structured queries | ❌ No fallback |
 | `/api/arcanos` | Intent-based routing (WRITE/AUDIT) | Intent-driven | Depends on route |
 | `/api/memory` | Store/retrieve memories | Context storage | N/A |
+| `/api/diagnostics` | System diagnostics | Natural language commands | N/A |
+| `/api/canon/files` | Canon file management | File operations | N/A |
+| `/api/containers/status` | Container monitoring | Status queries | N/A |
 
 ## Basic Prompting
 
@@ -298,7 +305,7 @@ curl -X GET http://localhost:8080/api/memory
 ```bash
 # Required
 OPENAI_API_KEY=sk-proj-your-api-key-here
-OPENAI_FINE_TUNED_MODEL=ft:gpt-3.5-turbo:your-org:model-name:id
+FINE_TUNED_MODEL=ft:gpt-3.5-turbo:your-org:model-name:id
 
 # Optional
 PORT=8080
@@ -308,7 +315,7 @@ RUN_WORKERS=true
 
 ### Model Configuration
 
-1. **Fine-tuned Model**: Set `OPENAI_FINE_TUNED_MODEL` for primary model
+1. **Fine-tuned Model**: Set `FINE_TUNED_MODEL` for primary model
 2. **Fallback Model**: GPT-4 Turbo used automatically when fallback enabled
 3. **Model Status Check**:
    ```bash
@@ -432,7 +439,7 @@ async function robustAPICall(message) {
 
 ### Issue: "Fine-tuned model is missing"
 
-**Cause**: `OPENAI_FINE_TUNED_MODEL` not set or invalid
+**Cause**: `FINE_TUNED_MODEL` not set or invalid
 **Solution**: 
 1. Check your `.env` file
 2. Verify the model ID is correct
