@@ -1,0 +1,31 @@
+### GitHub Copilot Reference Commands for ARCANOS
+### Quick test commands for Railway deployment validation
+
+# Set the base URL for Railway deployment
+@API_URL = https://arcanos-production-426d.up.railway.app
+@MODEL_ROUTE = /query-finetune
+@LOGIC_ROUTE = /ask
+
+### 1. Fine-tuned Model Query - Main endpoint from problem statement
+POST {{API_URL}}{{MODEL_ROUTE}}
+Content-Type: application/json
+
+{
+  "query": "What is ARCANOS?"
+}
+
+### 2. Fallback Logic Route
+POST {{API_URL}}{{LOGIC_ROUTE}}
+Content-Type: application/json
+
+{
+  "query": "Test fallback logic query"
+}
+
+### 3. Health Check for Railway
+GET {{API_URL}}/health
+
+### 4. cURL equivalent test (reference)
+# curl -X POST "https://arcanos-production-426d.up.railway.app/query-finetune" \
+#   -H "Content-Type: application/json" \
+#   -d '{"query": "What is ARCANOS?"}'
