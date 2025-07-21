@@ -51,7 +51,7 @@ cron.schedule('*/15 * * * *', async () => {
       useRAG: false,
       useHRC: false,
     });
-    console.log('[PROBE] Model responded:', test.data.response);
+    console.log('[PROBE] Model responded:', (test.data as any)?.response || 'No response');
     workerStatusService.updateWorkerStatus('worker-1', 'running', 'memory_diagnostics');
   } catch (err: any) {
     console.error('[PROBE] Model check failed:', err.message);
