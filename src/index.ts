@@ -10,9 +10,9 @@ import axios from 'axios';
 import * as os from 'os';
 import * as fs from 'fs';
 import { exec } from 'child_process';
-import bodyParser from 'body-parser';
 import cors from 'cors';
 import router from './routes/index';
+import handleQuery from './routes/handleQuery';
 // Worker initialization will be handled by worker-init.js
 // import { startCronWorker } from './services/cron-worker';
 
@@ -38,7 +38,7 @@ const PORT = Number(process.env.PORT) || 8080;
 
 // Middleware - matches problem statement specification
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
 // Also keep existing middleware for compatibility
 app.use(express.urlencoded({ extended: true }));
@@ -162,6 +162,9 @@ app.post('/ask', (req, res) => {
 
   res.json(response);
 });
+
+// Copilot router endpoint
+app.post('/copilot/query', handleQuery);
 
 // Root route - matches problem statement specification
 app.get('/', (req, res) => {
