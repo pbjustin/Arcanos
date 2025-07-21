@@ -52,10 +52,44 @@ The CRON worker system runs when `RUN_WORKERS=true` and manages the following sc
 - 📊 **Error handling**: Comprehensive logging and graceful degradation
 
 ### API Endpoints
-- `POST /` - Main chat endpoint with fine-tuned model
-- `POST /api/ask` - Chat without fallback permission
+
+#### Core Endpoints
 - `GET /health` - Health check endpoint
-- `GET /api/model-status` - Model configuration status
+- `GET /` - API status message  
+- `POST /` - Main chat endpoint with intent-based routing
+- `POST /ask` - Simple query processing endpoint
+- `POST /webhook` - GitHub webhook integration
+
+#### AI Chat Endpoints
+- `GET /api` - Welcome message with model status
+- `POST /api/echo` - Echo endpoint for testing
+- `POST /api/ask` - Fine-tuned model chat (no fallback)
+- `POST /api/ask-with-fallback` - Chat with GPT fallback permission
+- `POST /api/ask-v1-safe` - Safe interface with RAG/HRC features
+- `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT detection)
+- `GET /api/model-status` - Get current model configuration
+- `GET /api/model/info` - Detailed model metadata
+
+#### Validation & Processing
+- `POST /api/ask-hrc` - Message validation using HRCCore
+
+#### Memory & Storage
+- `POST /api/memory` - Store a memory entry
+- `GET /api/memory` - Retrieve all memory entries
+
+#### Canon Management
+- `GET /api/canon/files` - List all canon storyline files
+- `GET /api/canon/files/:filename` - Read specific canon file
+- `POST /api/canon/files/:filename` - Write/update canon file
+
+#### Container Management
+- `GET /api/containers/status` - List Docker container status
+- `POST /api/containers/:name/:action` - Control containers (start/stop/restart)
+
+#### Diagnostics & Monitoring
+- `POST /api/diagnostics` - Natural language diagnostic commands
+- `GET /api/workers/status` - Background worker status
+- `GET /sync/diagnostics` - GPT-accessible system metrics
 
 ### Removed Features
 - ❌ **Heartbeat endpoints**: Removed per user request (no longer in use)

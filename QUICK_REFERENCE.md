@@ -16,18 +16,44 @@ dist/              # Compiled output (generated)
 ## API Endpoints
 
 ### Available Endpoints
+
+#### Core Endpoints
 - `GET /health` - System health check
+- `GET /` - API status message
+- `POST /` - Main chat with intent routing
+- `POST /ask` - Simple query processing
+- `POST /webhook` - GitHub webhook integration
+
+#### AI Chat Endpoints
 - `GET /api` - Welcome message with model status
 - `POST /api/echo` - Echo test endpoint
-- `POST /api/ask` - Main AI query endpoint (requires permission for fallback)
+- `POST /api/ask` - Fine-tuned model chat (no fallback)
 - `POST /api/ask-with-fallback` - AI query with fallback permission granted
-- `GET /api/model-status` - Current model configuration
-- `GET /api/model/info` - Detailed model information
-- `POST /api/ask-hrc` - Message validation using HRCCore
-- `POST /api/memory` - Store memory entry
-- `GET /api/memory` - Retrieve all memory entries
 - `POST /api/ask-v1-safe` - Safe interface with RAG/HRC features
 - `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT)
+- `GET /api/model-status` - Current model configuration
+- `GET /api/model/info` - Detailed model information
+
+#### Validation & Processing
+- `POST /api/ask-hrc` - Message validation using HRCCore
+
+#### Memory & Storage
+- `POST /api/memory` - Store memory entry
+- `GET /api/memory` - Retrieve all memory entries
+
+#### Canon Management
+- `GET /api/canon/files` - List canon files
+- `GET /api/canon/files/:filename` - Read canon file
+- `POST /api/canon/files/:filename` - Write canon file
+
+#### Container Management
+- `GET /api/containers/status` - Container status
+- `POST /api/containers/:name/:action` - Container control
+
+#### Diagnostics & Monitoring
+- `POST /api/diagnostics` - Natural language diagnostics
+- `GET /api/workers/status` - Worker status
+- `GET /sync/diagnostics` - System metrics
 - `POST /api/diagnostics` - System diagnostics
 - `GET /api/workers/status` - Worker status information
 - `GET /api/config/sleep` - Sleep configuration
@@ -37,16 +63,21 @@ dist/              # Compiled output (generated)
 ```bash
 # Required
 OPENAI_API_KEY=your-openai-api-key-here
-OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id-here
+FINE_TUNED_MODEL=your-fine-tuned-model-id-here
 
 # Server Configuration
 PORT=8080
 NODE_ENV=production
+
+# Optional
+RUN_WORKERS=true
+SERVER_URL=https://your-app.railway.app
+GPT_TOKEN=your-gpt-diagnostic-token
 ```
 
 ## Model Hierarchy
 
-1. **Primary**: Fine-tuned model (configured via `OPENAI_FINE_TUNED_MODEL` environment variable)
+1. **Primary**: Fine-tuned model (configured via `FINE_TUNED_MODEL` environment variable)
 2. **Fallback**: GPT-4 Turbo (with permission)
 3. **Error**: No fallback without permission
 
