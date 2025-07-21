@@ -25,6 +25,10 @@ export interface LoadMemoryRequest {
 export class DatabaseService {
   private pool: Pool;
   private isInitialized = false;
+  private connectionRetryCount = 0;
+  private maxRetries = 5;
+  private retryDelay = 2000; // Start with 2 seconds
+  private isConnected = false;
 
   constructor() {
     const databaseUrl = process.env.DATABASE_URL;
@@ -40,22 +44,61 @@ export class DatabaseService {
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      connectionTimeoutMillis: 5000, // Increased for recovery scenarios
     });
 
-    // Test connection on startup
-    this.testConnection();
+    // Test connection on startup with retry logic
+    this.connectWithRetry();
+  }
+
+  private async connectWithRetry(): Promise<void> {
+    while (this.connectionRetryCount < this.maxRetries && !this.isConnected) {
+      try {
+        await this.testConnection();
+        this.isConnected = true;
+        this.connectionRetryCount = 0; // Reset on successful connection
+        console.log('✅ Database connection established successfully');
+        return;
+      } catch (error: any) {
+        this.connectionRetryCount++;
+        const delay = this.retryDelay * Math.pow(2, this.connectionRetryCount - 1); // Exponential backoff
+        
+        console.log(`⚠️ Database connection attempt ${this.connectionRetryCount}/${this.maxRetries} failed: ${error.message}`);
+        
+        if (this.connectionRetryCount >= this.maxRetries) {
+          console.error('❌ Max database connection retries exceeded. Running in degraded mode.');
+          break;
+        }
+        
+        console.log(`🔄 Retrying database connection in ${delay}ms...`);
+        await this.sleep(delay);
+      }
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private async testConnection(): Promise<void> {
+    if (!this.pool) {
+      throw new Error('Database pool not initialized');
+    }
+
     try {
       const client = await this.pool.connect();
       await client.query('SELECT NOW()');
       client.release();
-      console.log('✅ Database connection established');
-    } catch (error) {
-      console.error('❌ Database connection failed:', error);
-      throw new Error('Failed to connect to database');
+      this.isConnected = true;
+    } catch (error: any) {
+      this.isConnected = false;
+      // Check if this is a recovery-related error
+      if (error.message.includes('recovery') || 
+          error.message.includes('starting up') || 
+          error.message.includes('not ready')) {
+        console.log('🔄 Database is in recovery mode, waiting...');
+      }
+      throw new Error(`Database connection failed: ${error.message}`);
     }
   }
 
@@ -111,9 +154,17 @@ export class DatabaseService {
         created_at: row.created_at,
         updated_at: row.updated_at
       };
-    } catch (error) {
-      console.error('❌ Failed to save memory:', error);
-      throw new Error('Failed to save memory');
+    } catch (error: any) {
+      console.error('❌ Failed to save memory:', error.message);
+      
+      // Check if this is a connection issue during recovery
+      if (this.isRecoveryError(error)) {
+        console.log('🔄 Database appears to be in recovery, attempting reconnection...');
+        await this.attemptReconnection();
+        throw new Error('Database temporarily unavailable during recovery');
+      }
+      
+      throw new Error(`Failed to save memory: ${error.message}`);
     }
   }
 
@@ -149,9 +200,16 @@ export class DatabaseService {
         created_at: row.created_at,
         updated_at: row.updated_at
       };
-    } catch (error) {
-      console.error('❌ Failed to load memory:', error);
-      throw new Error('Failed to load memory');
+    } catch (error: any) {
+      console.error('❌ Failed to load memory:', error.message);
+      
+      if (this.isRecoveryError(error)) {
+        console.log('🔄 Database appears to be in recovery, attempting reconnection...');
+        await this.attemptReconnection();
+        throw new Error('Database temporarily unavailable during recovery');
+      }
+      
+      throw new Error(`Failed to load memory: ${error.message}`);
     }
   }
 
@@ -179,9 +237,16 @@ export class DatabaseService {
         created_at: row.created_at,
         updated_at: row.updated_at
       }));
-    } catch (error) {
-      console.error('❌ Failed to load all memory:', error);
-      throw new Error('Failed to load all memory');
+    } catch (error: any) {
+      console.error('❌ Failed to load all memory:', error.message);
+      
+      if (this.isRecoveryError(error)) {
+        console.log('🔄 Database appears to be in recovery, attempting reconnection...');
+        await this.attemptReconnection();
+        throw new Error('Database temporarily unavailable during recovery');
+      }
+      
+      throw new Error(`Failed to load all memory: ${error.message}`);
     }
   }
 
@@ -198,13 +263,45 @@ export class DatabaseService {
       client.release();
       
       return { cleared: result.rowCount || 0 };
-    } catch (error) {
-      console.error('❌ Failed to clear memory:', error);
-      throw new Error('Failed to clear memory');
+    } catch (error: any) {
+      console.error('❌ Failed to clear memory:', error.message);
+      
+      if (this.isRecoveryError(error)) {
+        console.log('🔄 Database appears to be in recovery, attempting reconnection...');
+        await this.attemptReconnection();
+        throw new Error('Database temporarily unavailable during recovery');
+      }
+      
+      throw new Error(`Failed to clear memory: ${error.message}`);
     }
   }
 
-  async healthCheck(): Promise<{ status: string; database: boolean; timestamp: string }> {
+  private isRecoveryError(error: any): boolean {
+    const errorMessage = error.message.toLowerCase();
+    return errorMessage.includes('recovery') ||
+           errorMessage.includes('starting up') ||
+           errorMessage.includes('not ready') ||
+           errorMessage.includes('connection terminated') ||
+           errorMessage.includes('server closed the connection') ||
+           error.code === 'ECONNRESET' ||
+           error.code === 'ECONNREFUSED';
+  }
+
+  private async attemptReconnection(): Promise<void> {
+    console.log('🔄 Attempting database reconnection...');
+    this.isConnected = false;
+    this.connectionRetryCount = 0;
+    
+    // Don't wait for full retry cycle, just attempt a quick reconnection
+    try {
+      await this.testConnection();
+      console.log('✅ Database reconnection successful');
+    } catch (error) {
+      console.log('⚠️ Quick reconnection failed, will retry on next operation');
+    }
+  }
+
+  async healthCheck(): Promise<{ status: string; database: boolean; timestamp: string; recovery?: boolean }> {
     const timestamp = new Date().toISOString();
     
     if (!this.pool) {
@@ -220,17 +317,23 @@ export class DatabaseService {
       await client.query('SELECT 1');
       client.release();
       
+      this.isConnected = true;
       return {
         status: 'healthy',
         database: true,
         timestamp
       };
-    } catch (error) {
-      console.error('❌ Database health check failed:', error);
+    } catch (error: any) {
+      console.error('❌ Database health check failed:', error.message);
+      
+      const isRecovering = this.isRecoveryError(error);
+      this.isConnected = false;
+      
       return {
-        status: 'unhealthy',
+        status: isRecovering ? 'recovering' : 'unhealthy',
         database: false,
-        timestamp
+        timestamp,
+        recovery: isRecovering
       };
     }
   }
