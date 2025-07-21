@@ -10,6 +10,8 @@ import axios from 'axios';
 import * as os from 'os';
 import * as fs from 'fs';
 import { exec } from 'child_process';
+import bodyParser from 'body-parser';
+import cors from 'cors';
 import router from './routes/index';
 // Worker initialization will be handled by worker-init.js
 // import { startCronWorker } from './services/cron-worker';
@@ -34,8 +36,11 @@ if (!fineTunedModel) {
 const app = express();
 const PORT = Number(process.env.PORT) || 8080;
 
-// Middleware
-app.use(express.json());
+// Middleware - matches problem statement specification
+app.use(cors());
+app.use(bodyParser.json());
+
+// Also keep existing middleware for compatibility
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static files for frontend testing
@@ -140,6 +145,27 @@ app.get('/sync/diagnostics', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   });
+});
+
+// POST /ask endpoint - matches problem statement specification
+app.post('/ask', (req, res) => {
+  const { query, mode = 'logic' } = req.body;
+
+  if (!query) {
+    return res.status(400).json({ error: 'Missing query field' });
+  }
+
+  // Simulated logic processing (replace with real engine)
+  const response = {
+    response: `Query received: "${query}" in mode: "${mode}"`,
+  };
+
+  res.json(response);
+});
+
+// Root route - matches problem statement specification
+app.get('/', (req, res) => {
+  res.send('ARCANOS API is live.');
 });
 
 // Mount core logic or routes here
