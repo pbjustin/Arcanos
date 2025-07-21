@@ -20,10 +20,22 @@
 
 const express = require('express');
 const cors = require('cors');
+const os = require('os');
 const queryRouter = require('./routes/query');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Diagnostics module logic
+let errorLogs = [];
+
+function logError(err) {
+  errorLogs.push({
+    message: err.message || 'Unknown error',
+    timestamp: new Date().toISOString(),
+  });
+  if (errorLogs.length > 100) errorLogs.shift();
+}
 
 // Middleware
 app.use(cors());
@@ -40,6 +52,34 @@ app.get('/health', (req, res) => {
   });
 });
 
+// System diagnostics endpoint
+app.get('/status', (req, res) => {
+  const memory = process.memoryUsage();
+  const uptime = process.uptime();
+
+  const diagnostics = {
+    system: {
+      cpuLoad: os.loadavg(),
+      totalMemory: os.totalmem(),
+      freeMemory: os.freemem(),
+      uptime: `${Math.floor(uptime)}s`,
+      platform: os.platform(),
+      arch: os.arch(),
+    },
+    api: {
+      status: 'online',
+      endpoints: ['/query', '/health', '/status'],
+    },
+    errors: {
+      count: errorLogs.length,
+      recent: errorLogs.slice(-5),
+    },
+    timestamp: new Date().toISOString(),
+  };
+
+  res.status(200).json(diagnostics);
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
@@ -47,7 +87,8 @@ app.get('/', (req, res) => {
     description: 'Fine-tune only query gateway (no fallback)',
     endpoints: {
       'POST /query': 'Submit queries to fine-tuned model',
-      'GET /health': 'Health check for Railway deployment'
+      'GET /health': 'Health check for Railway deployment',
+      'GET /status': 'System diagnostics and error monitoring'
     },
     model: 'gpt-3.5-turbo-0125:personal:arcanos-v1-1106',
     fallback: false
@@ -62,13 +103,14 @@ app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
     message: 'This router only supports POST /query for fine-tuned model queries',
-    available_endpoints: ['POST /query', 'GET /health', 'GET /']
+    available_endpoints: ['POST /query', 'GET /health', 'GET /status', 'GET /']
   });
 });
 
 // Error handler
 app.use((err, req, res, next) => {
   console.error('❌ Unhandled error:', err);
+  logError(err);
   res.status(500).json({
     error: 'Internal server error',
     timestamp: new Date().toISOString()
