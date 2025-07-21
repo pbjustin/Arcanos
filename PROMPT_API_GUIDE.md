@@ -305,7 +305,7 @@ curl -X GET http://localhost:8080/api/memory
 ```bash
 # Required
 OPENAI_API_KEY=sk-proj-your-api-key-here
-OPENAI_FINE_TUNED_MODEL=ft:gpt-3.5-turbo:your-org:model-name:id
+FINE_TUNED_MODEL=ft:gpt-3.5-turbo:your-org:model-name:id
 
 # Optional
 PORT=8080
@@ -315,7 +315,7 @@ RUN_WORKERS=true
 
 ### Model Configuration
 
-1. **Fine-tuned Model**: Set `OPENAI_FINE_TUNED_MODEL` for primary model
+1. **Fine-tuned Model**: Set `FINE_TUNED_MODEL` for primary model
 2. **Fallback Model**: GPT-4 Turbo used automatically when fallback enabled
 3. **Model Status Check**:
    ```bash
@@ -439,7 +439,7 @@ async function robustAPICall(message) {
 
 ### Issue: "Fine-tuned model is missing"
 
-**Cause**: `OPENAI_FINE_TUNED_MODEL` not set or invalid
+**Cause**: `FINE_TUNED_MODEL` not set or invalid
 **Solution**: 
 1. Check your `.env` file
 2. Verify the model ID is correct
