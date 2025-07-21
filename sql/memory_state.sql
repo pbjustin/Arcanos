@@ -4,6 +4,12 @@
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Simple memory table as specified in problem statement
+CREATE TABLE IF NOT EXISTS memory (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL
+);
+
 -- Main memory state table
 CREATE TABLE IF NOT EXISTS memory_state (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
