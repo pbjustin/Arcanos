@@ -1,12 +1,34 @@
 version: "3.9"
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: arcanos-postgres
+    environment:
+      POSTGRES_DB: arcanos
+      POSTGRES_USER: arcanos
+      POSTGRES_PASSWORD: arcanos
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - arcanos-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arcanos -d arcanos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   arcanos-core:
     build: .
     image: arcanos-core
     container_name: arcanos-core
     ports:
       - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -88,3 +110,6 @@ services:
 networks:
   arcanos-net:
     driver: bridge
+
+volumes:
+  postgres_data:
