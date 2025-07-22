@@ -2,10 +2,13 @@
 import { Pool } from 'pg';
 
 const DATABASE_URL = process.env.DATABASE_URL;
+
+let pool: Pool | any;
+
 if (!DATABASE_URL) {
   console.warn('⚠️ DATABASE_URL not set — memory service will use fallback');
   // Create a module that provides fallback functionality instead of exiting
-  const fallbackPool = {
+  pool = {
     query: async () => {
       throw new Error('Database not configured - set DATABASE_URL environment variable');
     },
@@ -14,9 +17,8 @@ if (!DATABASE_URL) {
       throw new Error('Database not configured - set DATABASE_URL environment variable');
     }
   };
-  export default fallbackPool;
 } else {
-  const pool = new Pool({ connectionString: DATABASE_URL });
+  pool = new Pool({ connectionString: DATABASE_URL });
 
   async function initDatabase() {
     try {
@@ -34,6 +36,6 @@ if (!DATABASE_URL) {
   }
 
   initDatabase();
-
-  export default pool;
 }
+
+export default pool;
