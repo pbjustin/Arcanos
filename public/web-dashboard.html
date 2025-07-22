@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arcanos Web Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { padding-top: 20px; }
+    #output { background:#000; color:#0f0; padding:15px; border-radius:5px; height:300px; overflow:auto; font-family:monospace; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1 class="mb-4">Arcanos Web Dashboard</h1>
+  <div class="mb-3">
+    <label for="prompt" class="form-label">Prompt</label>
+    <textarea id="prompt" class="form-control" rows="4"></textarea>
+  </div>
+  <div class="row mb-3">
+    <div class="col-md-4">
+      <label for="mode" class="form-label">Logic Mode</label>
+      <select id="mode" class="form-select">
+        <option value="build">build</option>
+        <option value="audit">audit</option>
+        <option value="sim">sim</option>
+        <option value="write">write</option>
+        <option value="logic" selected>logic</option>
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label d-block">Endpoint</label>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="endpoint" id="ask" value="ask" checked>
+        <label class="form-check-label" for="ask">/ask</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="endpoint" id="query" value="query-finetune">
+        <label class="form-check-label" for="query">/query-finetune</label>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <label for="file" class="form-label">Upload File (.jsonl, .pdf, .md)</label>
+      <input class="form-control" type="file" id="file" accept=".jsonl,.pdf,.md">
+    </div>
+  </div>
+  <button id="submit" class="btn btn-primary mb-3">Submit</button>
+  <pre id="output"></pre>
+</div>
+<script>
+const BASE_URL = 'https://arcanos-production-426d.up.railway.app';
+
+let uploadedFile = null;
+document.getElementById('file').addEventListener('change', e => {
+  uploadedFile = e.target.files[0] || null;
+});
+
+async function sendPrompt() {
+  const text = document.getElementById('prompt').value.trim();
+  const mode = document.getElementById('mode').value;
+  const endpoint = document.querySelector('input[name="endpoint"]:checked').value;
+  const output = document.getElementById('output');
+  output.textContent = 'Sending...';
+
+  try {
+    const payload = endpoint === 'ask' ? { query: text, mode } : { query: text };
+    if (uploadedFile) {
+      payload.filename = uploadedFile.name;
+    }
+
+    const res = await fetch(`${BASE_URL}/${endpoint}`, {
+      method: 'POST',
+      mode: 'cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    let data;
+    const textRes = await res.text();
+    try {
+      data = JSON.parse(textRes);
+    } catch (_) {
+      data = textRes;
+    }
+
+    if (uploadedFile) {
+      output.textContent = `File: ${uploadedFile.name}\n\n`;
+    } else {
+      output.textContent = '';
+    }
+    output.textContent += typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  } catch (err) {
+    output.textContent = 'Error: ' + err.message;
+  }
+}
+
+document.getElementById('submit').addEventListener('click', sendPrompt);
+</script>
+</body>
+</html>
