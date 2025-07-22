@@ -51,6 +51,34 @@ app.use(express.static('public'));
 // Basic Healthcheck
 app.get('/health', (_, res) => res.send('✅ OK'));
 
+// Fine-tune routing status endpoint
+app.get('/finetune-status', async (req, res) => {
+  const userId = req.headers['x-user-id'] as string || 'default';
+  const sessionId = req.headers['x-session-id'] as string || 'default';
+  
+  try {
+    const { fineTuneRoutingService } = await import('./services/finetune-routing');
+    
+    const isActive = await fineTuneRoutingService.isFineTuneRoutingActive(userId, sessionId);
+    const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
+    const state = await fineTuneRoutingService.getRoutingState(userId, sessionId);
+    
+    res.json({
+      active: isActive,
+      message: statusMessage,
+      state: state,
+      userId,
+      sessionId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get fine-tune routing status',
+      details: error.message
+    });
+  }
+});
+
 // GitHub webhook endpoint
 app.post('/webhook', async (req, res) => {
   try {
@@ -233,13 +261,93 @@ app.use('/memory', memoryRouter);
 // POST endpoint for natural language inputs with improved error handling
 app.post('/', async (req, res) => {
   const { message } = req.body;
+  const userId = req.headers['x-user-id'] as string || 'default';
+  const sessionId = req.headers['x-session-id'] as string || 'default';
   
   if (!message) {
     return res.status(400).json({ error: 'Message is required' });
   }
 
+  // Track graceful fallback scenarios for user alerts
+  let fallbackAlert = '';
+
   try {
-    // --- ARCANOS FINE-TUNE PREFIX DETECTION ---
+    // --- ARCANOS FINE-TUNE ROUTING OVERRIDE ---
+    // Import the fine-tune routing service
+    const { fineTuneRoutingService } = await import('./services/finetune-routing');
+    
+    // Check if this is a routing command
+    const commandType = fineTuneRoutingService.isFineTuneCommand(message);
+    
+    if (commandType === 'activate') {
+      console.log('🎯 Fine-tune routing ACTIVATION command detected');
+      
+      const state = await fineTuneRoutingService.activateFineTuneRouting(userId, sessionId, message);
+      const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
+      
+      // Check for memory persistence warnings
+      let responseMessage = `✅ Fine-tuned model routing activated! ${statusMessage}`;
+      if (state.memoryPersistenceWarning) {
+        responseMessage += `\n\n⚠️ Warning: There was an issue persisting your routing preference to memory storage. Your fine-tune routing will work for this session but may not persist if the server restarts.`;
+      }
+      
+      return res.send(responseMessage);
+      
+    } else if (commandType === 'deactivate') {
+      console.log('⭕ Fine-tune routing DEACTIVATION command detected');
+      
+      const wasActive = await fineTuneRoutingService.deactivateFineTuneRouting(userId, sessionId);
+      const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
+      
+      if (wasActive) {
+        return res.send(`✅ Fine-tuned model routing deactivated. ${statusMessage}`);
+      } else {
+        return res.send(`ℹ️ Fine-tuned model routing was already inactive. ${statusMessage}`);
+      }
+    }
+    
+    // Check if fine-tune routing is active
+    const isFineTuneActive = await fineTuneRoutingService.isFineTuneRoutingActive(userId, sessionId);
+    
+    if (isFineTuneActive) {
+      console.log('🎯 Fine-tune routing OVERRIDE active - routing directly to fine-tuned model');
+      
+      try {
+        // Import OpenAI service for fine-tuned model access
+        const { OpenAIService } = await import('./services/openai');
+        const openaiService = new OpenAIService();
+        
+        console.log('🚀 Processing message with fine-tuned model (override mode):', openaiService.getModel());
+        
+        // Call the fine-tuned model directly
+        const response = await openaiService.chat([
+          { role: 'user', content: message }
+        ]);
+
+        // Check if OpenAI service returned an error (graceful fallback scenario)
+        if (response.error) {
+          console.warn('⚠️ Fine-tuned model failed, falling back to normal routing:', response.error);
+          fallbackAlert = `⚠️ Alert: Fine-tuned model temporarily unavailable (${response.error}). Using normal routing as fallback.`;
+          
+          // Continue to normal routing (graceful fallback)
+          console.log('🔄 Graceful fallback: Using normal intent-based routing due to fine-tuned model failure');
+        } else {
+          console.log('✅ Fine-tuned model response received (override mode)');
+          
+          // Return the response with a subtle indicator that override is active
+          return res.send(response.message);
+        }
+
+      } catch (error: any) {
+        console.error('❌ Error in fine-tune override routing, falling back to normal routing:', error.message);
+        fallbackAlert = `⚠️ Alert: Fine-tuned model service error. Using normal routing as fallback.`;
+        
+        // Continue to normal routing (graceful fallback)
+        console.log('🔄 Graceful fallback: Using normal intent-based routing due to exception');
+      }
+    }
+    
+    // --- ARCANOS FINE-TUNE PREFIX DETECTION (Legacy Support) ---
     // Check for query-finetune: prefix and route directly to fine-tuned model
     if (typeof message === 'string' && message.trim().toLowerCase().startsWith('query-finetune:')) {
       const query = message.trim().substring('query-finetune:'.length).trim();
@@ -258,30 +366,32 @@ app.post('/', async (req, res) => {
         const { OpenAIService } = await import('./services/openai');
         const openaiService = new OpenAIService();
         
-        console.log('🚀 Processing query with fine-tuned model (mirror mode):', openaiService.getModel());
+        console.log('🚀 Processing query with fine-tuned model (prefix mode):', openaiService.getModel());
         
-        // Call the fine-tuned model directly (mirror mode - raw response)
+        // Call the fine-tuned model directly (prefix mode - raw response)
         const response = await openaiService.chat([
           { role: 'user', content: query }
         ]);
 
-        console.log('✅ Fine-tuned model response received (mirror mode)');
+        // Check if OpenAI service returned an error (graceful fallback scenario)
+        if (response.error) {
+          console.warn('⚠️ Fine-tuned model failed in prefix mode:', response.error);
+          return res.send(`⚠️ Fine-tuned model temporarily unavailable: ${response.error}\n\nPlease try again later or use the main endpoint without the query-finetune: prefix for normal routing.`);
+        }
+
+        console.log('✅ Fine-tuned model response received (prefix mode)');
         
-        // Mirror mode: Return raw model response without additional formatting
+        // Prefix mode: Return raw model response without additional formatting
         return res.send(response.message);
 
       } catch (error: any) {
-        console.error('❌ Error in fine-tune routing:', error.message);
+        console.error('❌ Error in fine-tune prefix routing:', error.message);
         
-        return res.status(500).json({
-          error: 'Fine-tuned model invocation failed',
-          details: error.message,
-          timestamp: new Date().toISOString()
-        });
+        return res.send(`⚠️ Fine-tuned model service error: ${error.message}\n\nPlease try again later or use the main endpoint without the query-finetune: prefix for normal routing.`);
       }
     }
     
-    // --- ARCANOS INTENT-BASED ROUTING ---
+    // --- ARCANOS INTENT-BASED ROUTING (Default) ---
     console.log('🎯 POST / endpoint called with message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
     
     // Import the router service
@@ -307,13 +417,21 @@ app.post('/', async (req, res) => {
     
     // Return response based on success
     if (result.success) {
-      // Success case - return just the message content for simple API compatibility
-      res.send(result.response);
+      // Success case - return message content with fallback alert if applicable
+      const responseText = fallbackAlert ? `${fallbackAlert}\n\n${result.response}` : result.response;
+      res.send(responseText);
     } else {
-      res.json({ 
+      const errorResponse = { 
         error: result.error,
         response: result.response 
-      });
+      };
+      
+      // Add fallback alert to error response if applicable
+      if (fallbackAlert) {
+        errorResponse.response = fallbackAlert + '\n\n' + (errorResponse.response || '');
+      }
+      
+      res.json(errorResponse);
     }
     
   } catch (error: any) {
