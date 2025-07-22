@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const pool = new Pool(); // assumes DATABASE_URL env is set
 
 module.exports = async function bootstrapMemory() {
-  const sqlPath = path.join(__dirname, '../state/memory_state.sql');
+  const sqlPath = path.resolve(__dirname, '../state/memory_state.sql');
 
   if (!fs.existsSync(sqlPath)) {
     return { error: 'memory_state.sql not found.' };
