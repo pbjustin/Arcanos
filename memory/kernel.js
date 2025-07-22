@@ -3,6 +3,7 @@ const modules = {
   longterm: require('./modules/longterm'),
   identity: require('./modules/identity'),
   goals: require('./modules/goals'),
+  emotions: require('./modules/emotions'),
 };
 
 const actions = {
@@ -10,11 +11,16 @@ const actions = {
   updateGoal: require('./actions/updateGoal'),
   hydrateState: require('./actions/hydrateState'),
   bootstrap: require('./actions/bootstrapMemory'),
+  sync: require('./actions/syncToPostgres'),
 };
 
-function dispatch(command, payload) {
-  if (command.startsWith('read-')) return modules[payload.type].read();
-  if (command.startsWith('write-')) return modules[payload.type].write(payload.data);
+async function dispatch(command, payload = {}) {
+  if (command.startsWith('read-')) {
+    return modules[payload.type].read();
+  }
+  if (command.startsWith('write-')) {
+    return modules[payload.type].write(payload.data);
+  }
   if (actions[command]) return actions[command](payload);
   return { error: 'Unknown memory operation' };
 }

@@ -11,6 +11,9 @@
     "builder": "NIXPACKS",
     "buildCommand": "npm ci && npm run build"
   },
+  "postDeploy": {
+    "cmd": "curl -sS -X POST $SERVER_URL/memory/bootstrap"
+  },
   "environments": {
     "production": {
       "variables": {

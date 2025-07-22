@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../services/database-connection');
 const memory = require('../memory/kernel');
+const fs = require('fs');
+const path = require('path');
+const fallbackLoader = require('../memory/actions/fallbackLoader');
 
 // Middleware to parse JSON
 router.use(express.json());
@@ -82,9 +85,17 @@ router.get('/load', async (req, res) => {
     
   } catch (error) {
     console.error('❌ Error loading memory:', error);
-    res.status(500).json({ 
+    const fallback = await fallbackLoader();
+    if (!fallback.error && fallback.state[key] !== undefined) {
+      return res.status(200).json({
+        success: true,
+        message: 'Memory loaded from fallback',
+        data: { key, value: fallback.state[key] }
+      });
+    }
+    res.status(500).json({
       error: 'Failed to load memory',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -104,9 +115,18 @@ router.get('/all', async (req, res) => {
     
   } catch (error) {
     console.error('❌ Error loading all memory:', error);
-    res.status(500).json({ 
+    const fallback = await fallbackLoader();
+    if (!fallback.error) {
+      return res.status(200).json({
+        success: true,
+        message: 'Memory loaded from fallback',
+        count: Object.keys(fallback.state).length,
+        data: Object.entries(fallback.state).map(([key, value]) => ({ key, value }))
+      });
+    }
+    res.status(500).json({
       error: 'Failed to load all memory',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -129,6 +149,22 @@ router.delete('/clear', async (req, res) => {
       error: 'Failed to clear memory',
       details: error.message 
     });
+  }
+});
+
+// GET /memory/status - Memory file status
+router.get('/status', async (_req, res) => {
+  try {
+    const file = path.join(__dirname, '../memory/state/cache.json');
+    const stats = fs.statSync(file);
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    res.json({
+      keys: Object.keys(data),
+      volumeBytes: stats.size,
+      lastModified: stats.mtime.toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to read memory status', details: error.message });
   }
 });
 
@@ -163,6 +199,16 @@ router.post('/bootstrap', async (req, res) => {
     return res.status(500).json({ error: result.error });
   }
   res.json(result);
+});
+
+// POST /memory/sync - Persist memory state to Postgres
+router.post('/sync', async (_req, res) => {
+  try {
+    const result = await memory.dispatch('sync');
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 module.exports = router;
