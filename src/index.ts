@@ -15,6 +15,10 @@ import cors from 'cors';
 import router from './routes/index';
 import memoryRouter from './routes/memory';
 import { databaseService } from './services/database';
+
+// Import the new database connection module to ensure memory table exists
+import './services/database-connection';
+
 // Worker initialization will be handled by worker-init.js
 // import { startCronWorker } from './services/cron-worker';
 
