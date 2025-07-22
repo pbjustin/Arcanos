@@ -181,7 +181,7 @@ curl -X POST http://localhost:8080/ \
 ## 🚀 Production Deployment
 
 The feature is production-ready and requires:
-1. **Environment Variables**: Ensure `FINE_TUNED_MODEL` or `OPENAI_FINE_TUNED_MODEL` is set
+1. **Environment Variables**: Ensure `FINE_TUNED_MODEL` is set
 2. **OpenAI API Key**: Configure `OPENAI_API_KEY` for model access
 3. **Memory Storage**: Database connection for persistent state (optional, falls back to in-memory)
 

@@ -33,8 +33,7 @@ cd Arcanos && npm install && npm run build && npm start
 NODE_ENV=production
 PORT=8080
 OPENAI_API_KEY=your-key-here
-OPENAI_FINE_TUNED_MODEL=your-model-id
-SESSION_SECRET=your-secret-here
+FINE_TUNED_MODEL=your-model-id
 ```
 
 **TEST COMMAND:**
