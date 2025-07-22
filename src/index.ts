@@ -29,6 +29,11 @@ import './worker-init';
 // Load environment variables
 dotenv.config();
 
+// Boot additional background workers if enabled
+if (process.env.RUN_WORKERS === 'true') {
+  require('../workers/index');
+}
+
 // 1. VERIFY: Environment variable loading
 console.log("Model (FINE_TUNED_MODEL):", process.env.FINE_TUNED_MODEL);
 console.log("Model (OPENAI_FINE_TUNED_MODEL):", process.env.OPENAI_FINE_TUNED_MODEL);
