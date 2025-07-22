@@ -13,6 +13,7 @@ RUN npm ci --only=production && npm cache clean --force
 
 # Copy source code
 COPY src/ ./src/
+COPY sql/ ./sql/
 COPY tsconfig.json ./
 
 # Install dev dependencies for build
@@ -42,6 +43,7 @@ RUN npm ci --only=production && npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/sql ./sql
 
 # Change ownership to non-root user
 RUN chown -R arcanos:nodejs /app
