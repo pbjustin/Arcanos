@@ -89,10 +89,7 @@ PORT=8080
 
 # OpenAI Configuration (Required)
 OPENAI_API_KEY=your-openai-api-key-here
-OPENAI_FINE_TUNED_MODEL=your-fine-tuned-model-id-here
-
-# Session Management
-SESSION_SECRET=your-secure-session-secret-here
+FINE_TUNED_MODEL=your-fine-tuned-model-id-here
 
 # Optional: Custom GPT Token
 GPT_TOKEN=your-gpt-access-token-here
