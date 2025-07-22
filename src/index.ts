@@ -51,6 +51,34 @@ app.use(express.static('public'));
 // Basic Healthcheck
 app.get('/health', (_, res) => res.send('✅ OK'));
 
+// Fine-tune routing status endpoint
+app.get('/finetune-status', async (req, res) => {
+  const userId = req.headers['x-user-id'] as string || 'default';
+  const sessionId = req.headers['x-session-id'] as string || 'default';
+  
+  try {
+    const { fineTuneRoutingService } = await import('./services/finetune-routing');
+    
+    const isActive = await fineTuneRoutingService.isFineTuneRoutingActive(userId, sessionId);
+    const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
+    const state = await fineTuneRoutingService.getRoutingState(userId, sessionId);
+    
+    res.json({
+      active: isActive,
+      message: statusMessage,
+      state: state,
+      userId,
+      sessionId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get fine-tune routing status',
+      details: error.message
+    });
+  }
+});
+
 // GitHub webhook endpoint
 app.post('/webhook', async (req, res) => {
   try {
@@ -233,13 +261,77 @@ app.use('/memory', memoryRouter);
 // POST endpoint for natural language inputs with improved error handling
 app.post('/', async (req, res) => {
   const { message } = req.body;
+  const userId = req.headers['x-user-id'] as string || 'default';
+  const sessionId = req.headers['x-session-id'] as string || 'default';
   
   if (!message) {
     return res.status(400).json({ error: 'Message is required' });
   }
 
   try {
-    // --- ARCANOS FINE-TUNE PREFIX DETECTION ---
+    // --- ARCANOS FINE-TUNE ROUTING OVERRIDE ---
+    // Import the fine-tune routing service
+    const { fineTuneRoutingService } = await import('./services/finetune-routing');
+    
+    // Check if this is a routing command
+    const commandType = fineTuneRoutingService.isFineTuneCommand(message);
+    
+    if (commandType === 'activate') {
+      console.log('🎯 Fine-tune routing ACTIVATION command detected');
+      
+      const state = await fineTuneRoutingService.activateFineTuneRouting(userId, sessionId, message);
+      const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
+      
+      return res.send(`✅ Fine-tuned model routing activated! ${statusMessage}`);
+      
+    } else if (commandType === 'deactivate') {
+      console.log('⭕ Fine-tune routing DEACTIVATION command detected');
+      
+      const wasActive = await fineTuneRoutingService.deactivateFineTuneRouting(userId, sessionId);
+      const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
+      
+      if (wasActive) {
+        return res.send(`✅ Fine-tuned model routing deactivated. ${statusMessage}`);
+      } else {
+        return res.send(`ℹ️ Fine-tuned model routing was already inactive. ${statusMessage}`);
+      }
+    }
+    
+    // Check if fine-tune routing is active
+    const isFineTuneActive = await fineTuneRoutingService.isFineTuneRoutingActive(userId, sessionId);
+    
+    if (isFineTuneActive) {
+      console.log('🎯 Fine-tune routing OVERRIDE active - routing directly to fine-tuned model');
+      
+      try {
+        // Import OpenAI service for fine-tuned model access
+        const { OpenAIService } = await import('./services/openai');
+        const openaiService = new OpenAIService();
+        
+        console.log('🚀 Processing message with fine-tuned model (override mode):', openaiService.getModel());
+        
+        // Call the fine-tuned model directly
+        const response = await openaiService.chat([
+          { role: 'user', content: message }
+        ]);
+
+        console.log('✅ Fine-tuned model response received (override mode)');
+        
+        // Return the response with a subtle indicator that override is active
+        return res.send(response.message);
+
+      } catch (error: any) {
+        console.error('❌ Error in fine-tune override routing:', error.message);
+        
+        return res.status(500).json({
+          error: 'Fine-tuned model invocation failed (override mode)',
+          details: error.message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+    
+    // --- ARCANOS FINE-TUNE PREFIX DETECTION (Legacy Support) ---
     // Check for query-finetune: prefix and route directly to fine-tuned model
     if (typeof message === 'string' && message.trim().toLowerCase().startsWith('query-finetune:')) {
       const query = message.trim().substring('query-finetune:'.length).trim();
@@ -258,20 +350,20 @@ app.post('/', async (req, res) => {
         const { OpenAIService } = await import('./services/openai');
         const openaiService = new OpenAIService();
         
-        console.log('🚀 Processing query with fine-tuned model (mirror mode):', openaiService.getModel());
+        console.log('🚀 Processing query with fine-tuned model (prefix mode):', openaiService.getModel());
         
-        // Call the fine-tuned model directly (mirror mode - raw response)
+        // Call the fine-tuned model directly (prefix mode - raw response)
         const response = await openaiService.chat([
           { role: 'user', content: query }
         ]);
 
-        console.log('✅ Fine-tuned model response received (mirror mode)');
+        console.log('✅ Fine-tuned model response received (prefix mode)');
         
-        // Mirror mode: Return raw model response without additional formatting
+        // Prefix mode: Return raw model response without additional formatting
         return res.send(response.message);
 
       } catch (error: any) {
-        console.error('❌ Error in fine-tune routing:', error.message);
+        console.error('❌ Error in fine-tune prefix routing:', error.message);
         
         return res.status(500).json({
           error: 'Fine-tuned model invocation failed',
@@ -281,7 +373,7 @@ app.post('/', async (req, res) => {
       }
     }
     
-    // --- ARCANOS INTENT-BASED ROUTING ---
+    // --- ARCANOS INTENT-BASED ROUTING (Default) ---
     console.log('🎯 POST / endpoint called with message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
     
     // Import the router service

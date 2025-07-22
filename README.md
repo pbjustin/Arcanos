@@ -216,6 +216,7 @@ The backend implements intelligent intent detection that routes requests to spec
 - **Primary Model**: Custom fine-tuned GPT-3.5 Turbo model
 - **Fallback System**: Permission-based GPT-4 fallback for reliability
 - **Error Transparency**: Comprehensive error logging and user feedback
+- **🔁 Routing Override**: Shell command to force all prompts through fine-tuned model
 
 ### Memory & Context Management
 - **Persistent Storage**: Memory entries with tags and metadata
@@ -246,6 +247,7 @@ The backend implements intelligent intent detection that routes requests to spec
 ## 📚 Documentation
 
 - **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start instructions
+- **[🔁 Fine-Tune Routing Override](./FINETUNE_ROUTING_OVERRIDE.md)** - Shell command to force all prompts through fine-tuned model
 - **[📖 Prompt API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive guide to using prompts with all API endpoints
 - **[💡 Practical Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use examples and code snippets
 - **[🔧 Test Script](./test-api-endpoints.sh)** - Automated endpoint testing
