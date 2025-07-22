@@ -24,6 +24,8 @@ services:
     build: .
     image: arcanos-core
     container_name: arcanos-core
+    environment:
+      DATABASE_URL: postgresql://arcanos:arcanos@postgres:5432/arcanos
     ports:
       - "8080:8080"
     depends_on:
