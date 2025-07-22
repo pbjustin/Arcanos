@@ -1,13 +1,15 @@
 const shortterm = require('./shortterm');
+const { logEvent } = require('../logEvent');
 
 module.exports = {
-  read: () => {
-    const data = shortterm.read();
+  async read() {
+    const data = await shortterm.read();
     return data.goals || [];
   },
-  write: (goals) => {
-    const data = shortterm.read();
+  async write(goals) {
+    const data = await shortterm.read();
     data.goals = goals;
-    shortterm.write(data);
+    await shortterm.write(data);
+    await logEvent('goals');
   },
 };

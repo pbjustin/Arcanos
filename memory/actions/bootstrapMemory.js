@@ -15,6 +15,9 @@ module.exports = async function bootstrapMemory() {
     await pool.query(sql);
     return { success: true, message: 'Memory schema initialized.' };
   } catch (err) {
+    if (err.code === '42P07' || /already exists/i.test(err.message)) {
+      return { success: true, message: 'Memory schema already initialized.' };
+    }
     return { error: err.message };
   }
 };

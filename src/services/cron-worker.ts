@@ -59,13 +59,16 @@ cron.schedule('*/15 * * * *', async () => {
   }
 });
 
-// 💾 Optional memory persistence (every 30 minutes)
-cron.schedule('*/30 * * * *', () => {
+// 💾 Persist memory state to Postgres (every hour)
+cron.schedule('0 * * * *', async () => {
   workerStatusService.updateWorkerStatus('worker-2', 'running', 'memory_persistence_sync');
-  console.log('[MEMORY] Syncing persistent state to disk (placeholder)');
-  setTimeout(() => {
-    workerStatusService.updateWorkerStatus('worker-2', 'idle', 'awaiting_job');
-  }, 2000); // Simulate 2 second sync task
+  try {
+    await axios.post(`${SERVER_URL}/memory/sync`);
+    console.log('[MEMORY] Synced memory state to Postgres');
+  } catch (err: any) {
+    console.error('[MEMORY] Sync failed:', err.message);
+  }
+  workerStatusService.updateWorkerStatus('worker-2', 'idle', 'awaiting_job');
 });
 
 export function startCronWorker() {
@@ -74,7 +77,7 @@ export function startCronWorker() {
   console.log('[CRON] - Health check: every 5 minutes');
   console.log('[CRON] - Maintenance: every hour');
   console.log('[CRON] - Model probe: every 15 minutes');
-  console.log('[CRON] - Memory sync: every 30 minutes');
+  console.log('[CRON] - Memory sync: every hour');
   console.log(`[CRON] Monitoring server at: ${SERVER_URL}`);
   
   // Initialize worker status tracking
