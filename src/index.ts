@@ -268,6 +268,9 @@ app.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Message is required' });
   }
 
+  // Track graceful fallback scenarios for user alerts
+  let fallbackAlert = '';
+
   try {
     // --- ARCANOS FINE-TUNE ROUTING OVERRIDE ---
     // Import the fine-tune routing service
@@ -282,7 +285,13 @@ app.post('/', async (req, res) => {
       const state = await fineTuneRoutingService.activateFineTuneRouting(userId, sessionId, message);
       const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
       
-      return res.send(`✅ Fine-tuned model routing activated! ${statusMessage}`);
+      // Check for memory persistence warnings
+      let responseMessage = `✅ Fine-tuned model routing activated! ${statusMessage}`;
+      if (state.memoryPersistenceWarning) {
+        responseMessage += `\n\n⚠️ Warning: There was an issue persisting your routing preference to memory storage. Your fine-tune routing will work for this session but may not persist if the server restarts.`;
+      }
+      
+      return res.send(responseMessage);
       
     } else if (commandType === 'deactivate') {
       console.log('⭕ Fine-tune routing DEACTIVATION command detected');
@@ -315,19 +324,26 @@ app.post('/', async (req, res) => {
           { role: 'user', content: message }
         ]);
 
-        console.log('✅ Fine-tuned model response received (override mode)');
-        
-        // Return the response with a subtle indicator that override is active
-        return res.send(response.message);
+        // Check if OpenAI service returned an error (graceful fallback scenario)
+        if (response.error) {
+          console.warn('⚠️ Fine-tuned model failed, falling back to normal routing:', response.error);
+          fallbackAlert = `⚠️ Alert: Fine-tuned model temporarily unavailable (${response.error}). Using normal routing as fallback.`;
+          
+          // Continue to normal routing (graceful fallback)
+          console.log('🔄 Graceful fallback: Using normal intent-based routing due to fine-tuned model failure');
+        } else {
+          console.log('✅ Fine-tuned model response received (override mode)');
+          
+          // Return the response with a subtle indicator that override is active
+          return res.send(response.message);
+        }
 
       } catch (error: any) {
-        console.error('❌ Error in fine-tune override routing:', error.message);
+        console.error('❌ Error in fine-tune override routing, falling back to normal routing:', error.message);
+        fallbackAlert = `⚠️ Alert: Fine-tuned model service error. Using normal routing as fallback.`;
         
-        return res.status(500).json({
-          error: 'Fine-tuned model invocation failed (override mode)',
-          details: error.message,
-          timestamp: new Date().toISOString()
-        });
+        // Continue to normal routing (graceful fallback)
+        console.log('🔄 Graceful fallback: Using normal intent-based routing due to exception');
       }
     }
     
@@ -357,6 +373,12 @@ app.post('/', async (req, res) => {
           { role: 'user', content: query }
         ]);
 
+        // Check if OpenAI service returned an error (graceful fallback scenario)
+        if (response.error) {
+          console.warn('⚠️ Fine-tuned model failed in prefix mode:', response.error);
+          return res.send(`⚠️ Fine-tuned model temporarily unavailable: ${response.error}\n\nPlease try again later or use the main endpoint without the query-finetune: prefix for normal routing.`);
+        }
+
         console.log('✅ Fine-tuned model response received (prefix mode)');
         
         // Prefix mode: Return raw model response without additional formatting
@@ -365,11 +387,7 @@ app.post('/', async (req, res) => {
       } catch (error: any) {
         console.error('❌ Error in fine-tune prefix routing:', error.message);
         
-        return res.status(500).json({
-          error: 'Fine-tuned model invocation failed',
-          details: error.message,
-          timestamp: new Date().toISOString()
-        });
+        return res.send(`⚠️ Fine-tuned model service error: ${error.message}\n\nPlease try again later or use the main endpoint without the query-finetune: prefix for normal routing.`);
       }
     }
     
@@ -399,13 +417,21 @@ app.post('/', async (req, res) => {
     
     // Return response based on success
     if (result.success) {
-      // Success case - return just the message content for simple API compatibility
-      res.send(result.response);
+      // Success case - return message content with fallback alert if applicable
+      const responseText = fallbackAlert ? `${fallbackAlert}\n\n${result.response}` : result.response;
+      res.send(responseText);
     } else {
-      res.json({ 
+      const errorResponse = { 
         error: result.error,
         response: result.response 
-      });
+      };
+      
+      // Add fallback alert to error response if applicable
+      if (fallbackAlert) {
+        errorResponse.response = fallbackAlert + '\n\n' + (errorResponse.response || '');
+      }
+      
+      res.json(errorResponse);
     }
     
   } catch (error: any) {
