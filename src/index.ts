@@ -4,7 +4,6 @@
 
 // --- ENTRY POINT IMPLEMENTATION ---
 import express from 'express';
-import * as http from 'http';
 import * as dotenv from 'dotenv';
 import axios from 'axios';
 import * as os from 'os';
@@ -15,6 +14,7 @@ import cors from 'cors';
 import router from './routes/index';
 import memoryRouter from './routes/memory';
 import { databaseService } from './services/database';
+import { serverService } from './services/server';
 
 // Import the new database connection module to ensure memory table exists
 import './services/database-connection';
@@ -454,25 +454,11 @@ app.post('/', async (req, res) => {
 });
 
 // Keep process alive with HTTP server
-const server = http.createServer(app);
+serverService.setupSignalHandlers();
 
 // ========= GLOBAL PROCESS MONITORS =========
 process.on("exit", (code) => {
   console.log(`[EXIT] Process is exiting with code ${code}`);
-});
-process.on("SIGTERM", () => {
-  console.log("[SIGNAL] SIGTERM received. Gracefully shutting down...");
-  server.close(() => {
-    console.log('✅ Server closed successfully');
-    process.exit(0);
-  });
-});
-process.on("SIGINT", () => {
-  console.log("[SIGNAL] SIGINT received (e.g. Ctrl+C)");
-  server.close(() => {
-    console.log('✅ Server closed successfully');
-    process.exit(0);
-  });
 });
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] Uncaught Exception:", err);
@@ -482,7 +468,7 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 // ========= ADD INSIDE YOUR SERVER STARTUP =========
-server.listen(PORT, async () => {
+serverService.start(app, PORT).then(async () => {
   console.log(`[SERVER] Running on port ${PORT}`);
   console.log(`[INFO] ENV:`, {
     NODE_ENV: process.env.NODE_ENV,
