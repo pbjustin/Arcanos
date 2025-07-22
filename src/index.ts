@@ -8,6 +8,7 @@ import * as dotenv from 'dotenv';
 import axios from 'axios';
 import * as os from 'os';
 import * as fs from 'fs';
+import path from 'path';
 import { exec } from 'child_process';
 import bodyParser from 'body-parser';
 import cors from 'cors';
@@ -50,7 +51,8 @@ app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static files for frontend testing
-app.use(express.static('public'));
+const publicDir = path.join(__dirname, '../public');
+app.use(express.static(publicDir));
 
 // Basic Healthcheck
 app.get('/health', (_, res) => res.send('✅ OK'));
@@ -251,9 +253,9 @@ app.post('/ask', (req, res) => {
   res.json(response);
 });
 
-// Root route - matches problem statement specification
-app.get('/', (req, res) => {
-  res.send('ARCANOS API is live.');
+// Root route - serve dashboard index
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(publicDir, 'index.html'));
 });
 
 // Mount core logic or routes here
