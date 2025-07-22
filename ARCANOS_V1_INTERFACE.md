@@ -95,7 +95,8 @@ node test-v1-comprehensive.js
 
 Required environment variables:
 - `OPENAI_API_KEY`: OpenAI API key
-- `FINE_TUNED_MODEL` or `OPENAI_FINE_TUNED_MODEL`: Fine-tuned model identifier
+- `FINE_TUNED_MODEL`: Fine-tuned model identifier
+*Deprecated `OPENAI_FINE_TUNED_MODEL` is still accepted for backward compatibility*
 
 Optional:
 - `RUN_WORKERS`: Set to "true" to enable background workers
