@@ -227,6 +227,12 @@ The backend implements intelligent intent detection that routes requests to spec
 - **System Diagnostics**: Natural language diagnostic commands
 - **Real-time Monitoring**: Background worker status and health metrics
 
+### Fine-Tuning Pipeline
+- **Modular Training**: Upload and process .jsonl training data
+- **Incremental Refinement**: Continue fine-tuning existing models
+- **Progress Monitoring**: Real-time job tracking and status logging
+- **Human-Controlled**: Manual triggers for staged model improvement
+
 ## Environment Variables
 
 - `NODE_ENV` - Environment (development/production)
@@ -243,6 +249,7 @@ The backend implements intelligent intent detection that routes requests to spec
 - **[📖 Prompt API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive guide to using prompts with all API endpoints
 - **[💡 Practical Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use examples and code snippets
 - **[🔧 Test Script](./test-api-endpoints.sh)** - Automated endpoint testing
+- **[🤖 Fine-Tuning Pipeline](./FINETUNE_PIPELINE.md)** - Modular system for continuing fine-tuning of OpenAI models
 
 ## Quick Reference
 
@@ -274,6 +281,12 @@ npm start
 - `GET /api/workers/status` - Background process monitoring
 - `GET /api/containers/status` - Docker container management
 - `GET /api/canon/files` - Storyline file management
+
+### Fine-Tuning Pipeline
+- `./upload_jsonl.sh [file.jsonl]` - Upload training data to OpenAI
+- `./continue_finetune.sh [file-id] [model]` - Start fine-tuning jobs
+- `./track_job.sh [--follow]` - Monitor training progress
+- `./test-finetune-pipeline.sh` - Test pipeline components
 
 ## Project Structure
 

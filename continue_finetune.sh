@@ -57,9 +57,11 @@ get_latest_file_id() {
 
 # Function to determine base model
 get_base_model() {
-    # Priority: 1. Command line arg, 2. FINE_TUNED_MODEL env var, 3. Default
+    # Priority: 1. Command line arg, 2. MODEL_ID env var, 3. FINE_TUNED_MODEL env var, 4. Default
     if [ $# -ge 2 ] && [ -n "$2" ]; then
         echo "$2"
+    elif [ -n "${MODEL_ID:-}" ]; then
+        echo "$MODEL_ID"
     elif [ -n "${FINE_TUNED_MODEL:-}" ]; then
         echo "$FINE_TUNED_MODEL"
     else
