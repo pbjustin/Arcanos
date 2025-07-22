@@ -102,21 +102,37 @@ export class DatabaseService {
     }
   }
 
+  private loadInitSQL(): string | null {
+    try {
+      const schemaPath = path.join(__dirname, '../../sql/memory_state.sql');
+      const schema = fs.readFileSync(schemaPath, 'utf8');
+      console.log('✅ Loaded memory_state.sql');
+      return schema;
+    } catch (err) {
+      console.warn('⚠️ Skipping SQL init: memory_state.sql not found.');
+      return null;
+    }
+  }
+
   async initialize(): Promise<void> {
     if (this.isInitialized || !this.pool) {
       return;
     }
 
     try {
-      const schemaPath = path.join(__dirname, '../../sql/memory_state.sql');
-      const schema = fs.readFileSync(schemaPath, 'utf-8');
-      
-      const client = await this.pool.connect();
-      await client.query(schema);
-      client.release();
-      
+      const schema = this.loadInitSQL();
+
+      if (schema) {
+        const client = await this.pool.connect();
+        await client.query(schema);
+        client.release();
+
+        console.log('✅ Database schema initialized');
+      } else {
+        console.warn('⚠️ Skipping database schema initialization.');
+      }
+
       this.isInitialized = true;
-      console.log('✅ Database schema initialized');
     } catch (error) {
       console.error('❌ Failed to initialize database schema:', error);
       throw new Error('Database initialization failed');
