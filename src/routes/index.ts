@@ -214,7 +214,7 @@ router.get('/memory', async (req, res) => {
 
 // Bootstrap memory schema from SQL file if available
 router.post('/memory/bootstrap', async (_req, res) => {
-  const sqlPath = path.join(process.cwd(), 'sql', 'memory_state.sql');
+  const sqlPath = path.resolve(__dirname, '..', '..', 'sql', 'memory_state.sql');
   if (!fs.existsSync(sqlPath)) {
     return res.status(404).json({ error: 'memory_state.sql not found' });
   }
