@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../services/database-connection');
+const memory = require('../memory/kernel');
 
 // Middleware to parse JSON
 router.use(express.json());
@@ -153,6 +154,15 @@ router.get('/health', async (req, res) => {
       error: error.message
     });
   }
+});
+
+// POST /memory/bootstrap - Initialize memory schema if missing
+router.post('/bootstrap', async (req, res) => {
+  const result = await memory.dispatch('bootstrap');
+  if (result.error) {
+    return res.status(500).json({ error: result.error });
+  }
+  res.json(result);
 });
 
 module.exports = router;

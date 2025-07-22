@@ -104,7 +104,7 @@ export class DatabaseService {
 
   private loadInitSQL(): string | null {
     try {
-      const schemaPath = path.join(__dirname, '../../sql/memory_state.sql');
+      const schemaPath = path.join(process.cwd(), 'sql', 'memory_state.sql');
       const schema = fs.readFileSync(schemaPath, 'utf8');
       console.log('✅ Loaded memory_state.sql');
       return schema;

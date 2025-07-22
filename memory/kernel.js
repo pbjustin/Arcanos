@@ -9,6 +9,7 @@ const actions = {
   clearCache: require('./actions/clearCache'),
   updateGoal: require('./actions/updateGoal'),
   hydrateState: require('./actions/hydrateState'),
+  bootstrap: require('./actions/bootstrapMemory'),
 };
 
 function dispatch(command, payload) {
