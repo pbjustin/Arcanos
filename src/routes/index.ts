@@ -7,6 +7,7 @@ import askRoute from './ask';
 import canonRoute from './canon';
 import containersRoute from './containers';
 import queryRouter from './query-router';
+import pluginRoute from './plugins';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { processArcanosRequest } from '../services/arcanos-router';
@@ -483,6 +484,7 @@ router.get('/v1/sleep_schedule/active_sleep_schedule', (req, res) => {
 });
 
 router.use('/api', askRoute);
+router.use('/arcanos/plugins', pluginRoute);
 
 // Canon API routes - Clean Canon Access API for Backstage Booker
 router.use('/canon', canonRoute);
