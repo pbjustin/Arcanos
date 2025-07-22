@@ -209,6 +209,20 @@ router.get('/memory', async (req, res) => {
   res.json({ success: true, memories: list });
 });
 
+// Bootstrap memory schema from SQL file if available
+router.post('/memory/bootstrap', async (_req, res) => {
+  const sqlPath = path.join(__dirname, '../../sql/memory_state.sql');
+  if (!fs.existsSync(sqlPath)) {
+    return res.status(404).json({ error: 'memory_state.sql not found' });
+  }
+  try {
+    await databaseService.initialize();
+    res.json({ success: true, message: 'Memory schema initialized.' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ARCANOS V1 Safe Interface endpoint
 router.post('/ask-v1-safe', async (req, res) => {
   try {
