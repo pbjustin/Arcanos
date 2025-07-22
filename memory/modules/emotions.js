@@ -1,7 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { logEvent } = require('../logEvent');
-const FILE = path.join(__dirname, '../state/context.db');
+const FILE = path.join(__dirname, '../state/emotions.json');
 
 module.exports = {
   async read() {
@@ -14,6 +14,6 @@ module.exports = {
   },
   async write(data) {
     await fs.writeFile(FILE, JSON.stringify(data, null, 2));
-    await logEvent('longterm');
-  },
+    await logEvent('emotions');
+  }
 };
