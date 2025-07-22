@@ -6,3 +6,8 @@ CREATE TABLE IF NOT EXISTS goals (
   objective TEXT,
   completed BOOLEAN DEFAULT FALSE
 );
+
+CREATE TABLE IF NOT EXISTS identity (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
