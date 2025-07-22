@@ -9,6 +9,7 @@ export interface FineTuneRoutingState {
   userId: string;
   sessionId: string;
   originalCommand: string;
+  memoryPersistenceWarning?: boolean;
 }
 
 export class FineTuneRoutingService {
@@ -92,6 +93,9 @@ export class FineTuneRoutingService {
       console.log('✅ Fine-tune routing activated and persisted for user:', userId);
     } catch (error) {
       console.warn('⚠️ Failed to persist fine-tune routing state:', error);
+      // Mark state as having persistence warning for user notification
+      state.memoryPersistenceWarning = true;
+      this.routingStates.set(`${userId}:${sessionId}`, state);
     }
 
     return state;
@@ -207,7 +211,14 @@ export class FineTuneRoutingService {
       const duration = state ? 
         Math.round((Date.now() - state.activatedAt.getTime()) / 1000 / 60) : 0;
       
-      return `🎯 Fine-tuned model routing is ACTIVE (${duration} minutes). All prompts are being routed through your fine-tuned model. Say "stop using fine-tuned model" to deactivate.`;
+      let statusMessage = `🎯 Fine-tuned model routing is ACTIVE (${duration} minutes). All prompts are being routed through your fine-tuned model. Say "stop using fine-tuned model" to deactivate.`;
+      
+      // Add warning if there were memory persistence issues
+      if (state?.memoryPersistenceWarning) {
+        statusMessage += ` ⚠️ Warning: Session state may not persist across server restarts due to memory storage issues.`;
+      }
+      
+      return statusMessage;
     } else {
       return `⭕ Fine-tuned model routing is INACTIVE. Normal intent-based routing is active. Say "Force all prompts through my fine-tuned model until I say otherwise" to activate override.`;
     }
