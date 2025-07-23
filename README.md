@@ -240,7 +240,7 @@ The backend implements intelligent intent detection that routes requests to spec
 - `PORT` - Server port (default: 8080)
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `FINE_TUNED_MODEL` - Your fine-tuned model name
-- `RUN_WORKERS` - Enable background workers (true/false)
+- `RUN_WORKERS` - Set to `true` to enable background workers and audit tasks
 - `SERVER_URL` - Server URL for health checks
 - `GPT_TOKEN` - Authorization token for GPT diagnostic access
 
@@ -280,7 +280,7 @@ npm start
 
 ### Diagnostic & Management
 - `POST /api/diagnostics` - Natural language system commands
-- `GET /api/workers/status` - Background process monitoring
+- `GET /api/workers/status` - Background process monitoring (verify workers after setting `RUN_WORKERS=true`)
 - `GET /api/containers/status` - Docker container management
 - `GET /api/canon/files` - Storyline file management
 
