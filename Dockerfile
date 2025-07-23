@@ -14,6 +14,7 @@ RUN npm ci --only=production && npm cache clean --force
 # Copy source code
 COPY src/ ./src/
 COPY workers/ ./workers/
+COPY memory/ ./memory/
 COPY sql/ ./sql/
 COPY tsconfig.json ./
 
@@ -21,7 +22,7 @@ COPY tsconfig.json ./
 RUN npm ci
 
 # Build the application
-RUN npm run build && cp -R workers dist/
+RUN npm run build
 
 # Production stage
 FROM node:18-alpine AS production
@@ -45,6 +46,8 @@ RUN npm ci --only=production && npm cache clean --force
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/sql ./sql
+COPY workers ./dist/workers
+COPY memory ./dist/memory
 
 # Change ownership to non-root user
 RUN chown -R arcanos:nodejs /app
