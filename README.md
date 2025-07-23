@@ -243,7 +243,15 @@ The backend implements intelligent intent detection that routes requests to spec
 - `RUN_WORKERS` - Set to `true` to enable background workers and audit tasks
 - `SERVER_URL` - Server URL for health checks
 - `GPT_TOKEN` - Authorization token for GPT diagnostic access
+- `ARCANOS_API_TOKEN` - Token for memory and diagnostic endpoints
 - `ASK_CONCURRENCY_LIMIT` - Max concurrent `/api/ask` requests (default: 3)
+
+Example memory request with token:
+
+```bash
+curl -X GET http://localhost:8080/api/memory/health \
+  -H "Authorization: Bearer $ARCANOS_API_TOKEN"
+```
 
 ## 📚 Documentation
 
