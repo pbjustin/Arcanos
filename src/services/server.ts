@@ -1,6 +1,7 @@
 import express from 'express';
 import * as http from 'http';
 import { databaseService } from './database';
+import { isTrue } from '../utils/env';
 
 export class ServerService {
   private server: http.Server | null = null;
@@ -30,13 +31,18 @@ export class ServerService {
 
   setupSignalHandlers(): void {
     const handler = async (signal: string) => {
-      console.log(`[SIGNAL] ${signal} received. Gracefully shutting down...`);
-      try {
-        await this.shutdown();
-        process.exit(0);
-      } catch (error) {
-        console.error('❌ Error during shutdown:', error);
-        process.exit(1);
+      console.log(`[SIGNAL] ${signal} received.`);
+      if (isTrue(process.env.RUN_WORKERS)) {
+        console.log('[SIGNAL] RUN_WORKERS=true - gracefully shutting down...');
+        try {
+          await this.shutdown();
+          process.exit(0);
+        } catch (error) {
+          console.error('❌ Error during shutdown:', error);
+          process.exit(1);
+        }
+      } else {
+        console.log('[SIGNAL] RUN_WORKERS not true - ignoring signal to keep server alive');
       }
     };
     process.on('SIGTERM', () => handler('SIGTERM'));

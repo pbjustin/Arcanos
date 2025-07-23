@@ -28,12 +28,13 @@ import './services/database-connection';
 
 // Import worker initialization module (will run conditionally)
 import './worker-init';
+import { isTrue } from './utils/env';
 
 // Load environment variables
 dotenv.config();
 
 // Boot additional background workers if enabled
-if (process.env.RUN_WORKERS === 'true') {
+if (isTrue(process.env.RUN_WORKERS)) {
   require('../workers/index');
 }
 
@@ -532,6 +533,11 @@ serverService.start(app, PORT).then(async () => {
   bootstrapWorkers().catch(err => {
     console.error('[BOOT] Bootstrap sequence failed:', err.message);
   });
+
+  if (!isTrue(process.env.RUN_WORKERS)) {
+    console.log('[SERVER] RUN_WORKERS not enabled - keeping process alive');
+    setInterval(() => {}, 1 << 30); // Prevent Node from exiting
+  }
 });
 
 // --- RAILWAY SERVICE CONFIG VALIDATION ✅ ---
