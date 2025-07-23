@@ -1,5 +1,6 @@
 // Worker initialization module - conditionally starts workers based on RUN_WORKERS environment variable
 import { workerStatusService } from './services/worker-status';
+import { isTrue } from './utils/env';
 
 function startWorkers() {
   // Import and start the cron worker service
@@ -13,7 +14,7 @@ workerStatusService.initializeSystemWorkers();
 console.log('[WORKER-INIT] System workers initialized for status tracking');
 
 // Conditional worker startup based on environment variable
-if (process.env.RUN_WORKERS === 'true') {
+if (isTrue(process.env.RUN_WORKERS)) {
   startWorkers(); // Your worker orchestration entry
 } else {
   console.log('[WORKER-INIT] Workers disabled (RUN_WORKERS not set to true)');
