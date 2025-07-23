@@ -156,7 +156,11 @@ router.get('/thread/:id', async (req: Request, res: Response) => {
       ? (result as any).memory_value
       : result;
 
-    res.status(200).json(thread);
+    if (!thread || (typeof thread === 'object' && Object.keys(thread).length === 0)) {
+      return res.status(404).json({ error: 'Thread not found', id });
+    }
+
+    return res.status(200).json(thread);
   } catch (error: any) {
     console.error('❌ Error loading thread:', error);
     res.status(500).json({ error: 'Failed to load thread', details: error.message });
