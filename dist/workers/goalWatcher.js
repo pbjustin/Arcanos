@@ -1,4 +1,5 @@
-const goals = require('./memory/modules/goals');
+const path = require('path');
+const goals = require(path.resolve(__dirname, '../memory/modules/goals'));
 
 module.exports = async function goalWatcher() {
   const list = goals.read();
