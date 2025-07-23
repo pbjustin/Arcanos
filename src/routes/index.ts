@@ -4,8 +4,6 @@ import fs from 'fs';
 import path from 'path';
 import { databaseService } from '../services/database';
 import askRoute from './ask';
-import jobLimitRoute from './job-limit';
-import jobQueueRoute from './job-queue';
 import canonRoute from './canon';
 import containersRoute from './containers';
 import queryRouter from './query-router';
@@ -486,8 +484,6 @@ router.get('/v1/sleep_schedule/active_sleep_schedule', (req, res) => {
 });
 
 router.use('/api', askRoute);
-router.use('/jobs', jobLimitRoute);
-router.use('/queue', jobQueueRoute);
 router.use('/arcanos/plugins', pluginRoute);
 
 // Canon API routes - Clean Canon Access API for Backstage Booker
