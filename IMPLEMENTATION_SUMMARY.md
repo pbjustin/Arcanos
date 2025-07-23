@@ -6,9 +6,10 @@ Successfully implemented a fine-tune only query gateway that routes to a persona
 ## Architecture
 
 ### Core Files
-- **index.js** - Main Express application with Railway deployment configuration
-- **routes/query.js** - Query routing with fallback pattern detection and rejection
-- **services/send.js** - Axios service for fine-tune endpoint communication
+- **src/index.ts** - Main TypeScript Express application with Railway deployment configuration
+- **src/routes/index.ts** - Main API routes with fallback pattern detection and rejection
+- **src/services/openai.ts** - OpenAI service for fine-tune endpoint communication
+- **dist/index.js** - Compiled JavaScript entry point for production
 
 ### Key Features Implemented
 

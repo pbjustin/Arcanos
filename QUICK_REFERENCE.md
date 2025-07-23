@@ -52,11 +52,9 @@ dist/              # Compiled output (generated)
 
 #### Diagnostics & Monitoring
 - `POST /api/diagnostics` - Natural language diagnostics
-- `GET /api/workers/status` - Worker status
+- `GET /system/diagnostics` - System diagnostics information
+- `GET /system/workers` - Worker status information
 - `GET /sync/diagnostics` - System metrics
-- `POST /api/diagnostics` - System diagnostics
-- `GET /api/workers/status` - Worker status information
-- `GET /api/config/sleep` - Sleep configuration
 
 ## Environment Variables
 
@@ -67,7 +65,7 @@ FINE_TUNED_MODEL=your-fine-tuned-model-id-here
 
 # Server Configuration
 PORT=8080
-NODE_ENV=production
+NODE_ENV=development
 
 # Optional
 RUN_WORKERS=true
