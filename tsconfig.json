@@ -9,6 +9,6 @@
     "skipLibCheck": true,
     "moduleResolution": "node"
   },
-  "include": ["src"],
+  "include": ["src", "memory"],
   "exclude": ["node_modules", "dist"]
 }

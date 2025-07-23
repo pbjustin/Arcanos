@@ -7,7 +7,7 @@
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "build": "tsc && cp -r workers dist/workers && cp -r memory dist/memory",
+    "build": "rm -rf dist && tsc && mkdir -p dist && cp -r workers dist && cp -r memory dist",
     "start": "node --max-old-space-size=7168 dist/index.js",
     "start:railway": "node --max-old-space-size=7168 dist/index.js",
     "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
