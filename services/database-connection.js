@@ -27,7 +27,18 @@ async function initDatabase() {
         value JSONB NOT NULL
       );
     `);
-    console.log('✅ Connected to PostgreSQL and ensured memory table');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS memory_state (
+        id SERIAL PRIMARY KEY,
+        key TEXT NOT NULL,
+        value JSONB,
+        version INTEGER NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        tag TEXT,
+        UNIQUE(key, version)
+      );
+    `);
+    console.log('✅ Connected to PostgreSQL and ensured memory tables');
   } catch (error) {
     console.error('❌ Failed to connect to PostgreSQL:', error.message);
     process.exit(1);

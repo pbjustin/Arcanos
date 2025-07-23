@@ -19,6 +19,7 @@ build/
 # Logs
 logs
 *.log
+!memory/state/audit.log
 
 # Runtime data
 pids

@@ -5,6 +5,7 @@ const memory = require('../memory/kernel');
 const fs = require('fs');
 const path = require('path');
 const fallbackLoader = require('../memory/actions/fallbackLoader');
+const snapshots = require('../services/memory-snapshots');
 
 // Middleware to parse JSON
 router.use(express.json());
@@ -38,6 +39,11 @@ router.post('/save', async (req, res) => {
     `;
     
     const result = await pool.query(query, [key, JSON.stringify(value)]);
+    try {
+      await snapshots.recordWrite(key, value, req.body.tag);
+    } catch (err) {
+      console.error('Snapshot write failed:', err.message);
+    }
     
     res.status(200).json({
       success: true,
