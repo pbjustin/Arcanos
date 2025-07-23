@@ -251,8 +251,8 @@ The backend implements intelligent intent detection that routes requests to spec
 ### Database Configuration
 - `DATABASE_URL` - PostgreSQL connection string (optional, uses in-memory fallback if not set)
 
-### Worker Configuration
-- `RUN_WORKERS` - Set to `true` to enable background workers and audit tasks (default: false)
+-### Worker Configuration
+- `RUN_WORKERS` - Set to `true` (or `1`) to enable background workers. Use `false` if you only need the memory API and want the server to stay running without background jobs.
 - `SERVER_URL` - Server URL for health checks (default: http://localhost:8080)
 
 ### Optional Configuration
