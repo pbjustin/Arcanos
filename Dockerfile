@@ -46,8 +46,6 @@ RUN npm ci --only=production && npm cache clean --force
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/sql ./sql
-COPY workers ./dist/workers
-COPY memory ./dist/memory
 
 # Change ownership to non-root user
 RUN chown -R arcanos:nodejs /app
