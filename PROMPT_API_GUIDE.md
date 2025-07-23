@@ -50,7 +50,8 @@ curl -X POST http://localhost:8080/api/echo \
 | `/api/ask-hrc` | Message validation using HRCCore | Text validation | N/A |
 | `/api/ask-v1-safe` | Safe interface with RAG/HRC | Structured queries | ❌ No fallback |
 | `/api/arcanos` | Intent-based routing (WRITE/AUDIT) | Intent-driven | Depends on route |
-| `/api/memory` | Store/retrieve memories | Context storage | N/A |
+| `/memory/save` | Store memories | Context storage | N/A |
+| `/memory/load` | Retrieve memories | Context retrieval | N/A |
 | `/api/diagnostics` | System diagnostics | Natural language commands | N/A |
 | `/api/canon/files` | Canon file management | File operations | N/A |
 | `/api/containers/status` | Container monitoring | Status queries | N/A |
