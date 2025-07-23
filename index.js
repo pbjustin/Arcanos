@@ -4,6 +4,7 @@ const app = express();
 const statusRoute = require('./routes/status');
 const memoryRoute = require('./routes/memory');
 const testMemoryRoute = require('./routes/testMemory');
+const snapshotRoute = require('./routes/memorySnapshots');
 
 // Initialize database connection and memory table
 require('./services/database-connection');
@@ -14,6 +15,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/status', statusRoute);
 app.use('/memory', memoryRoute);
 app.use('/api', testMemoryRoute);
+app.use('/api/memory/snapshots', snapshotRoute);
 
 // Prisma example connection (as specified in problem statement)
 const { PrismaClient } = require('@prisma/client');
