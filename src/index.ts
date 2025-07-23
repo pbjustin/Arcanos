@@ -15,6 +15,7 @@ import cors from 'cors';
 import router from './routes/index';
 import memoryRouter from './routes/memory';
 import systemRouter from './routes/system';
+import { requireApiToken } from './middleware/api-token';
 import { databaseService } from './services/database';
 import { serverService } from './services/server';
 import { bootstrapWorkers } from './bootstrap-workers';
@@ -157,7 +158,9 @@ app.post('/webhook', async (req, res) => {
 // This exposes live server health metrics: memory, CPU, disk, uptime
 app.get('/sync/diagnostics', async (req, res) => {
   const token = req.headers['authorization'];
-  if (token !== `Bearer ${process.env.GPT_TOKEN}`) {
+  const gptToken = `Bearer ${process.env.GPT_TOKEN}`;
+  const apiToken = `Bearer ${process.env.ARCANOS_API_TOKEN}`;
+  if (token !== gptToken && token !== apiToken) {
     return res.status(403).json({ error: "Unauthorized GPT access" });
   }
 
@@ -268,8 +271,9 @@ app.get('/', (_req, res) => {
 // Mount core logic or routes here
 app.use('/api', router);
 
-// Mount memory routes - Universal Memory Archetype
-app.use('/memory', memoryRouter);
+// Mount memory routes - protected by ARCANOS_API_TOKEN
+// Expose memory routes under /api/memory to match documentation
+app.use('/api/memory', requireApiToken, memoryRouter);
 // Mount system diagnostics routes
 app.use('/system', systemRouter);
 

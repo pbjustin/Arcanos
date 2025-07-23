@@ -1,7 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { databaseService, SaveMemoryRequest, LoadMemoryRequest } from '../services/database';
+import { MemoryStorage } from '../storage/memory-storage';
 
 const router = Router();
+const fallbackMemory = new MemoryStorage();
+const useDatabase = !!process.env.DATABASE_URL;
+
+// API token middleware applied in src/index.ts
 
 // Middleware to get container_id from headers or default
 const getContainerId = (req: Request): string => {
@@ -37,7 +42,9 @@ router.post('/save', async (req: Request, res: Response) => {
       container_id
     };
 
-    const result = await databaseService.saveMemory(saveRequest);
+    const result = useDatabase
+      ? await databaseService.saveMemory(saveRequest)
+      : await fallbackMemory.storeMemory(container_id, 'default', 'context', memory_key, memory_value);
     
     res.status(200).json({
       success: true,
@@ -73,7 +80,9 @@ router.get('/load', async (req: Request, res: Response) => {
       container_id
     };
 
-    const result = await databaseService.loadMemory(loadRequest);
+    const result = useDatabase
+      ? await databaseService.loadMemory(loadRequest)
+      : await fallbackMemory.getMemory(container_id, memory_key);
     
     if (!result) {
       return res.status(404).json({
@@ -104,7 +113,9 @@ router.get('/all', async (req: Request, res: Response) => {
   try {
     const container_id = getContainerId(req);
     
-    const results = await databaseService.loadAllMemory(container_id);
+    const results = useDatabase
+      ? await databaseService.loadAllMemory(container_id)
+      : await fallbackMemory.getMemoriesByUser(container_id);
     
     res.status(200).json({
       success: true,
@@ -128,7 +139,9 @@ router.delete('/clear', async (req: Request, res: Response) => {
   try {
     const container_id = getContainerId(req);
     
-    const result = await databaseService.clearMemory(container_id);
+    const result = useDatabase
+      ? await databaseService.clearMemory(container_id)
+      : await fallbackMemory.clearAll(container_id);
     
     res.status(200).json({
       success: true,

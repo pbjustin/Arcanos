@@ -64,8 +64,9 @@ export const askHandler = async (req: Request, res: Response) => {
     if (useRAG) {
       try {
         const memory = getMemoryStorage();
+        const userId = (req.headers['x-user-id'] as string) || 'default';
         // Retrieve relevant context from memory
-        const memories = await memory.getMemoriesByUser('user');
+        const memories = await memory.getMemoriesByUser(userId);
         ragContext = memories.slice(0, 5); // Get last 5 memories for context
         console.log("Retrieved RAG context:", ragContext?.length || 0, "entries");
       } catch (error: any) {
@@ -116,8 +117,9 @@ export const askHandler = async (req: Request, res: Response) => {
       if (useRAG) {
         try {
           const memory = getMemoryStorage();
+          const userId = (req.headers['x-user-id'] as string) || 'default';
           await memory.storeMemory(
-            'user',
+            userId,
             (req as any).sessionID || 'default-session',
             'interaction',
             `interaction_${Date.now()}`,
