@@ -8,8 +8,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "node index.js",
-    "start:railway": "node index.js",
+    "start": "node --max-old-space-size=7168 dist/index.js",
+    "start:railway": "node --max-old-space-size=7168 dist/index.js",
     "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",

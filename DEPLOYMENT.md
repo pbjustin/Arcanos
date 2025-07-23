@@ -85,11 +85,12 @@ npm start
 ### Package.json Scripts
 
 The following scripts are available:
-- `npm run dev` - Start development server with hot reload
-- `npm run build` - Build TypeScript to JavaScript
-- `npm start` - Build and start production server (includes prestart dependency check)
+- `npm run dev` - Start development server with hot reload (7GB memory allocation)
+- `npm run build` - Build TypeScript to JavaScript (output to dist/)
+- `npm start` - Start production server from compiled JavaScript (dist/index.js)
+- `npm run start:railway` - Railway-specific start command (same as start)
 
-**Important**: The `prestart` script automatically runs `npm install` to ensure all dependencies are installed before starting the server.
+**Note**: Make sure to run `npm run build` before `npm start` to ensure the compiled output exists in the `dist/` directory.
 
 ## Deployment Verification
 

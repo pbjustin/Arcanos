@@ -12,9 +12,10 @@ This implementation fulfills the problem statement requirement to "Fix database 
 - **`services/database-connection-production.js`** - Production version that exits if DATABASE_URL is not set
 
 ### API Integration
-- **`routes/memory.js`** - RESTful API endpoints for memory operations (save, load, clear, health)
-- **`index.js`** - Updated to import and initialize the database connection
-- **`src/index.ts`** - Updated to import the TypeScript database connection
+- **`src/routes/memory.ts`** - RESTful API endpoints for memory operations (save, load, clear, health)
+- **`routes/memory.js`** - Legacy JavaScript memory routes  
+- **`index.js`** - Legacy entry point with database connection
+- **`src/index.ts`** - Main TypeScript entry point with database connection
 
 ### Testing
 - **`test-database-connection.js`** - Tests the implementation with graceful fallback

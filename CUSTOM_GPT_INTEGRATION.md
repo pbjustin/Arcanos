@@ -42,7 +42,9 @@ Available APIs:
 | `/api/ask-with-fallback` | POST | Chat with GPT fallback permission |
 | `/api/ask-v1-safe` | POST | Safe interface with RAG/HRC features |
 | `/api/arcanos` | POST | Intent-based routing (WRITE/AUDIT) |
-| `/api/memory` | GET/POST | Memory storage and retrieval |
+| `/memory/save` | POST | Store memory entries |
+| `/memory/load` | GET | Retrieve memory entries |
+| `/memory/all` | GET | Get all memory entries |
 | `/api/ask-hrc` | POST | Message validation using HRCCore |
 | `/api/diagnostics` | POST | Natural language system diagnostics |
 | `/api/canon/files` | GET/POST | Canon storyline file management |

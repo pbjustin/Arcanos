@@ -87,8 +87,11 @@ npm start
 - `POST /api/ask-hrc` - Message validation using HRCCore
 
 ### Memory & Storage
-- `POST /api/memory` - Store a memory entry
-- `GET /api/memory` - Retrieve all memory entries
+- `POST /memory/save` - Save memory key-value pair
+- `GET /memory/load` - Load memory by key
+- `GET /memory/all` - Retrieve all memory entries
+- `DELETE /memory/clear` - Clear memory entries
+- `GET /memory/health` - Memory system health check
 
 ### Canon Management
 - `GET /api/canon/files` - List all canon storyline files
@@ -101,7 +104,8 @@ npm start
 
 ### Diagnostics & Monitoring
 - `POST /api/diagnostics` - Natural language diagnostic commands
-- `GET /api/workers/status` - Background worker status
+- `GET /system/diagnostics` - System diagnostics information
+- `GET /system/workers` - Worker status information
 - `GET /sync/diagnostics` - GPT-accessible system metrics
 
 ### Request Formats
@@ -236,14 +240,29 @@ The backend implements intelligent intent detection that routes requests to spec
 
 ## Environment Variables
 
-- `NODE_ENV` - Environment (development/production)
-- `PORT` - Server port (default: 8080)
+### Required Variables
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `FINE_TUNED_MODEL` - Your fine-tuned model name
-- `RUN_WORKERS` - Set to `true` to enable background workers and audit tasks
-- `SERVER_URL` - Server URL for health checks
+
+### Server Configuration
+- `NODE_ENV` - Environment (development/production) (default: development)
+- `PORT` - Server port (default: 8080)
+
+### Database Configuration
+- `DATABASE_URL` - PostgreSQL connection string (optional, uses in-memory fallback if not set)
+
+### Worker Configuration
+- `RUN_WORKERS` - Set to `true` to enable background workers and audit tasks (default: false)
+- `SERVER_URL` - Server URL for health checks (default: http://localhost:8080)
+
+### Optional Configuration
 - `GPT_TOKEN` - Authorization token for GPT diagnostic access
 - `ASK_CONCURRENCY_LIMIT` - Max concurrent `/api/ask` requests (default: 3)
+- `MODEL_ID` - Base model for fine-tuning pipeline (default: gpt-3.5-turbo)
+- `SLEEP_ENABLED` - Enable sleep mode (default: false)
+- `SLEEP_START` - Sleep start time (default: 02:00)
+- `SLEEP_DURATION` - Sleep duration in hours (default: 7)
+- `SLEEP_TZ` - Sleep timezone (default: UTC)
 
 ## 📚 Documentation
 
@@ -279,11 +298,11 @@ npm start
 - `POST /api/ask-with-fallback` - AI chat with GPT-4 fallback
 - `POST /api/ask-v1-safe` - Safe interface with RAG/HRC features
 - `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT)
-- `POST /api/memory` - Context storage for better responses
+- `POST /memory/save` - Save memory entries for context
 
 ### Diagnostic & Management
 - `POST /api/diagnostics` - Natural language system commands
-- `GET /api/workers/status` - Background process monitoring (verify workers after setting `RUN_WORKERS=true`)
+- `GET /system/workers` - Background process monitoring (verify workers after setting `RUN_WORKERS=true`)
 - `GET /api/containers/status` - Docker container management
 - `GET /api/canon/files` - Storyline file management
 
@@ -299,16 +318,24 @@ npm start
 ./src/index.ts              # Main server entry point (TypeScript)
 ./src/routes/
   ├── index.ts              # Main API routes and endpoints
-  ├── ask.ts                # Example ask route implementation
+  ├── ask.ts                # Ask route implementation
   ├── canon.ts              # Canon storyline file management
-  └── containers.ts         # Docker container management
+  ├── containers.ts         # Docker container management
+  ├── memory.ts             # Memory storage routes
+  ├── system.ts             # System routes
+  ├── query-router.ts       # Query routing
+  ├── job-limit.ts          # Job limiting functionality
+  ├── job-queue.ts          # Job queue management
+  └── plugins.ts            # Plugin routes
 ./src/services/
   ├── openai.ts             # OpenAI service with fallback handling
   ├── arcanos-router.ts     # Intent-based routing service
   ├── arcanos-v1-interface.ts # Safe AI interface
   ├── diagnostics.ts        # System diagnostics service
   ├── cron-worker.ts        # Background worker management
-  └── endpoint-logger.ts    # API endpoint logging
+  ├── database.ts           # Database service
+  ├── database-connection.ts # Database connection management
+  └── server.ts             # Server utilities
 ./src/modules/hrc/          # HRCCore validation module
 ./src/storage/              # Memory and file storage systems
 ./src/handlers/             # Request handlers
