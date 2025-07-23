@@ -243,7 +243,6 @@ The backend implements intelligent intent detection that routes requests to spec
 - `RUN_WORKERS` - Set to `true` to enable background workers and audit tasks
 - `SERVER_URL` - Server URL for health checks
 - `GPT_TOKEN` - Authorization token for GPT diagnostic access
-- `ASK_CONCURRENCY_LIMIT` - Max concurrent `/api/ask` requests (default: 3)
 
 ## 📚 Documentation
 
@@ -253,7 +252,6 @@ The backend implements intelligent intent detection that routes requests to spec
 - **[💡 Practical Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use examples and code snippets
 - **[🔧 Test Script](./test-api-endpoints.sh)** - Automated endpoint testing
 - **[🤖 Fine-Tuning Pipeline](./FINETUNE_PIPELINE.md)** - Modular system for continuing fine-tuning of OpenAI models
-- **[⚡ Concurrency Test](./test-concurrency-limit.js)** - Verify parallel request handling
 
 ## Quick Reference
 
@@ -270,7 +268,6 @@ npm start
 
 # Test
 ./test-api-endpoints.sh
-./test-concurrency-limit.js
 ```
 
 ### Key Endpoints for AI Interaction
