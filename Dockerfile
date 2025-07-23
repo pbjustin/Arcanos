@@ -13,6 +13,7 @@ RUN npm ci --only=production && npm cache clean --force
 
 # Copy source code
 COPY src/ ./src/
+COPY workers/ ./workers/
 COPY sql/ ./sql/
 COPY tsconfig.json ./
 
@@ -20,7 +21,7 @@ COPY tsconfig.json ./
 RUN npm ci
 
 # Build the application
-RUN npm run build
+RUN npm run build && cp -R workers dist/
 
 # Production stage
 FROM node:18-alpine AS production
