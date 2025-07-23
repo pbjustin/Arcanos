@@ -99,6 +99,19 @@ export class MemoryStorage {
     return entries.find(m => m.key === key);
   }
 
+  async getMemoryById(id: string): Promise<MemoryEntry | undefined> {
+    if (this.persistent) {
+      try {
+        const result = await databaseService.loadMemory({ memory_key: id });
+        return result ? (result.memory_value as MemoryEntry) : undefined;
+      } catch (error: any) {
+        console.warn('Persistent memory load by id failed:', error.message);
+        return undefined;
+      }
+    }
+    return this.memories.get(id);
+  }
+
   async clearAll(userId: string): Promise<{ cleared: number }> {
     let cleared = 0;
     for (const [id, mem] of this.memories.entries()) {
