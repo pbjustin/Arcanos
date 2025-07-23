@@ -21,5 +21,11 @@
         "PORT": "3000"
       }
     }
-  }
+  },
+  "crons": [
+    {
+      "schedule": "*/10 * * * *",
+      "command": "node task-runner.js"
+    }
+  ]
 }
