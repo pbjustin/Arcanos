@@ -35,7 +35,7 @@ dotenv.config();
 
 // Boot additional background workers if enabled
 if (isTrue(process.env.RUN_WORKERS)) {
-  require('../workers/index');
+  require('./workers/index');
 }
 
 // 1. VERIFY: Environment variable loading
