@@ -14,6 +14,7 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import router from './routes/index';
 import memoryRouter from './routes/memory';
+import systemRouter from './routes/system';
 import { databaseService } from './services/database';
 import { serverService } from './services/server';
 
@@ -268,6 +269,8 @@ app.use('/api', router);
 
 // Mount memory routes - Universal Memory Archetype
 app.use('/memory', memoryRouter);
+// Mount system diagnostics routes
+app.use('/system', systemRouter);
 
 // POST endpoint for natural language inputs with improved error handling
 app.post('/', async (req, res) => {
