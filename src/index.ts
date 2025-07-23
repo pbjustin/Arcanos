@@ -17,6 +17,7 @@ import memoryRouter from './routes/memory';
 import systemRouter from './routes/system';
 import { databaseService } from './services/database';
 import { serverService } from './services/server';
+import { bootstrapWorkers } from './bootstrap-workers';
 
 // Import the new database connection module to ensure memory table exists
 import './services/database-connection';
@@ -522,6 +523,11 @@ serverService.start(app, PORT).then(async () => {
     const currentV8 = require('v8').getHeapStatistics();
     console.log(`🧠 [MEMORY_MONITOR] RSS: ${(currentMem.rss / 1024 / 1024).toFixed(2)}MB, Heap: ${(currentMem.heapUsed / 1024 / 1024).toFixed(2)}MB/${(currentV8.heap_size_limit / 1024 / 1024 / 1024).toFixed(2)}GB`);
   }, 300000); // Log every 5 minutes
+
+  // Kick off bootstrap sequence for diagnostics pipeline
+  bootstrapWorkers().catch(err => {
+    console.error('[BOOT] Bootstrap sequence failed:', err.message);
+  });
 });
 
 // --- RAILWAY SERVICE CONFIG VALIDATION ✅ ---
