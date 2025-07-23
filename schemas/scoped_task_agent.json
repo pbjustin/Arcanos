@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Scoped Task Agent Payload",
+  "type": "object",
+  "properties": {
+    "shell_id": { "type": "string" },
+    "target_pattern": { "type": "string" },
+    "constraints": { "type": "object" }
+  },
+  "required": ["shell_id"],
+  "additionalProperties": false
+}
