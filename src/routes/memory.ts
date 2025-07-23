@@ -134,6 +134,44 @@ router.get('/all', async (req: Request, res: Response) => {
   }
 });
 
+// GET /memory/thread/:id - Retrieve a memory thread by id
+router.get('/thread/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const container_id = getContainerId(req);
+
+    if (!id) {
+      return res.status(400).json({ error: 'id parameter is required' });
+    }
+
+    const result = useDatabase
+      ? await databaseService.loadMemory({ memory_key: id, container_id })
+      : await fallbackMemory.getMemoryById(id);
+
+    if (!result) {
+      return res.status(404).json({ error: 'Thread not found', id });
+    }
+
+    const thread = useDatabase
+      ? (result as any).memory_value
+      : result;
+
+    if (
+      thread === undefined ||
+      (typeof thread === 'object' &&
+        thread !== null &&
+        Object.keys(thread).length === 0)
+    ) {
+      return res.status(404).json({ error: 'Thread not found', id });
+    }
+
+    return res.status(200).json(thread);
+  } catch (error: any) {
+    console.error('❌ Error loading thread:', error);
+    return res.status(500).json({ error: 'Failed to load thread', details: error.message });
+  }
+});
+
 // DELETE /memory/clear - Clear/reset all memory for container
 router.delete('/clear', async (req: Request, res: Response) => {
   try {
