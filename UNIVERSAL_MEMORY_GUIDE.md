@@ -17,7 +17,7 @@ The Universal Memory Archetype is a standardized, Railway-compatible memory syst
 
 #### Save Memory
 ```http
-POST /memory/save
+POST /api/memory/save
 Content-Type: application/json
 X-Container-Id: optional-container-name
 
@@ -29,25 +29,25 @@ X-Container-Id: optional-container-name
 
 #### Load Memory
 ```http
-GET /memory/load?key=user_preference
+GET /api/memory/load?key=user_preference
 X-Container-Id: optional-container-name
 ```
 
 #### Load All Memory
 ```http
-GET /memory/all
+GET /api/memory/all
 X-Container-Id: optional-container-name
 ```
 
 #### Clear Memory
 ```http
-DELETE /memory/clear
+DELETE /api/memory/clear
 X-Container-Id: optional-container-name
 ```
 
 #### Health Check
 ```http
-GET /memory/health
+GET /api/memory/health
 ```
 
 ## Container Isolation
@@ -76,6 +76,9 @@ Each service can use its own memory space by specifying a container ID:
 # Required for full functionality
 DATABASE_URL=postgresql://username:password@host:port/database
 
+# Authentication token for protected endpoints
+ARCANOS_API_TOKEN=my-secret-token
+
 # Optional - container identification
 CONTAINER_ID=my-service-name
 ```
@@ -93,7 +96,7 @@ psql $DATABASE_URL -f sql/memory_state.sql
 const axios = require('axios');
 
 // Save wrestling match result
-await axios.post('http://localhost:8080/memory/save', {
+await axios.post('http://localhost:8080/api/memory/save', {
   memory_key: 'last_match_result',
   memory_value: {
     winner: 'Roman Reigns',
@@ -102,12 +105,18 @@ await axios.post('http://localhost:8080/memory/save', {
     timestamp: new Date().toISOString()
   }
 }, {
-  headers: { 'X-Container-Id': 'backstage-booker' }
+  headers: {
+    'X-Container-Id': 'backstage-booker',
+    'Authorization': `Bearer ${process.env.ARCANOS_API_TOKEN}`
+  }
 });
 
 // Load match result
-const response = await axios.get('http://localhost:8080/memory/load?key=last_match_result', {
-  headers: { 'X-Container-Id': 'backstage-booker' }
+const response = await axios.get('http://localhost:8080/api/memory/load?key=last_match_result', {
+  headers: {
+    'X-Container-Id': 'backstage-booker',
+    'Authorization': `Bearer ${process.env.ARCANOS_API_TOKEN}`
+  }
 });
 console.log(response.data.memory_value);
 ```
@@ -115,17 +124,20 @@ console.log(response.data.memory_value);
 ### cURL Examples
 ```bash
 # Save memory
-curl -X POST http://localhost:8080/memory/save \
+curl -X POST http://localhost:8080/api/memory/save \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ARCANOS_API_TOKEN" \
   -H "X-Container-Id: backstage-booker" \
   -d '{"memory_key": "universe_state", "memory_value": {"current_champion": "Roman Reigns"}}'
 
 # Load memory
-curl "http://localhost:8080/memory/load?key=universe_state" \
+curl "http://localhost:8080/api/memory/load?key=universe_state" \
+  -H "Authorization: Bearer $ARCANOS_API_TOKEN" \
   -H "X-Container-Id: backstage-booker"
 
 # Health check
-curl http://localhost:8080/memory/health
+curl http://localhost:8080/api/memory/health \
+  -H "Authorization: Bearer $ARCANOS_API_TOKEN"
 ```
 
 ## Deployment
@@ -139,7 +151,7 @@ The service is pre-configured for Railway deployment:
    NODE_ENV=production
    ```
 
-2. **Health Checks**: Available at `/health` and `/memory/health`
+2. **Health Checks**: Available at `/health` and `/api/memory/health`
 
 3. **Memory Optimization**: Configured for 8GB Railway Hobby Plan
 

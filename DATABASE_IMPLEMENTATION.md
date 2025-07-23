@@ -62,11 +62,11 @@ module.exports = pool;
   - `value` JSONB NOT NULL
 
 ### 3. API Endpoints
-- `GET /memory/health` - Database connection health check
-- `POST /memory/save` - Save key-value pairs
-- `GET /memory/load?key=<key>` - Load value by key
-- `GET /memory/all` - Get all memory entries
-- `DELETE /memory/clear` - Clear all memory
+- `GET /api/memory/health` - Database connection health check
+- `POST /api/memory/save` - Save key-value pairs
+- `GET /api/memory/load?key=<key>` - Load value by key
+- `GET /api/memory/all` - Get all memory entries
+- `DELETE /api/memory/clear` - Clear all memory
 
 ### 4. Error Handling
 - Graceful fallback when DATABASE_URL is not set (development)
@@ -96,19 +96,19 @@ npm start  # Works with graceful fallback
 
 **Save Memory:**
 ```bash
-curl -X POST http://localhost:3000/memory/save \
+curl -X POST http://localhost:3000/api/memory/save \
   -H "Content-Type: application/json" \
   -d '{"key": "user_preference", "value": {"theme": "dark"}}'
 ```
 
 **Load Memory:**
 ```bash
-curl http://localhost:3000/memory/load?key=user_preference
+curl http://localhost:3000/api/memory/load?key=user_preference
 ```
 
 **Health Check:**
 ```bash
-curl http://localhost:3000/memory/health
+curl http://localhost:3000/api/memory/health
 ```
 
 ## Integration with Existing System

@@ -48,7 +48,8 @@
   <pre id="output"></pre>
 </div>
 <script>
-const BASE_URL = 'https://arcanos-production-426d.up.railway.app';
+// Default to same origin for local deployments
+const BASE_URL = window.BASE_URL || window.location.origin;
 
 async function sendPrompt() {
   const text = document.getElementById('prompt').value.trim();
