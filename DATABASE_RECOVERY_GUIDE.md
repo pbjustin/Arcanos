@@ -50,7 +50,7 @@ When the database is unavailable:
 
 ### 4. Health Monitoring
 
-The `/memory/health` endpoint provides real-time database status:
+The `/api/memory/health` endpoint provides real-time database status:
 
 ```json
 {
@@ -97,7 +97,7 @@ This test verifies:
 
 ## Best Practices
 
-1. **Monitor health endpoint**: Use `/memory/health` for monitoring
+1. **Monitor health endpoint**: Use `/api/memory/health` for monitoring
 2. **Handle recovery errors**: Check for recovery-specific error messages
 3. **Implement client retry**: Applications should retry failed database operations
 4. **Use graceful degradation**: Core functionality should remain available
