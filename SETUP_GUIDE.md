@@ -30,11 +30,18 @@ Edit `.env` file with your configuration:
 OPENAI_API_KEY=your-openai-api-key-here
 FINE_TUNED_MODEL=your-fine-tuned-model-id
 
-# Optional settings
+# Server configuration
 PORT=8080
-NODE_ENV=production
+NODE_ENV=development
+
+# Database (optional, uses in-memory fallback if not set)
+DATABASE_URL=postgresql://username:password@localhost:5432/arcanos
+
+# Worker configuration (optional)
 RUN_WORKERS=false
 SERVER_URL=http://localhost:8080
+
+# GPT diagnostic token (optional)
 GPT_TOKEN=your-gpt-diagnostic-token
 ```
 
