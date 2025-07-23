@@ -252,7 +252,7 @@ The backend implements intelligent intent detection that routes requests to spec
 - `DATABASE_URL` - PostgreSQL connection string (optional, uses in-memory fallback if not set)
 
 ### Worker Configuration
-- `RUN_WORKERS` - Set to `true` to enable background workers and audit tasks (default: false)
+- `RUN_WORKERS` - Set to `true` (or `1`) to enable background workers. Use `false` (default) if you only need the memory API and want the server to keep running without background jobs.
 - `SERVER_URL` - Server URL for health checks (default: http://localhost:8080)
 
 ### Optional Configuration
@@ -319,6 +319,18 @@ npm start
 - `./continue_finetune.sh [file-id] [model]` - Start fine-tuning jobs
 - `./track_job.sh [--follow]` - Monitor training progress
 - `./test-finetune-pipeline.sh` - Test pipeline components
+
+### Railway Deployment (Memory Only)
+If you just need the memory API, set `RUN_WORKERS=false` in your `.env` file. The server
+will start an Express app on `process.env.PORT || 8080` and keep itself alive with a
+minimal interval so Railway doesn't terminate the container. Run:
+
+```bash
+npm run build
+npm start
+# test the health endpoint
+curl $PORT/api/memory/health
+```
 
 ## Project Structure
 
