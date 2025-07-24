@@ -1,3 +1,6 @@
+// ARCANOS AI-Controlled Cron Worker System
+// All cron tasks are managed through AI model instructions
+
 import cron from 'node-cron';
 import axios from 'axios';
 import { workerStatusService } from './worker-status';
@@ -7,10 +10,45 @@ const SERVER_URL = process.env.SERVER_URL || (process.env.NODE_ENV === 'producti
   ? 'https://arcanos-production-426d.up.railway.app' 
   : `http://localhost:${process.env.PORT || 8080}`);
 
-// AI-Controlled Health Check (every 15 minutes - only runs if AI approves)
+// JSON-based cron instruction templates for AI model
+export const CRON_INSTRUCTIONS = {
+  healthCheck: {
+    action: 'schedule',
+    service: 'diagnostic',
+    parameters: { type: 'health' },
+    schedule: '*/15 * * * *',
+    execute: true,
+    priority: 6
+  },
+  maintenance: {
+    action: 'schedule',
+    service: 'maintenance',
+    parameters: { type: 'cleanup' },
+    schedule: '0 */6 * * *',
+    execute: true,
+    priority: 7
+  },
+  memorySync: {
+    action: 'schedule',
+    worker: 'memorySync',
+    parameters: {},
+    schedule: '0 */4 * * *',
+    execute: true,
+    priority: 5
+  },
+  goalWatcher: {
+    action: 'schedule',
+    worker: 'goalWatcher',
+    parameters: {},
+    schedule: '*/30 * * * *',
+    execute: true,
+    priority: 4
+  }
+};
+
+// AI-Controlled Health Check (AI decides when to run)
 cron.schedule('*/15 * * * *', async () => {
   try {
-    // Ask AI if health check should run
     const result = await modelControlHooks.handleCronTrigger(
       'health-check',
       '*/15 * * * *',
@@ -21,28 +59,20 @@ cron.schedule('*/15 * * * *', async () => {
       }
     );
 
-    if (result.success && result.response?.includes('approved')) {
-      workerStatusService.updateWorkerStatus('worker-health', 'running', 'ai_approved_health_check');
-      try {
-        const response = await axios.get(`${SERVER_URL}/health`, { timeout: 10000 });
-        console.log('[AI-HEALTH] AI-approved health check completed successfully');
-        workerStatusService.updateWorkerStatus('worker-health', 'idle', 'ai_health_check_complete');
-      } catch (error: any) {
-        console.error('[AI-HEALTH] AI-approved health check failed:', error.message);
-        workerStatusService.updateWorkerStatus('worker-health', 'error', 'ai_health_check_failed');
-      }
+    if (result.success) {
+      console.log('[AI-CRON] Health check approved by AI model');
+      await executeHealthCheck();
     } else {
-      console.log('[AI-HEALTH] AI denied health check execution:', result.error || 'No approval');
+      console.log('[AI-CRON] Health check denied by AI:', result.error || 'No approval');
     }
   } catch (error: any) {
-    console.error('[AI-HEALTH] AI control error:', error.message);
+    console.error('[AI-CRON] AI control error:', error.message);
   }
 });
 
-// AI-Controlled Maintenance (every 6 hours - only runs if AI approves)
+// AI-Controlled Maintenance (AI decides when to run)
 cron.schedule('0 */6 * * *', async () => {
   try {
-    // Ask AI if maintenance should run
     const result = await modelControlHooks.handleCronTrigger(
       'maintenance',
       '0 */6 * * *',
@@ -53,31 +83,103 @@ cron.schedule('0 */6 * * *', async () => {
       }
     );
 
-    if (result.success && result.response?.includes('approved')) {
-      workerStatusService.updateWorkerStatus('worker-maintenance', 'running', 'ai_approved_maintenance');
-      console.log('[AI-MAINTENANCE] AI approved maintenance sweep...');
-      
-      // AI-controlled cleanup
-      setTimeout(() => {
-        workerStatusService.updateWorkerStatus('worker-maintenance', 'idle', 'ai_maintenance_complete');
-        console.log('[AI-MAINTENANCE] AI-approved maintenance completed');
-      }, 2000);
+    if (result.success) {
+      console.log('[AI-CRON] Maintenance approved by AI model');
+      await executeMaintenance();
     } else {
-      console.log('[AI-MAINTENANCE] AI denied maintenance execution:', result.error || 'No approval');
+      console.log('[AI-CRON] Maintenance denied by AI:', result.error || 'No approval');
     }
   } catch (error: any) {
-    console.error('[AI-MAINTENANCE] AI control error:', error.message);
+    console.error('[AI-CRON] AI maintenance control error:', error.message);
   }
 });
 
-export function startCronWorker() {
-  console.log('[AI-CRON] AI-controlled worker service started:');
-  console.log('[AI-CRON] - Health check: every 15 minutes (AI approval required)');
-  console.log('[AI-CRON] - Maintenance: every 6 hours (AI approval required)');
-  console.log(`[AI-CRON] Monitoring server at: ${SERVER_URL}`);
-  console.log('[AI-CRON] All cron operations now require AI model approval');
+// AI-Controlled Memory Sync (AI decides when to run)
+cron.schedule('0 */4 * * *', async () => {
+  try {
+    const result = await modelControlHooks.orchestrateWorker(
+      'memorySync',
+      'scheduled',
+      {},
+      {
+        userId: 'system',
+        sessionId: 'cron',
+        source: 'cron'
+      }
+    );
+
+    if (result.success) {
+      console.log('[AI-CRON] Memory sync approved by AI model');
+    } else {
+      console.log('[AI-CRON] Memory sync denied by AI:', result.error || 'No approval');
+    }
+  } catch (error: any) {
+    console.error('[AI-CRON] AI memory sync control error:', error.message);
+  }
+});
+
+// AI-Controlled Goal Watcher (AI decides when to run)
+cron.schedule('*/30 * * * *', async () => {
+  try {
+    const result = await modelControlHooks.orchestrateWorker(
+      'goalWatcher',
+      'scheduled',
+      {},
+      {
+        userId: 'system',
+        sessionId: 'cron',
+        source: 'cron'
+      }
+    );
+
+    if (result.success) {
+      console.log('[AI-CRON] Goal watcher approved by AI model');
+    } else {
+      console.log('[AI-CRON] Goal watcher denied by AI:', result.error || 'No approval');
+    }
+  } catch (error: any) {
+    console.error('[AI-CRON] AI goal watcher control error:', error.message);
+  }
+});
+
+/**
+ * Execute health check when approved by AI
+ */
+async function executeHealthCheck(): Promise<void> {
+  workerStatusService.updateWorkerStatus('worker-health', 'running', 'ai_approved_health_check');
   
-  // Initialize minimal worker status tracking
-  workerStatusService.initializeMinimalWorkers();
-  console.log('[AI-CRON] AI-controlled worker status tracking initialized');
+  try {
+    const response = await axios.get(`${SERVER_URL}/health`, { timeout: 10000 });
+    console.log('[AI-HEALTH] Health check completed successfully');
+    workerStatusService.updateWorkerStatus('worker-health', 'idle', 'ai_health_check_complete');
+  } catch (error: any) {
+    console.error('[AI-HEALTH] Health check failed:', error.message);
+    workerStatusService.updateWorkerStatus('worker-health', 'error', 'ai_health_check_failed');
+  }
 }
+
+/**
+ * Execute maintenance when approved by AI
+ */
+async function executeMaintenance(): Promise<void> {
+  workerStatusService.updateWorkerStatus('worker-maintenance', 'running', 'ai_approved_maintenance');
+  
+  try {
+    // AI-controlled maintenance operations
+    console.log('[AI-MAINTENANCE] Running AI-approved maintenance tasks');
+    
+    // Memory cleanup
+    if (global.gc) {
+      global.gc();
+      console.log('[AI-MAINTENANCE] Memory garbage collection completed');
+    }
+    
+    console.log('[AI-MAINTENANCE] Maintenance tasks completed');
+    workerStatusService.updateWorkerStatus('worker-maintenance', 'idle', 'ai_maintenance_complete');
+  } catch (error: any) {
+    console.error('[AI-MAINTENANCE] Maintenance failed:', error.message);
+    workerStatusService.updateWorkerStatus('worker-maintenance', 'error', 'ai_maintenance_failed');
+  }
+}
+
+console.log('[AI-CRON] AI-controlled cron worker system initialized');
