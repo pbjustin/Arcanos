@@ -28,9 +28,6 @@ import './services/database-connection';
 // Import worker initialization module (conditional)
 import './worker-init';
 
-// Frontend-triggered worker dispatch route
-const workerDispatch = require('./api/worker/dispatch');
-
 // Load environment variables
 dotenv.config();
 
@@ -251,9 +248,6 @@ app.get('/', (_req, res) => {
 
 // Mount core logic or routes here
 app.use('/api', router);
-
-// Dispatch tasks to dynamic workers
-app.use('/api/worker/dispatch', workerDispatch);
 
 // Mount memory routes - protected by ARCANOS_API_TOKEN
 // Expose memory routes under /api/memory to match documentation
