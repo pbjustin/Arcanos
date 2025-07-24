@@ -1,21 +1,38 @@
-const express = require('express');
-const cors = require('cors');
+const { auditBackend, processTask, logHealth } = require('../../services/workerOps');
 
-const router = express.Router();
-router.use(cors());
-router.use(express.json());
+/**
+ * Dispatch handler for frontend AI tasks
+ * @param {Object} payload - The request payload from the front-end
+ * @returns {Object} result - Execution response
+ */
+async function dispatch(payload) {
+  const { type, data } = payload || {};
 
-router.post('/', async (req, res) => {
-  const { type, payload } = req.body || {};
-  if (!type) return res.status(400).json({ ok: false, error: 'type required' });
   try {
-    const worker = require(`../../workers/${type}.js`);
-    const result = await worker(payload);
-    res.json({ ok: true, result });
-  } catch (err) {
-    console.error('Worker dispatch error:', err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+    switch (type) {
+      case 'audit':
+        return await auditBackend(data);
 
-module.exports = router;
+      case 'process':
+        return await processTask(data);
+
+      case 'health':
+        return await logHealth();
+
+      default:
+        return {
+          status: 'error',
+          message: `Unknown dispatch type: ${type}`
+        };
+    }
+  } catch (err) {
+    console.error('[DISPATCH ERROR]', err);
+    return {
+      status: 'error',
+      message: 'Worker dispatch failed',
+      detail: err.message
+    };
+  }
+}
+
+module.exports = dispatch;
