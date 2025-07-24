@@ -23,15 +23,15 @@ import { bootstrapWorkers } from './bootstrap-workers';
 // Import the new database connection module to ensure memory table exists
 import './services/database-connection';
 
+// Load environment variables before initializing workers
+dotenv.config();
+
 // Worker initialization will be handled by worker-init.js
 // import { startCronWorker } from './services/cron-worker';
 
 // Import worker initialization module (will run conditionally)
 import './worker-init';
 import { isTrue } from './utils/env';
-
-// Load environment variables
-dotenv.config();
 
 // Boot additional background workers if enabled
 if (isTrue(process.env.RUN_WORKERS)) {
