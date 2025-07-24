@@ -4,6 +4,7 @@ const modules = {
   identity: require('./modules/identity'),
   goals: require('./modules/goals'),
   emotions: require('./modules/emotions'),
+  threads: require('./modules/threads'),
 };
 
 const actions = {
@@ -12,6 +13,7 @@ const actions = {
   hydrateState: require('./actions/hydrateState'),
   bootstrap: require('./actions/bootstrapMemory'),
   sync: require('./actions/syncToPostgres'),
+  saveThread: require('./actions/saveThread'),
 };
 
 async function dispatch(command, payload = {}) {
