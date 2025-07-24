@@ -54,14 +54,14 @@ GET /api/memory/health
 
 Each service can use its own memory space by specifying a container ID:
 
-- **Header**: `X-Container-Id: backstage-booker`
-- **Query Parameter**: `?container_id=segment-engine`
+- **Header**: `X-Container-Id: my-service-name`
+- **Query Parameter**: `?container_id=custom-component`
 - **Default**: `default` container if not specified
 
 ### Example Services:
-- `backstage-booker` - WWE Universe booking system
-- `segment-engine` - Match segment generator
-- `canon-manager` - Wrestling canon database
+- `arcanos-core` - Main backend service
+- `custom-gpt` - Custom GPT integration
+- `api-service` - External API service
 - `diagnostics` - System monitoring
 
 ## Database Setup
@@ -106,15 +106,15 @@ await axios.post('http://localhost:8080/api/memory/save', {
   }
 }, {
   headers: {
-    'X-Container-Id': 'backstage-booker',
+    'X-Container-Id': 'api-service',
     'Authorization': `Bearer ${process.env.ARCANOS_API_TOKEN}`
   }
 });
 
-// Load match result
-const response = await axios.get('http://localhost:8080/api/memory/load?key=last_match_result', {
+// Load application state
+const response = await axios.get('http://localhost:8080/api/memory/load?key=app_state', {
   headers: {
-    'X-Container-Id': 'backstage-booker',
+    'X-Container-Id': 'api-service',
     'Authorization': `Bearer ${process.env.ARCANOS_API_TOKEN}`
   }
 });
@@ -127,13 +127,13 @@ console.log(response.data.memory_value);
 curl -X POST http://localhost:8080/api/memory/save \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $ARCANOS_API_TOKEN" \
-  -H "X-Container-Id: backstage-booker" \
-  -d '{"memory_key": "universe_state", "memory_value": {"current_champion": "Roman Reigns"}}'
+  -H "X-Container-Id: api-service" \
+  -d '{"memory_key": "app_config", "memory_value": {"version": "1.0.0", "feature_flags": {}}}'
 
 # Load memory
-curl "http://localhost:8080/api/memory/load?key=universe_state" \
+curl "http://localhost:8080/api/memory/load?key=app_config" \
   -H "Authorization: Bearer $ARCANOS_API_TOKEN" \
-  -H "X-Container-Id: backstage-booker"
+  -H "X-Container-Id: api-service"
 
 # Health check
 curl http://localhost:8080/api/memory/health \

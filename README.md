@@ -210,6 +210,13 @@ or
 
 ## Features
 
+### AI-Controlled System Architecture
+The backend implements **full AI operational control** where the fine-tuned model manages system operations:
+- **AI-Controlled CRON Workers** - All background tasks require AI approval
+- **JSON Instruction System** - Service logic converted to AI-interpretable instructions
+- **Model Control Hooks** - Unified control interface for AI operational decisions
+- **Intelligent Resource Management** - AI decides when to execute maintenance, health checks, and memory operations
+
 ### Intent-Based AI Routing
 The backend implements intelligent intent detection that routes requests to specialized processors:
 - **ARCANOS:WRITE** - Creative writing and content generation
@@ -217,20 +224,31 @@ The backend implements intelligent intent detection that routes requests to spec
 - **General Processing** - Standard chat and Q&A
 
 ### Fine-Tuned Model Integration
-- **Primary Model**: Custom fine-tuned GPT-3.5 Turbo model
-- **Fallback System**: Permission-based GPT-4 fallback for reliability
+- **Primary Model**: `ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106`
+- **AI System Control**: Model controls CRON workers and operational decisions
+- **Permission-Based Fallback**: AI approval required for standard GPT models
 - **Error Transparency**: Comprehensive error logging and user feedback
 - **🔁 Routing Override**: Shell command to force all prompts through fine-tuned model
 
+### OpenAI Assistants Integration
+- **Automatic Sync**: All organization assistants synced every 30 minutes
+- **Runtime Lookup**: Assistants available via `config/assistants.json`
+- **Name Normalization**: `UPPERCASE_WITH_UNDERSCORES` format for consistent access
+- **Full Integration**: Assistant tools and instructions preserved and accessible
+
 ### Memory & Context Management
-- **Persistent Storage**: Memory entries with tags and metadata
+- **PostgreSQL Backend**: Persistent storage with automatic schema management
+- **In-Memory Fallback**: Graceful degradation when database unavailable
 - **Session Tracking**: User and session-based context preservation
 - **Canon Management**: Storyline file storage and retrieval
+- **AI-Controlled Memory Sync**: Automatic memory snapshots every 4 hours
 
-### Container & System Management
-- **Docker Integration**: Monitor and control application containers
-- **System Diagnostics**: Natural language diagnostic commands
+### System Health & Monitoring
+- **AI-Controlled Health Checks**: Fine-tuned model approves health monitoring
+- **Comprehensive Diagnostics**: Natural language diagnostic commands
 - **Real-time Monitoring**: Background worker status and health metrics
+- **Sleep/Wake Cycles**: Configurable low-power operation periods
+- **Container Management**: Docker integration for service control
 
 ### Fine-Tuning Pipeline
 - **Modular Training**: Upload and process .jsonl training data
@@ -252,18 +270,20 @@ The backend implements intelligent intent detection that routes requests to spec
 - `DATABASE_URL` - PostgreSQL connection string (optional, uses in-memory fallback if not set)
 
 ### Worker Configuration
-- `RUN_WORKERS` - Set to `true` (or `1`) to enable background workers. Use `false` (default) if you only need the memory API and want the server to keep running without background jobs.
+- `RUN_WORKERS` - Set to `true` (or `1`) to enable AI-controlled background workers. Use `false` (default) if you only need the memory API and want the server to keep running without background jobs.
 - `SERVER_URL` - Server URL for health checks (default: http://localhost:8080)
+
+### Sleep & Wake Configuration
+- `SLEEP_ENABLED` - Enable sleep mode (default: false)
+- `SLEEP_START` - Sleep start time in HH:MM format (default: 02:00)
+- `SLEEP_DURATION` - Sleep duration in hours (default: 7)
+- `SLEEP_TZ` - Sleep timezone (default: UTC)
 
 ### Optional Configuration
 - `GPT_TOKEN` - Authorization token for GPT diagnostic access
 - `ARCANOS_API_TOKEN` - Token for memory and diagnostic endpoints
 - `ASK_CONCURRENCY_LIMIT` - Max concurrent `/api/ask` requests (default: 3)
 - `MODEL_ID` - Base model for fine-tuning pipeline (default: gpt-3.5-turbo)
-- `SLEEP_ENABLED` - Enable sleep mode (default: false)
-- `SLEEP_START` - Sleep start time (default: 02:00)
-- `SLEEP_DURATION` - Sleep duration in hours (default: 7)
-- `SLEEP_TZ` - Sleep timezone (default: UTC)
 
 Example memory request with token:
 
@@ -274,13 +294,35 @@ curl -X GET http://localhost:8080/api/memory/health \
 
 ## 📚 Documentation
 
-- **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start instructions
-- **[🔁 Fine-Tune Routing Override](./FINETUNE_ROUTING_OVERRIDE.md)** - Shell command to force all prompts through fine-tuned model
-- **[📖 Prompt API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive guide to using prompts with all API endpoints
-- **[💡 Practical Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use examples and code snippets
-- **[🔧 Test Script](./test-api-endpoints.sh)** - Automated endpoint testing
-- **[🤖 Fine-Tuning Pipeline](./FINETUNE_PIPELINE.md)** - Modular system for continuing fine-tuning of OpenAI models
-- **[⚡ Concurrency Test](./test-concurrency-limit.js)** - Verify parallel request handling
+### Core Documentation
+- **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start and initial configuration
+- **[🔧 Quick Reference](./QUICK_REFERENCE.md)** - Essential commands and endpoints
+- **[🧠 Backend Documentation](./docs/backend.md)** - Comprehensive backend system overview
+- **[📋 Changelog](./docs/changelog.md)** - Version history and updates
+
+### API & Usage Guides
+- **[📖 API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive API usage documentation
+- **[💡 API Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use code examples
+- **[🤖 Custom GPT Integration](./CUSTOM_GPT_INTEGRATION.md)** - OpenAI Custom GPT setup
+- **[🧠 Diagnostics Guide](./GPT_DIAGNOSTICS_GUIDE.md)** - Natural language diagnostic commands
+
+### AI & Model Features
+- **[🔁 Fine-Tune Routing](./FINETUNE_ROUTING_OVERRIDE.md)** - Control fine-tuned model routing
+- **[🎯 Query Fine-Tune Guide](./QUERY_FINETUNE_GUIDE.md)** - Direct fine-tuned model access
+- **[🤖 Fine-Tuning Pipeline](./FINETUNE_PIPELINE.md)** - Model training and improvement
+- **[🔒 V1 Safe Interface](./ARCANOS_V1_INTERFACE.md)** - Safe AI interface implementation
+- **[🤖 Assistants Sync](./ASSISTANT_SYNC.md)** - OpenAI Assistants integration
+
+### Backend & Infrastructure
+- **[🗄️ Database Implementation](./DATABASE_IMPLEMENTATION.md)** - PostgreSQL setup and usage
+- **[🔄 Database Recovery](./DATABASE_RECOVERY_GUIDE.md)** - Recovery procedures and handling
+- **[💾 Memory Guide](./UNIVERSAL_MEMORY_GUIDE.md)** - Memory system architecture
+- **[⚡ Memory Optimization](./MEMORY_OPTIMIZATION.md)** - Railway 8GB optimization
+- **[🏗️ Deployment Guide](./DEPLOYMENT.md)** - Docker and Railway deployment
+- **[🔧 Prisma Setup](./PRISMA_SETUP.md)** - ORM configuration
+
+### Additional Services
+- **[📧 Email Service](./EMAIL_SERVICE.md)** - Gmail SMTP integration
 
 ## Quick Reference
 
@@ -311,8 +353,12 @@ npm start
 ### Diagnostic & Management
 - `POST /api/diagnostics` - Natural language system commands
 - `GET /system/workers` - Background process monitoring (verify workers after setting `RUN_WORKERS=true`)
+- `GET /system/diagnostics` - Comprehensive system diagnostics
+- `GET /sync/diagnostics` - GPT-accessible system metrics
 - `GET /api/containers/status` - Docker container management
 - `GET /api/canon/files` - Storyline file management
+- `GET /api/model-status` - Current model configuration
+- `GET /api/model/info` - Detailed model metadata
 
 ### Fine-Tuning Pipeline
 - `./upload_jsonl.sh [file.jsonl]` - Upload training data to OpenAI

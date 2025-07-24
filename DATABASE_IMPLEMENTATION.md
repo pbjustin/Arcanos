@@ -97,19 +97,19 @@ npm start  # Works with graceful fallback
 
 **Save Memory:**
 ```bash
-curl -X POST http://localhost:3000/api/memory/save \
+curl -X POST http://localhost:8080/api/memory/save \
   -H "Content-Type: application/json" \
   -d '{"key": "user_preference", "value": {"theme": "dark"}}'
 ```
 
 **Load Memory:**
 ```bash
-curl http://localhost:3000/api/memory/load?key=user_preference
+curl http://localhost:8080/api/memory/load?key=user_preference
 ```
 
 **Health Check:**
 ```bash
-curl http://localhost:3000/api/memory/health
+curl http://localhost:8080/api/memory/health
 ```
 
 ## Integration with Existing System

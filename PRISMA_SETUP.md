@@ -36,7 +36,7 @@ npm run prisma:studio    # Open Prisma Studio
 ```
 
 ### 5. Usage in Application
-Example connection code (see `index.js`):
+Example connection code (see `src/index.ts`):
 ```javascript
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
@@ -93,7 +93,7 @@ await prisma.user.delete({
 ## Files Added/Modified
 
 - `prisma/schema.prisma` - Database schema definition
-- `index.js` - Added Prisma client example
+- `src/index.ts` - Added Prisma client example
 - `package.json` - Added Prisma dependencies and scripts
 - `prisma-example.js` - Comprehensive usage examples
 - `.env` - Database configuration (copied from .env.example)
