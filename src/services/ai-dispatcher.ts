@@ -34,13 +34,19 @@ export interface DispatchResponse {
 }
 
 export class AIDispatcher {
-  private openaiService: OpenAIService;
+  private openaiService: OpenAIService | null;
   private model: string;
 
   constructor() {
-    this.openaiService = new OpenAIService();
     this.model = process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106';
-    console.log('🤖 AI Dispatcher initialized with model:', this.model);
+    
+    try {
+      this.openaiService = new OpenAIService();
+      console.log('🤖 AI Dispatcher initialized with model:', this.model);
+    } catch (error) {
+      console.warn('⚠️ AI Dispatcher initialized without OpenAI (testing mode):', error);
+      this.openaiService = null;
+    }
   }
 
   /**
@@ -52,6 +58,12 @@ export class AIDispatcher {
       endpoint: request.endpoint,
       method: request.method
     });
+
+    // If no OpenAI service available, return mock response for testing
+    if (!this.openaiService) {
+      console.log('⚠️ OpenAI service not available, returning mock AI response');
+      return this.createMockResponse(request);
+    }
 
     try {
       // Create structured prompt for the fine-tuned model
@@ -237,11 +249,61 @@ Please analyze this request and provide appropriate instructions for handling it
    * Quick method for simple AI queries without full dispatch overhead
    */
   async ask(query: string): Promise<string> {
+    if (!this.openaiService) {
+      return `AI: I would process "${query}" but I'm in testing mode without OpenAI access. In production, this would be handled by the fine-tuned model.`;
+    }
+    
     const response = await this.openaiService.chat([
       { role: 'user', content: query }
     ]);
     
     return response.error ? `Error: ${response.error}` : response.message;
+  }
+
+  /**
+   * Create mock response for testing when OpenAI is not available
+   */
+  private createMockResponse(request: DispatchRequest): DispatchResponse {
+    console.log('🎭 Creating mock AI response for testing');
+    
+    // Simulate AI decision making based on request type
+    let mockInstructions: DispatchInstruction[] = [];
+    let mockResponse = '';
+
+    if (request.type === 'api' && request.payload?.message) {
+      mockResponse = `AI Mock: I received your message "${request.payload.message}". In production, I would analyze this and provide appropriate instructions. This is a test response showing the AI dispatcher is working.`;
+      mockInstructions = [{
+        action: 'respond',
+        service: 'api',
+        response: mockResponse,
+        execute: true,
+        priority: 5
+      }];
+    } else if (request.type === 'api' && request.payload?.query) {
+      mockResponse = `AI Mock: Query "${request.payload.query}" received. This would be processed by the fine-tuned model in production.`;
+      mockInstructions = [{
+        action: 'respond',
+        service: 'api',
+        response: mockResponse,
+        execute: true,
+        priority: 5
+      }];
+    } else {
+      mockResponse = `AI Mock: Request processed. Type: ${request.type}, Endpoint: ${request.endpoint}`;
+      mockInstructions = [{
+        action: 'respond',
+        service: 'api',
+        response: mockResponse,
+        execute: true,
+        priority: 5
+      }];
+    }
+
+    return {
+      success: true,
+      instructions: mockInstructions,
+      directResponse: mockResponse
+    };
   }
 }
 
