@@ -89,6 +89,7 @@ The CRON worker system runs when `RUN_WORKERS=true` and manages the following sc
 #### Diagnostics & Monitoring
 - `POST /api/diagnostics` - Natural language diagnostic commands
 - `GET /api/workers/status` - Background worker status
+- `POST /api/worker/dispatch` - Run a specific worker module
 - `GET /sync/diagnostics` - GPT-accessible system metrics
 
 ### Removed Features
