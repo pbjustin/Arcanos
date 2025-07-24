@@ -29,8 +29,31 @@ import './services/database-connection';
 // Import worker initialization module (will run conditionally)
 import './worker-init';
 import { isTrue } from './utils/env';
-// Frontend-triggered worker dispatch route
-const workerDispatch = require('../api/worker/dispatch');
+
+// Frontend-triggered worker dispatch route. We check both possible locations so
+// the import works when running the TypeScript sources directly and after
+// compilation in the dist folder.
+const builtPath = path.join(__dirname, 'api', 'worker', 'dispatch.js');
+const sourcePath = path.join(__dirname, '..', 'api', 'worker', 'dispatch.js');
+const dispatchModule = fs.existsSync(builtPath) ? builtPath : sourcePath;
+const workerDispatch = require(dispatchModule);
+
+// Allow both an Express router or a simple function export
+let dispatchRouter: any;
+if (typeof workerDispatch === 'function' && workerDispatch.length <= 1) {
+  dispatchRouter = express.Router();
+  dispatchRouter.post('/', async (req: express.Request, res: express.Response) => {
+    try {
+      const result = await workerDispatch(req.body);
+      res.json(result);
+    } catch (err: any) {
+      console.error('[DISPATCH ERROR]', err);
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+} else {
+  dispatchRouter = workerDispatch;
+}
 
 // Load environment variables
 dotenv.config();
@@ -275,7 +298,7 @@ app.get('/', (_req, res) => {
 app.use('/api', router);
 
 // Dispatch tasks to dynamic workers
-app.use('/api/worker/dispatch', workerDispatch);
+app.use('/api/worker/dispatch', dispatchRouter);
 
 // Mount memory routes - protected by ARCANOS_API_TOKEN
 // Expose memory routes under /api/memory to match documentation
