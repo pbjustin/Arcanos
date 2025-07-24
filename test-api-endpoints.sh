@@ -10,6 +10,18 @@ echo ""
 
 BASE_URL="http://localhost:8080"
 
+# Build and start the API server in the background
+npm run build > /tmp/build.log 2>&1
+node dist/index.js > /tmp/server.log 2>&1 &
+SERVER_PID=$!
+# Wait for server to be ready
+for i in {1..30}; do
+  if curl -s "$BASE_URL/health" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -89,6 +101,11 @@ test_endpoint "Ask with Fallback (Error Test)" "POST" "/api/ask-with-fallback" '
 
 # Test 12: Sleep Configuration
 test_endpoint "Sleep Configuration" "GET" "/api/config/sleep" ""
+
+# Test 13: Worker Dispatch
+test_endpoint "Worker Dispatch" "POST" "/api/worker/dispatch" '{"type":"fineTuneProcessor","payload":{"type":"audit","payload":"const x = y + 1;"}}'
+
+kill $SERVER_PID
 
 echo "=================================================="
 echo "                 Test Summary"
