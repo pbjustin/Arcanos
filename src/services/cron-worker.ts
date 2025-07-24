@@ -5,6 +5,7 @@ import cron from 'node-cron';
 import axios from 'axios';
 import { workerStatusService } from './worker-status';
 import { modelControlHooks } from './model-control-hooks';
+import { openAIAssistantsService } from './openai-assistants';
 
 const SERVER_URL = process.env.SERVER_URL || (process.env.NODE_ENV === 'production' 
   ? 'https://arcanos-production-426d.up.railway.app' 
@@ -43,6 +44,14 @@ export const CRON_INSTRUCTIONS = {
     schedule: '*/30 * * * *',
     execute: true,
     priority: 4
+  },
+  assistantSync: {
+    action: 'schedule',
+    service: 'assistantSync',
+    parameters: { type: 'openai-sync' },
+    schedule: '15,45 * * * *',
+    execute: true,
+    priority: 5
   }
 };
 
@@ -142,6 +151,30 @@ cron.schedule('*/30 * * * *', async () => {
   }
 });
 
+// AI-Controlled Assistant Sync (AI decides when to run) - Every 30 minutes (offset by 15 min)
+cron.schedule('15,45 * * * *', async () => {
+  try {
+    const result = await modelControlHooks.handleCronTrigger(
+      'assistant-sync',
+      '15,45 * * * *',
+      {
+        userId: 'system',
+        sessionId: 'cron',
+        source: 'cron'
+      }
+    );
+
+    if (result.success) {
+      console.log('[AI-CRON] Assistant sync approved by AI model');
+      await executeAssistantSync();
+    } else {
+      console.log('[AI-CRON] Assistant sync denied by AI:', result.error || 'No approval');
+    }
+  } catch (error: any) {
+    console.error('[AI-CRON] AI assistant sync control error:', error.message);
+  }
+});
+
 /**
  * Execute health check when approved by AI
  */
@@ -179,6 +212,29 @@ async function executeMaintenance(): Promise<void> {
   } catch (error: any) {
     console.error('[AI-MAINTENANCE] Maintenance failed:', error.message);
     workerStatusService.updateWorkerStatus('worker-maintenance', 'error', 'ai_maintenance_failed');
+  }
+}
+
+/**
+ * Execute OpenAI assistant sync when approved by AI
+ */
+async function executeAssistantSync(): Promise<void> {
+  workerStatusService.updateWorkerStatus('worker-assistant-sync', 'running', 'ai_approved_assistant_sync');
+  
+  try {
+    console.log('[AI-ASSISTANT-SYNC] Running AI-approved assistant sync');
+    
+    // Sync assistants from OpenAI
+    const assistantMap = await openAIAssistantsService.syncAssistants();
+    const assistantCount = Object.keys(assistantMap).length;
+    
+    console.log(`[AI-ASSISTANT-SYNC] Successfully synced ${assistantCount} assistants`);
+    console.log('[AI-ASSISTANT-SYNC] Available assistants:', Object.keys(assistantMap));
+    
+    workerStatusService.updateWorkerStatus('worker-assistant-sync', 'idle', `ai_assistant_sync_complete_${assistantCount}_assistants`);
+  } catch (error: any) {
+    console.error('[AI-ASSISTANT-SYNC] Assistant sync failed:', error.message);
+    workerStatusService.updateWorkerStatus('worker-assistant-sync', 'error', 'ai_assistant_sync_failed');
   }
 }
 
