@@ -294,13 +294,35 @@ curl -X GET http://localhost:8080/api/memory/health \
 
 ## 📚 Documentation
 
-- **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start instructions
-- **[🔁 Fine-Tune Routing Override](./FINETUNE_ROUTING_OVERRIDE.md)** - Shell command to force all prompts through fine-tuned model
-- **[📖 Prompt API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive guide to using prompts with all API endpoints
-- **[💡 Practical Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use examples and code snippets
-- **[🔧 Test Script](./test-api-endpoints.sh)** - Automated endpoint testing
-- **[🤖 Fine-Tuning Pipeline](./FINETUNE_PIPELINE.md)** - Modular system for continuing fine-tuning of OpenAI models
-- **[⚡ Concurrency Test](./test-concurrency-limit.js)** - Verify parallel request handling
+### Core Documentation
+- **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start and initial configuration
+- **[🔧 Quick Reference](./QUICK_REFERENCE.md)** - Essential commands and endpoints
+- **[🧠 Backend Documentation](./docs/backend.md)** - Comprehensive backend system overview
+- **[📋 Changelog](./docs/changelog.md)** - Version history and updates
+
+### API & Usage Guides
+- **[📖 API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive API usage documentation
+- **[💡 API Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use code examples
+- **[🤖 Custom GPT Integration](./CUSTOM_GPT_INTEGRATION.md)** - OpenAI Custom GPT setup
+- **[🧠 Diagnostics Guide](./GPT_DIAGNOSTICS_GUIDE.md)** - Natural language diagnostic commands
+
+### AI & Model Features
+- **[🔁 Fine-Tune Routing](./FINETUNE_ROUTING_OVERRIDE.md)** - Control fine-tuned model routing
+- **[🎯 Query Fine-Tune Guide](./QUERY_FINETUNE_GUIDE.md)** - Direct fine-tuned model access
+- **[🤖 Fine-Tuning Pipeline](./FINETUNE_PIPELINE.md)** - Model training and improvement
+- **[🔒 V1 Safe Interface](./ARCANOS_V1_INTERFACE.md)** - Safe AI interface implementation
+- **[🤖 Assistants Sync](./ASSISTANT_SYNC.md)** - OpenAI Assistants integration
+
+### Backend & Infrastructure
+- **[🗄️ Database Implementation](./DATABASE_IMPLEMENTATION.md)** - PostgreSQL setup and usage
+- **[🔄 Database Recovery](./DATABASE_RECOVERY_GUIDE.md)** - Recovery procedures and handling
+- **[💾 Memory Guide](./UNIVERSAL_MEMORY_GUIDE.md)** - Memory system architecture
+- **[⚡ Memory Optimization](./MEMORY_OPTIMIZATION.md)** - Railway 8GB optimization
+- **[🏗️ Deployment Guide](./DEPLOYMENT.md)** - Docker and Railway deployment
+- **[🔧 Prisma Setup](./PRISMA_SETUP.md)** - ORM configuration
+
+### Additional Services
+- **[📧 Email Service](./EMAIL_SERVICE.md)** - Gmail SMTP integration
 
 ## Quick Reference
 
