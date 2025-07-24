@@ -31,6 +31,10 @@ import './services/cron-worker';
 // Import worker initialization module (conditional)
 import './worker-init';
 
+// Import ChatGPT-User middleware components
+import { chatGPTUserMiddleware, getChatGPTUserDiagnostics } from './middleware/chatgpt-user';
+import { chatGPTUserWhitelist } from './services/chatgpt-user-whitelist';
+
 // Import route handlers (reordered as per requirement: memory → audit → diagnostic → write)
 import { memoryHandler } from './handlers/memory-handler';
 import { auditHandler } from './handlers/audit-handler';
@@ -53,6 +57,13 @@ const PORT = Number(process.env.PORT) || 8080;
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ChatGPT-User middleware (applied globally if enabled)
+app.use(chatGPTUserMiddleware({
+  allowPostMethods: false, // Deny POST/PUT by default
+  rateLimit: true,
+  logToFile: false
+}));
 
 // Serve static files
 const publicDir = path.join(__dirname, '../public');
@@ -150,6 +161,23 @@ app.get('/audit-logs', (req, res) => {
     ...logs,
     timestamp: new Date().toISOString()
   });
+});
+
+// ChatGPT-User middleware diagnostics endpoint
+app.get('/chatgpt-user-status', (req, res) => {
+  try {
+    const diagnostics = getChatGPTUserDiagnostics();
+    res.json({
+      ...diagnostics,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: 'Failed to get ChatGPT-User status',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Simplified fine-tune routing status endpoint
@@ -435,6 +463,7 @@ serverService.start(app, PORT).then(async () => {
   console.log('✅ /api/* - Main API router with AI-controlled endpoints');
   console.log('✅ /api/memory/* - Protected memory routes (requires API token)');
   console.log('✅ /system/* - System diagnostics routes');
+  console.log('✅ /chatgpt-user-status - ChatGPT-User middleware diagnostics');
   console.log('✅ /finetune-status - Fine-tune routing status');
   console.log('✅ /query-finetune - AI dispatcher controlled');
   console.log('✅ /ask - AI dispatcher controlled');
@@ -450,6 +479,7 @@ serverService.start(app, PORT).then(async () => {
   console.log('✅ Malformed Tracking - Logs malformed model responses for audit');
   console.log('✅ Timestamp Validation - Confirms all memory save operations');
   console.log('✅ Fallback Injection - Auto-injects content if model response lacks content field');
+  console.log('✅ ChatGPT-User Handler - Detects and manages ChatGPT-User agent requests with IP whitelisting');
   
   console.log('\n[BOOT-SEQUENCE] 📋 Route Import Order Enforced:');
   console.log('1️⃣ memory → 2️⃣ audit → 3️⃣ diagnostic → 4️⃣ write');
@@ -465,6 +495,15 @@ serverService.start(app, PORT).then(async () => {
   } catch (error) {
     console.error('❌ Failed to initialize database:', error);
     console.warn('⚠️ Service will run in degraded mode with fallback handlers');
+  }
+  
+  // Initialize ChatGPT-User whitelist service
+  try {
+    await chatGPTUserWhitelist.initialize();
+    console.log('✅ ChatGPT-User whitelist service initialized');
+  } catch (error) {
+    console.error('❌ Failed to initialize ChatGPT-User whitelist:', error);
+    console.warn('⚠️ ChatGPT-User middleware will work in degraded mode');
   }
   
   // Basic memory logging (reduced verbosity)
