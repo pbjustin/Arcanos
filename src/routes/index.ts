@@ -1,8 +1,8 @@
-// ARCANOS AI-Controlled Router - All routes delegate to AI model
 import { Router } from 'express';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { diagnosticsService } from '../services/diagnostics';
 import { workerStatusService } from '../services/worker-status';
+import { sendEmail, verifyEmailConnection, getEmailSender } from '../services/email';
 
 const router = Router();
 
@@ -145,6 +145,62 @@ router.get('/workers/status', async (req, res) => {
     res.status(500).json({
       error: error.message,
       aiControlled: true,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Email service endpoints
+router.get('/email/status', async (req, res) => {
+  try {
+    const isConnected = await verifyEmailConnection();
+    const sender = getEmailSender();
+    
+    res.json({
+      connected: isConnected,
+      sender: sender,
+      configured: sender !== 'Not configured',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      error: error.message,
+      connected: false,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+router.post('/email/send', async (req, res) => {
+  try {
+    const { to, subject, html, from } = req.body;
+    
+    if (!to || !subject || !html) {
+      return res.status(400).json({
+        error: 'Missing required fields: to, subject, html',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const result = await sendEmail(to, subject, html, from);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        messageId: result.messageId,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
       timestamp: new Date().toISOString()
     });
   }
