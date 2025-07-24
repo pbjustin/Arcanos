@@ -1,21 +1,21 @@
-// Worker initialization module - conditionally starts workers based on RUN_WORKERS environment variable
+// Optimized Worker initialization - minimal workers on demand
 import { workerStatusService } from './services/worker-status';
 import { isTrue } from './utils/env';
 
 function startWorkers() {
-  // Import and start the cron worker service
+  // Import and start the optimized cron worker service
   const { startCronWorker } = require('./services/cron-worker');
   startCronWorker();
-  console.log('[WORKER-INIT] Workers started due to RUN_WORKERS=true');
+  console.log('[WORKER-INIT] Minimal workers started due to RUN_WORKERS=true');
 }
 
-// Always initialize system workers for status tracking (regardless of RUN_WORKERS)
-workerStatusService.initializeSystemWorkers();
-console.log('[WORKER-INIT] System workers initialized for status tracking');
+// Always initialize minimal system workers for status tracking
+workerStatusService.initializeMinimalWorkers();
+console.log('[WORKER-INIT] Minimal system workers initialized');
 
 // Conditional worker startup based on environment variable
 if (isTrue(process.env.RUN_WORKERS)) {
-  startWorkers(); // Your worker orchestration entry
+  startWorkers();
 } else {
   console.log('[WORKER-INIT] Workers disabled (RUN_WORKERS not set to true)');
 }
