@@ -42,18 +42,34 @@ router.post('/save', async (req: Request, res: Response) => {
       container_id
     };
 
+    // Log snapshot activity on every save as requested
+    console.log('💾 [MEMORY-SNAPSHOT] Saving memory:', { 
+      memory_key, 
+      container_id, 
+      value_type: typeof memory_value,
+      timestamp: new Date().toISOString() 
+    });
+
     const result = useDatabase
       ? await databaseService.saveMemory(saveRequest)
       : await fallbackMemory.storeMemory(container_id, 'default', 'context', memory_key, memory_value);
     
+    console.log('✅ [MEMORY-SNAPSHOT] Memory saved successfully:', { 
+      memory_key, 
+      container_id, 
+      success: true,
+      timestamp: new Date().toISOString() 
+    });
+    
     res.status(200).json({
       success: true,
       message: 'Memory saved successfully',
-      data: result
+      data: result,
+      snapshot_logged: true
     });
     
   } catch (error: any) {
-    console.error('❌ Error saving memory:', error);
+    console.error('❌ [MEMORY-SNAPSHOT] Error saving memory:', error);
     res.status(500).json({ 
       error: 'Failed to save memory',
       details: error.message 
