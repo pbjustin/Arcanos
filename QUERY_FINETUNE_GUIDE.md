@@ -49,12 +49,12 @@ Raw model response without JSON wrapper...
 ### Direct Endpoint Examples
 ```bash
 # Basic query
-curl -X POST http://localhost:3000/query-finetune \
+curl -X POST http://localhost:8080/query-finetune \
   -H "Content-Type: application/json" \
   -d '{"query": "What is ARCANOS?"}'
 
 # With metadata
-curl -X POST http://localhost:3000/query-finetune \
+curl -X POST http://localhost:8080/query-finetune \
   -H "Content-Type: application/json" \
   -d '{"query": "Explain the memory architecture", "metadata": {"session": "test"}}'
 ```
@@ -62,17 +62,17 @@ curl -X POST http://localhost:3000/query-finetune \
 ### Prefix-Based Examples
 ```bash
 # WWE simulation
-curl -X POST http://localhost:3000/ \
+curl -X POST http://localhost:8080/ \
   -H "Content-Type: application/json" \
   -d '{"message": "query-finetune: Simulate a Raw segment between Cody Rhodes and The Rock."}'
 
 # Universe management
-curl -X POST http://localhost:3000/ \
+curl -X POST http://localhost:8080/ \
   -H "Content-Type: application/json" \
   -d '{"message": "query-finetune: List current title holders in my WWE Universe."}'
 
 # System inquiry
-curl -X POST http://localhost:3000/ \
+curl -X POST http://localhost:8080/ \
   -H "Content-Type: application/json" \
   -d '{"message": "query-finetune: Explain the memory architecture being used."}'
 ```
