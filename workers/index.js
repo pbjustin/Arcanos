@@ -3,6 +3,7 @@ const jobs = [
   require(path.resolve(__dirname, './memorySync')),
   require(path.resolve(__dirname, './goalWatcher')),
   require(path.resolve(__dirname, './clearTemp')),
+  require(path.resolve(__dirname, './memoryAudit')),
 ];
 
 console.log('[WORKERS] Booting background task loop');
