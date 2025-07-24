@@ -1,12 +1,8 @@
-const express = require('express');
-const app = express();
-const PORT = process.env.PORT || 8080;
+// ARCANOS Backend - Full AI Control Delegation
+// This entry point delegates all operations to the AI-controlled TypeScript backend
 
-// Your routes and memory handlers go here
-app.get('/', (req, res) => res.send('ARCANOS backend running'));
-app.use('/api/memory', require('./routes/memory')); // Example
+console.log('🤖 ARCANOS: Delegating full operational control to AI model...');
 
-// Prevent shutdown: Start persistent listener
-app.listen(PORT, () => {
-  console.log(`✅ Server listening on port ${PORT}`);
-});
+// All logic has been moved to TypeScript AI-controlled backend
+// This ensures the fine-tuned ARCANOS model has complete operational control
+require('./dist/index.js');
