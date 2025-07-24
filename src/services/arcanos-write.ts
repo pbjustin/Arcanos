@@ -24,11 +24,16 @@ export interface WriteResponse {
 }
 
 export class ArcanosWriteService {
-  private openaiService: OpenAIService;
+  private openaiService: OpenAIService | null;
   private memoryStorage: MemoryStorage;
 
   constructor() {
-    this.openaiService = new OpenAIService();
+    try {
+      this.openaiService = new OpenAIService();
+    } catch (error) {
+      console.warn('⚠️ ArcanosWriteService: OpenAI not available, running in testing mode');
+      this.openaiService = null;
+    }
     this.memoryStorage = new MemoryStorage();
   }
 
@@ -64,7 +69,18 @@ export class ArcanosWriteService {
       ];
 
       console.log('🚀 Generating narrative content...');
-      const openaiResponse = await this.openaiService.chat(chatMessages);
+      
+      let openaiResponse;
+      if (this.openaiService) {
+        openaiResponse = await this.openaiService.chat(chatMessages);
+      } else {
+        // Mock response when OpenAI is not available
+        openaiResponse = {
+          message: `[TESTING MODE] Mock narrative response for: "${message}". In a real environment with OpenAI configured, this would be generated content for domain: ${domain}`,
+          model: 'mock-model',
+          error: null
+        };
+      }
 
       if (openaiResponse.error) {
         console.error('❌ OpenAI error in WRITE service:', openaiResponse.error);
