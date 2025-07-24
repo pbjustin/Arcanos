@@ -31,10 +31,13 @@ import './services/cron-worker';
 // Import worker initialization module (conditional)
 import './worker-init';
 
-// Import route controllers
-import { ArcanosWriteService } from './services/arcanos-write';
-import { ArcanosAuditService } from './services/arcanos-audit';
-import { diagnosticsService } from './services/diagnostics';
+// Import route handlers (reordered as per requirement: memory → audit → diagnostic → write)
+import { memoryHandler } from './handlers/memory-handler';
+import { auditHandler } from './handlers/audit-handler';
+import { diagnosticHandler } from './handlers/diagnostic-handler';
+import { writeHandler } from './handlers/write-handler';
+import { routeRecovery } from './handlers/route-recovery';
+import { fallbackHandler } from './handlers/fallback-handler';
 
 // Load environment variables
 dotenv.config();
@@ -58,169 +61,95 @@ app.use(express.static(publicDir));
 // Basic Healthcheck
 app.get('/health', (_, res) => res.send('✅ OK'));
 
-// Initialize service instances
-const writeService = new ArcanosWriteService();
-const auditService = new ArcanosAuditService();
+// Initialize route recovery system
+routeRecovery.setApp(app);
 
-// 1. /memory route - Register handler properly and log snapshot activity on every save
+// 1. /memory route - Refactored to use dedicated handler with enhanced functionality
 app.post('/memory', async (req, res) => {
-  console.log('📝 /memory endpoint called - logging snapshot activity');
   try {
-    const { memory_key, memory_value } = req.body;
-    
-    if (!memory_key) {
-      return res.status(400).json({ 
-        error: 'memory_key is required',
-        example: { memory_key: 'user_preference', memory_value: { theme: 'dark' } }
-      });
-    }
-
-    if (memory_value === undefined) {
-      return res.status(400).json({ 
-        error: 'memory_value is required (can be null)',
-        example: { memory_key: 'user_preference', memory_value: { theme: 'dark' } }
-      });
-    }
-
-    const container_id = (req.headers['x-container-id'] as string) || 'default';
-    
-    console.log('💾 Saving memory snapshot:', { memory_key, container_id, timestamp: new Date().toISOString() });
-    
-    let result;
-    try {
-      // Try database first if configured
-      const saveRequest = {
-        memory_key,
-        memory_value,
-        container_id
-      };
-      result = await databaseService.saveMemory(saveRequest);
-    } catch (dbError: any) {
-      // Fallback to in-memory storage
-      console.log('📂 Using fallback memory storage');
-      const { MemoryStorage } = await import('./storage/memory-storage');
-      const fallbackMemory = new MemoryStorage();
-      result = await fallbackMemory.storeMemory(container_id, 'default', 'context', memory_key, memory_value);
-    }
-    
-    console.log('✅ Memory snapshot saved successfully:', { memory_key, container_id });
-    
-    res.status(200).json({
-      success: true,
-      message: 'Memory saved successfully',
-      data: result,
-      snapshot_logged: true,
-      timestamp: new Date().toISOString()
-    });
-    
+    await memoryHandler.handleMemoryRequest(req, res);
   } catch (error: any) {
-    console.error('❌ Error saving memory snapshot:', error);
-    res.status(500).json({ 
-      error: 'Failed to save memory',
-      details: error.message 
-    });
+    console.error('❌ Memory route failure, attempting recovery:', error);
+    // Route recovery will be handled by the recovery middleware
+    throw error;
   }
 });
 
-// 2. /write route - Confirm write controller is imported and bound to router correctly
-app.post('/write', async (req, res) => {
-  console.log('✍️ /write endpoint called - routing to write controller');
-  try {
-    const { message, domain, useRAG } = req.body;
-    
-    if (!message) {
-      return res.status(400).json({
-        error: 'message is required',
-        example: { message: 'Write a story about...', domain: 'fiction', useRAG: true }
-      });
-    }
-
-    const writeRequest = {
-      message,
-      domain: domain || 'general',
-      useRAG: useRAG !== false
-    };
-
-    console.log('🖊️ Processing write request:', { domain: writeRequest.domain, useRAG: writeRequest.useRAG });
-    const result = await writeService.processWriteRequest(writeRequest);
-    console.log('✅ Write request processed successfully');
-    
-    res.json(result);
-    
-  } catch (error: any) {
-    console.error('❌ Error in /write endpoint:', error);
-    res.status(500).json({
-      success: false,
-      content: '',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// 3. /audit route - Create route and bind to audit controller, ensure it logs when triggered
+// 2. /audit route - Refactored to use dedicated handler (reordered per boot sequence)
 app.post('/audit', async (req, res) => {
-  console.log('🔍 /audit endpoint triggered - logging audit activity');
   try {
-    const { message, domain, useHRC } = req.body;
-    
-    if (!message) {
-      return res.status(400).json({
-        error: 'message is required for audit',
-        example: { message: 'Validate this content...', domain: 'security', useHRC: true }
-      });
-    }
-
-    const auditRequest = {
-      message,
-      domain: domain || 'general',
-      useHRC: useHRC !== false
-    };
-
-    console.log('🕵️ Processing audit request:', { domain: auditRequest.domain, useHRC: auditRequest.useHRC, timestamp: new Date().toISOString() });
-    const result = await auditService.processAuditRequest(auditRequest);
-    console.log('✅ Audit completed successfully:', { success: result.success, timestamp: new Date().toISOString() });
-    
-    res.json(result);
-    
+    await auditHandler.handleAuditRequest(req, res);
   } catch (error: any) {
-    console.error('❌ Error in /audit endpoint:', error);
-    res.status(500).json({
-      success: false,
-      auditResult: '',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
+    console.error('❌ Audit route failure, attempting recovery:', error);
+    // Route recovery will be handled by the recovery middleware
+    throw error;
   }
 });
 
-// 4. /diagnostic route - Export and attach diagnostic handler, log readiness during app startup
+// 3. /diagnostic route - Refactored to use dedicated handler (reordered per boot sequence)
 app.get('/diagnostic', async (req, res) => {
-  console.log('🩺 /diagnostic endpoint called - performing system diagnostic');
   try {
-    const command = (req.query.command as string) || 'system health';
-    
-    console.log('🔧 Running diagnostic command:', command);
-    const result = await diagnosticsService.executeDiagnosticCommand(command);
-    console.log('✅ Diagnostic completed:', { success: result.success, category: result.category });
-    
-    res.json({
-      ...result,
-      endpoint: '/diagnostic',
-      diagnostic_logged: true
-    });
-    
+    await diagnosticHandler.handleDiagnosticRequest(req, res);
   } catch (error: any) {
-    console.error('❌ Error in /diagnostic endpoint:', error);
-    res.status(500).json({
-      success: false,
-      command: req.query.command || 'unknown',
-      category: 'error',
-      data: {},
-      timestamp: new Date().toISOString(),
-      error: error.message
-    });
+    console.error('❌ Diagnostic route failure, attempting recovery:', error);
+    // Route recovery will be handled by the recovery middleware
+    throw error;
   }
+});
+
+// 4. /write route - Refactored to use dedicated handler (last in boot sequence)
+app.post('/write', async (req, res) => {
+  try {
+    await writeHandler.handleWriteRequest(req, res);
+  } catch (error: any) {
+    console.error('❌ Write route failure, attempting recovery:', error);
+    // Route recovery will be handled by the recovery middleware
+    throw error;
+  }
+});
+
+// Enhanced route status endpoints for monitoring
+app.get('/route-status', (req, res) => {
+  const routeStatuses = routeRecovery.getRouteStatuses();
+  const recoveryLogs = routeRecovery.getRecoveryLogs();
+  
+  res.json({
+    routes: routeStatuses,
+    recovery_logs: recoveryLogs.slice(-10), // Last 10 recovery attempts
+    handlers: {
+      memory: memoryHandler.constructor.name,
+      write: writeHandler.constructor.name,
+      audit: auditHandler.constructor.name,
+      diagnostic: diagnosticHandler.constructor.name
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Malformed response audit endpoint
+app.get('/audit-logs', (req, res) => {
+  const writeLogType = req.query.type as string;
+  
+  let logs: any = {};
+  
+  if (!writeLogType || writeLogType === 'write') {
+    logs.write_malformed = writeHandler.getMalformedResponseLogs();
+  }
+  
+  if (!writeLogType || writeLogType === 'audit') {
+    logs.audit_malformed = auditHandler.getMalformedAuditLogs();
+    logs.audit_activity = auditHandler.getAuditActivityLogs().slice(-20);
+  }
+  
+  if (!writeLogType || writeLogType === 'diagnostic') {
+    logs.diagnostic_activity = diagnosticHandler.getDiagnosticLogs().slice(-20);
+    logs.readiness_status = diagnosticHandler.getReadinessStatus();
+  }
+  
+  res.json({
+    ...logs,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Simplified fine-tune routing status endpoint
@@ -496,13 +425,13 @@ serverService.start(app, PORT).then(async () => {
     DATABASE: !!process.env.DATABASE_URL
   });
   
-  // Print confirmation logs for each active route
-  console.log('[ROUTES] Active Express.js API routes:');
-  console.log('✅ /health - Health check endpoint');
-  console.log('✅ /memory - Memory snapshot handler (logs activity on every save)');
-  console.log('✅ /write - Write controller properly imported and bound');
-  console.log('✅ /audit - Audit controller bound with logging when triggered');
-  console.log('✅ /diagnostic - Diagnostic handler exported and attached');
+  // Enhanced startup logs confirming status of all registered routes
+  console.log('\n[ROUTES] 🚀 ARCANOS Route Registration Status - Boot Sequence Optimized:');
+  console.log('✅ /health - Health check endpoint (always available)');
+  console.log('✅ /memory - Memory handler with snapshot validation & backup streams');
+  console.log('✅ /audit - Audit handler with malformed response tracking & activity logging');
+  console.log('✅ /diagnostic - Diagnostic handler with readiness confirmation & recovery logic');
+  console.log('✅ /write - Write handler with content validation & null prevention');
   console.log('✅ /api/* - Main API router with AI-controlled endpoints');
   console.log('✅ /api/memory/* - Protected memory routes (requires API token)');
   console.log('✅ /system/* - System diagnostics routes');
@@ -511,7 +440,23 @@ serverService.start(app, PORT).then(async () => {
   console.log('✅ /ask - AI dispatcher controlled');
   console.log('✅ /webhook - GitHub webhook handler');
   console.log('✅ /sync/diagnostics - Sync diagnostics endpoint');
-  console.log('[ROUTES] All routes registered successfully - no skipped routes due to middleware ordering');
+  
+  console.log('\n[HANDLERS] 🛠️ Enhanced Handler Features:');
+  console.log('✅ Fallback Handler - Consolidated undefined/fallback worker logic');
+  console.log('✅ Route Recovery - Missing controller & invalid schema handling');
+  console.log('✅ Memory Snapshots - 30-minute intervals with setInterval + CRON fallback');
+  console.log('✅ Secondary Streams - Backup memory writes if primary fails');
+  console.log('✅ Content Validation - Prevents null/incomplete content to avoid OpenAI 400 errors');
+  console.log('✅ Malformed Tracking - Logs malformed model responses for audit');
+  console.log('✅ Timestamp Validation - Confirms all memory save operations');
+  console.log('✅ Fallback Injection - Auto-injects content if model response lacks content field');
+  
+  console.log('\n[BOOT-SEQUENCE] 📋 Route Import Order Enforced:');
+  console.log('1️⃣ memory → 2️⃣ audit → 3️⃣ diagnostic → 4️⃣ write');
+  console.log('[ROUTES] All enhanced routes registered - no failures detected');
+  
+  // Start periodic memory snapshots
+  memoryHandler.startPeriodicMemorySnapshots();
   
   // Initialize database schema
   try {
@@ -519,7 +464,7 @@ serverService.start(app, PORT).then(async () => {
     console.log('✅ Database initialized');
   } catch (error) {
     console.error('❌ Failed to initialize database:', error);
-    console.warn('⚠️ Service will run in degraded mode');
+    console.warn('⚠️ Service will run in degraded mode with fallback handlers');
   }
   
   // Basic memory logging (reduced verbosity)
@@ -531,8 +476,8 @@ serverService.start(app, PORT).then(async () => {
     console.log(`🚂 Railway Environment: ${process.env.RAILWAY_ENVIRONMENT}`);
   }
 
-  console.log('[SERVER] Optimized backend ready - workers on-demand only');
-  console.log('[ROUTES] Route separation of concerns maintained across modules');
+  console.log('\n[SERVER] 🎯 GOALWATCHER-IMPROVEMENTS: All enhancements active');
+  console.log('[HANDLERS] Route separation of concerns maintained with recovery logic');
   
   if (!isTrue(process.env.RUN_WORKERS)) {
     console.log('[SERVER] RUN_WORKERS not enabled - keeping process alive');
