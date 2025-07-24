@@ -364,4 +364,7 @@ export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arca
 // Export sleep schedule functions for copilot integration
 export { getActiveSleepSchedule, getCoreSleepWindow } from './services/sleep-config';
 
+// Export email service functions for global access
+export { sendEmail, verifyEmailConnection, getEmailSender } from './services/email';
+
 // 🔧 End of Audit Block - ALL REQUIREMENTS IMPLEMENTED ✅
