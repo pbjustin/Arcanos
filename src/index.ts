@@ -30,7 +30,9 @@ import './services/database-connection';
 import './worker-init';
 import { isTrue } from './utils/env';
 // Frontend-triggered worker dispatch route
-const workerDispatch = require('../api/worker/dispatch');
+// Use a path relative to the compiled "dist" directory so the API folder can be
+// packaged with the build output.
+const workerDispatch = require('./api/worker/dispatch');
 
 // Load environment variables
 dotenv.config();
