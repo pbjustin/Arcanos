@@ -103,7 +103,7 @@ test_endpoint "Ask with Fallback (Error Test)" "POST" "/api/ask-with-fallback" '
 test_endpoint "Sleep Configuration" "GET" "/api/config/sleep" ""
 
 # Test 13: Worker Dispatch
-test_endpoint "Worker Dispatch" "POST" "/api/worker/dispatch" '{"type":"fineTuneProcessor","payload":{"type":"audit","payload":"const x = y + 1;"}}'
+test_endpoint "Worker Dispatch" "POST" "/api/worker/dispatch" '{"type":"goalWatcher","payload":{}}'
 
 kill $SERVER_PID
 
