@@ -1,5 +1,5 @@
-// ARCANOS:BACKEND OPTIMIZATION - Simplified Entry Point
-// Optimized: Removed fine-tune bloat, scoped workers on-demand, improved memory usage
+// ARCANOS:BACKEND AI-CONTROLLED - All Operations Under AI Model Control
+// Refactored: All static logic replaced with AI dispatcher, model has full operational control
 
 import express from 'express';
 import * as dotenv from 'dotenv';
@@ -16,6 +16,11 @@ import { requireApiToken } from './middleware/api-token';
 import { databaseService } from './services/database';
 import { serverService } from './services/server';
 import { isTrue } from './utils/env';
+
+// Import AI-controlled system components
+import { modelControlHooks } from './services/model-control-hooks';
+import { aiDispatcher } from './services/ai-dispatcher';
+import { executionEngine } from './services/execution-engine';
 
 // Import database connection module
 import './services/database-connection';
@@ -74,55 +79,32 @@ app.get('/finetune-status', async (req, res) => {
   }
 });
 
-// GitHub webhook endpoint
+// GitHub webhook endpoint - AI controlled
 app.post('/webhook', async (req, res) => {
   try {
-    const { repository, head_commit } = req.body;
+    console.log('🔗 GitHub webhook received - routing to AI dispatcher');
     
-    // Validate required webhook data
-    if (!repository || !head_commit) {
-      console.log('❌ Webhook missing required fields:', { 
-        hasRepository: !!repository, 
-        hasHeadCommit: !!head_commit 
-      });
-      return res.status(400).json({ error: 'Missing required webhook data' });
-    }
+    const result = await modelControlHooks.handleApiRequest(
+      '/webhook',
+      'POST',
+      req.body,
+      {
+        userId: 'github',
+        sessionId: 'webhook',
+        source: 'api',
+        metadata: { headers: req.headers }
+      }
+    );
 
-    const payload = {
-      key: 'github_sync',
-      value: JSON.stringify({
-        repo: repository.full_name,
-        message: head_commit.message,
-        url: head_commit.url,
-        timestamp: new Date().toISOString()
-      }),
-      type: 'context',
-      tags: ['git', 'sync']
-    };
-
-    console.log('🔗 GitHub webhook received:', {
-      repo: repository.full_name,
-      commit: head_commit.id?.substring(0, 7),
-      message: head_commit.message?.substring(0, 50) + '...'
-    });
-
-    // Send data to ARCANOS memory endpoint using axios
-    try {
-      const memoryUrl = process.env.ARCANOS_MEMORY_URL || 'https://arcanos-production-426d.up.railway.app/memory';
-      const response = await axios.post(memoryUrl, payload);
-      
-      console.log('✅ GitHub sync sent to ARCANOS memory endpoint');
+    if (result.success) {
       res.status(200).json({ 
         success: true, 
-        message: 'GitHub sync sent to ARCANOS' 
+        message: result.response 
       });
-    } catch (memoryError: any) {
-      console.error('❌ Failed to send to memory endpoint:', memoryError.message);
-      // Fallback: still return success since webhook was received
-      res.status(200).json({ 
-        success: true, 
-        message: 'GitHub sync received but memory storage failed',
-        warning: 'Could not store in memory endpoint'
+    } else {
+      res.status(500).json({ 
+        error: result.error,
+        success: false 
       });
     }
 
@@ -135,7 +117,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Simplified diagnostic endpoint
+// Simplified diagnostic endpoint - AI controlled
 app.get('/sync/diagnostics', async (req, res) => {
   const token = req.headers['authorization'];
   const gptToken = `Bearer ${process.env.GPT_TOKEN}`;
@@ -144,69 +126,88 @@ app.get('/sync/diagnostics', async (req, res) => {
     return res.status(403).json({ error: "Unauthorized access" });
   }
 
-  // Basic diagnostics
-  const memory = process.memoryUsage();
-  const uptime = process.uptime();
+  try {
+    const result = await modelControlHooks.checkSystemHealth({
+      userId: 'diagnostics',
+      sessionId: 'sync',
+      source: 'api',
+      metadata: { headers: req.headers }
+    });
 
-  res.json({
-    status: 'healthy',
-    env: process.env.NODE_ENV,
-    memory: {
-      rss: Math.round(memory.rss / 1024 / 1024) + 'MB',
-      heapUsed: Math.round(memory.heapUsed / 1024 / 1024) + 'MB'
-    },
-    uptime: Math.round(uptime) + 's',
-    timestamp: new Date().toISOString()
-  });
+    if (result.success) {
+      // Parse response if it's JSON string, otherwise create basic diagnostic
+      let diagnosticData;
+      try {
+        diagnosticData = JSON.parse(result.response || '{}');
+      } catch {
+        // Fallback diagnostic
+        const memory = process.memoryUsage();
+        const uptime = process.uptime();
+        diagnosticData = {
+          status: 'healthy',
+          env: process.env.NODE_ENV,
+          memory: {
+            rss: Math.round(memory.rss / 1024 / 1024) + 'MB',
+            heapUsed: Math.round(memory.heapUsed / 1024 / 1024) + 'MB'
+          },
+          uptime: Math.round(uptime) + 's',
+          timestamp: new Date().toISOString(),
+          aiControlled: true
+        };
+      }
+
+      res.json(diagnosticData);
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error: any) {
+    console.error('❌ Diagnostics error:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// POST /query-finetune endpoint - Railway + GitHub Copilot compliant fine-tuned model access
+// POST /query-finetune endpoint - AI dispatcher controlled
 app.post('/query-finetune', async (req, res) => {
-  console.log('🎯 /query-finetune endpoint called');
+  console.log('🎯 /query-finetune endpoint called - routing to AI dispatcher');
   
-  const { query, metadata } = req.body;
-
-  if (!query) {
-    return res.status(400).json({ 
-      error: 'Query field is required',
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  if (typeof query !== 'string') {
-    return res.status(400).json({ 
-      error: 'Query must be a string',
-      timestamp: new Date().toISOString()
-    });
-  }
-
   try {
-    // Import OpenAI service for fine-tuned model access
-    const { OpenAIService } = await import('./services/openai');
-    const openaiService = new OpenAIService();
-    
-    console.log('🚀 Processing query with fine-tuned model:', openaiService.getModel());
-    
-    // Call the fine-tuned model
-    const response = await openaiService.chat([
-      { role: 'user', content: query }
-    ]);
+    const result = await modelControlHooks.handleApiRequest(
+      '/query-finetune',
+      'POST',
+      req.body,
+      {
+        userId: req.headers['x-user-id'] as string || 'default',
+        sessionId: req.headers['x-session-id'] as string || 'default',
+        source: 'api',
+        metadata: { headers: req.headers }
+      }
+    );
 
-    console.log('✅ Fine-tuned model response received');
-    
-    return res.json({
-      response: response.message,
-      model: response.model,
-      success: true,
-      timestamp: new Date().toISOString(),
-      metadata: metadata || {}
-    });
+    if (result.success) {
+      // Try to parse structured response
+      try {
+        const parsed = JSON.parse(result.response || '{}');
+        res.json(parsed);
+      } catch {
+        res.json({
+          response: result.response,
+          success: true,
+          timestamp: new Date().toISOString(),
+          aiControlled: true
+        });
+      }
+    } else {
+      res.status(500).json({
+        error: result.error,
+        success: false,
+        timestamp: new Date().toISOString()
+      });
+    }
 
   } catch (error: any) {
     console.error('❌ Error in /query-finetune:', error.message);
-    
-    return res.status(500).json({
-      error: 'Fine-tuned model invocation failed',
+    res.status(500).json({
+      error: 'AI dispatcher error',
       details: error.message,
       success: false,
       timestamp: new Date().toISOString()
@@ -214,20 +215,33 @@ app.post('/query-finetune', async (req, res) => {
   }
 });
 
-// POST /ask endpoint - matches problem statement specification (fallback route)
-app.post('/ask', (req, res) => {
-  const { query, mode = 'logic' } = req.body;
+// POST /ask endpoint - AI dispatcher controlled (fallback route)
+app.post('/ask', async (req, res) => {
+  console.log('📝 /ask endpoint called - routing to AI dispatcher');
+  
+  try {
+    const result = await modelControlHooks.handleApiRequest(
+      '/ask',
+      'POST',
+      req.body,
+      {
+        userId: req.headers['x-user-id'] as string || 'default',
+        sessionId: req.headers['x-session-id'] as string || 'default',
+        source: 'api',
+        metadata: { headers: req.headers }
+      }
+    );
 
-  if (!query) {
-    return res.status(400).json({ error: 'Missing query field' });
+    if (result.success) {
+      res.json({ response: result.response });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+
+  } catch (error: any) {
+    console.error('❌ Error in /ask:', error.message);
+    res.status(500).json({ error: error.message });
   }
-
-  // Simulated logic processing (replace with real engine)
-  const response = {
-    response: `Query received: "${query}" in mode: "${mode}"`,
-  };
-
-  res.json(response);
 });
 
 // Root route - serve dashboard index
@@ -247,8 +261,10 @@ app.use('/api/memory', requireApiToken, memoryRouter);
 // Mount system diagnostics routes
 app.use('/system', systemRouter);
 
-// POST endpoint for natural language inputs - simplified
+// POST endpoint for natural language inputs - AI dispatcher controlled
 app.post('/', async (req, res) => {
+  console.log('🚀 Main endpoint called - routing to AI dispatcher');
+  
   const { message } = req.body;
   const userId = req.headers['x-user-id'] as string || 'default';
   const sessionId = req.headers['x-session-id'] as string || 'default';
@@ -258,94 +274,32 @@ app.post('/', async (req, res) => {
   }
 
   try {
-    // Check for fine-tune routing commands
-    const { fineTuneRoutingService } = await import('./services/finetune-routing');
-    const commandType = fineTuneRoutingService.isFineTuneCommand(message);
-    
-    if (commandType === 'activate') {
-      await fineTuneRoutingService.activateFineTuneRouting(userId, sessionId, message);
-      const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
-      return res.send(`✅ Fine-tuned model routing activated! ${statusMessage}`);
-      
-    } else if (commandType === 'deactivate') {
-      const wasActive = await fineTuneRoutingService.deactivateFineTuneRouting(userId, sessionId);
-      const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
-      
-      if (wasActive) {
-        return res.send(`✅ Fine-tuned model routing deactivated. ${statusMessage}`);
-      } else {
-        return res.send(`ℹ️ Fine-tuned model routing was already inactive. ${statusMessage}`);
+    // Route all requests through AI dispatcher
+    const result = await modelControlHooks.handleApiRequest(
+      '/',
+      'POST',
+      req.body,
+      {
+        userId,
+        sessionId,
+        source: 'api',
+        metadata: { headers: req.headers }
       }
-    }
-    
-    // Check if fine-tune routing is active
-    const isFineTuneActive = await fineTuneRoutingService.isFineTuneRoutingActive(userId, sessionId);
-    
-    if (isFineTuneActive) {
-      // Direct fine-tuned model routing
-      const { OpenAIService } = await import('./services/openai');
-      const openaiService = new OpenAIService();
-      
-      const response = await openaiService.chat([
-        { role: 'user', content: message }
-      ]);
+    );
 
-      if (response.error) {
-        return res.send(`⚠️ Fine-tuned model temporarily unavailable: ${response.error}`);
-      }
-
-      return res.send(response.message);
-    }
-    
-    // Check for query-finetune: prefix
-    if (typeof message === 'string' && message.trim().toLowerCase().startsWith('query-finetune:')) {
-      const query = message.trim().substring('query-finetune:'.length).trim();
-      
-      if (!query) {
-        return res.status(400).json({ 
-          error: 'Query cannot be empty after query-finetune: prefix'
-        });
-      }
-      
-      const { OpenAIService } = await import('./services/openai');
-      const openaiService = new OpenAIService();
-      
-      const response = await openaiService.chat([
-        { role: 'user', content: query }
-      ]);
-
-      if (response.error) {
-        return res.send(`⚠️ Fine-tuned model temporarily unavailable: ${response.error}`);
-      }
-
-      return res.send(response.message);
-    }
-    
-    // Default routing through ARCANOS router
-    const { processArcanosRequest } = await import('./services/arcanos-router');
-    
-    const routerRequest = {
-      message,
-      domain: 'general',
-      useRAG: true,
-      useHRC: true
-    };
-
-    const result = await processArcanosRequest(routerRequest);
-    
     if (result.success) {
       res.send(result.response);
     } else {
-      res.json({ 
+      res.status(500).json({ 
         error: result.error,
-        response: result.response 
+        response: `Echo: ${message}` // Fallback response
       });
     }
     
   } catch (error: any) {
     console.error('❌ Error processing message:', error);
     res.status(500).json({ 
-      error: 'Internal server error',
+      error: 'AI dispatcher error',
       response: `Echo: ${message}` // Fallback response
     });
   }
