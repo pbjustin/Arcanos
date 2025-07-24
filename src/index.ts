@@ -29,7 +29,7 @@ import './services/database-connection';
 import './worker-init';
 
 // Frontend-triggered worker dispatch route
-const workerDispatch = require('../api/worker/dispatch');
+const workerDispatch = require('./api/worker/dispatch');
 
 // Load environment variables
 dotenv.config();
