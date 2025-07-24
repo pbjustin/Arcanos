@@ -13,10 +13,11 @@ RUN npm ci --only=production && npm cache clean --force
 
 # Copy source code
 COPY src/ ./src/
-COPY workers/ ./workers/
-COPY memory/ ./memory/
 COPY sql/ ./sql/
 COPY tsconfig.json ./
+
+# Copy everything and let npm build handle optional directories conditionally
+COPY . ./
 
 # Install dev dependencies for build
 RUN npm ci
