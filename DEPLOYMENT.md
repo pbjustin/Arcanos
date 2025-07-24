@@ -123,10 +123,7 @@ The application includes a `docker-compose.yml` file for containerized deploymen
 ### Services
 
 - **arcanos-core**: The main ARCANOS backend service (port 8080)
-- **backstage-booker**: Wrestling creative professional service for backstage booking functionality (port 8090)
-  - Configured with wrestling creative prompt via `BACKSTAGE_BOOKER_PROMPT` environment variable
-  - Operates as a simulated pro wrestling creative department professional
-  - Supports booking, writing, producing, and decision-making for wrestling storylines
+- **postgres**: PostgreSQL database for persistent memory storage
 
 ### Usage
 
@@ -151,29 +148,16 @@ docker compose down
 
 The docker-compose configuration includes memory limits:
 - **arcanos-core**: 512MB limit, 256MB reservation
-- **backstage-booker**: 800MB limit, 512MB reservation
+- **postgres**: 256MB limit, 128MB reservation
 
 ### Prerequisites for Docker Deployment
 
 - Docker and Docker Compose installed
-- `backstage-booker` image available (for the complete setup)
-- Environment variables configured if needed
-
-### Environment Variables
-
-The `backstage-booker` service is pre-configured with comprehensive canon-first logic enforcement:
-
-- **BACKSTAGE_BOOKER_SYSTEM_DIRECTIVE**: Canon-first logic enforcement rules requiring WWE 2K25 canon memory compliance
-- **BACKSTAGE_BOOKER_PROMPT_INJECTION**: System prompt allowing real-world wrestling patterns but deferring to internal WWE 2K25 canon
-- **BACKSTAGE_BOOKER_CANON_VALIDATION**: Pseudo-code for character, alignment, and title validation against canon
-- **BACKSTAGE_BOOKER_REAL_LOGIC_MODE**: Developer flag enabling real-world analog logic patterns
-- **BACKSTAGE_BOOKER_USE_CASES**: Examples of valid and invalid operations based on canon compliance
-- **BACKSTAGE_BOOKER_DATA_PRIORITY**: Priority hierarchy for data sources (canon.json/canon.db first)
-- **BACKSTAGE_BOOKER_CORE_PROMPT**: Core wrestling creative professional persona and operational instructions
+- Environment variables configured in `.env` file
 
 ### Building Images
 
-The `arcanos-core` service builds from the local Dockerfile. For the `backstage-booker` service, ensure the image is available or modify the configuration to build from source if applicable.
+The `arcanos-core` service builds from the local Dockerfile. The PostgreSQL service uses the standard `postgres:16` image.
 
 ## Troubleshooting
 
