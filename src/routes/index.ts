@@ -376,7 +376,7 @@ router.get('/workers/status', async (req, res) => {
 router.get('/booker/workers/status', async (req, res) => {
   try {
     console.log('🔍 Booker worker status endpoint called');
-    
+
     const workersStatus = await workerStatusService.getAllWorkersStatus();
     
     console.log('📊 Retrieved status for', workersStatus.length, 'workers');
@@ -390,6 +390,36 @@ router.get('/booker/workers/status', async (req, res) => {
       details: error.message,
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+// Dynamic worker dispatch - bridge frontend commands to background workers
+router.post('/worker/dispatch', async (req, res) => {
+  const { type, payload } = req.body;
+
+  if (!type || typeof type !== 'string') {
+    return res.status(400).json({ ok: false, error: 'type is required' });
+  }
+
+  const workerPath = path.resolve(__dirname, '..', '..', 'workers', `${type}.js`);
+
+  try {
+    if (!fs.existsSync(workerPath)) {
+      return res.status(404).json({ ok: false, error: `Worker "${type}" not found` });
+    }
+
+    const mod = await import(workerPath);
+    const workerFn = (mod.default || mod) as any;
+
+    if (typeof workerFn !== 'function') {
+      return res.status(500).json({ ok: false, error: 'Worker module invalid' });
+    }
+
+    const result = await workerFn(payload);
+    res.json({ ok: true, result });
+  } catch (error: any) {
+    console.error('Worker dispatch error:', error);
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
