@@ -25,6 +25,9 @@ import { executionEngine } from './services/execution-engine';
 // Import database connection module
 import './services/database-connection';
 
+// Import CRON worker system
+import './services/cron-worker';
+
 // Import worker initialization module (conditional)
 import './worker-init';
 

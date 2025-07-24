@@ -3,6 +3,7 @@ import { modelControlHooks } from '../services/model-control-hooks';
 import { diagnosticsService } from '../services/diagnostics';
 import { workerStatusService } from '../services/worker-status';
 import { sendEmail, verifyEmailConnection, getEmailSender } from '../services/email';
+import assistantsRouter from './assistants';
 
 const router = Router();
 
@@ -205,6 +206,9 @@ router.post('/email/send', async (req, res) => {
     });
   }
 });
+
+// Mount assistant routes
+router.use('/', assistantsRouter);
 
 // Catch-all route - delegate everything to AI
 router.use('*', async (req, res) => {
