@@ -272,6 +272,16 @@ curl -X GET http://localhost:8080/api/memory/health \
   -H "Authorization: Bearer $ARCANOS_API_TOKEN"
 ```
 
+Example worker dispatch request:
+
+```js
+await fetch('/api/worker/dispatch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ type: 'goalWatcher', payload: { test: true } })
+});
+```
+
 ## 📚 Documentation
 
 - **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start instructions
@@ -296,7 +306,7 @@ npm run build
 npm start
 
 # Test
-./test-api-endpoints.sh
+./test-api-endpoints.sh     # script builds & launches server automatically
 ./test-concurrency-limit.js
 ```
 
@@ -313,6 +323,7 @@ npm start
 - `GET /system/workers` - Background process monitoring (verify workers after setting `RUN_WORKERS=true`)
 - `GET /api/containers/status` - Docker container management
 - `GET /api/canon/files` - Storyline file management
+- `POST /api/worker/dispatch` - Run a background worker on demand
 
 ### Fine-Tuning Pipeline
 - `./upload_jsonl.sh [file.jsonl]` - Upload training data to OpenAI
