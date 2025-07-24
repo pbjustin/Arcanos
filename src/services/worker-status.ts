@@ -173,7 +173,15 @@ export class WorkerStatusService {
   }
 
   /**
-   * Initialize default system workers
+   * Initialize minimal system workers for optimized backend
+   */
+  initializeMinimalWorkers(): void {
+    this.registerWorker('worker-health', 'health_monitoring', 'idle');
+    this.registerWorker('worker-maintenance', 'awaiting_job', 'idle');
+  }
+
+  /**
+   * Initialize default system workers (legacy - for compatibility)
    */
   initializeSystemWorkers(): void {
     this.registerWorker('worker-1', 'memory_diagnostics', 'running');
