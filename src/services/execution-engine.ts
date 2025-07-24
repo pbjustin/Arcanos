@@ -18,12 +18,17 @@ export interface ExecutionResult {
 
 export class ExecutionEngine {
   private memoryStorage: MemoryStorage;
-  private openaiService: OpenAIService;
+  private openaiService: OpenAIService | null;
   private scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
 
   constructor() {
     this.memoryStorage = new MemoryStorage();
-    this.openaiService = new OpenAIService();
+    try {
+      this.openaiService = new OpenAIService();
+    } catch (error) {
+      console.warn('⚠️ Execution Engine initialized without OpenAI (testing mode)');
+      this.openaiService = null;
+    }
     console.log('⚙️ Execution Engine initialized');
   }
 
@@ -278,6 +283,14 @@ export class ExecutionEngine {
   private async executeAuditOperation(parameters: any): Promise<ExecutionResult> {
     const { code, message, type = 'general' } = parameters;
 
+    if (!this.openaiService) {
+      return {
+        success: true,
+        result: { audit: `Mock audit: ${type} analysis of provided content would be performed here.` },
+        response: `Mock audit: ${type} analysis of provided content would be performed here.`
+      };
+    }
+
     try {
       const auditPrompt = `Please audit the following ${type}:
 
@@ -313,6 +326,14 @@ Provide a detailed analysis including:
    */
   private async executeWriteOperation(parameters: any): Promise<ExecutionResult> {
     const { prompt, type = 'general', style, length } = parameters;
+
+    if (!this.openaiService) {
+      return {
+        success: true,
+        result: { content: `Mock write: Generated ${type} content for "${prompt}" would appear here.` },
+        response: `Mock write: Generated ${type} content for "${prompt}" would appear here.`
+      };
+    }
 
     try {
       let writePrompt = prompt;
