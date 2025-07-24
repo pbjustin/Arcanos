@@ -8,6 +8,7 @@ echo "         Arcanos API Test Script"
 echo "=================================================="
 echo ""
 
+
 BASE_URL="http://localhost:8080"
 
 # Colors for output
@@ -15,6 +16,21 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+# Start server in background if not already running
+echo "🚀 Starting server for tests..."
+npm run build >/dev/null 2>&1
+npm start >/tmp/server.log 2>&1 &
+SERVER_PID=$!
+
+# Wait for server to be ready using wait-on with 30s timeout
+echo "⏳ Waiting for server to respond on $BASE_URL..."
+npx wait-on "$BASE_URL/health" -t 30000 >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+  echo -e "${GREEN}Server is up!${NC}"
+else
+  echo -e "${RED}⚠️  Server did not respond after 30 seconds. Tests may fail.${NC}"
+fi
 
 # Function to test endpoint
 test_endpoint() {
@@ -107,3 +123,10 @@ echo "3. Add your fine-tuned model ID"
 echo "4. Restart the server"
 echo ""
 echo "=================================================="
+
+# Stop the background server
+if kill -0 $SERVER_PID 2>/dev/null; then
+  echo "🛑 Stopping test server..."
+  kill $SERVER_PID
+  wait $SERVER_PID 2>/dev/null
+fi
