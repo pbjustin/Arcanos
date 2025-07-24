@@ -29,8 +29,14 @@ import './services/database-connection';
 // Import worker initialization module (will run conditionally)
 import './worker-init';
 import { isTrue } from './utils/env';
-// Frontend-triggered worker dispatch route
-const workerDispatch = require('../api/worker/dispatch');
+
+// Frontend-triggered worker dispatch route. We check both possible locations so
+// the import works when running the TypeScript sources directly and after
+// compilation in the dist folder.
+const builtPath = path.join(__dirname, 'api', 'worker', 'dispatch.js');
+const sourcePath = path.join(__dirname, '..', 'api', 'worker', 'dispatch.js');
+const dispatchModule = fs.existsSync(builtPath) ? builtPath : sourcePath;
+const workerDispatch = require(dispatchModule);
 
 // Load environment variables
 dotenv.config();
