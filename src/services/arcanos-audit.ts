@@ -27,11 +27,16 @@ export interface AuditResponse {
 }
 
 export class ArcanosAuditService {
-  private openaiService: OpenAIService;
+  private openaiService: OpenAIService | null;
   private hrcCore: HRCCore;
 
   constructor() {
-    this.openaiService = new OpenAIService();
+    try {
+      this.openaiService = new OpenAIService();
+    } catch (error) {
+      console.warn('⚠️ ArcanosAuditService: OpenAI not available, running in testing mode');
+      this.openaiService = null;
+    }
     this.hrcCore = new HRCCore();
   }
 
@@ -64,7 +69,18 @@ export class ArcanosAuditService {
       ];
 
       console.log('🚀 Performing AI audit/validation...');
-      const openaiResponse = await this.openaiService.chat(chatMessages);
+      
+      let openaiResponse;
+      if (this.openaiService) {
+        openaiResponse = await this.openaiService.chat(chatMessages);
+      } else {
+        // Mock response when OpenAI is not available
+        openaiResponse = {
+          message: `[TESTING MODE] Mock audit response for: "${message}". Analysis: Content reviewed for domain: ${domain}. In a real environment with OpenAI configured, this would be a detailed audit result.`,
+          model: 'mock-model',
+          error: null
+        };
+      }
 
       if (openaiResponse.error) {
         console.error('❌ OpenAI error in AUDIT service:', openaiResponse.error);
