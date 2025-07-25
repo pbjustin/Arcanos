@@ -2,6 +2,7 @@
 // Validates that all requirements from the problem statement are met
 
 const axios = require('axios');
+require('./scripts/codex-internal');
 
 const BASE_URL = 'http://localhost:8080';
 
