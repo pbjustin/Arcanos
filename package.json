@@ -13,7 +13,8 @@
     "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "test": "echo \"No tests defined\" && exit 0"
   },
   "dependencies": {
     "@prisma/client": "^6.12.0",
