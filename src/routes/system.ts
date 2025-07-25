@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { sleepManager } from '../services/sleep-manager';
+import { getCurrentSleepWindowStatus, logSleepWindowStatus } from '../services/sleep-config';
 
 const router = Router();
 
@@ -34,6 +36,58 @@ router.get('/workers', async (_req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Worker route failure',
+      details: error.message
+    });
+  }
+});
+
+// Sleep window status endpoint
+router.get('/sleep', async (_req, res) => {
+  try {
+    const sleepStatus = getCurrentSleepWindowStatus();
+    const shouldReduce = sleepManager.shouldReduceActivity();
+    
+    res.json({
+      sleepWindow: {
+        active: sleepStatus.inSleepWindow,
+        timeZone: 'America/New_York',
+        windowHours: '7:00 AM - 2:00 PM ET',
+        nextSleepStart: sleepStatus.nextSleepStart?.toISOString(),
+        nextSleepEnd: sleepStatus.nextSleepEnd?.toISOString(),
+        timeUntilSleep: sleepStatus.timeUntilSleep,
+        timeUntilWake: sleepStatus.timeUntilWake
+      },
+      serverMode: {
+        reducedActivity: shouldReduce,
+        maintenanceTasksActive: sleepStatus.inSleepWindow,
+        currentTime: new Date().toISOString()
+      },
+      manager: {
+        initialized: true,
+        status: 'active'
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Sleep status check failed',
+      details: error.message
+    });
+  }
+});
+
+// Force log sleep status (for debugging)
+router.post('/sleep/log', async (_req, res) => {
+  try {
+    logSleepWindowStatus();
+    res.json({
+      status: 'logged',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to log sleep status',
       details: error.message
     });
   }
