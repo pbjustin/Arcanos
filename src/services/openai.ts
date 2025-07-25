@@ -1,4 +1,7 @@
 import OpenAI from 'openai';
+import { createServiceLogger } from '../utils/logger';
+
+const logger = createServiceLogger('OpenAIService');
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -24,30 +27,33 @@ export class OpenAIService {
     this.client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       timeout: 30000, // 30 seconds timeout
-      maxRetries: 2,
+      maxRetries: 3,  // Increased from 2 for better reliability
     });
 
-    // Default to "arcanos-v1" if no fine-tuned model specified
-    this.model = process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || "arcanos-v1";
+    // Standardize on arcanos-v1 model (as requested in refactor)
+    this.model = 'arcanos-v1';
     
     // Log model configuration for audit purposes
-    console.log('🔧 OpenAI Service initialized with model:', this.model);
-    if (!process.env.FINE_TUNED_MODEL && !process.env.OPENAI_FINE_TUNED_MODEL) {
-      console.warn('⚠️ No fine-tuned model specified, using default:', this.model);
-    }
+    logger.info('OpenAI Service initialized', { 
+      model: this.model,
+      timeout: 30000,
+      maxRetries: 3
+    });
   }
 
   async chat(messages: ChatMessage[]): Promise<ChatResponse> {
-    console.log('🚀 Starting OpenAI API call');
-    console.log('📝 Model:', this.model);
-    console.log('💬 Messages:', JSON.stringify(messages, null, 2));
+    const startTime = Date.now();
+    
+    // Log AI interaction start
+    logger.info('AI interaction started', {
+      timestamp: new Date().toISOString(),
+      taskType: 'chat',
+      model: this.model,
+      messageCount: messages.length
+    });
     
     try {
-      // Log before the API call
-      const startTime = Date.now();
-      console.log('⏰ Making OpenAI API request at:', new Date().toISOString());
-      
-      // Use the model from environment variable or fallback
+      // Use the standardized arcanos-v1 model
       const completion = await this.client.chat.completions.create({
         model: this.model,
         messages,
@@ -56,17 +62,20 @@ export class OpenAIService {
       });
 
       const endTime = Date.now();
-      console.log('✅ OpenAI API call completed in:', endTime - startTime, 'ms');
-      console.log('📊 API Response:', {
-        id: completion.id,
-        model: completion.model,
-        choices: completion.choices?.length || 0,
-        usage: completion.usage
-      });
-
+      
       if (completion.choices && completion.choices.length > 0) {
         const responseMessage = completion.choices[0].message?.content || 'No response';
-        console.log('💬 Response content length:', responseMessage.length);
+        
+        // Log successful completion
+        logger.info('AI interaction completed', {
+          timestamp: new Date().toISOString(),
+          taskType: 'chat',
+          completionStatus: 'success',
+          model: this.model,
+          responseLength: responseMessage.length,
+          completionTimeMs: endTime - startTime,
+          usage: completion.usage
+        });
         
         return {
           message: responseMessage,
@@ -75,13 +84,21 @@ export class OpenAIService {
       }
 
       throw new Error('No response from OpenAI');
+      
     } catch (error: any) {
-      console.error('❌ OpenAI API error:', error.message);
-      console.error('🔍 Error details:', {
-        name: error.name,
+      const endTime = Date.now();
+      
+      // Log failed completion  
+      logger.error('AI interaction failed', {
+        timestamp: new Date().toISOString(),
+        taskType: 'chat',
+        completionStatus: 'error',
+        model: this.model,
+        completionTimeMs: endTime - startTime,
+        error: error.message,
+        errorType: error.name,
         status: error.status,
-        code: error.code,
-        type: error.type
+        code: error.code
       });
       
       return {

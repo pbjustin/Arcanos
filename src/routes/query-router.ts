@@ -1,35 +1,68 @@
 import express, { Request, Response, NextFunction } from 'express';
-import axios from 'axios';
+import { askArcanosV1_Safe } from '../services/arcanos-v1-interface';
+import { createServiceLogger } from '../utils/logger';
 
 const router = express.Router();
-
-const FORCE_FINE_TUNE = process.env.FORCE_FINE_TUNE === 'true';
-
-function shouldUseFineTune(prompt: string): boolean {
-  const hasPrefix = /^ARCANOS:|^query-|^POST |^GET /.test(prompt);
-  return FORCE_FINE_TUNE || !hasPrefix;
-}
+const logger = createServiceLogger('QueryRouter');
 
 router.post('/query', async (req: Request, res: Response) => {
+  const startTime = Date.now();
   const prompt = req.body.prompt;
 
   if (typeof prompt !== 'string') {
+    logger.error('Invalid prompt format', { prompt: typeof prompt });
     return res.status(400).json({ error: 'Invalid prompt format' });
   }
 
-  const routeToFineTune = shouldUseFineTune(prompt);
+  // Log the AI interaction start
+  logger.info('AI interaction started', {
+    timestamp: new Date().toISOString(),
+    taskType: 'query',
+    promptLength: prompt.length
+  });
 
   try {
-    const endpoint = routeToFineTune
-      ? 'https://arcanos-production-426d.up.railway.app/query-finetune'
-      : 'https://arcanos-production-426d.up.railway.app/ask';
+    // Use ARCANOS V1 interface directly instead of HTTP requests
+    const result = await askArcanosV1_Safe({
+      message: prompt,
+      domain: 'query',
+      useRAG: true,
+      useHRC: true
+    });
 
-    const response = await axios.post(endpoint, { query: prompt });
+    const completionTime = Date.now() - startTime;
+    
+    // Log successful completion
+    logger.info('AI interaction completed', {
+      timestamp: new Date().toISOString(),
+      taskType: 'query',
+      completionStatus: 'success',
+      responseLength: result.response.length,
+      model: result.model,
+      completionTimeMs: completionTime
+    });
 
-    res.json(response.data);
+    res.json({
+      response: result.response,
+      model: result.model,
+      completionTime: completionTime
+    });
   } catch (error: any) {
-    console.error('Routing error:', error.message);
-    res.status(500).json({ error: 'Routing failed' });
+    const completionTime = Date.now() - startTime;
+    
+    // Log failed completion
+    logger.error('AI interaction failed', {
+      timestamp: new Date().toISOString(),
+      taskType: 'query',
+      completionStatus: 'error',
+      error: error.message,
+      completionTimeMs: completionTime
+    });
+
+    res.status(500).json({ 
+      error: 'Query processing failed',
+      message: error.message 
+    });
   }
 });
 
