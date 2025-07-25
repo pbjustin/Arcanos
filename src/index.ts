@@ -39,20 +39,32 @@ import './worker-init';
 // Import sleep manager
 import { sleepManager } from './services/sleep-manager';
 
-// Validate configuration on startup
-const configValidation = validateConfig();
-if (!configValidation.valid) {
-  console.error('❌ Configuration validation failed:');
-  configValidation.errors.forEach(error => console.error(`  - ${error}`));
-  process.exit(1);
-}
+// Import token validator
+import { EnvTokenValidator } from './utils/env-token-validator';
 
-// Environment status
-const envStatus = getEnvironmentStatus();
-console.log("Configuration Status:", envStatus);
+// Async startup function
+async function startServer() {
+  // Validate configuration on startup
+  const configValidation = validateConfig();
+  if (!configValidation.valid) {
+    console.error('❌ Configuration validation failed:');
+    configValidation.errors.forEach(error => console.error(`  - ${error}`));
+    process.exit(1);
+  }
 
-const app = express();
-const PORT = config.server.port;
+  // Validate ARCANOS_API_TOKEN for Railway environment
+  const tokenValidation = await EnvTokenValidator.validateAndPromptIfNeeded();
+  if (!tokenValidation) {
+    console.error('❌ ARCANOS_API_TOKEN validation failed');
+    process.exit(1);
+  }
+
+  // Environment status
+  const envStatus = getEnvironmentStatus();
+  console.log("Configuration Status:", envStatus);
+
+  const app = express();
+  const PORT = config.server.port;
 
 // Middleware stack
 app.use(cors());
@@ -140,74 +152,81 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 // Server startup with optimized initialization
-serverService.start(app, PORT).then(async () => {
-  console.log(`[SERVER] Running on port ${PORT}`);
-  console.log(`[INFO] ENV:`, {
-    NODE_ENV: config.server.nodeEnv,
-    PORT: config.server.port,
-    MODEL: config.ai.fineTunedModel,
-    DATABASE: !!config.database.url
-  });
-  
-  // Optimized startup logs
-  console.log('\n[ROUTES] 🚀 ARCANOS Modular Route Architecture:');
-  console.log('✅ Core routes extracted to /routes/main.ts');
-  console.log('✅ AI routes extracted to /routes/ai.ts');
-  console.log('✅ Centralized error handling implemented');
-  console.log('✅ Route recovery system active');
-  
-  // Start periodic memory snapshots
-  memoryHandler.startPeriodicMemorySnapshots();
-  
-  // Initialize database schema
-  try {
-    await databaseService.initialize();
-    console.log('✅ Database initialized');
-  } catch (error) {
-    console.error('❌ Failed to initialize database:', error);
-    console.warn('⚠️ Service will run in degraded mode with fallback handlers');
-  }
-  
-  // Initialize sleep manager
-  try {
-    await sleepManager.initialize();
-    console.log('✅ Sleep manager initialized');
-  } catch (error) {
-    console.error('❌ Failed to initialize sleep manager:', error);
-    console.warn('⚠️ Sleep and maintenance features will be disabled');
-  }
-  
-  // Initialize ChatGPT-User whitelist service
-  try {
-    await chatGPTUserWhitelist.initialize();
-    console.log('✅ ChatGPT-User whitelist service initialized');
-  } catch (error) {
-    console.error('❌ Failed to initialize ChatGPT-User whitelist:', error);
-    console.warn('⚠️ ChatGPT-User middleware will work in degraded mode');
-  }
-  
-  // Memory usage monitoring
-  const memStats = process.memoryUsage();
-  console.log('🧠 [MEMORY] Initial RSS:', (memStats.rss / 1024 / 1024).toFixed(2), 'MB');
-  
-  // Railway-specific logging
-  if (config.railway.environment) {
-    console.log(`🚂 Railway Environment: ${config.railway.environment}`);
-  }
-
-  console.log('\n[OPTIMIZATION] ⚡ Backend optimization completed:');
-  console.log('✅ Modular route architecture');
-  console.log('✅ Centralized error handling');
-  console.log('✅ Centralized configuration management');
-  console.log('✅ Improved separation of concerns');
-  
-  if (!config.features.runWorkers) {
-    console.log('[SERVER] RUN_WORKERS not enabled - keeping process alive');
-    setInterval(() => {}, 1 << 30);
-  }
+await serverService.start(app, PORT);
+console.log(`[SERVER] Running on port ${PORT}`);
+console.log(`[INFO] ENV:`, {
+  NODE_ENV: config.server.nodeEnv,
+  PORT: config.server.port,
+  MODEL: config.ai.fineTunedModel,
+  DATABASE: !!config.database.url
 });
 
-export default app;
+// Optimized startup logs
+console.log('\n[ROUTES] 🚀 ARCANOS Modular Route Architecture:');
+console.log('✅ Core routes extracted to /routes/main.ts');
+console.log('✅ AI routes extracted to /routes/ai.ts');
+console.log('✅ Centralized error handling implemented');
+console.log('✅ Route recovery system active');
+
+// Start periodic memory snapshots
+memoryHandler.startPeriodicMemorySnapshots();
+
+// Initialize database schema
+try {
+  await databaseService.initialize();
+  console.log('✅ Database initialized');
+} catch (error) {
+  console.error('❌ Failed to initialize database:', error);
+  console.warn('⚠️ Service will run in degraded mode with fallback handlers');
+}
+
+// Initialize sleep manager
+try {
+  await sleepManager.initialize();
+  console.log('✅ Sleep manager initialized');
+} catch (error) {
+  console.error('❌ Failed to initialize sleep manager:', error);
+  console.warn('⚠️ Sleep and maintenance features will be disabled');
+}
+
+// Initialize ChatGPT-User whitelist service
+try {
+  await chatGPTUserWhitelist.initialize();
+  console.log('✅ ChatGPT-User whitelist service initialized');
+} catch (error) {
+  console.error('❌ Failed to initialize ChatGPT-User whitelist:', error);
+  console.warn('⚠️ ChatGPT-User middleware will work in degraded mode');
+}
+
+// Memory usage monitoring
+const memStats = process.memoryUsage();
+console.log('🧠 [MEMORY] Initial RSS:', (memStats.rss / 1024 / 1024).toFixed(2), 'MB');
+
+// Railway-specific logging
+if (config.railway.environment) {
+  console.log(`🚂 Railway Environment: ${config.railway.environment}`);
+}
+
+console.log('\n[OPTIMIZATION] ⚡ Backend optimization completed:');
+console.log('✅ Modular route architecture');
+console.log('✅ Centralized error handling');
+console.log('✅ Centralized configuration management');
+console.log('✅ Improved separation of concerns');
+console.log('✅ ARCANOS_API_TOKEN validation for Railway environment');
+
+if (!config.features.runWorkers) {
+  console.log('[SERVER] RUN_WORKERS not enabled - keeping process alive');
+  setInterval(() => {}, 1 << 30);
+}
+
+return app;
+}
+
+// Start the server
+startServer().catch((error) => {
+  console.error('❌ Failed to start server:', error);
+  process.exit(1);
+});
 
 // Export the ARCANOS V1 Safe Interface for direct usage
 export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arcanos-v1-interface';

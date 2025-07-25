@@ -7,11 +7,12 @@ import { diagnosticHandler } from '../handlers/diagnostic-handler';
 import { writeHandler } from '../handlers/write-handler';
 import { routeRecovery } from '../handlers/route-recovery';
 import { getChatGPTUserDiagnostics } from '../middleware/chatgpt-user';
+import { requireArcanosToken } from '../middleware/api-token';
 
 const router = Router();
 
-// 1. /memory route - Enhanced memory handler
-router.post('/memory', async (req, res) => {
+// 1. /memory route - Enhanced memory handler (requires ARCANOS token)
+router.post('/memory', requireArcanosToken, async (req, res) => {
   try {
     await memoryHandler.handleMemoryRequest(req, res);
   } catch (error: any) {
@@ -20,8 +21,8 @@ router.post('/memory', async (req, res) => {
   }
 });
 
-// 2. /audit route - Enhanced audit handler
-router.post('/audit', async (req, res) => {
+// 2. /audit route - Enhanced audit handler (requires ARCANOS token)
+router.post('/audit', requireArcanosToken, async (req, res) => {
   try {
     await auditHandler.handleAuditRequest(req, res);
   } catch (error: any) {
@@ -30,8 +31,8 @@ router.post('/audit', async (req, res) => {
   }
 });
 
-// 3. /diagnostic route - Support both GET and POST
-router.get('/diagnostic', async (req, res) => {
+// 3. /diagnostic route - Support both GET and POST (requires ARCANOS token)
+router.get('/diagnostic', requireArcanosToken, async (req, res) => {
   try {
     await diagnosticHandler.handleDiagnosticRequest(req, res);
   } catch (error: any) {
@@ -40,7 +41,7 @@ router.get('/diagnostic', async (req, res) => {
   }
 });
 
-router.post('/diagnostic', async (req, res) => {
+router.post('/diagnostic', requireArcanosToken, async (req, res) => {
   try {
     await diagnosticHandler.handleDiagnosticRequest(req, res);
   } catch (error: any) {
@@ -49,8 +50,8 @@ router.post('/diagnostic', async (req, res) => {
   }
 });
 
-// 4. /write route - Enhanced write handler
-router.post('/write', async (req, res) => {
+// 4. /write route - Enhanced write handler (requires ARCANOS token)
+router.post('/write', requireArcanosToken, async (req, res) => {
   try {
     await writeHandler.handleWriteRequest(req, res);
   } catch (error: any) {
@@ -59,7 +60,7 @@ router.post('/write', async (req, res) => {
   }
 });
 
-// Route status monitoring
+// Route status monitoring (public for health checks)
 router.get('/route-status', (req, res) => {
   const routeStatuses = routeRecovery.getRouteStatuses();
   const recoveryLogs = routeRecovery.getRecoveryLogs();
@@ -77,8 +78,8 @@ router.get('/route-status', (req, res) => {
   });
 });
 
-// Audit logs endpoint
-router.get('/audit-logs', (req, res) => {
+// Audit logs endpoint (requires ARCANOS token for sensitive data)
+router.get('/audit-logs', requireArcanosToken, (req, res) => {
   const writeLogType = req.query.type as string;
   
   let logs: any = {};
