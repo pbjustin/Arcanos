@@ -17,13 +17,21 @@ The Arcanos backend includes an enhanced nodemailer-based email service with com
 Add the appropriate environment variables to your `.env` file based on your email service:
 
 ```bash
-# Choose email service: gmail (production), mailtrap (testing), ethereal (testing)
-EMAIL_SERVICE=gmail
+# Choose email service: smtp (production), gmail (legacy), mailtrap (testing), ethereal (testing)
+EMAIL_SERVICE=smtp
 
-# Gmail SMTP (production)
+# Generic SMTP (recommended for Railway production)
+# Works with SendGrid, Mailgun, Postmark, and other SMTP providers
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=apikey
+SMTP_PASS=your-smtp-password-or-api-key
+EMAIL_FROM_NAME=Arcanos Backend
+
+# Gmail SMTP (legacy - not recommended for Railway)
 GMAIL_USER=your-email@gmail.com
 GMAIL_APP_PASSWORD=your-16-character-app-password
-EMAIL_FROM_NAME=Arcanos Backend
 
 # Mailtrap (for testing - https://mailtrap.io)
 # MAILTRAP_USER=your-mailtrap-username
@@ -37,10 +45,50 @@ EMAIL_FROM_NAME=Arcanos Backend
 
 ### Service Priority
 The email service automatically selects the appropriate transport in this order:
-1. **Ethereal Email** - If `EMAIL_SERVICE=ethereal` or `ETHEREAL_USER` is set
-2. **Mailtrap** - If `EMAIL_SERVICE=mailtrap` or `MAILTRAP_USER` is set  
-3. **Gmail SMTP** - If `GMAIL_USER` and `GMAIL_APP_PASSWORD` are set
-4. **Error** - If no valid configuration is found
+1. **Generic SMTP** - If `EMAIL_SERVICE=smtp` or `SMTP_HOST` is set (recommended for production)
+2. **Ethereal Email** - If `EMAIL_SERVICE=ethereal` or `ETHEREAL_USER` is set
+3. **Mailtrap** - If `EMAIL_SERVICE=mailtrap` or `MAILTRAP_USER` is set  
+4. **Gmail SMTP** - If `GMAIL_USER` and `GMAIL_APP_PASSWORD` are set (legacy support)
+5. **Error** - If no valid configuration is found
+
+### Railway Production Recommendations
+
+For Railway deployment, use the generic SMTP configuration with a reliable email service provider:
+
+#### Recommended Email APIs (instead of SMTP)
+For maximum reliability on Railway, consider using email APIs instead of SMTP:
+- **SendGrid API** - [https://sendgrid.com/docs/api-reference/](https://sendgrid.com/docs/api-reference/)
+- **Mailgun API** - [https://documentation.mailgun.com/en/latest/api_reference.html](https://documentation.mailgun.com/en/latest/api_reference.html)
+- **Postmark API** - [https://postmarkapp.com/developer](https://postmarkapp.com/developer)
+
+#### SMTP Configuration for Railway
+If using SMTP on Railway, use these settings:
+
+**For SSL (port 465):**
+```bash
+EMAIL_SERVICE=smtp
+SMTP_HOST=your-smtp-host
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=your-smtp-user
+SMTP_PASS=your-smtp-password
+```
+
+**For TLS (port 587, recommended):**
+```bash
+EMAIL_SERVICE=smtp
+SMTP_HOST=your-smtp-host
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-smtp-user
+SMTP_PASS=your-smtp-password
+```
+
+**Important Railway Notes:**
+- Ensure the `from:` address matches the authenticated SMTP user
+- SMTP can silently fail on cloud platforms like Railway due to network restrictions
+- The service includes timeout detection and comprehensive error logging
+- Monitor email delivery carefully and implement retry logic for critical emails
 
 ### Testing Services
 
