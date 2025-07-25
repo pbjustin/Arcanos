@@ -26,6 +26,7 @@ import { performanceMiddleware } from './utils/performance';
 import { databaseService } from './services/database';
 import { serverService } from './services/server';
 import { chatGPTUserWhitelist } from './services/chatgpt-user-whitelist';
+import { diagnosticsService } from './services/diagnostics';
 
 // Handlers (for initialization)
 import { memoryHandler } from './handlers/memory-handler';
@@ -134,9 +135,12 @@ process.on("exit", (code) => {
 });
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] Uncaught Exception:", err);
+  diagnosticsService.executeDiagnosticCommand(`uncaught exception: ${err.message}`).catch(() => {});
 });
 process.on("unhandledRejection", (reason, promise) => {
   console.error("[FATAL] Unhandled Rejection at:", promise, "reason:", reason);
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  diagnosticsService.executeDiagnosticCommand(`unhandled rejection: ${msg}`).catch(() => {});
 });
 
 // Server startup with optimized initialization

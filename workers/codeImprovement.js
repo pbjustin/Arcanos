@@ -2,9 +2,21 @@
 // Generates daily code improvement suggestions during sleep window
 
 const { modelControlHooks } = require('../dist/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../src/utils/logger');
+const logger = createServiceLogger('CodeImprovementWorker');
+
+async function reportFailure(error) {
+  logger.error('Worker failure', error);
+  try {
+    await diagnosticsService.executeDiagnosticCommand(`codeImprovement failure: ${error.message}`);
+  } catch (diagErr) {
+    logger.error('Diagnostics reporting failed', diagErr);
+  }
+}
 
 module.exports = async function codeImprovement() {
-  console.log('[AI-CODE-IMPROVEMENT] Starting AI-controlled code improvement analysis');
+  logger.info('Starting AI-controlled code improvement analysis');
   
   try {
     // Request code analysis permission from AI model
@@ -24,7 +36,7 @@ module.exports = async function codeImprovement() {
     );
 
     if (analysisResult.success) {
-      console.log('[AI-CODE-IMPROVEMENT] AI approved code improvement analysis');
+      logger.info('AI approved code improvement analysis');
       
       // Generate code improvement suggestions
       const suggestions = await generateCodeSuggestions();
@@ -50,17 +62,17 @@ module.exports = async function codeImprovement() {
       );
 
       if (storeResult.success) {
-        console.log('[AI-CODE-IMPROVEMENT] ✅ Generated %d code improvement suggestions', suggestions.length);
-        console.log('[AI-CODE-IMPROVEMENT] Suggestions stored for review:', suggestions.map(s => s.category).join(', '));
+        logger.success('Generated code improvement suggestions', { count: suggestions.length });
+        logger.info('Suggestions stored for review', { categories: suggestions.map(s => s.category) });
       } else {
         throw new Error(`Failed to store suggestions: ${storeResult.error}`);
       }
     } else {
-      console.log('[AI-CODE-IMPROVEMENT] AI denied code improvement analysis:', analysisResult.error);
+      logger.warning('AI denied code improvement analysis', analysisResult.error);
     }
-    
+
   } catch (error) {
-    console.error('[AI-CODE-IMPROVEMENT] Error in AI-controlled code improvement:', error.message);
+    await reportFailure(error);
     
     // Fallback: store error for manual review
     try {
@@ -83,7 +95,7 @@ module.exports = async function codeImprovement() {
         }
       );
     } catch (fallbackError) {
-      console.error('[AI-CODE-IMPROVEMENT] Fallback storage also failed:', fallbackError.message);
+      logger.error('Fallback storage also failed', fallbackError);
     }
   }
 };
@@ -160,10 +172,10 @@ async function generateCodeSuggestions() {
     timestamp: new Date().toISOString()
   });
 
-  console.log('[AI-CODE-IMPROVEMENT] 📝 Generated %d improvement suggestions across %d categories', 
-    suggestions.length, 
-    new Set(suggestions.map(s => s.category)).size
-  );
+  logger.debug('Generated improvement suggestions', {
+    count: suggestions.length,
+    categories: new Set(suggestions.map(s => s.category)).size
+  });
 
   return suggestions;
 }

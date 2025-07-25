@@ -41,6 +41,11 @@ router.get('/workers', async (_req, res) => {
   }
 });
 
+// Worker heartbeat
+router.get('/workers/heartbeat', (_req, res) => {
+  res.json({ service: 'workers', status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Sleep window status endpoint
 router.get('/sleep', async (_req, res) => {
   try {
