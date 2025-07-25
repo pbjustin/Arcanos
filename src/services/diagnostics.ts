@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import axios from 'axios';
 import { getQueueAudit, getQueueStats } from './jobQueue';
 
 const execAsync = promisify(exec);
@@ -67,6 +68,13 @@ export const DIAGNOSTIC_INSTRUCTIONS = {
     parameters: { type: 'queue' },
     execute: true,
     priority: 9
+  },
+  endpoint: {
+    action: 'execute',
+    service: 'diagnostic',
+    parameters: { type: 'endpoint', url: '' },
+    execute: true,
+    priority: 5
   }
 };
 
@@ -224,7 +232,15 @@ export class DiagnosticsService {
     if (this.containsKeywords(normalizedCommand, ['queue', 'job', 'audit', 'pending', 'completed', 'failed'])) {
       return DIAGNOSTIC_INSTRUCTIONS.queue;
     }
-    
+    if (this.containsKeywords(normalizedCommand, ['endpoint', 'api', 'route', 'url'])) {
+      const urlMatch = command.match(/https?:\/\/\S+|\/[\w\-\/]+/);
+      const instruction = { ...DIAGNOSTIC_INSTRUCTIONS.endpoint };
+      if (urlMatch) {
+        instruction.parameters.url = urlMatch[0];
+      }
+      return instruction;
+    }
+
     // Default to system diagnostic
     return DIAGNOSTIC_INSTRUCTIONS.system;
   }
@@ -246,6 +262,8 @@ export class DiagnosticsService {
         return await this.getNetworkDiagnostics();
       case 'queue':
         return await this.getQueueAudit();
+      case 'endpoint':
+        return await this.scanApiEndpoint(instruction.parameters.url);
       case 'system':
       default:
         return await this.getSystemDiagnostics();
@@ -426,6 +444,39 @@ export class DiagnosticsService {
         timestamp: new Date().toISOString(),
         auditType: 'queue'
       };
+    }
+  }
+
+  /**
+   * Scan an API endpoint with retry and timeout safeguards
+   */
+  private async scanApiEndpoint(url: string, maxRetries = 3, timeoutMs = 10000) {
+    if (!url) {
+      return { error: 'No endpoint URL provided', timestamp: new Date().toISOString() };
+    }
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await axios.get(url, { timeout: timeoutMs });
+        return {
+          url,
+          status: response.status,
+          data: response.data,
+          attempt,
+          timestamp: new Date().toISOString()
+        };
+      } catch (error: any) {
+        console.warn(`⚠️ Diagnostic scan attempt ${attempt}/${maxRetries} failed for ${url}: ${error.message}`);
+        if (attempt === maxRetries) {
+          console.error(`🚨 Diagnostic escalation: endpoint ${url} unreachable after ${maxRetries} attempts`);
+          return {
+            error: `Endpoint unreachable after ${maxRetries} attempts`,
+            url,
+            timestamp: new Date().toISOString()
+          };
+        }
+        await new Promise(res => setTimeout(res, 1000));
+      }
     }
   }
 }
