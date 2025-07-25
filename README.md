@@ -240,6 +240,7 @@ The backend implements intelligent intent detection that routes requests to spec
 - **Runtime Lookup**: Assistants available via `config/assistants.json`
 - **Name Normalization**: `UPPERCASE_WITH_UNDERSCORES` format for consistent access
 - **Full Integration**: Assistant tools and instructions preserved and accessible
+- **Python Code Interpreter**: Execute Python for data transformation via secure tool calling
 
 ### Memory & Context Management
 - **PostgreSQL Backend**: Persistent storage with automatic schema management
@@ -266,6 +267,7 @@ The backend implements intelligent intent detection that routes requests to spec
 ### Required Variables
 - `OPENAI_API_KEY` - Your OpenAI API key
 - `FINE_TUNED_MODEL` - Your fine-tuned model name
+- `CODE_INTERPRETER_MODEL` - Model for Python tool execution (default: gpt-4o)
 
 ### Server Configuration
 - `NODE_ENV` - Environment (development/production) (default: development)
@@ -354,6 +356,7 @@ npm start
 - `POST /api/ask-with-fallback` - AI chat with GPT-4 fallback
 - `POST /api/ask-v1-safe` - Safe interface with RAG/HRC features
 - `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT)
+- `POST /api/code-interpreter` - Python tool execution via code interpreter
 - `POST /memory/save` - Save memory entries for context
 
 ### Diagnostic & Management

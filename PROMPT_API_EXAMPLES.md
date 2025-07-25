@@ -497,4 +497,13 @@ result = client.ask_safe("Explain Python decorators", "programming")
 print(result["response"])
 ```
 
+### Code Interpreter Example
+```python
+response = requests.post(
+    f"{client.base_url}/api/code-interpreter",
+    json={"prompt": "Calculate the mean of [1,2,3,4]"}
+)
+print(response.json()["data"]["content"])
+```
+
 These examples provide a comprehensive set of ready-to-use implementations for testing and integrating with the Arcanos API.
