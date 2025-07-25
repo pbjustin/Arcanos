@@ -31,6 +31,7 @@ dist/              # Compiled output (generated)
 - `POST /api/ask-with-fallback` - AI query with fallback permission granted
 - `POST /api/ask-v1-safe` - Safe interface with RAG/HRC features
 - `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT)
+- `POST /api/code-interpreter` - Python tool execution via code interpreter
 - `GET /api/model-status` - Current model configuration
 - `GET /api/model/info` - Detailed model information
 
@@ -71,6 +72,7 @@ NODE_ENV=development
 RUN_WORKERS=true
 SERVER_URL=https://your-app.railway.app
 GPT_TOKEN=your-gpt-diagnostic-token
+CODE_INTERPRETER_MODEL=gpt-4o
 ```
 
 ## Model Hierarchy
