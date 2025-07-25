@@ -2,15 +2,20 @@
 import { workerStatusService } from './services/worker-status';
 import { modelControlHooks } from './services/model-control-hooks';
 import { isTrue } from './utils/env';
+import { goalTrackerWorker } from './workers/goal-tracker';
+import { maintenanceSchedulerWorker } from './workers/maintenance-scheduler';
+import { createServiceLogger } from './utils/logger';
+
+const logger = createServiceLogger('WorkerInit');
 
 async function initializeAIControlledWorkers() {
-  console.log('[AI-WORKERS] Initializing AI-controlled worker system');
+  logger.info('Initializing AI-controlled worker system with enhanced workers');
   
-  // Register available workers with AI control system
-  const availableWorkers = ['memorySync', 'goalWatcher', 'clearTemp'];
+  // Register available workers with AI control system (including new workers)
+  const availableWorkers = ['memorySync', 'goalWatcher', 'clearTemp', 'auditProcessor', 'maintenanceScheduler', 'emailDispatcher'];
   
   for (const workerName of availableWorkers) {
-    console.log(`[AI-WORKERS] Registering worker: ${workerName}`);
+    logger.info('Registering worker with AI control system', { workerName });
     
     // Each worker registers itself with the AI control system
     try {
@@ -24,24 +29,51 @@ async function initializeAIControlledWorkers() {
           source: 'system'
         }
       );
-    } catch (error) {
-      console.warn(`[AI-WORKERS] Failed to register ${workerName}:`, error);
+    } catch (error: any) {
+      logger.warning('Failed to register worker with AI control', { workerName, error: error.message });
     }
   }
   
-  console.log('[AI-WORKERS] AI-controlled worker system initialized');
+  logger.success('AI-controlled worker system initialized', { workerCount: availableWorkers.length });
+}
+
+async function startBackgroundWorkers() {
+  logger.info('Starting enhanced background workers');
+  
+  try {
+    // Start Goal Tracker Worker
+    await goalTrackerWorker.start();
+    logger.success('Goal Tracker Worker started');
+    
+    // Start Maintenance Scheduler Worker  
+    await maintenanceSchedulerWorker.start();
+    logger.success('Maintenance Scheduler Worker started');
+    
+    logger.success('All background workers started successfully');
+    
+  } catch (error: any) {
+    logger.error('Failed to start background workers', error);
+    throw error;
+  }
 }
 
 // Legacy function for compatibility - now AI controlled
 async function startWorkers() {
-  console.log('[AI-WORKERS] Legacy startWorkers called - routing to AI control');
+  logger.info('Legacy startWorkers called - routing to AI control and enhanced workers');
   
-  // Ask AI whether to start workers
+  // Start the enhanced background workers
+  try {
+    await startBackgroundWorkers();
+  } catch (error: any) {
+    logger.error('Background worker startup failed', error);
+  }
+  
+  // Ask AI whether to start additional workers
   const result = await modelControlHooks.processRequest(
     'worker-startup',
     { 
       reason: 'RUN_WORKERS environment variable is true',
-      requestedWorkers: ['memorySync', 'goalWatcher', 'clearTemp']
+      requestedWorkers: ['memorySync', 'goalWatcher', 'clearTemp', 'auditProcessor', 'maintenanceScheduler']
     },
     {
       userId: 'system',

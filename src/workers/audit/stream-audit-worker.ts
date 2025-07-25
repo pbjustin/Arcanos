@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { coreAIService } from '../../services/ai/core-ai-service';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import fs from 'fs';
 import path from 'path';
@@ -13,19 +13,20 @@ export interface StreamAuditRequest {
 }
 
 function buildSystemPrompt(domain: string): string {
-  return `You are ARCANOS in AUDIT mode. Validate content for domain: ${domain}.`;
+  return `You are ARCANOS in AUDIT mode. Validate content for domain: ${domain}.
+  
+Provide comprehensive audit analysis including:
+- Content validation
+- Security considerations  
+- Compliance assessment
+- Risk evaluation
+- Recommendations for improvement`;
 }
 
 /**
- * Run an audit using OpenAI streaming. Tokens are streamed to stdout and a log file.
+ * Run an audit using the core AI service with streaming, retry logic, and comprehensive logging
  */
 export async function runStreamAudit({ message, domain = 'general', logFilePath }: StreamAuditRequest): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is required');
-  }
-
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
   const logDir = path.join(process.cwd(), 'storage', 'audit-logs');
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
@@ -38,27 +39,50 @@ export async function runStreamAudit({ message, domain = 'general', logFilePath 
     { role: 'user', content: message }
   ];
 
-  logger.info('Starting streamed audit', { domain });
+  logger.info('Starting streamed audit with retry logic', { domain, logPath: finalLogPath });
 
-  const stream = await openai.chat.completions.create({
-    model: 'arcanos-v1',
-    messages,
-    stream: true
-  });
+  try {
+    let fullResponse = '';
+    const result = await coreAIService.completeStream(
+      messages,
+      'audit-stream',
+      (token: string) => {
+        process.stdout.write(token);
+        fileStream.write(token);
+        fullResponse += token;
+      },
+      {
+        maxTokens: 2000,
+        temperature: 0.4,
+        stream: true,
+        maxRetries: 3
+      }
+    );
 
-  let fullResponse = '';
-  for await (const chunk of stream) {
-    const token = chunk.choices?.[0]?.delta?.content || '';
-    if (token) {
-      process.stdout.write(token);
-      fileStream.write(token);
-      fullResponse += token;
+    fileStream.end();
+
+    if (!result.success) {
+      logger.error('Audit stream failed with fallback', { 
+        domain, 
+        error: result.error,
+        logPath: finalLogPath 
+      });
+      throw new Error(`Audit failed: ${result.error}`);
     }
-  }
 
-  fileStream.end();
-  logger.success('Audit stream completed', { log: finalLogPath });
-  return fullResponse;
+    logger.success('Audit stream completed successfully', { 
+      domain,
+      responseLength: fullResponse.length, 
+      logPath: finalLogPath 
+    });
+    
+    return fullResponse;
+    
+  } catch (error: any) {
+    fileStream.end();
+    logger.error('Audit stream execution failed', error, { domain, logPath: finalLogPath });
+    throw error;
+  }
 }
 
 // Allow running directly from node
