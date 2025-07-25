@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { getQueueAudit, getQueueStats } from './jobQueue';
 
 const execAsync = promisify(exec);
 
@@ -15,10 +16,12 @@ export interface DiagnosticResult {
   data: any;
   timestamp: string;
   error?: string;
+  forceMode?: boolean;
 }
 
 export interface DiagnosticRequest {
   command: string;
+  force?: boolean;
 }
 
 // JSON-based diagnostic instruction templates for AI model
@@ -57,6 +60,13 @@ export const DIAGNOSTIC_INSTRUCTIONS = {
     parameters: { type: 'system' },
     execute: true,
     priority: 8
+  },
+  queue: {
+    action: 'execute',
+    service: 'diagnostic',
+    parameters: { type: 'queue' },
+    execute: true,
+    priority: 9
   }
 };
 
@@ -96,6 +106,103 @@ export class DiagnosticsService {
   }
 
   /**
+   * Execute forced diagnostics - bypasses inference and directly executes all diagnostic tasks
+   */
+  async executeForcedDiagnostics(command: string = 'forced diagnostic'): Promise<DiagnosticResult> {
+    const timestamp = new Date().toISOString();
+
+    try {
+      console.log('🔧 FORCE-MODE: Executing all diagnostic tasks directly, bypassing inference');
+      
+      // Execute all diagnostic types including queue audits
+      const diagnosticTasks = [
+        this.getSystemDiagnostics(),
+        this.getMemoryDiagnostics(),
+        this.getCpuDiagnostics(),
+        this.getDiskDiagnostics(),
+        this.getNetworkDiagnostics(),
+        this.getQueueAudit()
+      ];
+
+      const results = await Promise.allSettled(diagnosticTasks);
+      
+      // Categorize results
+      const categorizedResults = {
+        completed: [] as any[],
+        pending: [] as any[],
+        'in-progress': [] as any[],
+        failed: [] as any[]
+      };
+
+      // Process all results
+      results.forEach((result, index) => {
+        const taskNames = ['system', 'memory', 'cpu', 'disk', 'network', 'queue'];
+        const taskName = taskNames[index];
+        
+        if (result.status === 'fulfilled') {
+          const taskResult = result.value;
+          
+          // Special handling for queue audit results
+          if (taskName === 'queue' && taskResult && typeof taskResult === 'object') {
+            // Check if this is a queue audit result with the expected structure
+            if ('pending' in taskResult && Array.isArray(taskResult.pending)) {
+              categorizedResults.pending.push(...taskResult.pending);
+            }
+            if ('inProgress' in taskResult && Array.isArray(taskResult.inProgress)) {
+              categorizedResults['in-progress'].push(...taskResult.inProgress);
+            }
+            if ('completed' in taskResult && Array.isArray(taskResult.completed)) {
+              categorizedResults.completed.push(...taskResult.completed);
+            }
+            if ('failed' in taskResult && Array.isArray(taskResult.failed)) {
+              categorizedResults.failed.push(...taskResult.failed);
+            }
+          } else {
+            categorizedResults.completed.push({
+              task: taskName,
+              status: 'completed',
+              category: 'completed',
+              data: taskResult,
+              timestamp
+            });
+          }
+        } else {
+          categorizedResults.failed.push({
+            task: taskName,
+            status: 'failed',
+            category: 'failed',
+            error: result.reason?.message || 'Unknown error',
+            timestamp
+          });
+        }
+      });
+
+      console.log(`✅ FORCE-MODE: Completed forced diagnostics. Results - Completed: ${categorizedResults.completed.length}, Pending: ${categorizedResults.pending.length}, In-Progress: ${categorizedResults['in-progress'].length}, Failed: ${categorizedResults.failed.length}`);
+
+      return {
+        success: true,
+        command,
+        category: 'forced',
+        data: categorizedResults,
+        timestamp,
+        forceMode: true
+      };
+
+    } catch (error: any) {
+      console.error('❌ FORCE-MODE: Error executing forced diagnostics:', error);
+      return {
+        success: false,
+        command,
+        category: 'error',
+        data: {},
+        timestamp,
+        error: error.message,
+        forceMode: true
+      };
+    }
+  }
+
+  /**
    * Create AI-compatible diagnostic instruction from natural language
    */
   private createDiagnosticInstruction(command: string): any {
@@ -113,6 +220,9 @@ export class DiagnosticsService {
     }
     if (this.containsKeywords(normalizedCommand, ['network', 'connectivity', 'ping', 'internet'])) {
       return DIAGNOSTIC_INSTRUCTIONS.network;
+    }
+    if (this.containsKeywords(normalizedCommand, ['queue', 'job', 'audit', 'pending', 'completed', 'failed'])) {
+      return DIAGNOSTIC_INSTRUCTIONS.queue;
     }
     
     // Default to system diagnostic
@@ -134,6 +244,8 @@ export class DiagnosticsService {
         return await this.getDiskDiagnostics();
       case 'network':
         return await this.getNetworkDiagnostics();
+      case 'queue':
+        return await this.getQueueAudit();
       case 'system':
       default:
         return await this.getSystemDiagnostics();
@@ -291,6 +403,30 @@ export class DiagnosticsService {
       cpu: cpu.formatted,
       timestamp: new Date().toISOString()
     };
+  }
+
+  /**
+   * Get queue audit diagnostics
+   */
+  private async getQueueAudit() {
+    try {
+      const audit = getQueueAudit();
+      const stats = getQueueStats();
+      
+      return {
+        ...audit,
+        stats,
+        timestamp: new Date().toISOString(),
+        auditType: 'queue'
+      };
+    } catch (error: any) {
+      return {
+        error: 'Unable to retrieve queue audit information',
+        details: error.message,
+        timestamp: new Date().toISOString(),
+        auditType: 'queue'
+      };
+    }
   }
 }
 
