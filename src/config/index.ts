@@ -27,6 +27,7 @@ export interface Config {
   };
   features: {
     runWorkers: boolean;
+    workerLogic: string;
     enableRecovery: boolean;
     enableLogging: boolean;
   };
@@ -60,6 +61,7 @@ export const config: Config = {
   },
   features: {
     runWorkers: process.env.RUN_WORKERS === 'true',
+    workerLogic: process.env.WORKER_LOGIC || 'arcanos',
     enableRecovery: process.env.ENABLE_RECOVERY !== 'false', // Default to true
     enableLogging: process.env.ENABLE_LOGGING !== 'false', // Default to true
   },
@@ -105,6 +107,7 @@ export function getEnvironmentStatus() {
     openaiApiKeyConfigured: !!(config.ai.openaiApiKey),
     databaseConfigured: !!(config.database.url),
     apiTokenConfigured: !!(config.api.arcanosApiToken),
+    workerLogic: config.features.workerLogic,
     isRailway: !!(config.railway.environment),
     isDevelopment: config.server.nodeEnv === 'development',
     isProduction: config.server.nodeEnv === 'production',
@@ -118,4 +121,5 @@ export const databaseConfig = config.database;
 export const apiConfig = config.api;
 export const railwayConfig = config.railway;
 export const featureConfig = config.features;
+export const workerLogic = config.features.workerLogic;
 export const chatgptConfig = config.chatgpt;

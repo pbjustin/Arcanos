@@ -5,6 +5,13 @@ const { diagnosticsService } = require('../dist/services/diagnostics');
 const { createServiceLogger } = require('../src/utils/logger');
 const logger = createServiceLogger('Workers');
 
+// Determine worker logic mode
+const WORKER_LOGIC = process.env.WORKER_LOGIC || 'arcanos';
+console.log(`[AI-WORKERS] Worker logic mode: ${WORKER_LOGIC}`);
+if (WORKER_LOGIC !== 'arcanos') {
+  console.warn(`[AI-WORKERS] Non-standard worker logic: ${WORKER_LOGIC} - defaulting to ARCANOS`);
+}
+
 // Available worker functions - now AI-controlled execution shells
 const workerExecutions = {
   memorySync: require(path.resolve(__dirname, './memorySync')),
