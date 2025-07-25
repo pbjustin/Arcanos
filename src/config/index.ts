@@ -47,7 +47,7 @@ export const config: Config = {
   },
   ai: {
     openaiApiKey: process.env.OPENAI_API_KEY,
-    fineTunedModel: process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL,
+    fineTunedModel: process.env.AI_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL,
     gptToken: process.env.GPT_TOKEN,
   },
   database: {
@@ -92,6 +92,13 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
   // Validate port number
   if (isNaN(config.server.port) || config.server.port < 1 || config.server.port > 65535) {
     errors.push('PORT must be a valid port number (1-65535)');
+  }
+
+  const expectedModel = 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106:BpYtP0ox';
+  if (!config.ai.fineTunedModel) {
+    errors.push(`AI_MODEL is required and must be set to ${expectedModel}`);
+  } else if (config.ai.fineTunedModel !== expectedModel) {
+    errors.push(`AI_MODEL mismatch. Expected ${expectedModel}`);
   }
 
   return {
