@@ -98,7 +98,18 @@ app.post('/audit', async (req, res) => {
 });
 
 // 3. /diagnostic route - Refactored to use dedicated handler (reordered per boot sequence)
+// Support both GET and POST for diagnostic requests
 app.get('/diagnostic', async (req, res) => {
+  try {
+    await diagnosticHandler.handleDiagnosticRequest(req, res);
+  } catch (error: any) {
+    console.error('❌ Diagnostic route failure, attempting recovery:', error);
+    // Route recovery will be handled by the recovery middleware
+    throw error;
+  }
+});
+
+app.post('/diagnostic', async (req, res) => {
   try {
     await diagnosticHandler.handleDiagnosticRequest(req, res);
   } catch (error: any) {
@@ -458,7 +469,7 @@ serverService.start(app, PORT).then(async () => {
   console.log('✅ /health - Health check endpoint (always available)');
   console.log('✅ /memory - Memory handler with snapshot validation & backup streams');
   console.log('✅ /audit - Audit handler with malformed response tracking & activity logging');
-  console.log('✅ /diagnostic - Diagnostic handler with readiness confirmation & recovery logic');
+  console.log('✅ /diagnostic - Diagnostic handler with readiness confirmation & recovery logic (GET/POST with force mode support)');
   console.log('✅ /write - Write handler with content validation & null prevention');
   console.log('✅ /api/* - Main API router with AI-controlled endpoints');
   console.log('✅ /api/memory/* - Protected memory routes (requires API token)');
