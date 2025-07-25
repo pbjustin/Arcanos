@@ -4,6 +4,7 @@ import { diagnosticsService } from '../services/diagnostics';
 import { workerStatusService } from '../services/worker-status';
 import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from '../services/email';
 import { sendEmailIntent } from '../intents/send_email';
+import { sendEmailAndRespond } from '../intents/send_email_and_respond';
 import assistantsRouter from './assistants';
 
 const router = Router();
@@ -217,6 +218,7 @@ router.post('/email/send', async (req, res) => {
 
 // Intent endpoints
 router.post('/intent/send_email', sendEmailIntent);
+router.post('/intent/send_email_and_respond', sendEmailAndRespond);
 
 // Mount assistant routes
 router.use('/', assistantsRouter);
