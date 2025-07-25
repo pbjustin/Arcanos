@@ -223,4 +223,13 @@ router.get('/health', async (req: Request, res: Response) => {
   }
 });
 
+// GET /memory/heartbeat - Lightweight heartbeat
+router.get('/heartbeat', (_req: Request, res: Response) => {
+  res.json({
+    service: 'arcanos-memory',
+    status: 'ok',
+    timestamp: new Date().toISOString()
+  });
+});
+
 export default router;
