@@ -76,7 +76,7 @@ Module.prototype.require = function(id) {
 console.log('🧪 Testing Database Connection with Mock PostgreSQL...\n');
 
 // Load the database connection module (will use our mock)
-const dbConnection = require('./services/database-connection');
+const dbConnection = require('./dist/services/database-connection');
 
 // Give it a moment to initialize
 setTimeout(async () => {
