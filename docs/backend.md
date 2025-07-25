@@ -11,6 +11,7 @@
 | `OPENAI_API_KEY` | `[REQUIRED]` | OpenAI API authentication key |
 | `FINE_TUNED_MODEL` | `ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106` | Primary fine-tuned model ID |
 | `RUN_WORKERS` | `true` | Enable AI-controlled CRON worker processes |
+| `WORKER_LOGIC` | `arcanos` | Default logic mode for background workers |
 | `SERVER_URL` | `https://arcanos-production-426d.up.railway.app` | Production server URL for health checks |
 | `DATABASE_URL` | `[OPTIONAL]` | PostgreSQL connection string (fallback to in-memory if not set) |
 

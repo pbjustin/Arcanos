@@ -276,6 +276,7 @@ The backend implements intelligent intent detection that routes requests to spec
 
 ### Worker Configuration
 - `RUN_WORKERS` - Set to `true` (or `1`) to enable AI-controlled background workers. Use `false` (default) if you only need the memory API and want the server to keep running without background jobs.
+- `WORKER_LOGIC` - Logic mode for background workers (default: `arcanos`). Set to another value to override.
 - `SERVER_URL` - Server URL for health checks (default: http://localhost:8080)
 
 ### Sleep & Wake Configuration
