@@ -3,7 +3,8 @@ console.log('🌙 ARCANOS Sleep and Maintenance Scheduler - Comprehensive Test')
 console.log('==============================================================');
 
 // Load the sleep configuration and manager
-const { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } = require('./dist/services/sleep-config');
+const { safeRequire } = require('./scripts/codex-internal');
+const { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } = safeRequire('./dist/services/sleep-config');
 
 async function runComprehensiveTest() {
   try {

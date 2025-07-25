@@ -5,6 +5,8 @@
 
 const fs = require('fs');
 const path = require('path');
+// Mount ARCANOS runtime modules for Codex execution
+require('./scripts/codex-internal');
 
 console.log('==================================================');
 console.log('  ARCANOS Railway + GitHub Copilot Validation');
@@ -36,6 +38,18 @@ function validateFileContent(filePath, searchText, description) {
     }
   } else {
     console.log(`❌ ${description}: File not found`);
+    allPassed = false;
+    return false;
+  }
+}
+
+function validateInternalModule(modulePath, description) {
+  try {
+    require.resolve(modulePath);
+    console.log(`✅ ${description}: Found`);
+    return true;
+  } catch (err) {
+    console.log(`⚠️ ${description}: Missing - ${err.message}`);
     allPassed = false;
     return false;
   }
@@ -92,6 +106,11 @@ console.log('\n8. Testing Infrastructure:');
 validateFile('test-railway-copilot.js', 'Railway + Copilot test script');
 validateFile('test-cors-compliance.js', 'CORS compliance test');
 
+// 9. Internal Runtime Modules
+console.log('\n9. Internal Runtime Modules:');
+validateInternalModule('./dist/services/model-control-hooks', 'Model control hooks');
+validateInternalModule('./workers/index.js', 'Worker system');
+
 console.log('\n==================================================');
 if (allPassed) {
   console.log('           🎉 ALL REQUIREMENTS PASSED! 🎉');
@@ -110,4 +129,4 @@ if (allPassed) {
   console.log('==================================================');
   console.log('Please review the failed items above.');
 }
-console.log('==================================================');
+console.log('==================================================')

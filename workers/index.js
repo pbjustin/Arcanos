@@ -1,8 +1,8 @@
 // AI-Controlled Worker System - Workers only execute when AI model instructs them to
 const path = require('path');
-const { modelControlHooks } = require('../src/services/model-control-hooks');
+const { modelControlHooks } = require('../dist/services/model-control-hooks');
 const { diagnosticsService } = require('../dist/services/diagnostics');
-const { createServiceLogger } = require('../src/utils/logger');
+const { createServiceLogger } = require('../dist/utils/logger');
 const logger = createServiceLogger('Workers');
 
 // Determine worker logic mode

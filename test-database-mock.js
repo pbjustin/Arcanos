@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 // Test script to demonstrate database connection with mocked PostgreSQL
+const { safeRequire } = require('./scripts/codex-internal');
 const originalEnv = process.env.DATABASE_URL;
 
 // Set a mock DATABASE_URL to test connection logic
@@ -76,7 +77,8 @@ Module.prototype.require = function(id) {
 console.log('🧪 Testing Database Connection with Mock PostgreSQL...\n');
 
 // Load the database connection module (will use our mock)
-const dbConnection = require('./dist/services/database-connection');
+const dbConnectionModule = safeRequire('./dist/services/database-connection');
+const dbConnection = dbConnectionModule.default || dbConnectionModule;
 
 // Give it a moment to initialize
 setTimeout(async () => {
