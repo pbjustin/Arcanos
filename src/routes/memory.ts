@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { databaseService, SaveMemoryRequest, LoadMemoryRequest } from '../services/database';
 import { MemoryStorage } from '../storage/memory-storage';
+import { sendErrorResponse, sendSuccessResponse, handleCatchError } from '../utils/response';
+import { arcanosLogger } from '../utils/logger';
 
 const router = Router();
 const fallbackMemory = new MemoryStorage();
@@ -21,17 +23,13 @@ router.post('/save', async (req: Request, res: Response) => {
     const { memory_key, memory_value } = req.body;
     
     if (!memory_key) {
-      return res.status(400).json({ 
-        error: 'memory_key is required',
-        example: { memory_key: 'user_preference', memory_value: { theme: 'dark' } }
-      });
+      return sendErrorResponse(res, 400, 'memory_key is required', 
+        'Example: { memory_key: "user_preference", memory_value: { theme: "dark" } }');
     }
 
     if (memory_value === undefined) {
-      return res.status(400).json({ 
-        error: 'memory_value is required (can be null)',
-        example: { memory_key: 'user_preference', memory_value: { theme: 'dark' } }
-      });
+      return sendErrorResponse(res, 400, 'memory_value is required (can be null)', 
+        'Example: { memory_key: "user_preference", memory_value: { theme: "dark" } }');
     }
 
     const container_id = getContainerId(req);
@@ -54,26 +52,20 @@ router.post('/save', async (req: Request, res: Response) => {
       ? await databaseService.saveMemory(saveRequest)
       : await fallbackMemory.storeMemory(container_id, 'default', 'context', memory_key, memory_value);
     
-    console.log('✅ [MEMORY-SNAPSHOT] Memory saved successfully:', { 
+    arcanosLogger.memorySnapshot('Memory saved successfully', { 
       memory_key, 
       container_id, 
-      success: true,
-      timestamp: new Date().toISOString() 
+      success: true
     });
     
-    res.status(200).json({
-      success: true,
-      message: 'Memory saved successfully',
-      data: result,
+    sendSuccessResponse(res, 'Memory saved successfully', {
+      ...result,
       snapshot_logged: true
     });
     
   } catch (error: any) {
-    console.error('❌ [MEMORY-SNAPSHOT] Error saving memory:', error);
-    res.status(500).json({ 
-      error: 'Failed to save memory',
-      details: error.message 
-    });
+    arcanosLogger.memorySnapshot('Error saving memory', { error: error.message });
+    handleCatchError(res, error, 'Memory save operation');
   }
 });
 
@@ -83,10 +75,8 @@ router.get('/load', async (req: Request, res: Response) => {
     const memory_key = req.query.key as string;
     
     if (!memory_key) {
-      return res.status(400).json({ 
-        error: 'key parameter is required',
-        example: '/memory/load?key=user_preference'
-      });
+      return sendErrorResponse(res, 400, 'key parameter is required', 
+        'Example: /memory/load?key=user_preference');
     }
 
     const container_id = getContainerId(req);
