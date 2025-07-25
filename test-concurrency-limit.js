@@ -1,22 +1,19 @@
 #!/usr/bin/env node
 
 // Simple test for /api/ask concurrency limiter
-const axios = require('axios');
+const { makeAxiosRequest } = require('./test-utils/common');
 
-const BASE_URL = process.env.TEST_URL || 'http://localhost:8080/api';
 const TOTAL_REQUESTS = Number(process.env.TOTAL_REQUESTS || 10); // send more than limit
-
 const DELAY = Number(process.env.DELAY || 0);
 
 async function send(index) {
   try {
-    const res = await axios.post(
-      `${BASE_URL}/ask?delay=${DELAY}`,
-      { query: `test-${index}` },
-      { validateStatus: () => true }
-    );
-    console.log(`#${index} -> status ${res.status}`);
-    return res.status;
+    const result = await makeAxiosRequest('POST', `/api/ask?delay=${DELAY}`, {
+      data: { query: `test-${index}` }
+    });
+    const status = result.status || (result.success ? 200 : 500);
+    console.log(`#${index} -> status ${status}`);
+    return status;
   } catch (err) {
     console.error(`#${index} -> network error`, err.message);
     return 0;

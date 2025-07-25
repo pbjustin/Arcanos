@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
+import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
 
 const router = Router();
 
@@ -16,7 +17,7 @@ router.get('/finetune-status', async (req, res) => {
     const isActive = await fineTuneRoutingService.isFineTuneRoutingActive(userId, sessionId);
     const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
     
-    res.json({
+    sendSuccessResponse(res, 'Fine-tune routing status retrieved', {
       active: isActive,
       message: statusMessage,
       userId,
@@ -24,10 +25,7 @@ router.get('/finetune-status', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
-    res.status(500).json({
-      error: 'Failed to get fine-tune routing status',
-      details: error.message
-    });
+    sendErrorResponse(res, 500, 'Failed to get fine-tune routing status', error.message);
   }
 });
 
@@ -48,24 +46,10 @@ router.post('/webhook', async (req, res) => {
       }
     );
 
-    if (result.success) {
-      res.status(200).json({ 
-        success: true, 
-        message: result.response 
-      });
-    } else {
-      res.status(500).json({ 
-        error: result.error,
-        success: false 
-      });
-    }
+    handleServiceResult(res, result, 'Webhook processed successfully');
 
   } catch (err: any) {
-    console.error('❌ Webhook error:', err);
-    res.status(500).json({ 
-      error: 'Internal webhook error',
-      details: err.message 
-    });
+    handleCatchError(res, err, 'Webhook');
   }
 });
 
@@ -75,7 +59,7 @@ router.get('/sync/diagnostics', async (req, res) => {
   const gptToken = `Bearer ${process.env.GPT_TOKEN}`;
   const apiToken = `Bearer ${process.env.ARCANOS_API_TOKEN}`;
   if (token !== gptToken && token !== apiToken) {
-    return res.status(403).json({ error: "Unauthorized access" });
+    return sendErrorResponse(res, 403, "Unauthorized access");
   }
 
   try {
@@ -110,11 +94,10 @@ router.get('/sync/diagnostics', async (req, res) => {
 
       res.json(diagnosticData);
     } else {
-      res.status(500).json({ error: result.error });
+      sendErrorResponse(res, 500, result.error || 'Diagnostics failed');
     }
   } catch (error: any) {
-    console.error('❌ Diagnostics error:', error);
-    res.status(500).json({ error: error.message });
+    handleCatchError(res, error, 'Diagnostics');
   }
 });
 
@@ -149,21 +132,11 @@ router.post('/query-finetune', async (req, res) => {
         });
       }
     } else {
-      res.status(500).json({
-        error: result.error,
-        success: false,
-        timestamp: new Date().toISOString()
-      });
+      sendErrorResponse(res, 500, result.error || 'Query finetune failed');
     }
 
   } catch (error: any) {
-    console.error('❌ Error in /query-finetune:', error.message);
-    res.status(500).json({
-      error: 'AI dispatcher error',
-      details: error.message,
-      success: false,
-      timestamp: new Date().toISOString()
-    });
+    handleCatchError(res, error, 'Query finetune');
   }
 });
 
@@ -184,15 +157,10 @@ router.post('/ask', async (req, res) => {
       }
     );
 
-    if (result.success) {
-      res.json({ response: result.response });
-    } else {
-      res.status(500).json({ error: result.error });
-    }
+    handleServiceResult(res, result, 'Ask endpoint processed successfully');
 
   } catch (error: any) {
-    console.error('❌ Error in /ask:', error.message);
-    res.status(500).json({ error: error.message });
+    handleCatchError(res, error, 'Ask endpoint');
   }
 });
 
@@ -205,7 +173,7 @@ router.post('/', async (req, res) => {
   const sessionId = req.headers['x-session-id'] as string || 'default';
   
   if (!message) {
-    return res.status(400).json({ error: 'Message is required' });
+    return sendErrorResponse(res, 400, 'Message is required');
   }
 
   try {
@@ -225,18 +193,12 @@ router.post('/', async (req, res) => {
     if (result.success) {
       res.send(result.response);
     } else {
-      res.status(500).json({ 
-        error: result.error,
-        response: `Echo: ${message}` // Fallback response
-      });
+      sendErrorResponse(res, 500, result.error || 'AI dispatcher error', `Echo: ${message}`);
     }
     
   } catch (error: any) {
     console.error('❌ Error processing message:', error);
-    res.status(500).json({ 
-      error: 'AI dispatcher error',
-      response: `Echo: ${message}` // Fallback response
-    });
+    sendErrorResponse(res, 500, 'AI dispatcher error', `Echo: ${message}`);
   }
 });
 
