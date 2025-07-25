@@ -1,22 +1,19 @@
 // Test file for ARCANOS Container Manager API
 // Tests the unified backend API block for monitoring and controlling containers
 
-const axios = require('axios');
-
-// Base URL for the container API
-const BASE_URL = 'http://localhost:8080/api/containers';
+const { makeAxiosRequest, logTestResult, runEndpointTests } = require('./test-utils/common');
 
 // ✅ TEST FUNCTION: Get container status
 async function testContainerStatus() {
   try {
     console.log('🔍 Testing container status endpoint...');
-    const response = await axios.get(`${BASE_URL}/status`);
+    const result = await makeAxiosRequest('GET', '/api/containers/status');
     
-    if (response.status !== 200) {
-      throw new Error(`Expected status 200, got ${response.status}`);
+    if (!result.success) {
+      throw new Error(`Expected status 200, got ${result.status}`);
     }
     
-    const containers = response.data;
+    const containers = result.data;
     console.log('✅ Container status retrieved successfully');
     console.log(`📦 Found ${containers.length} tracked containers`);
     
@@ -41,13 +38,13 @@ async function testContainerStatus() {
 async function testInvalidAction() {
   try {
     console.log('🚫 Testing invalid action validation...');
-    const response = await axios.post(`${BASE_URL}/test-container/invalid-action`);
+    const result = await makeAxiosRequest('POST', '/api/containers/test-container/invalid-action');
     
     // This should fail with 400
     throw new Error('Expected 400 error for invalid action, but request succeeded');
   } catch (err) {
-    if (err.response && err.response.status === 400) {
-      const errorData = err.response.data;
+    if (result.status === 400) {
+      const errorData = result.data;
       if (errorData.error === 'Invalid action') {
         console.log('✅ Invalid action validation working correctly');
         return { success: true };
@@ -55,7 +52,7 @@ async function testInvalidAction() {
         throw new Error(`Expected 'Invalid action' error, got: ${errorData.error}`);
       }
     } else {
-      throw new Error(`Expected 400 status, got: ${err.response?.status || 'network error'}`);
+      throw new Error(`Expected 400 status, got: ${result.status || 'network error'}`);
     }
   }
 }
