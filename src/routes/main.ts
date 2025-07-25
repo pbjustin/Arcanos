@@ -30,6 +30,11 @@ router.post('/audit', async (req, res) => {
   }
 });
 
+// Lightweight audit heartbeat
+router.get('/audit/heartbeat', (_req, res) => {
+  res.json({ service: 'audit', status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // 3. /diagnostic route - Support both GET and POST
 router.get('/diagnostic', async (req, res) => {
   try {
@@ -49,6 +54,11 @@ router.post('/diagnostic', async (req, res) => {
   }
 });
 
+// Lightweight diagnostic heartbeat
+router.get('/diagnostic/heartbeat', (_req, res) => {
+  res.json({ service: 'diagnostic', status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // 4. /write route - Enhanced write handler
 router.post('/write', async (req, res) => {
   try {
@@ -57,6 +67,11 @@ router.post('/write', async (req, res) => {
     console.error('❌ Write route failure, attempting recovery:', error);
     throw error;
   }
+});
+
+// Lightweight write heartbeat
+router.get('/write/heartbeat', (_req, res) => {
+  res.json({ service: 'write', status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Route status monitoring

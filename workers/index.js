@@ -1,6 +1,9 @@
 // AI-Controlled Worker System - Workers only execute when AI model instructs them to
 const path = require('path');
 const { modelControlHooks } = require('../src/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../src/utils/logger');
+const logger = createServiceLogger('Workers');
 
 // Available worker functions - now AI-controlled execution shells
 const workerExecutions = {
@@ -9,11 +12,20 @@ const workerExecutions = {
   clearTemp: require(path.resolve(__dirname, './clearTemp')),
 };
 
-console.log('[AI-WORKERS] AI-controlled worker system loaded');
+logger.info('AI-controlled worker system loaded');
 
 // AI-controlled worker execution function
+async function reportFailure(workerName, error) {
+  logger.error(`Worker ${workerName} failure`, error);
+  try {
+    await diagnosticsService.executeDiagnosticCommand(`worker failure ${workerName}: ${error.message}`);
+  } catch (diagErr) {
+    logger.error('Diagnostics reporting failed', diagErr);
+  }
+}
+
 async function executeWorkerWithAIControl(workerName, parameters = {}) {
-  console.log(`[AI-WORKERS] AI requesting execution of worker: ${workerName}`);
+  logger.info(`AI requesting execution of worker: ${workerName}`);
   
   try {
     // Ask AI model for permission and instructions
@@ -29,30 +41,30 @@ async function executeWorkerWithAIControl(workerName, parameters = {}) {
     );
 
     if (result.success) {
-      console.log(`[AI-WORKERS] AI approved execution of ${workerName}: ${result.response}`);
+      logger.info(`AI approved execution of ${workerName}`, { response: result.response });
       
       // Execute the actual worker if AI approves
       const workerFunction = workerExecutions[workerName];
       if (workerFunction) {
         await workerFunction();
-        console.log(`[AI-WORKERS] Completed execution of ${workerName}`);
+        logger.success(`Completed execution of ${workerName}`);
       } else {
-        console.error(`[AI-WORKERS] Unknown worker: ${workerName}`);
+        logger.error(`Unknown worker: ${workerName}`);
       }
     } else {
-      console.log(`[AI-WORKERS] AI denied execution of ${workerName}: ${result.error}`);
+      logger.warning(`AI denied execution of ${workerName}`, result.error);
     }
     
     return result;
   } catch (err) {
-    console.error(`[AI-WORKERS] Error executing ${workerName}:`, err.message);
+    await reportFailure(workerName, err);
     return { success: false, error: err.message };
   }
 }
 
 // Legacy function - now routes through AI control
 async function runWorkers() {
-  console.log('[AI-WORKERS] Legacy runWorkers called - routing to AI control');
+  logger.info('Legacy runWorkers called - routing to AI control');
   
   const results = [];
   for (const workerName of Object.keys(workerExecutions)) {
