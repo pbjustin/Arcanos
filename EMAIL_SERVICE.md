@@ -1,19 +1,73 @@
 # Email Service Documentation
 
 ## Overview
-The Arcanos backend now includes a nodemailer-based email service that allows sending emails through Gmail SMTP. The service provides a simple `sendEmail(to, subject, html)` function that can be called from anywhere in the application.
+The Arcanos backend includes an enhanced nodemailer-based email service with comprehensive error handling, pre-send verification, and support for multiple email services including Gmail (production), Mailtrap (testing), and Ethereal Email (testing).
+
+## Key Features
+- ✅ **Pre-send verification**: `transporter.verify()` called before each email send
+- ✅ **Comprehensive error handling**: Full try/catch blocks with detailed error logging
+- ✅ **Multiple service support**: Gmail, Mailtrap, and Ethereal Email
+- ✅ **Timeout detection**: Prevents silent failures with 30-second timeout
+- ✅ **Fallback warnings**: Detects and warns about silent failures
+- ✅ **Enhanced logging**: Full error details printed to console for debugging
 
 ## Configuration
 
 ### Environment Variables
-Add the following environment variables to your `.env` file:
+Add the appropriate environment variables to your `.env` file based on your email service:
 
 ```bash
-# Email Configuration (Gmail SMTP)
+# Choose email service: gmail (production), mailtrap (testing), ethereal (testing)
+EMAIL_SERVICE=gmail
+
+# Gmail SMTP (production)
 GMAIL_USER=your-email@gmail.com
 GMAIL_APP_PASSWORD=your-16-character-app-password
 EMAIL_FROM_NAME=Arcanos Backend
+
+# Mailtrap (for testing - https://mailtrap.io)
+# MAILTRAP_USER=your-mailtrap-username
+# MAILTRAP_PASS=your-mailtrap-password
+# MAILTRAP_FROM=test@example.com
+
+# Ethereal Email (for testing - https://ethereal.email)
+# ETHEREAL_USER=your-ethereal-username
+# ETHEREAL_PASS=your-ethereal-password
 ```
+
+### Service Priority
+The email service automatically selects the appropriate transport in this order:
+1. **Ethereal Email** - If `EMAIL_SERVICE=ethereal` or `ETHEREAL_USER` is set
+2. **Mailtrap** - If `EMAIL_SERVICE=mailtrap` or `MAILTRAP_USER` is set  
+3. **Gmail SMTP** - If `GMAIL_USER` and `GMAIL_APP_PASSWORD` are set
+4. **Error** - If no valid configuration is found
+
+### Testing Services
+
+#### Ethereal Email (Recommended for Testing)
+Ethereal Email provides a fake SMTP service perfect for testing:
+
+1. Visit [ethereal.email](https://ethereal.email) to create test credentials
+2. Set environment variables:
+   ```bash
+   EMAIL_SERVICE=ethereal
+   ETHEREAL_USER=your-test-email@ethereal.email
+   ETHEREAL_PASS=your-test-password
+   ```
+3. View sent emails at [ethereal.email/messages](https://ethereal.email/messages)
+
+#### Mailtrap (Alternative Testing)
+Mailtrap provides email testing with additional features:
+
+1. Sign up at [mailtrap.io](https://mailtrap.io)
+2. Get your SMTP credentials from the inbox settings
+3. Set environment variables:
+   ```bash
+   EMAIL_SERVICE=mailtrap
+   MAILTRAP_USER=your-mailtrap-username
+   MAILTRAP_PASS=your-mailtrap-password
+   MAILTRAP_FROM=test@example.com
+   ```
 
 ### Getting a Gmail App Password
 1. Enable 2-factor authentication on your Gmail account
@@ -21,9 +75,44 @@ EMAIL_FROM_NAME=Arcanos Backend
 3. Generate a new app password for "Mail"
 4. Use the 16-character password (without spaces) as `GMAIL_APP_PASSWORD`
 
-## Usage
+## Enhanced Features
 
-### Basic Email Sending
+### Pre-Send Verification
+Every email send operation now includes automatic transporter verification:
+```typescript
+// Automatic verification before each send
+const result = await sendEmail('user@example.com', 'Subject', '<p>Content</p>');
+console.log('Verified:', result.verified); // true if verification succeeded
+```
+
+### Comprehensive Error Handling
+The service provides detailed error logging and handling:
+- Full error details printed to console
+- Error codes, responses, and stack traces logged
+- Connection verification errors captured
+- Timeout detection for silent failures
+- Fallback warnings for unusual failure modes
+
+### Timeout Protection
+Emails have a 30-second timeout to prevent silent failures:
+```typescript
+// Automatic timeout protection
+const result = await sendEmail('user@example.com', 'Subject', '<p>Content</p>');
+if (!result.success && result.error.includes('timeout')) {
+  console.log('Email timed out - possible network issue');
+}
+```
+
+### Transport Information
+Enhanced response includes transport details:
+```typescript
+const result = await sendEmail('user@example.com', 'Subject', '<p>Content</p>');
+console.log('Transport:', result.transportType); // e.g., "Ethereal Email (Testing)"
+console.log('Verified:', result.verified);
+console.log('Message ID:', result.messageId);
+```
+
+## Usage
 ```typescript
 import { sendEmail } from './services/email';
 
