@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
+import { requireArcanosToken } from '../middleware/api-token';
 
 const router = Router();
 
@@ -118,8 +119,8 @@ router.get('/sync/diagnostics', async (req, res) => {
   }
 });
 
-// POST /query-finetune endpoint - AI dispatcher controlled
-router.post('/query-finetune', async (req, res) => {
+// POST /query-finetune endpoint - AI dispatcher controlled (requires ARCANOS token)
+router.post('/query-finetune', requireArcanosToken, async (req, res) => {
   console.log('🎯 /query-finetune endpoint called - routing to AI dispatcher');
   
   try {
@@ -167,8 +168,8 @@ router.post('/query-finetune', async (req, res) => {
   }
 });
 
-// POST /ask endpoint - AI dispatcher controlled (fallback route)
-router.post('/ask', async (req, res) => {
+// POST /ask endpoint - AI dispatcher controlled (requires ARCANOS token)
+router.post('/ask', requireArcanosToken, async (req, res) => {
   console.log('📝 /ask endpoint called - routing to AI dispatcher');
   
   try {
