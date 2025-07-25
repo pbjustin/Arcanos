@@ -34,7 +34,40 @@ class EmailService {
   }
 
   private createTransport(): { transporter: nodemailer.Transporter, transportType: string, senderEmail: string } {
-    // Priority order: Ethereal (for testing) > Mailtrap (for testing) > Gmail (production)
+    // Priority order: Generic SMTP (production) > Ethereal (testing) > Mailtrap (testing) > Gmail (legacy)
+    
+    // Generic SMTP (recommended for Railway production)
+    // This configuration works reliably with most SMTP providers including SendGrid, Mailgun, etc.
+    if (process.env.EMAIL_SERVICE === 'smtp' || process.env.SMTP_HOST) {
+      if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+        const senderEmail = process.env.SMTP_USER;
+        const port = parseInt(process.env.SMTP_PORT || '587', 10);
+        
+        // Railway SMTP Configuration:
+        // - Use secure: true with port 465 for SSL
+        // - Use secure: false with port 587 for TLS (recommended)
+        // - Ensure from address matches authenticated SMTP user to prevent silent failures
+        const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+        
+        return {
+          transporter: nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: port,
+            secure: secure,
+            auth: {
+              user: process.env.SMTP_USER,
+              pass: process.env.SMTP_PASS
+            },
+            // Additional settings for Railway reliability
+            connectionTimeout: 10000,  // 10 second connection timeout
+            greetingTimeout: 10000,    // 10 second greeting timeout  
+            socketTimeout: 30000,      // 30 second socket timeout
+          }),
+          transportType: `SMTP (${process.env.SMTP_HOST}:${port}, ${secure ? 'SSL' : 'TLS'})`,
+          senderEmail
+        };
+      }
+    }
     
     // Ethereal Email (for testing)
     if (process.env.EMAIL_SERVICE === 'ethereal' || process.env.ETHEREAL_USER) {
@@ -76,7 +109,7 @@ class EmailService {
       }
     }
 
-    // Gmail SMTP (production/default)
+    // Gmail SMTP (legacy - not recommended for Railway due to potential restrictions)
     if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
       const senderEmail = process.env.GMAIL_USER;
       return {
@@ -87,12 +120,12 @@ class EmailService {
             pass: process.env.GMAIL_APP_PASSWORD
           }
         }),
-        transportType: 'Gmail SMTP',
+        transportType: 'Gmail SMTP (Legacy)',
         senderEmail
       };
     }
 
-    throw new Error('No email service configured. Please set either GMAIL_USER/GMAIL_APP_PASSWORD, MAILTRAP_USER/MAILTRAP_PASS, or ETHEREAL_USER/ETHEREAL_PASS environment variables');
+    throw new Error('No email service configured. For Railway production, set SMTP_HOST, SMTP_USER, SMTP_PASS. For testing, set ETHEREAL_USER/ETHEREAL_PASS or MAILTRAP_USER/MAILTRAP_PASS. Legacy Gmail via GMAIL_USER/GMAIL_APP_PASSWORD is also supported.');
   }
 
   async sendEmail(to: string, subject: string, html: string, from?: string): Promise<EmailResponse> {
@@ -155,10 +188,20 @@ class EmailService {
       // Add timeout handling to detect silent failures
       const EMAIL_TIMEOUT = 30000; // 30 seconds timeout
       
+      // RAILWAY PRODUCTION NOTES:
+      // 1. SMTP can silently fail on Railway due to network restrictions or provider blocking
+      // 2. For production reliability, consider using email API services instead of SMTP:
+      //    - SendGrid API (https://sendgrid.com/docs/api-reference/)
+      //    - Mailgun API (https://documentation.mailgun.com/en/latest/api_reference.html)
+      //    - Postmark API (https://postmarkapp.com/developer)
+      // 3. These APIs are more reliable than SMTP on cloud platforms like Railway
+      // 4. If using SMTP, ensure the from address exactly matches the authenticated user
+      // 5. Monitor for silent failures and implement retry logic for critical emails
+      
       const sendEmailPromise = this.transporter.sendMail(mailOptions);
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-          reject(new Error(`Email sending timed out after ${EMAIL_TIMEOUT}ms - possible silent failure`));
+          reject(new Error(`Email sending timed out after ${EMAIL_TIMEOUT}ms - possible silent failure on Railway`));
         }, EMAIL_TIMEOUT);
       });
 
