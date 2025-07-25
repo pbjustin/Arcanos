@@ -118,13 +118,17 @@ export class SleepManager {
     });
 
     // Daily code improvement suggestions - once at 9 AM ET (during sleep window)
-    cron.schedule('0 14 * * *', async () => { // 9 AM ET = 14:00 UTC (approximate)
-      if (shouldReduceServerActivity()) {
-        await this.executeMaintenanceTask('code-improvement-suggestions', async () => {
-          await this.runCodeImprovementSuggestions();
-        });
-      }
-    });
+    cron.schedule(
+      '0 9 * * *',
+      async () => {
+        if (shouldReduceServerActivity()) {
+          await this.executeMaintenanceTask('code-improvement-suggestions', async () => {
+            await this.runCodeImprovementSuggestions();
+          });
+        }
+      },
+      { timezone: 'America/New_York' }
+    );
 
     this.maintenanceTasksScheduled = true;
     console.log('[SLEEP-MANAGER] 📅 Maintenance tasks scheduled for sleep window');
