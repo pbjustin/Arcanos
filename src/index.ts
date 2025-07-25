@@ -216,4 +216,4 @@ export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arca
 export { getCoreSleepWindow } from './services/sleep-config';
 
 // Export email service functions for global access
-export { sendEmail, verifyEmailConnection, getEmailSender } from './services/email';
+export { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from './services/email';
