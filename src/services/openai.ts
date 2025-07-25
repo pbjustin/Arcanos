@@ -23,10 +23,12 @@ export class OpenAIService {
 
     this.client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
+      timeout: 30000, // 30 seconds timeout
+      maxRetries: 2,
     });
 
-    // Use FINE_TUNED_MODEL as primary, fallback to OPENAI_FINE_TUNED_MODEL for compatibility
-    this.model = process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || "gpt-3.5-turbo";
+    // Default to "arcanos-v1" if no fine-tuned model specified
+    this.model = process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || "arcanos-v1";
     
     // Log model configuration for audit purposes
     console.log('🔧 OpenAI Service initialized with model:', this.model);
