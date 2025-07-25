@@ -3,6 +3,7 @@ import { modelControlHooks } from '../services/model-control-hooks';
 import { diagnosticsService } from '../services/diagnostics';
 import { workerStatusService } from '../services/worker-status';
 import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from '../services/email';
+import { sendEmailIntent } from '../intents/send_email';
 import assistantsRouter from './assistants';
 
 const router = Router();
@@ -213,6 +214,9 @@ router.post('/email/send', async (req, res) => {
     });
   }
 });
+
+// Intent endpoints
+router.post('/intent/send_email', sendEmailIntent);
 
 // Mount assistant routes
 router.use('/', assistantsRouter);
