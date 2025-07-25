@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 // CORS compliance test for Railway + GitHub Copilot integration
-const axios = require('axios');
-
-const BASE_URL = 'http://localhost:8080';
+const { makeAxiosRequest, logTestResult } = require('./test-utils/common');
 
 async function testCORS() {
   console.log('==================================================');
@@ -12,28 +10,27 @@ async function testCORS() {
 
   try {
     // Test CORS preflight request
-    const preflightResponse = await axios({
-      method: 'OPTIONS',
-      url: `${BASE_URL}/query-finetune`,
+    const preflightResult = await makeAxiosRequest('OPTIONS', '/query-finetune', {
       headers: {
         'Origin': 'https://github.com',
         'Access-Control-Request-Method': 'POST',
         'Access-Control-Request-Headers': 'Content-Type'
-      },
-      timeout: 10000
+      }
     });
 
-    console.log('✅ CORS Preflight Request Success');
-    console.log('CORS Headers:', {
-      'Access-Control-Allow-Origin': preflightResponse.headers['access-control-allow-origin'],
-      'Access-Control-Allow-Methods': preflightResponse.headers['access-control-allow-methods'],
-      'Access-Control-Allow-Headers': preflightResponse.headers['access-control-allow-headers']
-    });
+    if (preflightResult.success) {
+      console.log('✅ CORS Preflight Request Success');
+      console.log('CORS Headers:', {
+        'Access-Control-Allow-Origin': preflightResult.headers['access-control-allow-origin'],
+        'Access-Control-Allow-Methods': preflightResult.headers['access-control-allow-methods'],
+        'Access-Control-Allow-Headers': preflightResult.headers['access-control-allow-headers']
+      });
+    } else {
+      logTestResult('CORS Preflight Request', preflightResult, true);
+    }
 
     // Test actual POST request with Origin header
-    const postResponse = await axios({
-      method: 'POST',
-      url: `${BASE_URL}/query-finetune`,
+    const postResult = await makeAxiosRequest('POST', '/query-finetune', {
       data: { query: 'CORS test' },
       headers: {
         'Content-Type': 'application/json',

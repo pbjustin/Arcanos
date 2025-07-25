@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
 // Test for ChatGPT-User middleware functionality
-const axios = require('axios');
+const { makeAxiosRequest, logTestResult } = require('./test-utils/common');
 
-const BASE_URL = 'http://localhost:8080';
 const CHATGPT_USER_AGENT = 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot';
 
 async function testChatGPTUserMiddleware() {
@@ -13,41 +12,40 @@ async function testChatGPTUserMiddleware() {
 
   try {
     console.log('\n1. Testing health endpoint...');
-    const healthResponse = await axios.get(`${BASE_URL}/health`);
-    console.log('✅ Health check passed:', healthResponse.data);
+    const healthResult = await makeAxiosRequest('GET', '/health');
+    logTestResult('Health check', healthResult, true);
 
     console.log('\n2. Testing normal user agent request...');
-    const normalResponse = await axios.get(`${BASE_URL}/health`, {
+    const normalResult = await makeAxiosRequest('GET', '/health', {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
-    console.log('✅ Normal user agent request succeeded');
+    logTestResult('Normal user agent request', normalResult);
 
     console.log('\n3. Testing ChatGPT-User agent GET request...');
-    const chatgptGetResponse = await axios.get(`${BASE_URL}/health`, {
+    const chatgptGetResult = await makeAxiosRequest('GET', '/health', {
       headers: {
         'User-Agent': CHATGPT_USER_AGENT
       }
     });
-    console.log('✅ ChatGPT-User GET request succeeded');
-    console.log('Verification header:', chatgptGetResponse.headers['x-verification-status'] || 'None');
+    logTestResult('ChatGPT-User GET request', chatgptGetResult);
+    console.log('Verification header:', chatgptGetResult.headers?.['x-verification-status'] || 'None');
 
     console.log('\n4. Testing ChatGPT-User agent POST request (should be denied by default)...');
-    try {
-      await axios.post(`${BASE_URL}/`, {
-        message: 'Test from ChatGPT-User'
-      }, {
-        headers: {
-          'User-Agent': CHATGPT_USER_AGENT,
-          'Content-Type': 'application/json'
-        }
-      });
+    const chatgptPostResult = await makeAxiosRequest('POST', '/', {
+      data: { message: 'Test from ChatGPT-User' },
+      headers: {
+        'User-Agent': CHATGPT_USER_AGENT,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (chatgptPostResult.success) {
       console.log('⚠️ ChatGPT-User POST request was allowed (middleware may not be active)');
-    } catch (error) {
-      if (error.response && error.response.status === 405) {
-        console.log('✅ ChatGPT-User POST request properly denied with 405');
-      } else {
+    } else if (chatgptPostResult.status === 405) {
+      console.log('✅ ChatGPT-User POST request properly denied with 405');
+    } else {
         console.log('❓ ChatGPT-User POST request failed with status:', error.response?.status || 'Network error');
       }
     }

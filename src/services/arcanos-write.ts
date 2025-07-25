@@ -3,6 +3,9 @@
 
 import { OpenAIService, ChatMessage } from './openai';
 import { MemoryStorage } from '../storage/memory-storage';
+import { arcanosLogger, createServiceLogger } from '../utils/logger';
+
+const logger = createServiceLogger('ARCANOS:WRITE');
 
 export interface WriteRequest {
   message: string;
@@ -83,7 +86,7 @@ export class ArcanosWriteService {
       }
 
       if (openaiResponse.error) {
-        console.error('❌ OpenAI error in WRITE service:', openaiResponse.error);
+        arcanosLogger.openaiError('WRITE', openaiResponse);
         return {
           success: false,
           content: '',
@@ -116,14 +119,14 @@ export class ArcanosWriteService {
             [domain, 'narrative', 'write'],
             undefined
           );
-          console.log('💾 Stored narrative interaction in memory');
+          logger.info('Stored narrative interaction in memory');
         } catch (error: any) {
-          console.warn("Memory storage failed:", error.message);
+          logger.warning('Memory storage failed', error);
           // Continue without storing memory
         }
       }
 
-      console.log('✅ ARCANOS:WRITE - Successfully generated narrative content');
+      arcanosLogger.serviceSuccess('ARCANOS:WRITE', 'narrative content generation');
       return {
         success: true,
         content: openaiResponse.message,
@@ -137,7 +140,7 @@ export class ArcanosWriteService {
       };
 
     } catch (error: any) {
-      console.error('❌ ARCANOS:WRITE error:', error);
+      arcanosLogger.serviceError('ARCANOS:WRITE', 'narrative content generation', error);
       return {
         success: false,
         content: '',

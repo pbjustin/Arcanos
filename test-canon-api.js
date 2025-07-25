@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 
 // Test script for Canon Access API
-const axios = require('axios');
-
-const BASE_URL = 'http://localhost:8080/api';
+const { makeAxiosRequest, logTestResult, runEndpointTests } = require('./test-utils/common');
 
 async function testCanonAPI() {
   console.log('🧪 Testing Canon Access API...\n');
@@ -11,20 +9,25 @@ async function testCanonAPI() {
   try {
     // Test 1: List canon files
     console.log('1. Testing GET /api/canon/files (List all canon files)');
-    const listResponse = await axios.get(`${BASE_URL}/canon/files`);
-    console.log('✅ Response:', listResponse.data);
+    const listResult = await makeAxiosRequest('GET', '/api/canon/files');
+    logTestResult('List canon files', listResult, true);
     console.log('');
 
     // Test 2: Read existing file
-    if (listResponse.data.files && listResponse.data.files.length > 0) {
-      const filename = listResponse.data.files[0];
+    if (listResult.success && listResult.data.files && listResult.data.files.length > 0) {
+      const filename = listResult.data.files[0];
       console.log(`2. Testing GET /api/canon/files/${filename} (Read specific file)`);
-      const readResponse = await axios.get(`${BASE_URL}/canon/files/${filename}`);
-      console.log('✅ Response:', {
-        filename: readResponse.data.filename,
-        contentLength: readResponse.data.content.length,
-        contentPreview: readResponse.data.content.substring(0, 100) + '...'
-      });
+      const readResult = await makeAxiosRequest('GET', `/api/canon/files/${filename}`);
+      
+      if (readResult.success) {
+        console.log('✅ Response:', {
+          filename: readResult.data.filename,
+          contentLength: readResult.data.content.length,
+          contentPreview: readResult.data.content.substring(0, 100) + '...'
+        });
+      } else {
+        logTestResult(`Read file ${filename}`, readResult, true);
+      }
       console.log('');
     }
 

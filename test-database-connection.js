@@ -1,51 +1,7 @@
 #!/usr/bin/env node
 
 // Test script for database connection and memory table functionality
-const http = require('http');
-
-function makeRequest(method, path, data = null) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'localhost',
-      port: 3000,
-      path: path,
-      method: method,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    };
-
-    const req = http.request(options, (res) => {
-      let body = '';
-      res.on('data', (chunk) => {
-        body += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const parsedBody = JSON.parse(body);
-          resolve({
-            statusCode: res.statusCode,
-            body: parsedBody,
-          });
-        } catch (e) {
-          resolve({
-            statusCode: res.statusCode,
-            body: body,
-          });
-        }
-      });
-    });
-
-    req.on('error', (err) => {
-      reject(err);
-    });
-
-    if (data) {
-      req.write(JSON.stringify(data));
-    }
-    req.end();
-  });
-}
+const { makeLegacyRequest, logTestResult } = require('./test-utils/common');
 
 async function testMemoryService() {
   console.log('🧪 Testing Memory Service Database Connection...\n');
@@ -53,7 +9,7 @@ async function testMemoryService() {
   try {
     // Test 1: Health check
     console.log('1. Testing Memory Service Health Check');
-    const healthResponse = await makeRequest('GET', '/memory/health');
+    const healthResponse = await makeLegacyRequest('GET', '/memory/health');
     console.log('   Status:', healthResponse.statusCode);
     console.log('   Response:', JSON.stringify(healthResponse.body, null, 2));
     
@@ -66,7 +22,7 @@ async function testMemoryService() {
 
     // Test 2: Try to save memory (should fail gracefully without DATABASE_URL)
     console.log('2. Testing Memory Save (without DATABASE_URL)');
-    const saveResponse = await makeRequest('POST', '/memory/save', {
+    const saveResponse = await makeLegacyRequest('POST', '/memory/save', {
       key: 'test_key',
       value: { message: 'test value' }
     });
@@ -85,7 +41,7 @@ async function testMemoryService() {
 
     // Test 3: Try to load memory (should fail gracefully without DATABASE_URL)
     console.log('3. Testing Memory Load (without DATABASE_URL)');
-    const loadResponse = await makeRequest('GET', '/memory/load?key=test_key');
+    const loadResponse = await makeLegacyRequest('GET', '/memory/load?key=test_key');
     console.log('   Status:', loadResponse.statusCode);
     console.log('   Response:', JSON.stringify(loadResponse.body, null, 2));
     
