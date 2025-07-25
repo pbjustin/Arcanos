@@ -2,6 +2,7 @@
 
 // Comprehensive ARCANOS AI-Control Validation Test
 const axios = require('axios');
+require('./scripts/codex-internal');
 
 const BASE_URL = 'http://localhost:8080';
 
