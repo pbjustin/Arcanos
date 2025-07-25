@@ -4,6 +4,7 @@ import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
 import { codeInterpreterService } from '../services/code-interpreter';
+import { testFineTuneOutput } from '../handlers/test-finetune-output';
 
 const router = Router();
 
@@ -115,6 +116,9 @@ router.post('/code-interpreter', async (req, res) => {
     handleCatchError(res, error, 'Code interpreter');
   }
 });
+
+// GET /test-finetune - simple diagnostic to verify model output
+router.get('/test-finetune', testFineTuneOutput);
 
 // POST /query-finetune endpoint - AI dispatcher controlled
 router.post('/query-finetune', async (req, res) => {
