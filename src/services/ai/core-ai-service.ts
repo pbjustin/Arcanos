@@ -56,8 +56,8 @@ export class CoreAIService {
       maxRetries: 2,
     });
 
-    // Use arcanos-v1 as standardized model (as requested in refactor)
-    this.defaultModel = 'arcanos-v1';
+    // Use configured fine-tuned model or fallback ID
+    this.defaultModel = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106:BpYtP0ox';
     this.maxRetries = 3;
     this.retryDelayMs = 1000;
 
