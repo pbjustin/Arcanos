@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { diagnosticsService } from '../services/diagnostics';
 import { workerStatusService } from '../services/worker-status';
-import { sendEmail, verifyEmailConnection, getEmailSender } from '../services/email';
+import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from '../services/email';
 import assistantsRouter from './assistants';
 
 const router = Router();
@@ -156,10 +156,12 @@ router.get('/email/status', async (req, res) => {
   try {
     const isConnected = await verifyEmailConnection();
     const sender = getEmailSender();
+    const transportType = getEmailTransportType();
     
     res.json({
       connected: isConnected,
       sender: sender,
+      transportType: transportType,
       configured: sender !== 'Not configured',
       timestamp: new Date().toISOString()
     });
@@ -167,6 +169,7 @@ router.get('/email/status', async (req, res) => {
     res.status(500).json({
       error: error.message,
       connected: false,
+      transportType: 'Unknown',
       timestamp: new Date().toISOString()
     });
   }
@@ -189,12 +192,16 @@ router.post('/email/send', async (req, res) => {
       res.json({
         success: true,
         messageId: result.messageId,
+        verified: result.verified,
+        transportType: result.transportType,
         timestamp: new Date().toISOString()
       });
     } else {
       res.status(500).json({
         success: false,
         error: result.error,
+        verified: result.verified,
+        transportType: result.transportType,
         timestamp: new Date().toISOString()
       });
     }
