@@ -3,6 +3,7 @@ import { Router } from 'express';
 import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
+import { codeInterpreterService } from '../services/code-interpreter';
 
 const router = Router();
 
@@ -98,6 +99,20 @@ router.get('/sync/diagnostics', async (req, res) => {
     }
   } catch (error: any) {
     handleCatchError(res, error, 'Diagnostics');
+  }
+});
+
+// POST /code-interpreter - Run Python code using OpenAI's tool calling
+router.post('/code-interpreter', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) {
+    return sendErrorResponse(res, 400, 'Prompt is required');
+  }
+  try {
+    const result = await codeInterpreterService.run(prompt);
+    sendSuccessResponse(res, 'Code interpreter executed', result);
+  } catch (error: any) {
+    handleCatchError(res, error, 'Code interpreter');
   }
 });
 
