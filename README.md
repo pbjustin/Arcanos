@@ -93,6 +93,11 @@ npm start
 - `DELETE /memory/clear` - Clear memory entries
 - `GET /memory/health` - Memory system health check
 
+Pinned resources can be uploaded using the helper script:
+```bash
+node utils/pin_memory_resource.js --label MY_LABEL --type task --file ./workflow.md
+```
+
 ### Canon Management
 - `GET /api/canon/files` - List all canon storyline files
 - `GET /api/canon/files/:filename` - Read specific canon file
