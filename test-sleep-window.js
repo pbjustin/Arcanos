@@ -1,5 +1,6 @@
 // Test Sleep Window Functionality
-const { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } = require('./dist/services/sleep-config');
+const { safeRequire } = require('./scripts/codex-internal');
+const { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } = safeRequire('./dist/services/sleep-config');
 
 console.log('🌙 Testing ARCANOS Sleep Window System');
 console.log('=====================================');

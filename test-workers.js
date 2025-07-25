@@ -1,6 +1,7 @@
 // Test Enhanced Workers Functionality
 console.log('🔧 Testing ARCANOS Enhanced Workers');
 console.log('===================================');
+require('./scripts/codex-internal');
 
 // Mock the model control hooks for testing
 const mockModelControlHooks = {

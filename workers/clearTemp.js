@@ -4,7 +4,7 @@
 
 const { modelControlHooks } = require('../dist/services/model-control-hooks');
 const { diagnosticsService } = require('../dist/services/diagnostics');
-const { createServiceLogger } = require('../src/utils/logger');
+const { createServiceLogger } = require('../dist/utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
 const logger = createServiceLogger('TempCleanerWorker');

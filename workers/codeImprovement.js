@@ -3,7 +3,7 @@
 
 const { modelControlHooks } = require('../dist/services/model-control-hooks');
 const { diagnosticsService } = require('../dist/services/diagnostics');
-const { createServiceLogger } = require('../src/utils/logger');
+const { createServiceLogger } = require('../dist/utils/logger');
 const logger = createServiceLogger('CodeImprovementWorker');
 
 async function reportFailure(error) {
