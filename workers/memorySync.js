@@ -3,9 +3,21 @@
 // Enhanced for sleep window with snapshot functionality
 
 const { modelControlHooks } = require('../dist/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../src/utils/logger');
+const logger = createServiceLogger('MemorySyncWorker');
+
+async function reportFailure(error) {
+  logger.error('Worker failure', error);
+  try {
+    await diagnosticsService.executeDiagnosticCommand(`memorySync failure: ${error.message}`);
+  } catch (diagErr) {
+    logger.error('Diagnostics reporting failed', diagErr);
+  }
+}
 
 module.exports = async function memorySync() {
-  console.log('[AI-MEMORY-SYNC] Starting AI-controlled memory sync');
+  logger.info('Starting AI-controlled memory sync');
   
   try {
     // Request permission from AI model
@@ -20,7 +32,7 @@ module.exports = async function memorySync() {
     );
 
     if (result.success) {
-      console.log('[AI-MEMORY-SYNC] AI approved memory sync operation');
+      logger.info('AI approved memory sync operation');
       
       // Perform memory sync operations as directed by AI
       const syncResult = await modelControlHooks.manageMemory(
@@ -38,7 +50,7 @@ module.exports = async function memorySync() {
       );
 
       if (syncResult.success) {
-        console.log('[AI-MEMORY-SYNC] Memory sync completed successfully');
+        logger.success('Memory sync completed successfully');
         
         // Enhanced: Create memory snapshot during sleep window
         const { shouldReduceServerActivity } = require('../dist/services/sleep-config');
@@ -46,14 +58,14 @@ module.exports = async function memorySync() {
           await createMemorySnapshot();
         }
       } else {
-        console.error('[AI-MEMORY-SYNC] Memory sync failed:', syncResult.error);
+        logger.error('Memory sync failed', syncResult.error);
       }
     } else {
-      console.log('[AI-MEMORY-SYNC] AI denied memory sync operation:', result.error);
+      logger.warning('AI denied memory sync operation', result.error);
     }
     
   } catch (error) {
-    console.error('[AI-MEMORY-SYNC] Error in AI-controlled memory sync:', error.message);
+    await reportFailure(error);
   }
 };
 
@@ -62,7 +74,7 @@ module.exports = async function memorySync() {
  */
 async function createMemorySnapshot() {
   try {
-    console.log('[AI-MEMORY-SYNC] 📸 Creating memory snapshot during sleep window');
+    logger.info('Creating memory snapshot during sleep window');
     
     const memUsage = process.memoryUsage();
     const timestamp = new Date().toISOString();
@@ -107,18 +119,17 @@ async function createMemorySnapshot() {
     );
     
     if (snapshotResult.success) {
-      console.log('[AI-MEMORY-SYNC] ✅ Memory snapshot created successfully');
-      console.log('[AI-MEMORY-SYNC] 📊 Memory stats - RSS: %dMB, Heap: %dMB/%dMB, Records: %d', 
-        snapshotData.processMemory.rss,
-        snapshotData.processMemory.heapUsed,
-        snapshotData.processMemory.heapTotal,
-        snapshotData.memoryCount
-      );
+      logger.success('Memory snapshot created successfully', {
+        rss: snapshotData.processMemory.rss,
+        heapUsed: snapshotData.processMemory.heapUsed,
+        heapTotal: snapshotData.processMemory.heapTotal,
+        records: snapshotData.memoryCount
+      });
     } else {
       throw new Error(`Snapshot storage failed: ${snapshotResult.error}`);
     }
-    
+
   } catch (error) {
-    console.error('[AI-MEMORY-SYNC] ❌ Memory snapshot failed:', error.message);
+    await reportFailure(error);
   }
 }

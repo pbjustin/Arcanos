@@ -3,11 +3,23 @@
 // Enhanced for sleep window with log cleanup functionality
 
 const { modelControlHooks } = require('../dist/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../src/utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
+const logger = createServiceLogger('TempCleanerWorker');
+
+async function reportFailure(error) {
+  logger.error('Worker failure', error);
+  try {
+    await diagnosticsService.executeDiagnosticCommand(`tempCleaner failure: ${error.message}`);
+  } catch (diagErr) {
+    logger.error('Diagnostics reporting failed', diagErr);
+  }
+}
 
 module.exports = async function clearTemp() {
-  console.log('[AI-TEMP-CLEANER] Starting AI-controlled temp cleanup');
+  logger.info('Starting AI-controlled temp cleanup');
   
   try {
     // Request cleanup permission from AI model
@@ -22,12 +34,12 @@ module.exports = async function clearTemp() {
     );
 
     if (result.success) {
-      console.log('[AI-TEMP-CLEANER] AI approved temp cleanup operation');
+      logger.info('AI approved temp cleanup operation');
       
       // Perform AI-approved cleanup
       if (global.gc) {
         global.gc();
-        console.log('[AI-TEMP-CLEANER] Memory garbage collection executed');
+        logger.info('Memory garbage collection executed');
       }
       
       // Enhanced: Perform log cleanup during sleep window
@@ -36,13 +48,13 @@ module.exports = async function clearTemp() {
         await performLogCleanup();
       }
       
-      console.log('[AI-TEMP-CLEANER] Temp cleanup completed successfully');
+      logger.success('Temp cleanup completed successfully');
     } else {
-      console.log('[AI-TEMP-CLEANER] AI denied temp cleanup operation:', result.error);
+      logger.warning('AI denied temp cleanup operation', result.error);
     }
-    
+
   } catch (error) {
-    console.error('[AI-TEMP-CLEANER] Error in AI-controlled temp cleanup:', error.message);
+    await reportFailure(error);
   }
 };
 
@@ -51,7 +63,7 @@ module.exports = async function clearTemp() {
  */
 async function performLogCleanup() {
   try {
-    console.log('[AI-TEMP-CLEANER] 🧹 Performing log cleanup during sleep window');
+    logger.info('Performing log cleanup during sleep window');
     
     const cleanupStats = {
       timestamp: new Date().toISOString(),
@@ -79,7 +91,7 @@ async function performLogCleanup() {
         cleanupStats.filesRemoved += dirStats.filesRemoved;
         cleanupStats.bytesFreed += dirStats.bytesFreed;
       } catch (dirError) {
-        console.log('[AI-TEMP-CLEANER] Directory %s not accessible or doesn\'t exist: %s', dir, dirError.message);
+        logger.warning('Directory not accessible or does not exist', { dir, error: dirError.message });
       }
     }
     
@@ -102,18 +114,17 @@ async function performLogCleanup() {
     );
     
     if (cleanupResult.success) {
-      console.log('[AI-TEMP-CLEANER] ✅ Log cleanup completed successfully');
-      console.log('[AI-TEMP-CLEANER] 📊 Cleanup stats - Files processed: %d, Removed: %d, Freed: %sMB', 
-        cleanupStats.filesProcessed,
-        cleanupStats.filesRemoved,
-        Math.round(cleanupStats.bytesFreed / 1024 / 1024)
-      );
+      logger.success('Log cleanup completed successfully', {
+        processed: cleanupStats.filesProcessed,
+        removed: cleanupStats.filesRemoved,
+        freedMB: Math.round(cleanupStats.bytesFreed / 1024 / 1024)
+      });
     } else {
       throw new Error(`Cleanup report storage failed: ${cleanupResult.error}`);
     }
-    
+
   } catch (error) {
-    console.error('[AI-TEMP-CLEANER] ❌ Log cleanup failed:', error.message);
+    await reportFailure(error);
   }
 }
 
@@ -156,7 +167,7 @@ async function cleanupDirectory(dirPath) {
           await fs.unlink(filePath);
           stats.filesRemoved++;
           stats.bytesFreed += fileStat.size;
-          console.log('[AI-TEMP-CLEANER] Removed old file: %s (%d bytes)', file, fileStat.size);
+          logger.debug('Removed old file', { file, bytes: fileStat.size });
         }
         
       } catch (fileError) {
@@ -176,7 +187,7 @@ async function cleanupDirectory(dirPath) {
  */
 async function cleanupOldMemoryRecords() {
   try {
-    console.log('[AI-TEMP-CLEANER] 🗄️ Cleaning up old memory records');
+    logger.info('Cleaning up old memory records');
     
     // Get list of all memories
     const memoryResult = await modelControlHooks.manageMemory(
@@ -218,17 +229,17 @@ async function cleanupOldMemoryRecords() {
               cleanedCount++;
             }
           } catch (deleteError) {
-            console.log('[AI-TEMP-CLEANER] Failed to delete memory record %s: %s', memory.key, deleteError.message);
+            logger.warning('Failed to delete memory record', { key: memory.key, error: deleteError.message });
           }
         }
       }
       
       if (cleanedCount > 0) {
-        console.log('[AI-TEMP-CLEANER] 🗑️ Cleaned up %d old memory records', cleanedCount);
+        logger.success('Cleaned up old memory records', { count: cleanedCount });
       }
     }
     
   } catch (error) {
-    console.error('[AI-TEMP-CLEANER] Memory cleanup error:', error.message);
+    await reportFailure(error);
   }
 }

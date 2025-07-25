@@ -3,9 +3,21 @@
 // Enhanced for sleep window with backlog audit functionality
 
 const { modelControlHooks } = require('../dist/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../src/utils/logger');
+const logger = createServiceLogger('GoalWatcherWorker');
+
+async function reportFailure(error) {
+  logger.error('Worker failure', error);
+  try {
+    await diagnosticsService.executeDiagnosticCommand(`goalWatcher failure: ${error.message}`);
+  } catch (diagErr) {
+    logger.error('Diagnostics reporting failed', diagErr);
+  }
+}
 
 module.exports = async function goalWatcher() {
-  console.log('[AI-GOAL-WATCHER] Starting AI-controlled goal monitoring');
+  logger.info('Starting AI-controlled goal monitoring');
   
   try {
     // Request goal monitoring from AI model
@@ -25,7 +37,7 @@ module.exports = async function goalWatcher() {
         memory.tags && memory.tags.includes('goal')
       );
       
-      console.log('[AI-GOAL-WATCHER] Found %d goals to monitor', goals.length);
+      logger.info('Found goals to monitor', { count: goals.length });
       
       // Report goal status to AI model
       const reportResult = await modelControlHooks.performAudit(
@@ -39,7 +51,7 @@ module.exports = async function goalWatcher() {
       );
 
       if (reportResult.success) {
-        console.log('[AI-GOAL-WATCHER] Goal monitoring report sent to AI:', reportResult.response);
+        logger.success('Goal monitoring report sent to AI', { response: reportResult.response });
         
         // Enhanced: Perform backlog audit during sleep window
         const { shouldReduceServerActivity } = require('../dist/services/sleep-config');
@@ -48,11 +60,11 @@ module.exports = async function goalWatcher() {
         }
       }
     } else {
-      console.log('[AI-GOAL-WATCHER] AI denied goal monitoring operation:', result.error);
+      logger.warning('AI denied goal monitoring operation', result.error);
     }
     
   } catch (error) {
-    console.error('[AI-GOAL-WATCHER] Error in AI-controlled goal watching:', error.message);
+    await reportFailure(error);
   }
 };
 
@@ -61,7 +73,7 @@ module.exports = async function goalWatcher() {
  */
 async function performBacklogAudit(goals, allMemories) {
   try {
-    console.log('[AI-GOAL-WATCHER] 🔍 Performing backlog audit during sleep window');
+    logger.info('Performing backlog audit during sleep window');
     
     const auditData = {
       timestamp: new Date().toISOString(),
@@ -126,22 +138,21 @@ async function performBacklogAudit(goals, allMemories) {
     );
     
     if (auditResult.success) {
-      console.log('[AI-GOAL-WATCHER] ✅ Backlog audit completed successfully');
-      console.log('[AI-GOAL-WATCHER] 📊 Audit results - Active: %d, Completed: %d, Stale: %d, Unreferenced: %d', 
-        auditData.auditResults.activeGoals,
-        auditData.auditResults.completedGoals,
-        auditData.auditResults.staleGoals,
-        auditData.auditResults.unreferencedMemories
-      );
+      logger.success('Backlog audit completed successfully', {
+        active: auditData.auditResults.activeGoals,
+        completed: auditData.auditResults.completedGoals,
+        stale: auditData.auditResults.staleGoals,
+        unreferenced: auditData.auditResults.unreferencedMemories
+      });
       
       if (auditData.auditResults.staleGoals > 0) {
-        console.log('[AI-GOAL-WATCHER] ⚠️ Found %d stale goals that may need attention', auditData.auditResults.staleGoals);
+        logger.warning('Found stale goals that may need attention', { count: auditData.auditResults.staleGoals });
       }
     } else {
       throw new Error(`Audit storage failed: ${auditResult.error}`);
     }
-    
+
   } catch (error) {
-    console.error('[AI-GOAL-WATCHER] ❌ Backlog audit failed:', error.message);
+    await reportFailure(error);
   }
 }
