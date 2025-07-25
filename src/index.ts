@@ -36,6 +36,9 @@ import './services/database-connection';
 import './services/cron-worker';
 import './worker-init';
 
+// Import sleep manager
+import { sleepManager } from './services/sleep-manager';
+
 // Validate configuration on startup
 const configValidation = validateConfig();
 if (!configValidation.valid) {
@@ -57,6 +60,28 @@ app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(performanceMiddleware); // Add performance tracking
 
+// Sleep window activity reduction middleware
+app.use((req, res, next) => {
+  if (sleepManager.shouldReduceActivity()) {
+    // During sleep window, add response headers to indicate reduced activity mode
+    res.setHeader('X-Sleep-Mode', 'active');
+    res.setHeader('X-Sleep-Window', '7AM-2PM-ET');
+    
+    // Add small delay for non-essential endpoints during sleep
+    const isEssential = req.path === '/health' || 
+                       req.path === '/performance' || 
+                       req.path.startsWith('/api/system') ||
+                       req.method === 'GET' && req.path === '/';
+    
+    if (!isEssential) {
+      // Add 100ms delay for non-essential requests during sleep
+      setTimeout(() => next(), 100);
+      return;
+    }
+  }
+  next();
+});
+
 // ChatGPT-User middleware (applied globally if enabled)
 app.use(chatGPTUserMiddleware(config.chatgpt));
 
@@ -72,10 +97,13 @@ app.get('/performance', (req, res) => {
   const { performanceMonitor } = require('./utils/performance');
   const metrics = performanceMonitor.getMetrics();
   const memoryStatus = performanceMonitor.getMemoryPressureStatus();
+  const sleepStatus = sleepManager.getSleepStatus();
   
   res.json({
     ...metrics,
     memoryStatus,
+    sleepStatus,
+    sleepMode: sleepManager.shouldReduceActivity(),
     timestamp: new Date().toISOString(),
     environment: config.server.nodeEnv
   });
@@ -140,6 +168,15 @@ serverService.start(app, PORT).then(async () => {
     console.warn('⚠️ Service will run in degraded mode with fallback handlers');
   }
   
+  // Initialize sleep manager
+  try {
+    await sleepManager.initialize();
+    console.log('✅ Sleep manager initialized');
+  } catch (error) {
+    console.error('❌ Failed to initialize sleep manager:', error);
+    console.warn('⚠️ Sleep and maintenance features will be disabled');
+  }
+  
   // Initialize ChatGPT-User whitelist service
   try {
     await chatGPTUserWhitelist.initialize();
@@ -176,7 +213,7 @@ export default app;
 export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arcanos-v1-interface';
 
 // Export sleep schedule functions for copilot integration
-export { getActiveSleepSchedule, getCoreSleepWindow } from './services/sleep-config';
+export { getCoreSleepWindow } from './services/sleep-config';
 
 // Export email service functions for global access
 export { sendEmail, verifyEmailConnection, getEmailSender } from './services/email';
