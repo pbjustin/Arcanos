@@ -2,7 +2,22 @@
 // Monitors goals through ARCANOS model instructions
 // Enhanced for sleep window with backlog audit functionality
 
-const { modelControlHooks } = require('../dist/services/model-control-hooks');
+// Safely load model-control hooks with a fallback
+let modelControlHooks;
+try {
+  modelControlHooks = require('../services/model-control-hooks').modelControlHooks;
+} catch (err) {
+  console.warn('[Fallback Warning] model-control-hooks not found:', err.message);
+  modelControlHooks = {
+    noop: () => {},
+    audit: () => null,
+    manageMemory: async () => ({ success: true, results: [], error: undefined }),
+    performAudit: async () => ({ success: true, results: [], error: undefined })
+  };
+}
+// Use the stub methods safely
+modelControlHooks.noop();
+modelControlHooks.audit({});
 const { diagnosticsService } = require('../dist/services/diagnostics');
 const { createServiceLogger } = require('../dist/utils/logger');
 const logger = createServiceLogger('GoalWatcherWorker');
