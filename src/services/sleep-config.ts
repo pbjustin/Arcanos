@@ -1,6 +1,7 @@
 // 🔒 CORE BACKEND — COPILOT COMMAND BLOCK: SCHEDULED SLEEP CONFIG
 // Purpose: Access sleep window configuration for core system (non-Booker)
 // Sleep Window: 7:00 AM to 2:00 PM Eastern Time daily
+import { DateTime } from 'luxon';
 
 export interface SleepConfig {
   enabled: boolean;
@@ -71,54 +72,37 @@ export interface ActiveSleepScheduleResponse {
  * Sleep window: 7:00 AM to 2:00 PM ET daily
  */
 export function getCurrentSleepWindowStatus(): SleepWindowStatus {
-  const now = new Date();
-  
-  // Convert to Eastern Time (handle DST automatically)
-  const easternTime = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const easternHour = easternTime.getHours();
-  
-  // Sleep window: 7 AM to 2 PM ET (7-14 hours)
-  const sleepStart = 7;  // 7:00 AM ET
-  const sleepEnd = 14;   // 2:00 PM ET
-  
+  // Current time in Eastern Time using luxon (handles DST)
+  const nowET = DateTime.now().setZone('America/New_York');
+
+  const sleepStart = 7; // 7:00 AM ET
+  const sleepEnd = 14;  // 2:00 PM ET
+  const easternHour = nowET.hour;
+
   const inSleepWindow = easternHour >= sleepStart && easternHour < sleepEnd;
-  
-  // Calculate next sleep start/end times
-  const todayEastern = new Date(easternTime);
-  todayEastern.setHours(sleepStart, 0, 0, 0);
-  
-  const tomorrowEastern = new Date(todayEastern);
-  tomorrowEastern.setDate(tomorrowEastern.getDate() + 1);
-  
-  const todayWakeEastern = new Date(easternTime);
-  todayWakeEastern.setHours(sleepEnd, 0, 0, 0);
-  
-  let nextSleepStart: Date;
-  let nextSleepEnd: Date;
-  
+
+  // Calculate next sleep start/end times in ET
+  let nextSleepStartET: DateTime;
+  let nextSleepEndET: DateTime;
+
   if (easternHour < sleepStart) {
-    // Before sleep window today
-    nextSleepStart = todayEastern;
-    nextSleepEnd = todayWakeEastern;
+    nextSleepStartET = nowET.set({ hour: sleepStart, minute: 0, second: 0, millisecond: 0 });
+    nextSleepEndET = nowET.set({ hour: sleepEnd, minute: 0, second: 0, millisecond: 0 });
   } else if (easternHour < sleepEnd) {
-    // Currently in sleep window
-    nextSleepStart = tomorrowEastern;
-    nextSleepEnd = todayWakeEastern;
+    nextSleepStartET = nowET.plus({ days: 1 }).set({ hour: sleepStart, minute: 0, second: 0, millisecond: 0 });
+    nextSleepEndET = nowET.set({ hour: sleepEnd, minute: 0, second: 0, millisecond: 0 });
   } else {
-    // After sleep window today
-    nextSleepStart = tomorrowEastern;
-    const tomorrowWakeEastern = new Date(tomorrowEastern);
-    tomorrowWakeEastern.setHours(sleepEnd, 0, 0, 0);
-    nextSleepEnd = tomorrowWakeEastern;
+    nextSleepStartET = nowET.plus({ days: 1 }).set({ hour: sleepStart, minute: 0, second: 0, millisecond: 0 });
+    nextSleepEndET = nowET.plus({ days: 1 }).set({ hour: sleepEnd, minute: 0, second: 0, millisecond: 0 });
   }
-  
-  const timeUntilSleep = inSleepWindow ? undefined : Math.max(0, Math.floor((nextSleepStart.getTime() - now.getTime()) / 60000));
-  const timeUntilWake = inSleepWindow ? Math.max(0, Math.floor((nextSleepEnd.getTime() - now.getTime()) / 60000)) : undefined;
-  
+
+  const timeUntilSleep = inSleepWindow ? undefined : Math.max(0, Math.round(nextSleepStartET.diff(nowET, 'minutes').minutes));
+  const timeUntilWake = inSleepWindow ? Math.max(0, Math.round(nextSleepEndET.diff(nowET, 'minutes').minutes)) : undefined;
+
   return {
     inSleepWindow,
-    nextSleepStart,
-    nextSleepEnd,
+    nextSleepStart: nextSleepStartET.toJSDate(),
+    nextSleepEnd: nextSleepEndET.toJSDate(),
     timeUntilSleep,
     timeUntilWake
   };
@@ -137,7 +121,6 @@ export function shouldReduceServerActivity(): boolean {
  */
 export function logSleepWindowStatus(): void {
   const status = getCurrentSleepWindowStatus();
-  const now = new Date();
   
   if (status.inSleepWindow) {
     console.log(`[SLEEP-WINDOW] 😴 Currently in sleep window (7 AM - 2 PM ET)`);
