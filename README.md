@@ -358,6 +358,8 @@ npm start
 - `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT)
 - `POST /api/code-interpreter` - Python tool execution via code interpreter
 - `POST /memory/save` - Save memory entries for context
+- `POST /intent/send_email` - Send an email via intent
+- `POST /intent/send_email_and_respond` - Email user and return model reply
 
 ### Diagnostic & Management
 - `POST /api/diagnostics` - Natural language system commands
