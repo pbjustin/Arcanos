@@ -3,7 +3,13 @@
  * Consolidates common test patterns to reduce duplication
  */
 
-const axios = require('axios');
+let axios;
+try {
+  axios = require('axios');
+} catch (err) {
+  console.warn('Axios module not found. Falling back to http requests.');
+  axios = null;
+}
 const http = require('http');
 
 // Common test configuration
@@ -46,23 +52,35 @@ async function makeAxiosRequest(method, endpoint, options = {}) {
     config.data = data;
   }
 
-  try {
-    const response = await axios(config);
-    return {
-      success: true,
-      status: response.status,
-      data: response.data,
-      headers: response.headers
-    };
-  } catch (error) {
-    return {
-      success: false,
-      status: error.response?.status || 0,
-      data: error.response?.data || null,
-      error: error.message,
-      headers: error.response?.headers || {}
-    };
+  // Use axios if available, otherwise fallback to legacy http
+  if (axios) {
+    try {
+      const response = await axios(config);
+      return {
+        success: true,
+        status: response.status,
+        data: response.data,
+        headers: response.headers
+      };
+    } catch (error) {
+      return {
+        success: false,
+        status: error.response?.status || 0,
+        data: error.response?.data || null,
+        error: error.message,
+        headers: error.response?.headers || {}
+      };
+    }
   }
+
+  // fallback using makeLegacyRequest
+  const legacyResult = await makeLegacyRequest(method, normalizedEndpoint, data);
+  return {
+    success: legacyResult.statusCode >= 200 && legacyResult.statusCode < 300,
+    status: legacyResult.statusCode,
+    data: legacyResult.body,
+    headers: {}
+  };
 }
 
 /**

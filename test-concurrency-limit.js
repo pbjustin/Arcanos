@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 
 // Simple test for /api/ask concurrency limiter
-const { makeAxiosRequest } = require('./test-utils/common');
+const { validateSyntax } = require('./test-utils/validate');
+let makeAxiosRequest;
+try {
+  ({ makeAxiosRequest } = require('./test-utils/common'));
+} catch (err) {
+  console.error('❌ Failed to load test utilities:', err.message);
+  process.exit(1);
+}
+
+if (!validateSyntax(__filename)) {
+  process.exit(1);
+}
 
 const TOTAL_REQUESTS = Number(process.env.TOTAL_REQUESTS || 10); // send more than limit
 const DELAY = Number(process.env.DELAY || 0);

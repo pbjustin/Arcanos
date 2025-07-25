@@ -6,6 +6,11 @@
  */
 
 const { makeAxiosRequest, logTestResult, getAuthHeaders } = require('./test-utils/common');
+const { validateSyntax } = require('./test-utils/validate');
+
+if (!validateSyntax(__filename)) {
+  process.exit(1);
+}
 
 async function testMemoryEndpoints() {
   console.log('🧠 Testing Universal Memory Archetype endpoints...');
@@ -82,6 +87,8 @@ async function testMemoryEndpoints() {
     console.error('❌ Test suite failed:', error.message);
     process.exit(1);
   }
+}
+
 // Run tests if DATABASE_URL is configured
 if (require.main === module) {
   testMemoryEndpoints().catch(console.error);
