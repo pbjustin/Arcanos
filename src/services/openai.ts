@@ -30,8 +30,8 @@ export class OpenAIService {
       maxRetries: 3,  // Increased from 2 for better reliability
     });
 
-    // Standardize on arcanos-v1 model (as requested in refactor)
-    this.model = 'arcanos-v1';
+    // Use configured fine-tuned model or fallback to predefined ID
+    this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106:BpYtP0ox';
     
     // Log model configuration for audit purposes
     logger.info('OpenAI Service initialized', { 
@@ -53,7 +53,7 @@ export class OpenAIService {
     });
     
     try {
-      // Use the standardized arcanos-v1 model
+      // Use the configured AI model
       const completion = await this.client.chat.completions.create({
         model: this.model,
         messages,
