@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { coreAIService } from '../../services/ai/core-ai-service';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import fs from 'fs';
 import path from 'path';
@@ -20,23 +20,45 @@ export interface EmailDispatchRequest {
 function buildSystemPrompt(type: 'audit' | 'task' | 'goal'): string {
   switch (type) {
     case 'audit':
-      return 'You are ARCANOS generating an HTML audit summary email.';
+      return `You are ARCANOS generating an HTML audit summary email. 
+      
+Create a professional, well-structured HTML email that includes:
+- Executive summary of audit findings
+- Key issues and recommendations
+- Action items with priorities
+- Professional formatting with proper HTML structure`;
     case 'task':
-      return 'You are ARCANOS generating a task alert email in HTML format.';
+      return `You are ARCANOS generating a task alert email in HTML format.
+      
+Create a clear, actionable HTML email that includes:
+- Task details and urgency level
+- Required actions and deadlines  
+- Contact information if needed
+- Professional HTML formatting`;
     case 'goal':
-      return 'You are ARCANOS generating a goal report email in HTML format.';
+      return `You are ARCANOS generating a goal report email in HTML format.
+      
+Create an engaging, motivational HTML email that includes:
+- Goal progress summary
+- Achievements and milestones
+- Next steps and recommendations
+- Encouraging tone with professional formatting`;
     default:
-      return 'You are ARCANOS generating an email.';
+      return 'You are ARCANOS generating an email in HTML format with professional structure.';
   }
 }
 
-async function generateEmailBody({ message, type, stream = false, logFilePath }: { message: string; type: 'audit' | 'task' | 'goal'; stream?: boolean; logFilePath?: string }): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is required');
-  }
-
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
+async function generateEmailBody({ 
+  message, 
+  type, 
+  stream = false, 
+  logFilePath 
+}: { 
+  message: string; 
+  type: 'audit' | 'task' | 'goal'; 
+  stream?: boolean; 
+  logFilePath?: string; 
+}): Promise<string> {
   const logDir = path.join(process.cwd(), 'storage', 'email-logs');
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
@@ -49,41 +71,74 @@ async function generateEmailBody({ message, type, stream = false, logFilePath }:
     { role: 'user', content: message }
   ];
 
-  logger.info('Generating email body', { type });
+  logger.info('Generating email body with core AI service', { type, stream });
 
-  if (stream) {
-    const streamResp = await openai.chat.completions.create({
-      model: 'arcanos-v1',
-      messages,
-      stream: true
-    });
+  try {
+    if (stream) {
+      let fullResponse = '';
+      const result = await coreAIService.completeStream(
+        messages,
+        `email-${type}-stream`,
+        (token: string) => {
+          process.stdout.write(token);
+          fileStream.write(token);
+          fullResponse += token;
+        },
+        {
+          maxTokens: 1500,
+          temperature: 0.6,
+          stream: true,
+          maxRetries: 3
+        }
+      );
 
-    let fullResponse = '';
-    for await (const chunk of streamResp) {
-      const token = chunk.choices?.[0]?.delta?.content || '';
-      if (token) {
-        process.stdout.write(token);
-        fileStream.write(token);
-        fullResponse += token;
+      fileStream.end();
+
+      if (!result.success) {
+        logger.warning('Email generation failed, using fallback', { type, error: result.error });
+        return `<html><body><h2>Email Generation Notice</h2><p>AI service temporarily unavailable.</p><pre>${message}</pre></body></html>`;
       }
+
+      logger.success('Email body generation complete (streamed)', { 
+        type, 
+        contentLength: fullResponse.length,
+        logPath: finalLogPath 
+      });
+      
+      return fullResponse;
     }
 
+    const result = await coreAIService.complete(
+      messages, 
+      `email-${type}`,
+      {
+        maxTokens: 1500,
+        temperature: 0.6,
+        maxRetries: 3
+      }
+    );
+
+    fileStream.write(result.content);
     fileStream.end();
-    logger.success('Email body generation complete', { log: finalLogPath });
-    return fullResponse;
+
+    if (!result.success) {
+      logger.warning('Email generation failed, using fallback', { type, error: result.error });
+      return `<html><body><h2>Email Generation Notice</h2><p>AI service temporarily unavailable.</p><pre>${message}</pre></body></html>`;
+    }
+
+    logger.success('Email body generation complete', { 
+      type, 
+      contentLength: result.content.length,
+      logPath: finalLogPath 
+    });
+    
+    return result.content;
+    
+  } catch (error: any) {
+    fileStream.end();
+    logger.error('Email body generation threw error', error, { type });
+    return `<html><body><h2>Email Generation Error</h2><p>Failed to generate email content.</p><pre>${message}</pre></body></html>`;
   }
-
-  const completion = await openai.chat.completions.create({
-    model: 'arcanos-v1',
-    messages
-  });
-
-  const content = completion.choices?.[0]?.message?.content || '';
-  fileStream.write(content);
-  fileStream.end();
-
-  logger.success('Email body generation complete', { log: finalLogPath });
-  return content;
 }
 
 export async function dispatchEmail(request: EmailDispatchRequest, maxAttempts = 3): Promise<void> {
@@ -95,22 +150,53 @@ export async function dispatchEmail(request: EmailDispatchRequest, maxAttempts =
     html = await generateEmailBody({ message, type, stream: useStream, logFilePath: request.logFilePath });
   } catch (err: any) {
     logger.error('Email body generation failed', err);
-    html = message; // Fallback to raw message
+    html = `<html><body><h2>Fallback Email</h2><pre>${message}</pre></body></html>`; // Fallback HTML
   }
 
+  // Enhanced retry logic with exponential backoff
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      logger.info('Sending email', { attempt, to, subject });
+      logger.info('Sending email with retry logic', { attempt, to, subject, type });
       const result = await sendEmail(to, subject, html, from);
+      
       if (result.success) {
-        logger.success('Email sent', { messageId: result.messageId, attempt });
+        logger.success('Email sent successfully', { 
+          messageId: result.messageId, 
+          attempt,
+          type,
+          to: to.substring(0, 3) + '***' // Log partial email for privacy
+        });
         return;
       }
-      logger.warning('Email send failed', { attempt, error: result.error });
+      
+      logger.warning('Email send failed, will retry', { 
+        attempt, 
+        error: result.error,
+        nextAttempt: attempt < maxAttempts ? attempt + 1 : 'none'
+      });
+      
+      // Exponential backoff delay
+      if (attempt < maxAttempts) {
+        const delayMs = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s, etc.
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      
     } catch (error: any) {
-      logger.error('Email send threw error', error, { attempt });
+      logger.error('Email send threw error', error, { attempt, type });
+      
+      if (attempt < maxAttempts) {
+        const delayMs = Math.pow(2, attempt) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
     }
   }
 
-  logger.error('All email send attempts failed', { to, subject });
+  // Log final failure with comprehensive information
+  logger.error('All email send attempts failed - email not delivered', { 
+    to: to.substring(0, 3) + '***',
+    subject: subject.substring(0, 20) + '...',
+    type,
+    totalAttempts: maxAttempts,
+    timestamp: new Date().toISOString()
+  });
 }

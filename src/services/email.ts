@@ -34,7 +34,31 @@ class EmailService {
   }
 
   private createTransport(): { transporter: nodemailer.Transporter, transportType: string, senderEmail: string } {
-    // Priority order: Generic SMTP (production) > Ethereal (testing) > Mailtrap (testing) > Gmail (legacy)
+    // Priority order: Standard EMAIL_* vars > Generic SMTP > Ethereal > Mailtrap > Gmail
+    
+    // Standard EMAIL_HOST, EMAIL_USER, EMAIL_PASS (as requested in refactor)
+    if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      const senderEmail = process.env.EMAIL_USER;
+      const port = parseInt(process.env.EMAIL_PORT || '587', 10);
+      const secure = process.env.EMAIL_SECURE === 'true' || port === 465;
+      
+      return {
+        transporter: nodemailer.createTransport({
+          host: process.env.EMAIL_HOST,
+          port: port,
+          secure: secure,
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+          },
+          connectionTimeout: 10000,
+          greetingTimeout: 10000,
+          socketTimeout: 30000,
+        }),
+        transportType: `EMAIL_SMTP (${process.env.EMAIL_HOST}:${port}, ${secure ? 'SSL' : 'TLS'})`,
+        senderEmail
+      };
+    }
     
     // Generic SMTP (recommended for Railway production)
     // This configuration works reliably with most SMTP providers including SendGrid, Mailgun, etc.
