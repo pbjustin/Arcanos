@@ -11,6 +11,7 @@
     "start": "node --max-old-space-size=7168 dist/index.js",
     "start:railway": "node --max-old-space-size=7168 dist/index.js",
     "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
+    "arc:dispatch": "node bin/arc-dispatch.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
