@@ -47,7 +47,7 @@ export const config: Config = {
   },
   ai: {
     openaiApiKey: process.env.OPENAI_API_KEY,
-    fineTunedModel: process.env.AI_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL,
+    fineTunedModel: process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL,
     gptToken: process.env.GPT_TOKEN,
   },
   database: {

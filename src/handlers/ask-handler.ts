@@ -80,7 +80,7 @@ export const askHandler = async (req: Request, res: Response) => {
       const openai = getOpenAIService();
       
       // Log the fine-tuned model being used
-      console.log('🔍 Using fine-tuned model:', process.env.AI_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || 'default');
+      console.log('🔍 Using fine-tuned model:', process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || 'default');
       console.log('🎯 Processing message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
       
       // Build chat messages with context
