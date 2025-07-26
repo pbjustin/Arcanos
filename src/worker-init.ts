@@ -5,6 +5,41 @@ import { isTrue } from './utils/env';
 import { goalTrackerWorker } from './workers/goal-tracker';
 import { maintenanceSchedulerWorker } from './workers/maintenance-scheduler';
 import { createServiceLogger } from './utils/logger';
+import cron from 'node-cron';
+
+// Global registry for active workers
+declare global {
+  var activeWorkers: Map<string, any> | undefined;
+}
+
+function workerInit(name: string, instance: any) {
+  const globalAny = globalThis as any;
+  if (!globalAny.activeWorkers) {
+    globalAny.activeWorkers = new Map<string, any>();
+  }
+  if (globalAny.activeWorkers.has(name)) {
+    logger.info(`Worker ${name} already registered`);
+    return globalAny.activeWorkers.get(name);
+  }
+  const context = { instance, started: false, registeredAt: Date.now() };
+  globalAny.activeWorkers.set(name, context);
+  return context;
+}
+
+function pruneStaleWorkers() {
+  const globalAny = globalThis as any;
+  if (!globalAny.activeWorkers) return;
+  const now = Date.now();
+  for (const [name, ctx] of globalAny.activeWorkers.entries()) {
+    if (!ctx.started && now - ctx.registeredAt > 30 * 60 * 1000) {
+      globalAny.activeWorkers.delete(name);
+      logger.info(`Pruned stale worker ${name}`);
+    }
+  }
+}
+
+// Run cleanup every 15 minutes
+cron.schedule('*/15 * * * *', pruneStaleWorkers);
 
 const logger = createServiceLogger('WorkerInit');
 
@@ -39,15 +74,23 @@ async function initializeAIControlledWorkers() {
 
 async function startBackgroundWorkers() {
   logger.info('Starting enhanced background workers');
-  
+
   try {
     // Start Goal Tracker Worker
-    await goalTrackerWorker.start();
-    logger.success('Goal Tracker Worker started');
-    
-    // Start Maintenance Scheduler Worker  
-    await maintenanceSchedulerWorker.start();
-    logger.success('Maintenance Scheduler Worker started');
+    const goalCtx = workerInit('goalTracker', goalTrackerWorker);
+    if (!goalCtx.started) {
+      await goalTrackerWorker.start();
+      goalCtx.started = true;
+      logger.success('Goal Tracker Worker started');
+    }
+
+    // Start Maintenance Scheduler Worker
+    const maintCtx = workerInit('maintenanceScheduler', maintenanceSchedulerWorker);
+    if (!maintCtx.started) {
+      await maintenanceSchedulerWorker.start();
+      maintCtx.started = true;
+      logger.success('Maintenance Scheduler Worker started');
+    }
     
     logger.success('All background workers started successfully');
     
