@@ -2,8 +2,8 @@
 // Routes inputs to ARCANOS:WRITE or ARCANOS:AUDIT based on intent analysis
 
 import { IntentAnalyzer, IntentType } from './intent-analyzer';
-import { ArcanosWriteService, WriteRequest, WriteResponse } from './arcanos-write';
-import { ArcanosAuditService, AuditRequest, AuditResponse } from './arcanos-audit';
+import { ArcanosWriteService, WriteRequest } from './arcanos-write';
+import { ArcanosAuditService, AuditRequest } from './arcanos-audit';
 import { diagnosticsService } from './diagnostics';
 
 export interface RouterRequest {

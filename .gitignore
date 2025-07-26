@@ -66,6 +66,9 @@ npm_logs/
 # Test files
 test-webhook.js
 
+# Development and debugging scripts  
+dev-tests/
+
 # Storage directories
 storage/canon/*.txt
 !storage/canon/sample-storyline.txt
