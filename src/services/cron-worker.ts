@@ -8,15 +8,11 @@ import { modelControlHooks } from './model-control-hooks';
 import { openAIAssistantsService } from './openai-assistants';
 import { serviceAlreadyRegistered } from './service-registry';
 
-// Prevent duplicate initialization
-if (serviceAlreadyRegistered('cron-worker')) {
-  console.log('[AI-CRON] Cron worker already initialized');
-  // Skip further setup
-} else {
-
-const SERVER_URL = process.env.SERVER_URL || (process.env.NODE_ENV === 'production' 
-  ? 'https://arcanos-production-426d.up.railway.app' 
-  : `http://localhost:${process.env.PORT || 8080}`);
+const SERVER_URL =
+  process.env.SERVER_URL ||
+  (process.env.NODE_ENV === 'production'
+    ? 'https://arcanos-production-426d.up.railway.app'
+    : `http://localhost:${process.env.PORT || 8080}`);
 
 // JSON-based cron instruction templates for AI model
 export const CRON_INSTRUCTIONS = {
@@ -62,8 +58,17 @@ export const CRON_INSTRUCTIONS = {
   }
 };
 
-// AI-Controlled Health Check (AI decides when to run)
-cron.schedule('*/15 * * * *', async () => {
+/**
+ * Initialize cron worker schedules if not already registered
+ */
+export function initCronWorker(): void {
+  if (serviceAlreadyRegistered('cron-worker')) {
+    console.log('[AI-CRON] Cron worker already initialized');
+    return;
+  }
+
+  // AI-Controlled Health Check (AI decides when to run)
+  cron.schedule('*/15 * * * *', async () => {
   try {
     const result = await modelControlHooks.handleCronTrigger(
       'health-check',
@@ -247,3 +252,6 @@ async function executeAssistantSync(): Promise<void> {
 
 console.log('[AI-CRON] AI-controlled cron worker system initialized');
 }
+
+// Immediately initialize the cron worker
+initCronWorker();
