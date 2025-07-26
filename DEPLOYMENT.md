@@ -42,7 +42,7 @@ npm run build || echo "❌ Build failed – check your tsconfig.json and src/ind
 
 # Verify required .env keys are set
 echo "Verifying .env variables..."
-cat .env | grep -E 'OPENAI_API_KEY|FINE_TUNED_MODEL|NODE_ENV|PORT' || echo "⚠️ Missing one or more required environment variables."
+cat .env | grep -E 'OPENAI_API_KEY|AI_MODEL|FINE_TUNE_MODEL|FINE_TUNED_MODEL|NODE_ENV|PORT' || echo "⚠️ Missing one or more required environment variables."
 
 # Try running the app manually to catch runtime errors
 echo "Starting server manually to catch errors..."
@@ -62,7 +62,11 @@ Create a `.env` file with the following required variables:
 NODE_ENV=production
 PORT=8080
 OPENAI_API_KEY=your-openai-api-key-here
-FINE_TUNED_MODEL=your-fine-tuned-model-id
+# Use the highest priority environment variable for your model
+AI_MODEL=your-fine-tuned-model-id
+# Or alternatively:
+# FINE_TUNE_MODEL=your-fine-tuned-model-id
+# FINE_TUNED_MODEL=your-fine-tuned-model-id
 RUN_WORKERS=true
 SERVER_URL=https://your-app.railway.app
 GPT_TOKEN=your-gpt-diagnostic-token
