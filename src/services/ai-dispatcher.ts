@@ -3,6 +3,11 @@
 
 import { OpenAIService, ChatMessage } from './openai';
 
+// In-memory lock map to debounce dispatches per worker type
+declare global {
+  var __dispatchLocks: Map<string, boolean> | undefined;
+}
+
 export interface DispatchRequest {
   type: 'api' | 'internal' | 'worker' | 'cron' | 'memory' | 'audit';
   endpoint?: string;
@@ -59,10 +64,33 @@ export class AIDispatcher {
       method: request.method
     });
 
+    // Debounce worker-type dispatches to avoid redundant model calls
+    const lockKey =
+      request.type === 'worker' ? request.payload?.worker : undefined;
+    const globalAny = globalThis as any;
+    if (lockKey) {
+      if (!globalAny.__dispatchLocks) {
+        globalAny.__dispatchLocks = new Map<string, boolean>();
+      }
+      if (globalAny.__dispatchLocks.get(lockKey)) {
+        console.log(
+          `[DISPATCH] Skipping duplicate dispatch for worker ${lockKey}`
+        );
+        return {
+          success: false,
+          instructions: [],
+          error: 'dispatch_in_flight'
+        };
+      }
+      globalAny.__dispatchLocks.set(lockKey, true);
+    }
+
     // If no OpenAI service available, return mock response for testing
     if (!this.openaiService) {
       console.log('⚠️ OpenAI service not available, returning mock AI response');
-      return this.createMockResponse(request);
+      const mock = this.createMockResponse(request);
+      if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
+      return mock;
     }
 
     try {
@@ -92,19 +120,23 @@ export class AIDispatcher {
       // Parse the model's response into structured instructions
       const instructions = this.parseModelResponse(response.message);
       
-      return {
+      const result = {
         success: true,
         instructions,
         directResponse: this.extractDirectResponse(response.message)
       };
+      if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
+      return result;
 
     } catch (error: any) {
       console.error('❌ AI Dispatcher error:', error);
-      return {
+      const errResp = {
         success: false,
         instructions: [],
         error: error.message
       };
+      if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
+      return errResp;
     }
   }
 
