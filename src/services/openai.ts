@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { createServiceLogger } from '../utils/logger';
+import { aiConfig } from '../config';
 
 const logger = createServiceLogger('OpenAIService');
 
@@ -15,29 +16,38 @@ export interface ChatResponse {
   fallbackRequested?: boolean;
 }
 
+export interface OpenAIServiceOptions {
+  apiKey?: string;
+  model?: string;
+}
+
 export class OpenAIService {
   private client: OpenAI;
   private model: string;
 
-  constructor() {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY is required');
+  constructor(options?: OpenAIServiceOptions) {
+    // Get API key from options, config, or environment variable
+    const apiKey = options?.apiKey || aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
+    
+    if (!apiKey) {
+      throw new Error('The OPENAI_API_KEY environment variable is missing or empty; either provide it, or instantiate the OpenAI client with an apiKey option, like new OpenAI({ apiKey: \'My API Key\' }).');
     }
 
     this.client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: apiKey,
       timeout: 30000, // 30 seconds timeout
       maxRetries: 3,  // Increased from 2 for better reliability
     });
 
     // Use configured fine-tuned model or fallback to predefined ID
-    this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106:BpYtP0ox';
+    this.model = options?.model || aiConfig.fineTunedModel || process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106:BpYtP0ox';
     
     // Log model configuration for audit purposes
     logger.info('OpenAI Service initialized', { 
       model: this.model,
       timeout: 30000,
-      maxRetries: 3
+      maxRetries: 3,
+      apiKeySource: options?.apiKey ? 'options' : (aiConfig.openaiApiKey ? 'config' : 'environment')
     });
   }
 
