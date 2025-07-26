@@ -30,7 +30,7 @@ router.get('/assistants', async (_req, res) => {
 /**
  * POST /assistants/sync - Manually trigger assistant sync
  */
-router.post('/assistants/sync', async (req, res) => {
+router.post('/assistants/sync', async (_req, res) => {
   try {
     console.log('[API] Manual assistant sync triggered');
     const assistants = await openAIAssistantsService.syncAssistants();
