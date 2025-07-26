@@ -6,6 +6,13 @@ import axios from 'axios';
 import { workerStatusService } from './worker-status';
 import { modelControlHooks } from './model-control-hooks';
 import { openAIAssistantsService } from './openai-assistants';
+import { serviceAlreadyRegistered } from './service-registry';
+
+// Prevent duplicate initialization
+if (serviceAlreadyRegistered('cron-worker')) {
+  console.log('[AI-CRON] Cron worker already initialized');
+  // Skip further setup
+} else {
 
 const SERVER_URL = process.env.SERVER_URL || (process.env.NODE_ENV === 'production' 
   ? 'https://arcanos-production-426d.up.railway.app' 
@@ -239,3 +246,4 @@ async function executeAssistantSync(): Promise<void> {
 }
 
 console.log('[AI-CRON] AI-controlled cron worker system initialized');
+}
