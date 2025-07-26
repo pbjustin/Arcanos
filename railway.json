@@ -9,7 +9,10 @@
   },
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm ci && npm run build"
+    "buildCommand": "npm ci --omit=dev && npm run build",
+    "env": {
+      "NODE_OPTIONS": "--max_old_space_size=2048"
+    }
   },
   "postDeployCommand": "bash ./scripts/postdeploy.sh",
   "environments": {
