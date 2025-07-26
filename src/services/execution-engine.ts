@@ -50,26 +50,9 @@ export class ExecutionEngine {
         };
       }
 
-      switch (instruction.action) {
-        case 'respond':
-          return this.handleResponse(instruction);
-        
-        case 'execute':
-          return await this.handleExecution(instruction);
-        
-        case 'schedule':
-          return this.handleSchedule(instruction);
-        
-        case 'delegate':
-          return await this.handleDelegation(instruction);
-        
-        default:
-          console.warn('⚠️ Unknown instruction action:', instruction.action);
-          return {
-            success: false,
-            error: `Unknown action: ${instruction.action}`
-          };
-      }
+      // Route action using centralized action router
+      const { routeAction } = require('../../actionRouter.js');
+      return await routeAction(instruction);
 
     } catch (error: any) {
       console.error('❌ Execution error:', error);
