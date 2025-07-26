@@ -2,6 +2,8 @@
 
 A comprehensive TypeScript + Express backend for the Arcanos AI project, featuring fine-tuned OpenAI model integration, intent-based routing, and persistent memory storage.
 
+Arcanos is designed as an **AI-managed backend**. A fine-tuned GPT model controls background workers, decides when to run maintenance tasks, and processes incoming requests through an intent router. Persistent memory is stored in PostgreSQL with an in-memory fallback so the system can maintain context even if the database is unavailable. In short, Arcanos provides a conventional HTTP API that is orchestrated by an AI model.
+
 ## ⚠️ Current Build Status
 
 **Note**: The current codebase has TypeScript compilation dependencies that may need to be installed. If you encounter build errors, ensure all dependencies are properly installed:
@@ -321,8 +323,10 @@ curl -X GET http://localhost:8080/api/memory/health \
 
 ## 📚 Documentation
 
-### Core Documentation  
+### Core Documentation
+
 - **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start and initial configuration
+- **[🌟 Arcanos Overview](./docs/arcanos-overview.md)** - Explanation of the project goals
 - **[🔧 Quick Reference](./QUICK_REFERENCE.md)** - Essential commands and endpoints
 - **[🧠 Backend Documentation](./docs/backend.md)** - Comprehensive backend system overview
 - **[📋 Changelog](./docs/changelog.md)** - Version history and recent updates
