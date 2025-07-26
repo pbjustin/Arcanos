@@ -36,7 +36,7 @@ dist/              # Compiled output (generated)
 - `GET /api/model/info` - Detailed model information
 
 #### Validation & Processing
-- `POST /api/ask-hrc` - Message validation using HRCCore
+- `POST /api/ask-hrc` - Message validation using HRCCore overlay system
 
 #### Memory & Storage
 - `POST /api/memory` - Store memory entry

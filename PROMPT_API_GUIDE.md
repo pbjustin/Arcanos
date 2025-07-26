@@ -20,7 +20,9 @@ This comprehensive guide explains how to use prompts to interact with all availa
 1. Ensure your `.env` file is configured with:
    ```bash
    OPENAI_API_KEY=your-openai-api-key
-   FINE_TUNED_MODEL=your-fine-tuned-model-id
+   # Fine-tuned model (in order of precedence):
+   AI_MODEL=your-fine-tuned-model-id
+   FINE_TUNE_MODEL=your-alternative-model-id
    PORT=8080
    NODE_ENV=production
    RUN_WORKERS=false
@@ -47,7 +49,7 @@ curl -X POST http://localhost:8080/api/echo \
 | `/ask` | Simple query processing | Query/response | No |
 | `/api/ask` | Fine-tuned model chat | Conversational | ❌ No fallback |
 | `/api/ask-with-fallback` | AI chat with GPT-4 fallback | Conversational | ✅ GPT-4 fallback |
-| `/api/ask-hrc` | Message validation using HRCCore | Text validation | N/A |
+| `/api/ask-hrc` | Message validation using HRCCore overlay | Text validation | N/A |
 | `/api/ask-v1-safe` | Safe interface with RAG/HRC | Structured queries | ❌ No fallback |
 | `/api/arcanos` | Intent-based routing (WRITE/AUDIT) | Intent-driven | Depends on route |
 | `/memory/save` | Store memories | Context storage | N/A |

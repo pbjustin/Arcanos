@@ -1,5 +1,43 @@
 # 📄 Arcanos Backend Changelog
 
+## v1.3 - Recent Feature Updates and Documentation Modernization (2025-01-26)
+
+### ✅ Recent Feature Integrations
+- **PR #221**: Implemented HRC overlay evaluation system with runtime scoring
+  - Added `HRCCore` module with resilience and fidelity validation
+  - Integrated heuristic scoring for message quality assessment
+  - Enhanced `/api/ask-hrc` endpoint with overlay validation
+
+- **PR #220**: Enhanced environment variable support for fine-tuned models
+  - Added `FINE_TUNE_MODEL` environment variable to configuration hierarchy
+  - Updated precedence order: `AI_MODEL` → `FINE_TUNE_MODEL` → `FINE_TUNED_MODEL` → `OPENAI_FINE_TUNED_MODEL`
+  - Improved backward compatibility for existing model configurations
+
+- **PR #219**: Updated model integration and configuration management
+  - Enhanced model configuration validation and error handling
+  - Improved fine-tuned model integration workflows
+  - Updated deployment configuration for current model setup
+
+- **PR #218**: Enhanced OpenAI API key configuration flexibility
+  - Added support for `apiKey` option in OpenAI service instantiation
+  - Improved error handling for missing API key configurations
+  - Enhanced configuration logging and debugging capabilities
+
+### 🔧 Documentation Modernization
+- **UPDATED**: All environment variable documentation with current precedence
+- **ENHANCED**: API endpoint documentation with latest features
+- **IMPROVED**: Cross-linking between related documentation sections
+- **STANDARDIZED**: Code examples and configuration references
+- **ALIGNED**: Tone and format consistency across all documentation files
+
+### 🤖 Current System State
+- **Fine-tuned Model**: `ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106`
+- **HRC Overlay**: Active validation with resilience/fidelity scoring
+- **Environment Variables**: Enhanced support with flexible precedence
+- **OpenAI Integration**: Improved configuration options and error handling
+
+---
+
 ## v1.2 - Documentation Cleanup and Current State Update (2024-07-24)
 
 ### ✅ Major Documentation Overhaul
