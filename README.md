@@ -2,6 +2,18 @@
 
 A comprehensive TypeScript + Express backend for the Arcanos AI project, featuring fine-tuned OpenAI model integration, intent-based routing, and persistent memory storage.
 
+## ⚠️ Current Build Status
+
+**Note**: The current codebase has TypeScript compilation dependencies that may need to be installed. If you encounter build errors, ensure all dependencies are properly installed:
+
+```bash
+npm install
+# If you still see TypeScript errors, you may need to:
+npm audit fix
+```
+
+The test suite currently uses a placeholder (`npm test` returns success). Core functionality is operational despite build warnings.
+
 ## Setup
 
 1. **Clone the repository**
@@ -78,13 +90,14 @@ npm start
 - `POST /api/echo` - Echo endpoint for testing
 - `POST /api/ask` - Fine-tuned model chat (no fallback)
 - `POST /api/ask-with-fallback` - Chat with GPT fallback permission
+- `POST /api/ask-hrc` - Message validation using HRCCore (added in v1.2)
 - `POST /api/ask-v1-safe` - Safe interface with RAG/HRC features
 - `POST /api/arcanos` - Intent-based routing (WRITE/AUDIT detection)
 - `GET /api/model-status` - Get current model configuration
 - `GET /api/model/info` - Detailed model metadata
 
 ### Validation & Processing
-- `POST /api/ask-hrc` - Message validation using HRCCore
+- `POST /api/ask-hrc` - Message validation using HRCCore overlay system
 
 ### Memory & Storage
 - `POST /memory/save` - Save memory key-value pair
@@ -266,7 +279,11 @@ The backend implements intelligent intent detection that routes requests to spec
 
 ### Required Variables
 - `OPENAI_API_KEY` - Your OpenAI API key
-- `FINE_TUNED_MODEL` - Your fine-tuned model name
+- Fine-tuned model configuration (in order of precedence):
+  - `AI_MODEL` - Primary fine-tuned model (highest priority)
+  - `FINE_TUNE_MODEL` - Alternative fine-tuned model variable (added in v1.2)  
+  - `FINE_TUNED_MODEL` - Legacy fine-tuned model variable
+  - `OPENAI_FINE_TUNED_MODEL` - OpenAI-specific model variable (lowest priority)
 - `CODE_INTERPRETER_MODEL` - Model for Python tool execution (default: gpt-4o)
 
 ### Server Configuration
@@ -302,17 +319,18 @@ curl -X GET http://localhost:8080/api/memory/health \
 
 ## 📚 Documentation
 
-### Core Documentation
+### Core Documentation  
 - **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start and initial configuration
 - **[🔧 Quick Reference](./QUICK_REFERENCE.md)** - Essential commands and endpoints
 - **[🧠 Backend Documentation](./docs/backend.md)** - Comprehensive backend system overview
-- **[📋 Changelog](./docs/changelog.md)** - Version history and updates
+- **[📋 Changelog](./docs/changelog.md)** - Version history and recent updates
 
 ### API & Usage Guides
 - **[📖 API Guide](./PROMPT_API_GUIDE.md)** - Comprehensive API usage documentation
 - **[💡 API Examples](./PROMPT_API_EXAMPLES.md)** - Ready-to-use code examples
 - **[🤖 Custom GPT Integration](./CUSTOM_GPT_INTEGRATION.md)** - OpenAI Custom GPT setup
 - **[🧠 Diagnostics Guide](./GPT_DIAGNOSTICS_GUIDE.md)** - Natural language diagnostic commands
+- **[🔗 ChatGPT Backend Workflow](./CHATGPT_BACKEND_WORKFLOW.md)** - ChatGPT app integration workflow
 
 ### AI & Model Features
 - **[🔁 Fine-Tune Routing](./FINETUNE_ROUTING_OVERRIDE.md)** - Control fine-tuned model routing
@@ -331,6 +349,7 @@ curl -X GET http://localhost:8080/api/memory/health \
 
 ### Additional Services
 - **[📧 Email Service](./EMAIL_SERVICE.md)** - Gmail SMTP integration
+- **[😴 Sleep Scheduler](./SLEEP_SCHEDULER_IMPLEMENTATION.md)** - Sleep/wake cycle management
 
 ## Quick Reference
 
