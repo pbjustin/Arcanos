@@ -9,6 +9,7 @@ import { createServiceLogger } from '../utils/logger';
 import fs from 'fs';
 import path from 'path';
 import * as cron from 'node-cron';
+import { z } from 'zod';
 
 const logger = createServiceLogger('MaintenanceScheduler');
 
@@ -348,13 +349,19 @@ Please analyze and provide:
 
     try {
       const parsed = JSON.parse(result.content);
+      const schema = z.object({
+        issues: z.array(z.string()).optional().default([]),
+        actions: z.array(z.string()).optional().default([]),
+        recommendations: z.array(z.string()).optional().default([])
+      });
+      const data = schema.parse(parsed);
       return {
-        issues: Array.isArray(parsed.issues) ? parsed.issues : [],
-        actions: Array.isArray(parsed.actions) ? parsed.actions : [],
-        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : []
+        issues: data.issues,
+        actions: data.actions,
+        recommendations: data.recommendations
       };
-    } catch (error) {
-      logger.warning('Failed to parse maintenance actions JSON', { content: result.content });
+    } catch (error: any) {
+      logger.warning('Failed to parse maintenance actions JSON', { content: result.content, error: error.message });
       return {
         issues: ['JSON parsing failed'],
         actions: ['Manual maintenance required'],
