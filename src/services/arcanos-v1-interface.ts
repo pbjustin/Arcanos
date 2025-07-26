@@ -4,6 +4,7 @@
 import { OpenAIService } from './openai';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
+import { aiConfig } from '../config';
 
 // Model interface that all models must implement
 export interface ArcanosModel {
@@ -135,21 +136,24 @@ class ArcanosModelWrapper implements ArcanosModel {
 // Function to get the active model - returns null if no model is available
 export async function getActiveModel(): Promise<ArcanosModel | null> {
   try {
-    // Check if OpenAI API key is configured
-    if (!process.env.OPENAI_API_KEY) {
+    // Check if OpenAI API key is configured through config system
+    if (!aiConfig.openaiApiKey && !process.env.OPENAI_API_KEY) {
       console.warn("No OpenAI API key configured");
       return null;
     }
 
     // Check if a fine-tuned model is configured
-    const fineTunedModel = process.env.AI_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
+    const fineTunedModel = aiConfig.fineTunedModel || process.env.AI_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
     if (!fineTunedModel) {
       console.warn("No fine-tuned model configured");
       return null;
     }
 
-    // Try to initialize the OpenAI service
-    const openaiService = new OpenAIService();
+    // Try to initialize the OpenAI service with configuration
+    const openaiService = new OpenAIService({
+      apiKey: aiConfig.openaiApiKey,
+      model: fineTunedModel
+    });
     
     // Create and return the model wrapper
     return new ArcanosModelWrapper(openaiService);
