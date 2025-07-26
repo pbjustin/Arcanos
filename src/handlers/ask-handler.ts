@@ -1,11 +1,9 @@
 import { Request, Response } from 'express';
 import { OpenAIService, ChatMessage } from '../services/openai';
-import { HRCCore } from '../modules/hrc';
 import { HRCOverlay } from '../modules/overlay';
 import { MemoryStorage } from '../storage/memory-storage';
 
 let openaiService: OpenAIService | null = null;
-let hrcCore: HRCCore | null = null;
 let hrcOverlay: HRCOverlay | null = null;
 let memoryStorage: MemoryStorage | null = null;
 
@@ -15,13 +13,6 @@ function getOpenAIService(): OpenAIService {
     openaiService = new OpenAIService();
   }
   return openaiService;
-}
-
-function getHRCCore(): HRCCore {
-  if (!hrcCore) {
-    hrcCore = new HRCCore();
-  }
-  return hrcCore;
 }
 
 function getHRCOverlay(): HRCOverlay {
