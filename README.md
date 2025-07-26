@@ -102,6 +102,7 @@ npm start
 
 ### Validation & Processing
 - `POST /api/ask-hrc` - Message validation using HRCCore overlay system
+- `applyCLEAROverlay()` - Activate CLEAR overlay for context boundaries and hallucination control
 
 ### Memory & Storage
 - `POST /memory/save` - Save memory key-value pair
