@@ -2,9 +2,9 @@
 // Monitors goals through ARCANOS model instructions
 // Enhanced for sleep window with backlog audit functionality
 
-const { modelControlHooks } = require('../dist/services/model-control-hooks');
 const { diagnosticsService } = require('../dist/services/diagnostics');
 const { createServiceLogger } = require('../dist/utils/logger');
+const { checkModelControlHooks } = require('../dist/utils/overlay-diagnostics');
 const logger = createServiceLogger('GoalWatcherWorker');
 
 async function reportFailure(error) {
@@ -18,8 +18,17 @@ async function reportFailure(error) {
 
 module.exports = async function goalWatcher() {
   logger.info('Starting AI-controlled goal monitoring');
-  
+
   try {
+    const hooksOk = await checkModelControlHooks();
+    let modelControlHooks;
+    if (hooksOk) {
+      ({ modelControlHooks } = require('../dist/services/model-control-hooks'));
+    } else {
+      logger.warning('Overlay reroute executed - skipping goal monitoring');
+      return;
+    }
+
     // Request goal monitoring from AI model
     const result = await modelControlHooks.manageMemory(
       'list',
