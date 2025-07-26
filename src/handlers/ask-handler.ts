@@ -1,10 +1,12 @@
 import { Request, Response } from 'express';
 import { OpenAIService, ChatMessage } from '../services/openai';
 import { HRCCore } from '../modules/hrc';
+import { HRCOverlay } from '../modules/overlay';
 import { MemoryStorage } from '../storage/memory-storage';
 
 let openaiService: OpenAIService | null = null;
 let hrcCore: HRCCore | null = null;
+let hrcOverlay: HRCOverlay | null = null;
 let memoryStorage: MemoryStorage | null = null;
 
 // Lazy initialization of services
@@ -20,6 +22,13 @@ function getHRCCore(): HRCCore {
     hrcCore = new HRCCore();
   }
   return hrcCore;
+}
+
+function getHRCOverlay(): HRCOverlay {
+  if (!hrcOverlay) {
+    hrcOverlay = new HRCOverlay();
+  }
+  return hrcOverlay;
 }
 
 function getMemoryStorage(): MemoryStorage {
@@ -48,15 +57,23 @@ export const askHandler = async (req: Request, res: Response) => {
     let aiResponse = null;
     let errors: string[] = [];
 
-    // Step 1: HRC validation if requested
+    // Step 1: HRC overlay evaluation if requested
     if (useHRC) {
       try {
-        const hrc = getHRCCore();
-        hrcValidation = await hrc.validate(message, { domain });
-        console.log("HRC validation result:", hrcValidation);
+        const overlay = getHRCOverlay();
+        const result = await overlay.evaluate(message, domain);
+        hrcValidation = result.metrics;
+        console.log('HRC overlay result:', result);
+        if (result.route === 'block') {
+          return res.status(400).json({
+            error: 'Message blocked by HRC overlay',
+            metrics: result.metrics,
+            timestamp: new Date().toISOString()
+          });
+        }
       } catch (error: any) {
-        console.error("HRC validation error:", error);
-        errors.push(`HRC validation failed: ${error.message}`);
+        console.error('HRC overlay error:', error);
+        errors.push(`HRC overlay failed: ${error.message}`);
       }
     }
 
