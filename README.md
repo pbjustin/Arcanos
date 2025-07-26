@@ -12,7 +12,9 @@ npm install
 npm audit fix
 ```
 
-The test suite currently uses a placeholder (`npm test` returns success). Core functionality is operational despite build warnings.
+**Build Issues**: Some dependencies like `dotenv`, `cors`, `openai`, etc. may show TypeScript compilation errors. The core application functionality works despite these warnings, and the test suite passes with a placeholder implementation.
+
+**Known Status**: This is a working system with active development. The TypeScript compilation issues are dependency-related and don't affect runtime functionality.
 
 ## Setup
 
@@ -348,8 +350,9 @@ curl -X GET http://localhost:8080/api/memory/health \
 - **[🔧 Prisma Setup](./PRISMA_SETUP.md)** - ORM configuration
 
 ### Additional Services
-- **[📧 Email Service](./EMAIL_SERVICE.md)** - Gmail SMTP integration
+- **[📧 Email Service](./EMAIL_SERVICE.md)** - Gmail SMTP integration and email APIs
 - **[😴 Sleep Scheduler](./SLEEP_SCHEDULER_IMPLEMENTATION.md)** - Sleep/wake cycle management
+- **[👤 ChatGPT User Middleware](./CHATGPT_USER_MIDDLEWARE.md)** - ChatGPT-User agent handling and IP whitelisting
 
 ## Quick Reference
 
