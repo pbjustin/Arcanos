@@ -1,8 +1,8 @@
 // AI-Controlled Worker System - Workers only execute when AI model instructs them to
-const path = require('path');
 const { modelControlHooks } = require('../services/model-control-hooks');
 const { diagnosticsService } = require('../services/diagnostics');
 const { createServiceLogger } = require('../utils/logger');
+const { workerRegistry, getWorkers } = require('./workerRegistry');
 const logger = createServiceLogger('Workers');
 
 // Determine worker logic mode
@@ -12,12 +12,11 @@ if (WORKER_LOGIC !== 'arcanos') {
   console.warn(`[AI-WORKERS] Non-standard worker logic: ${WORKER_LOGIC} - defaulting to ARCANOS`);
 }
 
-// Available worker functions - now AI-controlled execution shells
-const workerExecutions = {
-  memorySync: require(path.resolve(__dirname, './memorySync')),
-  goalWatcher: require(path.resolve(__dirname, './goalWatcher')),
-  clearTemp: require(path.resolve(__dirname, './clearTemp')),
-};
+// Dynamically loaded worker functions - hot swappable modules
+const workerExecutions = {};
+for (const name of getWorkers()) {
+  workerExecutions[name] = workerRegistry.get(name);
+}
 
 logger.info('AI-controlled worker system loaded');
 
