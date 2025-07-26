@@ -1,6 +1,5 @@
 // ARCANOS Main Routes - Extracted from index.ts for better modularity
 import { Router } from 'express';
-import { modelControlHooks } from '../services/model-control-hooks';
 import { memoryHandler } from '../handlers/memory-handler';
 import { auditHandler } from '../handlers/audit-handler';
 import { diagnosticHandler } from '../handlers/diagnostic-handler';

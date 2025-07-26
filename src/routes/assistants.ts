@@ -6,7 +6,7 @@ const router = express.Router();
 /**
  * GET /assistants - Get all synced assistants
  */
-router.get('/assistants', async (req, res) => {
+router.get('/assistants', async (_req, res) => {
   try {
     const assistants = await openAIAssistantsService.loadAssistants();
     const assistantNames = Object.keys(assistants);

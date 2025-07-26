@@ -102,7 +102,7 @@ app.use(express.static(publicDir));
 app.get('/health', (_, res) => res.send('✅ OK'));
 
 // Performance monitoring endpoint
-app.get('/performance', (req, res) => {
+app.get('/performance', (_req, res) => {
   const { performanceMonitor } = require('./utils/performance');
   const metrics = performanceMonitor.getMetrics();
   const memoryStatus = performanceMonitor.getMemoryPressureStatus();
