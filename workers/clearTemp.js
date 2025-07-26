@@ -2,9 +2,9 @@
 // Cleans temporary data when approved by ARCANOS model
 // Enhanced for sleep window with log cleanup functionality
 
-const { modelControlHooks } = require('../dist/services/model-control-hooks');
-const { diagnosticsService } = require('../dist/services/diagnostics');
-const { createServiceLogger } = require('../dist/utils/logger');
+const { modelControlHooks } = require('../services/model-control-hooks');
+const { diagnosticsService } = require('../services/diagnostics');
+const { createServiceLogger } = require('../utils/logger');
 const fs = require('fs').promises;
 const path = require('path');
 const logger = createServiceLogger('TempCleanerWorker');
@@ -43,7 +43,7 @@ module.exports = async function clearTemp() {
       }
       
       // Enhanced: Perform log cleanup during sleep window
-      const { shouldReduceServerActivity } = require('../dist/services/sleep-config');
+      const { shouldReduceServerActivity } = require('../services/sleep-config');
       if (shouldReduceServerActivity()) {
         await performLogCleanup();
       }
