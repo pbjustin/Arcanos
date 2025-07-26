@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { sendEmail } from '../utils/sendEmail';
+import { sendEmail } from '../services/email';
 import { OpenAIService, ChatMessage } from '../services/openai';
 
 let openaiService: OpenAIService | null = null;
@@ -19,7 +19,10 @@ export async function sendEmailAndRespond(req: Request, res: Response) {
       return res.status(400).json({ error: 'Missing required fields: to, subject, body.' });
     }
 
-    const emailResult = await sendEmail(to, subject, body);
+    // Convert text body to HTML for the new service
+    const htmlBody = body.replace(/\n/g, '<br>');
+    
+    const emailResult = await sendEmail(to, subject, htmlBody);
 
     const messages: ChatMessage[] = [
       { role: 'system', content: 'You are ARCANOS, a modular AI operations interface.' },
