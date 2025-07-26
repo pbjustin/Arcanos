@@ -1,5 +1,5 @@
-const { executionEngine } = require('./src/services/execution-engine');
-const { createServiceLogger } = require('./src/utils/logger');
+const { executionEngine } = require('./services/execution-engine');
+const { createServiceLogger } = require('./utils/logger');
 const logger = createServiceLogger('ActionRouter');
 
 const actions = {
