@@ -51,7 +51,7 @@ export class ExecutionEngine {
       }
 
       // Route action using centralized action router
-      const { routeAction } = require('../../actionRouter.js');
+      const { routeAction } = require('../actionRouter.js');
       return await routeAction(instruction);
 
     } catch (error: any) {
