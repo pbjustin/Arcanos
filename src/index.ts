@@ -8,6 +8,7 @@ import cors from 'cors';
 
 // Centralized configuration
 import { config, validateConfig, getEnvironmentStatus } from './config';
+import { applyCLEAROverlay } from './modules/clear-overlay';
 
 // Core route modules (extracted for better modularity)
 import router from './routes/index';
@@ -51,6 +52,13 @@ if (!configValidation.valid) {
 // Environment status
 const envStatus = getEnvironmentStatus();
 console.log("Configuration Status:", envStatus);
+
+// Initialize CLEAR overlay with strict settings
+applyCLEAROverlay({
+  enforceContextBoundaries: true,
+  hallucinationControl: { enabled: true, fallback: 'diagnostic-fail' },
+  logicMemorySync: true,
+});
 
 const app = express();
 const PORT = config.server.port;
