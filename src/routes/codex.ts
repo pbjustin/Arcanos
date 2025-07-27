@@ -6,7 +6,13 @@ const router = Router();
 
 // POST /codex/dispatch - route requests through AI dispatcher
 router.post('/dispatch', async (req, res) => {
-  const { prompt, context } = req.body || {};
+  let { prompt, context } = req.body || {};
+
+  // ✅ Fix for ARCANOS memory routing edge case
+  if (!context || typeof context !== 'string') {
+    context = '[ARCANOS:SESSION_DEFAULT]'; // fallback context
+    console.warn('⚠️ Context was null, using fallback context string.');
+  }
 
   if (!prompt) {
     return sendErrorResponse(res, 400, 'prompt is required');
