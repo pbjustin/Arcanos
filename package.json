@@ -15,7 +15,8 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
-    "test": "echo \"No tests defined\" && exit 0"
+    "test": "echo \"No tests defined\" && exit 0",
+    "email:diagnostic": "node bin/email-diagnostic.js"
   },
   "dependencies": {
     "@prisma/client": "^6.12.0",

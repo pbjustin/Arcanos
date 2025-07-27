@@ -13,6 +13,12 @@ export interface EmailResponse {
   error?: string;
   verified?: boolean;
   transportType?: string;
+  providerResponse?: {
+    statusCode?: number;
+    responseCode?: number;
+    headers?: any;
+    body?: any;
+  };
 }
 
 class EmailService {
@@ -242,7 +248,10 @@ class EmailService {
         envelope: info.envelope,
         accepted: info.accepted,
         rejected: info.rejected,
-        pending: info.pending
+        pending: info.pending,
+        responseCode: info.responseCode,
+        statusCode: info.statusCode,
+        headers: info.headers
       });
 
       // REQUIREMENT: Add fallback warning if transporter silently fails
@@ -252,7 +261,13 @@ class EmailService {
           success: false,
           error: 'Silent failure detected: No message ID returned from transporter',
           verified: verificationSuccess,
-          transportType: this.transportType
+          transportType: this.transportType,
+          providerResponse: {
+            statusCode: info.statusCode,
+            responseCode: info.responseCode,
+            headers: info.headers,
+            body: info.response
+          }
         };
       }
 
@@ -263,7 +278,13 @@ class EmailService {
           success: false,
           error: `Email rejected for recipients: ${info.rejected.join(', ')}`,
           verified: verificationSuccess,
-          transportType: this.transportType
+          transportType: this.transportType,
+          providerResponse: {
+            statusCode: info.statusCode,
+            responseCode: info.responseCode,
+            headers: info.headers,
+            body: info.response
+          }
         };
       }
 
@@ -271,7 +292,13 @@ class EmailService {
         success: true,
         messageId: info.messageId,
         verified: verificationSuccess,
-        transportType: this.transportType
+        transportType: this.transportType,
+        providerResponse: {
+          statusCode: info.statusCode,
+          responseCode: info.responseCode,
+          headers: info.headers,
+          body: info.response
+        }
       };
       
     } catch (error: any) {
@@ -307,7 +334,12 @@ class EmailService {
         success: false,
         error: error.message,
         verified: false,
-        transportType: this.transportType
+        transportType: this.transportType,
+        providerResponse: {
+          statusCode: error.responseCode,
+          headers: error.headers,
+          body: error.response
+        }
       };
     }
   }
