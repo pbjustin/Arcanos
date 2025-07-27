@@ -59,6 +59,21 @@ worker: RUN_WORKERS=true node --max-old-space-size=7168 dist/index.js
 CMD ["node", "--max-old-space-size=7168", "dist/index.js"]
 ```
 
+### NPM Install Optimizations
+
+To reduce memory spikes during dependency installation, a `.npmrc` file configures offline caching:
+
+```ini
+prefer-offline=true
+cache-min=999999
+```
+
+Docker and CI builds install dependencies with a lower memory limit:
+
+```bash
+NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev
+```
+
 ### Memory Monitoring
 
 Added real-time memory monitoring to track usage:
