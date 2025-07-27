@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { sendEmail } from '../utils/sendEmail';
+import { sendEmail } from '../services/email';
 
 export async function sendEmailIntent(req: Request, res: Response) {
   const { to, subject, body } = req.body;
@@ -8,10 +8,18 @@ export async function sendEmailIntent(req: Request, res: Response) {
     return res.status(400).json({ error: 'Missing required fields: to, subject, body.' });
   }
 
-  const result = await sendEmail(to, subject, body);
+  // Convert text body to HTML for the new service
+  const htmlBody = body.replace(/\n/g, '<br>');
+  
+  const result = await sendEmail(to, subject, htmlBody);
 
   if (result.success) {
-    return res.status(200).json({ message: 'Email sent successfully.', info: result.info });
+    return res.status(200).json({ 
+      message: 'Email sent successfully.', 
+      messageId: result.messageId,
+      verified: result.verified,
+      transportType: result.transportType
+    });
   } else {
     return res.status(500).json({ error: result.error });
   }
