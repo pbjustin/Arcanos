@@ -16,7 +16,8 @@
     "prisma:push": "prisma db push",
     "prisma:studio": "prisma studio",
     "test": "echo \"No tests defined\" && exit 0",
-    "email:diagnostic": "node bin/email-diagnostic.js"
+    "email:diagnostic": "node bin/email-diagnostic.js",
+    "ci:build": "NODE_OPTIONS='--max_old_space_size=256' npm install --omit=dev && npm run build"
   },
   "dependencies": {
     "@prisma/client": "^6.12.0",
@@ -42,6 +43,7 @@
     "@types/dotenv": "^6.1.1",
     "@types/express": "^4.17.0",
     "@types/node": "^20.19.9",
+    "@types/axios": "^0.14.4",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^6.4.17",
     "@types/pg": "^8.15.4",

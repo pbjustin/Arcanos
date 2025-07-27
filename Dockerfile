@@ -5,11 +5,11 @@ FROM node:18-alpine AS builder
 # Set working directory
 WORKDIR /app
 
-# Copy package files for dependency installation
-COPY package*.json ./
+# Copy package files and .npmrc for dependency installation
+COPY package*.json .npmrc ./
 
-# Install dependencies with npm ci for reproducible builds
-RUN npm ci --omit=dev && npm cache clean --force
+# Install production dependencies with capped memory
+RUN NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev --no-audit --no-fund
 
 # Copy source code
 COPY src/ ./src/
@@ -19,8 +19,12 @@ COPY tsconfig.json ./
 # Copy everything and let npm build handle optional directories conditionally
 COPY . ./
 
-# Install dev dependencies for build
-RUN npm ci
+# Install dev dependencies if lockfile is present
+RUN if [ -f package-lock.json ]; then \
+      npm ci || npm install; \
+    else \
+      npm install; \
+    fi
 
 # Build the application
 RUN npm run build
@@ -38,11 +42,11 @@ RUN addgroup -g 1001 -S nodejs && \
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files and .npmrc
+COPY package*.json .npmrc ./
 
-# Install only production dependencies
-RUN npm ci --omit=dev && npm cache clean --force
+# Install only production dependencies with capped memory
+RUN NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev --no-audit --no-fund
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
