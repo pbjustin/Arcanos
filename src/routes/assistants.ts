@@ -6,7 +6,7 @@ const router = express.Router();
 /**
  * GET /assistants - Get all synced assistants
  */
-router.get('/assistants', async (req, res) => {
+router.get('/assistants', async (_req, res) => {
   try {
     const assistants = await openAIAssistantsService.loadAssistants();
     const assistantNames = Object.keys(assistants);
@@ -30,7 +30,7 @@ router.get('/assistants', async (req, res) => {
 /**
  * POST /assistants/sync - Manually trigger assistant sync
  */
-router.post('/assistants/sync', async (req, res) => {
+router.post('/assistants/sync', async (_req, res) => {
   try {
     console.log('[API] Manual assistant sync triggered');
     const assistants = await openAIAssistantsService.syncAssistants();

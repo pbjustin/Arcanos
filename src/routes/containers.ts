@@ -7,7 +7,7 @@ import { exec } from 'child_process';
 const router = Router();
 
 // ✅ 1. STATUS: List tracked containers
-router.get('/status', (req, res) => {
+router.get('/status', (_req, res) => {
   exec("docker ps --format '{{json .}}'", (err, stdout) => {
     if (err) return res.status(500).json({ error: 'Docker status failed' });
 

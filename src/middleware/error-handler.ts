@@ -1,6 +1,5 @@
 // Centralized Error Handler for ARCANOS Backend
 import { Request, Response, NextFunction } from 'express';
-import { routeRecovery } from '../handlers/route-recovery';
 
 export interface ErrorHandlerOptions {
   enableRecovery?: boolean;

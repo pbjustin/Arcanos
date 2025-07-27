@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
 import { askArcanosV1_Safe } from '../services/arcanos-v1-interface';
 import { createServiceLogger } from '../utils/logger';
 

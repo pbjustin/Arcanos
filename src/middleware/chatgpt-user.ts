@@ -24,7 +24,6 @@ export function chatGPTUserMiddleware(options: ChatGPTUserOptions = {}) {
   const { 
     allowPostMethods = false, 
     rateLimit = true,
-    logToFile = false,
     diagnosticsQueue
   } = options;
 
