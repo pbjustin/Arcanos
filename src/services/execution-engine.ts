@@ -8,6 +8,7 @@ import { diagnosticsService } from './diagnostics';
 import { workerStatusService } from './worker-status';
 import * as cron from 'node-cron';
 import { databaseService } from './database';
+import { initializeFallbackScheduler } from '../workers/default-scheduler';
 
 export interface ExecutionResult {
   success: boolean;
@@ -73,6 +74,12 @@ export class ExecutionEngine {
     const sortedInstructions = instructions.sort((a, b) => (b.priority || 5) - (a.priority || 5));
     
     for (const instruction of sortedInstructions) {
+      if (instruction.action === 'schedule' && !instruction.worker) {
+        console.warn('⚠️ Schedule instruction received with undefined worker. Applying fallback...');
+        instruction.worker = 'defaultScheduler';
+        initializeFallbackScheduler(instruction);
+      }
+
       const result = await this.executeInstruction(instruction);
       results.push(result);
       
