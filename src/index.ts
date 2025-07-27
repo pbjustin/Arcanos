@@ -17,6 +17,7 @@ import aiRoutes from './routes/ai';
 import memoryRouter from './routes/memory';
 import systemRouter from './routes/system';
 import codexRouter from './routes/codex';
+import { enableAdminControl, getAdminRouter } from './system/auth';
 
 // Middleware
 import { requireApiToken } from './middleware/api-token';
@@ -64,6 +65,15 @@ applyCLEAROverlay({
 
 const app = express();
 const PORT = config.server.port;
+
+if (process.env.ADMIN_KEY) {
+  enableAdminControl(process.env.ADMIN_KEY);
+  const adminRouter = getAdminRouter();
+  if (adminRouter) {
+    app.use('/admin', adminRouter);
+  }
+  console.log('🛡 Admin access enabled');
+}
 
 // Middleware stack
 app.use(cors());
