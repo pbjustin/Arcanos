@@ -9,7 +9,7 @@
   },
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm ci --omit=dev && npm run build",
+    "buildCommand": "NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev && npm run build",
     "env": {
       "NODE_OPTIONS": "--max_old_space_size=2048"
     }
