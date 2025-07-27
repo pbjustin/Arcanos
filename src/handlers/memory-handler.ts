@@ -2,9 +2,9 @@
 // Enforces clear handler separation and includes backup functionality
 
 import { Request, Response } from 'express';
-import { databaseService } from '../services/database';
 import { MemoryStorage } from '../storage/memory-storage';
 import { fallbackHandler } from './fallback-handler';
+import { modelControlHooks } from '../services/model-control-hooks';
 
 export class MemoryHandler {
   private fallbackMemory: MemoryStorage;
@@ -50,39 +50,41 @@ export class MemoryHandler {
       let backupUsed = false;
 
       try {
-        // Primary save attempt using database
-        const saveRequest = {
-          memory_key,
-          memory_value,
-          container_id
-        };
-        result = await databaseService.saveMemory(saveRequest);
-        console.log('✅ MEMORY-SNAPSHOT: Primary save successful:', { memory_key, container_id, timestamp });
-        
+        const dispatch = await modelControlHooks.manageMemory(
+          'store',
+          { key: memory_key, value: memory_value, userId: container_id, sessionId: (req.headers['x-session-id'] as string) || 'default' },
+          { userId: container_id, sessionId: (req.headers['x-session-id'] as string) || 'default', source: 'api', metadata: { headers: req.headers } }
+        );
+
+        if (!dispatch.success) {
+          throw new Error(dispatch.error || 'ARCANOS memory dispatch failed');
+        }
+
+        result = dispatch.results?.[0]?.result;
+        console.log('✅ MEMORY-SNAPSHOT: ARCANOS dispatch successful:', { memory_key, container_id, timestamp });
+
       } catch (primaryError: any) {
-        console.warn('⚠️ Primary memory save failed, attempting secondary stream:', primaryError.message);
-        
+        console.warn('⚠️ ARCANOS memory dispatch failed, attempting secondary stream:', primaryError.message);
+
         try {
-          // Secondary memory write stream as backup
           result = await this.fallbackMemory.storeMemory(
-            container_id, 
-            'default', 
-            'context', 
-            memory_key, 
+            container_id,
+            'default',
+            'context',
+            memory_key,
             memory_value
           );
           backupUsed = true;
           console.log('✅ MEMORY-SNAPSHOT: Secondary backup save successful:', { memory_key, container_id, timestamp });
-          
+
         } catch (backupError: any) {
           console.error('❌ Both primary and backup memory saves failed:', backupError.message);
-          
-          // Use fallback handler for complete failure
+
           const fallbackResult = await fallbackHandler.handleUndefinedWorker({
             type: 'memory',
             data: { memory_key, memory_value, container_id }
           });
-          
+
           if (fallbackResult.success) {
             result = fallbackResult.data;
             backupUsed = true;
@@ -169,16 +171,20 @@ export class MemoryHandler {
         memories: allMemories
       };
 
-      // Save snapshot using primary and backup streams
+      // Save snapshot using ARCANOS memory dispatch
       try {
-        await databaseService.saveMemory({
-          memory_key: `system_snapshot_${Date.now()}`,
-          memory_value: snapshotData,
-          container_id: 'system'
-        });
-        console.log('✅ SCHEDULED-SNAPSHOT: Primary snapshot save successful');
+        const dispatch = await modelControlHooks.manageMemory(
+          'store',
+          { key: `system_snapshot_${Date.now()}`, value: snapshotData, userId: 'system', sessionId: 'snapshot' },
+          { userId: 'system', sessionId: 'snapshot', source: 'system' }
+        );
+
+        if (!dispatch.success) {
+          throw new Error(dispatch.error || 'ARCANOS memory dispatch failed');
+        }
+        console.log('✅ SCHEDULED-SNAPSHOT: ARCANOS dispatch successful');
       } catch (primaryError: any) {
-        console.warn('⚠️ Primary snapshot save failed, using backup:', primaryError.message);
+        console.warn('⚠️ ARCANOS snapshot dispatch failed, using backup:', primaryError.message);
         await this.fallbackMemory.storeMemory('system', 'snapshots', 'system', `snapshot_${Date.now()}`, snapshotData);
         console.log('✅ SCHEDULED-SNAPSHOT: Backup snapshot save successful');
       }
