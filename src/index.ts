@@ -16,6 +16,7 @@ import mainRoutes from './routes/main';
 import aiRoutes from './routes/ai';
 import memoryRouter from './routes/memory';
 import systemRouter from './routes/system';
+import codexRouter from './routes/codex';
 
 // Middleware
 import { requireApiToken } from './middleware/api-token';
@@ -130,6 +131,7 @@ app.use('/', aiRoutes);    // AI-controlled endpoints (/ask, /query-finetune, et
 app.use('/api', router);
 app.use('/api/memory', requireApiToken, memoryRouter);
 app.use('/system', systemRouter);
+app.use('/codex', codexRouter);
 
 // Error handling middleware (must be last)
 app.use(errorHandler.handleError);
