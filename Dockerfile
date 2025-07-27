@@ -8,8 +8,12 @@ WORKDIR /app
 # Copy package files for dependency installation
 COPY package*.json ./
 
-# Install dependencies with npm ci for reproducible builds
-RUN npm ci --omit=dev && npm cache clean --force
+# Install dependencies with better memory handling
+RUN npm ci --omit=dev --prefer-offline --no-audit --no-fund
+# Clean npm cache separately
+RUN npm cache clean --force
+# Reduce build parallelism to prevent memory overrun
+ENV NODE_OPTIONS="--max_old_space_size=256"
 
 # Copy source code
 COPY src/ ./src/
@@ -41,8 +45,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm ci --omit=dev && npm cache clean --force
+# Install only production dependencies with improved memory handling
+RUN npm ci --omit=dev --prefer-offline --no-audit --no-fund
+RUN npm cache clean --force
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
