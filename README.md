@@ -79,6 +79,10 @@ This starts the server with hot reloading and 7GB memory allocation for optimal 
 npm run build
 npm start
 ```
+For CI environments like Railway, use the optimized build script:
+```bash
+npm run ci:build
+```
 
 ## API Endpoints
 
@@ -443,6 +447,8 @@ curl $PORT/api/memory/health
 ./src/modules/hrc/          # HRCCore validation module
 ./src/storage/              # Memory and file storage systems
 ./src/handlers/             # Request handlers
+./src/utils/goal-validator.ts # Goal input validation utility
+./examples/goal-validator-usage.ts # Example usage of the goal validator
 ./index.js                  # Legacy entry point (JavaScript)
 ./package.json              # Dependencies and scripts
 ./tsconfig.json             # TypeScript configuration
