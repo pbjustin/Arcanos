@@ -9,7 +9,8 @@ import { diagnosticsService } from './diagnostics';
 import { workerStatusService } from './worker-status';
 import * as cron from 'node-cron';
 import { databaseService } from './database';
-import { initializeFallbackScheduler } from '../workers/default-scheduler';
+import { isValidWorker } from './worker-manager';
+import { createServiceLogger } from '../utils/logger';
 // Dynamically load worker modules from the JS registry
 // If the registry is missing, provide an empty fallback implementation
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -23,6 +24,8 @@ try {
   getDynamicWorker = () => undefined;
   workerRegistryMissing = true;
 }
+
+const logger = createServiceLogger('ExecutionEngine');
 
 export interface ExecutionResult {
   success: boolean;
@@ -95,23 +98,24 @@ export class ExecutionEngine {
    */
   async executeInstructions(instructions: DispatchInstruction[]): Promise<ExecutionResult[]> {
     const results: ExecutionResult[] = [];
-    
+
+    const cleaned = this.cleanScheduleQueue(instructions);
+
     // Sort by priority (higher numbers first)
-    const sortedInstructions = instructions.sort((a, b) => (b.priority || 5) - (a.priority || 5));
+    const sortedInstructions = cleaned.sort((a, b) => (b.priority || 5) - (a.priority || 5));
     
     for (const instruction of sortedInstructions) {
       instruction.worker = this.normalizeWorker(instruction.worker);
 
-      if (instruction.action === 'schedule' && !instruction.worker) {
-        console.warn('⚠️ Schedule instruction received with undefined worker.');
-        if (instruction.schedule) {
-          initializeFallbackScheduler(instruction);
-          results.push({ success: true, response: 'Fallback scheduler initialized' });
-        } else {
-          console.warn('⚠️ No schedule provided. Skipping instruction.');
-          results.push({ success: false, error: 'schedule_missing' });
+      if (instruction.action === 'schedule') {
+        if (!instruction.worker) {
+          console.warn("No worker defined. Using 'defaultWorker'.");
+          instruction.worker = 'defaultWorker';
         }
-        continue;
+        if (!isValidWorker(instruction.worker)) {
+          results.push({ success: false, error: `invalid_worker_${instruction.worker}` });
+          continue;
+        }
       }
 
       const result = await this.executeInstruction(instruction);
@@ -182,9 +186,14 @@ export class ExecutionEngine {
     }
 
     if (!workerName) {
+      console.warn("No worker defined. Using 'defaultWorker'.");
+      workerName = 'defaultWorker';
+    }
+
+    if (!isValidWorker(workerName)) {
       return {
         success: false,
-        error: 'Worker name required for scheduling',
+        error: `Invalid worker: ${workerName}`
       };
     }
 
@@ -219,6 +228,7 @@ export class ExecutionEngine {
       // Task starts immediately with the schedule
 
       console.log(`✅ Scheduled task ${taskId} with expression: ${schedule}`);
+      this.logScheduleDiagnostics(taskId, workerName, schedule);
       
       return {
         success: true,
@@ -563,6 +573,25 @@ Provide a detailed analysis including:
         error: error.message
       };
     }
+  }
+
+  /**
+   * Remove malformed or duplicate schedule instructions
+   */
+  private cleanScheduleQueue(queue: DispatchInstruction[]): DispatchInstruction[] {
+    const seen = new Set<string>();
+    return queue.filter(task => {
+      if (task.action !== 'schedule') return true;
+      const worker = this.normalizeWorker(task.worker);
+      const hash = `${task.service || ''}-${worker}-${task.schedule}`;
+      if (seen.has(hash)) return false;
+      seen.add(hash);
+      return !!worker && !!task.schedule;
+    });
+  }
+
+  private logScheduleDiagnostics(taskId: string, worker: string, schedule: string): void {
+    logger.info(`[SCHEDULE] Task "${taskId}" scheduled for "${worker}" at ${schedule}`);
   }
 
   /**
