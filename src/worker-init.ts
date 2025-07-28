@@ -47,7 +47,15 @@ async function initializeAIControlledWorkers() {
   logger.info('Initializing AI-controlled worker system with enhanced workers');
   
   // Register available workers with AI control system (including new workers)
-  const availableWorkers = ['memorySync', 'goalWatcher', 'clearTemp', 'auditProcessor', 'maintenanceScheduler', 'emailDispatcher'];
+  const availableWorkers = [
+    'memorySync',
+    'goalWatcher',
+    'clearTemp',
+    'auditProcessor',
+    'maintenanceScheduler',
+    'emailDispatcher',
+    'scheduled_emails_worker'
+  ];
   
   for (const workerName of availableWorkers) {
     logger.info('Registering worker with AI control system', { workerName });
@@ -116,7 +124,15 @@ async function startWorkers() {
     'worker-startup',
     { 
       reason: 'RUN_WORKERS environment variable is true',
-      requestedWorkers: ['memorySync', 'goalWatcher', 'clearTemp', 'auditProcessor', 'maintenanceScheduler']
+      requestedWorkers: [
+        'memorySync',
+        'goalWatcher',
+        'clearTemp',
+        'auditProcessor',
+        'maintenanceScheduler',
+        'emailDispatcher',
+        'scheduled_emails_worker'
+      ]
     },
     {
       userId: 'system',
