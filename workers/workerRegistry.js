@@ -15,6 +15,19 @@ const REGISTRY_FILE = path.resolve(__dirname, '../storage/registered-workers.jso
 let registeredWorkers = [];
 let scheduleRegistry = [];
 
+// Ensure jobs always have a bound worker, even when defaultWorker is used
+function forceBindWorker(job) {
+  const name = job && job.parameters && job.parameters.name;
+  if (!job.worker || job.worker === 'defaultWorker') {
+    job.worker = {
+      AuditProcessorInitialization: 'auditProcessor',
+      ScheduledMaintenance: 'maintenanceScheduler',
+      EmailDigestJob: 'emailDispatcher'
+    }[name] || 'defaultWorker';
+  }
+  return job;
+}
+
 // AI controller event emitter for integration
 const aiController = new EventEmitter();
 
@@ -64,6 +77,7 @@ function registerWorker(workerName) {
 }
 
 function scheduleJob(job) {
+  job = forceBindWorker(job);
   if (!validateWorker(job.worker)) {
     console.error(`❌ Invalid worker: ${job.worker} — Job dropped.`);
     return;
@@ -131,6 +145,7 @@ module.exports = {
   validateWorker,
   registerWorker,
   scheduleJob,
+  forceBindWorker,
   registeredWorkers: () => [...registeredWorkers], // Return copy to prevent mutation
   scheduleRegistry: () => [...scheduleRegistry], // Return copy to prevent mutation
   fallbackScheduler,
