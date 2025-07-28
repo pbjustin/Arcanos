@@ -110,7 +110,7 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     errors.push('PORT must be a valid port number (1-65535)');
   }
 
-  const expectedModel = 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
+  const expectedModel = 'ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD';
   if (!config.ai.fineTunedModel) {
     errors.push(`AI_MODEL is required and must be set to ${expectedModel}`);
   } else if (config.ai.fineTunedModel !== expectedModel) {
