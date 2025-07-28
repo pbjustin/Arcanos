@@ -1,66 +1,30 @@
-// AI-Controlled Worker Initialization - Workers only run when AI model decides
+// AI-Controlled Worker Initialization - Streamlined for OpenAI SDK patterns
 import { workerStatusService } from './services/worker-status';
 import { modelControlHooks } from './services/model-control-hooks';
 import { isTrue } from './utils/env';
 import { goalTrackerWorker } from './workers/goal-tracker';
 import { maintenanceSchedulerWorker } from './workers/maintenance-scheduler';
 import { createServiceLogger } from './utils/logger';
-import cron from 'node-cron';
 
-// Global registry for active workers
-declare global {
-  var activeWorkers: Map<string, any> | undefined;
-}
-
-function workerInit(name: string, instance: any) {
-  const globalAny = globalThis as any;
-  if (!globalAny.activeWorkers) {
-    globalAny.activeWorkers = new Map<string, any>();
-  }
-  if (globalAny.activeWorkers.has(name)) {
-    logger.info(`Worker ${name} already registered`);
-    return globalAny.activeWorkers.get(name);
-  }
-  const context = { instance, started: false, registeredAt: Date.now() };
-  globalAny.activeWorkers.set(name, context);
-  return context;
-}
-
-function pruneStaleWorkers() {
-  const globalAny = globalThis as any;
-  if (!globalAny.activeWorkers) return;
-  const now = Date.now();
-  for (const [name, ctx] of globalAny.activeWorkers.entries()) {
-    if (!ctx.started && now - ctx.registeredAt > 30 * 60 * 1000) {
-      globalAny.activeWorkers.delete(name);
-      logger.info(`Pruned stale worker ${name}`);
-    }
-  }
-}
-
-// Run cleanup every 15 minutes
-cron.schedule('*/15 * * * *', pruneStaleWorkers);
+// Simplified worker registry - explicit and persistent
+const activeWorkers = new Map<string, { instance: any; started: boolean; registeredAt: number }>();
 
 const logger = createServiceLogger('WorkerInit');
 
 async function initializeAIControlledWorkers() {
-  logger.info('Initializing AI-controlled worker system with enhanced workers');
+  logger.info('Initializing streamlined AI-controlled worker system');
   
-  // Register available workers with AI control system (including new workers)
+  // Explicit worker registration - only modern TypeScript workers
   const availableWorkers = [
-    'memorySync',
-    'goalWatcher',
-    'clearTemp',
-    'auditProcessor',
+    'goalTracker',
     'maintenanceScheduler',
     'emailDispatcher',
-    'scheduled_emails_worker'
+    'auditProcessor'
   ];
   
   for (const workerName of availableWorkers) {
     logger.info('Registering worker with AI control system', { workerName });
     
-    // Each worker registers itself with the AI control system
     try {
       await modelControlHooks.orchestrateWorker(
         workerName,
@@ -72,6 +36,14 @@ async function initializeAIControlledWorkers() {
           source: 'system'
         }
       );
+      
+      // Explicit registration
+      activeWorkers.set(workerName, { 
+        instance: null, 
+        started: false, 
+        registeredAt: Date.now() 
+      });
+      
     } catch (error: any) {
       logger.warning('Failed to register worker with AI control', { workerName, error: error.message });
     }
@@ -81,20 +53,22 @@ async function initializeAIControlledWorkers() {
 }
 
 async function startBackgroundWorkers() {
-  logger.info('Starting enhanced background workers');
+  logger.info('Starting streamlined background workers');
 
   try {
     // Start Goal Tracker Worker
-    const goalCtx = workerInit('goalTracker', goalTrackerWorker);
-    if (!goalCtx.started) {
+    const goalCtx = activeWorkers.get('goalTracker');
+    if (goalCtx && !goalCtx.started) {
+      goalCtx.instance = goalTrackerWorker;
       await goalTrackerWorker.start();
       goalCtx.started = true;
       logger.success('Goal Tracker Worker started');
     }
 
     // Start Maintenance Scheduler Worker
-    const maintCtx = workerInit('maintenanceScheduler', maintenanceSchedulerWorker);
-    if (!maintCtx.started) {
+    const maintCtx = activeWorkers.get('maintenanceScheduler');
+    if (maintCtx && !maintCtx.started) {
+      maintCtx.instance = maintenanceSchedulerWorker;
       await maintenanceSchedulerWorker.start();
       maintCtx.started = true;
       logger.success('Maintenance Scheduler Worker started');
@@ -108,31 +82,23 @@ async function startBackgroundWorkers() {
   }
 }
 
-// Legacy function for compatibility - now AI controlled
+// Streamlined worker startup - removed legacy fallback logic
 async function startWorkers() {
-  logger.info('Legacy startWorkers called - routing to AI control and enhanced workers');
+  logger.info('Starting AI-controlled workers with streamlined logic');
   
-  // Start the enhanced background workers
+  // Start the background workers
   try {
     await startBackgroundWorkers();
   } catch (error: any) {
     logger.error('Background worker startup failed', error);
   }
   
-  // Ask AI whether to start additional workers
+  // Ask AI whether to start additional workers (simplified request)
   const result = await modelControlHooks.processRequest(
     'worker-startup',
     { 
       reason: 'RUN_WORKERS environment variable is true',
-      requestedWorkers: [
-        'memorySync',
-        'goalWatcher',
-        'clearTemp',
-        'auditProcessor',
-        'maintenanceScheduler',
-        'emailDispatcher',
-        'scheduled_emails_worker'
-      ]
+      requestedWorkers: Array.from(activeWorkers.keys())
     },
     {
       userId: 'system',
@@ -148,7 +114,7 @@ async function startWorkers() {
   }
 }
 
-// Always initialize minimal system workers for status tracking
+// Initialize minimal system workers for status tracking
 workerStatusService.initializeMinimalWorkers();
 console.log('[WORKER-INIT] Minimal system workers initialized');
 
@@ -157,7 +123,7 @@ initializeAIControlledWorkers().catch(error => {
   console.error('[AI-WORKERS] Failed to initialize AI-controlled workers:', error);
 });
 
-// Conditional worker startup based on environment variable - now AI controlled
+// Conditional worker startup based on environment variable - now streamlined
 if (isTrue(process.env.RUN_WORKERS)) {
   startWorkers().catch(error => {
     console.error('[AI-WORKERS] Failed to start AI-controlled workers:', error);
@@ -166,4 +132,4 @@ if (isTrue(process.env.RUN_WORKERS)) {
   console.log('[WORKER-INIT] Workers disabled (RUN_WORKERS not set to true)');
 }
 
-export { startWorkers, initializeAIControlledWorkers };
+export { startWorkers, initializeAIControlledWorkers, activeWorkers };
