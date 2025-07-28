@@ -175,10 +175,18 @@ async function startBackgroundWorkers(): Promise<void> {
     let startedCount = 0;
     
     for (const workerName of workersToStart) {
-      const workerCtx = activeWorkers.get(workerName);
+      let workerCtx = activeWorkers.get(workerName);
       if (!workerCtx) {
-        logger.warning(`⚠️ Worker context not found for ${workerName}`);
-        continue;
+        logger.warning(`⚠️ Worker context not found for ${workerName} - creating placeholder`);
+        workerCtx = {
+          instance: null,
+          started: false,
+          registeredAt: Date.now(),
+          lastError: 'context_missing',
+          retryCount: 0,
+          system: 'legacy'
+        };
+        activeWorkers.set(workerName, workerCtx);
       }
 
       if (workerCtx.started) {
