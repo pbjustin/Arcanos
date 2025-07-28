@@ -1,0 +1,12 @@
+[
+  "memorySync",
+  "goalWatcher",
+  "clearTemp",
+  "codeImprovement",
+  "auditProcessor",
+  "maintenanceScheduler",
+  "emailDispatcher",
+  "scheduled_emails_worker",
+  "testWorker",
+  "aiControlledWorker"
+]
