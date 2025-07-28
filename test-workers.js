@@ -22,10 +22,10 @@ const mockModelControlHooks = {
 // Mock require to use our mock hooks
 const originalRequire = require;
 require = function(modulePath) {
-  if (modulePath === '../src/services/model-control-hooks') {
+  if (modulePath === '../src/services/model-control-hooks' || modulePath === '../dist/services/model-control-hooks') {
     return { modelControlHooks: mockModelControlHooks };
   }
-  if (modulePath === '../src/services/sleep-config') {
+  if (modulePath === '../src/services/sleep-config' || modulePath === '../dist/services/sleep-config') {
     return originalRequire('./dist/services/sleep-config');
   }
   return originalRequire.apply(this, arguments);

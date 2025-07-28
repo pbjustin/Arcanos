@@ -1,2 +1,2 @@
-const clearTemp = require('../clearTemp');
-module.exports = { name: 'clearTemp', handler: clearTemp };
+const clearTemp = require("../clearTemp");
+module.exports = { name: "clearTemp", handler: clearTemp };

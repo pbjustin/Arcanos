@@ -1,2 +1,2 @@
-const handler = require('../auditProcessor');
-module.exports = { name: 'auditProcessor', handler };
+const handler = require("../auditProcessor");
+module.exports = { name: "auditProcessor", handler };

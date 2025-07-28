@@ -1,2 +1,2 @@
-const handler = require('../maintenanceScheduler');
-module.exports = { name: 'maintenanceScheduler', handler };
+const handler = require("../maintenanceScheduler");
+module.exports = { name: "maintenanceScheduler", handler };

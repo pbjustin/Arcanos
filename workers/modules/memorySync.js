@@ -1,2 +1,2 @@
-const memorySync = require('../memorySync');
-module.exports = { name: 'memorySync', handler: memorySync };
+const memorySync = require("../memorySync");
+module.exports = { name: "memorySync", handler: memorySync };
