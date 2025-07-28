@@ -319,6 +319,7 @@ The backend implements intelligent intent detection that routes requests to spec
 ### Optional Configuration
 - `GPT_TOKEN` - Authorization token for GPT diagnostic access
 - `ARCANOS_API_TOKEN` - Token for memory and diagnostic endpoints
+- `ADMIN_KEY` - Secret key to enable `/admin` routes
 - `ASK_CONCURRENCY_LIMIT` - Max concurrent `/api/ask` requests (default: 3)
 - `MODEL_ID` - Base model for fine-tuning pipeline (default: gpt-3.5-turbo)
 
@@ -327,6 +328,21 @@ Example memory request with token:
 ```bash
 curl -X GET http://localhost:8080/api/memory/health \
   -H "Authorization: Bearer $ARCANOS_API_TOKEN"
+```
+
+### Admin Access
+
+Set `ADMIN_KEY` in your environment to enable the admin router. When enabled,
+requests to `/admin/*` must include:
+
+```bash
+Authorization: Bearer $ADMIN_KEY
+```
+
+Example status check:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_KEY" http://localhost:8080/admin/status
 ```
 
 ## 📚 Documentation
