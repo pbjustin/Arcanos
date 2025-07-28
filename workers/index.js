@@ -2,7 +2,15 @@
 const { modelControlHooks } = require('../dist/services/model-control-hooks');
 const { diagnosticsService } = require('../dist/services/diagnostics');
 const { createServiceLogger } = require('../dist/utils/logger');
-const { workerRegistry, getWorkers } = require('./workerRegistry');
+let workerRegistry;
+let getWorkers;
+try {
+  ({ workerRegistry, getWorkers } = require('./workerRegistry'));
+} catch (err) {
+  console.warn('[Workers] workerRegistry module missing, using empty registry');
+  workerRegistry = {};
+  getWorkers = () => [];
+}
 const logger = createServiceLogger('Workers');
 
 // Determine worker logic mode
@@ -15,7 +23,9 @@ if (WORKER_LOGIC !== 'arcanos') {
 // Dynamically loaded worker functions - hot swappable modules
 const workerExecutions = {};
 for (const name of getWorkers()) {
-  workerExecutions[name] = workerRegistry.get(name);
+  if (workerRegistry.get) {
+    workerExecutions[name] = workerRegistry.get(name);
+  }
 }
 
 logger.info('AI-controlled worker system loaded');
