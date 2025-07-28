@@ -172,7 +172,7 @@ export class ExecutionEngine {
    */
   public handleSchedule(instruction: DispatchInstruction): ExecutionResult {
     const { schedule, parameters = {} } = instruction;
-    const workerName = this.normalizeWorker(instruction.worker);
+    let workerName = this.normalizeWorker(instruction.worker);
 
     if (!schedule) {
       return {
@@ -182,8 +182,10 @@ export class ExecutionEngine {
     }
 
     if (!workerName) {
-      initializeFallbackScheduler(instruction);
-      return { success: true, response: 'Fallback scheduler initialized' };
+      workerName = process.env.FALLBACK_WORKER || 'defaultWorker';
+      console.warn(
+        `[ExecutionEngine] Missing workerName - using fallback ${workerName}`
+      );
     }
 
     try {
