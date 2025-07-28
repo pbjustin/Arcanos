@@ -101,10 +101,17 @@ export class ExecutionEngine {
     
     for (const instruction of sortedInstructions) {
       instruction.worker = this.normalizeWorker(instruction.worker);
+
       if (instruction.action === 'schedule' && !instruction.worker) {
-        console.warn('⚠️ Schedule instruction received with undefined worker. Applying fallback...');
-        instruction.worker = 'defaultScheduler';
-        initializeFallbackScheduler(instruction);
+        console.warn('⚠️ Schedule instruction received with undefined worker.');
+        if (instruction.schedule) {
+          initializeFallbackScheduler(instruction);
+          results.push({ success: true, response: 'Fallback scheduler initialized' });
+        } else {
+          console.warn('⚠️ No schedule provided. Skipping instruction.');
+          results.push({ success: false, error: 'schedule_missing' });
+        }
+        continue;
       }
 
       const result = await this.executeInstruction(instruction);
@@ -166,12 +173,17 @@ export class ExecutionEngine {
   public handleSchedule(instruction: DispatchInstruction): ExecutionResult {
     const { schedule, parameters = {} } = instruction;
     const workerName = this.normalizeWorker(instruction.worker);
-    
+
     if (!schedule) {
       return {
         success: false,
         error: 'Schedule expression required'
       };
+    }
+
+    if (!workerName) {
+      initializeFallbackScheduler(instruction);
+      return { success: true, response: 'Fallback scheduler initialized' };
     }
 
     try {

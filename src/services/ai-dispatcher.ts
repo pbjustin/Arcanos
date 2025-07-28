@@ -248,11 +248,21 @@ Please analyze this request and provide appropriate instructions for handling it
       }
 
       // Handle both single instruction and array of instructions
-      if (Array.isArray(parsed)) {
-        return parsed;
-      } else {
-        return [parsed];
-      }
+      let instructions: DispatchInstruction[] = Array.isArray(parsed) ? parsed : [parsed];
+
+      // Drop invalid schedule instructions and warn about missing worker names
+      instructions = instructions.filter(instr => {
+        if (instr.action === 'schedule' && !instr.worker && !instr.schedule) {
+          console.warn('[AI-DISPATCHER] Dropping invalid schedule instruction', instr);
+          return false;
+        }
+        if ((instr.action === 'schedule' || instr.action === 'delegate') && !instr.worker) {
+          console.warn('[AI-DISPATCHER] Instruction missing worker name', instr);
+        }
+        return true;
+      });
+
+      return instructions;
 
     } catch (error) {
       console.warn('⚠️ Failed to parse model response, using fallback:', error);
