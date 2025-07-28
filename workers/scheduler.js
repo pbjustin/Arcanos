@@ -1,5 +1,14 @@
 const cron = require('node-cron');
 const { createServiceLogger } = require('../dist/utils/logger');
+// Import worker validation
+let validateWorker;
+try {
+  ({ validateWorker } = require('./workerRegistry'));
+} catch (err) {
+  console.warn('[Scheduler] Worker validation unavailable');
+  validateWorker = () => false;
+}
+
 let executionEngine;
 try {
   ({ executionEngine } = require('../dist/services/execution-engine'));
@@ -15,6 +24,13 @@ function scheduleInstruction(id, cronExpr, instruction) {
     logger.warning('No schedule expression provided', { id });
     return;
   }
+  
+  // Validate worker if instruction requires one
+  if (instruction.worker && !validateWorker(instruction.worker)) {
+    logger.error('Invalid worker for scheduled instruction', { id, worker: instruction.worker });
+    return;
+  }
+  
   if (scheduledTasks.has(id)) {
     logger.info('Task already scheduled', { id });
     return scheduledTasks.get(id);
