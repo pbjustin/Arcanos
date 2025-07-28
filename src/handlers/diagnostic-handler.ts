@@ -3,7 +3,6 @@
 
 import { Request, Response } from 'express';
 import { diagnosticsService } from '../services/diagnostics';
-import { fallbackHandler } from './fallback-handler';
 
 export class DiagnosticHandler {
   private diagnosticLog: any[] = [];
@@ -41,23 +40,16 @@ export class DiagnosticHandler {
           result = await diagnosticsService.executeDiagnosticCommand(command);
         }
       } catch (serviceError: any) {
-        console.warn('⚠️ Primary diagnostic service failed, using fallback:', serviceError.message);
+        console.warn('⚠️ Primary diagnostic service failed:', serviceError.message);
         
-        // Use fallback handler if primary diagnostic service fails
-        const fallbackResult = await fallbackHandler.handleUndefinedWorker({
-          type: 'diagnostic',
-          message: command,
-          data: { command, force: forceMode }
-        });
-        
+        // Streamlined error handling - fail fast
         result = {
-          success: fallbackResult.success,
+          success: false,
           command,
-          category: 'fallback',
-          data: fallbackResult.data || {},
+          category: 'error',
+          data: {},
           timestamp,
-          fallback_used: true,
-          error: fallbackResult.error,
+          error: serviceError.message,
           forceMode
         };
       }
@@ -102,38 +94,17 @@ export class DiagnosticHandler {
         timestamp
       });
       
-      // Final fallback response
-      try {
-        const fallbackResult = await fallbackHandler.handleUndefinedWorker({
-          type: 'diagnostic',
-          message: 'diagnostic failure recovery',
-          data: { error: error.message, force: forceMode }
-        });
-        
-        res.status(500).json({
-          success: false,
-          command: params.command || 'unknown',
-          category: 'error',
-          data: fallbackResult.data || {},
-          timestamp,
-          error: error.message,
-          fallback_used: true,
-          diagnostic_logged: true,
-          forceMode
-        });
-      } catch (fallbackError: any) {
-        res.status(500).json({
-          success: false,
-          command: params.command || 'unknown',
-          category: 'error',
-          data: {},
-          timestamp,
-          error: error.message,
-          fallback_error: fallbackError.message,
-          diagnostic_logged: true,
-          forceMode
-        });
-      }
+      // Streamlined error response
+      res.status(500).json({
+        success: false,
+        command: params.command || 'unknown',
+        category: 'error',
+        data: {},
+        timestamp,
+        error: error.message,
+        diagnostic_logged: true,
+        forceMode
+      });
     }
   }
 

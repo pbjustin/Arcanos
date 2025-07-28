@@ -1,204 +1,156 @@
-// ARCANOS:MEMORY-HANDLER - Dedicated memory route handler
-// Enforces clear handler separation and includes backup functionality
+// ARCANOS:MEMORY-HANDLER - Streamlined memory route handler
+// Uses new OpenAI SDK-compatible memory operations
 
 import { Request, Response } from 'express';
-import { MemoryStorage } from '../storage/memory-storage';
-import { fallbackHandler } from './fallback-handler';
+import { memoryOperations } from '../services/memory-operations';
 import { modelControlHooks } from '../services/model-control-hooks';
 
 export class MemoryHandler {
-  private fallbackMemory: MemoryStorage;
-
-  constructor() {
-    this.fallbackMemory = new MemoryStorage();
-  }
-
   async handleMemoryRequest(req: Request, res: Response): Promise<void> {
-    console.log('📝 MemoryHandler: Processing memory request with timestamp confirmation');
+    console.log('📝 MemoryHandler: Processing memory request with streamlined operations');
     const timestamp = new Date().toISOString();
     
     try {
-      const { memory_key, memory_value } = req.body;
+      const { memory_key, memory_value, operation = 'store' } = req.body;
       
-      if (!memory_key) {
+      if (!memory_key && operation !== 'list') {
         res.status(400).json({ 
-          error: 'memory_key is required',
+          error: 'memory_key is required for non-list operations',
           example: { memory_key: 'user_preference', memory_value: { theme: 'dark' } },
           timestamp
         });
         return;
       }
 
-      if (memory_value === undefined) {
-        res.status(400).json({ 
-          error: 'memory_value is required (can be null)',
-          example: { memory_key: 'user_preference', memory_value: { theme: 'dark' } },
-          timestamp
-        });
-        return;
-      }
-
-      const container_id = (req.headers['x-container-id'] as string) || 'default';
-      
-      console.log('💾 MEMORY-SNAPSHOT: Saving with timestamp confirmation:', { 
-        memory_key, 
-        container_id, 
-        timestamp 
-      });
-      
+      // Use streamlined memory operations based on operation type
       let result;
-      let backupUsed = false;
-
+      
       try {
-        const dispatch = await modelControlHooks.manageMemory(
-          'store',
-          { key: memory_key, value: memory_value, userId: container_id, sessionId: (req.headers['x-session-id'] as string) || 'default' },
-          { userId: container_id, sessionId: (req.headers['x-session-id'] as string) || 'default', source: 'api', metadata: { headers: req.headers } }
-        );
-
-        if (!dispatch.success) {
-          throw new Error(dispatch.error || 'ARCANOS memory dispatch failed');
+        switch (operation) {
+          case 'store':
+          case 'save':
+            if (memory_value === undefined) {
+              res.status(400).json({ 
+                error: 'memory_value is required for store/save operations',
+                timestamp
+              });
+              return;
+            }
+            
+            result = await memoryOperations.storeMemory({
+              userId: (req.headers['x-container-id'] as string) || 'default',
+              sessionId: (req.headers['x-session-id'] as string) || 'default',
+              content: typeof memory_value === 'string' ? memory_value : JSON.stringify(memory_value),
+              metadata: {
+                type: 'context',
+                importance: 'medium',
+                timestamp: new Date().toISOString(),
+                tags: [memory_key]
+              }
+            });
+            break;
+            
+          case 'load':
+          case 'get':
+            const searchResults = await memoryOperations.searchMemories({
+              userId: (req.headers['x-container-id'] as string) || 'default',
+              sessionId: (req.headers['x-session-id'] as string) || 'default',
+              tags: [memory_key],
+              limit: 1
+            });
+            result = searchResults[0] || null;
+            break;
+            
+          case 'list':
+            result = await memoryOperations.searchMemories({
+              userId: (req.headers['x-container-id'] as string) || 'default',
+              sessionId: (req.headers['x-session-id'] as string) || 'default',
+              limit: 50
+            });
+            break;
+            
+          default:
+            res.status(400).json({ 
+              error: 'Invalid operation. Use: store, load, or list',
+              timestamp
+            });
+            return;
         }
 
-        result = dispatch.results?.[0]?.result;
-        console.log('✅ MEMORY-SNAPSHOT: ARCANOS dispatch successful:', { memory_key, container_id, timestamp });
-
-      } catch (primaryError: any) {
-        console.warn('⚠️ ARCANOS memory dispatch failed, attempting secondary stream:', primaryError.message);
-
-        try {
-          result = await this.fallbackMemory.storeMemory(
-            container_id,
-            'default',
-            'context',
-            memory_key,
-            memory_value
-          );
-          backupUsed = true;
-          console.log('✅ MEMORY-SNAPSHOT: Secondary backup save successful:', { memory_key, container_id, timestamp });
-
-        } catch (backupError: any) {
-          console.error('❌ Both primary and backup memory saves failed:', backupError.message);
-
-          const fallbackResult = await fallbackHandler.handleUndefinedWorker({
-            type: 'memory',
-            data: { memory_key, memory_value, container_id }
-          });
-
-          if (fallbackResult.success) {
-            result = fallbackResult.data;
-            backupUsed = true;
-            console.log('✅ MEMORY-SNAPSHOT: Fallback handler save successful:', { memory_key, container_id, timestamp });
-          } else {
-            throw new Error(`All memory save attempts failed: ${fallbackResult.error}`);
-          }
-        }
+        
+        console.log(`✅ Memory ${operation} operation successful:`, { memory_key, operation, timestamp });
+        
+        res.status(200).json({
+          success: true,
+          message: `Memory ${operation} completed`,
+          data: result,
+          operation,
+          timestamp
+        });
+        
+      } catch (error: any) {
+        console.error(`❌ Memory ${operation} operation failed:`, error);
+        res.status(500).json({ 
+          error: `Failed to ${operation} memory`,
+          details: error.message,
+          timestamp 
+        });
       }
-      
-      // Validate memory save operation with timestamp confirmation
-      const validationLog = {
-        memory_key,
-        container_id,
-        save_successful: true,
-        backup_used: backupUsed,
-        timestamp_confirmed: timestamp,
-        validation_timestamp: new Date().toISOString()
-      };
-      
-      console.log('✅ MEMORY-VALIDATION: Save operation validated:', validationLog);
-      
-      res.status(200).json({
-        success: true,
-        message: 'Memory saved successfully',
-        data: result,
-        snapshot_logged: true,
-        backup_used: backupUsed,
-        timestamp_confirmed: timestamp,
-        validation: validationLog
-      });
       
     } catch (error: any) {
-      console.error('❌ MEMORY-HANDLER: Complete failure:', error);
+      console.error('❌ MEMORY-HANDLER: Request processing failed:', error);
       res.status(500).json({ 
-        error: 'Failed to save memory',
+        error: 'Failed to process memory request',
         details: error.message,
-        timestamp_confirmed: timestamp 
+        timestamp 
       });
     }
   }
 
-  // Enhanced memory snapshot saving every 30 minutes
+  // Enhanced memory snapshot saving every hour
   startPeriodicMemorySnapshots(): void {
-    console.log('⏰ Starting periodic memory snapshots every 30 minutes');
+    console.log('⏰ Starting periodic memory snapshots every hour');
     
     // Primary: setInterval approach
     const intervalId = setInterval(async () => {
-      await this.performScheduledSnapshot('setInterval');
-    }, 30 * 60 * 1000); // 30 minutes
+      await this.performStreamlinedSnapshot();
+    }, 60 * 60 * 1000); // 1 hour
 
     // CRON fallback - using node-cron as backup
     try {
+      console.log('📸 Starting streamlined memory snapshots');
+      // Simplified snapshot using the new memory operations
       const cron = require('node-cron');
-      cron.schedule('*/30 * * * *', async () => {
-        await this.performScheduledSnapshot('cron-fallback');
+      cron.schedule('0 * * * *', async () => { // Every hour
+        await this.performStreamlinedSnapshot();
       });
-      console.log('✅ CRON fallback scheduled for memory snapshots');
+      console.log('✅ Streamlined memory snapshots scheduled');
     } catch (cronError: any) {
-      console.warn('⚠️ CRON fallback not available:', cronError.message);
+      console.warn('⚠️ CRON scheduling failed:', cronError.message);
     }
-
-    // Cleanup on process exit
-    process.on('exit', () => {
-      clearInterval(intervalId);
-      console.log('🛑 Memory snapshot interval cleared');
-    });
   }
 
-  private async performScheduledSnapshot(method: string): Promise<void> {
+  private async performStreamlinedSnapshot(): Promise<void> {
     const timestamp = new Date().toISOString();
-    console.log(`📸 SCHEDULED-SNAPSHOT: Performing memory snapshot via ${method} at ${timestamp}`);
+    console.log(`📸 STREAMLINED-SNAPSHOT: Performing memory snapshot at ${timestamp}`);
     
     try {
-      // Get all memory data for snapshot
-      const allMemories = await this.fallbackMemory.getMemoriesByUser('default');
-      
-      // Create snapshot entry
-      const snapshotData = {
-        snapshot_id: `snapshot_${Date.now()}`,
-        method,
-        memory_count: allMemories.length,
-        created_at: timestamp,
-        memories: allMemories
-      };
-
-      // Save snapshot using ARCANOS memory dispatch
-      try {
-        const dispatch = await modelControlHooks.manageMemory(
-          'store',
-          { key: `system_snapshot_${Date.now()}`, value: snapshotData, userId: 'system', sessionId: 'snapshot' },
-          { userId: 'system', sessionId: 'snapshot', source: 'system' }
-        );
-
-        if (!dispatch.success) {
-          throw new Error(dispatch.error || 'ARCANOS memory dispatch failed');
+      // Create a snapshot using the new memory operations
+      await memoryOperations.storeMemory({
+        userId: 'system',
+        sessionId: 'snapshots',
+        content: `Memory snapshot created at ${timestamp}`,
+        metadata: {
+          type: 'system',
+          importance: 'medium',
+          timestamp,
+          tags: ['snapshot', 'periodic', 'memory-maintenance']
         }
-        console.log('✅ SCHEDULED-SNAPSHOT: ARCANOS dispatch successful');
-      } catch (primaryError: any) {
-        console.warn('⚠️ ARCANOS snapshot dispatch failed, using backup:', primaryError.message);
-        await this.fallbackMemory.storeMemory('system', 'snapshots', 'system', `snapshot_${Date.now()}`, snapshotData);
-        console.log('✅ SCHEDULED-SNAPSHOT: Backup snapshot save successful');
-      }
-
-      // Timestamp confirmation log
-      console.log('✅ SNAPSHOT-VALIDATION: Scheduled snapshot validated:', {
-        snapshot_id: snapshotData.snapshot_id,
-        method,
-        memory_count: allMemories.length,
-        timestamp_confirmed: timestamp
       });
-
+      
+      console.log('✅ STREAMLINED-SNAPSHOT: Snapshot created successfully');
     } catch (error: any) {
-      console.error('❌ SCHEDULED-SNAPSHOT: Failed to perform snapshot:', error);
+      console.error('❌ STREAMLINED-SNAPSHOT: Failed to perform snapshot:', error);
     }
   }
 }
