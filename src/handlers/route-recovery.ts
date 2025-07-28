@@ -2,10 +2,14 @@
 // Handles route failures and provides recovery mechanisms
 
 import { Express, Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
 import { memoryHandler } from './memory-handler';
 import { writeHandler } from './write-handler';
 import { auditHandler } from './audit-handler';
 import { diagnosticHandler } from './diagnostic-handler';
+import { createServiceLogger } from '../utils/logger';
+
+const logger = createServiceLogger('RouteRecovery');
 
 export interface RouteRecoveryConfig {
   route: string;
@@ -90,18 +94,29 @@ export class RouteRecovery {
     routeConfig.recovery_attempts += 1;
     routeConfig.last_recovery = timestamp;
 
-    console.log('🔄 ROUTE-RECOVERY: Attempting recovery for route:', { 
+    logger.info('🔄 Attempting recovery for route:', { 
       route, 
       attempt: routeConfig.recovery_attempts 
     });
 
     try {
-      // Attempt route-specific recovery
-      const recoveryResult = await this.attemptRouteRecovery(route, req, res);
+      // First attempt: Route-specific recovery
+      let recoveryResult = await this.attemptRouteRecovery(route, req, res);
+      
+      // If that fails, try bootstrap recovery
+      if (!recoveryResult.success && routeConfig.recovery_attempts === 1) {
+        logger.info(`🔧 Attempting bootstrap recovery for route: ${route}`);
+        const bootstrapResult = await this.bootstrapFailedRoute(route);
+        
+        if (bootstrapResult.success) {
+          // Retry route recovery after bootstrap
+          recoveryResult = await this.attemptRouteRecovery(route, req, res);
+        }
+      }
       
       if (recoveryResult.success) {
         routeConfig.status = 'active';
-        console.log('✅ ROUTE-RECOVERY: Route recovered successfully:', route);
+        logger.success('✅ Route recovered successfully:', route);
         
         this.logRecoveryActivity('route_recovered', {
           route,
@@ -113,7 +128,7 @@ export class RouteRecovery {
         throw new Error(recoveryResult.message);
       }
     } catch (recoveryError: any) {
-      console.error('❌ ROUTE-RECOVERY: Recovery failed for route:', route, recoveryError.message);
+      logger.error('❌ Recovery failed for route:', route, recoveryError.message);
       
       routeConfig.status = 'failed';
       
@@ -255,36 +270,116 @@ export class RouteRecovery {
     return false;
   }
 
-  // Method to validate route schemas (basic validation)
+  // Method to validate route schemas with enhanced zod validation
   validateRouteSchema(route: string, data: any): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
 
-    switch (route) {
-      case '/memory':
-        if (!data.memory_key) errors.push('memory_key is required');
-        if (data.memory_value === undefined) errors.push('memory_value is required');
-        break;
+    try {
+      switch (route) {
+        case '/memory':
+          const memorySchema = z.object({
+            memory_key: z.string().min(1, 'memory_key is required'),
+            memory_value: z.any(),
+            operation: z.enum(['store', 'load', 'list', 'clear']).optional()
+          });
+          memorySchema.parse(data);
+          break;
 
-      case '/write':
-        if (!data.message) errors.push('message is required');
-        break;
+        case '/write':
+          const writeSchema = z.object({
+            message: z.string().min(1, 'message is required'),
+            type: z.enum(['creative', 'technical', 'documentation']).optional(),
+            context: z.record(z.any()).optional()
+          });
+          writeSchema.parse(data);
+          break;
 
-      case '/audit':
-        if (!data.message) errors.push('message is required for audit');
-        break;
+        case '/audit':
+          const auditSchema = z.object({
+            message: z.string().min(1, 'message is required for audit'),
+            target: z.string().optional(),
+            auditType: z.enum(['code', 'security', 'performance']).optional()
+          });
+          auditSchema.parse(data);
+          break;
 
-      case '/diagnostic':
-        // Diagnostic route is flexible with parameters
-        break;
+        case '/diagnostic':
+          const diagnosticSchema = z.object({
+            command: z.string().optional(),
+            type: z.enum(['health', 'performance', 'memory']).optional()
+          });
+          diagnosticSchema.parse(data);
+          break;
 
-      default:
-        errors.push('Unknown route for schema validation');
+        default:
+          errors.push('Unknown route for schema validation');
+      }
+    } catch (zodError: any) {
+      if (zodError instanceof z.ZodError) {
+        errors.push(...zodError.errors.map(e => `${e.path.join('.')}: ${e.message}`));
+      } else {
+        errors.push(`Validation error: ${zodError.message}`);
+      }
     }
 
     return {
       valid: errors.length === 0,
       errors
     };
+  }
+
+  // Enhanced route bootstrap logic for initialization failures
+  async bootstrapFailedRoute(route: string): Promise<{ success: boolean; message: string }> {
+    logger.info(`🔧 Attempting bootstrap recovery for route: ${route}`);
+    
+    try {
+      switch (route) {
+        case '/memory':
+          // Bootstrap memory handler
+          const { memoryHandler } = await import('./memory-handler');
+          // Check if initialize method exists, otherwise skip
+          if (typeof (memoryHandler as any).initialize === 'function') {
+            await (memoryHandler as any).initialize();
+          }
+          return { success: true, message: 'Memory handler bootstrapped' };
+
+        case '/write':
+          // Bootstrap write handler
+          const { writeHandler } = await import('./write-handler');
+          // Check if initialize method exists, otherwise skip
+          if (typeof (writeHandler as any).initialize === 'function') {
+            await (writeHandler as any).initialize();
+          }
+          return { success: true, message: 'Write handler bootstrapped' };
+
+        case '/audit':
+          // Bootstrap audit handler
+          const { auditHandler } = await import('./audit-handler');
+          // Check if initialize method exists, otherwise skip
+          if (typeof (auditHandler as any).initialize === 'function') {
+            await (auditHandler as any).initialize();
+          }
+          return { success: true, message: 'Audit handler bootstrapped' };
+
+        case '/diagnostic':
+          // Bootstrap diagnostic handler with enhanced recovery
+          const { diagnosticHandler } = await import('./diagnostic-handler');
+          // Check if performFullBootstrap method exists, otherwise use basic recovery
+          if (typeof (diagnosticHandler as any).performFullBootstrap === 'function') {
+            const diagnosticResult = await (diagnosticHandler as any).performFullBootstrap();
+            return diagnosticResult || { success: true, message: 'Diagnostic handler bootstrapped' };
+          } else if (typeof (diagnosticHandler as any).recoverRoute === 'function') {
+            return await (diagnosticHandler as any).recoverRoute();
+          }
+          return { success: true, message: 'Diagnostic handler bootstrapped (basic)' };
+
+        default:
+          return { success: false, message: 'No bootstrap logic available for route' };
+      }
+    } catch (bootstrapError: any) {
+      logger.error(`❌ Bootstrap failed for route ${route}:`, bootstrapError.message);
+      return { success: false, message: `Bootstrap failed: ${bootstrapError.message}` };
+    }
   }
 }
 
