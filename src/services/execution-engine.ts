@@ -56,7 +56,7 @@ export class ExecutionEngine {
       }
 
       // Route action using centralized action router
-      const { routeAction } = require('../actionRouter.js');
+      const { routeAction } = await import('./action-router');
       return await routeAction(instruction);
 
     } catch (error: any) {
@@ -100,7 +100,7 @@ export class ExecutionEngine {
   /**
    * Handle response action - return direct response to user
    */
-  private handleResponse(instruction: DispatchInstruction): ExecutionResult {
+  public handleResponse(instruction: DispatchInstruction): ExecutionResult {
     return {
       success: true,
       response: instruction.response || 'No response provided'
@@ -110,7 +110,7 @@ export class ExecutionEngine {
   /**
    * Handle execution action - execute service operations
    */
-  private async handleExecution(instruction: DispatchInstruction): Promise<ExecutionResult> {
+  public async handleExecution(instruction: DispatchInstruction): Promise<ExecutionResult> {
     const { service, parameters = {} } = instruction;
 
     switch (service) {
@@ -140,7 +140,7 @@ export class ExecutionEngine {
   /**
    * Handle schedule action - schedule recurring tasks
    */
-  private handleSchedule(instruction: DispatchInstruction): ExecutionResult {
+  public handleSchedule(instruction: DispatchInstruction): ExecutionResult {
     const { schedule, worker, parameters = {} } = instruction;
     
     if (!schedule) {
@@ -191,7 +191,7 @@ export class ExecutionEngine {
   /**
    * Handle delegation action - delegate to workers
    */
-  private async handleDelegation(instruction: DispatchInstruction): Promise<ExecutionResult> {
+  public async handleDelegation(instruction: DispatchInstruction): Promise<ExecutionResult> {
     const { worker, parameters = {} } = instruction;
     
     if (!worker) {
@@ -318,7 +318,7 @@ Provide a detailed analysis including:
   /**
    * Execute write operations (content generation)
    */
-  private async executeWriteOperation(parameters: any): Promise<ExecutionResult> {
+  public async executeWriteOperation(parameters: any): Promise<ExecutionResult> {
     const { prompt, type = 'general', style, length } = parameters;
 
     if (!this.openaiService) {
