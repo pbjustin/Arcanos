@@ -152,7 +152,9 @@ export async function getActiveModel(): Promise<ArcanosModel | null> {
     // Try to initialize the OpenAI service with configuration
     const openaiService = new OpenAIService({
       apiKey: aiConfig.openaiApiKey,
-      model: fineTunedModel
+      model: fineTunedModel,
+      identityOverride: aiConfig.identityOverride,
+      identityTriggerPhrase: aiConfig.identityTriggerPhrase,
     });
     
     // Create and return the model wrapper

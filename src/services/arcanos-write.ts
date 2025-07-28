@@ -2,6 +2,7 @@
 // Handles requests that have narrative intent
 
 import { OpenAIService, ChatMessage } from './openai';
+import { aiConfig } from '../config';
 import { MemoryStorage } from '../storage/memory-storage';
 import { arcanosLogger, createServiceLogger } from '../utils/logger';
 
@@ -32,7 +33,10 @@ export class ArcanosWriteService {
 
   constructor() {
     try {
-      this.openaiService = new OpenAIService();
+      this.openaiService = new OpenAIService({
+        identityOverride: aiConfig.identityOverride,
+        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      });
     } catch (error) {
       console.warn('⚠️ ArcanosWriteService: OpenAI not available, running in testing mode');
       this.openaiService = null;
