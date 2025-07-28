@@ -1,18 +1,26 @@
 {
   "compilerOptions": {
-    "target": "ES2019",
-    "module": "commonjs",
-    "rootDir": "src",
-    "outDir": "dist",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
+    "target": "ESNext",
+    "module": "CommonJS",
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "*": ["node_modules/*", "src/types/*"]
-    }
+      "@types/*": ["types/*"],
+      "@/*": ["src/*"]
+    },
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "typeRoots": ["./types", "./node_modules/@types"],
+    "allowImportingTsExtensions": true,
+    "outDir": "dist"
   },
-  "include": ["src", "memory", "src/types"],
+  "include": [
+    "src",
+    "types",
+    "**/*.ts",
+    "**/*.d.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

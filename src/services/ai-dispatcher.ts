@@ -2,6 +2,7 @@
 // Replaces static logic, conditionals, and routing trees with AI-controlled decision making
 
 import { OpenAIService, ChatMessage } from './openai';
+import { aiConfig } from '../config';
 
 // In-memory lock map to debounce dispatches per worker type
 declare global {
@@ -46,7 +47,10 @@ export class AIDispatcher {
     this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106:BpYtP0ox';
     
     try {
-      this.openaiService = new OpenAIService();
+      this.openaiService = new OpenAIService({
+        identityOverride: aiConfig.identityOverride,
+        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      });
       console.log('🤖 AI Dispatcher initialized with model:', this.model);
     } catch (error) {
       console.warn('⚠️ AI Dispatcher initialized without OpenAI (testing mode):', error);

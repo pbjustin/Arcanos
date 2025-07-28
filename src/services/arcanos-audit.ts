@@ -2,6 +2,7 @@
 // Handles requests that require validation, checking, or auditing
 
 import { OpenAIService, ChatMessage } from './openai';
+import { aiConfig } from '../config';
 import { HRCCore } from '../modules/hrc';
 
 export interface AuditRequest {
@@ -32,7 +33,10 @@ export class ArcanosAuditService {
 
   constructor() {
     try {
-      this.openaiService = new OpenAIService();
+      this.openaiService = new OpenAIService({
+        identityOverride: aiConfig.identityOverride,
+        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      });
     } catch (error) {
       console.warn('⚠️ ArcanosAuditService: OpenAI not available, running in testing mode');
       this.openaiService = null;

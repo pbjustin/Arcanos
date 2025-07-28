@@ -3,6 +3,7 @@
 
 import { DispatchInstruction } from './ai-dispatcher';
 import { OpenAIService } from './openai';
+import { aiConfig } from '../config';
 import { MemoryStorage } from '../storage/memory-storage';
 import { diagnosticsService } from './diagnostics';
 import { workerStatusService } from './worker-status';
@@ -25,7 +26,10 @@ export class ExecutionEngine {
   constructor() {
     this.memoryStorage = new MemoryStorage();
     try {
-      this.openaiService = new OpenAIService();
+      this.openaiService = new OpenAIService({
+        identityOverride: aiConfig.identityOverride,
+        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      });
     } catch (error) {
       console.warn('⚠️ Execution Engine initialized without OpenAI (testing mode)');
       this.openaiService = null;
