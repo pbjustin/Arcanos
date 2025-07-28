@@ -8,5 +8,8 @@
   "emailDispatcher",
   "scheduled_emails_worker",
   "testWorker",
-  "aiControlledWorker"
+  "aiControlledWorker",
+  "aiRegisteredWorker",
+  "demoWorker",
+  "aiTriggeredWorker"
 ]
