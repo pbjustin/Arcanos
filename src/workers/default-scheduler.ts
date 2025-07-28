@@ -11,7 +11,7 @@ const logger = createServiceLogger('DefaultScheduler');
 export function initializeFallbackScheduler(instruction: DispatchInstruction): void {
   const schedule = instruction.schedule;
   if (!schedule) {
-    logger.error('No schedule provided for fallback scheduler');
+    logger.warning('No schedule provided for fallback scheduler');
     return;
   }
 

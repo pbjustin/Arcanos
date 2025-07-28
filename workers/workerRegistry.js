@@ -9,10 +9,11 @@ function loadModules() {
   files.forEach(file => {
     try {
       const mod = require(path.join(modulesDir, file));
-      if (mod && mod.name && typeof mod.handler === 'function') {
-        registry.set(mod.name, mod.handler);
+      const name = mod && typeof mod.name === 'string' ? mod.name.trim() : '';
+      if (name && typeof mod.handler === 'function') {
+        registry.set(name, mod.handler);
       } else {
-        console.warn(`[WorkerRegistry] Invalid module ${file}`);
+        console.warn(`[WorkerRegistry] Invalid module ${file} - missing name`);
       }
     } catch (err) {
       console.error(`[WorkerRegistry] Failed to load module ${file}:`, err.message);
