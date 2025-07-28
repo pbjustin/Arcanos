@@ -1,11 +1,6 @@
 import cron from 'node-cron';
 import { createServiceLogger } from '../../utils/logger';
-let registry: Map<string, any> | undefined;
-try {
-  ({ workerRegistry: registry } = require('../../../workers/workerRegistry'));
-} catch {
-  registry = undefined;
-}
+import { workerRegistry } from '../../services/unified-worker-registry';
 
 const logger = createServiceLogger('ScheduleEmailWorker');
 
@@ -16,14 +11,17 @@ export interface ScheduleEmailOptions {
 
 export function scheduleEmailWorker(options: ScheduleEmailOptions) {
   const { cron: cronExpr, request } = options;
-  if (!registry || !registry.has('emailDispatcher')) {
+  
+  const emailHandler = workerRegistry.getWorkerHandler('emailDispatcher');
+  if (!emailHandler) {
     logger.warning('emailDispatcher worker not registered, aborting schedule');
     return null;
   }
-  const handler = registry.get('emailDispatcher');
+  
   const task = cron.schedule(cronExpr, async () => {
-    await handler(request);
+    await emailHandler(request);
   });
+  
   logger.info('Scheduled emailDispatcher', { cron: cronExpr });
   return task;
 }

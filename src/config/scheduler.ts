@@ -75,16 +75,27 @@ export const WORKER_SCHEDULES: ScheduleConfig[] = [
     retryDelayMs: SCHEDULE_CONSTANTS.DEFAULT_RETRY.retryDelayMs
   },
   {
-    id: 'audit-processor',
-    name: 'Audit Processing',
-    cronExpression: SCHEDULE_CONSTANTS.COMMON_CRONS.EVERY_30_MINUTES,
-    workerType: 'auditProcessor',
+    id: 'cleanup-daily',
+    name: 'Daily Cleanup',
+    cronExpression: SCHEDULE_CONSTANTS.COMMON_CRONS.DAILY_MIDNIGHT,
+    workerType: 'cleanupWorker',
     enabled: true,
-    description: 'Process audit logs and generate reports',
+    description: 'Daily cleanup of temporary files and logs',
     timezone: SCHEDULE_CONSTANTS.TIMEZONES.UTC,
     maxRetries: SCHEDULE_CONSTANTS.DEFAULT_RETRY.maxRetries,
     retryDelayMs: SCHEDULE_CONSTANTS.DEFAULT_RETRY.retryDelayMs
-  }
+  },
+  {
+    id: 'code-improvement',
+    name: 'Code Improvement Analysis',
+    cronExpression: '0 2 * * 0', // Weekly on Sundays at 2 AM
+    workerType: 'codeImprovement',
+    enabled: true,
+    description: 'Weekly code improvement suggestions',
+    timezone: SCHEDULE_CONSTANTS.TIMEZONES.UTC,
+    maxRetries: SCHEDULE_CONSTANTS.DEFAULT_RETRY.maxRetries,
+    retryDelayMs: SCHEDULE_CONSTANTS.DEFAULT_RETRY.retryDelayMs
+  },
 ];
 
 export function getScheduleConfig(workerId: string): ScheduleConfig | undefined {
