@@ -14,6 +14,7 @@
 | `WORKER_LOGIC` | `arcanos` | Default logic mode for background workers |
 | `SERVER_URL` | `https://arcanos-production-426d.up.railway.app` | Production server URL for health checks |
 | `DATABASE_URL` | `[OPTIONAL]` | PostgreSQL connection string (fallback to in-memory if not set) |
+| `ADMIN_KEY` | `[OPTIONAL]` | Enable admin router and protect `/admin/*` routes |
 
 ### Deprecated Variables (Removed)
 - ❌ `PORT=3000` - Now defaults to `8080` and auto-assigned by Railway
@@ -110,6 +111,11 @@ The CRON worker system runs when `RUN_WORKERS=true` and implements **AI-controll
 
 #### Validation & Processing
 - `POST /api/ask-hrc` - Message validation using HRCCore overlay system with resilience and fidelity scoring
+
+### Admin Router
+- Enabled when `ADMIN_KEY` is set in the environment
+- All admin requests require `Authorization: Bearer <ADMIN_KEY>`
+- `GET /admin/status` - Simple health status
 
 ### Memory & Storage System
 
