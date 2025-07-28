@@ -5,6 +5,7 @@ import { isTrue } from './utils/env';
 import { goalTrackerWorker } from './workers/goal-tracker';
 import { maintenanceSchedulerWorker } from './workers/maintenance-scheduler';
 import { createServiceLogger } from './utils/logger';
+import { initializeOpenAIWorkers } from './services/openai-worker-orchestrator';
 
 // Simplified worker registry - explicit and persistent
 const activeWorkers = new Map<string, { instance: any; started: boolean; registeredAt: number }>();
@@ -121,6 +122,12 @@ console.log('[WORKER-INIT] Minimal system workers initialized');
 // Initialize AI-controlled worker system
 initializeAIControlledWorkers().catch(error => {
   console.error('[AI-WORKERS] Failed to initialize AI-controlled workers:', error);
+  
+  // 🔁 Fallback to OpenAI SDK-compatible worker orchestration
+  console.log('[AI-WORKERS] Attempting fallback to OpenAI SDK orchestration...');
+  initializeOpenAIWorkers().catch(fallbackError => {
+    console.error('[AI-WORKERS] Fallback OpenAI orchestration also failed:', fallbackError);
+  });
 });
 
 // Conditional worker startup based on environment variable - now streamlined
@@ -132,4 +139,4 @@ if (isTrue(process.env.RUN_WORKERS)) {
   console.log('[WORKER-INIT] Workers disabled (RUN_WORKERS not set to true)');
 }
 
-export { startWorkers, initializeAIControlledWorkers, activeWorkers };
+export { startWorkers, initializeAIControlledWorkers, activeWorkers, initializeOpenAIWorkers };
