@@ -97,8 +97,8 @@ export class ExecutionEngine {
 
       if (instruction.action === 'schedule') {
         if (!instruction.worker) {
-          console.warn("No worker defined. Using 'defaultWorker'.");
-          instruction.worker = 'defaultWorker';
+          console.warn("No worker defined. Using 'maintenanceScheduler'.");
+          instruction.worker = 'maintenanceScheduler';
         }
         if (!isValidWorker(instruction.worker)) {
           results.push({ success: false, error: `invalid_worker_${instruction.worker}` });
@@ -174,8 +174,8 @@ export class ExecutionEngine {
     }
 
     if (!workerName) {
-      console.warn("No worker defined. Using 'defaultWorker'.");
-      workerName = 'defaultWorker';
+      console.warn("No worker defined. Using 'maintenanceScheduler'.");
+      workerName = 'maintenanceScheduler';
     }
 
     if (!isValidWorker(workerName)) {

@@ -250,7 +250,7 @@ Please analyze this request and provide appropriate instructions for handling it
       // Handle both single instruction and array of instructions
       let instructions: DispatchInstruction[] = Array.isArray(parsed) ? parsed : [parsed];
 
-      const fallbackWorker = process.env.FALLBACK_WORKER || 'defaultWorker';
+      const fallbackWorker = process.env.FALLBACK_WORKER || 'maintenanceScheduler';
 
       instructions = instructions
         .map(instr => {
