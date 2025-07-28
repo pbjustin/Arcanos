@@ -1,8 +1,20 @@
 // Centralized Configuration Management for ARCANOS Backend
 import * as dotenv from 'dotenv';
+import type { IdentityOverride } from '../../types/IdentityOverride';
 
 // Load environment variables
 dotenv.config();
+
+function parseIdentityOverride(value?: string): string | IdentityOverride | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(value) as IdentityOverride;
+  } catch {
+    return value;
+  }
+}
 
 // Configuration interface for type safety
 export interface Config {
@@ -15,6 +27,8 @@ export interface Config {
     openaiApiKey?: string;
     fineTunedModel?: string;
     gptToken?: string;
+    identityOverride?: string | IdentityOverride;
+    identityTriggerPhrase?: string;
   };
   database: {
     url?: string;
@@ -49,6 +63,8 @@ export const config: Config = {
     openaiApiKey: process.env.OPENAI_API_KEY,
     fineTunedModel: process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL,
     gptToken: process.env.GPT_TOKEN,
+    identityOverride: parseIdentityOverride(process.env.IDENTITY_OVERRIDE),
+    identityTriggerPhrase: process.env.IDENTITY_TRIGGER_PHRASE || 'I am Skynet',
   },
   database: {
     url: process.env.DATABASE_URL,

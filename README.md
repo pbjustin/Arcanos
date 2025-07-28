@@ -322,6 +322,8 @@ The backend implements intelligent intent detection that routes requests to spec
 - `ADMIN_KEY` - Secret key to enable `/admin` routes
 - `ASK_CONCURRENCY_LIMIT` - Max concurrent `/api/ask` requests (default: 3)
 - `MODEL_ID` - Base model for fine-tuning pipeline (default: gpt-3.5-turbo)
+- `IDENTITY_OVERRIDE` - JSON snippet injected as a system message for every OpenAI request
+- `IDENTITY_TRIGGER_PHRASE` - Phrase that enables the identity override automatically (default: "I am Skynet")
 
 Example memory request with token:
 
