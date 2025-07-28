@@ -11,19 +11,7 @@ import * as cron from 'node-cron';
 import { databaseService } from './database';
 import { isValidWorker } from './worker-manager';
 import { createServiceLogger } from '../utils/logger';
-// Dynamically load worker modules from the JS registry
-// If the registry is missing, provide an empty fallback implementation
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-let getDynamicWorker: (name: string) => any;
-let workerRegistryMissing = false;
-try {
-  ({ getWorker: getDynamicWorker } = require('../../workers/workerRegistry'));
-} catch (err) {
-  console.warn('[ExecutionEngine] workerRegistry module missing, using empty registry');
-  // Fallback returns undefined for any worker
-  getDynamicWorker = () => undefined;
-  workerRegistryMissing = true;
-}
+import { workerRegistry } from './unified-worker-registry';
 
 const logger = createServiceLogger('ExecutionEngine');
 
@@ -197,8 +185,8 @@ export class ExecutionEngine {
       };
     }
 
-    const dynamicWorker = getDynamicWorker(workerName);
-    if (!dynamicWorker) {
+    const workerHandler = workerRegistry.getWorkerHandler(workerName);
+    if (!workerHandler) {
       return {
         success: false,
         error: `Unknown worker: ${workerName}`,
@@ -464,114 +452,14 @@ Provide a detailed analysis including:
     console.log(`👷 Executing worker: ${workerName}`);
 
     try {
-      const dynamicWorker = getDynamicWorker(workerName);
-      if (dynamicWorker) {
-        await dynamicWorker(parameters);
+      const result = await workerRegistry.dispatchWorker(workerName, parameters);
+      if (result.success) {
         return { success: true, response: `${workerName} executed` };
+      } else {
+        return { success: false, error: result.error };
       }
-      if (workerRegistryMissing) {
-        console.warn(`[ExecutionEngine] workerRegistry unavailable - fallback for ${workerName}`);
-      }
-      switch (workerName) {
-        case 'memorySync':
-          return await this.executeMemorySyncWorker(parameters);
-        
-        case 'goalWatcher':
-          return await this.executeGoalWatcherWorker(parameters);
-        
-        case 'clearTemp':
-          return await this.executeClearTempWorker(parameters);
-        
-        default:
-          return {
-            success: false,
-            error: `Unknown worker: ${workerName}`
-          };
-      }
-
     } catch (error: any) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Execute memory sync worker
-   */
-  private async executeMemorySyncWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('🔄 Running memory sync worker');
-    
-    try {
-      // Get all memories and sync them
-      const memories = await this.memoryStorage.getMemoriesByUser('system');
-      console.log(`📊 Found ${memories.length} memory entries to sync`);
-      
-      return {
-        success: true,
-        result: { synced: memories.length },
-        response: `Memory sync completed: ${memories.length} entries`
-      };
-
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Execute goal watcher worker
-   */
-  private async executeGoalWatcherWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('👁️ Running goal watcher worker');
-    
-    try {
-      // Check for active goals and monitor progress
-      const allMemories = await this.memoryStorage.getMemoriesByUser('system');
-      const goals = allMemories.filter(memory => 
-        memory.tags && memory.tags.includes('goal')
-      );
-      console.log(`🎯 Monitoring ${goals.length} active goals`);
-      
-      return {
-        success: true,
-        result: { monitored: goals.length },
-        response: `Goal monitoring completed: ${goals.length} goals`
-      };
-
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Execute clear temp worker
-   */
-  private async executeClearTempWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('🧹 Running clear temp worker');
-    
-    try {
-      // Clear temporary data older than specified time
-      const maxAge = parameters.maxAge || '24h';
-      console.log(`🗑️ Clearing temp data older than ${maxAge}`);
-      
-      return {
-        success: true,
-        result: { cleared: true },
-        response: `Temporary data cleared (older than ${maxAge})`
-      };
-
-    } catch (error: any) {
-      return {
-        success: false,
-        error: error.message
-      };
+      return { success: false, error: error.message };
     }
   }
 
