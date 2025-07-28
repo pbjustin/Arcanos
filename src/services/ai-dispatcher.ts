@@ -44,7 +44,7 @@ export class AIDispatcher {
   private model: string;
 
   constructor() {
-    this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106:BpYtP0ox';
+    this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD';
     
     try {
       this.openaiService = new OpenAIService({
