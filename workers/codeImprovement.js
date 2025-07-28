@@ -1,9 +1,9 @@
 // AI-Controlled Code Improvement Suggestions Worker
 // Generates daily code improvement suggestions during sleep window
 
-const { modelControlHooks } = require('../services/model-control-hooks');
-const { diagnosticsService } = require('../services/diagnostics');
-const { createServiceLogger } = require('../utils/logger');
+const { modelControlHooks } = require('../dist/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../dist/utils/logger');
 const logger = createServiceLogger('CodeImprovementWorker');
 
 async function reportFailure(error) {
