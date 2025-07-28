@@ -75,11 +75,15 @@ async function orchestrateWorker(task: unknown): Promise<string | null> {
       logger.info(`Known workers: ${KNOWN_WORKERS.join(', ')}`);
     }
 
-    // Check OpenAI availability
+    // Check OpenAI availability and attempt lazy initialization if needed
     if (!openai) {
-      const error = `OpenAI client not available - ${initializationError || 'Unknown initialization error'}`;
-      logger.error(`❌ ${error}`);
-      throw new Error(error);
+      initializeOpenAIClient();
+
+      if (!openai) {
+        const error = `OpenAI client not available - ${initializationError || 'Unknown initialization error'}`;
+        logger.error(`❌ ${error}`);
+        throw new Error(error);
+      }
     }
 
     // Validate OpenAI orchestration parameters
