@@ -8,6 +8,7 @@ export interface ActionHandler {
   (instruction: DispatchInstruction): any;
 }
 
+// Streamlined action handlers - no fallback logic
 const actions: Record<string, ActionHandler> = {
   respond: (instruction: DispatchInstruction) => executionEngine.handleResponse(instruction),
   execute: (instruction: DispatchInstruction) => executionEngine.handleExecution(instruction),
@@ -16,17 +17,15 @@ const actions: Record<string, ActionHandler> = {
   write: (instruction: DispatchInstruction) => executionEngine.executeWriteOperation(instruction.parameters || {}),
 };
 
-function fallback(instruction: DispatchInstruction) {
-  logger.error(`Unknown action: ${instruction.action}`);
-  return { success: false, error: `Unknown action: ${instruction.action}` };
-}
-
 export function routeAction(instruction: DispatchInstruction) {
   const handler = actions[instruction.action];
   if (handler) {
     return handler(instruction);
   }
-  return fallback(instruction);
+  
+  // No fallback - fail fast for unknown actions
+  logger.error(`Unknown action: ${instruction.action}`);
+  return { success: false, error: `Unknown action: ${instruction.action}` };
 }
 
 export { actions };
