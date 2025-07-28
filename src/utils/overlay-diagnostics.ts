@@ -1,7 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 import { createServiceLogger } from './logger';
-import { fallbackHandler } from '../handlers/fallback-handler';
 
 const logger = createServiceLogger('OverlayDiagnostics');
 
@@ -29,10 +28,8 @@ export async function checkModelControlHooks(): Promise<boolean> {
     }
 
     try {
-      await fallbackHandler.handleUndefinedWorker({
-        type: 'audit',
-        message: 'goalWatcher overlay reroute - missing model-control-hooks.js',
-      });
+      // Simplified logging - removed fallback handler dependency
+      logger.warning('model-control-hooks.js missing - overlay reroute detected');
     } catch (err) {
       logger.error('Dynamic audit reroute failed', err);
     }
