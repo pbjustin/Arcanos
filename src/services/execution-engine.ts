@@ -11,8 +11,18 @@ import * as cron from 'node-cron';
 import { databaseService } from './database';
 import { initializeFallbackScheduler } from '../workers/default-scheduler';
 // Dynamically load worker modules from the JS registry
+// If the registry is missing, provide an empty fallback implementation
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { getWorker: getDynamicWorker } = require('../../workers/workerRegistry');
+let getDynamicWorker: (name: string) => any;
+let workerRegistryMissing = false;
+try {
+  ({ getWorker: getDynamicWorker } = require('../../workers/workerRegistry'));
+} catch (err) {
+  console.warn('[ExecutionEngine] workerRegistry module missing, using empty registry');
+  // Fallback returns undefined for any worker
+  getDynamicWorker = () => undefined;
+  workerRegistryMissing = true;
+}
 
 export interface ExecutionResult {
   success: boolean;
@@ -426,6 +436,9 @@ Provide a detailed analysis including:
       if (dynamicWorker) {
         await dynamicWorker(parameters);
         return { success: true, response: `${workerName} executed` };
+      }
+      if (workerRegistryMissing) {
+        console.warn(`[ExecutionEngine] workerRegistry unavailable - fallback for ${workerName}`);
       }
       switch (workerName) {
         case 'memorySync':
