@@ -3,6 +3,8 @@
  * Consolidates repeated logging patterns
  */
 
+import { relayLog } from '../services/log-relay';
+
 export type LogLevel = 'info' | 'success' | 'warning' | 'error' | 'debug';
 
 /**
@@ -35,27 +37,67 @@ export class ServiceLogger {
   }
 
   info(message: string, context?: any): void {
-    console.log(this.formatMessage('info', message, context));
+    const formatted = this.formatMessage('info', message, context);
+    console.log(formatted);
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      service: this.serviceName,
+      message,
+      context,
+    });
   }
 
   success(message: string, context?: any): void {
-    console.log(this.formatMessage('success', message, context));
+    const formatted = this.formatMessage('success', message, context);
+    console.log(formatted);
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'success',
+      service: this.serviceName,
+      message,
+      context,
+    });
   }
 
   warning(message: string, context?: any): void {
-    console.warn(this.formatMessage('warning', message, context));
+    const formatted = this.formatMessage('warning', message, context);
+    console.warn(formatted);
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'warning',
+      service: this.serviceName,
+      message,
+      context,
+    });
   }
 
   error(message: string, error?: any, context?: any): void {
-    const errorContext = error instanceof Error 
-      ? { ...context, error: error.message } 
+    const errorContext = error instanceof Error
+      ? { ...context, error: error.message }
       : { ...context, error };
-    console.error(this.formatMessage('error', message, errorContext));
+    const formatted = this.formatMessage('error', message, errorContext);
+    console.error(formatted);
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      service: this.serviceName,
+      message,
+      context: errorContext,
+    });
   }
 
   debug(message: string, context?: any): void {
     if (process.env.NODE_ENV === 'development') {
-      console.log(this.formatMessage('debug', message, context));
+      const formatted = this.formatMessage('debug', message, context);
+      console.log(formatted);
+      relayLog({
+        timestamp: new Date().toISOString(),
+        level: 'debug',
+        service: this.serviceName,
+        message,
+        context,
+      });
     }
   }
 }
@@ -68,14 +110,32 @@ export const arcanosLogger = {
    * Log service operation start
    */
   serviceStart(serviceName: string, operation: string, context?: any): void {
-    console.log(`🚀 ${serviceName} - Starting ${operation}`, context ? JSON.stringify(context) : '');
+    const message = `🚀 ${serviceName} - Starting ${operation}`;
+    const contextStr = context ? JSON.stringify(context) : '';
+    console.log(message, contextStr);
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      service: serviceName,
+      message: `Starting ${operation}`,
+      context,
+    });
   },
 
   /**
    * Log service operation success
    */
   serviceSuccess(serviceName: string, operation: string, context?: any): void {
-    console.log(`✅ ${serviceName} - Successfully completed ${operation}`, context ? JSON.stringify(context) : '');
+    const message = `✅ ${serviceName} - Successfully completed ${operation}`;
+    const contextStr = context ? JSON.stringify(context) : '';
+    console.log(message, contextStr);
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'success',
+      service: serviceName,
+      message: `Completed ${operation}`,
+      context,
+    });
   },
 
   /**
@@ -85,6 +145,13 @@ export const arcanosLogger = {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const logContext = { ...context, error: errorMessage };
     console.error(`❌ ${serviceName} - ${operation} error:`, JSON.stringify(logContext));
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      service: serviceName,
+      message: `${operation} error`,
+      context: logContext,
+    });
   },
 
   /**
@@ -92,6 +159,13 @@ export const arcanosLogger = {
    */
   openaiError(serviceName: string, response: any): void {
     console.error(`❌ OpenAI error in ${serviceName} service:`, response.error);
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      service: serviceName,
+      message: 'OpenAI error',
+      context: { error: response.error },
+    });
   },
 
   /**
@@ -101,6 +175,13 @@ export const arcanosLogger = {
     const icon = success ? '✅' : '❌';
     const status = success ? 'successful' : 'failed';
     console.log(`${icon} Database ${operation} ${status}`, details ? JSON.stringify(details) : '');
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: success ? 'success' : 'error',
+      service: 'Database',
+      message: `${operation} ${status}`,
+      context: details,
+    });
   },
 
   /**
@@ -110,6 +191,13 @@ export const arcanosLogger = {
     console.log(`💾 [MEMORY-SNAPSHOT] ${operation}:`, {
       ...data,
       timestamp: new Date().toISOString()
+    });
+    relayLog({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      service: 'Memory',
+      message: `Snapshot ${operation}`,
+      context: data,
     });
   }
 };
