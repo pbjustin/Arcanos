@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { OpenAIService, ChatMessage } from '../services/openai';
+import { aiConfig } from '../config';
 import { HRCOverlay } from '../modules/overlay';
 import { MemoryStorage } from '../storage/memory-storage';
 
@@ -10,7 +11,10 @@ let memoryStorage: MemoryStorage | null = null;
 // Lazy initialization of services
 function getOpenAIService(): OpenAIService {
   if (!openaiService) {
-    openaiService = new OpenAIService();
+    openaiService = new OpenAIService({
+      identityOverride: aiConfig.identityOverride,
+      identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+    });
   }
   return openaiService;
 }

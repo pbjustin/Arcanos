@@ -3,6 +3,7 @@
 
 import { MemoryStorage } from '../storage/memory-storage';
 import { OpenAIService, ChatMessage } from '../services/openai';
+import { aiConfig } from '../config';
 
 export interface FallbackRequest {
   type: 'memory' | 'write' | 'audit' | 'diagnostic' | 'general';
@@ -27,7 +28,10 @@ export class FallbackHandler {
   constructor() {
     this.memoryStorage = new MemoryStorage();
     try {
-      this.openaiService = new OpenAIService();
+      this.openaiService = new OpenAIService({
+        identityOverride: aiConfig.identityOverride,
+        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      });
     } catch (error) {
       console.warn('⚠️ FallbackHandler: OpenAI not available, using mock responses');
       this.openaiService = null;

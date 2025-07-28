@@ -1,12 +1,16 @@
 import { Request, Response } from 'express';
 import { sendEmail } from '../services/email';
 import { OpenAIService, ChatMessage } from '../services/openai';
+import { aiConfig } from '../config';
 
 let openaiService: OpenAIService | null = null;
 
 function getOpenAIService(): OpenAIService {
   if (!openaiService) {
-    openaiService = new OpenAIService();
+    openaiService = new OpenAIService({
+      identityOverride: aiConfig.identityOverride,
+      identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+    });
   }
   return openaiService;
 }
