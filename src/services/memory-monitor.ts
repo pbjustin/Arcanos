@@ -1,5 +1,5 @@
-import { performanceMonitor } from '../utils/performance';
-import { getHeapStatistics } from 'v8';
+import { performanceMonitor } from "../utils/performance";
+import { getHeapStatistics } from "v8";
 
 class MemoryMonitor {
   private intervalId?: NodeJS.Timeout;
@@ -8,7 +8,7 @@ class MemoryMonitor {
     if (this.intervalId) return;
     this.logUsage();
     this.intervalId = setInterval(() => this.logUsage(), intervalMs);
-    process.on('exit', () => this.stop());
+    process.on("exit", () => this.stop());
   }
 
   stop() {
@@ -25,10 +25,15 @@ class MemoryMonitor {
     const externalMB = (mem.external / 1024 / 1024).toFixed(2);
     const bufferMB = (mem.arrayBuffers / 1024 / 1024).toFixed(2);
     const diffMB = ((mem.rss - mem.heapTotal) / 1024 / 1024).toFixed(2);
-    const heapLimitGB = (heapStats.heap_size_limit / 1024 / 1024 / 1024).toFixed(2);
+    const heapLimitGB = (
+      heapStats.heap_size_limit /
+      1024 /
+      1024 /
+      1024
+    ).toFixed(2);
 
     console.log(
-      `🧠 [MEMORY_MONITOR] RSS: ${rssMB}MB, Heap: ${heapUsedMB}/${heapTotalMB}MB, External: ${externalMB}MB, Buffers: ${bufferMB}MB, RSS-HeapDiff: ${diffMB}MB, HeapLimit: ${heapLimitGB}GB`
+      `🧠 [MEMORY_MONITOR] RSS: ${rssMB}MB, Heap: ${heapUsedMB}/${heapTotalMB}MB, External: ${externalMB}MB, Buffers: ${bufferMB}MB, RSS-HeapDiff: ${diffMB}MB, HeapLimit: ${heapLimitGB}GB`,
     );
 
     performanceMonitor.updateMemorySnapshot();

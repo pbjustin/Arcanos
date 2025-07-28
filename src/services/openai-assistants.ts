@@ -1,6 +1,6 @@
-import OpenAI from 'openai';
-import fs from 'fs';
-import path from 'path';
+import OpenAI from "openai";
+import fs from "fs";
+import path from "path";
 
 export interface AssistantData {
   id: string;
@@ -19,7 +19,7 @@ export class OpenAIAssistantsService {
   private configPath: string;
 
   constructor() {
-    this.configPath = path.join(process.cwd(), 'config', 'assistants.json');
+    this.configPath = path.join(process.cwd(), "config", "assistants.json");
 
     // Only initialize OpenAI client if API key is available
     if (process.env.OPENAI_API_KEY) {
@@ -27,7 +27,9 @@ export class OpenAIAssistantsService {
         apiKey: process.env.OPENAI_API_KEY,
       });
     } else {
-      console.warn('[ASSISTANT-SYNC] OPENAI_API_KEY not provided - sync functionality will be limited');
+      console.warn(
+        "[ASSISTANT-SYNC] OPENAI_API_KEY not provided - sync functionality will be limited",
+      );
     }
   }
 
@@ -38,8 +40,8 @@ export class OpenAIAssistantsService {
   private normalizeName(name: string): string {
     return name
       .trim()
-      .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special characters except spaces
-      .replace(/\s+/g, '_') // Replace spaces with underscores
+      .replace(/[^a-zA-Z0-9\s]/g, "") // Remove special characters except spaces
+      .replace(/\s+/g, "_") // Replace spaces with underscores
       .toUpperCase();
   }
 
@@ -55,19 +57,19 @@ export class OpenAIAssistantsService {
    */
   async fetchAssistants(): Promise<AssistantData[]> {
     if (!this.client) {
-      throw new Error('OpenAI client not initialized - missing OPENAI_API_KEY');
+      throw new Error("OpenAI client not initialized - missing OPENAI_API_KEY");
     }
 
     try {
-      console.log('[ASSISTANT-SYNC] Fetching assistants from OpenAI API...');
-      
+      console.log("[ASSISTANT-SYNC] Fetching assistants from OpenAI API...");
+
       const response = await this.client.beta.assistants.list({
         limit: 100, // Fetch up to 100 assistants
       });
 
-      const assistants: AssistantData[] = response.data.map(assistant => ({
+      const assistants: AssistantData[] = response.data.map((assistant) => ({
         id: assistant.id,
-        name: assistant.name || 'Unnamed Assistant',
+        name: assistant.name || "Unnamed Assistant",
         instructions: assistant.instructions,
         tools: assistant.tools || [],
         model: assistant.model,
@@ -76,7 +78,10 @@ export class OpenAIAssistantsService {
       console.log(`[ASSISTANT-SYNC] Found ${assistants.length} assistants`);
       return assistants;
     } catch (error: any) {
-      console.error('[ASSISTANT-SYNC] Failed to fetch assistants:', error.message);
+      console.error(
+        "[ASSISTANT-SYNC] Failed to fetch assistants:",
+        error.message,
+      );
       throw new Error(`Failed to fetch assistants: ${error.message}`);
     }
   }
@@ -87,11 +92,11 @@ export class OpenAIAssistantsService {
   async syncAssistants(): Promise<AssistantMap> {
     try {
       const assistants = await this.fetchAssistants();
-      
+
       // Create map with normalized names as keys
       const assistantMap: AssistantMap = {};
-      
-      assistants.forEach(assistant => {
+
+      assistants.forEach((assistant) => {
         const normalizedName = this.normalizeName(assistant.name);
         assistantMap[normalizedName] = assistant;
       });
@@ -105,12 +110,17 @@ export class OpenAIAssistantsService {
       // Save to file
       await this.saveAssistantsToFile(assistantMap);
 
-      console.log(`[ASSISTANT-SYNC] Successfully synced ${Object.keys(assistantMap).length} assistants`);
-      console.log('[ASSISTANT-SYNC] Normalized names:', Object.keys(assistantMap));
-      
+      console.log(
+        `[ASSISTANT-SYNC] Successfully synced ${Object.keys(assistantMap).length} assistants`,
+      );
+      console.log(
+        "[ASSISTANT-SYNC] Normalized names:",
+        Object.keys(assistantMap),
+      );
+
       return assistantMap;
     } catch (error: any) {
-      console.error('[ASSISTANT-SYNC] Sync failed:', error.message);
+      console.error("[ASSISTANT-SYNC] Sync failed:", error.message);
       throw error;
     }
   }
@@ -118,13 +128,18 @@ export class OpenAIAssistantsService {
   /**
    * Save assistants map to JSON file
    */
-  private async saveAssistantsToFile(assistantMap: AssistantMap): Promise<void> {
+  private async saveAssistantsToFile(
+    assistantMap: AssistantMap,
+  ): Promise<void> {
     try {
       const jsonData = JSON.stringify(assistantMap, null, 2);
-      fs.writeFileSync(this.configPath, jsonData, 'utf8');
+      fs.writeFileSync(this.configPath, jsonData, "utf8");
       console.log(`[ASSISTANT-SYNC] Saved assistants to ${this.configPath}`);
     } catch (error: any) {
-      console.error('[ASSISTANT-SYNC] Failed to save assistants file:', error.message);
+      console.error(
+        "[ASSISTANT-SYNC] Failed to save assistants file:",
+        error.message,
+      );
       throw new Error(`Failed to save assistants file: ${error.message}`);
     }
   }
@@ -135,17 +150,24 @@ export class OpenAIAssistantsService {
   async loadAssistants(): Promise<AssistantMap> {
     try {
       if (!fs.existsSync(this.configPath)) {
-        console.log('[ASSISTANT-SYNC] Config file does not exist, returning empty map');
+        console.log(
+          "[ASSISTANT-SYNC] Config file does not exist, returning empty map",
+        );
         return {};
       }
 
-      const fileContent = fs.readFileSync(this.configPath, 'utf8');
+      const fileContent = fs.readFileSync(this.configPath, "utf8");
       const assistantMap = JSON.parse(fileContent);
-      
-      console.log(`[ASSISTANT-SYNC] Loaded ${Object.keys(assistantMap).length} assistants from config`);
+
+      console.log(
+        `[ASSISTANT-SYNC] Loaded ${Object.keys(assistantMap).length} assistants from config`,
+      );
       return assistantMap;
     } catch (error: any) {
-      console.error('[ASSISTANT-SYNC] Failed to load assistants config:', error.message);
+      console.error(
+        "[ASSISTANT-SYNC] Failed to load assistants config:",
+        error.message,
+      );
       return {};
     }
   }

@@ -2,10 +2,14 @@
 // Manages server sleep window and maintenance scheduler
 // Sleep Window: 7:00 AM to 2:00 PM Eastern Time daily
 
-import cron from 'node-cron';
-import { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } from './sleep-config';
-import { modelControlHooks } from './model-control-hooks';
-import { workerStatusService } from './worker-status';
+import cron from "node-cron";
+import {
+  getCurrentSleepWindowStatus,
+  shouldReduceServerActivity,
+  logSleepWindowStatus,
+} from "./sleep-config";
+import { modelControlHooks } from "./model-control-hooks";
+import { workerStatusService } from "./worker-status";
 
 export interface SleepManagerConfig {
   enabled: boolean;
@@ -25,7 +29,7 @@ export class SleepManager {
       activityReductionEnabled: true,
       maintenanceTasksEnabled: true,
       logInterval: 30, // Log status every 30 minutes
-      ...config
+      ...config,
     };
   }
 
@@ -34,11 +38,13 @@ export class SleepManager {
    */
   public async initialize(): Promise<void> {
     if (!this.config.enabled) {
-      console.log('[SLEEP-MANAGER] Sleep manager is disabled');
+      console.log("[SLEEP-MANAGER] Sleep manager is disabled");
       return;
     }
 
-    console.log('[SLEEP-MANAGER] 🌙 Initializing sleep and maintenance scheduler');
+    console.log(
+      "[SLEEP-MANAGER] 🌙 Initializing sleep and maintenance scheduler",
+    );
     logSleepWindowStatus();
 
     // Start periodic status logging
@@ -49,14 +55,18 @@ export class SleepManager {
       this.scheduleMaintenanceTasks();
     }
 
-    console.log('[SLEEP-MANAGER] ✅ Sleep manager initialized successfully');
+    console.log("[SLEEP-MANAGER] ✅ Sleep manager initialized successfully");
   }
 
   /**
    * Check if server should reduce activity
    */
   public shouldReduceActivity(): boolean {
-    return this.config.enabled && this.config.activityReductionEnabled && shouldReduceServerActivity();
+    return (
+      this.config.enabled &&
+      this.config.activityReductionEnabled &&
+      shouldReduceServerActivity()
+    );
   }
 
   /**
@@ -74,9 +84,12 @@ export class SleepManager {
       clearInterval(this.statusLogInterval);
     }
 
-    this.statusLogInterval = setInterval(() => {
-      logSleepWindowStatus();
-    }, this.config.logInterval * 60 * 1000);
+    this.statusLogInterval = setInterval(
+      () => {
+        logSleepWindowStatus();
+      },
+      this.config.logInterval * 60 * 1000,
+    );
 
     // Log immediately
     logSleepWindowStatus();
@@ -91,27 +104,27 @@ export class SleepManager {
     }
 
     // Memory sync and snapshot - every 2 hours during sleep window
-    cron.schedule('0 */2 * * *', async () => {
+    cron.schedule("0 */2 * * *", async () => {
       if (shouldReduceServerActivity()) {
-        await this.executeMaintenanceTask('memory-sync-snapshot', async () => {
+        await this.executeMaintenanceTask("memory-sync-snapshot", async () => {
           await this.runMemorySyncSnapshot();
         });
       }
     });
 
-    // Goal watcher backlog audit - every hour during sleep window  
-    cron.schedule('0 * * * *', async () => {
+    // Goal watcher backlog audit - every hour during sleep window
+    cron.schedule("0 * * * *", async () => {
       if (shouldReduceServerActivity()) {
-        await this.executeMaintenanceTask('goal-watcher-audit', async () => {
+        await this.executeMaintenanceTask("goal-watcher-audit", async () => {
           await this.runGoalWatcherAudit();
         });
       }
     });
 
     // Clear temp files and logs - every 3 hours during sleep window
-    cron.schedule('0 */3 * * *', async () => {
+    cron.schedule("0 */3 * * *", async () => {
       if (shouldReduceServerActivity()) {
-        await this.executeMaintenanceTask('clear-temp-logs', async () => {
+        await this.executeMaintenanceTask("clear-temp-logs", async () => {
           await this.runClearTempLogs();
         });
       }
@@ -119,49 +132,84 @@ export class SleepManager {
 
     // Daily code improvement suggestions - once at 9 AM ET (during sleep window)
     cron.schedule(
-      '0 9 * * *',
+      "0 9 * * *",
       async () => {
         if (shouldReduceServerActivity()) {
-          await this.executeMaintenanceTask('code-improvement-suggestions', async () => {
-            await this.runCodeImprovementSuggestions();
-          });
+          await this.executeMaintenanceTask(
+            "code-improvement-suggestions",
+            async () => {
+              await this.runCodeImprovementSuggestions();
+            },
+          );
         }
       },
-      { timezone: 'America/New_York' }
+      { timezone: "America/New_York" },
     );
 
     this.maintenanceTasksScheduled = true;
-    console.log('[SLEEP-MANAGER] 📅 Maintenance tasks scheduled for sleep window');
+    console.log(
+      "[SLEEP-MANAGER] 📅 Maintenance tasks scheduled for sleep window",
+    );
   }
 
   /**
    * Execute a maintenance task with error handling and logging
    */
-  private async executeMaintenanceTask(taskName: string, taskFunction: () => Promise<void>): Promise<void> {
+  private async executeMaintenanceTask(
+    taskName: string,
+    taskFunction: () => Promise<void>,
+  ): Promise<void> {
     const startTime = Date.now();
-    workerStatusService.updateWorkerStatus(`sleep-${taskName}`, 'running', 'sleep_window_maintenance_started');
+    workerStatusService.updateWorkerStatus(
+      `sleep-${taskName}`,
+      "running",
+      "sleep_window_maintenance_started",
+    );
 
     try {
-      console.log(`[SLEEP-MAINTENANCE] 🔧 Starting ${taskName} during sleep window`);
+      console.log(
+        `[SLEEP-MAINTENANCE] 🔧 Starting ${taskName} during sleep window`,
+      );
       await taskFunction();
       const duration = Date.now() - startTime;
-      console.log(`[SLEEP-MAINTENANCE] ✅ ${taskName} completed successfully in ${duration}ms`);
-      workerStatusService.updateWorkerStatus(`sleep-${taskName}`, 'idle', `sleep_maintenance_complete_${duration}ms`);
+      console.log(
+        `[SLEEP-MAINTENANCE] ✅ ${taskName} completed successfully in ${duration}ms`,
+      );
+      workerStatusService.updateWorkerStatus(
+        `sleep-${taskName}`,
+        "idle",
+        `sleep_maintenance_complete_${duration}ms`,
+      );
     } catch (error: any) {
       const duration = Date.now() - startTime;
-      console.error(`[SLEEP-MAINTENANCE] ❌ ${taskName} failed after ${duration}ms:`, error.message);
-      workerStatusService.updateWorkerStatus(`sleep-${taskName}`, 'error', `sleep_maintenance_failed_${error.message}`);
-      
+      console.error(
+        `[SLEEP-MAINTENANCE] ❌ ${taskName} failed after ${duration}ms:`,
+        error.message,
+      );
+      workerStatusService.updateWorkerStatus(
+        `sleep-${taskName}`,
+        "error",
+        `sleep_maintenance_failed_${error.message}`,
+      );
+
       // Fallback: try again in 30 minutes
-      setTimeout(async () => {
-        console.log(`[SLEEP-MAINTENANCE] 🔄 Retrying ${taskName} (fallback)`);
-        try {
-          await taskFunction();
-          console.log(`[SLEEP-MAINTENANCE] ✅ ${taskName} fallback retry succeeded`);
-        } catch (retryError: any) {
-          console.error(`[SLEEP-MAINTENANCE] ❌ ${taskName} fallback retry also failed:`, retryError.message);
-        }
-      }, 30 * 60 * 1000); // 30 minutes
+      setTimeout(
+        async () => {
+          console.log(`[SLEEP-MAINTENANCE] 🔄 Retrying ${taskName} (fallback)`);
+          try {
+            await taskFunction();
+            console.log(
+              `[SLEEP-MAINTENANCE] ✅ ${taskName} fallback retry succeeded`,
+            );
+          } catch (retryError: any) {
+            console.error(
+              `[SLEEP-MAINTENANCE] ❌ ${taskName} fallback retry also failed:`,
+              retryError.message,
+            );
+          }
+        },
+        30 * 60 * 1000,
+      ); // 30 minutes
     }
   }
 
@@ -169,26 +217,26 @@ export class SleepManager {
    * Run memory sync and snapshot task
    */
   private async runMemorySyncSnapshot(): Promise<void> {
-    const memorySync = require('../../dist/workers/memorySync');
+    const memorySync = require("../../dist/workers/memorySync");
     await memorySync();
-    
+
     // Additional snapshot logic
     const result = await modelControlHooks.manageMemory(
-      'store',
+      "store",
       {
-        key: 'sleep_memory_snapshot',
+        key: "sleep_memory_snapshot",
         value: {
           timestamp: new Date().toISOString(),
           memoryUsage: process.memoryUsage(),
-          sleepWindow: true
+          sleepWindow: true,
         },
-        tags: ['sleep', 'snapshot', 'maintenance']
+        tags: ["sleep", "snapshot", "maintenance"],
       },
       {
-        userId: 'system',
-        sessionId: 'sleep-maintenance',
-        source: 'system'
-      }
+        userId: "system",
+        sessionId: "sleep-maintenance",
+        source: "system",
+      },
     );
 
     if (!result.success) {
@@ -200,22 +248,22 @@ export class SleepManager {
    * Run goal watcher backlog audit
    */
   private async runGoalWatcherAudit(): Promise<void> {
-    const goalWatcher = require('../../dist/workers/goalWatcher');
+    const goalWatcher = require("../../dist/workers/goalWatcher");
     await goalWatcher();
 
     // Additional backlog audit logic
     const auditResult = await modelControlHooks.performAudit(
-      { 
-        auditType: 'backlog',
-        timestamp: new Date().toISOString(),
-        sleepWindow: true 
-      },
-      'goal_backlog_audit',
       {
-        userId: 'system',
-        sessionId: 'sleep-maintenance',
-        source: 'system'
-      }
+        auditType: "backlog",
+        timestamp: new Date().toISOString(),
+        sleepWindow: true,
+      },
+      "goal_backlog_audit",
+      {
+        userId: "system",
+        sessionId: "sleep-maintenance",
+        source: "system",
+      },
     );
 
     if (!auditResult.success) {
@@ -227,23 +275,23 @@ export class SleepManager {
    * Run clear temp files and logs task
    */
   private async runClearTempLogs(): Promise<void> {
-    const clearTemp = require('../../dist/workers/clearTemp');
+    const clearTemp = require("../../dist/workers/clearTemp");
     await clearTemp();
 
     // Additional log cleanup logic
     const cleanupResult = await modelControlHooks.performMaintenance(
-      'cleanup',
-      { 
-        target: 'logs',
-        maxAge: '7d',
+      "cleanup",
+      {
+        target: "logs",
+        maxAge: "7d",
         sleepWindow: true,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       },
       {
-        userId: 'system',
-        sessionId: 'sleep-maintenance',
-        source: 'system'
-      }
+        userId: "system",
+        sessionId: "sleep-maintenance",
+        source: "system",
+      },
     );
 
     if (!cleanupResult.success) {
@@ -255,7 +303,7 @@ export class SleepManager {
    * Run daily code improvement suggestions
    */
   private async runCodeImprovementSuggestions(): Promise<void> {
-    const codeImprovement = require('../../dist/workers/codeImprovement');
+    const codeImprovement = require("../../dist/workers/codeImprovement");
     await codeImprovement();
   }
 
@@ -267,7 +315,7 @@ export class SleepManager {
       clearInterval(this.statusLogInterval);
       this.statusLogInterval = undefined;
     }
-    console.log('[SLEEP-MANAGER] 🛑 Sleep manager stopped');
+    console.log("[SLEEP-MANAGER] 🛑 Sleep manager stopped");
   }
 }
 

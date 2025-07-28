@@ -1,19 +1,19 @@
 // ARCANOS:ROUTE-RECOVERY - Route recovery logic for missing controllers or invalid schemas
 // Handles route failures and provides recovery mechanisms
 
-import { Express, Request, Response, NextFunction } from 'express';
-import { memoryHandler } from './memory-handler';
-import { writeHandler } from './write-handler';
-import { auditHandler } from './audit-handler';
-import { diagnosticHandler } from './diagnostic-handler';
-import { fallbackHandler } from './fallback-handler';
+import { Express, Request, Response, NextFunction } from "express";
+import { memoryHandler } from "./memory-handler";
+import { writeHandler } from "./write-handler";
+import { auditHandler } from "./audit-handler";
+import { diagnosticHandler } from "./diagnostic-handler";
+import { fallbackHandler } from "./fallback-handler";
 
 export interface RouteRecoveryConfig {
   route: string;
   handler: string;
   recovery_attempts: number;
   last_recovery?: string;
-  status: 'active' | 'recovering' | 'failed';
+  status: "active" | "recovering" | "failed";
 }
 
 export class RouteRecovery {
@@ -32,10 +32,10 @@ export class RouteRecovery {
 
   private initializeRouteStatuses(): void {
     const routes = [
-      { route: '/memory', handler: 'memory-handler' },
-      { route: '/write', handler: 'write-handler' },
-      { route: '/audit', handler: 'audit-handler' },
-      { route: '/diagnostic', handler: 'diagnostic-handler' }
+      { route: "/memory", handler: "memory-handler" },
+      { route: "/write", handler: "write-handler" },
+      { route: "/audit", handler: "audit-handler" },
+      { route: "/diagnostic", handler: "diagnostic-handler" },
     ];
 
     routes.forEach(({ route, handler }) => {
@@ -43,11 +43,13 @@ export class RouteRecovery {
         route,
         handler,
         recovery_attempts: 0,
-        status: 'active'
+        status: "active",
       });
     });
 
-    console.log('🔄 ROUTE-RECOVERY: Initialized route statuses for recovery tracking');
+    console.log(
+      "🔄 ROUTE-RECOVERY: Initialized route statuses for recovery tracking",
+    );
   }
 
   private setupRouteRecoveryMiddleware(): void {
@@ -55,14 +57,23 @@ export class RouteRecovery {
 
     // Global error handler for route recovery
     this.app.use(this.routeRecoveryMiddleware.bind(this));
-    console.log('🛡️ ROUTE-RECOVERY: Recovery middleware installed');
+    console.log("🛡️ ROUTE-RECOVERY: Recovery middleware installed");
   }
 
-  private routeRecoveryMiddleware(error: any, req: Request, res: Response, next: NextFunction): void {
+  private routeRecoveryMiddleware(
+    error: any,
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): void {
     const route = req.path;
     const timestamp = new Date().toISOString();
 
-    console.log('🚨 ROUTE-RECOVERY: Route failure detected:', { route, error: error.message, timestamp });
+    console.log("🚨 ROUTE-RECOVERY: Route failure detected:", {
+      route,
+      error: error.message,
+      timestamp,
+    });
 
     // Check if this is a route we can recover
     if (this.routeStatuses.has(route)) {
@@ -73,57 +84,66 @@ export class RouteRecovery {
     }
   }
 
-  private async handleRouteFailure(route: string, error: any, req: Request, res: Response): Promise<void> {
+  private async handleRouteFailure(
+    route: string,
+    error: any,
+    req: Request,
+    res: Response,
+  ): Promise<void> {
     const routeConfig = this.routeStatuses.get(route)!;
     const timestamp = new Date().toISOString();
 
     // Log the failure
-    this.logRecoveryActivity('route_failure', {
+    this.logRecoveryActivity("route_failure", {
       route,
       handler: routeConfig.handler,
       error: error.message,
       recovery_attempts: routeConfig.recovery_attempts,
-      timestamp
+      timestamp,
     });
 
     // Update route status
-    routeConfig.status = 'recovering';
+    routeConfig.status = "recovering";
     routeConfig.recovery_attempts += 1;
     routeConfig.last_recovery = timestamp;
 
-    console.log('🔄 ROUTE-RECOVERY: Attempting recovery for route:', { 
-      route, 
-      attempt: routeConfig.recovery_attempts 
+    console.log("🔄 ROUTE-RECOVERY: Attempting recovery for route:", {
+      route,
+      attempt: routeConfig.recovery_attempts,
     });
 
     try {
       // Attempt route-specific recovery
       const recoveryResult = await this.attemptRouteRecovery(route, req, res);
-      
+
       if (recoveryResult.success) {
-        routeConfig.status = 'active';
-        console.log('✅ ROUTE-RECOVERY: Route recovered successfully:', route);
-        
-        this.logRecoveryActivity('route_recovered', {
+        routeConfig.status = "active";
+        console.log("✅ ROUTE-RECOVERY: Route recovered successfully:", route);
+
+        this.logRecoveryActivity("route_recovered", {
           route,
           handler: routeConfig.handler,
           recovery_attempts: routeConfig.recovery_attempts,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       } else {
         throw new Error(recoveryResult.message);
       }
     } catch (recoveryError: any) {
-      console.error('❌ ROUTE-RECOVERY: Recovery failed for route:', route, recoveryError.message);
-      
-      routeConfig.status = 'failed';
-      
-      this.logRecoveryActivity('route_recovery_failed', {
+      console.error(
+        "❌ ROUTE-RECOVERY: Recovery failed for route:",
+        route,
+        recoveryError.message,
+      );
+
+      routeConfig.status = "failed";
+
+      this.logRecoveryActivity("route_recovery_failed", {
         route,
         handler: routeConfig.handler,
         recovery_attempts: routeConfig.recovery_attempts,
         error: recoveryError.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
 
       // Send fallback response
@@ -131,83 +151,104 @@ export class RouteRecovery {
     }
   }
 
-  private async attemptRouteRecovery(route: string, req: Request, res: Response): Promise<{ success: boolean; message: string }> {
+  private async attemptRouteRecovery(
+    route: string,
+    req: Request,
+    res: Response,
+  ): Promise<{ success: boolean; message: string }> {
     try {
       switch (route) {
-        case '/memory':
+        case "/memory":
           // Test memory handler functionality
-          if (req.method === 'POST') {
+          if (req.method === "POST") {
             await memoryHandler.handleMemoryRequest(req, res);
-            return { success: true, message: 'Memory route recovered' };
+            return { success: true, message: "Memory route recovered" };
           }
           break;
 
-        case '/write':
+        case "/write":
           // Test write handler functionality
-          if (req.method === 'POST') {
+          if (req.method === "POST") {
             await writeHandler.handleWriteRequest(req, res);
-            return { success: true, message: 'Write route recovered' };
+            return { success: true, message: "Write route recovered" };
           }
           break;
 
-        case '/audit':
+        case "/audit":
           // Test audit handler functionality
-          if (req.method === 'POST') {
+          if (req.method === "POST") {
             await auditHandler.handleAuditRequest(req, res);
-            return { success: true, message: 'Audit route recovered' };
+            return { success: true, message: "Audit route recovered" };
           }
           break;
 
-        case '/diagnostic':
+        case "/diagnostic":
           // Test diagnostic handler functionality and use its recovery method
           const diagnosticRecovery = await diagnosticHandler.recoverRoute();
-          if (diagnosticRecovery.success && req.method === 'GET') {
+          if (diagnosticRecovery.success && req.method === "GET") {
             await diagnosticHandler.handleDiagnosticRequest(req, res);
-            return { success: true, message: 'Diagnostic route recovered' };
+            return { success: true, message: "Diagnostic route recovered" };
           }
           return diagnosticRecovery;
 
         default:
-          return { success: false, message: 'Unknown route for recovery' };
+          return { success: false, message: "Unknown route for recovery" };
       }
 
-      return { success: false, message: 'Recovery method not applicable for request type' };
+      return {
+        success: false,
+        message: "Recovery method not applicable for request type",
+      };
     } catch (error: any) {
-      return { success: false, message: `Recovery attempt failed: ${error.message}` };
+      return {
+        success: false,
+        message: `Recovery attempt failed: ${error.message}`,
+      };
     }
   }
 
-  private async sendFallbackResponse(route: string, req: Request, res: Response): Promise<void> {
+  private async sendFallbackResponse(
+    route: string,
+    req: Request,
+    res: Response,
+  ): Promise<void> {
     try {
-      let fallbackType: 'memory' | 'write' | 'audit' | 'diagnostic' | 'general' = 'general';
-      
-      if (route === '/memory') fallbackType = 'memory';
-      else if (route === '/write') fallbackType = 'write';
-      else if (route === '/audit') fallbackType = 'audit';
-      else if (route === '/diagnostic') fallbackType = 'diagnostic';
+      let fallbackType:
+        | "memory"
+        | "write"
+        | "audit"
+        | "diagnostic"
+        | "general" = "general";
+
+      if (route === "/memory") fallbackType = "memory";
+      else if (route === "/write") fallbackType = "write";
+      else if (route === "/audit") fallbackType = "audit";
+      else if (route === "/diagnostic") fallbackType = "diagnostic";
 
       const fallbackResult = await fallbackHandler.handleUndefinedWorker({
         type: fallbackType,
         message: req.body?.message || `Route recovery for ${route}`,
-        data: req.body || req.query
+        data: req.body || req.query,
       });
 
       res.status(503).json({
-        error: 'Route temporarily unavailable',
+        error: "Route temporarily unavailable",
         route,
         fallback_response: fallbackResult,
-        recovery_status: 'failed',
-        message: 'Service degraded - using fallback handler',
-        timestamp: new Date().toISOString()
+        recovery_status: "failed",
+        message: "Service degraded - using fallback handler",
+        timestamp: new Date().toISOString(),
       });
-
     } catch (fallbackError: any) {
-      console.error('❌ FALLBACK-RESPONSE: Even fallback failed:', fallbackError);
+      console.error(
+        "❌ FALLBACK-RESPONSE: Even fallback failed:",
+        fallbackError,
+      );
       res.status(503).json({
-        error: 'Service completely unavailable',
+        error: "Service completely unavailable",
         route,
-        message: 'All recovery attempts failed',
-        timestamp: new Date().toISOString()
+        message: "All recovery attempts failed",
+        timestamp: new Date().toISOString(),
       });
     }
   }
@@ -216,20 +257,20 @@ export class RouteRecovery {
     const logEntry = {
       activity,
       details,
-      logged_at: new Date().toISOString()
+      logged_at: new Date().toISOString(),
     };
 
     this.recoveryLog.push(logEntry);
-    
+
     // Keep only last 50 entries to prevent memory issues
     if (this.recoveryLog.length > 50) {
       this.recoveryLog.shift();
     }
 
-    console.log('📝 RECOVERY-LOG: Activity logged:', {
+    console.log("📝 RECOVERY-LOG: Activity logged:", {
       activity,
       route: details.route,
-      timestamp: logEntry.logged_at
+      timestamp: logEntry.logged_at,
     });
   }
 
@@ -247,50 +288,54 @@ export class RouteRecovery {
   resetRouteStatus(route: string): boolean {
     if (this.routeStatuses.has(route)) {
       const config = this.routeStatuses.get(route)!;
-      config.status = 'active';
+      config.status = "active";
       config.recovery_attempts = 0;
       config.last_recovery = undefined;
-      
-      this.logRecoveryActivity('route_reset', {
+
+      this.logRecoveryActivity("route_reset", {
         route,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
-      
-      console.log('🔄 ROUTE-RECOVERY: Route status reset:', route);
+
+      console.log("🔄 ROUTE-RECOVERY: Route status reset:", route);
       return true;
     }
     return false;
   }
 
   // Method to validate route schemas (basic validation)
-  validateRouteSchema(route: string, data: any): { valid: boolean; errors: string[] } {
+  validateRouteSchema(
+    route: string,
+    data: any,
+  ): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
 
     switch (route) {
-      case '/memory':
-        if (!data.memory_key) errors.push('memory_key is required');
-        if (data.memory_value === undefined) errors.push('memory_value is required');
+      case "/memory":
+        if (!data.memory_key) errors.push("memory_key is required");
+        if (data.memory_value === undefined)
+          errors.push("memory_value is required");
         break;
 
-      case '/write':
-        if (!data.message) errors.push('message is required');
+      case "/write":
+        if (!data.message) errors.push("message is required");
         break;
 
-      case '/audit':
-        if (!data.message) errors.push('message is required for audit');
+      case "/audit":
+        if (!data.message) errors.push("message is required for audit");
         break;
 
-      case '/diagnostic':
+      case "/diagnostic":
         // Diagnostic route is flexible with parameters
         break;
 
       default:
-        errors.push('Unknown route for schema validation');
+        errors.push("Unknown route for schema validation");
     }
 
     return {
       valid: errors.length === 0,
-      errors
+      errors,
     };
   }
 }

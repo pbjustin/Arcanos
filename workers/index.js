@@ -2,6 +2,7 @@
 const { modelControlHooks } = require("../dist/services/model-control-hooks");
 const { diagnosticsService } = require("../dist/services/diagnostics");
 const { createServiceLogger } = require("../dist/utils/logger");
+
 let workerRegistry;
 let getWorkers;
 try {
@@ -11,6 +12,7 @@ try {
   workerRegistry = {};
   getWorkers = () => [];
 }
+
 const logger = createServiceLogger("Workers");
 
 // Determine worker logic mode
@@ -33,7 +35,7 @@ for (const name of getWorkers()) {
 logger.info("AI-controlled worker system loaded");
 
 // AI-controlled worker execution function
-async function reportFailure(workerName, error) {
+const reportFailure = async (workerName, error) => {
   logger.error(`Worker ${workerName} failure`, error);
   try {
     await diagnosticsService.executeDiagnosticCommand(
@@ -42,9 +44,9 @@ async function reportFailure(workerName, error) {
   } catch (diagErr) {
     logger.error("Diagnostics reporting failed", diagErr);
   }
-}
+};
 
-async function executeWorkerWithAIControl(workerName, parameters = {}) {
+const executeWorkerWithAIControl = async (workerName, parameters = {}) => {
   logger.info(`AI requesting execution of worker: ${workerName}`);
 
   try {
@@ -69,7 +71,7 @@ async function executeWorkerWithAIControl(workerName, parameters = {}) {
       const workerFunction = workerExecutions[workerName];
       if (workerFunction) {
         await workerFunction();
-        logger.success(`Completed execution of ${workerName}`);
+        logger.info(`Completed execution of ${workerName}`);
       } else {
         logger.error(`Unknown worker: ${workerName}`);
       }
@@ -82,10 +84,10 @@ async function executeWorkerWithAIControl(workerName, parameters = {}) {
     await reportFailure(workerName, err);
     return { success: false, error: err.message };
   }
-}
+};
 
 // Legacy function - now routes through AI control
-async function runWorkers() {
+const runWorkers = async () => {
   logger.info("Legacy runWorkers called - routing to AI control");
 
   const results = [];
@@ -95,7 +97,7 @@ async function runWorkers() {
   }
 
   return results;
-}
+};
 
 // Export AI-controlled interfaces
 module.exports = {

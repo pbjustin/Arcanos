@@ -1,5 +1,5 @@
 // Centralized Error Handler for ARCANOS Backend
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from "express";
 
 export interface ErrorHandlerOptions {
   enableRecovery?: boolean;
@@ -14,8 +14,8 @@ class ErrorHandler {
     this.options = {
       enableRecovery: true,
       logErrors: true,
-      includeStackTrace: process.env.NODE_ENV === 'development',
-      ...options
+      includeStackTrace: process.env.NODE_ENV === "development",
+      ...options,
     };
   }
 
@@ -29,7 +29,12 @@ class ErrorHandler {
   };
 
   // Main error handler middleware
-  public handleError = (error: any, req: Request, res: Response, next: NextFunction) => {
+  public handleError = (
+    error: any,
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
     if (this.options.logErrors) {
       console.error(`❌ Error in ${req.method} ${req.path}:`, error.message);
       if (this.options.includeStackTrace) {
@@ -40,15 +45,17 @@ class ErrorHandler {
     // Log error for route recovery (simplified approach since handleRouteError doesn't exist)
     if (this.options.enableRecovery) {
       try {
-        console.log(`🔄 Route error logged for potential recovery: ${req.path}`);
+        console.log(
+          `🔄 Route error logged for potential recovery: ${req.path}`,
+        );
       } catch (recoveryError) {
-        console.error('❌ Route recovery logging failed:', recoveryError);
+        console.error("❌ Route recovery logging failed:", recoveryError);
       }
     }
 
     // Determine error response
     let statusCode = 500;
-    let errorMessage = 'Internal server error';
+    let errorMessage = "Internal server error";
     let errorDetails: any = {};
 
     if (error.status || error.statusCode) {
@@ -60,16 +67,16 @@ class ErrorHandler {
     }
 
     // Handle specific error types
-    if (error.name === 'ValidationError') {
+    if (error.name === "ValidationError") {
       statusCode = 400;
-      errorMessage = 'Validation failed';
+      errorMessage = "Validation failed";
       errorDetails = error.details || {};
-    } else if (error.name === 'UnauthorizedError') {
+    } else if (error.name === "UnauthorizedError") {
       statusCode = 401;
-      errorMessage = 'Unauthorized access';
-    } else if (error.code === 'MODULE_NOT_FOUND') {
+      errorMessage = "Unauthorized access";
+    } else if (error.code === "MODULE_NOT_FOUND") {
       statusCode = 500;
-      errorMessage = 'Service temporarily unavailable';
+      errorMessage = "Service temporarily unavailable";
       errorDetails = { module: error.message };
     }
 
@@ -78,7 +85,7 @@ class ErrorHandler {
       success: false,
       timestamp: new Date().toISOString(),
       path: req.path,
-      method: req.method
+      method: req.method,
     };
 
     if (this.options.includeStackTrace && error.stack) {
@@ -98,12 +105,12 @@ class ErrorHandler {
   // 404 handler
   public notFoundHandler = (req: Request, res: Response) => {
     const errorResponse = {
-      error: 'Route not found',
+      error: "Route not found",
       success: false,
       timestamp: new Date().toISOString(),
       path: req.path,
       method: req.method,
-      availableRoutes: this.getAvailableRoutes()
+      availableRoutes: this.getAvailableRoutes(),
     };
 
     res.status(404).json(errorResponse);
@@ -111,21 +118,21 @@ class ErrorHandler {
 
   private getAvailableRoutes(): string[] {
     return [
-      'GET /health',
-      'POST /memory',
-      'POST /audit', 
-      'GET|POST /diagnostic',
-      'POST /write',
-      'GET /route-status',
-      'GET /audit-logs',
-      'GET /chatgpt-user-status',
-      'GET /finetune-status',
-      'POST /webhook',
-      'GET /sync/diagnostics',
-      'POST /query-finetune',
-      'POST /ask',
-      'POST /',
-      'GET /'
+      "GET /health",
+      "POST /memory",
+      "POST /audit",
+      "GET|POST /diagnostic",
+      "POST /write",
+      "GET /route-status",
+      "GET /audit-logs",
+      "GET /chatgpt-user-status",
+      "GET /finetune-status",
+      "POST /webhook",
+      "GET /sync/diagnostics",
+      "POST /query-finetune",
+      "POST /ask",
+      "POST /",
+      "GET /",
     ];
   }
 }

@@ -1,6 +1,6 @@
-import { createServiceLogger } from '../utils/logger';
+import { createServiceLogger } from "../utils/logger";
 
-const logger = createServiceLogger('Studio');
+const logger = createServiceLogger("Studio");
 
 export interface StudioLog {
   action: string;

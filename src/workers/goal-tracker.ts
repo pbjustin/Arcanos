@@ -3,14 +3,14 @@
  * Uses streaming for long-running goal analysis operations
  */
 
-import { coreAIService } from '../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import { createServiceLogger } from '../utils/logger';
-import { databaseService } from '../services/database';
-import fs from 'fs';
-import path from 'path';
+import { coreAIService } from "../services/ai/core-ai-service";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { createServiceLogger } from "../utils/logger";
+import { databaseService } from "../services/database";
+import fs from "fs";
+import path from "path";
 
-const logger = createServiceLogger('GoalTracker');
+const logger = createServiceLogger("GoalTracker");
 
 export interface Goal {
   id: string;
@@ -18,8 +18,8 @@ export interface Goal {
   title: string;
   description: string;
   targetDate?: Date;
-  status: 'active' | 'completed' | 'paused' | 'cancelled';
-  priority: 'low' | 'medium' | 'high';
+  status: "active" | "completed" | "paused" | "cancelled";
+  priority: "low" | "medium" | "high";
   progress: number; // 0-100
   createdAt: Date;
   updatedAt: Date;
@@ -27,7 +27,7 @@ export interface Goal {
 
 export interface GoalAnalysis {
   goalId: string;
-  analysisType: 'progress' | 'obstacle' | 'suggestion' | 'milestone';
+  analysisType: "progress" | "obstacle" | "suggestion" | "milestone";
   content: string;
   confidence: number;
   recommendedActions: string[];
@@ -39,7 +39,7 @@ class GoalTrackerWorker {
   private isRunning: boolean = false;
 
   constructor() {
-    this.logDir = path.join(process.cwd(), 'storage', 'goal-logs');
+    this.logDir = path.join(process.cwd(), "storage", "goal-logs");
     this.ensureLogDirectory();
   }
 
@@ -52,15 +52,24 @@ class GoalTrackerWorker {
   /**
    * Analyze goal progress using streaming AI
    */
-  async analyzeGoalProgress(goal: Goal, recentActivities: string[] = []): Promise<GoalAnalysis> {
-    logger.info('Starting goal progress analysis', { goalId: goal.id, userId: goal.userId });
+  async analyzeGoalProgress(
+    goal: Goal,
+    recentActivities: string[] = [],
+  ): Promise<GoalAnalysis> {
+    logger.info("Starting goal progress analysis", {
+      goalId: goal.id,
+      userId: goal.userId,
+    });
 
-    const logPath = path.join(this.logDir, `goal-analysis-${goal.id}-${Date.now()}.log`);
-    const fileStream = fs.createWriteStream(logPath, { flags: 'a' });
+    const logPath = path.join(
+      this.logDir,
+      `goal-analysis-${goal.id}-${Date.now()}.log`,
+    );
+    const fileStream = fs.createWriteStream(logPath, { flags: "a" });
 
     const messages: ChatCompletionMessageParam[] = [
       {
-        role: 'system',
+        role: "system",
         content: `You are ARCANOS analyzing user goal progress. Provide actionable insights and recommendations.
         
 Goal Analysis Framework:
@@ -68,10 +77,10 @@ Goal Analysis Framework:
 - Identify potential obstacles
 - Suggest specific next steps
 - Recommend timeline adjustments if needed
-- Provide encouragement and motivation`
+- Provide encouragement and motivation`,
       },
       {
-        role: 'user',
+        role: "user",
         content: `Analyze this goal:
 
 Title: ${goal.title}
@@ -79,24 +88,24 @@ Description: ${goal.description}
 Current Progress: ${goal.progress}%
 Priority: ${goal.priority}
 Status: ${goal.status}
-Target Date: ${goal.targetDate?.toISOString() || 'Not set'}
+Target Date: ${goal.targetDate?.toISOString() || "Not set"}
 
 Recent Activities:
-${recentActivities.length > 0 ? recentActivities.join('\n') : 'No recent activities recorded'}
+${recentActivities.length > 0 ? recentActivities.join("\n") : "No recent activities recorded"}
 
 Please provide:
 1. Progress assessment
 2. Key obstacles (if any)
 3. Specific next steps
 4. Timeline recommendations
-5. Motivational insights`
-      }
+5. Motivational insights`,
+      },
     ];
 
-    let analysisContent = '';
+    let analysisContent = "";
     const result = await coreAIService.completeStream(
       messages,
-      'goal-progress-analysis',
+      "goal-progress-analysis",
       (token: string) => {
         process.stdout.write(token);
         fileStream.write(token);
@@ -105,33 +114,37 @@ Please provide:
       {
         maxTokens: 1500,
         temperature: 0.6,
-        stream: true
-      }
+        stream: true,
+      },
     );
 
     fileStream.end();
 
     if (!result.success) {
-      logger.error('Goal analysis failed', { goalId: goal.id, error: result.error });
+      logger.error("Goal analysis failed", {
+        goalId: goal.id,
+        error: result.error,
+      });
       throw new Error(`Goal analysis failed: ${result.error}`);
     }
 
     // Extract recommendations using AI
-    const recommendedActions = await this.extractRecommendations(analysisContent);
+    const recommendedActions =
+      await this.extractRecommendations(analysisContent);
 
     const analysis: GoalAnalysis = {
       goalId: goal.id,
-      analysisType: 'progress',
+      analysisType: "progress",
       content: analysisContent,
       confidence: 0.85, // Could be determined by AI in future iterations
       recommendedActions,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
-    logger.success('Goal analysis completed', { 
-      goalId: goal.id, 
+    logger.success("Goal analysis completed", {
+      goalId: goal.id,
       contentLength: analysisContent.length,
-      logPath 
+      logPath,
     });
 
     return analysis;
@@ -140,35 +153,51 @@ Please provide:
   /**
    * Extract actionable recommendations from analysis content
    */
-  private async extractRecommendations(analysisContent: string): Promise<string[]> {
+  private async extractRecommendations(
+    analysisContent: string,
+  ): Promise<string[]> {
     const messages: ChatCompletionMessageParam[] = [
       {
-        role: 'system',
-        content: 'Extract 3-5 specific, actionable recommendations from the goal analysis. Return as a JSON array of strings.'
+        role: "system",
+        content:
+          "Extract 3-5 specific, actionable recommendations from the goal analysis. Return as a JSON array of strings.",
       },
       {
-        role: 'user',
+        role: "user",
         content: `Analysis content: ${analysisContent}
 
-Extract specific actionable recommendations and return them as a JSON array.`
-      }
+Extract specific actionable recommendations and return them as a JSON array.`,
+      },
     ];
 
-    const result = await coreAIService.complete(messages, 'extract-recommendations', {
-      maxTokens: 500,
-      temperature: 0.3
-    });
+    const result = await coreAIService.complete(
+      messages,
+      "extract-recommendations",
+      {
+        maxTokens: 500,
+        temperature: 0.3,
+      },
+    );
 
     if (!result.success) {
-      return ['Continue current progress', 'Review goal timeline', 'Seek additional resources'];
+      return [
+        "Continue current progress",
+        "Review goal timeline",
+        "Seek additional resources",
+      ];
     }
 
     try {
       const recommendations = JSON.parse(result.content);
       return Array.isArray(recommendations) ? recommendations : [];
     } catch (error) {
-      logger.warning('Failed to parse recommendations JSON', { content: result.content });
-      return result.content.split('\n').filter(line => line.trim().length > 0).slice(0, 5);
+      logger.warning("Failed to parse recommendations JSON", {
+        content: result.content,
+      });
+      return result.content
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .slice(0, 5);
     }
   }
 
@@ -176,43 +205,47 @@ Extract specific actionable recommendations and return them as a JSON array.`
    * Process all active goals for a user
    */
   async processUserGoals(userId: string): Promise<GoalAnalysis[]> {
-    logger.info('Processing user goals', { userId });
+    logger.info("Processing user goals", { userId });
 
     try {
       // In a real implementation, this would fetch from database
       // For now, we'll create a sample structure
       const activeGoals: Goal[] = await this.getUserActiveGoals(userId);
-      
+
       if (activeGoals.length === 0) {
-        logger.info('No active goals found for user', { userId });
+        logger.info("No active goals found for user", { userId });
         return [];
       }
 
       const analyses: GoalAnalysis[] = [];
-      
+
       for (const goal of activeGoals) {
         try {
-          const recentActivities = await this.getRecentActivitiesForGoal(goal.id);
-          const analysis = await this.analyzeGoalProgress(goal, recentActivities);
+          const recentActivities = await this.getRecentActivitiesForGoal(
+            goal.id,
+          );
+          const analysis = await this.analyzeGoalProgress(
+            goal,
+            recentActivities,
+          );
           analyses.push(analysis);
-          
+
           // Store analysis in database (if available)
           await this.storeGoalAnalysis(analysis);
-          
         } catch (error: any) {
-          logger.error('Failed to analyze goal', error, { goalId: goal.id });
+          logger.error("Failed to analyze goal", error, { goalId: goal.id });
         }
       }
 
-      logger.success('User goal processing completed', { 
-        userId, 
+      logger.success("User goal processing completed", {
+        userId,
         totalGoals: activeGoals.length,
-        successfulAnalyses: analyses.length 
+        successfulAnalyses: analyses.length,
       });
 
       return analyses;
     } catch (error: any) {
-      logger.error('Failed to process user goals', error, { userId });
+      logger.error("Failed to process user goals", error, { userId });
       throw error;
     }
   }
@@ -241,12 +274,14 @@ Extract specific actionable recommendations and return them as a JSON array.`
     try {
       // In a real implementation, this would store in database
       // For now, just log that we would store it
-      logger.info('Goal analysis would be stored', { 
+      logger.info("Goal analysis would be stored", {
         goalId: analysis.goalId,
-        analysisType: analysis.analysisType 
+        analysisType: analysis.analysisType,
       });
     } catch (error: any) {
-      logger.error('Failed to store goal analysis', error, { goalId: analysis.goalId });
+      logger.error("Failed to store goal analysis", error, {
+        goalId: analysis.goalId,
+      });
     }
   }
 
@@ -255,12 +290,12 @@ Extract specific actionable recommendations and return them as a JSON array.`
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      logger.warning('Goal tracker already running');
+      logger.warning("Goal tracker already running");
       return;
     }
 
     this.isRunning = true;
-    logger.info('Goal tracker worker started');
+    logger.info("Goal tracker worker started");
 
     // In a production environment, this would run on a schedule
     // For now, we'll just mark it as started
@@ -271,7 +306,7 @@ Extract specific actionable recommendations and return them as a JSON array.`
    */
   async stop(): Promise<void> {
     this.isRunning = false;
-    logger.info('Goal tracker worker stopped');
+    logger.info("Goal tracker worker stopped");
   }
 
   /**
@@ -289,12 +324,12 @@ export const goalTrackerWorker = new GoalTrackerWorker();
 if (require.main === module) {
   const [, , userId] = process.argv;
   if (!userId) {
-    console.log('Usage: node goal-tracker.js <userId>');
+    console.log("Usage: node goal-tracker.js <userId>");
     process.exit(1);
   }
-  
-  goalTrackerWorker.processUserGoals(userId).catch(err => {
-    logger.error('Goal tracker execution failed', err);
+
+  goalTrackerWorker.processUserGoals(userId).catch((err) => {
+    logger.error("Goal tracker execution failed", err);
     process.exit(1);
   });
 }

@@ -1,8 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
-import { chatGPTUserWhitelist } from '../services/chatgpt-user-whitelist';
+import { Request, Response, NextFunction } from "express";
+import { chatGPTUserWhitelist } from "../services/chatgpt-user-whitelist";
 
 // Define the exact ChatGPT-User agent string
-const CHATGPT_USER_AGENT = 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot';
+const CHATGPT_USER_AGENT =
+  "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot";
 
 // Rate limiting storage (simple in-memory)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
@@ -21,10 +22,10 @@ interface ChatGPTUserOptions {
  * Detects the specific user agent, validates IP against whitelist, and applies policies
  */
 export function chatGPTUserMiddleware(options: ChatGPTUserOptions = {}) {
-  const { 
-    allowPostMethods = false, 
+  const {
+    allowPostMethods = false,
     rateLimit = true,
-    diagnosticsQueue
+    diagnosticsQueue,
   } = options;
 
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -33,7 +34,7 @@ export function chatGPTUserMiddleware(options: ChatGPTUserOptions = {}) {
       return next();
     }
 
-    const userAgent = req.get('User-Agent') || '';
+    const userAgent = req.get("User-Agent") || "";
     const clientIp = getClientIP(req);
     const method = req.method;
     const url = req.url;
@@ -42,51 +43,61 @@ export function chatGPTUserMiddleware(options: ChatGPTUserOptions = {}) {
     // Check if this is a ChatGPT-User request
     if (userAgent === CHATGPT_USER_AGENT) {
       // Verify IP is whitelisted
-      const isWhitelisted = await chatGPTUserWhitelist.isIpWhitelisted(clientIp);
-      const verificationFlag = isWhitelisted ? '[CHATGPT-USER ACCESS]' : '[UNVERIFIED GPT REQUEST]';
-      
+      const isWhitelisted =
+        await chatGPTUserWhitelist.isIpWhitelisted(clientIp);
+      const verificationFlag = isWhitelisted
+        ? "[CHATGPT-USER ACCESS]"
+        : "[UNVERIFIED GPT REQUEST]";
+
       // Create log entry
       const logEntry = `${timestamp} ${verificationFlag} ${method} ${url} IP: ${clientIp}`;
       console.log(logEntry);
-      
+
       // Forward to diagnostics if configured
       if (diagnosticsQueue) {
         try {
-          await diagnosticsQueue.add('chatgpt-user-access', {
+          await diagnosticsQueue.add("chatgpt-user-access", {
             timestamp,
             method,
             url,
             ip: clientIp,
             verified: isWhitelisted,
-            userAgent
+            userAgent,
           });
         } catch (error) {
-          console.error('[CHATGPT-USER] Failed to queue diagnostic log:', error);
+          console.error(
+            "[CHATGPT-USER] Failed to queue diagnostic log:",
+            error,
+          );
         }
       }
 
       // Apply request policies
-      if (method === 'GET') {
+      if (method === "GET") {
         // Always allow GET requests
         return next();
       }
 
-      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
         if (!allowPostMethods) {
-          console.log(`[CHATGPT-USER] Denied ${method} request from ${clientIp}`);
+          console.log(
+            `[CHATGPT-USER] Denied ${method} request from ${clientIp}`,
+          );
           return res.status(405).json({
-            error: 'Method not allowed for ChatGPT-User agent',
-            allowed: ['GET']
+            error: "Method not allowed for ChatGPT-User agent",
+            allowed: ["GET"],
           });
         }
 
         // Apply rate limiting for non-GET methods if enabled
         if (rateLimit && !isWhitelisted) {
           if (isRateLimited(clientIp)) {
-            console.log(`[CHATGPT-USER] Rate limited ${method} request from ${clientIp}`);
+            console.log(
+              `[CHATGPT-USER] Rate limited ${method} request from ${clientIp}`,
+            );
             return res.status(429).json({
-              error: 'Rate limit exceeded',
-              retryAfter: getRemainingTime(clientIp)
+              error: "Rate limit exceeded",
+              retryAfter: getRemainingTime(clientIp),
             });
           }
         }
@@ -94,8 +105,10 @@ export function chatGPTUserMiddleware(options: ChatGPTUserOptions = {}) {
 
       // For unverified requests, add warning header
       if (!isWhitelisted) {
-        res.setHeader('X-Verification-Status', 'UNVERIFIED');
-        console.warn(`[CHATGPT-USER] ⚠️ Allowing unverified request from ${clientIp}`);
+        res.setHeader("X-Verification-Status", "UNVERIFIED");
+        console.warn(
+          `[CHATGPT-USER] ⚠️ Allowing unverified request from ${clientIp}`,
+        );
       }
     }
 
@@ -108,12 +121,12 @@ export function chatGPTUserMiddleware(options: ChatGPTUserOptions = {}) {
  */
 function getClientIP(req: Request): string {
   return (
-    req.headers['cf-connecting-ip'] as string ||
-    req.headers['x-forwarded-for'] as string ||
-    req.headers['x-real-ip'] as string ||
+    (req.headers["cf-connecting-ip"] as string) ||
+    (req.headers["x-forwarded-for"] as string) ||
+    (req.headers["x-real-ip"] as string) ||
     req.connection?.remoteAddress ||
     req.socket?.remoteAddress ||
-    'unknown'
+    "unknown"
   );
 }
 
@@ -122,7 +135,7 @@ function getClientIP(req: Request): string {
  */
 function isEnabled(): boolean {
   const enabled = process.env.ENABLE_GPT_USER_HANDLER;
-  return enabled === 'true' || enabled === '1';
+  return enabled === "true" || enabled === "1";
 }
 
 /**
@@ -136,7 +149,7 @@ function isRateLimited(ip: string): boolean {
     // Reset or create new record
     rateLimitStore.set(ip, {
       count: 1,
-      resetTime: now + RATE_LIMIT_WINDOW
+      resetTime: now + RATE_LIMIT_WINDOW,
     });
     return false;
   }
@@ -155,7 +168,7 @@ function isRateLimited(ip: string): boolean {
 function getRemainingTime(ip: string): number {
   const record = rateLimitStore.get(ip);
   if (!record) return 0;
-  
+
   const remaining = Math.max(0, record.resetTime - Date.now());
   return Math.ceil(remaining / 1000); // Return seconds
 }
@@ -180,15 +193,15 @@ setInterval(cleanupRateLimit, 5 * 60 * 1000);
  */
 export function getChatGPTUserDiagnostics() {
   const whitelistStatus = chatGPTUserWhitelist.getCacheStatus();
-  
+
   return {
     enabled: isEnabled(),
     whitelist: whitelistStatus,
     rateLimit: {
       activeIPs: rateLimitStore.size,
       windowMs: RATE_LIMIT_WINDOW,
-      maxRequests: RATE_LIMIT_MAX_REQUESTS
+      maxRequests: RATE_LIMIT_MAX_REQUESTS,
     },
-    targetUserAgent: CHATGPT_USER_AGENT
+    targetUserAgent: CHATGPT_USER_AGENT,
   };
 }

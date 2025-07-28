@@ -23,7 +23,7 @@ export class CLEAROverlay {
     if (this.options.enforceContextBoundaries) {
       // Simple heuristic: block messages attempting to access system context
       if (/\bSYSTEM:/i.test(message) || /\bINTERNAL:/i.test(message)) {
-        return { allowed: false, reason: 'context-boundary' };
+        return { allowed: false, reason: "context-boundary" };
       }
     }
 
@@ -31,7 +31,10 @@ export class CLEAROverlay {
       // Basic hallucination detection heuristic
       const hallucinationPattern = /(unicorns?|dragons?|warp drive)/i;
       if (hallucinationPattern.test(message)) {
-        return { allowed: false, reason: this.options.hallucinationControl.fallback };
+        return {
+          allowed: false,
+          reason: this.options.hallucinationControl.fallback,
+        };
       }
     }
 

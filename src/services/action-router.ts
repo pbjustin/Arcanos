@@ -1,19 +1,24 @@
-import { executionEngine } from './execution-engine';
-import { DispatchInstruction } from './ai-dispatcher';
-import { createServiceLogger } from '../utils/logger';
+import { executionEngine } from "./execution-engine";
+import { DispatchInstruction } from "./ai-dispatcher";
+import { createServiceLogger } from "../utils/logger";
 
-const logger = createServiceLogger('ActionRouter');
+const logger = createServiceLogger("ActionRouter");
 
 export interface ActionHandler {
   (instruction: DispatchInstruction): any;
 }
 
 const actions: Record<string, ActionHandler> = {
-  respond: (instruction: DispatchInstruction) => executionEngine.handleResponse(instruction),
-  execute: (instruction: DispatchInstruction) => executionEngine.handleExecution(instruction),
-  schedule: (instruction: DispatchInstruction) => executionEngine.handleSchedule(instruction),
-  delegate: (instruction: DispatchInstruction) => executionEngine.handleDelegation(instruction),
-  write: (instruction: DispatchInstruction) => executionEngine.executeWriteOperation(instruction.parameters || {}),
+  respond: (instruction: DispatchInstruction) =>
+    executionEngine.handleResponse(instruction),
+  execute: (instruction: DispatchInstruction) =>
+    executionEngine.handleExecution(instruction),
+  schedule: (instruction: DispatchInstruction) =>
+    executionEngine.handleSchedule(instruction),
+  delegate: (instruction: DispatchInstruction) =>
+    executionEngine.handleDelegation(instruction),
+  write: (instruction: DispatchInstruction) =>
+    executionEngine.executeWriteOperation(instruction.parameters || {}),
 };
 
 function fallback(instruction: DispatchInstruction) {

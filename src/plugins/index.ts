@@ -1,5 +1,5 @@
-import reversePlugin from './reverse-plugin';
-import { pluginManager } from '../services/plugin-manager';
+import reversePlugin from "./reverse-plugin";
+import { pluginManager } from "../services/plugin-manager";
 
 let loaded = false;
 

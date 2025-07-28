@@ -1,15 +1,15 @@
 // ARCANOS AI Dispatcher - Unified dispatch system that sends all requests to fine-tuned model
 // Replaces static logic, conditionals, and routing trees with AI-controlled decision making
 
-import { OpenAIService, ChatMessage } from './openai';
-import { aiConfig } from '../config';
+import { OpenAIService, ChatMessage } from "./openai";
+import { aiConfig } from "../config";
 
 // Helper to resolve workers from schedule keys
 function resolveWorkerFromKey(key: string): string | null {
   const workerMap: Record<string, string> = {
-    scheduled_jobs: 'auditProcessor',
-    planned_jobs: 'maintenanceScheduler',
-    scheduled_emails_worker: 'emailDispatcher'
+    scheduled_jobs: "auditProcessor",
+    planned_jobs: "maintenanceScheduler",
+    scheduled_emails_worker: "emailDispatcher",
   };
   return workerMap[key] || null;
 }
@@ -19,7 +19,7 @@ function normalizeSchedulePayload(payload: any): any {
   if (!payload) return {};
   if (!payload.worker) {
     const resolved = resolveWorkerFromKey(payload.key);
-    payload.worker = resolved || process.env.FALLBACK_WORKER || 'defaultWorker';
+    payload.worker = resolved || process.env.FALLBACK_WORKER || "defaultWorker";
   }
   return payload;
 }
@@ -30,7 +30,7 @@ declare global {
 }
 
 export interface DispatchRequest {
-  type: 'api' | 'internal' | 'worker' | 'cron' | 'memory' | 'audit';
+  type: "api" | "internal" | "worker" | "cron" | "memory" | "audit";
   endpoint?: string;
   method?: string;
   payload: any;
@@ -64,16 +64,21 @@ export class AIDispatcher {
   private model: string;
 
   constructor() {
-    this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD';
-    
+    this.model =
+      process.env.AI_MODEL ||
+      "ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD";
+
     try {
       this.openaiService = new OpenAIService({
         identityOverride: aiConfig.identityOverride,
         identityTriggerPhrase: aiConfig.identityTriggerPhrase,
       });
-      console.log('🤖 AI Dispatcher initialized with model:', this.model);
+      console.log("🤖 AI Dispatcher initialized with model:", this.model);
     } catch (error) {
-      console.warn('⚠️ AI Dispatcher initialized without OpenAI (testing mode):', error);
+      console.warn(
+        "⚠️ AI Dispatcher initialized without OpenAI (testing mode):",
+        error,
+      );
       this.openaiService = null;
     }
   }
@@ -82,15 +87,15 @@ export class AIDispatcher {
    * Main dispatch method - sends every request to the fine-tuned model for decision making
    */
   async dispatch(request: DispatchRequest): Promise<DispatchResponse> {
-    console.log('🚀 AI Dispatcher processing request:', {
+    console.log("🚀 AI Dispatcher processing request:", {
       type: request.type,
       endpoint: request.endpoint,
-      method: request.method
+      method: request.method,
     });
 
     // Debounce worker-type dispatches to avoid redundant model calls
     const lockKey =
-      request.type === 'worker' ? request.payload?.worker : undefined;
+      request.type === "worker" ? request.payload?.worker : undefined;
     const globalAny = globalThis as any;
     if (lockKey) {
       if (!globalAny.__dispatchLocks) {
@@ -98,12 +103,12 @@ export class AIDispatcher {
       }
       if (globalAny.__dispatchLocks.get(lockKey)) {
         console.log(
-          `[DISPATCH] Skipping duplicate dispatch for worker ${lockKey}`
+          `[DISPATCH] Skipping duplicate dispatch for worker ${lockKey}`,
         );
         return {
           success: false,
           instructions: [],
-          error: 'dispatch_in_flight'
+          error: "dispatch_in_flight",
         };
       }
       globalAny.__dispatchLocks.set(lockKey, true);
@@ -111,7 +116,9 @@ export class AIDispatcher {
 
     // If no OpenAI service available, return mock response for testing
     if (!this.openaiService) {
-      console.log('⚠️ OpenAI service not available, returning mock AI response');
+      console.log(
+        "⚠️ OpenAI service not available, returning mock AI response",
+      );
       const mock = this.createMockResponse(request);
       if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
       return mock;
@@ -123,41 +130,40 @@ export class AIDispatcher {
       const userPrompt = this.createRequestPrompt(request);
 
       const messages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
       ];
 
-      console.log('📤 Sending request to fine-tuned model...');
+      console.log("📤 Sending request to fine-tuned model...");
       const response = await this.openaiService.chat(messages);
 
       if (response.error) {
-        console.error('❌ Fine-tuned model error:', response.error);
+        console.error("❌ Fine-tuned model error:", response.error);
         return {
           success: false,
           instructions: [],
-          error: response.error
+          error: response.error,
         };
       }
 
-      console.log('📥 Received response from fine-tuned model');
-      
+      console.log("📥 Received response from fine-tuned model");
+
       // Parse the model's response into structured instructions
       const instructions = this.parseModelResponse(response.message);
-      
+
       const result = {
         success: true,
         instructions,
-        directResponse: this.extractDirectResponse(response.message)
+        directResponse: this.extractDirectResponse(response.message),
       };
       if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
       return result;
-
     } catch (error: any) {
-      console.error('❌ AI Dispatcher error:', error);
+      console.error("❌ AI Dispatcher error:", error);
       const errResp = {
         success: false,
         instructions: [],
-        error: error.message
+        error: error.message,
       };
       if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
       return errResp;
@@ -216,13 +222,13 @@ Always prioritize security, efficiency, and user experience in your decisions.`;
    */
   private createRequestPrompt(request: DispatchRequest): string {
     const context = request.context || {};
-    
+
     return `REQUEST ANALYSIS:
 Type: ${request.type}
-Endpoint: ${request.endpoint || 'N/A'}
-Method: ${request.method || 'N/A'}
-User ID: ${context.userId || 'anonymous'}
-Session ID: ${context.sessionId || 'default'}
+Endpoint: ${request.endpoint || "N/A"}
+Method: ${request.method || "N/A"}
+User ID: ${context.userId || "anonymous"}
+Session ID: ${context.sessionId || "default"}
 
 PAYLOAD:
 ${JSON.stringify(request.payload, null, 2)}
@@ -242,56 +248,62 @@ Please analyze this request and provide appropriate instructions for handling it
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         // If no JSON found, create a default response instruction
-        return [{
-          action: 'respond',
-          service: 'api',
-          response: response,
-          execute: true,
-          priority: 5
-        }];
+        return [
+          {
+            action: "respond",
+            service: "api",
+            response: response,
+            execute: true,
+            priority: 5,
+          },
+        ];
       }
 
       const jsonStr = jsonMatch[0];
       let parsed;
-      
+
       try {
         parsed = JSON.parse(jsonStr);
       } catch (parseError) {
         // If JSON parse fails, return response as is
-        return [{
-          action: 'respond',
-          service: 'api',
-          response: response,
-          execute: true,
-          priority: 5
-        }];
+        return [
+          {
+            action: "respond",
+            service: "api",
+            response: response,
+            execute: true,
+            priority: 5,
+          },
+        ];
       }
 
       // Handle both single instruction and array of instructions
-      let instructions: DispatchInstruction[] = Array.isArray(parsed) ? parsed : [parsed];
+      let instructions: DispatchInstruction[] = Array.isArray(parsed)
+        ? parsed
+        : [parsed];
 
       // Normalize schedule instructions and enforce fallback worker assignment
       instructions = instructions
-        .map(instr => {
-          if (instr.action === 'schedule') {
+        .map((instr) => {
+          if (instr.action === "schedule") {
             const params = normalizeSchedulePayload(instr.parameters || {});
             instr.parameters = params;
             if (!instr.worker) instr.worker = params.worker;
           }
           return instr;
         })
-        .filter(instr => {
-          if (instr.action === 'schedule' && !instr.worker) {
+        .filter((instr) => {
+          if (instr.action === "schedule" && !instr.worker) {
             console.warn(
-              '[AI-DISPATCHER] Dropping schedule instruction without worker',
-              instr
+              "[AI-DISPATCHER] Dropping schedule instruction without worker",
+              instr,
             );
             return false;
           }
-          if (instr.action === 'schedule' && !instr.schedule) {
+          if (instr.action === "schedule" && !instr.schedule) {
             console.warn(
-              '[AI-DISPATCHER] Dropping invalid schedule instruction',
-              instr
+              "[AI-DISPATCHER] Dropping invalid schedule instruction",
+              instr,
             );
             return false;
           }
@@ -299,16 +311,17 @@ Please analyze this request and provide appropriate instructions for handling it
         });
 
       return instructions;
-
     } catch (error) {
-      console.warn('⚠️ Failed to parse model response, using fallback:', error);
-      return [{
-        action: 'respond',
-        service: 'api',
-        response: response,
-        execute: true,
-        priority: 5
-      }];
+      console.warn("⚠️ Failed to parse model response, using fallback:", error);
+      return [
+        {
+          action: "respond",
+          service: "api",
+          response: response,
+          execute: true,
+          priority: 5,
+        },
+      ];
     }
   }
 
@@ -322,7 +335,7 @@ Please analyze this request and provide appropriate instructions for handling it
       const beforeJson = response.substring(0, jsonMatch.index).trim();
       return beforeJson || undefined;
     }
-    
+
     // If no JSON, return the entire response as direct response
     return response;
   }
@@ -334,11 +347,11 @@ Please analyze this request and provide appropriate instructions for handling it
     if (!this.openaiService) {
       return `AI: I would process "${query}" but I'm in testing mode without OpenAI access. In production, this would be handled by the fine-tuned model.`;
     }
-    
+
     const response = await this.openaiService.chat([
-      { role: 'user', content: query }
+      { role: "user", content: query },
     ]);
-    
+
     return response.error ? `Error: ${response.error}` : response.message;
   }
 
@@ -346,45 +359,51 @@ Please analyze this request and provide appropriate instructions for handling it
    * Create mock response for testing when OpenAI is not available
    */
   private createMockResponse(request: DispatchRequest): DispatchResponse {
-    console.log('🎭 Creating mock AI response for testing');
-    
+    console.log("🎭 Creating mock AI response for testing");
+
     // Simulate AI decision making based on request type
     let mockInstructions: DispatchInstruction[] = [];
-    let mockResponse = '';
+    let mockResponse = "";
 
-    if (request.type === 'api' && request.payload?.message) {
+    if (request.type === "api" && request.payload?.message) {
       mockResponse = `AI Mock: I received your message "${request.payload.message}". In production, I would analyze this and provide appropriate instructions. This is a test response showing the AI dispatcher is working.`;
-      mockInstructions = [{
-        action: 'respond',
-        service: 'api',
-        response: mockResponse,
-        execute: true,
-        priority: 5
-      }];
-    } else if (request.type === 'api' && request.payload?.query) {
+      mockInstructions = [
+        {
+          action: "respond",
+          service: "api",
+          response: mockResponse,
+          execute: true,
+          priority: 5,
+        },
+      ];
+    } else if (request.type === "api" && request.payload?.query) {
       mockResponse = `AI Mock: Query "${request.payload.query}" received. This would be processed by the fine-tuned model in production.`;
-      mockInstructions = [{
-        action: 'respond',
-        service: 'api',
-        response: mockResponse,
-        execute: true,
-        priority: 5
-      }];
+      mockInstructions = [
+        {
+          action: "respond",
+          service: "api",
+          response: mockResponse,
+          execute: true,
+          priority: 5,
+        },
+      ];
     } else {
       mockResponse = `AI Mock: Request processed. Type: ${request.type}, Endpoint: ${request.endpoint}`;
-      mockInstructions = [{
-        action: 'respond',
-        service: 'api',
-        response: mockResponse,
-        execute: true,
-        priority: 5
-      }];
+      mockInstructions = [
+        {
+          action: "respond",
+          service: "api",
+          response: mockResponse,
+          execute: true,
+          priority: 5,
+        },
+      ];
     }
 
     return {
       success: true,
       instructions: mockInstructions,
-      directResponse: mockResponse
+      directResponse: mockResponse,
     };
   }
 }
