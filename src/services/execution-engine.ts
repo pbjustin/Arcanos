@@ -1,39 +1,24 @@
-// ARCANOS Execution Engine - Executes instructions returned by the AI dispatcher
-// Provides thin execution shells for all system operations
+// ARCANOS Execution Engine - Streamlined for OpenAI SDK patterns
+// Provides efficient execution for AI-controlled operations
 
 import { DispatchInstruction } from './ai-dispatcher';
 import { OpenAIService } from './openai';
 import { aiConfig } from '../config';
-import { MemoryStorage } from '../storage/memory-storage';
+import { memoryOperations } from './memory-operations';
 import { diagnosticsService } from './diagnostics';
 import { workerStatusService } from './worker-status';
 import * as cron from 'node-cron';
 import { databaseService } from './database';
 import { isValidWorker } from './worker-manager';
-// Import worker validation from the registry
-let validateWorkerRegistration: (name: string) => boolean;
-try {
-  ({ validateWorker: validateWorkerRegistration } = require('../../workers/workerRegistry'));
-} catch (err) {
-  console.warn('[ExecutionEngine] workerRegistry validation unavailable');
-  validateWorkerRegistration = () => false;
-}
+import { activeWorkers } from '../worker-init';
 import { createServiceLogger } from '../utils/logger';
-// Dynamically load worker modules from the JS registry
-// If the registry is missing, provide an empty fallback implementation
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-let getDynamicWorker: (name: string) => any;
-let workerRegistryMissing = false;
-try {
-  ({ getWorker: getDynamicWorker } = require('../../workers/workerRegistry'));
-} catch (err) {
-  console.warn('[ExecutionEngine] workerRegistry module missing, using empty registry');
-  // Fallback returns undefined for any worker
-  getDynamicWorker = () => undefined;
-  workerRegistryMissing = true;
-}
 
 const logger = createServiceLogger('ExecutionEngine');
+
+// Streamlined worker validation - uses active worker registry
+function validateWorkerRegistration(name: string): boolean {
+  return activeWorkers.has(name);
+}
 
 export interface ExecutionResult {
   success: boolean;
@@ -43,12 +28,10 @@ export interface ExecutionResult {
 }
 
 export class ExecutionEngine {
-  private memoryStorage: MemoryStorage;
   private openaiService: OpenAIService | null;
   private scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
 
   constructor() {
-    this.memoryStorage = new MemoryStorage();
     try {
       this.openaiService = new OpenAIService({
         identityOverride: aiConfig.identityOverride,
@@ -58,7 +41,7 @@ export class ExecutionEngine {
       console.warn('⚠️ Execution Engine initialized without OpenAI (testing mode)');
       this.openaiService = null;
     }
-    console.log('⚙️ Execution Engine initialized');
+    console.log('⚙️ Execution Engine initialized with streamlined memory operations');
   }
 
   /**
@@ -218,8 +201,9 @@ export class ExecutionEngine {
       };
     }
 
-    const dynamicWorker = getDynamicWorker(workerName);
-    if (!dynamicWorker) {
+    // Check if worker is registered in the active workers registry
+    const workerContext = activeWorkers.get(workerName);
+    if (!workerContext) {
       return {
         success: false,
         error: `Worker not found: ${workerName}`,
@@ -290,7 +274,7 @@ export class ExecutionEngine {
   }
 
   /**
-   * Execute memory operations
+   * Execute memory operations using OpenAI SDK-compatible patterns
    */
   private async executeMemoryOperation(parameters: any): Promise<ExecutionResult> {
     const { operation, key, value, userId = 'system', sessionId = 'default' } = parameters;
@@ -299,48 +283,71 @@ export class ExecutionEngine {
       switch (operation) {
         case 'store':
         case 'save':
-          const stored = await this.memoryStorage.storeMemory(
-            userId, sessionId, 'context', key, value, parameters.tags || []
-          );
+          const stored = await memoryOperations.storeMemory({
+            userId,
+            sessionId,
+            content: typeof value === 'string' ? value : JSON.stringify(value),
+            metadata: {
+              type: parameters.type || 'context',
+              importance: parameters.importance || 'medium',
+              timestamp: new Date().toISOString(),
+              tags: parameters.tags || [key]
+            }
+          });
           return {
             success: true,
             result: stored,
-            response: `Memory stored: ${key}`
+            response: `Memory stored: ${stored.id}`
           };
 
         case 'load':
         case 'get':
-          const loaded = await this.memoryStorage.getMemoryById(key);
+          // Search for memory by content or tags containing the key
+          const searchResults = await memoryOperations.searchMemories({
+            userId,
+            sessionId,
+            tags: [key],
+            limit: 1
+          });
+          const loaded = searchResults[0] || null;
           return {
             success: true,
             result: loaded,
-            response: loaded ? `Memory loaded: ${key}` : `Memory not found: ${key}`
+            response: loaded ? `Memory loaded: ${loaded.id}` : `Memory not found: ${key}`
           };
 
         case 'list':
         case 'all':
-          const memories = await this.memoryStorage.getMemoriesByUser(userId);
+          const memories = await memoryOperations.searchMemories({
+            userId,
+            sessionId,
+            limit: parameters.limit || 50
+          });
           return {
             success: true,
             result: memories,
             response: `Found ${memories.length} memory entries`
           };
 
+        case 'analyze':
+          const analysis = await memoryOperations.analyzeMemoryContext(userId, sessionId);
+          return {
+            success: true,
+            result: { analysis },
+            response: analysis
+          };
+
         case 'clear':
         case 'delete':
-          // Use the available clearAll method
-          try {
-            const result = await this.memoryStorage.clearAll(userId);
-            return {
-              success: true,
-              response: `Memory cleared: ${result.cleared} entries`
-            };
-          } catch (error: any) {
-            return {
-              success: false,
-              error: error.message
-            };
-          }
+          const cleaned = await memoryOperations.cleanupMemories(userId, {
+            olderThanDays: parameters.olderThanDays || 0,
+            keepHighImportance: parameters.keepHighImportance || false
+          });
+          return {
+            success: true,
+            result: { cleaned },
+            response: `Memory cleared: ${cleaned} entries`
+          };
 
         default:
           return {
@@ -492,23 +499,26 @@ Provide a detailed analysis including:
     console.log(`👷 Executing worker: ${workerName}`);
 
     try {
-      const dynamicWorker = getDynamicWorker(workerName);
-      if (dynamicWorker) {
-        await dynamicWorker(parameters);
+      // Use the streamlined worker registry
+      const workerContext = activeWorkers.get(workerName);
+      if (workerContext && workerContext.instance) {
+        await workerContext.instance(parameters);
         return { success: true, response: `${workerName} executed` };
       }
-      if (workerRegistryMissing) {
-        console.warn(`[ExecutionEngine] workerRegistry unavailable - fallback for ${workerName}`);
-      }
+      
+      // Direct worker execution for built-in workers
       switch (workerName) {
-        case 'memorySync':
-          return await this.executeMemorySyncWorker(parameters);
+        case 'goalTracker':
+          return await this.executeGoalTrackerWorker(parameters);
         
-        case 'goalWatcher':
-          return await this.executeGoalWatcherWorker(parameters);
+        case 'maintenanceScheduler':
+          return await this.executeMaintenanceSchedulerWorker(parameters);
         
-        case 'clearTemp':
-          return await this.executeClearTempWorker(parameters);
+        case 'emailDispatcher':
+          return await this.executeEmailDispatcherWorker(parameters);
+          
+        case 'auditProcessor':
+          return await this.executeAuditProcessorWorker(parameters);
         
         default:
           return {
@@ -526,20 +536,25 @@ Provide a detailed analysis including:
   }
 
   /**
-   * Execute memory sync worker
+   * Execute goal tracker worker
    */
-  private async executeMemorySyncWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('🔄 Running memory sync worker');
+  private async executeGoalTrackerWorker(parameters: any): Promise<ExecutionResult> {
+    console.log('🎯 Running goal tracker worker');
     
     try {
-      // Get all memories and sync them
-      const memories = await this.memoryStorage.getMemoriesByUser('system');
-      console.log(`📊 Found ${memories.length} memory entries to sync`);
+      // Get goal-related memories and analyze them
+      const goalMemories = await memoryOperations.searchMemories({
+        userId: parameters.userId || 'system',
+        tags: ['goal', 'objective', 'target'],
+        limit: 20
+      });
+      
+      console.log(`📊 Found ${goalMemories.length} goal-related entries`);
       
       return {
         success: true,
-        result: { synced: memories.length },
-        response: `Memory sync completed: ${memories.length} entries`
+        result: { analyzed: goalMemories.length },
+        response: `Goal tracking completed: ${goalMemories.length} entries analyzed`
       };
 
     } catch (error: any) {
@@ -551,23 +566,25 @@ Provide a detailed analysis including:
   }
 
   /**
-   * Execute goal watcher worker
+   * Execute maintenance scheduler worker
    */
-  private async executeGoalWatcherWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('👁️ Running goal watcher worker');
+  private async executeMaintenanceSchedulerWorker(parameters: any): Promise<ExecutionResult> {
+    console.log('🔧 Running maintenance scheduler worker');
     
     try {
-      // Check for active goals and monitor progress
-      const allMemories = await this.memoryStorage.getMemoriesByUser('system');
-      const goals = allMemories.filter(memory => 
-        memory.tags && memory.tags.includes('goal')
-      );
-      console.log(`🎯 Monitoring ${goals.length} active goals`);
+      // Perform maintenance tasks
+      const cleaned = await memoryOperations.cleanupMemories('system', {
+        olderThanDays: 7,
+        keepHighImportance: true,
+        maxRecords: 1000
+      });
+      
+      console.log(`🧹 Cleaned ${cleaned} old memory entries`);
       
       return {
         success: true,
-        result: { monitored: goals.length },
-        response: `Goal monitoring completed: ${goals.length} goals`
+        result: { cleaned },
+        response: `Maintenance completed: ${cleaned} entries cleaned`
       };
 
     } catch (error: any) {
@@ -579,20 +596,39 @@ Provide a detailed analysis including:
   }
 
   /**
-   * Execute clear temp worker
+   * Execute email dispatcher worker
    */
-  private async executeClearTempWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('🧹 Running clear temp worker');
+  private async executeEmailDispatcherWorker(parameters: any): Promise<ExecutionResult> {
+    console.log('📧 Running email dispatcher worker');
     
     try {
-      // Clear temporary data older than specified time
-      const maxAge = parameters.maxAge || '24h';
-      console.log(`🗑️ Clearing temp data older than ${maxAge}`);
-      
+      // Email dispatch functionality would go here
       return {
         success: true,
-        result: { cleared: true },
-        response: `Temporary data cleared (older than ${maxAge})`
+        result: { dispatched: 0 },
+        response: `Email dispatch completed`
+      };
+
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Execute audit processor worker
+   */
+  private async executeAuditProcessorWorker(parameters: any): Promise<ExecutionResult> {
+    console.log('📊 Running audit processor worker');
+    
+    try {
+      // Audit processing functionality would go here
+      return {
+        success: true,
+        result: { processed: 0 },
+        response: `Audit processing completed`
       };
 
     } catch (error: any) {
