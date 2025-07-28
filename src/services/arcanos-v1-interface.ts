@@ -1,18 +1,21 @@
 // ARCANOS MODEL INTERFACE v1.0 – DO NOT MODIFY
 // Purpose: Safe, fallback-proof logic interface for model routing
 
-import { OpenAIService } from './openai';
-import { HRCCore } from '../modules/hrc';
-import { MemoryStorage } from '../storage/memory-storage';
-import { aiConfig } from '../config';
+import { OpenAIService } from "./openai";
+import { HRCCore } from "../modules/hrc";
+import { MemoryStorage } from "../storage/memory-storage";
+import { aiConfig } from "../config";
 
 // Model interface that all models must implement
 export interface ArcanosModel {
-  respond(message: string, options: {
-    domain?: string;
-    useRAG?: boolean;
-    useHRC?: boolean;
-  }): Promise<{
+  respond(
+    message: string,
+    options: {
+      domain?: string;
+      useRAG?: boolean;
+      useHRC?: boolean;
+    },
+  ): Promise<{
     status: "success" | "fallback" | "error";
     text: string;
   }>;
@@ -30,11 +33,14 @@ class ArcanosModelWrapper implements ArcanosModel {
     this.memoryStorage = new MemoryStorage();
   }
 
-  async respond(message: string, options: {
-    domain?: string;
-    useRAG?: boolean;
-    useHRC?: boolean;
-  } = {}): Promise<{
+  async respond(
+    message: string,
+    options: {
+      domain?: string;
+      useRAG?: boolean;
+      useHRC?: boolean;
+    } = {},
+  ): Promise<{
     status: "success" | "fallback" | "error";
     text: string;
   }> {
@@ -56,7 +62,7 @@ class ArcanosModelWrapper implements ArcanosModel {
       // Step 2: RAG context retrieval if requested
       if (useRAG) {
         try {
-          const memories = await this.memoryStorage.getMemoriesByUser('user');
+          const memories = await this.memoryStorage.getMemoriesByUser("user");
           ragContext = memories.slice(0, 5); // Get last 5 memories for context
         } catch (error) {
           console.warn("RAG context retrieval failed:", error);
@@ -67,15 +73,17 @@ class ArcanosModelWrapper implements ArcanosModel {
       // Step 3: Generate AI response using OpenAI service
       const chatMessages = [
         {
-          role: 'system' as const,
+          role: "system" as const,
           content: `You are ARCANOS, an AI assistant. Domain: ${domain}. ${
-            ragContext ? `Context from previous interactions: ${JSON.stringify(ragContext)}` : ''
-          }`
+            ragContext
+              ? `Context from previous interactions: ${JSON.stringify(ragContext)}`
+              : ""
+          }`,
         },
         {
-          role: 'user' as const,
-          content: message
-        }
+          role: "user" as const,
+          content: message,
+        },
       ];
 
       const openaiResponse = await this.openaiService.chat(chatMessages);
@@ -84,14 +92,14 @@ class ArcanosModelWrapper implements ArcanosModel {
       if (openaiResponse.error) {
         return {
           status: "error",
-          text: openaiResponse.message
+          text: openaiResponse.message,
         };
       }
 
       if (openaiResponse.fallbackRequested) {
         return {
           status: "fallback",
-          text: openaiResponse.message
+          text: openaiResponse.message,
         };
       }
 
@@ -99,18 +107,18 @@ class ArcanosModelWrapper implements ArcanosModel {
       if (useRAG) {
         try {
           await this.memoryStorage.storeMemory(
-            'user',
-            'default-session',
-            'interaction',
+            "user",
+            "default-session",
+            "interaction",
             `interaction_${Date.now()}`,
             {
               userMessage: message,
               aiResponse: openaiResponse.message,
               domain: domain,
-              timestamp: new Date().toISOString()
+              timestamp: new Date().toISOString(),
             },
-            [domain || 'general', 'interaction'],
-            undefined
+            [domain || "general", "interaction"],
+            undefined,
           );
         } catch (error) {
           console.warn("Memory storage failed:", error);
@@ -120,14 +128,13 @@ class ArcanosModelWrapper implements ArcanosModel {
 
       return {
         status: "success",
-        text: openaiResponse.message
+        text: openaiResponse.message,
       };
-
     } catch (error: any) {
       console.error("Model respond error:", error);
       return {
         status: "error",
-        text: `Error processing request: ${error.message}`
+        text: `Error processing request: ${error.message}`,
       };
     }
   }
@@ -143,7 +150,12 @@ export async function getActiveModel(): Promise<ArcanosModel | null> {
     }
 
     // Check if a fine-tuned model is configured
-    const fineTunedModel = aiConfig.fineTunedModel || process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
+    const fineTunedModel =
+      aiConfig.fineTunedModel ||
+      process.env.AI_MODEL ||
+      process.env.FINE_TUNE_MODEL ||
+      process.env.FINE_TUNED_MODEL ||
+      process.env.OPENAI_FINE_TUNED_MODEL;
     if (!fineTunedModel) {
       console.warn("No fine-tuned model configured");
       return null;
@@ -156,10 +168,9 @@ export async function getActiveModel(): Promise<ArcanosModel | null> {
       identityOverride: aiConfig.identityOverride,
       identityTriggerPhrase: aiConfig.identityTriggerPhrase,
     });
-    
+
     // Create and return the model wrapper
     return new ArcanosModelWrapper(openaiService);
-
   } catch (error: any) {
     console.error("Failed to get active model:", error);
     return null;
@@ -179,28 +190,32 @@ export async function askArcanosV1_Safe({
   useHRC?: boolean;
 }): Promise<{ response: string; model?: string }> {
   // Get the actual model name from environment (if available)
-  const modelName = process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
-  
+  const modelName =
+    process.env.AI_MODEL ||
+    process.env.FINE_TUNE_MODEL ||
+    process.env.FINE_TUNED_MODEL ||
+    process.env.OPENAI_FINE_TUNED_MODEL;
+
   const model = await getActiveModel(); // ← Your current backend model hook
 
   if (!model) {
-    return { 
+    return {
       response: "❌ Error: No active model found. Fallback blocked.",
-      model: modelName || undefined
+      model: modelName || undefined,
     };
   }
 
   const result = await model.respond(message, { domain, useRAG, useHRC });
 
   if (result.status === "fallback" || result.status === "error") {
-    return { 
+    return {
       response: "❌ Error: Fallback triggered or invalid model response.",
-      model: modelName || undefined
+      model: modelName || undefined,
     };
   }
 
-  return { 
+  return {
     response: result.text,
-    model: modelName || undefined
+    model: modelName || undefined,
   };
 }

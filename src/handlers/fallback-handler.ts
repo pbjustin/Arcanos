@@ -1,12 +1,12 @@
 // ARCANOS:FALLBACK-HANDLER - Consolidated fallback worker logic
 // Handles all undefined or fallback worker scenarios in a single module
 
-import { MemoryStorage } from '../storage/memory-storage';
-import { OpenAIService, ChatMessage } from '../services/openai';
-import { aiConfig } from '../config';
+import { MemoryStorage } from "../storage/memory-storage";
+import { OpenAIService, ChatMessage } from "../services/openai";
+import { aiConfig } from "../config";
 
 export interface FallbackRequest {
-  type: 'memory' | 'write' | 'audit' | 'diagnostic' | 'general';
+  type: "memory" | "write" | "audit" | "diagnostic" | "general";
   message?: string;
   data?: any;
   context?: any;
@@ -33,79 +33,91 @@ export class FallbackHandler {
         identityTriggerPhrase: aiConfig.identityTriggerPhrase,
       });
     } catch (error) {
-      console.warn('⚠️ FallbackHandler: OpenAI not available, using mock responses');
+      console.warn(
+        "⚠️ FallbackHandler: OpenAI not available, using mock responses",
+      );
       this.openaiService = null;
     }
   }
 
-  async handleUndefinedWorker(request: FallbackRequest): Promise<FallbackResponse> {
-    console.log(`🛡️ FallbackHandler: Handling undefined worker for type: ${request.type}`);
+  async handleUndefinedWorker(
+    request: FallbackRequest,
+  ): Promise<FallbackResponse> {
+    console.log(
+      `🛡️ FallbackHandler: Handling undefined worker for type: ${request.type}`,
+    );
 
     const timestamp = new Date().toISOString();
 
     try {
       switch (request.type) {
-        case 'memory':
+        case "memory":
           return await this.handleMemoryFallback(request, timestamp);
-        case 'write':
+        case "write":
           return await this.handleWriteFallback(request, timestamp);
-        case 'audit':
+        case "audit":
           return await this.handleAuditFallback(request, timestamp);
-        case 'diagnostic':
+        case "diagnostic":
           return await this.handleDiagnosticFallback(request, timestamp);
         default:
           return await this.handleGeneralFallback(request, timestamp);
       }
     } catch (error: any) {
-      console.error('❌ FallbackHandler error:', error);
+      console.error("❌ FallbackHandler error:", error);
       return {
         success: false,
         error: `Fallback handler error: ${error.message}`,
         fallbackUsed: true,
-        timestamp
+        timestamp,
       };
     }
   }
 
-  private async handleMemoryFallback(request: FallbackRequest, timestamp: string): Promise<FallbackResponse> {
-    console.log('💾 Memory fallback activated - using in-memory storage');
-    
+  private async handleMemoryFallback(
+    request: FallbackRequest,
+    timestamp: string,
+  ): Promise<FallbackResponse> {
+    console.log("💾 Memory fallback activated - using in-memory storage");
+
     try {
-      if (request.data?.memory_key && request.data?.memory_value !== undefined) {
+      if (
+        request.data?.memory_key &&
+        request.data?.memory_value !== undefined
+      ) {
         // Save operation
         const result = await this.memoryStorage.storeMemory(
-          request.data.container_id || 'default',
-          'default-session',
-          'context',
+          request.data.container_id || "default",
+          "default-session",
+          "context",
           request.data.memory_key,
-          request.data.memory_value
+          request.data.memory_value,
         );
-        
+
         return {
           success: true,
           data: result,
           fallbackUsed: true,
-          timestamp
+          timestamp,
         };
       } else if (request.data?.memory_key) {
         // Load operation
         const result = await this.memoryStorage.getMemory(
-          request.data.container_id || 'default',
-          request.data.memory_key
+          request.data.container_id || "default",
+          request.data.memory_key,
         );
-        
+
         return {
           success: true,
           data: result,
           fallbackUsed: true,
-          timestamp
+          timestamp,
         };
       } else {
         return {
           success: false,
-          error: 'Invalid memory fallback request',
+          error: "Invalid memory fallback request",
           fallbackUsed: true,
-          timestamp
+          timestamp,
         };
       }
     } catch (error: any) {
@@ -113,58 +125,69 @@ export class FallbackHandler {
         success: false,
         error: `Memory fallback error: ${error.message}`,
         fallbackUsed: true,
-        timestamp
+        timestamp,
       };
     }
   }
 
-  private async handleWriteFallback(request: FallbackRequest, timestamp: string): Promise<FallbackResponse> {
-    console.log('✍️ Write fallback activated - generating fallback content');
-    
+  private async handleWriteFallback(
+    request: FallbackRequest,
+    timestamp: string,
+  ): Promise<FallbackResponse> {
+    console.log("✍️ Write fallback activated - generating fallback content");
+
     try {
       let content: string;
-      
+
       if (this.openaiService) {
         const chatMessages: ChatMessage[] = [
-          { 
-            role: 'system', 
-            content: 'You are ARCANOS in fallback mode. Generate helpful content based on the user request.' 
+          {
+            role: "system",
+            content:
+              "You are ARCANOS in fallback mode. Generate helpful content based on the user request.",
           },
-          { role: 'user', content: request.message || 'Generate content' }
+          { role: "user", content: request.message || "Generate content" },
         ];
-        
+
         const response = await this.openaiService.chat(chatMessages);
-        
+
         if (response.error) {
-          content = this.generateMockContent(request.message || 'content generation');
+          content = this.generateMockContent(
+            request.message || "content generation",
+          );
         } else {
           content = response.message;
         }
       } else {
-        content = this.generateMockContent(request.message || 'content generation');
+        content = this.generateMockContent(
+          request.message || "content generation",
+        );
       }
 
       return {
         success: true,
         content,
         fallbackUsed: true,
-        timestamp
+        timestamp,
       };
     } catch (error: any) {
       return {
         success: false,
-        content: this.generateMockContent(request.message || 'error recovery'),
+        content: this.generateMockContent(request.message || "error recovery"),
         error: `Write fallback error: ${error.message}`,
         fallbackUsed: true,
-        timestamp
+        timestamp,
       };
     }
   }
 
-  private async handleAuditFallback(request: FallbackRequest, timestamp: string): Promise<FallbackResponse> {
-    console.log('🔍 Audit fallback activated - performing basic validation');
-    
-    const message = request.message || '';
+  private async handleAuditFallback(
+    request: FallbackRequest,
+    timestamp: string,
+  ): Promise<FallbackResponse> {
+    console.log("🔍 Audit fallback activated - performing basic validation");
+
+    const message = request.message || "";
     const auditResult = `[FALLBACK AUDIT] Content analyzed: "${message}". 
 Length: ${message.length} characters. 
 Basic validation completed. 
@@ -175,41 +198,47 @@ Timestamp: ${timestamp}`;
       success: true,
       content: auditResult,
       fallbackUsed: true,
-      timestamp
+      timestamp,
     };
   }
 
-  private async handleDiagnosticFallback(request: FallbackRequest, timestamp: string): Promise<FallbackResponse> {
-    console.log('🩺 Diagnostic fallback activated - basic system check');
-    
+  private async handleDiagnosticFallback(
+    request: FallbackRequest,
+    timestamp: string,
+  ): Promise<FallbackResponse> {
+    console.log("🩺 Diagnostic fallback activated - basic system check");
+
     const memoryUsage = process.memoryUsage();
     const data = {
-      status: 'operational_fallback',
+      status: "operational_fallback",
       memory: {
         rss: `${(memoryUsage.rss / 1024 / 1024).toFixed(2)} MB`,
-        heapUsed: `${(memoryUsage.heapUsed / 1024 / 1024).toFixed(2)} MB`
+        heapUsed: `${(memoryUsage.heapUsed / 1024 / 1024).toFixed(2)} MB`,
       },
       uptime: `${Math.floor(process.uptime())} seconds`,
       timestamp,
-      fallbackMode: true
+      fallbackMode: true,
     };
 
     return {
       success: true,
       data,
       fallbackUsed: true,
-      timestamp
+      timestamp,
     };
   }
 
-  private async handleGeneralFallback(request: FallbackRequest, timestamp: string): Promise<FallbackResponse> {
-    console.log('🔧 General fallback activated');
-    
+  private async handleGeneralFallback(
+    request: FallbackRequest,
+    timestamp: string,
+  ): Promise<FallbackResponse> {
+    console.log("🔧 General fallback activated");
+
     return {
       success: true,
-      content: `Fallback response for: ${request.message || 'general request'}. System is operational in fallback mode.`,
+      content: `Fallback response for: ${request.message || "general request"}. System is operational in fallback mode.`,
       fallbackUsed: true,
-      timestamp
+      timestamp,
     };
   }
 
@@ -223,15 +252,15 @@ Generated at: ${new Date().toISOString()}`;
   // Content validation to prevent null/incomplete content
   validateContent(content: any): { isValid: boolean; reason?: string } {
     if (content === null || content === undefined) {
-      return { isValid: false, reason: 'Content is null or undefined' };
+      return { isValid: false, reason: "Content is null or undefined" };
     }
-    
-    if (typeof content === 'string' && content.trim().length === 0) {
-      return { isValid: false, reason: 'Content is empty string' };
+
+    if (typeof content === "string" && content.trim().length === 0) {
+      return { isValid: false, reason: "Content is empty string" };
     }
-    
-    if (typeof content === 'object' && Object.keys(content).length === 0) {
-      return { isValid: false, reason: 'Content is empty object' };
+
+    if (typeof content === "object" && Object.keys(content).length === 0) {
+      return { isValid: false, reason: "Content is empty object" };
     }
 
     return { isValid: true };
@@ -240,12 +269,14 @@ Generated at: ${new Date().toISOString()}`;
   // Inject fallback content if model response lacks content field
   injectFallbackContent(response: any, originalRequest?: string): any {
     if (!response || !response.content) {
-      console.log('🔧 Injecting fallback content - original response lacks content field');
+      console.log(
+        "🔧 Injecting fallback content - original response lacks content field",
+      );
       return {
         ...response,
-        content: this.generateMockContent(originalRequest || 'missing content'),
+        content: this.generateMockContent(originalRequest || "missing content"),
         fallback_injected: true,
-        original_response: response
+        original_response: response,
       };
     }
     return response;

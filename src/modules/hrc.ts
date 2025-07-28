@@ -1,13 +1,16 @@
 export class HRCCore {
-  status = 'active';
+  status = "active";
 
   async initialize(): Promise<void> {
     // Placeholder for future initialization logic
   }
 
-  async validate(text: string, _ctx: any): Promise<{ success: boolean; data: any }> {
+  async validate(
+    text: string,
+    _ctx: any,
+  ): Promise<{ success: boolean; data: any }> {
     const flaggedPatterns = [/rm\s+-rf/i, /drop\s+table/i, /shutdown/i];
-    const flagged = flaggedPatterns.some(p => p.test(text));
+    const flagged = flaggedPatterns.some((p) => p.test(text));
 
     const lengthScore = text.length > 1000 ? 0.5 : 1;
     const fidelityScore = lengthScore;

@@ -1,39 +1,43 @@
 // ARCANOS Execution Engine - Executes instructions returned by the AI dispatcher
 // Provides thin execution shells for all system operations
 
-import { DispatchInstruction } from './ai-dispatcher';
-import { OpenAIService } from './openai';
-import { aiConfig } from '../config';
-import { MemoryStorage } from '../storage/memory-storage';
-import { diagnosticsService } from './diagnostics';
-import { workerStatusService } from './worker-status';
-import * as cron from 'node-cron';
-import { databaseService } from './database';
-import { isValidWorker } from './worker-manager';
+import { DispatchInstruction } from "./ai-dispatcher";
+import { OpenAIService } from "./openai";
+import { aiConfig } from "../config";
+import { MemoryStorage } from "../storage/memory-storage";
+import { diagnosticsService } from "./diagnostics";
+import { workerStatusService } from "./worker-status";
+import * as cron from "node-cron";
+import { databaseService } from "./database";
+import { isValidWorker } from "./worker-manager";
 // Import worker validation from the registry
 let validateWorkerRegistration: (name: string) => boolean;
 try {
-  ({ validateWorker: validateWorkerRegistration } = require('../../workers/workerRegistry'));
+  ({
+    validateWorker: validateWorkerRegistration,
+  } = require("../../workers/workerRegistry"));
 } catch (err) {
-  console.warn('[ExecutionEngine] workerRegistry validation unavailable');
+  console.warn("[ExecutionEngine] workerRegistry validation unavailable");
   validateWorkerRegistration = () => false;
 }
-import { createServiceLogger } from '../utils/logger';
+import { createServiceLogger } from "../utils/logger";
 // Dynamically load worker modules from the JS registry
 // If the registry is missing, provide an empty fallback implementation
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 let getDynamicWorker: (name: string) => any;
 let workerRegistryMissing = false;
 try {
-  ({ getWorker: getDynamicWorker } = require('../../workers/workerRegistry'));
+  ({ getWorker: getDynamicWorker } = require("../../workers/workerRegistry"));
 } catch (err) {
-  console.warn('[ExecutionEngine] workerRegistry module missing, using empty registry');
+  console.warn(
+    "[ExecutionEngine] workerRegistry module missing, using empty registry",
+  );
   // Fallback returns undefined for any worker
   getDynamicWorker = () => undefined;
   workerRegistryMissing = true;
 }
 
-const logger = createServiceLogger('ExecutionEngine');
+const logger = createServiceLogger("ExecutionEngine");
 
 export interface ExecutionResult {
   success: boolean;
@@ -55,10 +59,12 @@ export class ExecutionEngine {
         identityTriggerPhrase: aiConfig.identityTriggerPhrase,
       });
     } catch (error) {
-      console.warn('⚠️ Execution Engine initialized without OpenAI (testing mode)');
+      console.warn(
+        "⚠️ Execution Engine initialized without OpenAI (testing mode)",
+      );
       this.openaiService = null;
     }
-    console.log('⚙️ Execution Engine initialized');
+    console.log("⚙️ Execution Engine initialized");
   }
 
   /**
@@ -66,37 +72,38 @@ export class ExecutionEngine {
    */
   private normalizeWorker(input: any): string | undefined {
     if (!input) return undefined;
-    if (typeof input === 'string') return input;
+    if (typeof input === "string") return input;
     return input.workerName || input.name || input.work;
   }
 
   /**
    * Execute a single instruction from the AI model
    */
-  async executeInstruction(instruction: DispatchInstruction): Promise<ExecutionResult> {
-    console.log('🔧 Executing instruction:', {
+  async executeInstruction(
+    instruction: DispatchInstruction,
+  ): Promise<ExecutionResult> {
+    console.log("🔧 Executing instruction:", {
       action: instruction.action,
       service: instruction.service,
-      worker: instruction.worker
+      worker: instruction.worker,
     });
 
     try {
       if (!instruction.execute) {
         return {
           success: true,
-          response: instruction.response
+          response: instruction.response,
         };
       }
 
       // Route action using centralized action router
-      const { routeAction } = await import('./action-router');
+      const { routeAction } = await import("./action-router");
       return await routeAction(instruction);
-
     } catch (error: any) {
-      console.error('❌ Execution error:', error);
+      console.error("❌ Execution error:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -104,42 +111,52 @@ export class ExecutionEngine {
   /**
    * Execute multiple instructions in sequence
    */
-  async executeInstructions(instructions: DispatchInstruction[]): Promise<ExecutionResult[]> {
+  async executeInstructions(
+    instructions: DispatchInstruction[],
+  ): Promise<ExecutionResult[]> {
     const results: ExecutionResult[] = [];
 
     const cleaned = this.cleanScheduleQueue(instructions);
 
     // Sort by priority (higher numbers first)
-    const sortedInstructions = cleaned.sort((a, b) => (b.priority || 5) - (a.priority || 5));
-    
+    const sortedInstructions = cleaned.sort(
+      (a, b) => (b.priority || 5) - (a.priority || 5),
+    );
+
     for (const instruction of sortedInstructions) {
       instruction.worker = this.normalizeWorker(instruction.worker);
 
-      if (instruction.action === 'schedule') {
+      if (instruction.action === "schedule") {
         if (!instruction.worker) {
-          results.push({ success: false, error: 'no_worker_specified' });
+          results.push({ success: false, error: "no_worker_specified" });
           continue;
         }
         if (!isValidWorker(instruction.worker)) {
-          results.push({ success: false, error: `invalid_worker_format_${instruction.worker}` });
+          results.push({
+            success: false,
+            error: `invalid_worker_format_${instruction.worker}`,
+          });
           continue;
         }
         if (!validateWorkerRegistration(instruction.worker)) {
-          results.push({ success: false, error: `unregistered_worker_${instruction.worker}` });
+          results.push({
+            success: false,
+            error: `unregistered_worker_${instruction.worker}`,
+          });
           continue;
         }
       }
 
       const result = await this.executeInstruction(instruction);
       results.push(result);
-      
+
       // If a high-priority instruction fails, consider stopping
       if (!result.success && (instruction.priority || 5) >= 8) {
-        console.warn('⚠️ High-priority instruction failed, stopping execution');
+        console.warn("⚠️ High-priority instruction failed, stopping execution");
         break;
       }
     }
-    
+
     return results;
   }
 
@@ -149,36 +166,38 @@ export class ExecutionEngine {
   public handleResponse(instruction: DispatchInstruction): ExecutionResult {
     return {
       success: true,
-      response: instruction.response || 'No response provided'
+      response: instruction.response || "No response provided",
     };
   }
 
   /**
    * Handle execution action - execute service operations
    */
-  public async handleExecution(instruction: DispatchInstruction): Promise<ExecutionResult> {
+  public async handleExecution(
+    instruction: DispatchInstruction,
+  ): Promise<ExecutionResult> {
     const { service, parameters = {} } = instruction;
 
     switch (service) {
-      case 'memory':
+      case "memory":
         return await this.executeMemoryOperation(parameters);
-      
-      case 'audit':
+
+      case "audit":
         return await this.executeAuditOperation(parameters);
-      
-      case 'write':
+
+      case "write":
         return await this.executeWriteOperation(parameters);
-      
-      case 'diagnostic':
+
+      case "diagnostic":
         return await this.executeDiagnosticOperation(parameters);
-      
-      case 'api':
+
+      case "api":
         return await this.executeApiOperation(parameters);
-      
+
       default:
         return {
           success: false,
-          error: `Unknown service: ${service}`
+          error: `Unknown service: ${service}`,
         };
     }
   }
@@ -193,28 +212,28 @@ export class ExecutionEngine {
     if (!schedule) {
       return {
         success: false,
-        error: 'Schedule expression required'
+        error: "Schedule expression required",
       };
     }
 
     if (!workerName) {
       return {
         success: false,
-        error: 'Worker name required for scheduling'
+        error: "Worker name required for scheduling",
       };
     }
 
     if (!isValidWorker(workerName)) {
       return {
         success: false,
-        error: `Invalid worker format: ${workerName}`
+        error: `Invalid worker format: ${workerName}`,
       };
     }
 
     if (!validateWorkerRegistration(workerName)) {
       return {
         success: false,
-        error: `Unregistered worker: ${workerName}`
+        error: `Unregistered worker: ${workerName}`,
       };
     }
 
@@ -227,40 +246,43 @@ export class ExecutionEngine {
     }
 
     try {
-      const taskId = `${workerName || 'task'}_${Date.now()}`;
-      
-      const task = cron.schedule(schedule, async () => {
-        console.log(`⏰ Executing scheduled task: ${taskId}`);
-        
-        if (workerName) {
-          await this.executeWorker(workerName, parameters);
-        } else {
-          // Execute the instruction directly
-          await this.executeInstruction({
-            ...instruction,
-            action: 'execute'
-          });
-        }
-      }, {
-        timezone: 'UTC'
-      });
+      const taskId = `${workerName || "task"}_${Date.now()}`;
+
+      const task = cron.schedule(
+        schedule,
+        async () => {
+          console.log(`⏰ Executing scheduled task: ${taskId}`);
+
+          if (workerName) {
+            await this.executeWorker(workerName, parameters);
+          } else {
+            // Execute the instruction directly
+            await this.executeInstruction({
+              ...instruction,
+              action: "execute",
+            });
+          }
+        },
+        {
+          timezone: "UTC",
+        },
+      );
 
       this.scheduledTasks.set(taskId, task);
       // Task starts immediately with the schedule
 
       console.log(`✅ Scheduled task ${taskId} with expression: ${schedule}`);
       this.logScheduleDiagnostics(taskId, workerName, schedule);
-      
+
       return {
         success: true,
         result: { taskId, schedule },
-        response: `Task scheduled successfully: ${taskId}`
+        response: `Task scheduled successfully: ${taskId}`,
       };
-
     } catch (error: any) {
       return {
         success: false,
-        error: `Failed to schedule task: ${error.message}`
+        error: `Failed to schedule task: ${error.message}`,
       };
     }
   }
@@ -268,21 +290,23 @@ export class ExecutionEngine {
   /**
    * Handle delegation action - delegate to workers
    */
-  public async handleDelegation(instruction: DispatchInstruction): Promise<ExecutionResult> {
+  public async handleDelegation(
+    instruction: DispatchInstruction,
+  ): Promise<ExecutionResult> {
     const workerName = this.normalizeWorker(instruction.worker);
     const { parameters = {} } = instruction;
 
     if (!workerName) {
       return {
         success: false,
-        error: 'Worker name required for delegation'
+        error: "Worker name required for delegation",
       };
     }
 
     if (!validateWorkerRegistration(workerName)) {
       return {
         success: false,
-        error: `Unregistered worker: ${workerName}`
+        error: `Unregistered worker: ${workerName}`,
       };
     }
 
@@ -292,66 +316,81 @@ export class ExecutionEngine {
   /**
    * Execute memory operations
    */
-  private async executeMemoryOperation(parameters: any): Promise<ExecutionResult> {
-    const { operation, key, value, userId = 'system', sessionId = 'default' } = parameters;
+  private async executeMemoryOperation(
+    parameters: any,
+  ): Promise<ExecutionResult> {
+    const {
+      operation,
+      key,
+      value,
+      userId = "system",
+      sessionId = "default",
+    } = parameters;
 
     try {
       switch (operation) {
-        case 'store':
-        case 'save':
+        case "store":
+        case "save":
           const stored = await this.memoryStorage.storeMemory(
-            userId, sessionId, 'context', key, value, parameters.tags || []
+            userId,
+            sessionId,
+            "context",
+            key,
+            value,
+            parameters.tags || [],
           );
           return {
             success: true,
             result: stored,
-            response: `Memory stored: ${key}`
+            response: `Memory stored: ${key}`,
           };
 
-        case 'load':
-        case 'get':
+        case "load":
+        case "get":
           const loaded = await this.memoryStorage.getMemoryById(key);
           return {
             success: true,
             result: loaded,
-            response: loaded ? `Memory loaded: ${key}` : `Memory not found: ${key}`
+            response: loaded
+              ? `Memory loaded: ${key}`
+              : `Memory not found: ${key}`,
           };
 
-        case 'list':
-        case 'all':
+        case "list":
+        case "all":
           const memories = await this.memoryStorage.getMemoriesByUser(userId);
           return {
             success: true,
             result: memories,
-            response: `Found ${memories.length} memory entries`
+            response: `Found ${memories.length} memory entries`,
           };
 
-        case 'clear':
-        case 'delete':
+        case "clear":
+        case "delete":
           // Use the available clearAll method
           try {
             const result = await this.memoryStorage.clearAll(userId);
             return {
               success: true,
-              response: `Memory cleared: ${result.cleared} entries`
+              response: `Memory cleared: ${result.cleared} entries`,
             };
           } catch (error: any) {
             return {
               success: false,
-              error: error.message
+              error: error.message,
             };
           }
 
         default:
           return {
             success: false,
-            error: `Unknown memory operation: ${operation}`
+            error: `Unknown memory operation: ${operation}`,
           };
       }
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -359,14 +398,18 @@ export class ExecutionEngine {
   /**
    * Execute audit operations (code review, analysis)
    */
-  private async executeAuditOperation(parameters: any): Promise<ExecutionResult> {
-    const { code, message, type = 'general' } = parameters;
+  private async executeAuditOperation(
+    parameters: any,
+  ): Promise<ExecutionResult> {
+    const { code, message, type = "general" } = parameters;
 
     if (!this.openaiService) {
       return {
         success: true,
-        result: { audit: `Mock audit: ${type} analysis of provided content would be performed here.` },
-        response: `Mock audit: ${type} analysis of provided content would be performed here.`
+        result: {
+          audit: `Mock audit: ${type} analysis of provided content would be performed here.`,
+        },
+        response: `Mock audit: ${type} analysis of provided content would be performed here.`,
       };
     }
 
@@ -382,20 +425,19 @@ Provide a detailed analysis including:
 4. Best practices recommendations`;
 
       const response = await this.openaiService.chat([
-        { role: 'user', content: auditPrompt }
+        { role: "user", content: auditPrompt },
       ]);
 
       return {
         success: !response.error,
         result: { audit: response.message },
         response: response.message,
-        error: response.error
+        error: response.error,
       };
-
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -403,47 +445,50 @@ Provide a detailed analysis including:
   /**
    * Execute write operations (content generation)
    */
-  public async executeWriteOperation(parameters: any): Promise<ExecutionResult> {
-    const { prompt, type = 'general', style, length } = parameters;
+  public async executeWriteOperation(
+    parameters: any,
+  ): Promise<ExecutionResult> {
+    const { prompt, type = "general", style, length } = parameters;
 
     if (!this.openaiService) {
       return {
         success: true,
-        result: { content: `Mock write: Generated ${type} content for "${prompt}" would appear here.` },
-        response: `Mock write: Generated ${type} content for "${prompt}" would appear here.`
+        result: {
+          content: `Mock write: Generated ${type} content for "${prompt}" would appear here.`,
+        },
+        response: `Mock write: Generated ${type} content for "${prompt}" would appear here.`,
       };
     }
 
     try {
       let writePrompt = prompt;
-      
-      if (type !== 'general') {
+
+      if (type !== "general") {
         writePrompt = `Write ${type} content: ${prompt}`;
       }
-      
+
       if (style) {
         writePrompt += ` (Style: ${style})`;
       }
-      
+
       if (length) {
         writePrompt += ` (Length: ${length})`;
       }
 
       const response = await this.openaiService.chat([
-        { role: 'user', content: writePrompt }
+        { role: "user", content: writePrompt },
       ]);
 
       return {
         success: !response.error,
         result: { content: response.message },
         response: response.message,
-        error: response.error
+        error: response.error,
       };
-
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -451,23 +496,26 @@ Provide a detailed analysis including:
   /**
    * Execute diagnostic operations
    */
-  private async executeDiagnosticOperation(parameters: any): Promise<ExecutionResult> {
-    const { command, type = 'system' } = parameters;
+  private async executeDiagnosticOperation(
+    parameters: any,
+  ): Promise<ExecutionResult> {
+    const { command, type = "system" } = parameters;
 
     try {
-      const result = await diagnosticsService.executeDiagnosticCommand(command || type);
-      
+      const result = await diagnosticsService.executeDiagnosticCommand(
+        command || type,
+      );
+
       return {
         success: result.success,
         result: result.data,
         response: JSON.stringify(result.data, null, 2),
-        error: result.error
+        error: result.error,
       };
-
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -477,18 +525,21 @@ Provide a detailed analysis including:
    */
   private async executeApiOperation(parameters: any): Promise<ExecutionResult> {
     const { response, status = 200 } = parameters;
-    
+
     return {
       success: true,
       result: { status, response },
-      response: response || 'API operation completed'
+      response: response || "API operation completed",
     };
   }
 
   /**
    * Execute worker operations
    */
-  private async executeWorker(workerName: string, parameters: any = {}): Promise<ExecutionResult> {
+  private async executeWorker(
+    workerName: string,
+    parameters: any = {},
+  ): Promise<ExecutionResult> {
     console.log(`👷 Executing worker: ${workerName}`);
 
     try {
@@ -498,29 +549,30 @@ Provide a detailed analysis including:
         return { success: true, response: `${workerName} executed` };
       }
       if (workerRegistryMissing) {
-        console.warn(`[ExecutionEngine] workerRegistry unavailable - fallback for ${workerName}`);
+        console.warn(
+          `[ExecutionEngine] workerRegistry unavailable - fallback for ${workerName}`,
+        );
       }
       switch (workerName) {
-        case 'memorySync':
+        case "memorySync":
           return await this.executeMemorySyncWorker(parameters);
-        
-        case 'goalWatcher':
+
+        case "goalWatcher":
           return await this.executeGoalWatcherWorker(parameters);
-        
-        case 'clearTemp':
+
+        case "clearTemp":
           return await this.executeClearTempWorker(parameters);
-        
+
         default:
           return {
             success: false,
-            error: `Unregistered worker: ${workerName}`
+            error: `Unregistered worker: ${workerName}`,
           };
       }
-
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -528,24 +580,25 @@ Provide a detailed analysis including:
   /**
    * Execute memory sync worker
    */
-  private async executeMemorySyncWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('🔄 Running memory sync worker');
-    
+  private async executeMemorySyncWorker(
+    parameters: any,
+  ): Promise<ExecutionResult> {
+    console.log("🔄 Running memory sync worker");
+
     try {
       // Get all memories and sync them
-      const memories = await this.memoryStorage.getMemoriesByUser('system');
+      const memories = await this.memoryStorage.getMemoriesByUser("system");
       console.log(`📊 Found ${memories.length} memory entries to sync`);
-      
+
       return {
         success: true,
         result: { synced: memories.length },
-        response: `Memory sync completed: ${memories.length} entries`
+        response: `Memory sync completed: ${memories.length} entries`,
       };
-
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -553,27 +606,28 @@ Provide a detailed analysis including:
   /**
    * Execute goal watcher worker
    */
-  private async executeGoalWatcherWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('👁️ Running goal watcher worker');
-    
+  private async executeGoalWatcherWorker(
+    parameters: any,
+  ): Promise<ExecutionResult> {
+    console.log("👁️ Running goal watcher worker");
+
     try {
       // Check for active goals and monitor progress
-      const allMemories = await this.memoryStorage.getMemoriesByUser('system');
-      const goals = allMemories.filter(memory => 
-        memory.tags && memory.tags.includes('goal')
+      const allMemories = await this.memoryStorage.getMemoriesByUser("system");
+      const goals = allMemories.filter(
+        (memory) => memory.tags && memory.tags.includes("goal"),
       );
       console.log(`🎯 Monitoring ${goals.length} active goals`);
-      
+
       return {
         success: true,
         result: { monitored: goals.length },
-        response: `Goal monitoring completed: ${goals.length} goals`
+        response: `Goal monitoring completed: ${goals.length} goals`,
       };
-
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -581,24 +635,25 @@ Provide a detailed analysis including:
   /**
    * Execute clear temp worker
    */
-  private async executeClearTempWorker(parameters: any): Promise<ExecutionResult> {
-    console.log('🧹 Running clear temp worker');
-    
+  private async executeClearTempWorker(
+    parameters: any,
+  ): Promise<ExecutionResult> {
+    console.log("🧹 Running clear temp worker");
+
     try {
       // Clear temporary data older than specified time
-      const maxAge = parameters.maxAge || '24h';
+      const maxAge = parameters.maxAge || "24h";
       console.log(`🗑️ Clearing temp data older than ${maxAge}`);
-      
+
       return {
         success: true,
         result: { cleared: true },
-        response: `Temporary data cleared (older than ${maxAge})`
+        response: `Temporary data cleared (older than ${maxAge})`,
       };
-
     } catch (error: any) {
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -606,20 +661,28 @@ Provide a detailed analysis including:
   /**
    * Remove malformed or duplicate schedule instructions
    */
-  private cleanScheduleQueue(queue: DispatchInstruction[]): DispatchInstruction[] {
+  private cleanScheduleQueue(
+    queue: DispatchInstruction[],
+  ): DispatchInstruction[] {
     const seen = new Set<string>();
-    return queue.filter(task => {
-      if (task.action !== 'schedule') return true;
+    return queue.filter((task) => {
+      if (task.action !== "schedule") return true;
       const worker = this.normalizeWorker(task.worker);
-      const hash = `${task.service || ''}-${worker}-${task.schedule}`;
+      const hash = `${task.service || ""}-${worker}-${task.schedule}`;
       if (seen.has(hash)) return false;
       seen.add(hash);
       return !!worker && !!task.schedule;
     });
   }
 
-  private logScheduleDiagnostics(taskId: string, worker: string, schedule: string): void {
-    logger.info(`[SCHEDULE] Task "${taskId}" scheduled for "${worker}" at ${schedule}`);
+  private logScheduleDiagnostics(
+    taskId: string,
+    worker: string,
+    schedule: string,
+  ): void {
+    logger.info(
+      `[SCHEDULE] Task "${taskId}" scheduled for "${worker}" at ${schedule}`,
+    );
   }
 
   /**

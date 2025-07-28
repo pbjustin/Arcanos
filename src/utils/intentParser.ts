@@ -4,10 +4,12 @@ export interface CodexIntent {
 }
 
 // Very basic intent parser expecting `intent:payload` or JSON
-export function validateCodexIntent(prompt: string | undefined): CodexIntent | null {
-  if (!prompt || typeof prompt !== 'string') return null;
+export function validateCodexIntent(
+  prompt: string | undefined,
+): CodexIntent | null {
+  if (!prompt || typeof prompt !== "string") return null;
 
-  const colonIndex = prompt.indexOf(':');
+  const colonIndex = prompt.indexOf(":");
   if (colonIndex === -1) {
     return { intent: prompt.trim(), payload: {} };
   }

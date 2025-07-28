@@ -1,12 +1,12 @@
 // Worker Status Tracking Service
 // Provides real-time status monitoring for background workers
 
-import * as os from 'os';
+import * as os from "os";
 
 export interface WorkerInfo {
   id: string;
   task: string;
-  status: 'running' | 'idle' | 'error';
+  status: "running" | "idle" | "error";
   cpu: string;
   ram: string;
   uptime: string;
@@ -21,12 +21,16 @@ export class WorkerStatusService {
   /**
    * Register a new worker or update existing worker status
    */
-  registerWorker(id: string, task: string, status: 'running' | 'idle' | 'error' = 'idle'): void {
+  registerWorker(
+    id: string,
+    task: string,
+    status: "running" | "idle" | "error" = "idle",
+  ): void {
     if (!id) {
-      throw new Error('Worker registration failed: Missing workerName.');
+      throw new Error("Worker registration failed: Missing workerName.");
     }
     const now = Date.now();
-    
+
     if (this.workers.has(id)) {
       // Update existing worker
       const worker = this.workers.get(id)!;
@@ -39,11 +43,11 @@ export class WorkerStatusService {
         id,
         task,
         status,
-        cpu: '0%',
-        ram: '0MB',
-        uptime: '0s',
+        cpu: "0%",
+        ram: "0MB",
+        uptime: "0s",
         startTime: now,
-        lastActivity: now
+        lastActivity: now,
       });
     }
   }
@@ -51,7 +55,11 @@ export class WorkerStatusService {
   /**
    * Update worker status
    */
-  updateWorkerStatus(id: string, status: 'running' | 'idle' | 'error', task?: string): void {
+  updateWorkerStatus(
+    id: string,
+    status: "running" | "idle" | "error",
+    task?: string,
+  ): void {
     const worker = this.workers.get(id);
     if (worker) {
       worker.status = status;
@@ -79,14 +87,14 @@ export class WorkerStatusService {
     // Update metrics for each worker
     for (const [id, worker] of this.workers) {
       const updatedWorker = await this.updateWorkerMetrics(worker, currentTime);
-      // Return only the fields specified in the API format  
+      // Return only the fields specified in the API format
       workers.push({
         id: updatedWorker.id,
         task: updatedWorker.task,
         status: updatedWorker.status,
         cpu: updatedWorker.cpu,
         ram: updatedWorker.ram,
-        uptime: updatedWorker.uptime
+        uptime: updatedWorker.uptime,
       });
     }
 
@@ -96,7 +104,10 @@ export class WorkerStatusService {
   /**
    * Update real-time metrics for a worker
    */
-  private async updateWorkerMetrics(worker: WorkerInfo, currentTime: number): Promise<WorkerInfo> {
+  private async updateWorkerMetrics(
+    worker: WorkerInfo,
+    currentTime: number,
+  ): Promise<WorkerInfo> {
     // Calculate uptime
     const startTime = worker.startTime || currentTime;
     const uptimeMs = currentTime - startTime;
@@ -104,18 +115,24 @@ export class WorkerStatusService {
 
     // Get current memory usage (simulate realistic values per worker)
     const memUsage = process.memoryUsage();
-    const baseMemoryMB = Math.round((memUsage.heapUsed / 1024 / 1024));
-    
+    const baseMemoryMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+
     // Simulate different memory usage based on worker type and status
     let workerMemoryMB: number;
-    if (worker.status === 'running') {
+    if (worker.status === "running") {
       // Running workers use more memory
-      if (worker.task === 'memory_diagnostics') {
-        workerMemoryMB = Math.round(baseMemoryMB * 0.4 + Math.random() * 50 + 250); // 250-350MB range
-      } else if (worker.task === 'health_monitoring') {
-        workerMemoryMB = Math.round(baseMemoryMB * 0.2 + Math.random() * 30 + 80); // 80-130MB range  
+      if (worker.task === "memory_diagnostics") {
+        workerMemoryMB = Math.round(
+          baseMemoryMB * 0.4 + Math.random() * 50 + 250,
+        ); // 250-350MB range
+      } else if (worker.task === "health_monitoring") {
+        workerMemoryMB = Math.round(
+          baseMemoryMB * 0.2 + Math.random() * 30 + 80,
+        ); // 80-130MB range
       } else {
-        workerMemoryMB = Math.round(baseMemoryMB * 0.3 + Math.random() * 40 + 100); // 100-180MB range
+        workerMemoryMB = Math.round(
+          baseMemoryMB * 0.3 + Math.random() * 40 + 100,
+        ); // 100-180MB range
       }
     } else {
       // Idle workers use less memory
@@ -126,16 +143,22 @@ export class WorkerStatusService {
     // Get CPU usage (simulate realistic values)
     const loadAvg = os.loadavg();
     const systemCpuUsage = Math.min((loadAvg[0] / os.cpus().length) * 100, 100);
-    
+
     let workerCpuUsage: number;
-    if (worker.status === 'running') {
+    if (worker.status === "running") {
       // Running workers use more CPU
-      if (worker.task === 'memory_diagnostics') {
-        workerCpuUsage = Math.round((systemCpuUsage * 0.3 + Math.random() * 15 + 15) * 100) / 100; // 15-30% range
-      } else if (worker.task === 'health_monitoring') {
-        workerCpuUsage = Math.round((systemCpuUsage * 0.1 + Math.random() * 3 + 2) * 100) / 100; // 2-5% range
+      if (worker.task === "memory_diagnostics") {
+        workerCpuUsage =
+          Math.round((systemCpuUsage * 0.3 + Math.random() * 15 + 15) * 100) /
+          100; // 15-30% range
+      } else if (worker.task === "health_monitoring") {
+        workerCpuUsage =
+          Math.round((systemCpuUsage * 0.1 + Math.random() * 3 + 2) * 100) /
+          100; // 2-5% range
       } else {
-        workerCpuUsage = Math.round((systemCpuUsage * 0.2 + Math.random() * 5 + 5) * 100) / 100; // 5-12% range
+        workerCpuUsage =
+          Math.round((systemCpuUsage * 0.2 + Math.random() * 5 + 5) * 100) /
+          100; // 5-12% range
       }
     } else {
       // Idle workers use minimal CPU
@@ -149,8 +172,8 @@ export class WorkerStatusService {
     // Check if worker is still active (if no activity in last 5 minutes, mark as idle)
     const lastActivity = worker.lastActivity || currentTime;
     const timeSinceActivity = currentTime - lastActivity;
-    if (timeSinceActivity > 5 * 60 * 1000 && worker.status === 'running') {
-      worker.status = 'idle';
+    if (timeSinceActivity > 5 * 60 * 1000 && worker.status === "running") {
+      worker.status = "idle";
     }
 
     return { ...worker };
@@ -179,33 +202,37 @@ export class WorkerStatusService {
    * Initialize minimal system workers for optimized backend
    */
   initializeMinimalWorkers(): void {
-    this.registerWorker('worker-health', 'health_monitoring', 'idle');
-    this.registerWorker('worker-maintenance', 'awaiting_job', 'idle');
+    this.registerWorker("worker-health", "health_monitoring", "idle");
+    this.registerWorker("worker-maintenance", "awaiting_job", "idle");
   }
 
   /**
    * Initialize default system workers (legacy - for compatibility)
    */
   initializeSystemWorkers(): void {
-    this.registerWorker('worker-1', 'memory_diagnostics', 'running');
-    this.registerWorker('worker-2', 'awaiting_job', 'idle');
-    this.registerWorker('worker-3', 'health_monitoring', 'running');
-    this.registerWorker('worker-4', 'maintenance_sweep', 'idle');
-    this.registerWorker('worker-5', 'model_probe', 'idle');
+    this.registerWorker("worker-1", "memory_diagnostics", "running");
+    this.registerWorker("worker-2", "awaiting_job", "idle");
+    this.registerWorker("worker-3", "health_monitoring", "running");
+    this.registerWorker("worker-4", "maintenance_sweep", "idle");
+    this.registerWorker("worker-5", "model_probe", "idle");
   }
 
   /**
    * Add a high-load worker for testing purposes
    */
   addHighLoadWorker(): void {
-    this.registerWorker('worker-test-high-load', 'heavy_computation', 'running');
+    this.registerWorker(
+      "worker-test-high-load",
+      "heavy_computation",
+      "running",
+    );
   }
 
   /**
    * Simulate high CPU load for testing - override CPU values for specific workers
    */
   private simulateHighLoad(worker: WorkerInfo): void {
-    if (worker.id === 'worker-test-high-load') {
+    if (worker.id === "worker-test-high-load") {
       // Force high CPU usage for testing
       worker.cpu = `${(75 + Math.random() * 20).toFixed(2)}%`; // 75-95% CPU
     }

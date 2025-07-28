@@ -1,8 +1,8 @@
-import { HRCCore } from './hrc';
+import { HRCCore } from "./hrc";
 
 export interface OverlayResult {
   allowed: boolean;
-  route: 'allow' | 'throttle' | 'block';
+  route: "allow" | "throttle" | "block";
   metrics: {
     resilience: number;
     fidelity: number;
@@ -21,16 +21,16 @@ export class HRCOverlay {
     const validation = await this.hrc.validate(message, { domain });
     const resScore = validation.data?.resilienceScore ?? 1;
     const fidScore = validation.data?.fidelityScore ?? 1;
-    let route: 'allow' | 'throttle' | 'block' = 'allow';
+    let route: "allow" | "throttle" | "block" = "allow";
 
     if (!validation.success) {
-      route = 'block';
+      route = "block";
     } else if (resScore < 0.5 || fidScore < 0.5) {
-      route = 'throttle';
+      route = "throttle";
     }
 
     return {
-      allowed: route === 'allow',
+      allowed: route === "allow",
       route,
       metrics: {
         resilience: resScore,

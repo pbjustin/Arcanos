@@ -3,7 +3,7 @@
  * Consolidates repeated response patterns across routes
  */
 
-import { Response } from 'express';
+import { Response } from "express";
 
 /**
  * Standard error response structure
@@ -33,21 +33,21 @@ export interface SuccessResponse<T = any> {
  * @param details - Optional error details
  */
 export function sendErrorResponse(
-  res: Response, 
-  status: number, 
-  error: string, 
-  details?: string
+  res: Response,
+  status: number,
+  error: string,
+  details?: string,
 ): void {
   const response: ErrorResponse = {
     success: false,
     error,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   };
-  
+
   if (details) {
     response.details = details;
   }
-  
+
   res.status(status).json(response);
 }
 
@@ -62,18 +62,18 @@ export function sendSuccessResponse<T = any>(
   res: Response,
   message: string,
   data?: T,
-  status: number = 200
+  status: number = 200,
 ): void {
   const response: SuccessResponse<T> = {
     success: true,
     message,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   };
-  
+
   if (data !== undefined) {
     response.data = data;
   }
-  
+
   res.status(status).json(response);
 }
 
@@ -83,7 +83,11 @@ export function sendSuccessResponse<T = any>(
  * @param error - Caught error
  * @param context - Context/operation name for logging
  */
-export function handleCatchError(res: Response, error: any, context: string): void {
+export function handleCatchError(
+  res: Response,
+  error: any,
+  context: string,
+): void {
   console.error(`❌ ${context} error:`, error);
   sendErrorResponse(res, 500, `${context} error`, error.message);
 }
@@ -96,12 +100,17 @@ export function handleCatchError(res: Response, error: any, context: string): vo
  */
 export function handleServiceResult(
   res: Response,
-  result: { success: boolean; error?: string; response?: any; [key: string]: any },
-  successMessage: string
+  result: {
+    success: boolean;
+    error?: string;
+    response?: any;
+    [key: string]: any;
+  },
+  successMessage: string,
 ): void {
   if (result.success) {
     sendSuccessResponse(res, successMessage, result.response || result);
   } else {
-    sendErrorResponse(res, 500, result.error || 'Service operation failed');
+    sendErrorResponse(res, 500, result.error || "Service operation failed");
   }
 }

@@ -41,7 +41,7 @@ class PerformanceMonitor {
   trackRequest(responseTime: number, isError = false) {
     this.requestCount++;
     this.lastRequestTime = Date.now();
-    
+
     if (isError) {
       this.errorRequests++;
     } else {
@@ -64,11 +64,13 @@ class PerformanceMonitor {
   getMetrics(): PerformanceMetrics {
     const memory = process.memoryUsage();
     const uptime = process.uptime();
-    
+
     // Calculate average response time
-    const avgResponseTime = this.responseTimes.length > 0 
-      ? this.responseTimes.reduce((a, b) => a + b, 0) / this.responseTimes.length 
-      : 0;
+    const avgResponseTime =
+      this.responseTimes.length > 0
+        ? this.responseTimes.reduce((a, b) => a + b, 0) /
+          this.responseTimes.length
+        : 0;
 
     return {
       memory: {
@@ -79,7 +81,8 @@ class PerformanceMonitor {
       },
       cpu: {
         uptime: this.formatDuration(uptime * 1000),
-        loadAverage: process.platform !== 'win32' ? require('os').loadavg() : undefined,
+        loadAverage:
+          process.platform !== "win32" ? require("os").loadavg() : undefined,
       },
       timing: {
         startup: this.startupTime,
@@ -97,10 +100,10 @@ class PerformanceMonitor {
 
   // Format bytes to human readable
   private formatBytes(bytes: number): string {
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    if (bytes === 0) return '0 Bytes';
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    if (bytes === 0) return "0 Bytes";
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+    return Math.round((bytes / Math.pow(1024, i)) * 100) / 100 + " " + sizes[i];
   }
 
   // Format duration to human readable
@@ -117,36 +120,51 @@ class PerformanceMonitor {
   }
 
   // Get memory pressure warning
-  getMemoryPressureStatus(): { status: 'ok' | 'warning' | 'critical'; message: string } {
+  getMemoryPressureStatus(): {
+    status: "ok" | "warning" | "critical";
+    message: string;
+  } {
     const memory = process.memoryUsage();
     const heapUsedMB = memory.heapUsed / 1024 / 1024;
     const rssMB = memory.rss / 1024 / 1024;
 
-    if (rssMB > 6000) { // Over 6GB
-      return { status: 'critical', message: `RSS memory usage is critical: ${this.formatBytes(memory.rss)}` };
+    if (rssMB > 6000) {
+      // Over 6GB
+      return {
+        status: "critical",
+        message: `RSS memory usage is critical: ${this.formatBytes(memory.rss)}`,
+      };
     }
-    if (rssMB > 4000) { // Over 4GB
-      return { status: 'warning', message: `RSS memory usage is high: ${this.formatBytes(memory.rss)}` };
+    if (rssMB > 4000) {
+      // Over 4GB
+      return {
+        status: "warning",
+        message: `RSS memory usage is high: ${this.formatBytes(memory.rss)}`,
+      };
     }
-    if (heapUsedMB > 3000) { // Over 3GB heap
-      return { status: 'warning', message: `Heap usage is high: ${this.formatBytes(memory.heapUsed)}` };
+    if (heapUsedMB > 3000) {
+      // Over 3GB heap
+      return {
+        status: "warning",
+        message: `Heap usage is high: ${this.formatBytes(memory.heapUsed)}`,
+      };
     }
 
-    return { status: 'ok', message: 'Memory usage is normal' };
+    return { status: "ok", message: "Memory usage is normal" };
   }
 
   // Performance summary for logs
   getPerformanceSummary(): string {
     const metrics = this.getMetrics();
     const memoryStatus = this.getMemoryPressureStatus();
-    
+
     return [
       `Memory: ${metrics.memory.rss} RSS, ${metrics.memory.heapUsed} heap`,
       `Uptime: ${metrics.cpu.uptime}`,
       `Requests: ${metrics.requests.total} total, ${metrics.requests.errors} errors`,
       `Avg Response: ${metrics.requests.averageResponseTime}ms`,
-      `Status: ${memoryStatus.status.toUpperCase()}`
-    ].join(' | ');
+      `Status: ${memoryStatus.status.toUpperCase()}`,
+    ].join(" | ");
   }
 }
 
@@ -156,12 +174,12 @@ export const performanceMonitor = new PerformanceMonitor();
 // Express middleware for tracking request performance
 export function performanceMiddleware(req: any, res: any, next: any) {
   const startTime = Date.now();
-  
-  res.on('finish', () => {
+
+  res.on("finish", () => {
     const responseTime = Date.now() - startTime;
     const isError = res.statusCode >= 400;
     performanceMonitor.trackRequest(responseTime, isError);
   });
-  
+
   next();
 }

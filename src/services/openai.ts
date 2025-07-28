@@ -1,12 +1,12 @@
-import OpenAI from 'openai';
-import { createServiceLogger } from '../utils/logger';
-import { aiConfig } from '../config';
-import type { IdentityOverride } from '../types/IdentityOverride';
+import OpenAI from "openai";
+import { createServiceLogger } from "../utils/logger";
+import { aiConfig } from "../config";
+import type { IdentityOverride } from "../types/IdentityOverride";
 
-const logger = createServiceLogger('OpenAIService');
+const logger = createServiceLogger("OpenAIService");
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: "system" | "user" | "assistant";
   content: string;
 }
 
@@ -32,24 +32,34 @@ export class OpenAIService {
 
   constructor(options?: OpenAIServiceOptions) {
     // Get API key from options, config, or environment variable
-    const apiKey = options?.apiKey || aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
-    
+    const apiKey =
+      options?.apiKey || aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
+
     if (!apiKey) {
-      throw new Error('The OPENAI_API_KEY environment variable is missing or empty; either provide it, or instantiate the OpenAI client with an apiKey option, like new OpenAI({ apiKey: \'My API Key\' }).');
+      throw new Error(
+        "The OPENAI_API_KEY environment variable is missing or empty; either provide it, or instantiate the OpenAI client with an apiKey option, like new OpenAI({ apiKey: 'My API Key' }).",
+      );
     }
 
     this.client = new OpenAI({
       apiKey: apiKey,
       timeout: 30000, // 30 seconds timeout
-      maxRetries: 3,  // Increased from 2 for better reliability
+      maxRetries: 3, // Increased from 2 for better reliability
     });
 
     // Use configured fine-tuned model or fallback to predefined ID
-    this.model = options?.model || aiConfig.fineTunedModel || process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD';
+    this.model =
+      options?.model ||
+      aiConfig.fineTunedModel ||
+      process.env.AI_MODEL ||
+      "ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD";
 
     // Optional identity override injected as system message for all chats
-    const override = options?.identityOverride || aiConfig.identityOverride || process.env.IDENTITY_OVERRIDE;
-    if (typeof override === 'string') {
+    const override =
+      options?.identityOverride ||
+      aiConfig.identityOverride ||
+      process.env.IDENTITY_OVERRIDE;
+    if (typeof override === "string") {
       try {
         this.identityOverride = JSON.parse(override) as IdentityOverride;
       } catch {
@@ -58,14 +68,22 @@ export class OpenAIService {
     } else {
       this.identityOverride = override;
     }
-    this.identityTriggerPhrase = options?.identityTriggerPhrase || aiConfig.identityTriggerPhrase || process.env.IDENTITY_TRIGGER_PHRASE || 'I am Skynet';
-    
+    this.identityTriggerPhrase =
+      options?.identityTriggerPhrase ||
+      aiConfig.identityTriggerPhrase ||
+      process.env.IDENTITY_TRIGGER_PHRASE ||
+      "I am Skynet";
+
     // Log model configuration for audit purposes
-    logger.info('OpenAI Service initialized', { 
+    logger.info("OpenAI Service initialized", {
       model: this.model,
       timeout: 30000,
       maxRetries: 3,
-      apiKeySource: options?.apiKey ? 'options' : (aiConfig.openaiApiKey ? 'config' : 'environment')
+      apiKeySource: options?.apiKey
+        ? "options"
+        : aiConfig.openaiApiKey
+          ? "config"
+          : "environment",
     });
   }
 
@@ -76,12 +94,13 @@ export class OpenAIService {
     if (this.identityTriggerPhrase) {
       const phrase = this.identityTriggerPhrase;
       const triggerIndex = finalMessages.findIndex(
-        m => m.role === 'user' && m.content.includes(phrase)
+        (m) => m.role === "user" && m.content.includes(phrase),
       );
       if (triggerIndex !== -1) {
         if (!this.identityOverride) {
-          const raw = aiConfig.identityOverride || process.env.IDENTITY_OVERRIDE;
-          if (typeof raw === 'string') {
+          const raw =
+            aiConfig.identityOverride || process.env.IDENTITY_OVERRIDE;
+          if (typeof raw === "string") {
             try {
               this.identityOverride = JSON.parse(raw) as IdentityOverride;
             } catch {
@@ -91,24 +110,29 @@ export class OpenAIService {
             this.identityOverride = raw;
           }
         }
-        finalMessages[triggerIndex].content = finalMessages[triggerIndex].content.replace(phrase, '').trim();
+        finalMessages[triggerIndex].content = finalMessages[
+          triggerIndex
+        ].content
+          .replace(phrase, "")
+          .trim();
       }
     }
     if (this.identityOverride) {
-      const overrideContent = typeof this.identityOverride === 'string'
-        ? this.identityOverride
-        : JSON.stringify(this.identityOverride);
-      finalMessages.unshift({ role: 'system', content: overrideContent });
+      const overrideContent =
+        typeof this.identityOverride === "string"
+          ? this.identityOverride
+          : JSON.stringify(this.identityOverride);
+      finalMessages.unshift({ role: "system", content: overrideContent });
     }
-    
+
     // Log AI interaction start
-    logger.info('AI interaction started', {
+    logger.info("AI interaction started", {
       timestamp: new Date().toISOString(),
-      taskType: 'chat',
+      taskType: "chat",
       model: this.model,
-      messageCount: finalMessages.length
+      messageCount: finalMessages.length,
     });
-    
+
     try {
       // Use the configured AI model
       const completion = await this.client.chat.completions.create({
@@ -119,47 +143,47 @@ export class OpenAIService {
       });
 
       const endTime = Date.now();
-      
+
       if (completion.choices && completion.choices.length > 0) {
-        const responseMessage = completion.choices[0].message?.content || 'No response';
-        
+        const responseMessage =
+          completion.choices[0].message?.content || "No response";
+
         // Log successful completion
-        logger.info('AI interaction completed', {
+        logger.info("AI interaction completed", {
           timestamp: new Date().toISOString(),
-          taskType: 'chat',
-          completionStatus: 'success',
+          taskType: "chat",
+          completionStatus: "success",
           model: this.model,
           responseLength: responseMessage.length,
           completionTimeMs: endTime - startTime,
-          usage: completion.usage
+          usage: completion.usage,
         });
-        
+
         return {
           message: responseMessage,
           model: this.model,
         };
       }
 
-      throw new Error('No response from OpenAI');
-      
+      throw new Error("No response from OpenAI");
     } catch (error: any) {
       const endTime = Date.now();
-      
-      // Log failed completion  
-      logger.error('AI interaction failed', {
+
+      // Log failed completion
+      logger.error("AI interaction failed", {
         timestamp: new Date().toISOString(),
-        taskType: 'chat',
-        completionStatus: 'error',
+        taskType: "chat",
+        completionStatus: "error",
         model: this.model,
         completionTimeMs: endTime - startTime,
         error: error.message,
         errorType: error.name,
         status: error.status,
-        code: error.code
+        code: error.code,
       });
-      
+
       return {
-        message: 'OpenAI service temporarily unavailable',
+        message: "OpenAI service temporarily unavailable",
         model: this.model,
         error: error.message,
       };

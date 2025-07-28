@@ -1,12 +1,12 @@
 // ARCANOS:WRITE - Narrative content generation service
 // Handles requests that have narrative intent
 
-import { OpenAIService, ChatMessage } from './openai';
-import { aiConfig } from '../config';
-import { MemoryStorage } from '../storage/memory-storage';
-import { arcanosLogger, createServiceLogger } from '../utils/logger';
+import { OpenAIService, ChatMessage } from "./openai";
+import { aiConfig } from "../config";
+import { MemoryStorage } from "../storage/memory-storage";
+import { arcanosLogger, createServiceLogger } from "../utils/logger";
 
-const logger = createServiceLogger('ARCANOS:WRITE');
+const logger = createServiceLogger("ARCANOS:WRITE");
 
 export interface WriteRequest {
   message: string;
@@ -38,7 +38,9 @@ export class ArcanosWriteService {
         identityTriggerPhrase: aiConfig.identityTriggerPhrase,
       });
     } catch (error) {
-      console.warn('⚠️ ArcanosWriteService: OpenAI not available, running in testing mode');
+      console.warn(
+        "⚠️ ArcanosWriteService: OpenAI not available, running in testing mode",
+      );
       this.openaiService = null;
     }
     this.memoryStorage = new MemoryStorage();
@@ -46,9 +48,11 @@ export class ArcanosWriteService {
 
   async processWriteRequest(request: WriteRequest): Promise<WriteResponse> {
     const { message, domain = "general", useRAG = true } = request;
-    
-    console.log(`🖊️ ARCANOS:WRITE - Processing narrative request in domain: ${domain}`);
-    
+
+    console.log(
+      `🖊️ ARCANOS:WRITE - Processing narrative request in domain: ${domain}`,
+    );
+
     try {
       let ragContext = null;
       let ragContextEntries = 0;
@@ -56,7 +60,7 @@ export class ArcanosWriteService {
       // Step 1: Retrieve RAG context if requested
       if (useRAG) {
         try {
-          const memories = await this.memoryStorage.getMemoriesByUser('user');
+          const memories = await this.memoryStorage.getMemoriesByUser("user");
           ragContext = memories.slice(0, 5); // Get last 5 memories for context
           ragContextEntries = ragContext.length;
           console.log(`📚 Retrieved ${ragContextEntries} RAG context entries`);
@@ -67,16 +71,19 @@ export class ArcanosWriteService {
       }
 
       // Step 2: Build system prompt for narrative generation
-      const systemPrompt = this.buildWriteSystemPrompt(domain, ragContext || []);
+      const systemPrompt = this.buildWriteSystemPrompt(
+        domain,
+        ragContext || [],
+      );
 
       // Step 3: Generate narrative content
       const chatMessages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: message }
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message },
       ];
 
-      console.log('🚀 Generating narrative content...');
-      
+      console.log("🚀 Generating narrative content...");
+
       let openaiResponse;
       if (this.openaiService) {
         openaiResponse = await this.openaiService.chat(chatMessages);
@@ -84,24 +91,24 @@ export class ArcanosWriteService {
         // Mock response when OpenAI is not available
         openaiResponse = {
           message: `[TESTING MODE] Mock narrative response for: "${message}". In a real environment with OpenAI configured, this would be generated content for domain: ${domain}`,
-          model: 'mock-model',
-          error: null
+          model: "mock-model",
+          error: null,
         };
       }
 
       if (openaiResponse.error) {
-        arcanosLogger.openaiError('WRITE', openaiResponse);
+        arcanosLogger.openaiError("WRITE", openaiResponse);
         return {
           success: false,
-          content: '',
+          content: "",
           error: openaiResponse.error,
           model: openaiResponse.model,
           metadata: {
             domain,
             useRAG,
             ragContextEntries,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         };
       }
 
@@ -109,28 +116,31 @@ export class ArcanosWriteService {
       if (useRAG) {
         try {
           await this.memoryStorage.storeMemory(
-            'user',
-            'default-session',
-            'interaction',
+            "user",
+            "default-session",
+            "interaction",
             `write_${Date.now()}`,
             {
               userRequest: message,
               generatedContent: openaiResponse.message,
               domain,
-              type: 'narrative',
-              timestamp: new Date().toISOString()
+              type: "narrative",
+              timestamp: new Date().toISOString(),
             },
-            [domain, 'narrative', 'write'],
-            undefined
+            [domain, "narrative", "write"],
+            undefined,
           );
-          logger.info('Stored narrative interaction in memory');
+          logger.info("Stored narrative interaction in memory");
         } catch (error: any) {
-          logger.warning('Memory storage failed', error);
+          logger.warning("Memory storage failed", error);
           // Continue without storing memory
         }
       }
 
-      arcanosLogger.serviceSuccess('ARCANOS:WRITE', 'narrative content generation');
+      arcanosLogger.serviceSuccess(
+        "ARCANOS:WRITE",
+        "narrative content generation",
+      );
       return {
         success: true,
         content: openaiResponse.message,
@@ -139,21 +149,24 @@ export class ArcanosWriteService {
           domain,
           useRAG,
           ragContextEntries,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       };
-
     } catch (error: any) {
-      arcanosLogger.serviceError('ARCANOS:WRITE', 'narrative content generation', error);
+      arcanosLogger.serviceError(
+        "ARCANOS:WRITE",
+        "narrative content generation",
+        error,
+      );
       return {
         success: false,
-        content: '',
+        content: "",
         error: `WRITE service error: ${error.message}`,
         metadata: {
           domain,
           useRAG,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       };
     }
   }

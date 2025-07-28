@@ -1,17 +1,17 @@
-import { databaseService } from '../services/database';
+import { databaseService } from "../services/database";
 
 export interface MemoryEntry {
   id: string;
   userId: string;
   sessionId: string;
-  type: 'context' | 'preference' | 'interaction' | 'system';
+  type: "context" | "preference" | "interaction" | "system";
   key: string;
   value: any;
   timestamp: Date;
   ttl?: number;
   tags: string[];
   metadata: {
-    importance: 'low' | 'medium' | 'high';
+    importance: "low" | "medium" | "high";
     category: string;
     source: string;
     version: number;
@@ -26,11 +26,11 @@ export class MemoryStorage {
   async storeMemory(
     userId: string,
     sessionId: string,
-    type: MemoryEntry['type'],
+    type: MemoryEntry["type"],
     key: string,
     value: any,
     tags: string[] = [],
-    ttl?: number
+    ttl?: number,
   ): Promise<MemoryEntry> {
     const memory: MemoryEntry = {
       id: Math.random().toString(36).substr(2, 9),
@@ -43,12 +43,12 @@ export class MemoryStorage {
       ttl,
       tags,
       metadata: {
-        importance: 'medium',
+        importance: "medium",
         category: type,
-        source: 'user',
+        source: "user",
         version: 1,
-        encrypted: false
-      }
+        encrypted: false,
+      },
     };
     this.memories.set(memory.id, memory);
 
@@ -60,29 +60,34 @@ export class MemoryStorage {
           container_id: userId,
         });
       } catch (error: any) {
-        console.warn('Persistent memory save failed:', error.message);
+        console.warn("Persistent memory save failed:", error.message);
       }
     }
 
     return memory;
   }
 
-  async getMemoriesByUser(userId: string, type?: MemoryEntry['type']): Promise<MemoryEntry[]> {
+  async getMemoriesByUser(
+    userId: string,
+    type?: MemoryEntry["type"],
+  ): Promise<MemoryEntry[]> {
     let entries: MemoryEntry[] = [];
 
     if (this.persistent) {
       try {
         const results = await databaseService.loadAllMemory(userId);
-        entries = results.map(r => r.memory_value as MemoryEntry);
+        entries = results.map((r) => r.memory_value as MemoryEntry);
       } catch (error: any) {
-        console.warn('Persistent memory load failed:', error.message);
+        console.warn("Persistent memory load failed:", error.message);
         entries = [];
       }
     } else {
-      entries = Array.from(this.memories.values()).filter(m => m.userId === userId);
+      entries = Array.from(this.memories.values()).filter(
+        (m) => m.userId === userId,
+      );
     }
 
-    const filtered = entries.filter(m => {
+    const filtered = entries.filter((m) => {
       if (type && m.type !== type) return false;
       if (m.ttl && Date.now() - new Date(m.timestamp).getTime() > m.ttl) {
         this.memories.delete(m.id);
@@ -91,12 +96,18 @@ export class MemoryStorage {
       return true;
     });
 
-    return filtered.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return filtered.sort(
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
   }
 
-  async getMemory(userId: string, key: string): Promise<MemoryEntry | undefined> {
+  async getMemory(
+    userId: string,
+    key: string,
+  ): Promise<MemoryEntry | undefined> {
     const entries = await this.getMemoriesByUser(userId);
-    return entries.find(m => m.key === key);
+    return entries.find((m) => m.key === key);
   }
 
   async getMemoryById(id: string): Promise<MemoryEntry | undefined> {
@@ -105,7 +116,7 @@ export class MemoryStorage {
         const result = await databaseService.loadMemory({ memory_key: id });
         return result ? (result.memory_value as MemoryEntry) : undefined;
       } catch (error: any) {
-        console.warn('Persistent memory load by id failed:', error.message);
+        console.warn("Persistent memory load by id failed:", error.message);
         return undefined;
       }
     }
@@ -125,7 +136,7 @@ export class MemoryStorage {
       try {
         await databaseService.clearMemory(userId);
       } catch (error: any) {
-        console.warn('Persistent memory clear failed:', error.message);
+        console.warn("Persistent memory clear failed:", error.message);
       }
     }
 

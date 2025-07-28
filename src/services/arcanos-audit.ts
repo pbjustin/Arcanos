@@ -1,9 +1,9 @@
 // ARCANOS:AUDIT - Content validation and audit service
 // Handles requests that require validation, checking, or auditing
 
-import { OpenAIService, ChatMessage } from './openai';
-import { aiConfig } from '../config';
-import { HRCCore } from '../modules/hrc';
+import { OpenAIService, ChatMessage } from "./openai";
+import { aiConfig } from "../config";
+import { HRCCore } from "../modules/hrc";
 
 export interface AuditRequest {
   message: string;
@@ -38,7 +38,9 @@ export class ArcanosAuditService {
         identityTriggerPhrase: aiConfig.identityTriggerPhrase,
       });
     } catch (error) {
-      console.warn('⚠️ ArcanosAuditService: OpenAI not available, running in testing mode');
+      console.warn(
+        "⚠️ ArcanosAuditService: OpenAI not available, running in testing mode",
+      );
       this.openaiService = null;
     }
     this.hrcCore = new HRCCore();
@@ -46,9 +48,11 @@ export class ArcanosAuditService {
 
   async processAuditRequest(request: AuditRequest): Promise<AuditResponse> {
     const { message, domain = "general", useHRC = true } = request;
-    
-    console.log(`🔍 ARCANOS:AUDIT - Processing validation request in domain: ${domain}`);
-    
+
+    console.log(
+      `🔍 ARCANOS:AUDIT - Processing validation request in domain: ${domain}`,
+    );
+
     try {
       let hrcValidation = null;
 
@@ -56,7 +60,7 @@ export class ArcanosAuditService {
       if (useHRC) {
         try {
           hrcValidation = await this.hrcCore.validate(message, { domain });
-          console.log('🛡️ HRC validation completed:', hrcValidation);
+          console.log("🛡️ HRC validation completed:", hrcValidation);
         } catch (error: any) {
           console.warn("HRC validation failed:", error.message);
           hrcValidation = { success: false, data: null };
@@ -68,12 +72,12 @@ export class ArcanosAuditService {
 
       // Step 3: Perform AI-powered audit/validation
       const chatMessages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: message }
+        { role: "system", content: systemPrompt },
+        { role: "user", content: message },
       ];
 
-      console.log('🚀 Performing AI audit/validation...');
-      
+      console.log("🚀 Performing AI audit/validation...");
+
       let openaiResponse;
       if (this.openaiService) {
         openaiResponse = await this.openaiService.chat(chatMessages);
@@ -81,28 +85,31 @@ export class ArcanosAuditService {
         // Mock response when OpenAI is not available
         openaiResponse = {
           message: `[TESTING MODE] Mock audit response for: "${message}". Analysis: Content reviewed for domain: ${domain}. In a real environment with OpenAI configured, this would be a detailed audit result.`,
-          model: 'mock-model',
-          error: null
+          model: "mock-model",
+          error: null,
         };
       }
 
       if (openaiResponse.error) {
-        console.error('❌ OpenAI error in AUDIT service:', openaiResponse.error);
+        console.error(
+          "❌ OpenAI error in AUDIT service:",
+          openaiResponse.error,
+        );
         return {
           success: false,
-          auditResult: '',
+          auditResult: "",
           error: openaiResponse.error,
           model: openaiResponse.model,
           hrcValidation: hrcValidation || undefined,
           metadata: {
             domain,
             useHRC,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         };
       }
 
-      console.log('✅ ARCANOS:AUDIT - Successfully completed audit/validation');
+      console.log("✅ ARCANOS:AUDIT - Successfully completed audit/validation");
       return {
         success: true,
         auditResult: openaiResponse.message,
@@ -111,21 +118,20 @@ export class ArcanosAuditService {
         metadata: {
           domain,
           useHRC,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       };
-
     } catch (error: any) {
-      console.error('❌ ARCANOS:AUDIT error:', error);
+      console.error("❌ ARCANOS:AUDIT error:", error);
       return {
         success: false,
-        auditResult: '',
+        auditResult: "",
         error: `AUDIT service error: ${error.message}`,
         metadata: {
           domain,
           useHRC,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       };
     }
   }

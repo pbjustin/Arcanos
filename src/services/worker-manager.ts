@@ -1,7 +1,7 @@
 // Worker registration and dispatch utilities
 // Adds name validation and per-worker dispatch locking
 
-import { AIDispatcher } from './ai-dispatcher';
+import { AIDispatcher } from "./ai-dispatcher";
 
 // Use a Set for active workers
 const activeWorkers: Set<string> = new Set();
@@ -52,6 +52,8 @@ export async function safeDispatch(workerType: string): Promise<void> {
  */
 async function sendToFineTunedModel(workerType: string): Promise<void> {
   const dispatcher = new AIDispatcher();
-  await dispatcher.dispatch({ type: 'worker', payload: { worker: workerType } });
+  await dispatcher.dispatch({
+    type: "worker",
+    payload: { worker: workerType },
+  });
 }
-

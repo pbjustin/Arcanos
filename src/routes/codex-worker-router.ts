@@ -1,28 +1,29 @@
-import { Router, Request, Response } from 'express';
-import { runDiagnostics } from '../handlers/diagnostics';
-import { runRefactor } from '../handlers/refactor';
-import { createDraftBranch } from '../handlers/branchDraft';
-import { editBackendCode } from '../handlers/backendEdit';
-import { validateCodexIntent, CodexIntent } from '../utils/intentParser';
-import { logToStudio } from '../studio/logger';
+import { Router, Request, Response } from "express";
+import { runDiagnostics } from "../handlers/diagnostics";
+import { runRefactor } from "../handlers/refactor";
+import { createDraftBranch } from "../handlers/branchDraft";
+import { editBackendCode } from "../handlers/backendEdit";
+import { validateCodexIntent, CodexIntent } from "../utils/intentParser";
+import { logToStudio } from "../studio/logger";
 
 const router = Router();
 
 // Map of available intent handlers
-const intentRouter: Record<string, (payload: any, meta?: any) => Promise<any>> = {
-  diagnostic: runDiagnostics,
-  edit: editBackendCode,
-  refactor: runRefactor,
-  branchDraft: createDraftBranch,
-};
+const intentRouter: Record<string, (payload: any, meta?: any) => Promise<any>> =
+  {
+    diagnostic: runDiagnostics,
+    edit: editBackendCode,
+    refactor: runRefactor,
+    branchDraft: createDraftBranch,
+  };
 
-router.post('/codex/intent', async (req: Request, res: Response) => {
+router.post("/codex/intent", async (req: Request, res: Response) => {
   try {
     const { prompt, meta } = req.body || {};
     const parsed: CodexIntent | null = validateCodexIntent(prompt);
 
     if (!parsed || !(parsed.intent in intentRouter)) {
-      return res.status(400).json({ error: 'Invalid or unknown intent' });
+      return res.status(400).json({ error: "Invalid or unknown intent" });
     }
 
     const handler = intentRouter[parsed.intent];
@@ -30,7 +31,7 @@ router.post('/codex/intent', async (req: Request, res: Response) => {
 
     logToStudio({
       action: parsed.intent,
-      source: 'codex-worker-router',
+      source: "codex-worker-router",
       result,
       timestamp: new Date().toISOString(),
     });
@@ -38,8 +39,8 @@ router.post('/codex/intent', async (req: Request, res: Response) => {
     res.json({ success: true, result });
   } catch (error: any) {
     logToStudio({
-      action: 'error',
-      source: 'codex-worker-router',
+      action: "error",
+      source: "codex-worker-router",
       error: error.message,
       timestamp: new Date().toISOString(),
     });

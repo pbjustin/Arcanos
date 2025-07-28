@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction } from "express";
 
 let adminRouter: Router | null = null;
 let adminKey: string | null = null;
@@ -14,20 +14,20 @@ export function enableAdminControl(key: string): void {
   adminRouter = Router();
 
   adminRouter.use((req: Request, res: Response, next: NextFunction) => {
-    const auth = req.headers['authorization'];
+    const auth = req.headers["authorization"];
     const token = Array.isArray(auth) ? auth[0] : auth;
     if (token === `Bearer ${adminKey}`) {
       return next();
     }
-    res.status(403).json({ error: 'Forbidden' });
+    res.status(403).json({ error: "Forbidden" });
   });
 
-  adminRouter.get('/status', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  adminRouter.get("/status", (_req: Request, res: Response) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
   enabled = true;
-  console.log('[ADMIN] Admin control routes enabled');
+  console.log("[ADMIN] Admin control routes enabled");
 }
 
 /**

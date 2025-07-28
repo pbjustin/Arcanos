@@ -1,10 +1,10 @@
 // ARCANOS Intent-Based Router
 // Routes inputs to ARCANOS:WRITE or ARCANOS:AUDIT based on intent analysis
 
-import { IntentAnalyzer, IntentType } from './intent-analyzer';
-import { ArcanosWriteService, WriteRequest } from './arcanos-write';
-import { ArcanosAuditService, AuditRequest } from './arcanos-audit';
-import { diagnosticsService } from './diagnostics';
+import { IntentAnalyzer, IntentType } from "./intent-analyzer";
+import { ArcanosWriteService, WriteRequest } from "./arcanos-write";
+import { ArcanosAuditService, AuditRequest } from "./arcanos-audit";
+import { diagnosticsService } from "./diagnostics";
 
 export interface RouterRequest {
   message: string;
@@ -22,7 +22,11 @@ export interface RouterResponse {
   model?: string;
   error?: string;
   metadata?: {
-    service: 'ARCANOS:WRITE' | 'ARCANOS:AUDIT' | 'ARCANOS:DIAGNOSTIC' | 'FALLBACK';
+    service:
+      | "ARCANOS:WRITE"
+      | "ARCANOS:AUDIT"
+      | "ARCANOS:DIAGNOSTIC"
+      | "FALLBACK";
     domain: string;
     timestamp: string;
   };
@@ -35,53 +39,68 @@ export class ArcanosRouter {
 
   constructor() {
     this.intentAnalyzer = new IntentAnalyzer();
-    
+
     // Only initialize services if OpenAI is available
     if (process.env.OPENAI_API_KEY) {
       try {
         this.writeService = new ArcanosWriteService();
         this.auditService = new ArcanosAuditService();
       } catch (error) {
-        console.warn('Failed to initialize ARCANOS services:', error);
+        console.warn("Failed to initialize ARCANOS services:", error);
       }
     }
   }
 
   async routeRequest(request: RouterRequest): Promise<RouterResponse> {
-    const { message, domain = "general", useRAG = true, useHRC = true } = request;
-    
-    console.log('🎯 ARCANOS Router - Analyzing intent for:', message.substring(0, 100) + '...');
-    
+    const {
+      message,
+      domain = "general",
+      useRAG = true,
+      useHRC = true,
+    } = request;
+
+    console.log(
+      "🎯 ARCANOS Router - Analyzing intent for:",
+      message.substring(0, 100) + "...",
+    );
+
     try {
       // Step 1: Analyze intent
       const intentAnalysis = this.intentAnalyzer.analyzeIntent(message);
-      console.log(`🧠 Intent Analysis: ${intentAnalysis.intent} (confidence: ${(intentAnalysis.confidence * 100).toFixed(1)}%)`);
+      console.log(
+        `🧠 Intent Analysis: ${intentAnalysis.intent} (confidence: ${(intentAnalysis.confidence * 100).toFixed(1)}%)`,
+      );
       console.log(`💭 Reasoning: ${intentAnalysis.reasoning}`);
 
       let serviceResponse: any;
-      let serviceName: 'ARCANOS:WRITE' | 'ARCANOS:AUDIT' | 'ARCANOS:DIAGNOSTIC' | 'FALLBACK';
+      let serviceName:
+        | "ARCANOS:WRITE"
+        | "ARCANOS:AUDIT"
+        | "ARCANOS:DIAGNOSTIC"
+        | "FALLBACK";
 
       // Step 2: Route to appropriate service based on intent
-      if (intentAnalysis.intent === 'DIAGNOSTIC') {
-        console.log('🔍 Routing to ARCANOS:DIAGNOSTIC service');
-        serviceName = 'ARCANOS:DIAGNOSTIC';
-        
+      if (intentAnalysis.intent === "DIAGNOSTIC") {
+        console.log("🔍 Routing to ARCANOS:DIAGNOSTIC service");
+        serviceName = "ARCANOS:DIAGNOSTIC";
+
         try {
-          const diagnosticResult = await diagnosticsService.executeDiagnosticCommand(message);
-          
+          const diagnosticResult =
+            await diagnosticsService.executeDiagnosticCommand(message);
+
           return {
             success: diagnosticResult.success,
             intent: intentAnalysis.intent,
             confidence: intentAnalysis.confidence,
             reasoning: intentAnalysis.reasoning,
             response: JSON.stringify(diagnosticResult.data, null, 2),
-            model: 'ARCANOS:DIAGNOSTIC',
+            model: "ARCANOS:DIAGNOSTIC",
             error: diagnosticResult.error,
             metadata: {
               service: serviceName,
               domain,
-              timestamp: new Date().toISOString()
-            }
+              timestamp: new Date().toISOString(),
+            },
           };
         } catch (error: any) {
           return {
@@ -89,44 +108,45 @@ export class ArcanosRouter {
             intent: intentAnalysis.intent,
             confidence: intentAnalysis.confidence,
             reasoning: intentAnalysis.reasoning,
-            response: 'ARCANOS:DIAGNOSTIC service error',
+            response: "ARCANOS:DIAGNOSTIC service error",
             error: error.message,
             metadata: {
               service: serviceName,
               domain,
-              timestamp: new Date().toISOString()
-            }
+              timestamp: new Date().toISOString(),
+            },
           };
         }
+      } else if (intentAnalysis.intent === "WRITE") {
+        console.log("📝 Routing to ARCANOS:WRITE service");
+        serviceName = "ARCANOS:WRITE";
 
-      } else if (intentAnalysis.intent === 'WRITE') {
-        console.log('📝 Routing to ARCANOS:WRITE service');
-        serviceName = 'ARCANOS:WRITE';
-        
         if (!this.writeService) {
           return {
             success: false,
             intent: intentAnalysis.intent,
             confidence: intentAnalysis.confidence,
             reasoning: intentAnalysis.reasoning,
-            response: 'ARCANOS:WRITE service not available (OpenAI API key required)',
-            error: 'Write service not initialized',
+            response:
+              "ARCANOS:WRITE service not available (OpenAI API key required)",
+            error: "Write service not initialized",
             metadata: {
               service: serviceName,
               domain,
-              timestamp: new Date().toISOString()
-            }
+              timestamp: new Date().toISOString(),
+            },
           };
         }
-        
+
         const writeRequest: WriteRequest = {
           message,
           domain,
-          useRAG
+          useRAG,
         };
-        
-        serviceResponse = await this.writeService.processWriteRequest(writeRequest);
-        
+
+        serviceResponse =
+          await this.writeService.processWriteRequest(writeRequest);
+
         return {
           success: serviceResponse.success,
           intent: intentAnalysis.intent,
@@ -138,38 +158,39 @@ export class ArcanosRouter {
           metadata: {
             service: serviceName,
             domain,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         };
+      } else if (intentAnalysis.intent === "AUDIT") {
+        console.log("🔍 Routing to ARCANOS:AUDIT service");
+        serviceName = "ARCANOS:AUDIT";
 
-      } else if (intentAnalysis.intent === 'AUDIT') {
-        console.log('🔍 Routing to ARCANOS:AUDIT service');
-        serviceName = 'ARCANOS:AUDIT';
-        
         if (!this.auditService) {
           return {
             success: false,
             intent: intentAnalysis.intent,
             confidence: intentAnalysis.confidence,
             reasoning: intentAnalysis.reasoning,
-            response: 'ARCANOS:AUDIT service not available (OpenAI API key required)',
-            error: 'Audit service not initialized',
+            response:
+              "ARCANOS:AUDIT service not available (OpenAI API key required)",
+            error: "Audit service not initialized",
             metadata: {
               service: serviceName,
               domain,
-              timestamp: new Date().toISOString()
-            }
+              timestamp: new Date().toISOString(),
+            },
           };
         }
-        
+
         const auditRequest: AuditRequest = {
           message,
           domain,
-          useHRC
+          useHRC,
         };
-        
-        serviceResponse = await this.auditService.processAuditRequest(auditRequest);
-        
+
+        serviceResponse =
+          await this.auditService.processAuditRequest(auditRequest);
+
         return {
           success: serviceResponse.success,
           intent: intentAnalysis.intent,
@@ -181,15 +202,14 @@ export class ArcanosRouter {
           metadata: {
             service: serviceName,
             domain,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         };
-
       } else {
         // Intent is UNKNOWN - provide fallback response
-        console.log('❓ Intent unclear, providing fallback response');
-        serviceName = 'FALLBACK';
-        
+        console.log("❓ Intent unclear, providing fallback response");
+        serviceName = "FALLBACK";
+
         return {
           success: true,
           intent: intentAnalysis.intent,
@@ -199,32 +219,33 @@ export class ArcanosRouter {
           metadata: {
             service: serviceName,
             domain,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         };
       }
-
     } catch (error: any) {
-      console.error('❌ ARCANOS Router error:', error);
+      console.error("❌ ARCANOS Router error:", error);
       return {
         success: false,
-        intent: 'UNKNOWN',
+        intent: "UNKNOWN",
         confidence: 0,
-        reasoning: 'Router error occurred',
+        reasoning: "Router error occurred",
         response: `I encountered an error processing your request: ${error.message}`,
         error: error.message,
         metadata: {
-          service: 'FALLBACK',
+          service: "FALLBACK",
           domain,
-          timestamp: new Date().toISOString()
-        }
+          timestamp: new Date().toISOString(),
+        },
       };
     }
   }
 }
 
 // Export the main function for easy integration
-export async function processArcanosRequest(request: RouterRequest): Promise<RouterResponse> {
+export async function processArcanosRequest(
+  request: RouterRequest,
+): Promise<RouterResponse> {
   const router = new ArcanosRouter();
   return await router.routeRequest(request);
 }
