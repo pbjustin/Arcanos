@@ -22,6 +22,9 @@ export class WorkerStatusService {
    * Register a new worker or update existing worker status
    */
   registerWorker(id: string, task: string, status: 'running' | 'idle' | 'error' = 'idle'): void {
+    if (!id) {
+      throw new Error('Worker registration failed: Missing workerName.');
+    }
     const now = Date.now();
     
     if (this.workers.has(id)) {
