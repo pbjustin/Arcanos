@@ -10,6 +10,9 @@ import { workerStatusService } from './worker-status';
 import * as cron from 'node-cron';
 import { databaseService } from './database';
 import { initializeFallbackScheduler } from '../workers/default-scheduler';
+// Dynamically load worker modules from the JS registry
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getWorker: getDynamicWorker } = require('../../workers/workerRegistry');
 
 export interface ExecutionResult {
   success: boolean;
@@ -35,6 +38,15 @@ export class ExecutionEngine {
       this.openaiService = null;
     }
     console.log('⚙️ Execution Engine initialized');
+  }
+
+  /**
+   * Normalize worker identifiers that may be provided as objects
+   */
+  private normalizeWorker(input: any): string | undefined {
+    if (!input) return undefined;
+    if (typeof input === 'string') return input;
+    return input.workerName || input.name || input.work;
   }
 
   /**
@@ -78,6 +90,7 @@ export class ExecutionEngine {
     const sortedInstructions = instructions.sort((a, b) => (b.priority || 5) - (a.priority || 5));
     
     for (const instruction of sortedInstructions) {
+      instruction.worker = this.normalizeWorker(instruction.worker);
       if (instruction.action === 'schedule' && !instruction.worker) {
         console.warn('⚠️ Schedule instruction received with undefined worker. Applying fallback...');
         instruction.worker = 'defaultScheduler';
@@ -141,7 +154,8 @@ export class ExecutionEngine {
    * Handle schedule action - schedule recurring tasks
    */
   public handleSchedule(instruction: DispatchInstruction): ExecutionResult {
-    const { schedule, worker, parameters = {} } = instruction;
+    const { schedule, parameters = {} } = instruction;
+    const workerName = this.normalizeWorker(instruction.worker);
     
     if (!schedule) {
       return {
@@ -151,13 +165,13 @@ export class ExecutionEngine {
     }
 
     try {
-      const taskId = `${worker || 'task'}_${Date.now()}`;
+      const taskId = `${workerName || 'task'}_${Date.now()}`;
       
       const task = cron.schedule(schedule, async () => {
         console.log(`⏰ Executing scheduled task: ${taskId}`);
         
-        if (worker) {
-          await this.executeWorker(worker, parameters);
+        if (workerName) {
+          await this.executeWorker(workerName, parameters);
         } else {
           // Execute the instruction directly
           await this.executeInstruction({
@@ -192,16 +206,17 @@ export class ExecutionEngine {
    * Handle delegation action - delegate to workers
    */
   public async handleDelegation(instruction: DispatchInstruction): Promise<ExecutionResult> {
-    const { worker, parameters = {} } = instruction;
-    
-    if (!worker) {
+    const workerName = this.normalizeWorker(instruction.worker);
+    const { parameters = {} } = instruction;
+
+    if (!workerName) {
       return {
         success: false,
         error: 'Worker name required for delegation'
       };
     }
 
-    return await this.executeWorker(worker, parameters);
+    return await this.executeWorker(workerName, parameters);
   }
 
   /**
@@ -407,6 +422,11 @@ Provide a detailed analysis including:
     console.log(`👷 Executing worker: ${workerName}`);
 
     try {
+      const dynamicWorker = getDynamicWorker(workerName);
+      if (dynamicWorker) {
+        await dynamicWorker(parameters);
+        return { success: true, response: `${workerName} executed` };
+      }
       switch (workerName) {
         case 'memorySync':
           return await this.executeMemorySyncWorker(parameters);
