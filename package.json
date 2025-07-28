@@ -7,8 +7,8 @@
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc && mkdir -p dist && [ -d \"workers\" ] && cp -r workers dist || true && [ -d \"memory\" ] && cp -r memory dist || true && [ -d \"api\" ] && cp -r api dist || true && [ -f actionRouter.js ] && cp actionRouter.js dist || true",
-    "start": "node --max-old-space-size=7168 dist/index.js",
+    "build": "tsc",
+    "start": "node dist/index.js",
     "start:railway": "node --max-old-space-size=7168 dist/index.js",
     "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
     "arc:dispatch": "node bin/arc-dispatch.js",

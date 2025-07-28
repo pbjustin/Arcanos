@@ -12,15 +12,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": true,
-    "typeRoots": ["./types", "./node_modules/@types"],
-    "allowImportingTsExtensions": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "rootDir": "src"
   },
   "include": [
-    "src",
-    "types",
-    "**/*.ts",
-    "**/*.d.ts"
+    "src/**/*"
   ],
   "exclude": ["node_modules", "dist"]
 }

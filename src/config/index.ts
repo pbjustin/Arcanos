@@ -1,6 +1,6 @@
 // Centralized Configuration Management for ARCANOS Backend
 import * as dotenv from 'dotenv';
-import type { IdentityOverride } from '../../types/IdentityOverride';
+import type { IdentityOverride } from '../types/IdentityOverride';
 
 // Load environment variables
 dotenv.config();
