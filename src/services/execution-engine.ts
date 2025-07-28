@@ -182,10 +182,18 @@ export class ExecutionEngine {
     }
 
     if (!workerName) {
-      workerName = process.env.FALLBACK_WORKER || 'defaultWorker';
-      console.warn(
-        `[ExecutionEngine] Missing workerName - using fallback ${workerName}`
-      );
+      return {
+        success: false,
+        error: 'Worker name required for scheduling',
+      };
+    }
+
+    const dynamicWorker = getDynamicWorker(workerName);
+    if (!dynamicWorker) {
+      return {
+        success: false,
+        error: `Unknown worker: ${workerName}`,
+      };
     }
 
     try {

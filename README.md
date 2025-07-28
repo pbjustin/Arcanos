@@ -310,6 +310,17 @@ The backend implements intelligent intent detection that routes requests to spec
 - `WORKER_LOGIC` - Logic mode for background workers (default: `arcanos`). Set to another value to override.
 - `SERVER_URL` - Server URL for health checks (default: http://localhost:8080)
 
+### Available Workers
+
+The worker registry exposes several built-in workers with explicit routing logic. Each worker is bound to a known endpoint or schedule so the dispatcher can route requests correctly.
+
+| Worker | Type | Route/Interval |
+| ------ | ---- | -------------- |
+| `emailDispatcher` | onDemand | `/email/send` |
+| `maintenanceScheduler` | recurring | weekly |
+| `scheduled_emails_worker` | cron | `/email/schedule` |
+| `auditProcessor` | logic | CLEAR mode |
+
 ### Sleep & Wake Configuration
 - `SLEEP_ENABLED` - Enable sleep mode (default: false)
 - `SLEEP_START` - Sleep start time in HH:MM format (default: 02:00)
