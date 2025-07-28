@@ -1,7 +1,7 @@
 // AI-Controlled Worker System - Workers only execute when AI model instructs them to
-const { modelControlHooks } = require('../services/model-control-hooks');
-const { diagnosticsService } = require('../services/diagnostics');
-const { createServiceLogger } = require('../utils/logger');
+const { modelControlHooks } = require('../dist/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../dist/utils/logger');
 const { workerRegistry, getWorkers } = require('./workerRegistry');
 const logger = createServiceLogger('Workers');
 

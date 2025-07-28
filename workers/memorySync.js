@@ -2,9 +2,9 @@
 // Executes only when approved by ARCANOS model
 // Enhanced for sleep window with snapshot functionality
 
-const { modelControlHooks } = require('../services/model-control-hooks');
-const { diagnosticsService } = require('../services/diagnostics');
-const { createServiceLogger } = require('../utils/logger');
+const { modelControlHooks } = require('../dist/services/model-control-hooks');
+const { diagnosticsService } = require('../dist/services/diagnostics');
+const { createServiceLogger } = require('../dist/utils/logger');
 const logger = createServiceLogger('MemorySyncWorker');
 
 async function reportFailure(error) {
@@ -53,7 +53,7 @@ module.exports = async function memorySync() {
         logger.success('Memory sync completed successfully');
         
         // Enhanced: Create memory snapshot during sleep window
-        const { shouldReduceServerActivity } = require('../services/sleep-config');
+        const { shouldReduceServerActivity } = require('../dist/services/sleep-config');
         if (shouldReduceServerActivity()) {
           await createMemorySnapshot();
         }
