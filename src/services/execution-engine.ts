@@ -10,6 +10,14 @@ import { workerStatusService } from './worker-status';
 import * as cron from 'node-cron';
 import { databaseService } from './database';
 import { isValidWorker } from './worker-manager';
+// Import worker validation from the registry
+let validateWorkerRegistration: (name: string) => boolean;
+try {
+  ({ validateWorker: validateWorkerRegistration } = require('../../workers/workerRegistry'));
+} catch (err) {
+  console.warn('[ExecutionEngine] workerRegistry validation unavailable');
+  validateWorkerRegistration = () => false;
+}
 import { createServiceLogger } from '../utils/logger';
 // Dynamically load worker modules from the JS registry
 // If the registry is missing, provide an empty fallback implementation
@@ -109,11 +117,15 @@ export class ExecutionEngine {
 
       if (instruction.action === 'schedule') {
         if (!instruction.worker) {
-          console.warn("No worker defined. Using 'defaultWorker'.");
-          instruction.worker = 'defaultWorker';
+          results.push({ success: false, error: 'no_worker_specified' });
+          continue;
         }
         if (!isValidWorker(instruction.worker)) {
-          results.push({ success: false, error: `invalid_worker_${instruction.worker}` });
+          results.push({ success: false, error: `invalid_worker_format_${instruction.worker}` });
+          continue;
+        }
+        if (!validateWorkerRegistration(instruction.worker)) {
+          results.push({ success: false, error: `unregistered_worker_${instruction.worker}` });
           continue;
         }
       }
@@ -186,14 +198,23 @@ export class ExecutionEngine {
     }
 
     if (!workerName) {
-      console.warn("No worker defined. Using 'defaultWorker'.");
-      workerName = 'defaultWorker';
+      return {
+        success: false,
+        error: 'Worker name required for scheduling'
+      };
     }
 
     if (!isValidWorker(workerName)) {
       return {
         success: false,
-        error: `Invalid worker: ${workerName}`
+        error: `Invalid worker format: ${workerName}`
+      };
+    }
+
+    if (!validateWorkerRegistration(workerName)) {
+      return {
+        success: false,
+        error: `Unregistered worker: ${workerName}`
       };
     }
 
@@ -201,7 +222,7 @@ export class ExecutionEngine {
     if (!dynamicWorker) {
       return {
         success: false,
-        error: `Unknown worker: ${workerName}`,
+        error: `Worker not found: ${workerName}`,
       };
     }
 
@@ -255,6 +276,13 @@ export class ExecutionEngine {
       return {
         success: false,
         error: 'Worker name required for delegation'
+      };
+    }
+
+    if (!validateWorkerRegistration(workerName)) {
+      return {
+        success: false,
+        error: `Unregistered worker: ${workerName}`
       };
     }
 
@@ -485,7 +513,7 @@ Provide a detailed analysis including:
         default:
           return {
             success: false,
-            error: `Unknown worker: ${workerName}`
+            error: `Unregistered worker: ${workerName}`
           };
       }
 
