@@ -6,7 +6,6 @@ import { memoryHandler } from './memory-handler';
 import { writeHandler } from './write-handler';
 import { auditHandler } from './audit-handler';
 import { diagnosticHandler } from './diagnostic-handler';
-import { fallbackHandler } from './fallback-handler';
 
 export interface RouteRecoveryConfig {
   route: string;
@@ -186,18 +185,12 @@ export class RouteRecovery {
       else if (route === '/audit') fallbackType = 'audit';
       else if (route === '/diagnostic') fallbackType = 'diagnostic';
 
-      const fallbackResult = await fallbackHandler.handleUndefinedWorker({
-        type: fallbackType,
-        message: req.body?.message || `Route recovery for ${route}`,
-        data: req.body || req.query
-      });
-
+      // Streamlined error response - no fallback logic
       res.status(503).json({
         error: 'Route temporarily unavailable',
         route,
-        fallback_response: fallbackResult,
         recovery_status: 'failed',
-        message: 'Service degraded - using fallback handler',
+        message: 'Service degraded - route not available',
         timestamp: new Date().toISOString()
       });
 

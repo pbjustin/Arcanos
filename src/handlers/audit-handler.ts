@@ -3,7 +3,6 @@
 
 import { Request, Response } from 'express';
 import { ArcanosAuditService } from '../services/arcanos-audit';
-import { fallbackHandler } from './fallback-handler';
 
 export class AuditHandler {
   private auditService: ArcanosAuditService;
@@ -89,32 +88,13 @@ export class AuditHandler {
         timestamp
       });
       
-      // Use fallback handler for error recovery
-      try {
-        const fallbackResult = await fallbackHandler.handleUndefinedWorker({
-          type: 'audit',
-          message: req.body.message,
-          data: req.body
-        });
-        
-        res.status(500).json({
-          success: false,
-          auditResult: fallbackResult.content || '',
-          error: error.message,
-          fallback_used: true,
-          audit_logged: true,
-          timestamp
-        });
-      } catch (fallbackError: any) {
-        res.status(500).json({
-          success: false,
-          auditResult: '',
-          error: error.message,
-          fallback_error: fallbackError.message,
-          audit_logged: true,
-          timestamp
-        });
-      }
+      // Streamlined error handling - no fallback logic
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        audit_logged: true,
+        timestamp
+      });
     }
   }
 
