@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { createServiceLogger } from '../utils/logger';
 import { aiConfig } from '../config';
-import type { IdentityOverride } from '../../types/IdentityOverride';
+import type { IdentityOverride } from '../types/IdentityOverride';
 
 const logger = createServiceLogger('OpenAIService');
 
