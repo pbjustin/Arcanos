@@ -109,8 +109,8 @@ export class ExecutionEngine {
 
       if (instruction.action === 'schedule') {
         if (!instruction.worker) {
-          console.warn("No worker defined. Using 'defaultWorker'.");
-          instruction.worker = 'defaultWorker';
+          results.push({ success: false, error: `Missing worker field for scheduled job` });
+          continue;
         }
         if (!isValidWorker(instruction.worker)) {
           results.push({ success: false, error: `invalid_worker_${instruction.worker}` });
@@ -186,8 +186,10 @@ export class ExecutionEngine {
     }
 
     if (!workerName) {
-      console.warn("No worker defined. Using 'defaultWorker'.");
-      workerName = 'defaultWorker';
+      return {
+        success: false,
+        error: 'Worker name is required for scheduled jobs'
+      };
     }
 
     if (!isValidWorker(workerName)) {
@@ -614,6 +616,34 @@ Provide a detailed analysis including:
   getScheduledTasks(): string[] {
     return Array.from(this.scheduledTasks.keys());
   }
+}
+
+/**
+ * Schedule a job with explicit worker validation
+ * Ensures that all scheduled jobs explicitly define the target worker
+ * and fallback is never triggered
+ */
+export function scheduleJob({ key, value, schedule, priority }: {
+  key: string;
+  value: { worker: string; [key: string]: any };
+  schedule: string;
+  priority?: number;
+}): DispatchInstruction {
+  if (!value.worker || typeof value.worker !== 'string') {
+    throw new Error(`Missing or invalid 'worker' field for scheduled job: ${key}`);
+  }
+
+  return {
+    action: 'schedule',
+    service: 'memory',
+    parameters: {
+      key,
+      value,
+    },
+    schedule,
+    priority,
+    worker: value.worker // Ensure the worker is passed here
+  };
 }
 
 // Export singleton instance

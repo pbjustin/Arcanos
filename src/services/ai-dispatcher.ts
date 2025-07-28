@@ -250,20 +250,15 @@ Please analyze this request and provide appropriate instructions for handling it
       // Handle both single instruction and array of instructions
       let instructions: DispatchInstruction[] = Array.isArray(parsed) ? parsed : [parsed];
 
-      const fallbackWorker = process.env.FALLBACK_WORKER || 'defaultWorker';
-
       instructions = instructions
-        .map(instr => {
+        .filter(instr => {
           if (instr.action === 'schedule' && !instr.worker) {
-            console.warn(
-              `[AI-DISPATCHER] schedule missing worker name - using fallback ${fallbackWorker}`,
+            console.error(
+              '[AI-DISPATCHER] Dropping schedule instruction with missing worker field',
               instr
             );
-            return { ...instr, worker: fallbackWorker };
+            return false;
           }
-          return instr;
-        })
-        .filter(instr => {
           if (instr.action === 'schedule' && !instr.schedule) {
             console.warn(
               '[AI-DISPATCHER] Dropping invalid schedule instruction',
