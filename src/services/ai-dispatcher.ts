@@ -4,6 +4,26 @@
 import { OpenAIService, ChatMessage } from './openai';
 import { aiConfig } from '../config';
 
+// Helper to resolve workers from schedule keys
+function resolveWorkerFromKey(key: string): string | null {
+  const workerMap: Record<string, string> = {
+    scheduled_jobs: 'auditProcessor',
+    planned_jobs: 'maintenanceScheduler',
+    scheduled_emails_worker: 'emailDispatcher'
+  };
+  return workerMap[key] || null;
+}
+
+// Normalize schedule payloads to ensure a worker value exists
+function normalizeSchedulePayload(payload: any): any {
+  if (!payload) return {};
+  if (!payload.worker) {
+    const resolved = resolveWorkerFromKey(payload.key);
+    payload.worker = resolved || process.env.FALLBACK_WORKER || 'defaultWorker';
+  }
+  return payload;
+}
+
 // In-memory lock map to debounce dispatches per worker type
 declare global {
   var __dispatchLocks: Map<string, boolean> | undefined;
@@ -250,8 +270,16 @@ Please analyze this request and provide appropriate instructions for handling it
       // Handle both single instruction and array of instructions
       let instructions: DispatchInstruction[] = Array.isArray(parsed) ? parsed : [parsed];
 
-      // Validate worker instructions but don't add fallback
+      // Normalize schedule instructions and enforce fallback worker assignment
       instructions = instructions
+        .map(instr => {
+          if (instr.action === 'schedule') {
+            const params = normalizeSchedulePayload(instr.parameters || {});
+            instr.parameters = params;
+            if (!instr.worker) instr.worker = params.worker;
+          }
+          return instr;
+        })
         .filter(instr => {
           if (instr.action === 'schedule' && !instr.worker) {
             console.warn(
