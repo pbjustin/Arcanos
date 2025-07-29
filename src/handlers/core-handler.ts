@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { OpenAIService } from '../services/openai';
-import OpenAI from 'openai';
+import { getUnifiedOpenAI } from '../services/unified-openai';
+import { OpenAIService } from '../services/openai'; // Keep for backward compatibility
 import { aiConfig } from '../config';
 
 const modesSupported = [
@@ -15,26 +15,9 @@ const modesSupported = [
   'booking',
 ];
 
-const openai = new OpenAIService();
-
-// Direct OpenAI client for fine-tuned model routing
-let openaiClient: OpenAI | null = null;
-
-// Get direct OpenAI client for fine-tuned routing
-function getOpenAIClient(): OpenAI {
-  if (!openaiClient) {
-    const apiKey = aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required for fine-tuned model routing');
-    }
-    openaiClient = new OpenAI({
-      apiKey: apiKey,
-      timeout: 30000,
-      maxRetries: 3,
-    });
-  }
-  return openaiClient;
-}
+// Use unified OpenAI service
+const unifiedOpenAI = getUnifiedOpenAI();
+const openai = new OpenAIService(); // Keep for backward compatibility
 
 export async function askHandler(req: Request, res: Response): Promise<void> {
   const { query, mode = "logic", useFineTuned = false, frontend = false } = req.body;
@@ -42,15 +25,21 @@ export async function askHandler(req: Request, res: Response): Promise<void> {
   try {
     if (useFineTuned || /finetune|ft:/i.test(query)) {
       try {
-        const openaiDirect = getOpenAIClient();
-        const completion = await openaiDirect.chat.completions.create({
-          model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:your-org:model-id", // replace with actual ID
-          messages: [{ role: "user", content: query }],
+        // Use unified service for fine-tuned model requests
+        const response = await unifiedOpenAI.chat([
+          { role: "user", content: query }
+        ], {
+          model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH",
           temperature: 0.7,
         });
-        const response = completion.choices[0]?.message?.content || "";
-        res.json({ response: frontend ? stripReflections(response) : response });
-        return;
+        
+        if (response.success) {
+          res.json({ response: frontend ? stripReflections(response.content) : response.content });
+          return;
+        } else {
+          console.error('Fine-tuned route failed, falling back to reflective logic:', response.error);
+          // Fall through to reflective logic
+        }
       } catch (ftError) {
         console.error('Fine-tuned route failed, falling back to reflective logic:', ftError);
         // Fall through to reflective logic

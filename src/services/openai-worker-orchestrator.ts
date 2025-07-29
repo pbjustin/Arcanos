@@ -1,6 +1,9 @@
 // 🔁 OpenAI SDK-Compatible Worker Initialization & Fallback Logic
+// @deprecated This orchestrator is being replaced by UnifiedOpenAIService
+// Use getUnifiedOpenAI() for new implementations
 
-import OpenAI from "openai"; // OpenAI SDK v4+
+import { getUnifiedOpenAI } from './unified-openai';
+import OpenAI from "openai"; // OpenAI SDK v4+ - kept for legacy compatibility
 import { createServiceLogger } from '../utils/logger';
 import { 
   validateWorkerTask, 
