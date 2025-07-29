@@ -2,7 +2,6 @@
 // Replaces static logic, conditionals, and routing trees with AI-controlled decision making
 
 import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
-import { aiConfig } from '../config';
 
 // Helper to resolve workers from schedule keys
 function resolveWorkerFromKey(key: string): string | null {
