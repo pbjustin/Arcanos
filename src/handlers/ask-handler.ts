@@ -55,7 +55,7 @@ async function runFineTunedModel(prompt: string): Promise<string> {
   });
 
   const completion = await openaiClient.chat.completions.create({
-    model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD",
+    model: aiConfig.fineTunedModel || "REDACTED_FINE_TUNED_MODEL_ID",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.7,
   });
