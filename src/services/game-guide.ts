@@ -1,4 +1,5 @@
-import { OpenAIService } from './openai';
+import { getUnifiedOpenAI } from './unified-openai';
+import { OpenAIService } from './openai'; // Keep for backward compatibility
 import { createServiceLogger } from '../utils/logger';
 
 const logger = createServiceLogger('GameGuideService');
@@ -17,7 +18,8 @@ export interface GameGuideResponse {
 }
 
 export class GameGuideService {
-  private openaiService: OpenAIService;
+  private unifiedOpenAI = getUnifiedOpenAI();
+  private openaiService: OpenAIService; // Keep for backward compatibility
 
   constructor() {
     this.openaiService = new OpenAIService({
@@ -51,13 +53,18 @@ Return this as a structured guide with bullet points.
 `;
 
     try {
-      const response = await this.openaiService.chat([
+      // Use unified service for better performance and features
+      const response = await this.unifiedOpenAI.chat([
         { role: "user", content: prompt }
-      ]);
+      ], {
+        model: 'gpt-3.5-turbo',
+        maxTokens: 1500,
+        temperature: 0.7
+      });
 
       const endTime = Date.now();
       
-      if (response.error) {
+      if (!response.success) {
         logger.error('Game guide generation failed', {
           gameTitle,
           error: response.error,
@@ -75,13 +82,13 @@ Return this as a structured guide with bullet points.
 
       logger.info('Game guide generation completed', {
         gameTitle,
-        guideLength: response.message.length,
+        guideLength: response.content.length,
         completionTimeMs: endTime - startTime,
         model: response.model
       });
 
       return {
-        guide: response.message,
+        guide: response.content,
         gameTitle,
         model: response.model,
         timestamp: new Date().toISOString()
