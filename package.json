@@ -1,7 +1,7 @@
 {
   "name": "arcanos-backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/main.js",
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=8.0.0"
@@ -9,8 +9,12 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:main": "node dist/main.js",
+    "start:agent-control": "DEPLOY_MODE=agent-control node dist/main.js",
     "start:railway": "node --max-old-space-size=7168 dist/index.js",
     "dev": "node --max-old-space-size=7168 -r ts-node/register src/index.ts",
+    "dev:main": "npx ts-node src/main.ts",
+    "dev:agent-control": "DEPLOY_MODE=agent-control npx ts-node src/main.ts",
     "arc:dispatch": "node bin/arc-dispatch.js",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
