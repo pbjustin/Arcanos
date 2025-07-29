@@ -1,7 +1,7 @@
 // ARCANOS:AUDIT - Content validation and audit service
 // Handles requests that require validation, checking, or auditing
 
-import { OpenAIService, ChatMessage } from './openai';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
 import { aiConfig } from '../config';
 import { HRCCore } from '../modules/hrc';
 
@@ -28,18 +28,17 @@ export interface AuditResponse {
 }
 
 export class ArcanosAuditService {
-  private openaiService: OpenAIService | null;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null;
   private hrcCore: HRCCore;
 
   constructor() {
     try {
-      this.openaiService = new OpenAIService({
-        identityOverride: aiConfig.identityOverride,
-        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      this.unifiedOpenAI = getUnifiedOpenAI({
+        model: aiConfig.fineTunedModel,
       });
     } catch (error) {
       console.warn('⚠️ ArcanosAuditService: OpenAI not available, running in testing mode');
-      this.openaiService = null;
+      this.unifiedOpenAI = null;
     }
     this.hrcCore = new HRCCore();
   }
@@ -75,8 +74,21 @@ export class ArcanosAuditService {
       console.log('🚀 Performing AI audit/validation...');
       
       let openaiResponse;
-      if (this.openaiService) {
-        openaiResponse = await this.openaiService.chat(chatMessages);
+      if (this.unifiedOpenAI) {
+        const response = await this.unifiedOpenAI.chat(chatMessages);
+        if (response.success) {
+          openaiResponse = {
+            message: response.content,
+            model: response.model,
+            error: null
+          };
+        } else {
+          openaiResponse = {
+            message: '',
+            model: 'unknown',
+            error: response.error
+          };
+        }
       } else {
         // Mock response when OpenAI is not available
         openaiResponse = {
