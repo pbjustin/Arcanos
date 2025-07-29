@@ -5,6 +5,7 @@ import { workerStatusService } from '../services/worker-status';
 import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from '../services/email';
 import { sendEmailIntent } from '../intents/send_email';
 import { sendEmailAndRespond } from '../intents/send_email_and_respond';
+import { getUnifiedOpenAI } from '../services/unified-openai';
 import assistantsRouter from './assistants';
 
 const router = Router();
@@ -219,6 +220,81 @@ router.post('/email/send', async (req, res) => {
 // Intent endpoints
 router.post('/intent/send_email', sendEmailIntent);
 router.post('/intent/send_email_and_respond', sendEmailAndRespond);
+
+// POST /api/guide - Streaming guide generation endpoint
+router.post('/guide', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({
+        error: 'Prompt is required',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const unifiedOpenAI = getUnifiedOpenAI();
+    
+    // Set headers for streaming response
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    console.log('🎯 Starting streaming guide generation for prompt:', prompt.substring(0, 50) + '...');
+
+    // Create the streaming callback that writes chunks to the response
+    const streamCallback = (chunk: string, isComplete: boolean) => {
+      if (!isComplete && chunk) {
+        // Write the chunk to the response stream
+        res.write(chunk);
+      } else if (isComplete) {
+        // End the response when streaming is complete
+        res.end();
+      }
+    };
+
+    // Use the unified OpenAI service to stream the response
+    const result = await unifiedOpenAI.chatStream(
+      [
+        { role: "system", content: "You are a guide engine." },
+        { role: "user", content: prompt }
+      ],
+      streamCallback,
+      {
+        model: 'gpt-4',
+        maxTokens: 2000,
+        temperature: 0.7
+      }
+    );
+
+    if (!result.success && result.error) {
+      console.error("Guide stream error:", result.error);
+      // If we haven't started writing yet, send an error response
+      if (!res.headersSent) {
+        return res.status(500).json({
+          error: 'Streaming failed',
+          details: result.error,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+  } catch (err: any) {
+    console.error("Guide stream error:", err);
+    // If we haven't started writing yet, send an error response
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'Streaming failed',
+        details: err.message,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      // If we've already started streaming, just end the response
+      res.end();
+    }
+  }
+});
 
 // Mount assistant routes
 router.use('/', assistantsRouter);
