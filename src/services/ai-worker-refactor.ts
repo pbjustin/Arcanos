@@ -29,6 +29,10 @@ export class ModularControlHooks {
   private fallbackHook?: Function;
 
   registerHook(name: string, hook: Function): void {
+    if (this.hooks.has(name)) {
+      logger.warning(`Control hook '${name}' already registered, skipping duplicate registration`);
+      return;
+    }
     this.hooks.set(name, hook);
     logger.info(`Control hook registered: ${name}`);
   }
@@ -126,6 +130,7 @@ export class RefactoredAIWorkerSystem {
   private controlHooks: ModularControlHooks;
   private fallbackDispatch: UnifiedFallbackDispatch;
   private workers: Map<string, any> = new Map();
+  private registeredWorkers: Set<string> = new Set(); // Track registered workers to prevent duplicates
 
   constructor(config: WorkerSystemConfig) {
     this.config = config;
@@ -157,13 +162,19 @@ export class RefactoredAIWorkerSystem {
   private setupDefaultHooks(): void {
     // Default worker registration hook
     this.controlHooks.registerHook('register', async (workerName: string, config: any) => {
+      if (this.registeredWorkers.has(workerName)) {
+        logger.info(`Worker '${workerName}' already registered, skipping duplicate registration`);
+        return { success: true, worker: workerName, duplicate: true };
+      }
+      
       this.workers.set(workerName, {
         name: workerName,
         config,
         registered: Date.now(),
         status: 'registered'
       });
-      return { success: true, worker: workerName };
+      this.registeredWorkers.add(workerName);
+      return { success: true, worker: workerName, duplicate: false };
     });
 
     // Default worker orchestration hook
@@ -230,6 +241,11 @@ export class RefactoredAIWorkerSystem {
     return await this.controlHooks.executeHook('register', name, config);
   }
 
+  // Check if worker is already registered
+  isWorkerRegistered(name: string): boolean {
+    return this.registeredWorkers.has(name);
+  }
+
   async orchestrateWorker(task: any): Promise<any> {
     try {
       return await this.controlHooks.executeHook('orchestrate', task);
@@ -267,7 +283,7 @@ export class RefactoredAIWorkerSystem {
     };
   }
 
-  // Add custom hook
+  // Add custom hook with duplicate prevention
   addControlHook(name: string, hook: Function): void {
     this.controlHooks.registerHook(name, hook);
   }
@@ -307,12 +323,17 @@ export async function refactorAIWorkerSystem(config: RefactorConfig): Promise<Re
     
     for (const worker of defaultWorkers) {
       try {
-        await refactoredSystem.registerWorker(worker, { 
+        const result = await refactoredSystem.registerWorker(worker, { 
           type: 'system',
           priority: 5,
           enabled: true 
         });
-        logger.info(`Registered default worker: ${worker}`);
+        
+        if (result.duplicate) {
+          logger.info(`Skipped registering default worker (already exists): ${worker}`);
+        } else {
+          logger.info(`Registered default worker: ${worker}`);
+        }
       } catch (error: any) {
         logger.warning(`Failed to register worker ${worker}:`, error.message);
       }
@@ -321,7 +342,7 @@ export async function refactorAIWorkerSystem(config: RefactorConfig): Promise<Re
 
   // Add modular hooks if requested
   if (config.modularize) {
-    // Add health check hook
+    // Add health check hook (with deduplication protection)
     refactoredSystem.addControlHook('health', async () => {
       return {
         status: 'healthy',
@@ -330,7 +351,7 @@ export async function refactorAIWorkerSystem(config: RefactorConfig): Promise<Re
       };
     });
 
-    // Add validation hook
+    // Add validation hook (with deduplication protection)
     refactoredSystem.addControlHook('validate', async (data: any) => {
       return {
         valid: !!data,
