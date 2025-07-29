@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
-import { OpenAIService } from '../services/openai';
+import { getUnifiedOpenAI, type ChatMessage, type FunctionDefinition } from '../services/unified-openai';
+import { OpenAIService } from '../services/openai'; // Keep for backward compatibility
 import { diagnosticsService } from '../services/diagnostics';
 import { GameGuideService } from '../services/game-guide';
 import { MemoryStorage } from '../storage/memory-storage';
-import OpenAI from 'openai';
 import { aiConfig } from '../config';
 
 // Unified stripReflections helper for frontend filtering
@@ -41,26 +41,23 @@ function queueReflection(query: string, response: string): void {
   });
 }
 
-// Command handler functions
-async function runFineTunedModel(prompt: string): Promise<string> {
-  const apiKey = aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OpenAI API key is required for fine-tuned model routing');
-  }
-  
-  const openaiClient = new OpenAI({
-    apiKey: apiKey,
-    timeout: 30000,
-    maxRetries: 3,
-  });
+// Get unified OpenAI service instance
+const unifiedOpenAI = getUnifiedOpenAI();
 
-  const completion = await openaiClient.chat.completions.create({
+// Command handler functions - Updated to use UnifiedOpenAIService
+async function runFineTunedModel(prompt: string): Promise<string> {
+  const response = await unifiedOpenAI.chat([
+    { role: 'user', content: prompt }
+  ], {
     model: aiConfig.fineTunedModel || "REDACTED_FINE_TUNED_MODEL_ID",
-    messages: [{ role: "user", content: prompt }],
     temperature: 0.7,
   });
   
-  return completion.choices[0]?.message?.content || "";
+  if (!response.success) {
+    throw new Error(response.error || 'Fine-tuned model request failed');
+  }
+  
+  return response.content;
 }
 
 async function runSimulation(prompt: string): Promise<string> {
@@ -112,16 +109,17 @@ async function generateGuide(prompt: string): Promise<string> {
   return result.guide;
 }
 
-// Reflective logic runner
+// Reflective logic runner - Updated to use UnifiedOpenAIService
 async function runReflectiveLogic(query: string): Promise<string> {
-  const openaiService = new OpenAIService();
-  const result = await openaiService.chat([{ role: 'user', content: query }]);
+  const response = await unifiedOpenAI.chat([
+    { role: 'user', content: query }
+  ]);
   
-  if (result.error) {
-    throw new Error(result.error);
+  if (!response.success) {
+    throw new Error(response.error || 'Reflective logic failed');
   }
   
-  return result.message;
+  return response.content;
 }
 
 // Consolidated command map
@@ -133,9 +131,112 @@ const commandMap: Record<string, (prompt: string) => Promise<string>> = {
   GUIDE: generateGuide,
 };
 
-// Main ask handler with unified structure
+// Enhanced functions for modern OpenAI features
+const enhancedFunctions: FunctionDefinition[] = [
+  {
+    name: 'get_system_status',
+    description: 'Get current system status and health metrics',
+    parameters: {
+      type: 'object',
+      properties: {
+        component: {
+          type: 'string',
+          enum: ['memory', 'database', 'openai', 'all'],
+          description: 'System component to check'
+        }
+      },
+      required: ['component']
+    }
+  },
+  {
+    name: 'search_memory',
+    description: 'Search stored memories and reflections',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        limit: { type: 'number', description: 'Maximum results to return' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'generate_code',
+    description: 'Generate code snippets based on requirements',
+    parameters: {
+      type: 'object',
+      properties: {
+        language: { type: 'string', description: 'Programming language' },
+        requirements: { type: 'string', description: 'Code requirements' },
+        framework: { type: 'string', description: 'Framework to use (optional)' }
+      },
+      required: ['language', 'requirements']
+    }
+  }
+];
+
+// Function handlers for enhanced capabilities
+const functionHandlers = {
+  get_system_status: async (component: string) => {
+    try {
+      if (component === 'openai' || component === 'all') {
+        const connectionTest = await unifiedOpenAI.testConnection();
+        return {
+          openai: {
+            status: connectionTest.success ? 'healthy' : 'unhealthy',
+            model: unifiedOpenAI.getModel(),
+            error: connectionTest.error
+          }
+        };
+      }
+      return { status: 'Component status check not implemented yet' };
+    } catch (error: any) {
+      return { error: error.message };
+    }
+  },
+
+  search_memory: async (query: string, limit: number = 10) => {
+    try {
+      const memoryStorage = new MemoryStorage();
+      // This would need to be implemented in MemoryStorage
+      return { query, limit, message: 'Memory search not yet implemented' };
+    } catch (error: any) {
+      return { error: error.message };
+    }
+  },
+
+  generate_code: async (language: string, requirements: string, framework?: string) => {
+    try {
+      const prompt = `Generate ${language} code for the following requirements: ${requirements}` +
+        (framework ? ` using ${framework} framework` : '');
+      
+      const response = await unifiedOpenAI.chat([
+        { role: 'system', content: 'You are an expert programmer. Generate clean, well-documented code.' },
+        { role: 'user', content: prompt }
+      ]);
+
+      return {
+        language,
+        framework,
+        code: response.content,
+        success: response.success
+      };
+    } catch (error: any) {
+      return { error: error.message };
+    }
+  }
+};
+
+// Main ask handler with unified structure and enhanced capabilities
 async function askHandler(req: Request, res: Response) {
-  const { query, frontend = false, mode = "logic" } = req.body || {};
+  const { 
+    query, 
+    frontend = false, 
+    mode = "logic",
+    stream = false,
+    enableFunctions = false 
+  } = req.body || {};
+  
   const cleaned = query.trim();
   const command = Object.keys(commandMap).find(cmd => cleaned.toUpperCase().startsWith(cmd));
 
@@ -145,7 +246,45 @@ async function askHandler(req: Request, res: Response) {
     if (command) {
       const prompt = cleaned.replace(new RegExp(command, 'i'), "").trim();
       response = await commandMap[command](prompt);
+    } else if (enableFunctions) {
+      // Use enhanced function calling
+      const result = await unifiedOpenAI.chatWithFunctions(
+        [{ role: 'user', content: cleaned }],
+        enhancedFunctions,
+        functionHandlers
+      );
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Function calling failed');
+      }
+      
+      response = result.content;
+    } else if (stream && !frontend) {
+      // Streaming response for non-frontend clients
+      res.writeHead(200, {
+        'Content-Type': 'text/plain',
+        'Transfer-Encoding': 'chunked',
+      });
+
+      const streamResponse = await unifiedOpenAI.chatStream(
+        [{ role: 'user', content: cleaned }],
+        (chunk: string, isComplete: boolean) => {
+          if (!isComplete) {
+            res.write(chunk);
+          } else {
+            res.end();
+          }
+        }
+      );
+
+      // Queue reflection for streaming responses
+      if (streamResponse.success) {
+        queueReflection(cleaned, streamResponse.content);
+      }
+      
+      return; // Response already sent via streaming
     } else {
+      // Standard logic processing
       const raw = await runReflectiveLogic(cleaned);
       queueReflection(cleaned, raw);
       response = frontend ? stripReflections(raw) : raw;
@@ -159,4 +298,12 @@ async function askHandler(req: Request, res: Response) {
   }
 }
 
-export { askHandler, stripReflections, queueReflection, commandMap };
+export { 
+  askHandler, 
+  stripReflections, 
+  queueReflection, 
+  commandMap,
+  enhancedFunctions,
+  functionHandlers,
+  unifiedOpenAI 
+};
