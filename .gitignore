@@ -73,5 +73,7 @@ dev-tests/
 storage/canon/*.txt
 !storage/canon/sample-storyline.txt
 storage/canon/test-logger.json
+storage/memory-snapshots/
+storage/code-improvements/
 
 /src/generated/prisma
