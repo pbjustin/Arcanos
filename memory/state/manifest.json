@@ -5,5 +5,13 @@
     "task": "test-task",
     "status": "running",
     "timestamp": "2025-07-29T09:26:10.868Z"
+  },
+  {
+    "event": "worker_update",
+    "id": "worker-maintenance",
+    "task": "awaiting_job",
+    "status": "idle",
+    "timestamp": "2025-07-29T10:12:54.833Z"
   }
+]
 ]
