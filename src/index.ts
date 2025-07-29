@@ -19,6 +19,7 @@ import systemRouter from './routes/system';
 import codexRouter from './routes/codex';
 import logsRouter from './routes/logs';
 import openaiWebhookRouter from './webhooks/openai';
+import githubWebhookRouter from './webhooks/github';
 import { enableAdminControl, getAdminRouter } from './system/auth';
 
 // Middleware
@@ -147,6 +148,7 @@ app.use('/system', systemRouter);
 app.use('/codex', codexRouter);
 app.use('/logs', logsRouter);
 app.use('/webhooks', openaiWebhookRouter);
+app.use('/webhooks', githubWebhookRouter);
 
 // Error handling middleware (must be last)
 app.use(errorHandler.handleError);
