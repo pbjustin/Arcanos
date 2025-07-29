@@ -170,7 +170,7 @@ export class SleepManager {
    */
   private async runMemorySyncSnapshot(): Promise<void> {
     const memorySync = require('../../dist/workers/memorySync');
-    await memorySync();
+    await memorySync.default();
     
     // Additional snapshot logic
     const result = await modelControlHooks.manageMemory(
@@ -201,7 +201,7 @@ export class SleepManager {
    */
   private async runGoalWatcherAudit(): Promise<void> {
     const goalWatcher = require('../../dist/workers/goalWatcher');
-    await goalWatcher();
+    await goalWatcher.default();
 
     // Additional backlog audit logic
     const auditResult = await modelControlHooks.performAudit(
@@ -228,7 +228,7 @@ export class SleepManager {
    */
   private async runClearTempLogs(): Promise<void> {
     const clearTemp = require('../../dist/workers/clearTemp');
-    await clearTemp();
+    await clearTemp.default();
 
     // Additional log cleanup logic
     const cleanupResult = await modelControlHooks.performMaintenance(
@@ -256,7 +256,7 @@ export class SleepManager {
    */
   private async runCodeImprovementSuggestions(): Promise<void> {
     const codeImprovement = require('../../dist/workers/codeImprovement');
-    await codeImprovement();
+    await codeImprovement.default();
   }
 
   /**
