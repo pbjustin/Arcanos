@@ -252,3 +252,6 @@ export { getCoreSleepWindow } from './services/sleep-config';
 // Export email service functions for global access
 export { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from './services/email';
 export { selfReflectionService } from './services/self-reflection';
+
+// Export game guide storage functionality
+export { saveGameGuide } from './services/game-guides';
