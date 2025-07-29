@@ -171,6 +171,27 @@ export class ExecutionEngine {
    */
   public handleSchedule(instruction: DispatchInstruction): ExecutionResult {
     const { schedule, parameters = {} } = instruction;
+    if (
+      instruction.service === 'memory' &&
+      (!parameters || !(parameters as any).scheduled_event)
+    ) {
+      console.warn(
+        '🔁 Skipped: Invalid memory schedule event',
+        parameters
+      );
+      dispatchJob({
+        action: 'schedule',
+        service: 'memory',
+        parameters: {
+          scheduled_event: true,
+          worker: 'defaultWorker'
+        },
+        execute: true,
+        worker: 'defaultWorker',
+        schedule
+      });
+      return { success: false, error: 'invalid_memory_schedule' };
+    }
     let workerName = this.normalizeWorker(instruction.worker);
 
     if (!schedule) {
@@ -682,3 +703,8 @@ Provide a detailed analysis including:
 
 // Export singleton instance
 export const executionEngine = new ExecutionEngine();
+
+// Simple helper for on-demand job dispatch
+export function dispatchJob(job: DispatchInstruction): Promise<ExecutionResult> {
+  return executionEngine.executeInstruction(job);
+}
