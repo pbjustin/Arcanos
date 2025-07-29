@@ -3,7 +3,6 @@
 
 import { Request, Response } from 'express';
 import { memoryOperations } from '../services/memory-operations';
-import { modelControlHooks } from '../services/model-control-hooks';
 
 export class MemoryHandler {
   async handleMemoryRequest(req: Request, res: Response): Promise<void> {
@@ -112,7 +111,7 @@ export class MemoryHandler {
     console.log('⏰ Starting periodic memory snapshots every hour');
     
     // Primary: setInterval approach
-    const intervalId = setInterval(async () => {
+    setInterval(async () => {
       await this.performStreamlinedSnapshot();
     }, 60 * 60 * 1000); // 1 hour
 

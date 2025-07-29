@@ -34,7 +34,6 @@ import { serverService } from './services/server';
 import { chatGPTUserWhitelist } from './services/chatgpt-user-whitelist';
 import { diagnosticsService } from './services/diagnostics';
 import { memoryMonitor } from './services/memory-monitor';
-import { selfReflectionService } from './services/self-reflection';
 
 // Handlers (for initialization)
 import { memoryHandler } from './handlers/memory-handler';
