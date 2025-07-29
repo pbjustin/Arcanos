@@ -31,7 +31,7 @@
 - **ALIGNED**: Tone and format consistency across all documentation files
 
 ### 🤖 Current System State
-- **Fine-tuned Model**: `ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD`
+- **Fine-tuned Model**: `ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH`
 - **HRC Overlay**: Active validation with resilience/fidelity scoring
 - **Environment Variables**: Enhanced support with flexible precedence
 - **OpenAI Integration**: Improved configuration options and error handling
@@ -51,7 +51,7 @@
 ### 🤖 AI-Controlled System Documentation
  - **DOCUMENTED**: Full AI operational control system via `modelControlHooks`
  - **DETAILED**: AI-controlled CRON worker schedules with approval system
- - **SPECIFIED**: Current fine-tuned model: `ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD`
+ - **SPECIFIED**: Current fine-tuned model: `ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH`
 - **EXPLAINED**: JSON instruction system for AI operational decisions
 - **COVERED**: AI approval requirements for all background tasks
 

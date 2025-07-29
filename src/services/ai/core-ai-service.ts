@@ -57,7 +57,7 @@ export class CoreAIService {
     });
 
     // Use configured fine-tuned model or fallback ID
-    this.defaultModel = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD';
+    this.defaultModel = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
     this.maxRetries = 3;
     this.retryDelayMs = 1000;
 
