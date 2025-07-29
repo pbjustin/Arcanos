@@ -72,47 +72,6 @@ export class WriteHandler {
     }
   }
 
-  private isMalformedResponse(response: any): boolean {
-    // Simple malformed response check
-    return (
-      !response ||
-      typeof response !== 'object' ||
-      !response.content ||
-      typeof response.content !== 'string' ||
-      response.content.trim().length === 0
-    );
-  }
-
-  private logMalformedResponse(response: any, request: any, timestamp: string): void {
-    const logEntry = {
-      timestamp,
-      response_structure: {
-        has_content: response?.hasOwnProperty('content'),
-        content_type: typeof response?.content,
-        content_length: response?.content ? response.content.length : 0,
-      },
-      request_info: {
-        message_length: request.message ? request.message.length : 0,
-        domain: request.domain,
-        useRAG: request.useRAG
-      },
-      audit_id: `malformed_${Date.now()}`
-    };
-
-    this.malformedResponseLog.push(logEntry);
-    
-    // Keep only last 100 entries to prevent memory issues
-    if (this.malformedResponseLog.length > 100) {
-      this.malformedResponseLog.shift();
-    }
-
-    console.log('📋 MALFORMED-AUDIT: Response logged for future audit:', {
-      audit_id: logEntry.audit_id,
-      timestamp,
-      total_logged: this.malformedResponseLog.length
-    });
-  }
-
   // Method to retrieve malformed response logs for auditing
   getMalformedResponseLogs(): any[] {
     return [...this.malformedResponseLog];

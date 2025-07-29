@@ -58,7 +58,7 @@ export class OptimizedAIDispatcher {
   private dispatchLocks: Map<string, boolean> = new Map();
 
   constructor() {
-    this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
+    this.model = process.env.AI_MODEL || 'gpt-4-turbo';
     
     try {
       this.unifiedOpenAI = getUnifiedOpenAI({
