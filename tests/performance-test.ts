@@ -4,7 +4,6 @@
  */
 
 import { getUnifiedOpenAI } from '../src/services/unified-openai';
-import { OpenAIService } from '../src/services/openai';
 
 interface PerformanceMetrics {
   averageResponseTime: number;
@@ -86,65 +85,21 @@ async function testUnifiedService(): Promise<PerformanceMetrics> {
 }
 
 async function testLegacyService(): Promise<PerformanceMetrics> {
-  console.log('🐌 Testing Legacy OpenAI Service...');
+  console.log('🐌 Legacy OpenAI Service has been removed - skipping test');
   
-  const startMemory = await measureMemory();
-  const results = [];
-  const errors = [];
-  
-  const testMessages = [
-    'Hello, how are you?',
-    'What is the capital of France?',
-    'Explain quantum computing in simple terms.',
-    'Write a haiku about programming.',
-    'What are the benefits of TypeScript?'
-  ];
-
-  for (let i = 0; i < testMessages.length; i++) {
-    const legacyService = new OpenAIService(); // Create new instance each time (old pattern)
-    const startTime = Date.now();
-    try {
-      const response = await legacyService.chat([
-        { role: 'user', content: testMessages[i] }
-      ]);
-      
-      const endTime = Date.now();
-      results.push({
-        success: !response.error,
-        responseTime: endTime - startTime,
-        contentLength: response.message.length
-      });
-      
-      if (response.error) {
-        errors.push(`Request ${i + 1}: ${response.error}`);
-      }
-    } catch (error: any) {
-      const endTime = Date.now();
-      results.push({
-        success: false,
-        responseTime: endTime - startTime,
-        contentLength: 0
-      });
-      errors.push(`Request ${i + 1}: ${error.message}`);
-    }
-  }
-
-  const endMemory = await measureMemory();
-  const successCount = results.filter(r => r.success).length;
-  const averageResponseTime = results.reduce((sum, r) => sum + r.responseTime, 0) / results.length;
-
+  // Legacy service was deprecated and removed
   return {
-    averageResponseTime,
+    averageResponseTime: 0,
     memoryUsage: {
-      rss: endMemory.rss - startMemory.rss,
-      heapUsed: endMemory.heapUsed - startMemory.heapUsed,
-      heapTotal: endMemory.heapTotal - startMemory.heapTotal,
-      external: endMemory.external - startMemory.external,
-      arrayBuffers: endMemory.arrayBuffers - startMemory.arrayBuffers
+      rss: 0,
+      heapUsed: 0,
+      heapTotal: 0,
+      external: 0,
+      arrayBuffers: 0
     },
-    successRate: (successCount / results.length) * 100,
-    totalRequests: results.length,
-    errors
+    successRate: 0,
+    totalRequests: 0,
+    errors: ['Legacy service has been deprecated and removed']
   };
 }
 

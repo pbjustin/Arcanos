@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import { getUnifiedOpenAI, type ChatMessage, type FunctionDefinition } from '../services/unified-openai';
-import { OpenAIService } from '../services/openai'; // Keep for backward compatibility
 import { diagnosticsService } from '../services/diagnostics';
 import { GameGuideService } from '../services/game-guide';
 import { MemoryStorage } from '../storage/memory-storage';
