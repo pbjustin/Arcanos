@@ -3,10 +3,25 @@ import { OpenAIService, ChatMessage } from '../services/openai';
 import { aiConfig } from '../config';
 import { HRCOverlay } from '../modules/overlay';
 import { MemoryStorage } from '../storage/memory-storage';
+import OpenAI from 'openai';
 
 let openaiService: OpenAIService | null = null;
 let hrcOverlay: HRCOverlay | null = null;
 let memoryStorage: MemoryStorage | null = null;
+
+// Direct OpenAI client for fine-tuned model routing
+let openaiClient: OpenAI | null = null;
+
+// Helper function to strip reflections from AI responses for frontend
+function stripReflections(response: string): string {
+  // Remove reflection patterns commonly used in AI responses
+  return response
+    .replace(/^(Let me think about this\.\.\.|I'll reflect on this\.\.\.|Let me consider\.\.\.|I need to think about\.\.\.)[\s\S]*?\n\n/i, '')
+    .replace(/\*\*(Reflection|Thinking|Analysis):\*\*[\s\S]*?(?=\n\n|\n\*\*|$)/gi, '')
+    .replace(/\[(Reflection|Thinking|Analysis)\][\s\S]*?(?=\n\n|\n\[|$)/gi, '')
+    .replace(/^---[\s\S]*?---\n\n/m, '')
+    .trim();
+}
 
 // Lazy initialization of services
 function getOpenAIService(): OpenAIService {
@@ -33,20 +48,99 @@ function getMemoryStorage(): MemoryStorage {
   return memoryStorage;
 }
 
+// Get direct OpenAI client for fine-tuned routing
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient) {
+    const apiKey = aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OpenAI API key is required for fine-tuned model routing');
+    }
+    openaiClient = new OpenAI({
+      apiKey: apiKey,
+      timeout: 30000,
+      maxRetries: 3,
+    });
+  }
+  return openaiClient;
+}
+
+// Simulate reflective logic (existing complex logic with RAG, HRC, etc.)
+function runReflectiveLogic(query: string): string {
+  // This represents the existing complex logic flow
+  // In the current implementation, this is handled by the full askHandler logic
+  return `Processed through reflective logic: ${query}`;
+}
+
 export const askHandler = async (req: Request, res: Response) => {
   try {
-    const { message, domain = "general", useRAG = true, useHRC = true, allowFallback = false } = req.body;
+    // Support both new interface (query, mode, useFineTuned, frontend) and existing interface (message, domain, etc.)
+    const { 
+      query, 
+      message, 
+      mode = "logic", 
+      useFineTuned = false, 
+      frontend = false,
+      domain = "general", 
+      useRAG = true, 
+      useHRC = true, 
+      allowFallback = false 
+    } = req.body;
 
-    if (!message || typeof message !== 'string') {
+    // Use query if provided (new interface), otherwise use message (existing interface)
+    const userInput = query || message;
+
+    if (!userInput || typeof userInput !== 'string') {
       return res.status(400).json({ 
-        error: "Message is required and must be a string",
+        error: "Message/query is required and must be a string",
         timestamp: new Date().toISOString()
       });
     }
 
-    console.log("Processing ARCANOS request:", { message, domain, useRAG, useHRC, allowFallback });
+    console.log("Processing ARCANOS request:", { userInput, mode, useFineTuned, frontend, domain, useRAG, useHRC, allowFallback });
 
-    let response = message;
+    // Fine-tuned model routing logic - check flag or content
+    if (useFineTuned || /finetune|ft:/i.test(userInput)) {
+      console.log("🎯 Routing through fine-tuned model");
+      
+      try {
+        const openai = getOpenAIClient();
+        const completion = await openai.chat.completions.create({
+          model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD", 
+          messages: [{ role: "user", content: userInput }],
+          temperature: 0.7,
+        });
+        
+        const response = completion.choices[0]?.message?.content || "";
+        console.log("✅ Fine-tuned model response received");
+        
+        return res.json({ 
+          response: frontend ? stripReflections(response) : response,
+          metadata: {
+            model: completion.model,
+            routing: 'fine-tuned',
+            frontend: frontend,
+            timestamp: new Date().toISOString()
+          }
+        });
+      } catch (error: any) {
+        console.error("❌ Fine-tuned model routing failed:", error);
+        // Fallback to reflective logic
+        console.log("🔄 Falling back to reflective logic");
+        const fallbackResponse = runReflectiveLogic(userInput);
+        return res.json({ 
+          response: frontend ? stripReflections(fallbackResponse) : fallbackResponse,
+          metadata: {
+            model: 'fallback',
+            routing: 'fallback-after-finetune-failure',
+            error: error.message,
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+    }
+
+    // Continue with existing reflective logic for non-fine-tuned requests
+    let response = userInput;
     let hrcValidation = null;
     let ragContext = null;
     let aiResponse = null;
@@ -56,7 +150,7 @@ export const askHandler = async (req: Request, res: Response) => {
     if (useHRC) {
       try {
         const overlay = getHRCOverlay();
-        const result = await overlay.evaluate(message, domain);
+        const result = await overlay.evaluate(userInput, domain);
         hrcValidation = result.metrics;
         console.log('HRC overlay result:', result);
         if (result.route === 'block') {
@@ -93,7 +187,7 @@ export const askHandler = async (req: Request, res: Response) => {
       
       // Log the fine-tuned model being used
       console.log('🔍 Using fine-tuned model:', process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || 'default');
-      console.log('🎯 Processing message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
+      console.log('🎯 Processing message:', userInput.substring(0, 100) + (userInput.length > 100 ? '...' : ''));
       
       // Build chat messages with context
       const chatMessages: ChatMessage[] = [
@@ -105,7 +199,7 @@ export const askHandler = async (req: Request, res: Response) => {
         },
         {
           role: 'user',
-          content: message
+          content: userInput
         }
       ];
 
@@ -136,7 +230,7 @@ export const askHandler = async (req: Request, res: Response) => {
             'interaction',
             `interaction_${Date.now()}`,
             {
-              userMessage: message,
+              userMessage: userInput,
               aiResponse: response,
               domain,
               timestamp: new Date().toISOString()
@@ -154,17 +248,21 @@ export const askHandler = async (req: Request, res: Response) => {
       console.error("OpenAI service error:", error);
       errors.push(`AI response generation failed: ${error.message}`);
       // Fallback to basic response
-      response = `I apologize, but I'm experiencing technical difficulties. Your message "${message}" was received in the ${domain} domain.`;
+      response = `I apologize, but I'm experiencing technical difficulties. Your message "${userInput}" was received in the ${domain} domain.`;
     }
 
     // Return the actual response with metadata
+    const finalResponse = frontend ? stripReflections(response) : response;
     return res.status(200).json({ 
-      response,
+      response: finalResponse,
       metadata: {
         model: aiResponse?.model || 'unknown',
         domain,
+        mode,
         useHRC,
         useRAG,
+        frontend,
+        routing: 'reflective',
         hrcValidation,
         ragContextEntries: ragContext?.length || 0,
         errors: errors.length > 0 ? errors : undefined,
