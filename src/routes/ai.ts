@@ -4,6 +4,7 @@ import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
 import { codeInterpreterService } from '../services/code-interpreter';
+import { gameGuideService } from '../services/game-guide';
 
 
 const router = Router();
@@ -114,6 +115,32 @@ router.post('/code-interpreter', async (req, res) => {
     sendSuccessResponse(res, 'Code interpreter executed', result);
   } catch (error: any) {
     handleCatchError(res, error, 'Code interpreter');
+  }
+});
+
+// POST /game-guide - Generate strategic game guide using OpenAI
+router.post('/game-guide', async (req, res) => {
+  const { gameTitle, notes } = req.body;
+  
+  if (!gameTitle) {
+    return sendErrorResponse(res, 400, 'gameTitle is required');
+  }
+  
+  try {
+    const result = await gameGuideService.simulateGameGuide(gameTitle, notes);
+    
+    if (result.error) {
+      return sendErrorResponse(res, 500, 'Failed to generate game guide', result.error);
+    }
+    
+    sendSuccessResponse(res, 'Game guide generated successfully', {
+      guide: result.guide,
+      gameTitle: result.gameTitle,
+      model: result.model,
+      timestamp: result.timestamp
+    });
+  } catch (error: any) {
+    handleCatchError(res, error, 'Game guide generation');
   }
 });
 
