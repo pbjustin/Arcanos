@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "event": "worker_update",
+    "id": "worker-maintenance",
+    "task": "awaiting_job",
+    "status": "idle",
+    "timestamp": "2025-07-29T09:18:46.719Z"
+  }
+]
+]
