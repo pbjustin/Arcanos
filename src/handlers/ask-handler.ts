@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { getUnifiedOpenAI, type ChatMessage, type FunctionDefinition } from '../services/unified-openai';
+import { getUnifiedOpenAI, type FunctionDefinition } from '../services/unified-openai';
 import { diagnosticsService } from '../services/diagnostics';
 import { GameGuideService } from '../services/game-guide';
 import { MemoryStorage } from '../storage/memory-storage';
@@ -48,7 +48,7 @@ async function runFineTunedModel(prompt: string): Promise<string> {
   const response = await unifiedOpenAI.chat([
     { role: 'user', content: prompt }
   ], {
-    model: aiConfig.fineTunedModel || "REDACTED_FINE_TUNED_MODEL_ID",
+    model: aiConfig.fineTunedModel || "gpt-4-turbo",
     temperature: 0.7,
   });
   
@@ -196,7 +196,6 @@ const functionHandlers = {
 
   search_memory: async (query: string, limit: number = 10) => {
     try {
-      const memoryStorage = new MemoryStorage();
       // This would need to be implemented in MemoryStorage
       return { query, limit, message: 'Memory search not yet implemented' };
     } catch (error: any) {
@@ -231,7 +230,6 @@ async function askHandler(req: Request, res: Response) {
   const { 
     query, 
     frontend = false, 
-    mode = "logic",
     stream = false,
     enableFunctions = false 
   } = req.body || {};

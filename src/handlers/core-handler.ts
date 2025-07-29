@@ -2,23 +2,11 @@ import { Request, Response } from 'express';
 import { getUnifiedOpenAI } from '../services/unified-openai';
 import { aiConfig } from '../config';
 
-const modesSupported = [
-  'logic',
-  'sim',
-  'build',
-  'audit',
-  'write',
-  'guide',
-  'research',
-  'tracker',
-  'booking',
-];
-
 // Use unified OpenAI service
 const unifiedOpenAI = getUnifiedOpenAI();
 
 export async function askHandler(req: Request, res: Response): Promise<void> {
-  const { query, mode = "logic", useFineTuned = false, frontend = false } = req.body;
+  const { query, useFineTuned = false, frontend = false } = req.body;
 
   try {
     if (useFineTuned || /finetune|ft:/i.test(query)) {
@@ -27,7 +15,7 @@ export async function askHandler(req: Request, res: Response): Promise<void> {
         const response = await unifiedOpenAI.chat([
           { role: "user", content: query }
         ], {
-          model: aiConfig.fineTunedModel || "REDACTED_FINE_TUNED_MODEL_ID",
+          model: aiConfig.fineTunedModel || "gpt-4-turbo",
           temperature: 0.7,
         });
         

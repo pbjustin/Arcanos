@@ -149,7 +149,7 @@ class MemoryOperationsService {
           content: `Memory context:\n${memoryContent}`
         }
       ], 'memory-analysis', {
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo',
         temperature: 0.3,
         maxTokens: 500
       });

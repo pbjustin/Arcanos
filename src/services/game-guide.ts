@@ -53,7 +53,7 @@ Return this as a structured guide with bullet points.
       const response = await this.unifiedOpenAI.chat([
         { role: "user", content: prompt }
       ], {
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo',
         maxTokens: 1500,
         temperature: 0.7
       });
