@@ -58,7 +58,7 @@ export class OptimizedAIDispatcher {
   private dispatchLocks: Map<string, boolean> = new Map();
 
   constructor() {
-    this.model = process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
+    this.model = process.env.AI_MODEL || 'gpt-4-turbo';
     
     try {
       this.unifiedOpenAI = getUnifiedOpenAI({

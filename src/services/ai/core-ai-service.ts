@@ -57,7 +57,7 @@ export class CoreAIService {
     });
 
     // Use configured fine-tuned model or fallback ID
-    this.defaultModel = process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
+    this.defaultModel = process.env.AI_MODEL || 'gpt-4-turbo';
     this.maxRetries = 3;
     this.retryDelayMs = 1000;
 

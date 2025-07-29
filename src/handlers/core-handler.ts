@@ -15,7 +15,7 @@ export async function askHandler(req: Request, res: Response): Promise<void> {
         const response = await unifiedOpenAI.chat([
           { role: "user", content: query }
         ], {
-          model: aiConfig.fineTunedModel || "REDACTED_FINE_TUNED_MODEL_ID",
+          model: aiConfig.fineTunedModel || "gpt-4-turbo",
           temperature: 0.7,
         });
         

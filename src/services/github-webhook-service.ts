@@ -77,7 +77,7 @@ Determine if any automated actions should be triggered (testing, deployment, cod
         maxTokens: 1500,
         temperature: 0.3
       });
-      console.log('[GITHUB-WEBHOOK] Push analysis:', analysis.response);
+      console.log('[GITHUB-WEBHOOK] Push analysis completed (length: ' + analysis.response.length + ')');
 
       // Check if ARCANOS suggests triggering actions
       if (analysis.response.includes('trigger') || analysis.response.includes('deploy') || analysis.response.includes('test')) {
@@ -109,7 +109,7 @@ Determine if this merge should trigger deployment, integration tests, or other a
         maxTokens: 1500,
         temperature: 0.3
       });
-      console.log('[GITHUB-WEBHOOK] PR merge analysis:', analysis.response);
+      console.log('[GITHUB-WEBHOOK] PR merge analysis completed (length: ' + analysis.response.length + ')');
 
       // Trigger deployment if this is a merge to main/master
       if (payload.pull_request.base.ref === 'main' || payload.pull_request.base.ref === 'master') {
@@ -141,7 +141,7 @@ Determine if this release should trigger production deployment, documentation up
         maxTokens: 2000,
         temperature: 0.3
       });
-      console.log('[GITHUB-WEBHOOK] Release analysis:', analysis.response);
+      console.log('[GITHUB-WEBHOOK] Release analysis completed (length: ' + analysis.response.length + ')');
 
       // Trigger release actions
       await this.triggerReleaseAction(payload);
