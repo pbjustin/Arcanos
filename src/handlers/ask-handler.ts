@@ -1,20 +1,13 @@
 import { Request, Response } from 'express';
-import { OpenAIService, ChatMessage } from '../services/openai';
-import { aiConfig } from '../config';
-import { HRCOverlay } from '../modules/overlay';
+import { OpenAIService } from '../services/openai';
+import { diagnosticsService } from '../services/diagnostics';
+import { GameGuideService } from '../services/game-guide';
 import { MemoryStorage } from '../storage/memory-storage';
 import OpenAI from 'openai';
+import { aiConfig } from '../config';
 
-let openaiService: OpenAIService | null = null;
-let hrcOverlay: HRCOverlay | null = null;
-let memoryStorage: MemoryStorage | null = null;
-
-// Direct OpenAI client for fine-tuned model routing
-let openaiClient: OpenAI | null = null;
-
-// Helper function to strip reflections from AI responses for frontend
+// Unified stripReflections helper for frontend filtering
 function stripReflections(response: string): string {
-  // Remove reflection patterns commonly used in AI responses
   return response
     .replace(/^(Let me think about this\.\.\.|I'll reflect on this\.\.\.|Let me consider\.\.\.|I need to think about\.\.\.)[\s\S]*?\n\n/i, '')
     .replace(/\*\*(Reflection|Thinking|Analysis):\*\*[\s\S]*?(?=\n\n|\n\*\*|$)/gi, '')
@@ -23,259 +16,147 @@ function stripReflections(response: string): string {
     .trim();
 }
 
-// Lazy initialization of services
-function getOpenAIService(): OpenAIService {
-  if (!openaiService) {
-    openaiService = new OpenAIService({
-      identityOverride: aiConfig.identityOverride,
-      identityTriggerPhrase: aiConfig.identityTriggerPhrase,
-    });
-  }
-  return openaiService;
-}
-
-function getHRCOverlay(): HRCOverlay {
-  if (!hrcOverlay) {
-    hrcOverlay = new HRCOverlay();
-  }
-  return hrcOverlay;
-}
-
-function getMemoryStorage(): MemoryStorage {
-  if (!memoryStorage) {
-    memoryStorage = new MemoryStorage();
-  }
-  return memoryStorage;
-}
-
-// Get direct OpenAI client for fine-tuned routing
-function getOpenAIClient(): OpenAI {
-  if (!openaiClient) {
-    const apiKey = aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required for fine-tuned model routing');
-    }
-    openaiClient = new OpenAI({
-      apiKey: apiKey,
-      timeout: 30000,
-      maxRetries: 3,
-    });
-  }
-  return openaiClient;
-}
-
-// Simulate reflective logic (existing complex logic with RAG, HRC, etc.)
-function runReflectiveLogic(query: string): string {
-  // This represents the existing complex logic flow
-  // In the current implementation, this is handled by the full askHandler logic
-  return `Processed through reflective logic: ${query}`;
-}
-
-export const askHandler = async (req: Request, res: Response) => {
-  try {
-    // Support both new interface (query, mode, useFineTuned, frontend) and existing interface (message, domain, etc.)
-    const { 
-      query, 
-      message, 
-      mode = "logic", 
-      useFineTuned = false, 
-      frontend = false,
-      domain = "general", 
-      useRAG = true, 
-      useHRC = true, 
-      allowFallback = false 
-    } = req.body;
-
-    // Use query if provided (new interface), otherwise use message (existing interface)
-    const userInput = query || message;
-
-    if (!userInput || typeof userInput !== 'string') {
-      return res.status(400).json({ 
-        error: "Message/query is required and must be a string",
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    console.log("Processing ARCANOS request:", { userInput, mode, useFineTuned, frontend, domain, useRAG, useHRC, allowFallback });
-
-    // Fine-tuned model routing logic - check flag or content
-    if (useFineTuned || /finetune|ft:/i.test(userInput)) {
-      console.log("🎯 Routing through fine-tuned model");
-      
-      try {
-        const openai = getOpenAIClient();
-        const completion = await openai.chat.completions.create({
-          model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD", 
-          messages: [{ role: "user", content: userInput }],
-          temperature: 0.7,
-        });
-        
-        const response = completion.choices[0]?.message?.content || "";
-        console.log("✅ Fine-tuned model response received");
-        
-        return res.json({ 
-          response: frontend ? stripReflections(response) : response,
-          metadata: {
-            model: completion.model,
-            routing: 'fine-tuned',
-            frontend: frontend,
-            timestamp: new Date().toISOString()
-          }
-        });
-      } catch (error: any) {
-        console.error("❌ Fine-tuned model routing failed:", error);
-        // Fallback to reflective logic
-        console.log("🔄 Falling back to reflective logic");
-        const fallbackResponse = runReflectiveLogic(userInput);
-        return res.json({ 
-          response: frontend ? stripReflections(fallbackResponse) : fallbackResponse,
-          metadata: {
-            model: 'fallback',
-            routing: 'fallback-after-finetune-failure',
-            error: error.message,
-            timestamp: new Date().toISOString()
-          }
-        });
-      }
-    }
-
-    // Continue with existing reflective logic for non-fine-tuned requests
-    let response = userInput;
-    let hrcValidation = null;
-    let ragContext = null;
-    let aiResponse = null;
-    let errors: string[] = [];
-
-    // Step 1: HRC overlay evaluation if requested
-    if (useHRC) {
-      try {
-        const overlay = getHRCOverlay();
-        const result = await overlay.evaluate(userInput, domain);
-        hrcValidation = result.metrics;
-        console.log('HRC overlay result:', result);
-        if (result.route === 'block') {
-          return res.status(400).json({
-            error: 'Message blocked by HRC overlay',
-            metrics: result.metrics,
-            timestamp: new Date().toISOString()
-          });
-        }
-      } catch (error: any) {
-        console.error('HRC overlay error:', error);
-        errors.push(`HRC overlay failed: ${error.message}`);
-      }
-    }
-
-    // Step 2: RAG context retrieval if requested
-    if (useRAG) {
-      try {
-        const memory = getMemoryStorage();
-        const userId = (req.headers['x-user-id'] as string) || 'default';
-        // Retrieve relevant context from memory
-        const memories = await memory.getMemoriesByUser(userId);
-        ragContext = memories.slice(0, 5); // Get last 5 memories for context
-        console.log("Retrieved RAG context:", ragContext?.length || 0, "entries");
-      } catch (error: any) {
-        console.error("RAG context retrieval error:", error);
-        errors.push(`RAG context retrieval failed: ${error.message}`);
-      }
-    }
-
-    // Step 3: Generate AI response using OpenAI service
+// Background reflection storage - called once after main logic
+function queueReflection(query: string, response: string): void {
+  // Queue reflection for background storage
+  setImmediate(async () => {
     try {
-      const openai = getOpenAIService();
-      
-      // Log the fine-tuned model being used
-      console.log('🔍 Using fine-tuned model:', process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL || 'default');
-      console.log('🎯 Processing message:', userInput.substring(0, 100) + (userInput.length > 100 ? '...' : ''));
-      
-      // Build chat messages with context
-      const chatMessages: ChatMessage[] = [
+      const memoryStorage = new MemoryStorage();
+      await memoryStorage.storeMemory(
+        'system',
+        'reflection-session',
+        'system',
+        `reflection_${Date.now()}`,
         {
-          role: 'system',
-          content: `You are ARCANOS, an AI assistant. Domain: ${domain}. ${
-            ragContext ? `Context from previous interactions: ${JSON.stringify(ragContext)}` : ''
-          }`
+          query,
+          response,
+          timestamp: new Date().toISOString()
         },
-        {
-          role: 'user',
-          content: userInput
-        }
-      ];
+        ['reflection', 'background'],
+        undefined
+      );
+    } catch (error) {
+      console.error('Background reflection storage failed:', error);
+    }
+  });
+}
 
-      // Use OpenAI service to generate response
-      console.log('🚀 Sending request to OpenAI service...');
-      const openaiResponse = await openai.chat(chatMessages);
-      aiResponse = openaiResponse;
-      console.log('📥 Received response from OpenAI service');
-      
-      // Handle error cases
-      if (openaiResponse.error) {
-        console.warn('⚠️ OpenAI service returned an error:', openaiResponse.error);
-        response = openaiResponse.message;
-        errors.push(`OpenAI error: ${openaiResponse.error}`);
-      } else {
-        console.log('✅ Successfully generated AI response');
-        response = openaiResponse.message;
-      }
+// Command handler functions
+async function runFineTunedModel(prompt: string): Promise<string> {
+  const apiKey = aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OpenAI API key is required for fine-tuned model routing');
+  }
+  
+  const openaiClient = new OpenAI({
+    apiKey: apiKey,
+    timeout: 30000,
+    maxRetries: 3,
+  });
 
-      // Store interaction in memory if RAG is enabled
-      if (useRAG) {
-        try {
-          const memory = getMemoryStorage();
-          const userId = (req.headers['x-user-id'] as string) || 'default';
-          await memory.storeMemory(
-            userId,
-            (req as any).sessionID || 'default-session',
-            'interaction',
-            `interaction_${Date.now()}`,
-            {
-              userMessage: userInput,
-              aiResponse: response,
-              domain,
-              timestamp: new Date().toISOString()
-            },
-            [domain, 'interaction'],
-            undefined
-          );
-        } catch (error: any) {
-          console.error("Memory storage error:", error);
-          errors.push(`Memory storage failed: ${error.message}`);
-        }
-      }
+  const completion = await openaiClient.chat.completions.create({
+    model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
+  });
+  
+  return completion.choices[0]?.message?.content || "";
+}
 
-    } catch (error: any) {
-      console.error("OpenAI service error:", error);
-      errors.push(`AI response generation failed: ${error.message}`);
-      // Fallback to basic response
-      response = `I apologize, but I'm experiencing technical difficulties. Your message "${userInput}" was received in the ${domain} domain.`;
+async function runSimulation(prompt: string): Promise<string> {
+  const gameGuideService = new GameGuideService();
+  
+  // Extract game title from prompt (simple extraction for demo)
+  const gameTitle = prompt.replace(/simulate|simulation/gi, '').trim() || 'Strategy Game';
+  
+  const result = await gameGuideService.simulateGameGuide(gameTitle, prompt);
+  
+  if (result.error) {
+    throw new Error(result.error);
+  }
+  
+  return result.guide;
+}
+
+async function runSystemDiagnostics(prompt: string): Promise<string> {
+  const result = await diagnosticsService.executeDiagnosticCommand(prompt);
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Diagnostic command failed');
+  }
+  
+  return JSON.stringify(result.data, null, 2);
+}
+
+async function estimateCost(prompt: string): Promise<string> {
+  // Simple cost estimation based on prompt length and complexity
+  const words = prompt.split(/\s+/).length;
+  const complexity = prompt.includes('complex') || prompt.includes('detailed') ? 'high' : 'medium';
+  const estimatedTokens = words * 1.3; // rough estimate
+  const costPer1000Tokens = 0.002; // example rate
+  const estimatedCost = (estimatedTokens / 1000) * costPer1000Tokens;
+  
+  return `Estimated cost for "${prompt.substring(0, 50)}...": $${estimatedCost.toFixed(4)} (${Math.round(estimatedTokens)} tokens, ${complexity} complexity)`;
+}
+
+async function generateGuide(prompt: string): Promise<string> {
+  const gameGuideService = new GameGuideService();
+  const topic = prompt.replace(/guide|how.*to/gi, '').trim() || 'General Topic';
+  
+  const result = await gameGuideService.simulateGameGuide(`${topic} Guide`, prompt);
+  
+  if (result.error) {
+    throw new Error(result.error);
+  }
+  
+  return result.guide;
+}
+
+// Reflective logic runner
+async function runReflectiveLogic(query: string): Promise<string> {
+  const openaiService = new OpenAIService();
+  const result = await openaiService.chat([{ role: 'user', content: query }]);
+  
+  if (result.error) {
+    throw new Error(result.error);
+  }
+  
+  return result.message;
+}
+
+// Consolidated command map
+const commandMap: Record<string, (prompt: string) => Promise<string>> = {
+  RUN_FINE_TUNED: runFineTunedModel,
+  SIMULATE: runSimulation,
+  DIAGNOSE: runSystemDiagnostics,
+  ESTIMATE_COST: estimateCost,
+  GUIDE: generateGuide,
+};
+
+// Main ask handler with unified structure
+async function askHandler(req: Request, res: Response) {
+  const { query, frontend = false, mode = "logic" } = req.body || {};
+  const cleaned = query.trim();
+  const command = Object.keys(commandMap).find(cmd => cleaned.toUpperCase().startsWith(cmd));
+
+  try {
+    let response;
+
+    if (command) {
+      const prompt = cleaned.replace(new RegExp(command, 'i'), "").trim();
+      response = await commandMap[command](prompt);
+    } else {
+      const raw = await runReflectiveLogic(cleaned);
+      queueReflection(cleaned, raw);
+      response = frontend ? stripReflections(raw) : raw;
     }
 
-    // Return the actual response with metadata
-    const finalResponse = frontend ? stripReflections(response) : response;
-    return res.status(200).json({ 
-      response: finalResponse,
-      metadata: {
-        model: aiResponse?.model || 'unknown',
-        domain,
-        mode,
-        useHRC,
-        useRAG,
-        frontend,
-        routing: 'reflective',
-        hrcValidation,
-        ragContextEntries: ragContext?.length || 0,
-        errors: errors.length > 0 ? errors : undefined,
-        timestamp: new Date().toISOString()
-      }
-    });
+    return res.json({ response });
 
-  } catch (error: any) {
-    console.error("askHandler error:", error);
-    return res.status(500).json({ 
-      error: "Internal server error",
-      details: error.message,
-      timestamp: new Date().toISOString()
-    });
+  } catch (err) {
+    console.error("Error in askHandler:", err);
+    return res.status(500).json({ error: "Internal logic error." });
   }
-};
+}
+
+export { askHandler, stripReflections, queueReflection, commandMap };
