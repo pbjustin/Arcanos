@@ -45,7 +45,7 @@ export class OpenAIService {
     });
 
     // Use configured fine-tuned model or fallback to predefined ID
-    this.model = options?.model || aiConfig.fineTunedModel || process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD';
+    this.model = options?.model || aiConfig.fineTunedModel || process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
 
     // Optional identity override injected as system message for all chats
     const override = options?.identityOverride || aiConfig.identityOverride || process.env.IDENTITY_OVERRIDE;

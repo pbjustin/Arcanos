@@ -9,7 +9,7 @@
 | `NODE_ENV` | `production` | Environment mode (production/development) |
 | `PORT` | `8080` | Server port (Railway auto-assigns) |
 | `OPENAI_API_KEY` | `[REQUIRED]` | OpenAI API authentication key |
-| `FINE_TUNED_MODEL` | `ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD` | Primary fine-tuned model ID (supports multiple variable names) |
+| `FINE_TUNED_MODEL` | `REDACTED_FINE_TUNED_MODEL_ID` | Primary fine-tuned model ID (supports multiple variable names) |
 | `RUN_WORKERS` | `true` | Enable AI-controlled CRON worker processes |
 | `WORKER_LOGIC` | `arcanos` | Default logic mode for background workers |
 | `SERVER_URL` | `https://arcanos-production-426d.up.railway.app` | Production server URL for health checks |
@@ -45,9 +45,9 @@ The CRON worker system runs when `RUN_WORKERS=true` and implements **AI-controll
 ## 🤖 Fine-Tuned Model Configuration & Behavior
 
 -### Active Model
-- **Primary Model**: `ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD`
+- **Primary Model**: `REDACTED_FINE_TUNED_MODEL_ID`
 - **Model Type**: Fine-tuned GPT-3.5 Turbo
-- **Version**: `arcanos-v3`
+- **Version**: `arcanos-v2`
 - **Owner**: Personal account
 - **Training Date**: November 2024
 
