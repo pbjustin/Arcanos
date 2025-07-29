@@ -1,7 +1,7 @@
 // ARCANOS AI Dispatcher - Unified dispatch system that sends all requests to fine-tuned model
 // Replaces static logic, conditionals, and routing trees with AI-controlled decision making
 
-import { OpenAIService, ChatMessage } from './openai';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
 import { aiConfig } from '../config';
 
 // Helper to resolve workers from schedule keys
@@ -60,21 +60,20 @@ export interface DispatchResponse {
 }
 
 export class AIDispatcher {
-  private openaiService: OpenAIService | null;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null;
   private model: string;
 
   constructor() {
     this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
     
     try {
-      this.openaiService = new OpenAIService({
-        identityOverride: aiConfig.identityOverride,
-        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      this.unifiedOpenAI = getUnifiedOpenAI({
+        model: this.model,
       });
       console.log('🤖 AI Dispatcher initialized with model:', this.model);
     } catch (error) {
       console.warn('⚠️ AI Dispatcher initialized without OpenAI (testing mode):', error);
-      this.openaiService = null;
+      this.unifiedOpenAI = null;
     }
   }
 
@@ -110,7 +109,7 @@ export class AIDispatcher {
     }
 
     // If no OpenAI service available, return mock response for testing
-    if (!this.openaiService) {
+    if (!this.unifiedOpenAI) {
       console.log('⚠️ OpenAI service not available, returning mock AI response');
       const mock = this.createMockResponse(request);
       if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
@@ -128,9 +127,12 @@ export class AIDispatcher {
       ];
 
       console.log('📤 Sending request to fine-tuned model...');
-      const response = await this.openaiService.chat(messages);
+      const response = await this.unifiedOpenAI.chat(messages, {
+        model: this.model,
+        temperature: 0.7,
+      });
 
-      if (response.error) {
+      if (!response.success) {
         console.error('❌ Fine-tuned model error:', response.error);
         return {
           success: false,
@@ -142,12 +144,12 @@ export class AIDispatcher {
       console.log('📥 Received response from fine-tuned model');
       
       // Parse the model's response into structured instructions
-      const instructions = this.parseModelResponse(response.message);
+      const instructions = this.parseModelResponse(response.content);
       
       const result = {
         success: true,
         instructions,
-        directResponse: this.extractDirectResponse(response.message)
+        directResponse: this.extractDirectResponse(response.content)
       };
       if (lockKey) globalAny.__dispatchLocks.delete(lockKey);
       return result;
@@ -331,15 +333,15 @@ Please analyze this request and provide appropriate instructions for handling it
    * Quick method for simple AI queries without full dispatch overhead
    */
   async ask(query: string): Promise<string> {
-    if (!this.openaiService) {
+    if (!this.unifiedOpenAI) {
       return `AI: I would process "${query}" but I'm in testing mode without OpenAI access. In production, this would be handled by the fine-tuned model.`;
     }
     
-    const response = await this.openaiService.chat([
+    const response = await this.unifiedOpenAI.chat([
       { role: 'user', content: query }
     ]);
     
-    return response.error ? `Error: ${response.error}` : response.message;
+    return response.error ? `Error: ${response.error}` : response.content;
   }
 
   /**

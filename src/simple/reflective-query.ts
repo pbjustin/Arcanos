@@ -1,7 +1,6 @@
 // ARCANOS Core Handler Patch (diagnostic + frontend safe)
 import { Request, Response } from 'express';
 import { getUnifiedOpenAI } from '../services/unified-openai';
-import { OpenAIService } from '../services/openai'; // Keep for backward compatibility
 
 const modesSupported = [
   'logic',
@@ -16,7 +15,6 @@ const modesSupported = [
 ];
 
 const unifiedOpenAI = getUnifiedOpenAI();
-const openai = new OpenAIService(); // Keep for backward compatibility
 
 export async function askHandler(req: Request, res: Response): Promise<void> {
   let { query, mode = 'logic', frontend = false } = req.body || {};
@@ -42,7 +40,7 @@ export async function askHandler(req: Request, res: Response): Promise<void> {
 
 async function runReflectiveLogic(query: string): Promise<string> {
   try {
-    // Use unified service for better performance
+    // Use unified service
     const response = await unifiedOpenAI.chat([
       { role: 'user', content: query }
     ]);
@@ -50,9 +48,7 @@ async function runReflectiveLogic(query: string): Promise<string> {
     if (response.success) {
       return response.content;
     } else {
-      // Fallback to legacy service
-      const fallbackResponse = await openai.chat([{ role: 'user', content: query }]);
-      return fallbackResponse.message;
+      throw new Error(response.error || 'Chat request failed');
     }
   } catch (error) {
     console.error('Reflective logic failed:', error);

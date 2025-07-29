@@ -1,7 +1,7 @@
 // ARCANOS:WRITE - Narrative content generation service
 // Handles requests that have narrative intent
 
-import { OpenAIService, ChatMessage } from './openai';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
 import { aiConfig } from '../config';
 import { MemoryStorage } from '../storage/memory-storage';
 import { arcanosLogger, createServiceLogger } from '../utils/logger';
@@ -28,18 +28,17 @@ export interface WriteResponse {
 }
 
 export class ArcanosWriteService {
-  private openaiService: OpenAIService | null;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null;
   private memoryStorage: MemoryStorage;
 
   constructor() {
     try {
-      this.openaiService = new OpenAIService({
-        identityOverride: aiConfig.identityOverride,
-        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      this.unifiedOpenAI = getUnifiedOpenAI({
+        model: aiConfig.fineTunedModel,
       });
     } catch (error) {
       console.warn('⚠️ ArcanosWriteService: OpenAI not available, running in testing mode');
-      this.openaiService = null;
+      this.unifiedOpenAI = null;
     }
     this.memoryStorage = new MemoryStorage();
   }
@@ -78,8 +77,21 @@ export class ArcanosWriteService {
       console.log('🚀 Generating narrative content...');
       
       let openaiResponse;
-      if (this.openaiService) {
-        openaiResponse = await this.openaiService.chat(chatMessages);
+      if (this.unifiedOpenAI) {
+        const response = await this.unifiedOpenAI.chat(chatMessages);
+        if (response.success) {
+          openaiResponse = {
+            message: response.content,
+            model: response.model,
+            error: null
+          };
+        } else {
+          openaiResponse = {
+            message: '',
+            model: 'unknown',
+            error: response.error
+          };
+        }
       } else {
         // Mock response when OpenAI is not available
         openaiResponse = {

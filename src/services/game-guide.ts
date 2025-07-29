@@ -1,5 +1,4 @@
 import { getUnifiedOpenAI } from './unified-openai';
-import { OpenAIService } from './openai'; // Keep for backward compatibility
 import { createServiceLogger } from '../utils/logger';
 
 const logger = createServiceLogger('GameGuideService');
@@ -19,12 +18,9 @@ export interface GameGuideResponse {
 
 export class GameGuideService {
   private unifiedOpenAI = getUnifiedOpenAI();
-  private openaiService: OpenAIService; // Keep for backward compatibility
 
   constructor() {
-    this.openaiService = new OpenAIService({
-      model: 'gpt-3.5-turbo' // Explicitly use gpt-3.5-turbo as specified in the problem statement
-    });
+    // Service is now using the unified OpenAI service only
   }
 
   async simulateGameGuide(gameTitle: string, notes: string = ""): Promise<GameGuideResponse> {
@@ -106,7 +102,7 @@ Return this as a structured guide with bullet points.
       return {
         guide: '',
         gameTitle,
-        model: this.openaiService.getModel(),
+        model: this.unifiedOpenAI.getModel(),
         timestamp: new Date().toISOString(),
         error: error.message
       };

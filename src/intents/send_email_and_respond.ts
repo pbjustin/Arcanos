@@ -1,18 +1,17 @@
 import { Request, Response } from 'express';
 import { sendEmail } from '../services/email';
-import { OpenAIService, ChatMessage } from '../services/openai';
+import { getUnifiedOpenAI, type ChatMessage } from '../services/unified-openai';
 import { aiConfig } from '../config';
 
-let openaiService: OpenAIService | null = null;
+let unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null = null;
 
-function getOpenAIService(): OpenAIService {
-  if (!openaiService) {
-    openaiService = new OpenAIService({
-      identityOverride: aiConfig.identityOverride,
-      identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+function getUnifiedOpenAIService(): ReturnType<typeof getUnifiedOpenAI> {
+  if (!unifiedOpenAI) {
+    unifiedOpenAI = getUnifiedOpenAI({
+      model: aiConfig.fineTunedModel,
     });
   }
-  return openaiService;
+  return unifiedOpenAI;
 }
 
 export async function sendEmailAndRespond(req: Request, res: Response) {
@@ -32,13 +31,17 @@ export async function sendEmailAndRespond(req: Request, res: Response) {
       { role: 'system', content: 'You are ARCANOS, a modular AI operations interface.' },
       { role: 'user', content: 'Confirm diagnostics and report readiness.' }
     ];
-    const aiService = getOpenAIService();
+    const aiService = getUnifiedOpenAIService();
     const aiResponse = await aiService.chat(messages);
+
+    if (!aiResponse.success) {
+      throw new Error(aiResponse.error || 'AI response failed');
+    }
 
     return res.status(200).json({
       success: true,
       email: emailResult,
-      modelResponse: aiResponse.message,
+      modelResponse: aiResponse.content,
       model: aiResponse.model,
     });
   } catch (error: any) {

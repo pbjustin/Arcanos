@@ -1,7 +1,7 @@
 // Optimized AI Dispatcher - Enhanced for refactored worker system compatibility
 // Uses optimized scheduling format and modular fallback dispatch
 
-import { OpenAIService, ChatMessage } from './openai';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
 import { aiConfig } from '../config';
 import { OptimizedScheduleFormat } from './ai-worker-refactor';
 import { createServiceLogger } from '../utils/logger';
@@ -53,7 +53,7 @@ export interface OptimizedDispatchResponse {
 }
 
 export class OptimizedAIDispatcher {
-  private openaiService: OpenAIService | null;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null;
   private model: string;
   private dispatchLocks: Map<string, boolean> = new Map();
 
@@ -61,14 +61,13 @@ export class OptimizedAIDispatcher {
     this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
     
     try {
-      this.openaiService = new OpenAIService({
-        identityOverride: aiConfig.identityOverride,
-        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      this.unifiedOpenAI = getUnifiedOpenAI({
+        model: this.model,
       });
       logger.info('Optimized AI Dispatcher initialized', { model: this.model });
     } catch (error) {
       logger.warning('Optimized AI Dispatcher initialized without OpenAI (testing mode):', error);
-      this.openaiService = null;
+      this.unifiedOpenAI = null;
     }
   }
 
@@ -103,7 +102,7 @@ export class OptimizedAIDispatcher {
 
     try {
       // Use mock response if OpenAI not available
-      if (!this.openaiService) {
+      if (!this.unifiedOpenAI) {
         const mockResponse = this.createOptimizedMockResponse(request);
         return {
           ...mockResponse,
@@ -124,9 +123,9 @@ export class OptimizedAIDispatcher {
       ];
 
       logger.info('Sending request to optimized AI model');
-      const response = await this.openaiService.chat(messages);
+      const response = await this.unifiedOpenAI.chat(messages);
 
-      if (response.error) {
+      if (!response.success) {
         logger.error('Optimized AI model error:', response.error);
         return {
           success: false,
@@ -137,12 +136,12 @@ export class OptimizedAIDispatcher {
       }
 
       // Parse response with enhanced instruction format
-      const instructions = this.parseOptimizedModelResponse(response.message, request);
+      const instructions = this.parseOptimizedModelResponse(response.content, request);
       
       const result: OptimizedDispatchResponse = {
         success: true,
         instructions,
-        directResponse: this.extractDirectResponse(response.message),
+        directResponse: this.extractDirectResponse(response.content),
         metadata: {
           processingTime: Date.now() - startTime,
           model: this.model,

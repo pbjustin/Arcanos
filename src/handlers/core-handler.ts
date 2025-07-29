@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import { getUnifiedOpenAI } from '../services/unified-openai';
-import { OpenAIService } from '../services/openai'; // Keep for backward compatibility
 import { aiConfig } from '../config';
 
 const modesSupported = [
@@ -17,7 +16,6 @@ const modesSupported = [
 
 // Use unified OpenAI service
 const unifiedOpenAI = getUnifiedOpenAI();
-const openai = new OpenAIService(); // Keep for backward compatibility
 
 export async function askHandler(req: Request, res: Response): Promise<void> {
   const { query, mode = "logic", useFineTuned = false, frontend = false } = req.body;
@@ -58,8 +56,13 @@ export async function askHandler(req: Request, res: Response): Promise<void> {
 }
 
 async function runReflectiveLogic(query: string): Promise<string> {
-  const result = await openai.chat([{ role: 'user', content: query }]);
-  return result.message;
+  const result = await unifiedOpenAI.chat([{ role: 'user', content: query }]);
+  
+  if (!result.success) {
+    throw new Error(result.error || 'Chat request failed');
+  }
+  
+  return result.content;
 }
 
 function stripReflections(text: string): string {
