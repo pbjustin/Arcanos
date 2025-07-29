@@ -1,10 +1,9 @@
 [
   {
-    "event": "worker_update",
-    "id": "worker-maintenance",
-    "task": "awaiting_job",
-    "status": "idle",
-    "timestamp": "2025-07-29T09:18:46.719Z"
+    "event": "worker_register",
+    "id": "test-worker",
+    "task": "test-task",
+    "status": "running",
+    "timestamp": "2025-07-29T09:26:10.868Z"
   }
-]
 ]
