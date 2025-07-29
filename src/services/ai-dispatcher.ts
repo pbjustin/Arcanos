@@ -63,7 +63,7 @@ export class AIDispatcher {
   private model: string;
 
   constructor() {
-    this.model = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
+    this.model = process.env.AI_MODEL || 'gpt-4-turbo';
     
     try {
       this.unifiedOpenAI = getUnifiedOpenAI({
@@ -140,7 +140,7 @@ export class AIDispatcher {
         };
       }
 
-      console.log('📥 Received response from fine-tuned model');
+      console.log('📥 Received response from model (content length: ' + response.content.length + ')');
       
       // Parse the model's response into structured instructions
       const instructions = this.parseModelResponse(response.content);

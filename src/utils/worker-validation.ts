@@ -32,7 +32,7 @@ export const workerDispatchSchema = z.object({
 
 // OpenAI orchestration parameters schema
 export const openaiOrchestrationSchema = z.object({
-  model: z.string().min(1).default('gpt-3.5-turbo'),
+  model: z.string().min(1).default('gpt-4-turbo'),
   messages: z.array(z.object({
     role: z.enum(['system', 'user', 'assistant']),
     content: z.string().min(1)

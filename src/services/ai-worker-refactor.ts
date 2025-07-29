@@ -182,7 +182,7 @@ export class RefactoredAIWorkerSystem {
       const validatedTask = validateWorkerTask(task);
       
       const response = await this.openai.chat.completions.create({
-        model: this.config.model || 'gpt-3.5-turbo',
+        model: this.config.model || 'gpt-4-turbo',
         messages: [
           {
             role: 'system',

@@ -48,7 +48,7 @@ async function runFineTunedModel(prompt: string): Promise<string> {
   const response = await unifiedOpenAI.chat([
     { role: 'user', content: prompt }
   ], {
-    model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH",
+    model: aiConfig.fineTunedModel || "gpt-4-turbo",
     temperature: 0.7,
   });
   
