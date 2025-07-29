@@ -5,6 +5,7 @@ const modules = {
   goals: require('./modules/goals'),
   emotions: require('./modules/emotions'),
   threads: require('./modules/threads'),
+  manifest: require('./modules/manifest'),
 };
 
 const actions = {
