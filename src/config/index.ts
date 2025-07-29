@@ -30,6 +30,16 @@ export interface Config {
     identityOverride?: string | IdentityOverride;
     identityTriggerPhrase?: string;
   };
+  deployment: {
+    mode: 'agent-control' | 'standard';
+    githubIntegration: boolean;
+    allowWebhooks: boolean;
+  };
+  github: {
+    token?: string;
+    webhookSecret?: string;
+    enableActions: boolean;
+  };
   database: {
     url?: string;
   };
@@ -65,6 +75,16 @@ export const config: Config = {
     gptToken: process.env.GPT_TOKEN,
     identityOverride: parseIdentityOverride(process.env.IDENTITY_OVERRIDE),
     identityTriggerPhrase: process.env.IDENTITY_TRIGGER_PHRASE || 'I am Skynet',
+  },
+  deployment: {
+    mode: (process.env.DEPLOY_MODE as 'agent-control' | 'standard') || 'standard',
+    githubIntegration: process.env.GITHUB_INTEGRATION !== 'false',
+    allowWebhooks: process.env.ALLOW_WEBHOOKS !== 'false',
+  },
+  github: {
+    token: process.env.GITHUB_TOKEN || process.env.GITHUB_API_TOKEN,
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+    enableActions: process.env.ENABLE_GITHUB_ACTIONS !== 'false',
   },
   database: {
     url: process.env.DATABASE_URL,
@@ -110,6 +130,21 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     errors.push('PORT must be a valid port number (1-65535)');
   }
 
+  // Validate deployment mode configuration
+  if (config.deployment.mode === 'agent-control') {
+    if (!config.ai.openaiApiKey) {
+      errors.push('OPENAI_API_KEY is required for agent-control mode');
+    }
+    if (config.github.enableActions && !config.github.token) {
+      console.warn('⚠️ GITHUB_TOKEN not set - GitHub Actions integration will be disabled');
+    }
+  }
+
+  // GitHub integration validation
+  if (config.deployment.githubIntegration && config.deployment.allowWebhooks && !config.github.webhookSecret) {
+    console.warn('⚠️ GITHUB_WEBHOOK_SECRET not set - webhook signature verification will be skipped');
+  }
+
   const expectedModel = 'REDACTED_FINE_TUNED_MODEL_ID';
   if (!config.ai.fineTunedModel) {
     errors.push(`AI_MODEL is required and must be set to ${expectedModel}`);
@@ -134,6 +169,9 @@ export function getEnvironmentStatus() {
     isRailway: !!(config.railway.environment),
     isDevelopment: config.server.nodeEnv === 'development',
     isProduction: config.server.nodeEnv === 'production',
+    deploymentMode: config.deployment.mode,
+    githubIntegration: config.deployment.githubIntegration,
+    githubActionsEnabled: config.github.enableActions,
   };
 }
 
@@ -144,5 +182,7 @@ export const databaseConfig = config.database;
 export const apiConfig = config.api;
 export const railwayConfig = config.railway;
 export const featureConfig = config.features;
+export const deploymentConfig = config.deployment;
+export const githubConfig = config.github;
 export const workerLogic = config.features.workerLogic;
 export const chatgptConfig = config.chatgpt;

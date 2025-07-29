@@ -1,0 +1,139 @@
+name: ARCANOS Code Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to analyze'
+        required: true
+        type: string
+      trigger_source:
+        description: 'Source that triggered this workflow'
+        required: false
+        default: 'manual'
+        type: string
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  DEPLOY_MODE: agent-control
+
+jobs:
+  arcanos-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+      issues: read
+      pull-requests: write
+      
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: 🧰 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔧 Build project
+        run: npm run build
+
+      - name: 🤖 Run ARCANOS Analysis
+        run: |
+          echo "Starting ARCANOS code analysis..."
+          echo "Commit SHA: ${{ inputs.commit_sha }}"
+          echo "Trigger source: ${{ inputs.trigger_source }}"
+          
+          # Start ARCANOS backend for analysis
+          npm start &
+          SERVER_PID=$!
+          
+          # Wait for server to be ready
+          sleep 10
+          
+          # Perform code analysis via ARCANOS API
+          curl -X POST http://localhost:8080/ask \
+            -H "Content-Type: application/json" \
+            -d '{
+              "prompt": "Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: ${{ inputs.commit_sha }}",
+              "context": "code_analysis"
+            }' \
+            -o analysis_result.json
+          
+          # Stop the server
+          kill $SERVER_PID || true
+          
+          echo "Analysis completed. Results saved to analysis_result.json"
+
+      - name: 📊 Process Analysis Results
+        run: |
+          if [ -f analysis_result.json ]; then
+            echo "ARCANOS Analysis Results:"
+            cat analysis_result.json
+            
+            # Extract key insights and create summary
+            echo "## ARCANOS Code Analysis Report" > analysis_summary.md
+            echo "**Commit:** ${{ inputs.commit_sha }}" >> analysis_summary.md
+            echo "**Triggered by:** ${{ inputs.trigger_source }}" >> analysis_summary.md
+            echo "**Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> analysis_summary.md
+            echo "" >> analysis_summary.md
+            echo "### Analysis Results" >> analysis_summary.md
+            
+            # Add analysis content (this would be enhanced with proper JSON parsing)
+            echo '```json' >> analysis_summary.md
+            cat analysis_result.json >> analysis_summary.md
+            echo '```' >> analysis_summary.md
+          else
+            echo "No analysis results found"
+            exit 1
+          fi
+
+      - name: 💾 Upload Analysis Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arcanos-analysis-${{ inputs.commit_sha }}
+          path: |
+            analysis_result.json
+            analysis_summary.md
+          retention-days: 30
+
+      - name: 📝 Create Issue for Critical Findings
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            try {
+              const analysisData = fs.readFileSync('analysis_result.json', 'utf8');
+              const analysis = JSON.parse(analysisData);
+              
+              // Check if analysis indicates critical issues
+              const analysisText = analysis.response || analysis.content || JSON.stringify(analysis);
+              
+              if (analysisText.toLowerCase().includes('critical') || 
+                  analysisText.toLowerCase().includes('security') ||
+                  analysisText.toLowerCase().includes('vulnerability')) {
+                
+                const summary = fs.readFileSync('analysis_summary.md', 'utf8');
+                
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `🤖 ARCANOS: Critical Code Analysis Findings - ${context.sha.substring(0, 7)}`,
+                  body: summary,
+                  labels: ['arcanos', 'code-analysis', 'needs-review']
+                });
+                
+                console.log('Created issue for critical findings');
+              }
+            } catch (error) {
+              console.log('No critical findings or error processing results:', error.message);
+            }
