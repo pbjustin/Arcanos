@@ -65,6 +65,9 @@ npm_logs/
 
 # Test files
 test-webhook.js
+test-guide-handler.js
+test-formatter.js
+test-integration.js
 
 # Development and debugging scripts  
 dev-tests/
