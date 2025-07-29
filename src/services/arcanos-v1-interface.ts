@@ -1,7 +1,7 @@
 // ARCANOS MODEL INTERFACE v1.0 – DO NOT MODIFY
 // Purpose: Safe, fallback-proof logic interface for model routing
 
-import { OpenAIService } from './openai';
+import { getUnifiedOpenAI } from './unified-openai';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { aiConfig } from '../config';
@@ -20,12 +20,12 @@ export interface ArcanosModel {
 
 // Model wrapper that integrates OpenAI service with HRC and RAG
 class ArcanosModelWrapper implements ArcanosModel {
-  private openaiService: OpenAIService;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI>;
   private hrcCore: HRCCore;
   private memoryStorage: MemoryStorage;
 
-  constructor(openaiService: OpenAIService) {
-    this.openaiService = openaiService;
+  constructor(unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI>) {
+    this.unifiedOpenAI = unifiedOpenAI;
     this.hrcCore = new HRCCore();
     this.memoryStorage = new MemoryStorage();
   }
@@ -78,20 +78,13 @@ class ArcanosModelWrapper implements ArcanosModel {
         }
       ];
 
-      const openaiResponse = await this.openaiService.chat(chatMessages);
+      const openaiResponse = await this.unifiedOpenAI.chat(chatMessages);
 
       // Handle OpenAI response
-      if (openaiResponse.error) {
+      if (!openaiResponse.success) {
         return {
           status: "error",
-          text: openaiResponse.message
-        };
-      }
-
-      if (openaiResponse.fallbackRequested) {
-        return {
-          status: "fallback",
-          text: openaiResponse.message
+          text: openaiResponse.error || 'Chat request failed'
         };
       }
 
@@ -105,7 +98,7 @@ class ArcanosModelWrapper implements ArcanosModel {
             `interaction_${Date.now()}`,
             {
               userMessage: message,
-              aiResponse: openaiResponse.message,
+              aiResponse: openaiResponse.content,
               domain: domain,
               timestamp: new Date().toISOString()
             },
@@ -120,7 +113,7 @@ class ArcanosModelWrapper implements ArcanosModel {
 
       return {
         status: "success",
-        text: openaiResponse.message
+        text: openaiResponse.content
       };
 
     } catch (error: any) {
@@ -149,16 +142,14 @@ export async function getActiveModel(): Promise<ArcanosModel | null> {
       return null;
     }
 
-    // Try to initialize the OpenAI service with configuration
-    const openaiService = new OpenAIService({
+    // Try to initialize the unified OpenAI service with configuration
+    const unifiedOpenAI = getUnifiedOpenAI({
       apiKey: aiConfig.openaiApiKey,
       model: fineTunedModel,
-      identityOverride: aiConfig.identityOverride,
-      identityTriggerPhrase: aiConfig.identityTriggerPhrase,
     });
     
     // Create and return the model wrapper
-    return new ArcanosModelWrapper(openaiService);
+    return new ArcanosModelWrapper(unifiedOpenAI);
 
   } catch (error: any) {
     console.error("Failed to get active model:", error);

@@ -2,7 +2,7 @@
 // Provides efficient execution for AI-controlled operations
 
 import { DispatchInstruction } from './ai-dispatcher';
-import { OpenAIService } from './openai';
+import { getUnifiedOpenAI } from './unified-openai';
 import { aiConfig } from '../config';
 import { memoryOperations } from './memory-operations';
 import { diagnosticsService } from './diagnostics';
@@ -28,18 +28,17 @@ export interface ExecutionResult {
 }
 
 export class ExecutionEngine {
-  private openaiService: OpenAIService | null;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null;
   private scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
 
   constructor() {
     try {
-      this.openaiService = new OpenAIService({
-        identityOverride: aiConfig.identityOverride,
-        identityTriggerPhrase: aiConfig.identityTriggerPhrase,
+      this.unifiedOpenAI = getUnifiedOpenAI({
+        model: aiConfig.fineTunedModel,
       });
     } catch (error) {
       console.warn('⚠️ Execution Engine initialized without OpenAI (testing mode)');
-      this.openaiService = null;
+      this.unifiedOpenAI = null;
     }
     console.log('⚙️ Execution Engine initialized with streamlined memory operations');
   }
@@ -390,7 +389,7 @@ export class ExecutionEngine {
   private async executeAuditOperation(parameters: any): Promise<ExecutionResult> {
     const { code, message, type = 'general' } = parameters;
 
-    if (!this.openaiService) {
+    if (!this.unifiedOpenAI) {
       return {
         success: true,
         result: { audit: `Mock audit: ${type} analysis of provided content would be performed here.` },
@@ -409,14 +408,14 @@ Provide a detailed analysis including:
 3. Performance implications
 4. Best practices recommendations`;
 
-      const response = await this.openaiService.chat([
+      const response = await this.unifiedOpenAI.chat([
         { role: 'user', content: auditPrompt }
       ]);
 
       return {
-        success: !response.error,
-        result: { audit: response.message },
-        response: response.message,
+        success: response.success,
+        result: { audit: response.content },
+        response: response.content,
         error: response.error
       };
 
@@ -434,7 +433,7 @@ Provide a detailed analysis including:
   public async executeWriteOperation(parameters: any): Promise<ExecutionResult> {
     const { prompt, type = 'general', style, length } = parameters;
 
-    if (!this.openaiService) {
+    if (!this.unifiedOpenAI) {
       return {
         success: true,
         result: { content: `Mock write: Generated ${type} content for "${prompt}" would appear here.` },
@@ -457,14 +456,14 @@ Provide a detailed analysis including:
         writePrompt += ` (Length: ${length})`;
       }
 
-      const response = await this.openaiService.chat([
+      const response = await this.unifiedOpenAI.chat([
         { role: 'user', content: writePrompt }
       ]);
 
       return {
-        success: !response.error,
-        result: { content: response.message },
-        response: response.message,
+        success: response.success,
+        result: { content: response.content },
+        response: response.content,
         error: response.error
       };
 
