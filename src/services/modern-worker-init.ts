@@ -161,6 +161,13 @@ export async function startModernWorkers(): Promise<void> {
 
   for (const worker of criticalWorkers) {
     try {
+      // Check if worker is already registered to avoid duplicates
+      if (refactoredWorkerSystem && refactoredWorkerSystem.isWorkerRegistered(worker.name)) {
+        logger.info(`✅ Worker ${worker.name} already registered, skipping duplicate registration`);
+        successCount++;
+        continue;
+      }
+      
       // Register the worker
       await registerModernWorker(worker.name, worker.config);
       
