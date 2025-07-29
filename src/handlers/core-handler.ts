@@ -41,15 +41,20 @@ export async function askHandler(req: Request, res: Response): Promise<void> {
 
   try {
     if (useFineTuned || /finetune|ft:/i.test(query)) {
-      const openaiDirect = getOpenAIClient();
-      const completion = await openaiDirect.chat.completions.create({
-        model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:your-org:model-id", // replace with actual ID
-        messages: [{ role: "user", content: query }],
-        temperature: 0.7,
-      });
-      const response = completion.choices[0]?.message?.content || "";
-      res.json({ response: frontend ? stripReflections(response) : response });
-      return;
+      try {
+        const openaiDirect = getOpenAIClient();
+        const completion = await openaiDirect.chat.completions.create({
+          model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:your-org:model-id", // replace with actual ID
+          messages: [{ role: "user", content: query }],
+          temperature: 0.7,
+        });
+        const response = completion.choices[0]?.message?.content || "";
+        res.json({ response: frontend ? stripReflections(response) : response });
+        return;
+      } catch (ftError) {
+        console.error('Fine-tuned route failed, falling back to reflective logic:', ftError);
+        // Fall through to reflective logic
+      }
     }
 
     const raw = await runReflectiveLogic(query);
