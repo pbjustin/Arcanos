@@ -153,7 +153,7 @@ function testModelConfiguration() {
   
   // Simulate the model selection logic
   const aiConfig = {
-    fineTunedModel: 'ft:gpt-3.5-turbo-0125:personal:arcanos-v3:ByCSivqD'
+    fineTunedModel: 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH'
   };
   
   const selectedModel = aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:your-org:model-id";
