@@ -18,6 +18,7 @@ import memoryRouter from './routes/memory';
 import systemRouter from './routes/system';
 import codexRouter from './routes/codex';
 import logsRouter from './routes/logs';
+import cronRouter from './routes/cron';
 import openaiWebhookRouter from './webhooks/openai';
 import githubWebhookRouter from './webhooks/github';
 import { enableAdminControl, getAdminRouter } from './system/auth';
@@ -147,6 +148,7 @@ app.use('/api/memory', requireApiToken, memoryRouter);
 app.use('/system', systemRouter);
 app.use('/codex', codexRouter);
 app.use('/logs', logsRouter);
+app.use('/cron', cronRouter);
 app.use('/webhooks', openaiWebhookRouter);
 app.use('/webhooks', githubWebhookRouter);
 
