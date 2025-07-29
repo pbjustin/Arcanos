@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { OpenAIService } from '../services/openai';
+import OpenAI from 'openai';
+import { aiConfig } from '../config';
 
 const modesSupported = [
   'logic',
@@ -15,26 +17,50 @@ const modesSupported = [
 
 const openai = new OpenAIService();
 
-export async function askHandler(req: Request, res: Response): Promise<void> {
-  let { query, mode = 'logic', frontend = false } = req.body || {};
+// Direct OpenAI client for fine-tuned model routing
+let openaiClient: OpenAI | null = null;
 
-  if (/diagnose|what can you do|list modes/i.test(query || '')) {
-    res.json({
-      response: '🧠 ARCANOS System Capabilities',
-      modes: modesSupported,
-      flags: {
-        frontend_filtering: true,
-        reflection_default: true,
-        debug_supported: true,
-      },
-      routing_notes: 'Query is routed to `runReflectiveLogic()` by default unless flagged.',
+// Get direct OpenAI client for fine-tuned routing
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient) {
+    const apiKey = aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OpenAI API key is required for fine-tuned model routing');
+    }
+    openaiClient = new OpenAI({
+      apiKey: apiKey,
+      timeout: 30000,
+      maxRetries: 3,
     });
+  }
+  return openaiClient;
+}
+
+export async function askHandler(req: Request, res: Response): Promise<void> {
+  const { query, mode = "logic", useFineTuned = false, frontend = false } = req.body;
+
+  try {
+    if (useFineTuned || /finetune|ft:/i.test(query)) {
+      const openaiDirect = getOpenAIClient();
+      const completion = await openaiDirect.chat.completions.create({
+        model: aiConfig.fineTunedModel || "ft:gpt-3.5-turbo-0125:your-org:model-id", // replace with actual ID
+        messages: [{ role: "user", content: query }],
+        temperature: 0.7,
+      });
+      const response = completion.choices[0]?.message?.content || "";
+      res.json({ response: frontend ? stripReflections(response) : response });
+      return;
+    }
+
+    const raw = await runReflectiveLogic(query);
+    res.json({ response: frontend ? stripReflections(raw) : raw });
+    return;
+
+  } catch (error: any) {
+    console.error("Routing or model error:", error);
+    res.status(500).json({ error: "AI route failed." });
     return;
   }
-
-  const raw = await runReflectiveLogic(query);
-  const response = frontend ? stripReflections(raw) : raw;
-  res.json({ response });
 }
 
 async function runReflectiveLogic(query: string): Promise<string> {
