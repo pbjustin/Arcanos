@@ -15,6 +15,7 @@ import router from './routes/index';
 import mainRoutes from './routes/main';
 import aiRoutes from './routes/ai';
 import memoryRouter from './routes/memory';
+import guidesRouter from './routes/guides';
 import systemRouter from './routes/system';
 import codexRouter from './routes/codex';
 import logsRouter from './routes/logs';
@@ -143,6 +144,7 @@ app.use('/', aiRoutes);    // AI-controlled endpoints (/ask, /query-finetune, et
 // Mount additional API routes
 app.use('/api', router);
 app.use('/api/memory', requireApiToken, memoryRouter);
+app.use('/api/guides', requireApiToken, guidesRouter);
 app.use('/system', systemRouter);
 app.use('/codex', codexRouter);
 app.use('/logs', logsRouter);
