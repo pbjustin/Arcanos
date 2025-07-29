@@ -2,6 +2,7 @@
 // Provides real-time status monitoring for background workers
 
 import * as os from 'os';
+const manifest = require('../../memory/modules/manifest');
 
 export interface WorkerInfo {
   id: string;
@@ -33,6 +34,7 @@ export class WorkerStatusService {
       worker.task = task;
       worker.status = status;
       worker.lastActivity = now;
+      manifest.add({ event: 'worker_update', id, task, status }).catch(() => {});
     } else {
       // Register new worker
       this.workers.set(id, {
@@ -45,6 +47,7 @@ export class WorkerStatusService {
         startTime: now,
         lastActivity: now
       });
+      manifest.add({ event: 'worker_register', id, task, status }).catch(() => {});
     }
   }
 
@@ -59,6 +62,7 @@ export class WorkerStatusService {
       if (task) {
         worker.task = task;
       }
+      manifest.add({ event: 'status_update', id, task: worker.task, status }).catch(() => {});
     }
   }
 
@@ -67,6 +71,7 @@ export class WorkerStatusService {
    */
   unregisterWorker(id: string): void {
     this.workers.delete(id);
+    manifest.add({ event: 'worker_unregister', id }).catch(() => {});
   }
 
   /**
