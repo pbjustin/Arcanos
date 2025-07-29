@@ -481,6 +481,7 @@ curl $PORT/api/memory/health
 ./src/handlers/             # Request handlers
 ./src/utils/goal-validator.ts # Goal input validation utility
 ./examples/goal-validator-usage.ts # Example usage of the goal validator
+./examples/self-reflection.ts # Simple self-reflection utility
 ./index.js                  # Legacy entry point (JavaScript)
 ./package.json              # Dependencies and scripts
 ./tsconfig.json             # TypeScript configuration
