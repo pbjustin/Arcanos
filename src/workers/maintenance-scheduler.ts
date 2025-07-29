@@ -6,6 +6,7 @@
 import { coreAIService } from '../services/ai/core-ai-service';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { createServiceLogger } from '../utils/logger';
+import { sanitizeJsonString } from '../utils/json';
 import fs from 'fs';
 import path from 'path';
 import * as cron from 'node-cron';
@@ -348,7 +349,8 @@ Please analyze and provide:
     }
 
     try {
-      const parsed = JSON.parse(result.content);
+      const cleaned = sanitizeJsonString(result.content);
+      const parsed = JSON.parse(cleaned);
       const schema = z.object({
         issues: z.array(z.string()).optional().default([]),
         actions: z.array(z.string()).optional().default([]),
