@@ -1,9 +1,14 @@
-import OpenAI from 'openai';
+/**
+ * @deprecated Use UnifiedOpenAIService instead. This service is maintained for backward compatibility.
+ * Will be removed in a future version.
+ */
+
+import { getUnifiedOpenAI, type ChatMessage as UnifiedChatMessage, type ChatResponse as UnifiedChatResponse } from './unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { aiConfig } from '../config';
 import type { IdentityOverride } from '../types/IdentityOverride';
 
-const logger = createServiceLogger('OpenAIService');
+const logger = createServiceLogger('OpenAIService-DEPRECATED');
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -24,28 +29,27 @@ export interface OpenAIServiceOptions {
   identityTriggerPhrase?: string;
 }
 
+/**
+ * @deprecated Legacy OpenAI service - Use UnifiedOpenAIService for new code
+ */
 export class OpenAIService {
-  private client: OpenAI;
+  private unifiedService: ReturnType<typeof getUnifiedOpenAI>;
   private model: string;
   private identityOverride?: string | IdentityOverride;
   private identityTriggerPhrase?: string;
 
   constructor(options?: OpenAIServiceOptions) {
-    // Get API key from options, config, or environment variable
-    const apiKey = options?.apiKey || aiConfig.openaiApiKey || process.env.OPENAI_API_KEY;
+    logger.info('OpenAIService is deprecated. Please use UnifiedOpenAIService for new implementations.');
     
-    if (!apiKey) {
-      throw new Error('The OPENAI_API_KEY environment variable is missing or empty; either provide it, or instantiate the OpenAI client with an apiKey option, like new OpenAI({ apiKey: \'My API Key\' }).');
-    }
-
-    this.client = new OpenAI({
-      apiKey: apiKey,
-      timeout: 30000, // 30 seconds timeout
-      maxRetries: 3,  // Increased from 2 for better reliability
+    // Initialize unified service
+    this.unifiedService = getUnifiedOpenAI({
+      apiKey: options?.apiKey || aiConfig.openaiApiKey || process.env.OPENAI_API_KEY,
+      model: options?.model || aiConfig.fineTunedModel || process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID',
+      timeout: 30000,
+      maxRetries: 3,
     });
 
-    // Use configured fine-tuned model or fallback to predefined ID
-    this.model = options?.model || aiConfig.fineTunedModel || process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
+    this.model = this.unifiedService.getModel();
 
     // Optional identity override injected as system message for all chats
     const override = options?.identityOverride || aiConfig.identityOverride || process.env.IDENTITY_OVERRIDE;
@@ -61,7 +65,7 @@ export class OpenAIService {
     this.identityTriggerPhrase = options?.identityTriggerPhrase || aiConfig.identityTriggerPhrase || process.env.IDENTITY_TRIGGER_PHRASE || 'I am Skynet';
     
     // Log model configuration for audit purposes
-    logger.info('OpenAI Service initialized', { 
+    logger.info('Legacy OpenAI Service initialized (using UnifiedOpenAIService)', { 
       model: this.model,
       timeout: 30000,
       maxRetries: 3,
@@ -110,37 +114,39 @@ export class OpenAIService {
     });
     
     try {
-      // Use the configured AI model
-      const completion = await this.client.chat.completions.create({
+      // Convert to unified format and call unified service
+      const unifiedMessages: UnifiedChatMessage[] = finalMessages.map(msg => ({
+        role: msg.role as any,
+        content: msg.content,
+      }));
+
+      const response = await this.unifiedService.chat(unifiedMessages, {
         model: this.model,
-        messages: finalMessages,
-        max_tokens: 1000,
+        maxTokens: 1000,
         temperature: 0.7,
       });
 
       const endTime = Date.now();
-      
-      if (completion.choices && completion.choices.length > 0) {
-        const responseMessage = completion.choices[0].message?.content || 'No response';
-        
+
+      if (response.success) {
         // Log successful completion
         logger.info('AI interaction completed', {
           timestamp: new Date().toISOString(),
           taskType: 'chat',
           completionStatus: 'success',
-          model: this.model,
-          responseLength: responseMessage.length,
+          model: response.model,
+          responseLength: response.content.length,
           completionTimeMs: endTime - startTime,
-          usage: completion.usage
+          usage: response.usage
         });
         
         return {
-          message: responseMessage,
-          model: this.model,
+          message: response.content,
+          model: response.model,
         };
+      } else {
+        throw new Error(response.error || 'Unified service returned failure');
       }
-
-      throw new Error('No response from OpenAI');
       
     } catch (error: any) {
       const endTime = Date.now();
