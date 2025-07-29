@@ -1,4 +1,3 @@
-// ARCANOS Core Handler Patch (diagnostic + frontend safe)
 import { Request, Response } from 'express';
 import { OpenAIService } from '../services/openai';
 
