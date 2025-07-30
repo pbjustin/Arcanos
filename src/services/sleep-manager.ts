@@ -169,8 +169,12 @@ export class SleepManager {
    * Run memory sync and snapshot task
    */
   private async runMemorySyncSnapshot(): Promise<void> {
-    const memorySync = require('../../dist/workers/memorySync');
-    await memorySync.default();
+    try {
+      const memorySync = await import('../../dist/workers/memorySync' as any);
+      await memorySync.default();
+    } catch (error) {
+      console.warn('Memory sync worker not available:', error);
+    }
     
     // Additional snapshot logic
     const result = await modelControlHooks.manageMemory(
@@ -200,8 +204,12 @@ export class SleepManager {
    * Run goal watcher backlog audit
    */
   private async runGoalWatcherAudit(): Promise<void> {
-    const goalWatcher = require('../../dist/workers/goalWatcher');
-    await goalWatcher.default();
+    try {
+      const goalWatcher = await import('../../dist/workers/goalWatcher' as any);
+      await goalWatcher.default();
+    } catch (error) {
+      console.warn('Goal watcher worker not available:', error);
+    }
 
     // Additional backlog audit logic
     const auditResult = await modelControlHooks.performAudit(
@@ -227,8 +235,12 @@ export class SleepManager {
    * Run clear temp files and logs task
    */
   private async runClearTempLogs(): Promise<void> {
-    const clearTemp = require('../../dist/workers/clearTemp');
-    await clearTemp.default();
+    try {
+      const clearTemp = await import('../../dist/workers/clearTemp' as any);
+      await clearTemp.default();
+    } catch (error) {
+      console.warn('Clear temp worker not available:', error);
+    }
 
     // Additional log cleanup logic
     const cleanupResult = await modelControlHooks.performMaintenance(
@@ -255,8 +267,12 @@ export class SleepManager {
    * Run daily code improvement suggestions
    */
   private async runCodeImprovementSuggestions(): Promise<void> {
-    const codeImprovement = require('../../dist/workers/codeImprovement');
-    await codeImprovement.default();
+    try {
+      const codeImprovement = await import('../../dist/workers/codeImprovement' as any);
+      await codeImprovement.default();
+    } catch (error) {
+      console.warn('Code improvement worker not available:', error);
+    }
   }
 
   /**

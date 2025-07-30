@@ -2,8 +2,24 @@ import { randomUUID } from 'crypto';
 import { sendEmail } from './email';
 import { sendEmailFallback } from '../plugins/email';
 import { createServiceLogger } from '../utils/logger';
-const receiptFailMap = require('../../memory/modules/receipt_fail_map');
-const emailDiagnostics = require('../../memory/modules/email_diagnostics');
+
+async function getReceiptFailMap() {
+  try {
+    const module = await import('../../memory/modules/receipt_fail_map' as any);
+    return module;
+  } catch {
+    return { flag: async () => {} }; // Mock implementation
+  }
+}
+
+async function getEmailDiagnostics() {
+  try {
+    const module = await import('../../memory/modules/email_diagnostics' as any);
+    return module;
+  } catch {
+    return { add: async () => {} }; // Mock implementation
+  }
+}
 
 export interface DiagnosticAttempt {
   attemptId: string;
@@ -54,10 +70,12 @@ export async function runEmailDiagnostic(to: string, subject: string, html: stri
       provider: 'fallback',
       response: { ...fallbackResult, fallbackPath: true }
     });
+    const receiptFailMap = await getReceiptFailMap();
     await receiptFailMap.flag(to);
   }
 
   const result: EmailDiagnosticResult = { attempts, finalStatus, diagnosticId };
+  const emailDiagnostics = await getEmailDiagnostics();
   await emailDiagnostics.add(result);
   logger.info('Diagnostic complete', result);
   return result;

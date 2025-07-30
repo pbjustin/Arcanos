@@ -4,16 +4,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-// Helper for dynamic imports that works in both ESM and CommonJS
+// Helper for dynamic imports
 const loadModule = async (specifier: string): Promise<any> => {
-  try {
-    // Use dynamic import first
-    const importer = new Function('s', 'return import(s)');
-    return await importer(specifier);
-  } catch (_) {
-    // Fallback to CommonJS require
-    return require(specifier);
-  }
+  return await import(specifier);
 };
 
 interface PatchContent {
