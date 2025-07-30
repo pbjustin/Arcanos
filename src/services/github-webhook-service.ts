@@ -1,7 +1,9 @@
 import { config } from '../config';
 import { askArcanosV1_Safe } from './arcanos-v1-interface';
 import { executeGitHubAction } from './github-actions-service';
-import { arcanosOpenAI } from './enhanced-openai';
+import { getUnifiedOpenAI } from './unified-openai';
+
+const unifiedOpenAI = getUnifiedOpenAI();
 
 interface GitHubPushPayload {
   repository: {
@@ -73,14 +75,25 @@ Modified files: ${modifiedFiles.join(', ')}
 
 Determine if any automated actions should be triggered (testing, deployment, code review, etc.).`;
 
-      const analysis = await arcanosOpenAI.chat(analysisPrompt, 'code_analysis', {
+      const messages = [
+        {
+          role: 'system' as const,
+          content: 'You are ARCANOS, an AI backend controller with code analysis capabilities. You specialize in code analysis, security review, and quality assessment. Provide detailed, actionable insights.'
+        },
+        {
+          role: 'user' as const,
+          content: analysisPrompt
+        }
+      ];
+
+      const analysis = await unifiedOpenAI.chat(messages, {
         maxTokens: 1500,
         temperature: 0.3
       });
-      console.log('[GITHUB-WEBHOOK] Push analysis completed (length: ' + analysis.response.length + ')');
+      console.log('[GITHUB-WEBHOOK] Push analysis completed (length: ' + analysis.content.length + ')');
 
       // Check if ARCANOS suggests triggering actions
-      if (analysis.response.includes('trigger') || analysis.response.includes('deploy') || analysis.response.includes('test')) {
+      if (analysis.content.includes('trigger') || analysis.content.includes('deploy') || analysis.content.includes('test')) {
         await this.triggerCodeAnalysisAction(payload);
       }
 
@@ -105,11 +118,22 @@ Head branch: ${payload.pull_request.head.ref}
 
 Determine if this merge should trigger deployment, integration tests, or other automated actions.`;
 
-      const analysis = await arcanosOpenAI.chat(analysisPrompt, 'deployment_analysis', {
+      const messages = [
+        {
+          role: 'system' as const,
+          content: 'You are ARCANOS, an AI backend controller with deployment analysis capabilities. You analyze deployment readiness, infrastructure requirements, and release safety. Be thorough and cautious.'
+        },
+        {
+          role: 'user' as const,
+          content: analysisPrompt
+        }
+      ];
+
+      const analysis = await unifiedOpenAI.chat(messages, {
         maxTokens: 1500,
         temperature: 0.3
       });
-      console.log('[GITHUB-WEBHOOK] PR merge analysis completed (length: ' + analysis.response.length + ')');
+      console.log('[GITHUB-WEBHOOK] PR merge analysis completed (length: ' + analysis.content.length + ')');
 
       // Trigger deployment if this is a merge to main/master
       if (payload.pull_request.base.ref === 'main' || payload.pull_request.base.ref === 'master') {
@@ -137,11 +161,22 @@ Release notes: ${payload.release?.body || 'N/A'}
 
 Determine if this release should trigger production deployment, documentation updates, or other release-related actions.`;
 
-      const analysis = await arcanosOpenAI.chat(analysisPrompt, 'release_analysis', {
+      const messages = [
+        {
+          role: 'system' as const,
+          content: 'You are ARCANOS, an AI backend controller with release analysis capabilities. You evaluate releases, generate documentation, and assess impact. Focus on clarity and completeness.'
+        },
+        {
+          role: 'user' as const,
+          content: analysisPrompt
+        }
+      ];
+
+      const analysis = await unifiedOpenAI.chat(messages, {
         maxTokens: 2000,
         temperature: 0.3
       });
-      console.log('[GITHUB-WEBHOOK] Release analysis completed (length: ' + analysis.response.length + ')');
+      console.log('[GITHUB-WEBHOOK] Release analysis completed (length: ' + analysis.content.length + ')');
 
       // Trigger release actions
       await this.triggerReleaseAction(payload);
