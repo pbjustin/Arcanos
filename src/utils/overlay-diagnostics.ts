@@ -21,7 +21,7 @@ export async function checkModelControlHooks(): Promise<boolean> {
 
     try {
       const logEventPath = path.join(__dirname, '../memory/logEvent.js');
-      const { logEvent } = require(logEventPath);
+      const { logEvent } = await import(logEventPath);
       await logEvent('overlay_reroute');
     } catch (err) {
       logger.error('Failed to record overlay_reroute event', err);

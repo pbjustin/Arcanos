@@ -1,11 +1,16 @@
 import cron from 'node-cron';
 import { createServiceLogger } from '../../utils/logger';
+
 let registry: Map<string, any> | undefined;
-try {
-  ({ workerRegistry: registry } = require('../../../workers/workerRegistry'));
-} catch {
-  registry = undefined;
-}
+
+(async () => {
+  try {
+    const module = await import('../../../workers/workerRegistry' as any);
+    registry = module.workerRegistry;
+  } catch {
+    registry = undefined;
+  }
+})();
 
 const logger = createServiceLogger('ScheduleEmailWorker');
 

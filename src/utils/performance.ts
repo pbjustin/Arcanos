@@ -1,4 +1,6 @@
 // Performance Monitoring Utilities for ARCANOS Backend
+import * as os from 'os';
+
 interface PerformanceMetrics {
   memory: {
     rss: string;
@@ -79,7 +81,7 @@ class PerformanceMonitor {
       },
       cpu: {
         uptime: this.formatDuration(uptime * 1000),
-        loadAverage: process.platform !== 'win32' ? require('os').loadavg() : undefined,
+        loadAverage: process.platform !== 'win32' ? os.loadavg() : undefined,
       },
       timing: {
         startup: this.startupTime,

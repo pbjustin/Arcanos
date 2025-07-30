@@ -2,7 +2,23 @@
 // Provides real-time status monitoring for background workers
 
 import * as os from 'os';
-const manifest = require('../../memory/modules/manifest');
+
+async function getManifest() {
+  try {
+    return await import('../../memory/modules/manifest' as any);
+  } catch {
+    return { add: async () => {} }; // Mock implementation
+  }
+}
+
+async function logToManifest(data: any) {
+  try {
+    const manifest = await getManifest();
+    await manifest.add(data);
+  } catch {
+    // Silent fail if manifest not available
+  }
+}
 
 export interface WorkerInfo {
   id: string;
@@ -22,7 +38,7 @@ export class WorkerStatusService {
   /**
    * Register a new worker or update existing worker status
    */
-  registerWorker(id: string, task: string, status: 'running' | 'idle' | 'error' = 'idle'): void {
+  async registerWorker(id: string, task: string, status: 'running' | 'idle' | 'error' = 'idle'): Promise<void> {
     if (!id) {
       throw new Error('Worker registration failed: Missing workerName.');
     }
@@ -34,7 +50,7 @@ export class WorkerStatusService {
       worker.task = task;
       worker.status = status;
       worker.lastActivity = now;
-      manifest.add({ event: 'worker_update', id, task, status }).catch(() => {});
+      await logToManifest({ event: 'worker_update', id, task, status });
     } else {
       // Register new worker
       this.workers.set(id, {
@@ -47,14 +63,14 @@ export class WorkerStatusService {
         startTime: now,
         lastActivity: now
       });
-      manifest.add({ event: 'worker_register', id, task, status }).catch(() => {});
+      await logToManifest({ event: 'worker_register', id, task, status });
     }
   }
 
   /**
    * Update worker status
    */
-  updateWorkerStatus(id: string, status: 'running' | 'idle' | 'error', task?: string): void {
+  async updateWorkerStatus(id: string, status: 'running' | 'idle' | 'error', task?: string): Promise<void> {
     const worker = this.workers.get(id);
     if (worker) {
       worker.status = status;
@@ -62,16 +78,16 @@ export class WorkerStatusService {
       if (task) {
         worker.task = task;
       }
-      manifest.add({ event: 'status_update', id, task: worker.task, status }).catch(() => {});
+      await logToManifest({ event: 'status_update', id, task: worker.task, status });
     }
   }
 
   /**
    * Remove a worker from tracking
    */
-  unregisterWorker(id: string): void {
+  async unregisterWorker(id: string): Promise<void> {
     this.workers.delete(id);
-    manifest.add({ event: 'worker_unregister', id }).catch(() => {});
+    await logToManifest({ event: 'worker_unregister', id });
   }
 
   /**
