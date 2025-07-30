@@ -68,6 +68,7 @@ test-webhook.js
 test-guide-handler.js
 test-formatter.js
 test-integration.js
+demo-ai-patch-system.sh
 
 # Development and debugging scripts  
 dev-tests/

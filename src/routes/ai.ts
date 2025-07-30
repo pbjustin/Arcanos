@@ -219,6 +219,70 @@ router.post('/query-finetune', async (req, res) => {
   }
 });
 
+// POST /ai-patch - AI Patch System for dynamic content management
+router.post('/ai-patch', async (req, res) => {
+  console.log('🔧 AI Patch System endpoint called');
+  
+  const { content, filename, taskDescription } = req.body;
+  
+  if (!content || !filename) {
+    return sendErrorResponse(res, 400, 'Content and filename are required');
+  }
+
+  try {
+    const { aiPatchSystem } = await import('../services/ai-patch-system');
+    
+    const result = await aiPatchSystem.processPatch({
+      content,
+      filename,
+      taskDescription
+    });
+
+    if (result.success) {
+      sendSuccessResponse(res, 'AI patch processed successfully', {
+        sha: result.sha,
+        filePath: result.filePath,
+        timestamp: result.timestamp,
+        filename
+      });
+    } else {
+      sendErrorResponse(res, 500, 'AI patch failed', result.error);
+    }
+    
+  } catch (error: any) {
+    handleCatchError(res, error, 'AI patch system');
+  }
+});
+
+// GET /ai-patch/status - Get AI Patch System status
+router.get('/ai-patch/status', async (req, res) => {
+  try {
+    const { aiPatchSystem } = await import('../services/ai-patch-system');
+    
+    const status = await aiPatchSystem.getSystemStatus();
+    
+    sendSuccessResponse(res, 'AI patch system status retrieved', status);
+    
+  } catch (error: any) {
+    handleCatchError(res, error, 'AI patch system status');
+  }
+});
+
+// POST /ai-patch/retry - Manually trigger retry queue processing
+router.post('/ai-patch/retry', async (req, res) => {
+  try {
+    const { aiPatchSystem } = await import('../services/ai-patch-system');
+    
+    await aiPatchSystem.processRetryQueue();
+    const status = await aiPatchSystem.getRetryQueueStatus();
+    
+    sendSuccessResponse(res, 'Retry queue processed', status);
+    
+  } catch (error: any) {
+    handleCatchError(res, error, 'AI patch retry processing');
+  }
+});
+
 // POST /ask endpoint - AI dispatcher controlled (fallback route)
 router.post('/ask', async (req, res) => {
   console.log('📝 /ask endpoint called - routing to AI dispatcher');
