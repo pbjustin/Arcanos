@@ -6,7 +6,8 @@
 import { databaseService } from './database';
 import { MemoryStorage } from '../storage/memory-storage';
 
-const fallbackMemory = new MemoryStorage();
+// Shared fallback memory instance to ensure consistency across modules
+export const fallbackMemory = new MemoryStorage();
 const useDatabase = !!process.env.DATABASE_URL;
 
 /**

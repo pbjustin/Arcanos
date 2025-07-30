@@ -141,10 +141,10 @@ routeRecovery.setApp(app);
 app.use('/', mainRoutes);  // Core ARCANOS routes (/memory, /audit, etc.)
 app.use('/', aiRoutes);    // AI-controlled endpoints (/ask, /query-finetune, etc.)
 
-// Mount additional API routes
-app.use('/api', router);
+// Mount additional API routes (before general API router to avoid catch-all)
 app.use('/api/memory', requireApiToken, memoryRouter);
 app.use('/api/guides', requireApiToken, guidesRouter);
+app.use('/api', router);
 app.use('/system', systemRouter);
 app.use('/codex', codexRouter);
 app.use('/logs', logsRouter);
