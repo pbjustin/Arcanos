@@ -73,3 +73,30 @@ export const saveMemory = async (key: string, value: any, containerId: string = 
  * @returns Promise resolving to saved memory entry
  */
 export const storeMemory = saveMemory;
+
+/**
+ * Write memory entry - alias for saveMemory to match expected interface
+ * @param key - Memory key
+ * @param payload - Data to store
+ * @param containerId - Optional container ID, defaults to 'default'
+ * @returns Promise resolving to saved memory entry
+ */
+export const writeMemory = async (key: string, payload: any, containerId: string = 'default'): Promise<any> => {
+  return await saveMemory(key, payload, containerId);
+};
+
+/**
+ * Index memory entry - creates an alias mapping to the main entry
+ * @param indexKey - Index key (e.g., 'alias_index/bg3')
+ * @param targetKey - Key of the actual memory entry being indexed
+ * @param containerId - Optional container ID, defaults to 'default'
+ * @returns Promise resolving to saved index entry
+ */
+export const indexMemory = async (indexKey: string, targetKey: string, containerId: string = 'default'): Promise<any> => {
+  const indexData = {
+    type: 'alias_index',
+    targetKey: targetKey,
+    timestamp: new Date().toISOString()
+  };
+  return await saveMemory(indexKey, indexData, containerId);
+};
