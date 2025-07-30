@@ -19,6 +19,7 @@ import guidesRouter from './routes/guides';
 import systemRouter from './routes/system';
 import codexRouter from './routes/codex';
 import logsRouter from './routes/logs';
+import webFallbackRouter from './routes/web-fallback';
 import openaiWebhookRouter from './webhooks/openai';
 import githubWebhookRouter from './webhooks/github';
 import { enableAdminControl, getAdminRouter } from './system/auth';
@@ -144,6 +145,7 @@ app.use('/', aiRoutes);    // AI-controlled endpoints (/ask, /query-finetune, et
 // Mount additional API routes (before general API router to avoid catch-all)
 app.use('/api/memory', requireApiToken, memoryRouter);
 app.use('/api/guides', requireApiToken, guidesRouter);
+app.use('/api/web-fallback', webFallbackRouter);
 app.use('/api', router);
 app.use('/system', systemRouter);
 app.use('/codex', codexRouter);
