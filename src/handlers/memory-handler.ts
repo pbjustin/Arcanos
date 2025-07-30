@@ -1,8 +1,10 @@
 // ARCANOS:MEMORY-HANDLER - Streamlined memory route handler
 // Uses new OpenAI SDK-compatible memory operations
+// Enhanced with GPT-4 fallback for malformed memory outputs
 
 import { Request, Response } from 'express';
 import { memoryOperations } from '../services/memory-operations';
+import { recoverOutput } from '../utils/output-recovery';
 
 export class MemoryHandler {
   async handleMemoryRequest(req: Request, res: Response): Promise<void> {
@@ -79,13 +81,50 @@ export class MemoryHandler {
         
         console.log(`✅ Memory ${operation} operation successful:`, { memory_key, operation, timestamp });
         
-        res.status(200).json({
+        // Prepare response data
+        const responseData = {
           success: true,
           message: `Memory ${operation} completed`,
           data: result,
           operation,
           timestamp
-        });
+        };
+
+        // Apply GPT-4 fallback if the response data appears malformed
+        if (result && typeof result === 'object') {
+          try {
+            // Handle both single record and array results
+            const records = Array.isArray(result) ? result : [result];
+            let hasRecovery = false;
+            
+            for (const record of records) {
+              if (record.content) {
+                const recoveryResult = await recoverOutput(record.content, {
+                  task: `Memory ${operation} operation`,
+                  expectedFormat: 'text',
+                  source: 'memory-handler'
+                });
+                
+                if (recoveryResult.wasRecovered) {
+                  record.content = recoveryResult.output;
+                  hasRecovery = true;
+                }
+              }
+            }
+            
+            if (hasRecovery) {
+              responseData.data = result;
+              res.setHeader('X-Output-Recovered', 'true');
+              res.setHeader('X-Recovery-Source', 'gpt4-fallback');
+              console.log(`🔄 Applied GPT-4 fallback for memory ${operation}`);
+            }
+          } catch (recoveryError: any) {
+            console.warn(`⚠️ GPT-4 fallback failed for memory ${operation}:`, recoveryError.message);
+            // Continue with original response
+          }
+        }
+        
+        res.status(200).json(responseData);
         
       } catch (error: any) {
         console.error(`❌ Memory ${operation} operation failed:`, error);

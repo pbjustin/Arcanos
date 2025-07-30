@@ -1,10 +1,12 @@
 // ARCANOS AI Routes - AI-controlled endpoints extracted for modularity
+// Enhanced with GPT-4 fallback for malformed or incomplete outputs
 import { Router } from 'express';
 import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
 import { codeInterpreterService } from '../services/code-interpreter';
 import { gameGuideService } from '../services/game-guide';
+import { recoverOutput, recoverJSON } from '../utils/output-recovery';
 
 
 const router = Router();
@@ -112,6 +114,22 @@ router.post('/code-interpreter', async (req, res) => {
   }
   try {
     const result = await codeInterpreterService.run(prompt);
+    
+    // Apply GPT-4 fallback if the code interpreter result appears malformed
+    if (result && typeof result === 'object' && result.content) {
+      const recoveryResult = await recoverOutput(result.content, {
+        task: 'Code interpreter execution',
+        expectedFormat: 'text',
+        source: 'code-interpreter'
+      });
+      
+      if (recoveryResult.wasRecovered) {
+        result.content = recoveryResult.output;
+        res.setHeader('X-Output-Recovered', 'true');
+        res.setHeader('X-Recovery-Source', 'gpt4-fallback');
+      }
+    }
+    
     sendSuccessResponse(res, 'Code interpreter executed', result);
   } catch (error: any) {
     handleCatchError(res, error, 'Code interpreter');
@@ -131,6 +149,22 @@ router.post('/game-guide', async (req, res) => {
     
     if (result.error) {
       return sendErrorResponse(res, 500, 'Failed to generate game guide', result.error);
+    }
+    
+    // Apply GPT-4 fallback to the game guide if it appears malformed
+    if (result.guide) {
+      const recoveryResult = await recoverOutput(result.guide, {
+        task: `Generate ${gameTitle} game guide`,
+        expectedFormat: 'markdown',
+        source: 'game-guide'
+      });
+      
+      if (recoveryResult.wasRecovered) {
+        result.guide = recoveryResult.output;
+        res.setHeader('X-Output-Recovered', 'true');
+        res.setHeader('X-Recovery-Source', 'gpt4-fallback');
+        console.log(`🔄 Applied GPT-4 fallback for ${gameTitle} guide`);
+      }
     }
     
     sendSuccessResponse(res, 'Game guide generated successfully', {
