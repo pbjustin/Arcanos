@@ -111,7 +111,7 @@ router.register("write::registerCronJob", async (payload, context) => {
     }
 
     // Example cron job registration logic
-    const cron = require("node-cron");
+    const { default: cron } = await import("node-cron");
     cron.schedule(schedule, async () => {
       try {
         console.log(`[CRON] Triggering task for ${worker}: ${task}`);

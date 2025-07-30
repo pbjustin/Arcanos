@@ -1,5 +1,3 @@
-const { mountArcanosInternal } = require('../scripts/codex-internal');
-
 let enabled = false;
 
 /**
@@ -7,9 +5,10 @@ let enabled = false;
  * This ensures Codex can resolve compiled files when executing
  * within the repository.
  */
-export function enableCodexInterface(): void {
+export async function enableCodexInterface(): Promise<void> {
   if (enabled) return;
   try {
+    const { mountArcanosInternal } = await import('../scripts/codex-internal' as any);
     mountArcanosInternal();
     enabled = true;
     console.log('[CODEX-INTEGRATOR] Codex interface enabled');

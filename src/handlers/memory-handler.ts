@@ -146,7 +146,7 @@ export class MemoryHandler {
   }
 
   // Enhanced memory snapshot saving every hour
-  startPeriodicMemorySnapshots(): void {
+  async startPeriodicMemorySnapshots(): Promise<void> {
     console.log('⏰ Starting periodic memory snapshots every hour');
     
     // Primary: setInterval approach
@@ -158,7 +158,7 @@ export class MemoryHandler {
     try {
       console.log('📸 Starting streamlined memory snapshots');
       // Simplified snapshot using the new memory operations
-      const cron = require('node-cron');
+      const { default: cron } = await import('node-cron');
       cron.schedule('0 * * * *', async () => { // Every hour
         await this.performStreamlinedSnapshot();
       });
