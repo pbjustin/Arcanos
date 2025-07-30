@@ -1,11 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { databaseService, SaveMemoryRequest, LoadMemoryRequest } from '../services/database';
-import { MemoryStorage } from '../storage/memory-storage';
+import { fallbackMemory } from '../services/memory';
 import { sendErrorResponse, sendSuccessResponse, handleCatchError } from '../utils/response';
 import { arcanosLogger } from '../utils/logger';
 
 const router = Router();
-const fallbackMemory = new MemoryStorage();
 const useDatabase = !!process.env.DATABASE_URL;
 
 // API token middleware applied in src/index.ts
