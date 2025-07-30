@@ -5,32 +5,13 @@
 
 import axios from "axios";
 import express from "express";
-import { OpenAI } from "openai";
+import { getUnifiedOpenAI } from "../services/unified-openai";
 import { storeMemory, getMemory } from "../services/memory"; // Update paths as needed
 
 const router = express.Router();
 
-// Initialize OpenAI client with better error handling for test environments
-let openai: OpenAI;
-try {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY environment variable is not set');
-  }
-  openai = new OpenAI({ apiKey });
-} catch (error) {
-  console.warn('OpenAI client initialization failed - running in test mode');
-  // Create a mock client for testing environments
-  openai = {
-    chat: {
-      completions: {
-        create: async () => ({ 
-          choices: [{ message: { content: 'Mock response for testing' } }] 
-        })
-      }
-    }
-  } as any;
-}
+// Initialize unified OpenAI client
+const unifiedOpenAI = getUnifiedOpenAI();
 
 function sanitize(str: string): string {
   return str.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/_+$/, "");
@@ -73,15 +54,17 @@ export async function webLookupAndSummarize(topic: string, injectToMemory: boole
     
     const rawText = await fetchWebText(searchUrl);
 
-    const gptResponse = await openai.chat.completions.create({
+    const messages = [
+      { role: "system" as const, content: "Summarize this content clearly and strategically." },
+      { role: "user" as const, content: rawText }
+    ];
+
+    const gptResponse = await unifiedOpenAI.chat(messages, {
       model: "gpt-4",
-      messages: [
-        { role: "system", content: "Summarize this content clearly and strategically." },
-        { role: "user", content: rawText }
-      ]
+      maxTokens: 1000
     });
 
-    const summary = gptResponse.choices[0].message.content || "No summary available";
+    const summary = gptResponse.content || "No summary available";
 
     if (injectToMemory) {
       const memoryKey = `external/${sanitize(topic)}`;
