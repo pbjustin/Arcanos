@@ -26,6 +26,7 @@
     "ci:build": "NODE_OPTIONS='--max_old_space_size=256' npm install --omit=dev && npm run build"
   },
   "dependencies": {
+    "@octokit/rest": "^22.0.0",
     "@prisma/client": "^6.12.0",
     "@types/luxon": "^3.6.2",
     "ajv": "^8.12.0",
