@@ -26,6 +26,7 @@
     "patch:push": "npx ts-node patch-push-system.ts",
     "patch:push:mock": "npx ts-node patch-push-system-mock.ts",
     "patch:push:integrated": "npx ts-node patch-push-system-integrated.ts",
+    "github:verify": "node scripts/verify-github-access.js",
     "ci:build": "NODE_OPTIONS='--max_old_space_size=256' npm install --omit=dev && npm run build"
   },
   "dependencies": {
