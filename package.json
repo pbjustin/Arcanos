@@ -23,6 +23,9 @@
     "test:ai-control": "node test-ai-control.js",
     "ai:control-elevation": "npx ts-node ai-control-elevation.ts",
     "email:diagnostic": "node bin/email-diagnostic.js",
+    "patch:push": "npx ts-node patch-push-system.ts",
+    "patch:push:mock": "npx ts-node patch-push-system-mock.ts",
+    "patch:push:integrated": "npx ts-node patch-push-system-integrated.ts",
     "ci:build": "NODE_OPTIONS='--max_old_space_size=256' npm install --omit=dev && npm run build"
   },
   "dependencies": {
