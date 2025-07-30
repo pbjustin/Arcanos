@@ -1,10 +1,12 @@
 // ARCANOS MODEL INTERFACE v1.0 – DO NOT MODIFY
 // Purpose: Safe, fallback-proof logic interface for model routing
+// Enhanced with GPT-4 fallback for malformed outputs
 
 import { getUnifiedOpenAI } from './unified-openai';
 import { HRCCore } from '../modules/hrc';
 import { MemoryStorage } from '../storage/memory-storage';
 import { aiConfig } from '../config';
+import { recoverOutput } from '../utils/output-recovery';
 
 // Model interface that all models must implement
 export interface ArcanosModel {
@@ -88,6 +90,25 @@ class ArcanosModelWrapper implements ArcanosModel {
         };
       }
 
+      let responseText = openaiResponse.content;
+
+      // Apply GPT-4 fallback if the response appears malformed
+      try {
+        const recoveryResult = await recoverOutput(responseText, {
+          task: `ARCANOS response for domain: ${domain}`,
+          expectedFormat: 'text',
+          source: 'arcanos-v1-interface'
+        });
+
+        if (recoveryResult.wasRecovered) {
+          console.log('🔄 Applied GPT-4 fallback recovery to ARCANOS response');
+          responseText = recoveryResult.output;
+        }
+      } catch (recoveryError: any) {
+        console.warn('⚠️ GPT-4 fallback recovery failed:', recoveryError.message);
+        // Continue with original response if recovery fails
+      }
+
       // Store interaction in memory if RAG is enabled
       if (useRAG) {
         try {
@@ -98,7 +119,7 @@ class ArcanosModelWrapper implements ArcanosModel {
             `interaction_${Date.now()}`,
             {
               userMessage: message,
-              aiResponse: openaiResponse.content,
+              aiResponse: responseText,
               domain: domain,
               timestamp: new Date().toISOString()
             },
@@ -113,7 +134,7 @@ class ArcanosModelWrapper implements ArcanosModel {
 
       return {
         status: "success",
-        text: openaiResponse.content
+        text: responseText
       };
 
     } catch (error: any) {
