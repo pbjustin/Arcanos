@@ -362,9 +362,7 @@ curl -H "Authorization: Bearer $ADMIN_KEY" http://localhost:8080/admin/status
 
 ### Core Documentation
 
-- **[🚀 Setup Guide](./SETUP_GUIDE.md)** - Quick start and initial configuration
 - **[🌟 Arcanos Overview](./docs/arcanos-overview.md)** - Explanation of the project goals
-- **[🔧 Quick Reference](./QUICK_REFERENCE.md)** - Essential commands and endpoints
 - **[🧠 Backend Documentation](./docs/backend.md)** - Comprehensive backend system overview
 - **[📋 Changelog](./docs/changelog.md)** - Version history and recent updates
 
@@ -404,13 +402,18 @@ npm install
 cp .env.example .env
 # Edit .env with your OpenAI credentials
 
-# Run
+# Development
+npm run dev      # Starts with hot reloading
+
+# Production
 npm run build
 npm start
 
+# Health Check
+curl http://localhost:8080/health
+
 # Test
 ./test-api-endpoints.sh
-./test-concurrency-limit.js
 ```
 
 ### Key Endpoints for AI Interaction
