@@ -63,17 +63,11 @@ export async function fetchGuideSegment({
   end = 2
 }: FetchGuideSegmentParams): Promise<string> {
   const path = `guides/${category}/${guideId}`;
-  console.log(`[DEBUG] Fetching guide from path: ${path}`);
-  
   const guide = await getMemory(path);
-  console.log(`[DEBUG] Guide retrieved:`, guide);
 
   if (!guide || !Array.isArray(guide.sections)) {
-    console.log(`[DEBUG] Guide validation failed - guide exists: ${!!guide}, has sections array: ${guide && Array.isArray(guide.sections)}`);
     return `⚠️ Could not load guide segment: ${category}/${guideId}`;
   }
 
-  const result = guide.sections.slice(start, end).join("\n\n");
-  console.log(`[DEBUG] Returning segments ${start}-${end-1}:`, result);
-  return result;
+  return guide.sections.slice(start, end).join("\n\n");
 }
