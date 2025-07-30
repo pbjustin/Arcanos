@@ -4,6 +4,18 @@
 import fs from 'fs/promises';
 import path from 'path';
 
+// Helper for dynamic imports that works in both ESM and CommonJS
+const loadModule = async (specifier: string): Promise<any> => {
+  try {
+    // Use dynamic import first
+    const importer = new Function('s', 'return import(s)');
+    return await importer(specifier);
+  } catch (_) {
+    // Fallback to CommonJS require
+    return require(specifier);
+  }
+};
+
 interface PatchContent {
   content: string;
   filename: string;
@@ -53,10 +65,8 @@ export class AIPatchSystemService {
     if (this.initialized) return;
 
     try {
-      // Use Function constructor to prevent TypeScript from transforming dynamic import
-      const dynamicImport = new Function('specifier', 'return import(specifier)');
-      const octokitModule = await dynamicImport('@octokit/rest');
-      const Octokit = octokitModule.Octokit;
+      const octokitModule = await loadModule('@octokit/rest');
+      const Octokit = (octokitModule as any).Octokit;
       
       // Initialize GitHub client
       const githubToken = process.env.GITHUB_TOKEN;
@@ -235,8 +245,7 @@ export class AIPatchSystemService {
       
       // Also store in memory for system tracking using dynamic import
       try {
-        const dynamicImport = new Function('specifier', 'return import(specifier)');
-        const memoryModule = await dynamicImport('./memory');
+        const memoryModule = await loadModule('./memory');
         await memoryModule.writeMemory('/logs/patch_success_latest', logEntry);
       } catch (memoryError) {
         console.warn('[AI-PATCH-SYSTEM] Memory logging failed:', memoryError);
@@ -266,8 +275,7 @@ export class AIPatchSystemService {
       
       // Also store in memory for system tracking using dynamic import
       try {
-        const dynamicImport = new Function('specifier', 'return import(specifier)');
-        const memoryModule = await dynamicImport('./memory');
+        const memoryModule = await loadModule('./memory');
         await memoryModule.writeMemory('/logs/patch_error_latest', logEntry);
       } catch (memoryError) {
         console.warn('[AI-PATCH-SYSTEM] Memory logging failed:', memoryError);
@@ -283,8 +291,7 @@ export class AIPatchSystemService {
   private async queueForRetry(patchData: PatchContent, timestamp: string): Promise<void> {
     try {
       // Get existing retry queue using dynamic import
-      const dynamicImport = new Function('specifier', 'return import(specifier)');
-      const memoryModule = await dynamicImport('./memory');
+      const memoryModule = await loadModule('./memory');
       const existingQueue = await memoryModule.getMemory(this.retryQueueKey) || [];
       const queue: RetryQueueItem[] = Array.isArray(existingQueue) ? existingQueue : [];
       
@@ -314,8 +321,7 @@ export class AIPatchSystemService {
    */
   async processRetryQueue(): Promise<void> {
     try {
-      const dynamicImport = new Function('specifier', 'return import(specifier)');
-      const memoryModule = await dynamicImport('./memory');
+      const memoryModule = await loadModule('./memory');
       const queue = await memoryModule.getMemory(this.retryQueueKey) || [];
       if (!Array.isArray(queue) || queue.length === 0) {
         return;
@@ -378,8 +384,7 @@ export class AIPatchSystemService {
    */
   async getRetryQueueStatus(): Promise<{ queueLength: number; items: RetryQueueItem[] }> {
     try {
-      const dynamicImport = new Function('specifier', 'return import(specifier)');
-      const memoryModule = await dynamicImport('./memory');
+      const memoryModule = await loadModule('./memory');
       const queue = await memoryModule.getMemory(this.retryQueueKey) || [];
       return {
         queueLength: Array.isArray(queue) ? queue.length : 0,
@@ -396,8 +401,7 @@ export class AIPatchSystemService {
    */
   async getSystemStatus(): Promise<any> {
     try {
-      const dynamicImport = new Function('specifier', 'return import(specifier)');
-      const memoryModule = await dynamicImport('./memory');
+      const memoryModule = await loadModule('./memory');
       const retryStatus = await this.getRetryQueueStatus();
       const successLog = await memoryModule.getMemory('/logs/patch_success_latest');
       const errorLog = await memoryModule.getMemory('/logs/patch_error_latest');
