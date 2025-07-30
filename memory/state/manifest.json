@@ -1,9 +1,10 @@
 [
   {
-    "event": "worker_register",
-    "id": "worker-health",
-    "task": "health_monitoring",
+    "event": "worker_update",
+    "id": "worker-maintenance",
+    "task": "awaiting_job",
     "status": "idle",
-    "timestamp": "2025-07-30T02:30:18.911Z"
+    "timestamp": "2025-07-30T08:53:29.680Z"
   }
+]
 ]

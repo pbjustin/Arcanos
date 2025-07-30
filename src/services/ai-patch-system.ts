@@ -297,6 +297,18 @@ export class AIPatchSystemService {
           continue;
         }
         
+        // Check if enough time has passed since last attempt (5 minutes minimum)
+        const lastAttemptTime = new Date(item.lastAttempt).getTime();
+        const now = new Date().getTime();
+        const timeSinceLastAttempt = now - lastAttemptTime;
+        const minRetryDelay = 5 * 60 * 1000; // 5 minutes
+        
+        if (timeSinceLastAttempt < minRetryDelay) {
+          // Not enough time has passed, add back to queue without retrying
+          processedItems.push(item);
+          continue;
+        }
+        
         // Attempt retry
         console.log(`[AI-PATCH-SYSTEM] Retrying patch for ${item.filename} (attempt ${item.attemptCount + 1})`);
         
@@ -315,6 +327,9 @@ export class AIPatchSystemService {
           item.lastAttempt = new Date().toISOString();
           processedItems.push(item);
         }
+        
+        // Add delay between retry attempts to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
       // Update queue with remaining items
