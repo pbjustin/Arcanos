@@ -64,3 +64,12 @@ export const saveMemory = async (key: string, value: any, containerId: string = 
     throw error;
   }
 };
+
+/**
+ * Store memory using existing memory access layer (alias for saveMemory to match problem statement interface)
+ * @param key - Memory key
+ * @param value - Value to store
+ * @param containerId - Optional container ID, defaults to 'default'
+ * @returns Promise resolving to saved memory entry
+ */
+export const storeMemory = saveMemory;
