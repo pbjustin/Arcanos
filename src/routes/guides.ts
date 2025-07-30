@@ -4,7 +4,7 @@
 
 import { Router, Request, Response } from 'express';
 import { fetchGuideHandler } from '../handlers/guide-handler';
-import { saveGameGuide } from '../services/game-guides';
+import { saveGameGuide, fetchGuideSegment } from '../services/game-guides';
 import { sendSuccessResponse, sendErrorResponse, handleCatchError } from '../utils/response';
 
 const router = Router();
@@ -33,6 +33,27 @@ router.post('/save', async (req: Request, res: Response) => {
     
   } catch (error: any) {
     handleCatchError(res, error, 'Game guide save operation');
+  }
+});
+
+// GET /guides/:category/:guideId - Fetch guide segment by category and guideId
+router.get('/:category/:guideId', async (req: Request, res: Response) => {
+  try {
+    const { category, guideId } = req.params;
+    const { sectionStart = 0, sectionEnd = 2 } = req.query;
+
+    const content = await fetchGuideSegment({
+      category,
+      guideId,
+      start: Number(sectionStart),
+      end: Number(sectionEnd)
+    });
+
+    res.setHeader("Content-Type", "text/plain");
+    res.status(200).send(content);
+    
+  } catch (error: any) {
+    handleCatchError(res, error, 'Guide segment fetch operation');
   }
 });
 
