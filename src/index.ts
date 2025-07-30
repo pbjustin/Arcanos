@@ -261,3 +261,6 @@ export { selfReflectionService } from './services/self-reflection';
 
 // Export game guide storage functionality
 export { saveGameGuide } from './services/game-guides';
+
+// Export AI patch system for external usage
+export { aiPatchSystem, createAIPatch } from './services/ai-patch-system';
