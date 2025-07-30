@@ -55,6 +55,14 @@ export const CRON_INSTRUCTIONS = {
     schedule: '15,45 * * * *',
     execute: true,
     priority: 5
+  },
+  patchRetry: {
+    action: 'schedule',
+    service: 'patchRetry',
+    parameters: { type: 'ai-patch-retry' },
+    schedule: '*/10 * * * *',
+    execute: true,
+    priority: 4
   }
 };
 
@@ -187,6 +195,30 @@ cron.schedule('15,45 * * * *', async () => {
   }
 });
 
+// AI-Controlled Patch Retry (AI decides when to run)
+cron.schedule('*/10 * * * *', async () => {
+  try {
+    const result = await modelControlHooks.handleCronTrigger(
+      'patch-retry',
+      '*/10 * * * *',
+      {
+        userId: 'system',
+        sessionId: 'cron',
+        source: 'cron'
+      }
+    );
+
+    if (result.success) {
+      console.log('[AI-CRON] Patch retry approved by AI model');
+      await executePatchRetry();
+    } else {
+      console.log('[AI-CRON] Patch retry denied by AI:', result.error || 'No approval');
+    }
+  } catch (error: any) {
+    console.error('[AI-CRON] AI patch retry control error:', error.message);
+  }
+});
+
 /**
  * Execute health check when approved by AI
  */
@@ -247,6 +279,29 @@ async function executeAssistantSync(): Promise<void> {
   } catch (error: any) {
     console.error('[AI-ASSISTANT-SYNC] Assistant sync failed:', error.message);
     workerStatusService.updateWorkerStatus('worker-assistant-sync', 'error', 'ai_assistant_sync_failed');
+  }
+}
+
+/**
+ * Execute AI patch retry queue processing when approved by AI
+ */
+async function executePatchRetry(): Promise<void> {
+  workerStatusService.updateWorkerStatus('worker-patch-retry', 'running', 'ai_approved_patch_retry');
+  
+  try {
+    console.log('[AI-PATCH-RETRY] Running AI-approved patch retry processing');
+    
+    // Import and execute patch retry processing
+    const { aiPatchSystem } = await import('./ai-patch-system');
+    await aiPatchSystem.processRetryQueue();
+    
+    const status = await aiPatchSystem.getRetryQueueStatus();
+    console.log(`[AI-PATCH-RETRY] Retry queue processed, ${status.queueLength} items remaining`);
+    
+    workerStatusService.updateWorkerStatus('worker-patch-retry', 'idle', `ai_patch_retry_complete_${status.queueLength}_remaining`);
+  } catch (error: any) {
+    console.error('[AI-PATCH-RETRY] Patch retry processing failed:', error.message);
+    workerStatusService.updateWorkerStatus('worker-patch-retry', 'error', 'ai_patch_retry_failed');
   }
 }
 
