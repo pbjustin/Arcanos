@@ -3,8 +3,6 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { Octokit } from "@octokit/rest";
-import { writeMemory, getMemory } from "./memory";
 
 interface PatchContent {
   content: string;
@@ -30,23 +28,16 @@ interface RetryQueueItem {
 }
 
 export class AIPatchSystemService {
-  private octokit: Octokit;
+  private octokit: any;
   private repoOwner: string;
   private repoName: string;
   private baseDir: string;
   private logsDir: string;
   private retryQueueKey = '/patch_system/retry_queue';
   private maxRetries = 3;
+  private initialized = false;
 
   constructor() {
-    // Initialize GitHub client
-    const githubToken = process.env.GITHUB_TOKEN;
-    if (!githubToken) {
-      console.warn('[AI-PATCH-SYSTEM] No GitHub token found. Git operations will fail.');
-    }
-    
-    this.octokit = new Octokit({ auth: githubToken });
-    
     // Get repository info from environment or default
     this.repoOwner = process.env.GITHUB_OWNER || 'pbjustin';
     this.repoName = process.env.GITHUB_REPO || 'Arcanos';
@@ -56,6 +47,29 @@ export class AIPatchSystemService {
     this.logsDir = path.join(this.baseDir, 'logs');
     
     this.ensureDirectories();
+  }
+
+  private async initializeOctokit(): Promise<void> {
+    if (this.initialized) return;
+
+    try {
+      // Use Function constructor to prevent TypeScript from transforming dynamic import
+      const dynamicImport = new Function('specifier', 'return import(specifier)');
+      const octokitModule = await dynamicImport('@octokit/rest');
+      const Octokit = octokitModule.Octokit;
+      
+      // Initialize GitHub client
+      const githubToken = process.env.GITHUB_TOKEN;
+      if (!githubToken) {
+        console.warn('[AI-PATCH-SYSTEM] No GitHub token found. Git operations will fail.');
+      }
+      
+      this.octokit = new Octokit({ auth: githubToken });
+      this.initialized = true;
+    } catch (error) {
+      console.error('[AI-PATCH-SYSTEM] Failed to initialize Octokit:', error);
+      throw new Error('Failed to initialize GitHub client');
+    }
   }
 
   private async ensureDirectories(): Promise<void> {
@@ -73,6 +87,9 @@ export class AIPatchSystemService {
     const timestamp = new Date().toISOString();
     
     try {
+      // Ensure Octokit is initialized
+      await this.initializeOctokit();
+
       // Step 1: Validate input
       if (!patchData.content || !patchData.filename) {
         throw new Error('Content and filename are required');
@@ -216,8 +233,14 @@ export class AIPatchSystemService {
     try {
       await fs.appendFile(logPath, logLine);
       
-      // Also store in memory for system tracking
-      await writeMemory('/logs/patch_success_latest', logEntry);
+      // Also store in memory for system tracking using dynamic import
+      try {
+        const dynamicImport = new Function('specifier', 'return import(specifier)');
+        const memoryModule = await dynamicImport('./memory');
+        await memoryModule.writeMemory('/logs/patch_success_latest', logEntry);
+      } catch (memoryError) {
+        console.warn('[AI-PATCH-SYSTEM] Memory logging failed:', memoryError);
+      }
     } catch (error) {
       console.error('[AI-PATCH-SYSTEM] Failed to log success:', error);
     }
@@ -241,8 +264,14 @@ export class AIPatchSystemService {
     try {
       await fs.appendFile(logPath, logLine);
       
-      // Also store in memory for system tracking
-      await writeMemory('/logs/patch_error_latest', logEntry);
+      // Also store in memory for system tracking using dynamic import
+      try {
+        const dynamicImport = new Function('specifier', 'return import(specifier)');
+        const memoryModule = await dynamicImport('./memory');
+        await memoryModule.writeMemory('/logs/patch_error_latest', logEntry);
+      } catch (memoryError) {
+        console.warn('[AI-PATCH-SYSTEM] Memory logging failed:', memoryError);
+      }
     } catch (logError) {
       console.error('[AI-PATCH-SYSTEM] Failed to log error:', logError);
     }
@@ -253,8 +282,10 @@ export class AIPatchSystemService {
    */
   private async queueForRetry(patchData: PatchContent, timestamp: string): Promise<void> {
     try {
-      // Get existing retry queue
-      const existingQueue = await getMemory(this.retryQueueKey) || [];
+      // Get existing retry queue using dynamic import
+      const dynamicImport = new Function('specifier', 'return import(specifier)');
+      const memoryModule = await dynamicImport('./memory');
+      const existingQueue = await memoryModule.getMemory(this.retryQueueKey) || [];
       const queue: RetryQueueItem[] = Array.isArray(existingQueue) ? existingQueue : [];
       
       // Add new item to retry queue
@@ -270,7 +301,7 @@ export class AIPatchSystemService {
       queue.push(retryItem);
       
       // Save updated queue
-      await writeMemory(this.retryQueueKey, queue);
+      await memoryModule.writeMemory(this.retryQueueKey, queue);
       
       console.log(`[AI-PATCH-SYSTEM] Queued ${patchData.filename} for retry`);
     } catch (error) {
@@ -283,7 +314,9 @@ export class AIPatchSystemService {
    */
   async processRetryQueue(): Promise<void> {
     try {
-      const queue = await getMemory(this.retryQueueKey) || [];
+      const dynamicImport = new Function('specifier', 'return import(specifier)');
+      const memoryModule = await dynamicImport('./memory');
+      const queue = await memoryModule.getMemory(this.retryQueueKey) || [];
       if (!Array.isArray(queue) || queue.length === 0) {
         return;
       }
@@ -333,7 +366,7 @@ export class AIPatchSystemService {
       }
       
       // Update queue with remaining items
-      await writeMemory(this.retryQueueKey, processedItems);
+      await memoryModule.writeMemory(this.retryQueueKey, processedItems);
       
     } catch (error) {
       console.error('[AI-PATCH-SYSTEM] Error processing retry queue:', error);
@@ -345,7 +378,9 @@ export class AIPatchSystemService {
    */
   async getRetryQueueStatus(): Promise<{ queueLength: number; items: RetryQueueItem[] }> {
     try {
-      const queue = await getMemory(this.retryQueueKey) || [];
+      const dynamicImport = new Function('specifier', 'return import(specifier)');
+      const memoryModule = await dynamicImport('./memory');
+      const queue = await memoryModule.getMemory(this.retryQueueKey) || [];
       return {
         queueLength: Array.isArray(queue) ? queue.length : 0,
         items: Array.isArray(queue) ? queue : []
@@ -361,9 +396,11 @@ export class AIPatchSystemService {
    */
   async getSystemStatus(): Promise<any> {
     try {
+      const dynamicImport = new Function('specifier', 'return import(specifier)');
+      const memoryModule = await dynamicImport('./memory');
       const retryStatus = await this.getRetryQueueStatus();
-      const successLog = await getMemory('/logs/patch_success_latest');
-      const errorLog = await getMemory('/logs/patch_error_latest');
+      const successLog = await memoryModule.getMemory('/logs/patch_success_latest');
+      const errorLog = await memoryModule.getMemory('/logs/patch_error_latest');
       
       return {
         retryQueue: retryStatus,
