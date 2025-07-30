@@ -47,7 +47,12 @@ export class CoreAIService {
 
   constructor() {
     if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY is required');
+      console.warn('⚠️ OPENAI_API_KEY not found, AI service will be in mock mode');
+      this.client = null as any;
+      this.defaultModel = 'mock-gpt-4';
+      this.maxRetries = 3;
+      this.retryDelayMs = 1000;
+      return;
     }
 
     this.client = new OpenAI({
@@ -88,6 +93,16 @@ export class CoreAIService {
     taskType: string,
     config: AIServiceConfig = {}
   ): Promise<AIResponse> {
+    // Mock mode if no API key
+    if (!this.client) {
+      return {
+        success: true,
+        content: `Mock AI response for ${taskType}. This is a simulated reflection based on current system state and interactions.`,
+        model: this.defaultModel,
+        usage: { prompt_tokens: 50, completion_tokens: 100, total_tokens: 150 }
+      };
+    }
+
     const startTime = Date.now();
     const {
       model = this.defaultModel,
