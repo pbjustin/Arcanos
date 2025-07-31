@@ -8,6 +8,7 @@ import { diagnosticsService } from './services/diagnostics';
 import { handleLogic as handleGenericLogic } from './routes/logic';
 import { installNLPInterpreter, getNLPInterpreter } from './modules/nlp-interpreter';
 import { installPagedOutputHandler, getPagedOutputHandler } from './modules/paged-output-handler';
+import { installMemoryAuditStreamSerializer } from './modules/memory-audit-stream-serializer';
 
 // Install NLP interpreter with default configuration
 installNLPInterpreter({
@@ -22,6 +23,13 @@ installPagedOutputHandler({
   chunkPrefix: '[LOG]',
   enableContinuationFlag: true,
   syncContextMemory: true,
+});
+
+// Install memory & audit streaming serializer
+installMemoryAuditStreamSerializer({
+  streamChunks: true,
+  maxChunkSize: 2048,
+  useContinuationTokens: true,
 });
 
 export async function dispatcher(req: Request, res: Response) {

@@ -7,6 +7,10 @@ import { writeHandler } from '../handlers/write-handler';
 import { routeRecovery } from '../handlers/route-recovery';
 import { getChatGPTUserDiagnostics } from '../middleware/chatgpt-user';
 import { getPagedOutputHandler } from '../modules/paged-output-handler';
+import { memoryOperations } from '../services/memory-operations';
+import { getMemoryAuditStreamSerializer } from '../modules/memory-audit-stream-serializer';
+import fs from 'fs';
+import path from 'path';
 
 const router = Router();
 
@@ -17,6 +21,32 @@ router.post('/memory', async (req, res) => {
   } catch (error: any) {
     console.error('❌ Memory route failure, attempting recovery:', error);
     throw error;
+  }
+});
+
+// Memory status with streaming serializer
+router.get('/memory/status', (req, res) => {
+  const serializer = getMemoryAuditStreamSerializer();
+  const payload = {
+    ...memoryOperations.getStatus(),
+    timestamp: new Date().toISOString(),
+  };
+  if (serializer) return serializer.stream(res, payload);
+  res.json(payload);
+});
+
+// Memory reflection analysis
+router.get('/memory/reflect', async (req, res) => {
+  try {
+    const userId = (req.headers['x-container-id'] as string) || 'default';
+    const sessionId = (req.headers['x-session-id'] as string) || 'default';
+    const reflection = await memoryOperations.analyzeMemoryContext(userId, sessionId);
+    const serializer = getMemoryAuditStreamSerializer();
+    const payload = { reflection, timestamp: new Date().toISOString() };
+    if (serializer) return serializer.stream(res, payload);
+    res.json(payload);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to analyze memory', details: error.message, timestamp: new Date().toISOString() });
   }
 });
 
@@ -123,6 +153,26 @@ router.get('/audit-logs', (req, res) => {
     res.json({ pages, paged: true });
   } else {
     res.json(result);
+  }
+});
+
+// Stream audit log files
+router.get('/audit/logs', (req, res) => {
+  try {
+    const logDir = path.join(process.cwd(), 'storage', 'audit-logs');
+    const logs: Record<string, string> = {};
+    if (fs.existsSync(logDir)) {
+      const files = fs.readdirSync(logDir).slice(-5);
+      for (const file of files) {
+        logs[file] = fs.readFileSync(path.join(logDir, file), 'utf8');
+      }
+    }
+    const serializer = getMemoryAuditStreamSerializer();
+    const payload = { logs, timestamp: new Date().toISOString() };
+    if (serializer) return serializer.stream(res, payload);
+    res.json(payload);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to load audit logs', details: error.message, timestamp: new Date().toISOString() });
   }
 });
 
