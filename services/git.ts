@@ -183,3 +183,21 @@ This PR was generated using the stateless patch system that bypasses memory lock
     };
   }
 }
+
+/**
+ * Convenience wrapper to push a patch as a PR to GitHub
+ * using default settings for stateless operations
+ */
+export async function pushPRToGitHub(patch: any, baseBranch = 'main'): Promise<PRResult> {
+  const branchName = `ai-diff-${Date.now()}`;
+  const commitMessage = 'AI Patch Update';
+  return generatePR({
+    patch,
+    branchName,
+    commitMessage,
+    forcePush: true,
+    verifyLock: false,
+    baseBranch
+  });
+}
+
