@@ -3,7 +3,7 @@
  * Handles automated system maintenance, cleanup, and optimization tasks
  */
 
-import { coreAIService } from '../services/ai/core-ai-service';
+import { getUnifiedOpenAI } from '../services/unified-openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { createServiceLogger } from '../utils/logger';
 import { sanitizeJsonString } from '../utils/json';
@@ -260,18 +260,22 @@ Please analyze and provide:
     ];
 
     let analysisContent = '';
-    const result = await coreAIService.completeStream(
-      messages,
-      `maintenance-${task.category}`,
-      (token: string) => {
-        process.stdout.write(token);
-        fileStream.write(token);
-        analysisContent += token;
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.chatStream(
+      messages.map(msg => ({
+        role: msg.role as any,
+        content: msg.content as string,
+      })),
+      (token: string, isComplete: boolean) => {
+        if (!isComplete) {
+          process.stdout.write(token);
+          fileStream.write(token);
+          analysisContent += token;
+        }
       },
       {
         maxTokens: 2000,
         temperature: 0.4,
-        stream: true
       }
     );
 
@@ -335,7 +339,8 @@ Please analyze and provide:
       }
     ];
 
-    const result = await coreAIService.complete(messages, 'extract-maintenance-actions', {
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.complete(messages, 'extract-maintenance-actions', {
       maxTokens: 500,
       temperature: 0.2
     });

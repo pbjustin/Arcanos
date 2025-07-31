@@ -3,7 +3,7 @@
  * Exports reflect function for the AI Reflection Scheduler
  */
 
-import { coreAIService } from './core-ai-service';
+import { getUnifiedOpenAI } from '../unified-openai';
 import { selfReflectionService } from '../self-reflection';
 import { saveMemory } from '../memory';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
@@ -62,7 +62,8 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
   ];
 
   // Get AI reflection
-  const aiResponse = await coreAIService.complete(messages, 'self-reflection', {
+  const unifiedOpenAI = getUnifiedOpenAI();
+  const aiResponse = await unifiedOpenAI.complete(messages, 'self-reflection', {
     maxTokens: 2000,
     temperature: 0.3
   });
@@ -109,5 +110,5 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
   return snapshot;
 }
 
-// Re-export core AI service for direct access
-export { coreAIService } from './core-ai-service';
+// Re-export unified AI service for direct access
+export { getUnifiedOpenAI } from '../unified-openai';

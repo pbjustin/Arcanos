@@ -148,85 +148,112 @@ class UnifiedOpenAIService {
   }
 
   /**
-   * Standard chat completion with comprehensive error handling
+   * Standard chat completion with comprehensive error handling and retry logic
    */
   async chat(
     messages: ChatMessage[],
-    options: ChatOptions = {}
+    options: ChatOptions = {},
+    taskType: string = 'chat-completion'
   ): Promise<ChatResponse> {
     const startTime = Date.now();
+    const maxRetries = this.defaultConfig.maxRetries;
+    let lastError: any;
     
-    try {
-      // Convert messages to OpenAI format
-      const openaiMessages: ChatCompletionMessageParam[] = messages.map(msg => ({
-        role: msg.role as any,
-        content: msg.content,
-        ...(msg.name && { name: msg.name }),
-        ...(msg.function_call && { function_call: msg.function_call }),
-        ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
-        ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
-      }));
+    // Convert messages to OpenAI format
+    const openaiMessages: ChatCompletionMessageParam[] = messages.map(msg => ({
+      role: msg.role as any,
+      content: msg.content,
+      ...(msg.name && { name: msg.name }),
+      ...(msg.function_call && { function_call: msg.function_call }),
+      ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+      ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
+    }));
 
-      // Prepare completion parameters
-      const params: ChatCompletionCreateParams = {
-        model: options.model || this.defaultModel,
-        messages: openaiMessages,
-        max_tokens: options.maxTokens || this.defaultConfig.maxTokens,
-        temperature: options.temperature ?? this.defaultConfig.temperature,
-        ...(options.tools && { tools: options.tools }),
-        ...(options.toolChoice && { tool_choice: options.toolChoice }),
-        ...(options.responseFormat && { response_format: options.responseFormat }),
-        ...(options.seed && { seed: options.seed }),
-      };
+    // Prepare completion parameters
+    const params: ChatCompletionCreateParams = {
+      model: options.model || this.defaultModel,
+      messages: openaiMessages,
+      max_tokens: options.maxTokens || this.defaultConfig.maxTokens,
+      temperature: options.temperature ?? this.defaultConfig.temperature,
+      ...(options.tools && { tools: options.tools }),
+      ...(options.toolChoice && { tool_choice: options.toolChoice }),
+      ...(options.responseFormat && { response_format: options.responseFormat }),
+      ...(options.seed && { seed: options.seed }),
+    };
 
-      logger.info('Chat completion started', {
-        model: params.model,
-        messageCount: messages.length,
-        hasTools: !!options.tools,
-      });
+    // Retry logic with exponential backoff
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        logger.info('Chat completion attempt', {
+          attempt: `${attempt}/${maxRetries}`,
+          model: params.model,
+          messageCount: messages.length,
+          taskType,
+          hasTools: !!options.tools,
+        });
 
-      const completion = await this.client.chat.completions.create(params);
-      const endTime = Date.now();
+        const completion = await this.client.chat.completions.create(params);
+        const endTime = Date.now();
 
-      const choice = completion.choices[0];
-      if (!choice) {
-        throw new Error('No completion choices returned');
+        const choice = completion.choices[0];
+        if (!choice) {
+          throw new Error('No completion choices returned');
+        }
+
+        const response: ChatResponse = {
+          success: true,
+          content: choice.message.content || '',
+          model: completion.model,
+          usage: completion.usage,
+          finishReason: choice.finish_reason,
+          ...(choice.message.tool_calls && { toolCalls: choice.message.tool_calls }),
+        };
+
+        logger.info('Chat completion succeeded', {
+          model: completion.model,
+          completionTime: endTime - startTime,
+          tokens: completion.usage?.total_tokens,
+          finishReason: choice.finish_reason,
+          taskType,
+          attempt,
+        });
+
+        return response;
+
+      } catch (error: any) {
+        lastError = error;
+        const endTime = Date.now();
+        
+        logger.error(`Chat completion attempt ${attempt} failed`, {
+          error: error.message,
+          completionTime: endTime - startTime,
+          model: options.model || this.defaultModel,
+          taskType,
+          attempt: `${attempt}/${maxRetries}`,
+        });
+
+        // Wait before retry (exponential backoff)
+        if (attempt < maxRetries) {
+          const delayMs = 1000 * Math.pow(2, attempt - 1);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
       }
-
-      const response: ChatResponse = {
-        success: true,
-        content: choice.message.content || '',
-        model: completion.model,
-        usage: completion.usage,
-        finishReason: choice.finish_reason,
-        ...(choice.message.tool_calls && { toolCalls: choice.message.tool_calls }),
-      };
-
-      logger.info('Chat completion succeeded', {
-        model: completion.model,
-        completionTime: endTime - startTime,
-        tokens: completion.usage?.total_tokens,
-        finishReason: choice.finish_reason,
-      });
-
-      return response;
-
-    } catch (error: any) {
-      const endTime = Date.now();
-      
-      logger.error('Chat completion failed', {
-        error: error.message,
-        completionTime: endTime - startTime,
-        model: options.model || this.defaultModel,
-      });
-
-      return {
-        success: false,
-        content: 'Chat completion failed',
-        model: options.model || this.defaultModel,
-        error: error.message,
-      };
     }
+
+    // All retries failed
+    logger.error('All chat completion attempts failed', {
+      error: lastError?.message,
+      model: options.model || this.defaultModel,
+      taskType,
+      totalAttempts: maxRetries,
+    });
+
+    return {
+      success: false,
+      content: `Chat completion failed after ${maxRetries} attempts. Error: ${lastError?.message || 'Unknown error'}`,
+      model: options.model || this.defaultModel,
+      error: lastError?.message,
+    };
   }
 
   /**
@@ -468,6 +495,77 @@ class UnifiedOpenAIService {
       logger.error('Failed to run assistant', { error: error.message, threadId, assistantId });
       throw error;
     }
+  }
+
+  /**
+   * Legacy compatibility method for core-ai-service style calls
+   */
+  async complete(
+    messages: ChatCompletionMessageParam[],
+    taskType: string,
+    config: {
+      model?: string;
+      maxTokens?: number;
+      temperature?: number;
+      stream?: boolean;
+    } = {}
+  ): Promise<ChatResponse> {
+    const chatMessages: ChatMessage[] = messages.map(msg => ({
+      role: msg.role as any,
+      content: msg.content as string,
+      ...(('name' in msg) && { name: (msg as any).name }),
+    }));
+
+    const options: ChatOptions = {
+      model: config.model,
+      maxTokens: config.maxTokens,
+      temperature: config.temperature,
+      stream: config.stream,
+    };
+
+    return this.chat(chatMessages, options, taskType);
+  }
+
+  /**
+   * Code interpreter functionality
+   */
+  async runCodeInterpreter(prompt: string): Promise<{
+    content: string;
+    files?: any[];
+  }> {
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: this.defaultModel,
+        messages: [{ role: 'user', content: prompt }],
+        tools: [{ type: 'code_interpreter' }] as any,
+      });
+
+      const message: any = completion.choices[0].message;
+      return {
+        content: message.content || '',
+        files: (message.files as any[]) || [],
+      };
+    } catch (error: any) {
+      logger.error('Code interpreter failed', { error: error.message });
+      return {
+        content: `Code interpreter error: ${error.message}`,
+        files: [],
+      };
+    }
+  }
+
+  /**
+   * Simple prompt completion for legacy codex-style calls
+   */
+  async runSimplePrompt(prompt: string, model?: string): Promise<string> {
+    const response = await this.chat([
+      { role: 'user', content: prompt }
+    ], {
+      model: model || this.defaultModel,
+      temperature: 0.2,
+    }, 'simple-prompt');
+
+    return response.success ? response.content : `❌ Error: ${response.error}`;
   }
 
   /**

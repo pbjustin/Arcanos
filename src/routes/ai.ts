@@ -4,7 +4,7 @@ import { Router } from 'express';
 import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
-import { codeInterpreterService } from '../services/code-interpreter';
+import { getUnifiedOpenAI } from '../services/unified-openai';
 import { gameGuideService } from '../services/game-guide';
 import { recoverOutput, recoverJSON } from '../utils/output-recovery';
 
@@ -113,7 +113,8 @@ router.post('/code-interpreter', async (req, res) => {
     return sendErrorResponse(res, 400, 'Prompt is required');
   }
   try {
-    const result = await codeInterpreterService.run(prompt);
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.runCodeInterpreter(prompt);
     
     // Apply GPT-4 fallback if the code interpreter result appears malformed
     if (result && typeof result === 'object' && result.content) {
