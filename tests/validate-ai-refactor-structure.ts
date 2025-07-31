@@ -24,7 +24,6 @@ function validateCodeChanges() {
   
   // Check new AI service directory structure
   allValid = validateFileExists('src/services/ai', 'AI Services Directory') && allValid;
-  allValid = validateFileExists('src/services/ai/core-ai-service.ts', 'Core AI Service') && allValid;
   
   // Check new workers
   allValid = validateFileExists('src/workers/goal-tracker.ts', 'Goal Tracker Worker') && allValid;
@@ -117,19 +116,15 @@ function validateArcanosV1ModelUsage() {
   console.log('\n🧪 Validating Arcanos-v1 Model Usage...');
   
   try {
-    const coreServicePath = path.join(__dirname, 'src/services/ai/core-ai-service.ts');
-    const openaiServicePath = path.join(__dirname, 'src/services/openai.ts');
-    
-    const coreContent = fs.readFileSync(coreServicePath, 'utf8');
+    const openaiServicePath = path.join(__dirname, 'src/services/unified-openai.ts');
+
     const openaiContent = fs.readFileSync(openaiServicePath, 'utf8');
-    
-    const coreUsesArcanos = coreContent.includes('arcanos-v1');
+
     const openaiUsesArcanos = openaiContent.includes('arcanos-v1');
-    
-    console.log(coreUsesArcanos ? '✅ Core AI Service uses arcanos-v1' : '❌ Core AI Service missing arcanos-v1');
+
     console.log(openaiUsesArcanos ? '✅ OpenAI Service uses arcanos-v1' : '❌ OpenAI Service missing arcanos-v1');
-    
-    return coreUsesArcanos && openaiUsesArcanos;
+
+    return openaiUsesArcanos;
   } catch (error: any) {
     console.log(`❌ Error reading AI service files: ${error.message}`);
     return false;

@@ -1,6 +1,6 @@
 /**
  * Unified OpenAI Service - Single source of truth for all OpenAI operations
- * Consolidates all OpenAI integrations with latest SDK v5.11+ features
+ * Consolidates all OpenAI integrations with latest SDK v4.x features
  * 
  * Features:
  * - Latest OpenAI SDK patterns with proper error handling
