@@ -3,7 +3,7 @@
  * Streamlined memory handling following OpenAI assistant patterns
  */
 
-import { coreAIService } from './ai/core-ai-service';
+import { getUnifiedOpenAI } from './unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { databaseService } from './database';
 
@@ -139,7 +139,8 @@ class MemoryOperationsService {
       .join('\n');
 
     try {
-      const analysis = await coreAIService.complete([
+      const unifiedOpenAI = getUnifiedOpenAI();
+      const analysis = await unifiedOpenAI.complete([
         {
           role: 'system',
           content: 'Analyze the provided memory context and create a concise summary of key information, patterns, and relevant context for the current conversation.'

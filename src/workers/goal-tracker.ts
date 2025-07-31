@@ -3,7 +3,7 @@
  * Uses streaming for long-running goal analysis operations
  */
 
-import { coreAIService } from '../services/ai/core-ai-service';
+import { getUnifiedOpenAI } from '../services/unified-openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { createServiceLogger } from '../utils/logger';
 import { databaseService } from '../services/database';
@@ -94,18 +94,22 @@ Please provide:
     ];
 
     let analysisContent = '';
-    const result = await coreAIService.completeStream(
-      messages,
-      'goal-progress-analysis',
-      (token: string) => {
-        process.stdout.write(token);
-        fileStream.write(token);
-        analysisContent += token;
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.chatStream(
+      messages.map(msg => ({
+        role: msg.role as any,
+        content: msg.content as string,
+      })),
+      (token: string, isComplete: boolean) => {
+        if (!isComplete) {
+          process.stdout.write(token);
+          fileStream.write(token);
+          analysisContent += token;
+        }
       },
       {
         maxTokens: 1500,
         temperature: 0.6,
-        stream: true
       }
     );
 
@@ -154,7 +158,8 @@ Extract specific actionable recommendations and return them as a JSON array.`
       }
     ];
 
-    const result = await coreAIService.complete(messages, 'extract-recommendations', {
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.complete(messages, 'extract-recommendations', {
       maxTokens: 500,
       temperature: 0.3
     });
@@ -168,7 +173,7 @@ Extract specific actionable recommendations and return them as a JSON array.`
       return Array.isArray(recommendations) ? recommendations : [];
     } catch (error) {
       logger.warning('Failed to parse recommendations JSON', { content: result.content });
-      return result.content.split('\n').filter(line => line.trim().length > 0).slice(0, 5);
+      return result.content.split('\n').filter((line: string) => line.trim().length > 0).slice(0, 5);
     }
   }
 

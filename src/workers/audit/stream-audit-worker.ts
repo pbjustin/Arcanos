@@ -1,4 +1,4 @@
-import { coreAIService } from '../../services/ai/core-ai-service';
+import { getUnifiedOpenAI } from '../../services/unified-openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import fs from 'fs';
 import path from 'path';
@@ -43,19 +43,22 @@ export async function runStreamAudit({ message, domain = 'general', logFilePath 
 
   try {
     let fullResponse = '';
-    const result = await coreAIService.completeStream(
-      messages,
-      'audit-stream',
-      (token: string) => {
-        process.stdout.write(token);
-        fileStream.write(token);
-        fullResponse += token;
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.chatStream(
+      messages.map(msg => ({
+        role: msg.role as any,
+        content: msg.content as string,
+      })),
+      (token: string, isComplete: boolean) => {
+        if (!isComplete) {
+          process.stdout.write(token);
+          fileStream.write(token);
+          fullResponse += token;
+        }
       },
       {
         maxTokens: 2000,
         temperature: 0.4,
-        stream: true,
-        maxRetries: 3
       }
     );
 

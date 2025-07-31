@@ -1,4 +1,4 @@
-import { coreAIService } from '../../services/ai/core-ai-service';
+import { getUnifiedOpenAI } from '../../services/unified-openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import fs from 'fs';
 import path from 'path';
@@ -71,24 +71,28 @@ async function generateEmailBody({
     { role: 'user', content: message }
   ];
 
-  logger.info('Generating email body with core AI service', { type, stream });
+  logger.info('Generating email body with unified AI service', { type, stream });
 
   try {
+    const unifiedOpenAI = getUnifiedOpenAI();
+    
     if (stream) {
       let fullResponse = '';
-      const result = await coreAIService.completeStream(
-        messages,
-        `email-${type}-stream`,
-        (token: string) => {
-          process.stdout.write(token);
-          fileStream.write(token);
-          fullResponse += token;
+      const result = await unifiedOpenAI.chatStream(
+        messages.map(msg => ({
+          role: msg.role as any,
+          content: msg.content as string,
+        })),
+        (token: string, isComplete: boolean) => {
+          if (!isComplete) {
+            process.stdout.write(token);
+            fileStream.write(token);
+            fullResponse += token;
+          }
         },
         {
           maxTokens: 1500,
           temperature: 0.6,
-          stream: true,
-          maxRetries: 3
         }
       );
 
@@ -108,13 +112,12 @@ async function generateEmailBody({
       return fullResponse;
     }
 
-    const result = await coreAIService.complete(
+    const result = await unifiedOpenAI.complete(
       messages, 
       `email-${type}`,
       {
         maxTokens: 1500,
         temperature: 0.6,
-        maxRetries: 3
       }
     );
 
