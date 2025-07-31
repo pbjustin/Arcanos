@@ -1,6 +1,6 @@
 # Multi-stage build for Railway BuildKit compatibility
 # Build stage
-FROM node:18-alpine AS builder
+FROM node:20.11.1-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -30,7 +30,7 @@ RUN if [ -f package-lock.json ]; then \
 RUN npm run build
 
 # Production stage
-FROM node:18-alpine AS production
+FROM node:20.11.1-alpine AS production
 
 # Set production environment
 ENV NODE_ENV=production

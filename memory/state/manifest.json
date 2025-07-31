@@ -1,17 +1,10 @@
 [
   {
-    "event": "worker_register",
-    "id": "worker-maintenance",
-    "task": "awaiting_job",
-    "status": "idle",
-    "timestamp": "2025-07-30T22:11:49.683Z"
-  },
-  {
     "event": "worker_update",
     "id": "worker-maintenance",
     "task": "awaiting_job",
     "status": "idle",
-    "timestamp": "2025-07-30T22:12:19.301Z"
+    "timestamp": "2025-07-31T05:34:47.003Z"
   }
 ]
 ]
