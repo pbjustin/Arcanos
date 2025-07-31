@@ -1,9 +1,10 @@
 /**
  * OpenAI SDK-Compatible Memory Operations
  * Streamlined memory handling following OpenAI assistant patterns
+ * Updated to use unified OpenAI service
  */
 
-import { coreAIService } from './ai/core-ai-service';
+import { getUnifiedOpenAI } from './unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { databaseService } from './database';
 
@@ -139,7 +140,8 @@ class MemoryOperationsService {
       .join('\n');
 
     try {
-      const analysis = await coreAIService.complete([
+      const unifiedOpenAI = getUnifiedOpenAI();
+      const analysis = await unifiedOpenAI.chat([
         {
           role: 'system',
           content: 'Analyze the provided memory context and create a concise summary of key information, patterns, and relevant context for the current conversation.'
@@ -148,9 +150,7 @@ class MemoryOperationsService {
           role: 'user',
           content: `Memory context:\n${memoryContent}`
         }
-      ], 'memory-analysis', {
-        model: 'gpt-4-turbo',
-        temperature: 0.3,
+      ], {
         maxTokens: 500
       });
 

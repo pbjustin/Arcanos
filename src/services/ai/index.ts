@@ -1,12 +1,12 @@
 /**
  * AI Services - Main entry point for AI reflection and services
  * Exports reflect function for the AI Reflection Scheduler
+ * Updated to use unified OpenAI service for consistency
  */
 
-import { coreAIService } from './core-ai-service';
+import { getUnifiedOpenAI, type ChatMessage } from '../unified-openai';
 import { selfReflectionService } from '../self-reflection';
 import { saveMemory } from '../memory';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export interface ReflectionOptions {
   label: string;
@@ -43,7 +43,7 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
   } = options;
 
   // Create reflection prompt
-  const messages: ChatCompletionMessageParam[] = [
+  const messages: ChatMessage[] = [
     {
       role: 'system',
       content: `You are performing a self-reflection as an AI system. Analyze your current state, recent interactions, and performance. Provide insights about:
@@ -61,8 +61,9 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
     }
   ];
 
-  // Get AI reflection
-  const aiResponse = await coreAIService.complete(messages, 'self-reflection', {
+  // Get AI reflection using unified OpenAI service
+  const unifiedOpenAI = getUnifiedOpenAI();
+  const aiResponse = await unifiedOpenAI.chat(messages, {
     maxTokens: 2000,
     temperature: 0.3
   });
@@ -109,5 +110,5 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
   return snapshot;
 }
 
-// Re-export core AI service for direct access
-export { coreAIService } from './core-ai-service';
+// Export getUnifiedOpenAI for compatibility
+export { getUnifiedOpenAI } from '../unified-openai';

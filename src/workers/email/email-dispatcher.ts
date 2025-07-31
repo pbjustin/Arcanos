@@ -1,5 +1,4 @@
-import { coreAIService } from '../../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { getUnifiedOpenAI, type ChatMessage } from '../../services/unified-openai';
 import fs from 'fs';
 import path from 'path';
 import { createServiceLogger } from '../../utils/logger';
@@ -66,7 +65,7 @@ async function generateEmailBody({
   const finalLogPath = logFilePath || path.join(logDir, `email_${Date.now()}.log`);
   const fileStream = fs.createWriteStream(finalLogPath, { flags: 'a' });
 
-  const messages: ChatCompletionMessageParam[] = [
+  const messages: ChatMessage[] = [
     { role: 'system', content: buildSystemPrompt(type) },
     { role: 'user', content: message }
   ];
@@ -74,21 +73,22 @@ async function generateEmailBody({
   logger.info('Generating email body with core AI service', { type, stream });
 
   try {
+    const unifiedOpenAI = getUnifiedOpenAI();
+    
     if (stream) {
       let fullResponse = '';
-      const result = await coreAIService.completeStream(
+      const result = await unifiedOpenAI.chatStream(
         messages,
-        `email-${type}-stream`,
-        (token: string) => {
-          process.stdout.write(token);
-          fileStream.write(token);
-          fullResponse += token;
+        (token: string, isComplete: boolean) => {
+          if (!isComplete) {
+            process.stdout.write(token);
+            fileStream.write(token);
+            fullResponse += token;
+          }
         },
         {
           maxTokens: 1500,
-          temperature: 0.6,
-          stream: true,
-          maxRetries: 3
+          temperature: 0.6
         }
       );
 
@@ -108,13 +108,11 @@ async function generateEmailBody({
       return fullResponse;
     }
 
-    const result = await coreAIService.complete(
+    const result = await unifiedOpenAI.chat(
       messages, 
-      `email-${type}`,
       {
         maxTokens: 1500,
-        temperature: 0.6,
-        maxRetries: 3
+        temperature: 0.6
       }
     );
 
