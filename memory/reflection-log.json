@@ -1,18 +1,18 @@
 {
-  "timestamp": "2025-07-31T22:39:43.922Z",
+  "timestamp": "2025-07-31T22:43:37.088Z",
   "systemState": {
     "memoryUsage": {
-      "rss": 259067904,
-      "heapTotal": 177590272,
-      "heapUsed": 154005848,
-      "external": 7763974,
-      "arrayBuffers": 4694711
+      "rss": 258805760,
+      "heapTotal": 176906240,
+      "heapUsed": 151815656,
+      "external": 7735735,
+      "arrayBuffers": 4678607
     },
-    "uptime": 2.367786639,
+    "uptime": 3.630286723,
     "nodeVersion": "v20.19.4",
     "platform": "linux"
   },
-  "aiReflection": "Reflection generation error: 401 Incorrect API key provided: mock-tes*-key. You can find your API key at https://platform.openai.com/account/api-keys.",
+  "aiReflection": "Reflection generation error: OPENAI_API_KEY environment variable is required",
   "model": "gpt-4",
   "scheduledRun": true,
   "metadata": {
