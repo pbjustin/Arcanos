@@ -6,6 +6,7 @@ import { diagnosticHandler } from '../handlers/diagnostic-handler';
 import { writeHandler } from '../handlers/write-handler';
 import { routeRecovery } from '../handlers/route-recovery';
 import { getChatGPTUserDiagnostics } from '../middleware/chatgpt-user';
+import { getPagedOutputHandler } from '../modules/paged-output-handler';
 
 const router = Router();
 
@@ -94,7 +95,7 @@ router.get('/route-status', (req, res) => {
 // Audit logs endpoint
 router.get('/audit-logs', (req, res) => {
   const writeLogType = req.query.type as string;
-  
+
   let logs: any = {};
   
   if (!writeLogType || writeLogType === 'write') {
@@ -110,11 +111,19 @@ router.get('/audit-logs', (req, res) => {
     logs.diagnostic_activity = diagnosticHandler.getDiagnosticLogs().slice(-20);
     logs.readiness_status = diagnosticHandler.getReadinessStatus();
   }
-  
-  res.json({
+
+  const result = {
     ...logs,
     timestamp: new Date().toISOString()
-  });
+  };
+
+  const paged = getPagedOutputHandler();
+  if (paged) {
+    const pages = paged.paginate(JSON.stringify(result));
+    res.json({ pages, paged: true });
+  } else {
+    res.json(result);
+  }
 });
 
 // ChatGPT-User middleware diagnostics
