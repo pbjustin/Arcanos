@@ -49,6 +49,9 @@ import './services/database-connection';
 import './services/cron-worker';
 import './worker-init';
 
+// Import AI reflection handler (initializes 7:00 AM daily schedule)
+import './services/backend-ai-reflection-handler';
+
 // Import sleep manager
 import { sleepManager } from './services/sleep-manager';
 
@@ -263,6 +266,9 @@ export { getCoreSleepWindow } from './services/sleep-config';
 // Export email service functions for global access
 export { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from './services/email';
 export { selfReflectionService } from './services/self-reflection';
+
+// Export backend AI reflection handler
+export { reflectIfScheduled } from './services/backend-ai-reflection-handler';
 
 // Export game guide storage functionality
 export { saveGameGuide } from './services/game-guides';
