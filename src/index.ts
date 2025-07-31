@@ -4,7 +4,8 @@
 import express from 'express';
 import path from 'path';
 import bodyParser from 'body-parser';
-import cors from 'cors';
+import { safeImport } from './utils/safeImport';
+const cors = safeImport<typeof import('cors')>('cors');
 
 // Centralized configuration
 import { config, validateConfig, getEnvironmentStatus } from './config';
@@ -83,7 +84,11 @@ if (process.env.ADMIN_KEY) {
 }
 
 // Middleware stack
-app.use(cors());
+if (cors) {
+  app.use(cors());
+} else {
+  console.warn('⚠️ CORS middleware unavailable');
+}
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(performanceMiddleware); // Add performance tracking
