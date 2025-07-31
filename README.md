@@ -33,6 +33,10 @@ npm audit fix
    ```bash
    npm install
    ```
+   If you run behind a proxy or firewall, make sure outbound access to
+   `registry.npmjs.org` is allowed. You can also set the environment
+   variable `ALLOW_NETWORK=true` so the safe module loader skips network
+   warnings during development.
 
 3. **Environment configuration**
    ```bash
