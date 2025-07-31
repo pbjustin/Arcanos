@@ -1,24 +1,20 @@
 import { Router } from 'express';
 import { sleepManager } from '../services/sleep-manager';
 import { getCurrentSleepWindowStatus, logSleepWindowStatus } from '../services/sleep-config';
+import { diagnosticsService } from '../services/diagnostics';
 
 const router = Router();
 
 router.get('/diagnostics', async (_req, res) => {
   try {
-    const result = {
-      last_run: new Date().toISOString(),
-      status: 'healthy',
-      active_agents: ['ARCANOS Overseer', 'Runtime Companion'],
-      pending_tasks: 2,
-      errors: [] as string[],
-    };
-
-    res.json(result);
+    const result = await diagnosticsService.executeDiagnosticCommand('system health');
+    const json = JSON.stringify(result, null, 2);
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).end(json);
   } catch (error: any) {
+    console.error('[Diagnostics Error]', error);
     res.status(500).json({
-      status: 'error',
-      message: 'Diagnostics failed',
+      error: 'Failed to run diagnostics',
       details: error.message,
     });
   }
