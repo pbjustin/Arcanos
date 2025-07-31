@@ -7,12 +7,21 @@ import { handleAudit } from './services/audit';
 import { diagnosticsService } from './services/diagnostics';
 import { handleLogic as handleGenericLogic } from './routes/logic';
 import { installNLPInterpreter, getNLPInterpreter } from './modules/nlp-interpreter';
+import { installPagedOutputHandler, getPagedOutputHandler } from './modules/paged-output-handler';
 
 // Install NLP interpreter with default configuration
 installNLPInterpreter({
   enablePromptTranslation: true,
   autoResolveIntents: true,
   fallbackToStructuredMode: true,
+});
+
+// Install paged output handler for chunked responses
+installPagedOutputHandler({
+  maxPayloadSize: 2048,
+  chunkPrefix: '[LOG]',
+  enableContinuationFlag: true,
+  syncContextMemory: true,
 });
 
 export async function dispatcher(req: Request, res: Response) {
@@ -30,30 +39,48 @@ export async function dispatcher(req: Request, res: Response) {
       }
     }
 
+    const paged = getPagedOutputHandler();
+
     switch (routeType) {
-      case 'codex':
+      case 'codex': {
+        const result = await handleCodexPrompt(req.body);
+        const pages = paged ? paged.paginate(typeof result === 'string' ? result : JSON.stringify(result)) : undefined;
         return res.json({
           status: '✅ Codex handled',
-          result: await handleCodexPrompt(req.body),
+          result,
+          pages,
         });
+      }
 
-      case 'audit':
+      case 'audit': {
+        const result = await handleAudit(req.body);
+        const pages = paged ? paged.paginate(typeof result === 'string' ? result : JSON.stringify(result)) : undefined;
         return res.json({
           status: '🧠 Audit processed',
-          result: await handleAudit(req.body),
+          result,
+          pages,
         });
+      }
 
-      case 'diagnostic':
+      case 'diagnostic': {
+        const result = await diagnosticsService.executeDiagnosticCommand(message || 'system health');
+        const pages = paged ? paged.paginate(typeof result === 'string' ? result : JSON.stringify(result)) : undefined;
         return res.json({
           status: '🩺 Diagnostic processed',
-          result: await diagnosticsService.executeDiagnosticCommand(message || 'system health'),
+          result,
+          pages,
         });
+      }
 
-      default:
+      default: {
+        const result = await handleGenericLogic(req.body);
+        const pages = paged ? paged.paginate(typeof result === 'string' ? result : JSON.stringify(result)) : undefined;
         return res.json({
           status: '⚙️ Default logic mode triggered',
-          result: await handleGenericLogic(req.body),
+          result,
+          pages,
         });
+      }
     }
   } catch (err: any) {
     return res.status(500).json({
