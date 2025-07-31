@@ -14,15 +14,6 @@
  */
 
 import OpenAI from 'openai';
-// Ensure fetch API is available in all Node.js environments
-import fetch, { Headers, Request, Response } from 'node-fetch';
-
-if (!globalThis.fetch) {
-  (globalThis as any).fetch = fetch as any;
-  (globalThis as any).Headers = Headers as any;
-  (globalThis as any).Request = Request as any;
-  (globalThis as any).Response = Response as any;
-}
 import type { 
   ChatCompletionCreateParams,
   ChatCompletionMessageParam,

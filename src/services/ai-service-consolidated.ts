@@ -20,23 +20,6 @@ function getOpenAIService() {
 }
 
 /**
- * Legacy codex prompt runner - now uses unified service
- * @deprecated Use openaiService.runPrompt directly
- */
-export async function runCodexPrompt(prompt: string, model = 'gpt-4'): Promise<string> {
-  try {
-    const openaiService = getOpenAIService();
-    if (!openaiService) {
-      return '❌ OpenAI service unavailable - running in mock mode';
-    }
-    return await openaiService.runPrompt(prompt, model, 0.2);
-  } catch (error: any) {
-    logger.error('Codex prompt failed:', error.message);
-    return '❌ Codex request failed.';
-  }
-}
-
-/**
  * Code interpreter service - now uses unified service
  */
 export class CodeInterpreterService {
