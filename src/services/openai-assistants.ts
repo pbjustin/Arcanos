@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { getUnifiedOpenAI } from './unified-openai';
 import fs from 'fs';
 import path from 'path';
 
@@ -15,19 +15,18 @@ export interface AssistantMap {
 }
 
 export class OpenAIAssistantsService {
-  private client?: OpenAI;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null;
   private configPath: string;
 
   constructor() {
     this.configPath = path.join(process.cwd(), 'config', 'assistants.json');
 
-    // Only initialize OpenAI client if API key is available
-    if (process.env.OPENAI_API_KEY) {
-      this.client = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-      });
-    } else {
-      console.warn('[ASSISTANT-SYNC] OPENAI_API_KEY not provided - sync functionality will be limited');
+    // Use unified OpenAI service for consistency
+    try {
+      this.unifiedOpenAI = getUnifiedOpenAI();
+    } catch (error) {
+      console.warn('[ASSISTANT-SYNC] OpenAI service unavailable - sync functionality will be limited');
+      this.unifiedOpenAI = null;
     }
   }
 
@@ -54,14 +53,15 @@ export class OpenAIAssistantsService {
    * Fetch all assistants from OpenAI API
    */
   async fetchAssistants(): Promise<AssistantData[]> {
-    if (!this.client) {
-      throw new Error('OpenAI client not initialized - missing OPENAI_API_KEY');
+    if (!this.unifiedOpenAI) {
+      throw new Error('OpenAI service not initialized - missing OPENAI_API_KEY');
     }
 
     try {
       console.log('[ASSISTANT-SYNC] Fetching assistants from OpenAI API...');
       
-      const response = await this.client.beta.assistants.list({
+      const client = this.unifiedOpenAI.getClient();
+      const response = await client.beta.assistants.list({
         limit: 100, // Fetch up to 100 assistants
       });
 

@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { getUnifiedOpenAI } from './unified-openai';
 
 export interface CodeInterpreterResult {
   content: string;
@@ -6,29 +6,27 @@ export interface CodeInterpreterResult {
 }
 
 export class CodeInterpreterService {
-  private client: OpenAI;
+  private unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI>;
   private model: string;
 
   constructor() {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY is required');
-    }
-
-    this.client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    this.unifiedOpenAI = getUnifiedOpenAI();
     this.model = process.env.CODE_INTERPRETER_MODEL || 'gpt-4o';
   }
 
   async run(prompt: string): Promise<CodeInterpreterResult> {
-    const completion = await this.client.chat.completions.create({
+    const tools = [{ type: 'code_interpreter' as const }];
+    
+    const response = await this.unifiedOpenAI.chat([
+      { role: 'user', content: prompt }
+    ], {
       model: this.model,
-      messages: [{ role: 'user', content: prompt }],
-      tools: [{ type: 'code_interpreter' }] as any,
+      tools: tools as any
     });
 
-    const message: any = completion.choices[0].message;
     return {
-      content: message.content || '',
-      files: (message.files as any[]) || [],
+      content: response.content || '',
+      files: response.toolCalls || [],
     };
   }
 }

@@ -1,10 +1,10 @@
 /**
  * Maintenance Scheduler Worker - AI-driven system maintenance using OpenAI SDK
  * Handles automated system maintenance, cleanup, and optimization tasks
+ * Updated to use unified OpenAI service
  */
 
-import { coreAIService } from '../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { getUnifiedOpenAI, type ChatMessage } from '../services/unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { sanitizeJsonString } from '../utils/json';
 import fs from 'fs';
@@ -225,7 +225,7 @@ class MaintenanceSchedulerWorker {
   }> {
     const systemInfo = await this.gatherSystemInformation();
     
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: `You are ARCANOS performing system maintenance analysis. Your task is to:
@@ -260,13 +260,15 @@ Please analyze and provide:
     ];
 
     let analysisContent = '';
-    const result = await coreAIService.completeStream(
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.chatStream(
       messages,
-      `maintenance-${task.category}`,
-      (token: string) => {
-        process.stdout.write(token);
-        fileStream.write(token);
-        analysisContent += token;
+      (token: string, isComplete: boolean) => {
+        if (!isComplete) {
+          process.stdout.write(token);
+          fileStream.write(token);
+          analysisContent += token;
+        }
       },
       {
         maxTokens: 2000,
@@ -324,7 +326,7 @@ Please analyze and provide:
     actions: string[];
     recommendations: string[];
   }> {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: 'Extract maintenance information from the analysis and return as JSON with keys: issues, actions, recommendations (all arrays of strings).'
@@ -335,7 +337,8 @@ Please analyze and provide:
       }
     ];
 
-    const result = await coreAIService.complete(messages, 'extract-maintenance-actions', {
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.chat(messages, {
       maxTokens: 500,
       temperature: 0.2
     });

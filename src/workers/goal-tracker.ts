@@ -1,10 +1,10 @@
 /**
  * Goal Tracker Worker - Monitors and tracks user goals using OpenAI SDK
  * Uses streaming for long-running goal analysis operations
+ * Updated to use unified OpenAI service
  */
 
-import { coreAIService } from '../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { getUnifiedOpenAI, type ChatMessage } from '../services/unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { databaseService } from '../services/database';
 import fs from 'fs';
@@ -58,7 +58,7 @@ class GoalTrackerWorker {
     const logPath = path.join(this.logDir, `goal-analysis-${goal.id}-${Date.now()}.log`);
     const fileStream = fs.createWriteStream(logPath, { flags: 'a' });
 
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: `You are ARCANOS analyzing user goal progress. Provide actionable insights and recommendations.
@@ -94,13 +94,15 @@ Please provide:
     ];
 
     let analysisContent = '';
-    const result = await coreAIService.completeStream(
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.chatStream(
       messages,
-      'goal-progress-analysis',
-      (token: string) => {
-        process.stdout.write(token);
-        fileStream.write(token);
-        analysisContent += token;
+      (token: string, isComplete: boolean) => {
+        if (!isComplete) {
+          process.stdout.write(token);
+          fileStream.write(token);
+          analysisContent += token;
+        }
       },
       {
         maxTokens: 1500,
@@ -141,7 +143,7 @@ Please provide:
    * Extract actionable recommendations from analysis content
    */
   private async extractRecommendations(analysisContent: string): Promise<string[]> {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: 'Extract 3-5 specific, actionable recommendations from the goal analysis. Return as a JSON array of strings.'
@@ -154,7 +156,8 @@ Extract specific actionable recommendations and return them as a JSON array.`
       }
     ];
 
-    const result = await coreAIService.complete(messages, 'extract-recommendations', {
+    const unifiedOpenAI = getUnifiedOpenAI();
+    const result = await unifiedOpenAI.chat(messages, {
       maxTokens: 500,
       temperature: 0.3
     });

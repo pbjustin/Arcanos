@@ -1,5 +1,4 @@
-import { coreAIService } from '../../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { getUnifiedOpenAI, type ChatMessage } from '../../services/unified-openai';
 import fs from 'fs';
 import path from 'path';
 import { createServiceLogger } from '../../utils/logger';
@@ -34,7 +33,7 @@ export async function runStreamAudit({ message, domain = 'general', logFilePath 
   const finalLogPath = logFilePath || path.join(logDir, `audit_${Date.now()}.log`);
   const fileStream = fs.createWriteStream(finalLogPath, { flags: 'a' });
 
-  const messages: ChatCompletionMessageParam[] = [
+  const messages: ChatMessage[] = [
     { role: 'system', content: buildSystemPrompt(domain) },
     { role: 'user', content: message }
   ];
@@ -42,20 +41,20 @@ export async function runStreamAudit({ message, domain = 'general', logFilePath 
   logger.info('Starting streamed audit with retry logic', { domain, logPath: finalLogPath });
 
   try {
+    const unifiedOpenAI = getUnifiedOpenAI();
     let fullResponse = '';
-    const result = await coreAIService.completeStream(
+    const result = await unifiedOpenAI.chatStream(
       messages,
-      'audit-stream',
-      (token: string) => {
-        process.stdout.write(token);
-        fileStream.write(token);
-        fullResponse += token;
+      (token: string, isComplete: boolean) => {
+        if (!isComplete) {
+          process.stdout.write(token);
+          fileStream.write(token);
+          fullResponse += token;
+        }
       },
       {
         maxTokens: 2000,
-        temperature: 0.4,
-        stream: true,
-        maxRetries: 3
+        temperature: 0.4
       }
     );
 
