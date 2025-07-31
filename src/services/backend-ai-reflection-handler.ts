@@ -1,4 +1,4 @@
-// Backend AI Reflection Handler (Scheduled for 7:00 AM Server Sleep)
+// Backend AI Reflection Handler (Scheduled for 8:30 AM Server Sleep)
 import { schedule } from 'node-cron';
 import * as fs from 'fs';
 import path from 'path';
@@ -27,8 +27,8 @@ if (!fs.existsSync(memoryDir)) {
   fs.mkdirSync(memoryDir, { recursive: true });
 }
 
-// Schedule reflections at 7:00 AM daily
-schedule('0 7 * * *', () => {
+// Schedule reflections at 8:30 AM daily
+schedule('30 8 * * *', () => {
   allowRuntimeReflection = true;
   performSelfReflection();
   allowRuntimeReflection = false;
@@ -55,7 +55,7 @@ async function generateReflection(): Promise<any> {
         reflection: `Daily AI self-reflection completed at ${new Date().toISOString()}. 
         
 System Status:
-- AI reflection handler is operational and scheduled for 7:00 AM daily
+- AI reflection handler is operational and scheduled for 8:30 AM daily
 - Backend services are running and monitoring system performance
 - Memory management and logging systems are active
 - Ready to provide AI insights and system introspection when OpenAI API is configured
@@ -69,7 +69,7 @@ Performance Insights:
 Note: This is a fallback reflection. For enhanced AI-generated insights, configure OPENAI_API_KEY environment variable.`,
         model: 'fallback-mode',
         type: 'daily_reflection',
-        scheduledTime: '7:00 AM',
+        scheduledTime: '8:30 AM',
         fallbackMode: true,
         systemStatus: {
           memoryUsage: process.memoryUsage(),
@@ -101,7 +101,7 @@ Note: This is a fallback reflection. For enhanced AI-generated insights, configu
       reflection: response.choices[0]?.message?.content || 'No reflection content generated',
       model: response.model,
       type: 'daily_reflection',
-      scheduledTime: '7:00 AM',
+      scheduledTime: '8:30 AM',
       systemStatus: {
         memoryUsage: process.memoryUsage(),
         uptime: process.uptime(),
@@ -116,7 +116,7 @@ Note: This is a fallback reflection. For enhanced AI-generated insights, configu
       reflection: 'Failed to generate reflection due to error: ' + error.message,
       error: true,
       type: 'daily_reflection',
-      scheduledTime: '7:00 AM'
+      scheduledTime: '8:30 AM'
     };
   }
 }
