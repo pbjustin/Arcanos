@@ -3,10 +3,10 @@
  * Exports reflect function for the AI Reflection Scheduler
  */
 
-import { coreAIService } from './core-ai-service';
+import { coreAIService } from '../ai-service-consolidated';
 import { selfReflectionService } from '../self-reflection';
 import { saveMemory } from '../memory';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import type { ChatMessage } from '../unified-openai';
 
 export interface ReflectionOptions {
   label: string;
@@ -43,7 +43,7 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
   } = options;
 
   // Create reflection prompt
-  const messages: ChatCompletionMessageParam[] = [
+  const messages: ChatMessage[] = [
     {
       role: 'system',
       content: `You are performing a self-reflection as an AI system. Analyze your current state, recent interactions, and performance. Provide insights about:
@@ -109,5 +109,5 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
   return snapshot;
 }
 
-// Re-export core AI service for direct access
-export { coreAIService } from './core-ai-service';
+// Re-export consolidated AI service for direct access
+export { coreAIService } from '../ai-service-consolidated';
