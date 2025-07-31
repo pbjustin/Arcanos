@@ -3,7 +3,7 @@
  * Streamlined memory handling following OpenAI assistant patterns
  */
 
-import { coreAIService } from './ai/core-ai-service';
+import { coreAIService } from './ai-service-consolidated';
 import { createServiceLogger } from '../utils/logger';
 import { databaseService } from './database';
 

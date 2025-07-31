@@ -1,7 +1,7 @@
-// AI Worker System Refactor - OpenAI SDK v1.0.0 Compatible
+// AI Worker System Refactor - Using Unified OpenAI Service
 // Unified worker orchestration with modular control hooks and fallback dispatch
 
-import OpenAI from 'openai';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { validateWorkerTask } from '../utils/worker-validation';
 
@@ -125,7 +125,7 @@ export interface OptimizedScheduleFormat {
 
 // Refactored AI Worker System
 export class RefactoredAIWorkerSystem {
-  private openai: OpenAI;
+  private unifiedAI: ReturnType<typeof getUnifiedOpenAI>;
   private config: WorkerSystemConfig;
   private controlHooks: ModularControlHooks;
   private fallbackDispatch: UnifiedFallbackDispatch;
@@ -137,22 +137,18 @@ export class RefactoredAIWorkerSystem {
     this.controlHooks = new ModularControlHooks();
     this.fallbackDispatch = new UnifiedFallbackDispatch();
 
-    // Initialize OpenAI with enhanced error handling
-    const apiKey = config.openaiApiKey || process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required for AI worker system');
-    }
-
-    this.openai = new OpenAI({
-      apiKey,
+    // Initialize Unified OpenAI service
+    this.unifiedAI = getUnifiedOpenAI({
+      apiKey: config.openaiApiKey || process.env.OPENAI_API_KEY,
+      model: config.model,
       timeout: config.timeout || 30000,
-      maxRetries: config.maxRetries || 2
+      maxRetries: config.maxRetries || 2,
     });
 
     this.setupDefaultHooks();
     this.setupDefaultFallbacks();
 
-    logger.info('Refactored AI Worker System initialized', {
+    logger.info('Refactored AI Worker System initialized with unified service', {
       model: config.model || 'default',
       timeout: config.timeout || 30000,
       maxRetries: config.maxRetries || 2
@@ -181,23 +177,24 @@ export class RefactoredAIWorkerSystem {
     this.controlHooks.registerHook('orchestrate', async (task: any) => {
       const validatedTask = validateWorkerTask(task);
       
-      const response = await this.openai.chat.completions.create({
+      const messages: ChatMessage[] = [
+        {
+          role: 'system',
+          content: 'You are a worker orchestration system. Process the worker task and return appropriate instructions.'
+        },
+        {
+          role: 'user',
+          content: `Orchestrate worker: ${validatedTask.name} with parameters: ${JSON.stringify(validatedTask.parameters || {})}`
+        }
+      ];
+
+      const response = await this.unifiedAI.chat(messages, {
         model: this.config.model || 'gpt-4-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a worker orchestration system. Process the worker task and return appropriate instructions.'
-          },
-          {
-            role: 'user',
-            content: `Orchestrate worker: ${validatedTask.name} with parameters: ${JSON.stringify(validatedTask.parameters || {})}`
-          }
-        ],
         temperature: 0.3,
-        max_tokens: 500
+        maxTokens: 500,
       });
 
-      return response.choices[0]?.message?.content || 'Orchestration completed';
+      return response.success ? response.content : 'Orchestration completed';
     });
 
     // Fallback hook for undefined operations
@@ -277,7 +274,7 @@ export class RefactoredAIWorkerSystem {
     return {
       workers: this.workers.size,
       hooks: this.controlHooks.listHooks(),
-      openaiConnected: !!this.openai,
+      unifiedAIConnected: !!this.unifiedAI,
       model: this.config.model,
       registeredWorkers: Array.from(this.workers.keys())
     };

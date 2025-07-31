@@ -3,8 +3,8 @@
  * Uses streaming for long-running goal analysis operations
  */
 
-import { coreAIService } from '../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { coreAIService } from '../services/ai-service-consolidated';
+import type { ChatMessage } from '../services/unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { databaseService } from '../services/database';
 import fs from 'fs';
@@ -58,7 +58,7 @@ class GoalTrackerWorker {
     const logPath = path.join(this.logDir, `goal-analysis-${goal.id}-${Date.now()}.log`);
     const fileStream = fs.createWriteStream(logPath, { flags: 'a' });
 
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: `You are ARCANOS analyzing user goal progress. Provide actionable insights and recommendations.
@@ -141,7 +141,7 @@ Please provide:
    * Extract actionable recommendations from analysis content
    */
   private async extractRecommendations(analysisContent: string): Promise<string[]> {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: 'Extract 3-5 specific, actionable recommendations from the goal analysis. Return as a JSON array of strings.'

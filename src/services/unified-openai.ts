@@ -1,15 +1,16 @@
 /**
- * Unified OpenAI Service - Consolidates all OpenAI integrations with latest SDK features
- * Replaces multiple competing implementations with a single, comprehensive service
+ * Unified OpenAI Service - Single source of truth for all OpenAI operations
+ * Consolidates all OpenAI integrations with latest SDK v5.11+ features
  * 
  * Features:
- * - Latest OpenAI SDK v5+ patterns
- * - Streaming support with proper error handling
- * - Function calling capabilities
- * - Tools/Assistants API support
- * - Comprehensive retry logic and error boundaries
+ * - Latest OpenAI SDK patterns with proper error handling
+ * - Streaming support with real-time token delivery
+ * - Function calling and tools integration
+ * - Assistants API with thread management
+ * - Comprehensive retry logic and circuit breakers
  * - Memory optimization and connection pooling
- * - Full observability and logging
+ * - Full observability, logging, and token tracking
+ * - Code interpreter and file handling support
  */
 
 import OpenAI from 'openai';
@@ -104,8 +105,25 @@ interface ThreadMessage {
   content: string;
 }
 
+// Code interpreter interfaces
+interface CodeInterpreterResult {
+  content: string;
+  files?: any[];
+  toolCalls?: any[];
+}
+
 // Streaming callback type
 type StreamCallback = (chunk: string, isComplete: boolean) => void;
+
+// Service statistics for monitoring
+interface ServiceStats {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  totalTokensUsed: number;
+  averageResponseTime: number;
+  lastRequestTime?: string;
+}
 
 /**
  * Unified OpenAI Service - Single source of truth for all OpenAI operations
@@ -114,6 +132,8 @@ class UnifiedOpenAIService {
   private client: OpenAI;
   private defaultModel: string;
   private defaultConfig: Required<Omit<OpenAIConfig, 'apiKey' | 'baseURL'>>;
+  private stats: ServiceStats;
+  private requestTimes: number[];
 
   constructor(config: OpenAIConfig = {}) {
     // Validate API key
@@ -126,7 +146,7 @@ class UnifiedOpenAIService {
     this.client = new OpenAI({
       apiKey,
       baseURL: config.baseURL,
-      timeout: config.timeout || 30000,
+      timeout: config.timeout || 60000, // Increased timeout
       maxRetries: config.maxRetries || 3,
     });
 
@@ -134,11 +154,21 @@ class UnifiedOpenAIService {
     this.defaultModel = config.model || process.env.AI_MODEL || 'gpt-4-turbo-preview';
     this.defaultConfig = {
       model: this.defaultModel,
-      maxTokens: config.maxTokens || 1000,
+      maxTokens: config.maxTokens || 2000, // Increased default
       temperature: config.temperature || 0.7,
-      timeout: config.timeout || 30000,
+      timeout: config.timeout || 60000,
       maxRetries: config.maxRetries || 3,
     };
+
+    // Initialize stats
+    this.stats = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      totalTokensUsed: 0,
+      averageResponseTime: 0,
+    };
+    this.requestTimes = [];
 
     logger.info('Unified OpenAI Service initialized', {
       model: this.defaultModel,
@@ -147,8 +177,29 @@ class UnifiedOpenAIService {
     });
   }
 
+  private updateStats(responseTime: number, success: boolean, tokensUsed: number = 0): void {
+    this.stats.totalRequests++;
+    this.stats.lastRequestTime = new Date().toISOString();
+    this.stats.totalTokensUsed += tokensUsed;
+
+    if (success) {
+      this.stats.successfulRequests++;
+    } else {
+      this.stats.failedRequests++;
+    }
+
+    // Track response times (keep last 100)
+    this.requestTimes.push(responseTime);
+    if (this.requestTimes.length > 100) {
+      this.requestTimes.shift();
+    }
+
+    // Calculate average response time
+    this.stats.averageResponseTime = this.requestTimes.reduce((a, b) => a + b, 0) / this.requestTimes.length;
+  }
+
   /**
-   * Standard chat completion with comprehensive error handling
+   * Standard chat completion with comprehensive error handling and monitoring
    */
   async chat(
     messages: ChatMessage[],
@@ -167,7 +218,7 @@ class UnifiedOpenAIService {
         ...(msg.tool_call_id && { tool_call_id: msg.tool_call_id }),
       }));
 
-      // Prepare completion parameters
+      // Prepare completion parameters with enhanced defaults
       const params: ChatCompletionCreateParams = {
         model: options.model || this.defaultModel,
         messages: openaiMessages,
@@ -183,10 +234,12 @@ class UnifiedOpenAIService {
         model: params.model,
         messageCount: messages.length,
         hasTools: !!options.tools,
+        maxTokens: params.max_tokens,
       });
 
       const completion = await this.client.chat.completions.create(params);
       const endTime = Date.now();
+      const responseTime = endTime - startTime;
 
       const choice = completion.choices[0];
       if (!choice) {
@@ -202,9 +255,12 @@ class UnifiedOpenAIService {
         ...(choice.message.tool_calls && { toolCalls: choice.message.tool_calls }),
       };
 
+      // Update statistics
+      this.updateStats(responseTime, true, completion.usage?.total_tokens || 0);
+
       logger.info('Chat completion succeeded', {
         model: completion.model,
-        completionTime: endTime - startTime,
+        completionTime: responseTime,
         tokens: completion.usage?.total_tokens,
         finishReason: choice.finish_reason,
       });
@@ -213,11 +269,16 @@ class UnifiedOpenAIService {
 
     } catch (error: any) {
       const endTime = Date.now();
+      const responseTime = endTime - startTime;
+      
+      // Update statistics for failed request
+      this.updateStats(responseTime, false);
       
       logger.error('Chat completion failed', {
         error: error.message,
-        completionTime: endTime - startTime,
+        completionTime: responseTime,
         model: options.model || this.defaultModel,
+        stack: error.stack,
       });
 
       return {
@@ -471,6 +532,77 @@ class UnifiedOpenAIService {
   }
 
   /**
+   * Code interpreter support with file handling
+   */
+  async runCodeInterpreter(prompt: string, model?: string): Promise<CodeInterpreterResult> {
+    const startTime = Date.now();
+    
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: model || process.env.CODE_INTERPRETER_MODEL || 'gpt-4',
+        messages: [{ role: 'user', content: prompt }],
+        tools: [{ type: 'code_interpreter' }] as any,
+        max_tokens: this.defaultConfig.maxTokens,
+      });
+
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
+      
+      const message: any = completion.choices[0].message;
+      const result: CodeInterpreterResult = {
+        content: message.content || '',
+        files: (message.files as any[]) || [],
+        toolCalls: message.tool_calls || [],
+      };
+
+      // Update stats
+      this.updateStats(responseTime, true, completion.usage?.total_tokens || 0);
+
+      logger.info('Code interpreter completed', {
+        model: completion.model,
+        completionTime: responseTime,
+        hasFiles: result.files && result.files.length > 0,
+        hasToolCalls: result.toolCalls && result.toolCalls.length > 0,
+      });
+
+      return result;
+
+    } catch (error: any) {
+      const endTime = Date.now();
+      const responseTime = endTime - startTime;
+      
+      this.updateStats(responseTime, false);
+      
+      logger.error('Code interpreter failed', {
+        error: error.message,
+        completionTime: responseTime,
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Simple prompt completion - consolidates codex functionality
+   */
+  async runPrompt(prompt: string, model?: string, temperature: number = 0.2): Promise<string> {
+    const response = await this.chat(
+      [{ role: 'user', content: prompt }],
+      { 
+        model: model || this.defaultModel, 
+        temperature,
+        maxTokens: this.defaultConfig.maxTokens,
+      }
+    );
+
+    if (!response.success) {
+      throw new Error(response.error || 'Prompt completion failed');
+    }
+
+    return response.content;
+  }
+
+  /**
    * Utility methods
    */
   getModel(): string {
@@ -479,6 +611,21 @@ class UnifiedOpenAIService {
 
   getClient(): OpenAI {
     return this.client;
+  }
+
+  getStats(): ServiceStats {
+    return { ...this.stats };
+  }
+
+  resetStats(): void {
+    this.stats = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      totalTokensUsed: 0,
+      averageResponseTime: 0,
+    };
+    this.requestTimes = [];
   }
 
   async testConnection(): Promise<{ success: boolean; error?: string }> {
@@ -512,4 +659,6 @@ export type {
   AssistantConfig,
   ThreadMessage,
   StreamCallback,
+  CodeInterpreterResult,
+  ServiceStats,
 };

@@ -4,7 +4,7 @@ import { Router } from 'express';
 import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
 import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
-import { codeInterpreterService } from '../services/code-interpreter';
+import { codeInterpreterService } from '../services/ai-service-consolidated';
 import { gameGuideService } from '../services/game-guide';
 import { recoverOutput, recoverJSON } from '../utils/output-recovery';
 

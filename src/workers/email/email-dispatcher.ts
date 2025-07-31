@@ -1,5 +1,5 @@
-import { coreAIService } from '../../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { coreAIService } from '../../services/ai-service-consolidated';
+import type { ChatMessage } from '../../services/unified-openai';
 import fs from 'fs';
 import path from 'path';
 import { createServiceLogger } from '../../utils/logger';
@@ -66,7 +66,7 @@ async function generateEmailBody({
   const finalLogPath = logFilePath || path.join(logDir, `email_${Date.now()}.log`);
   const fileStream = fs.createWriteStream(finalLogPath, { flags: 'a' });
 
-  const messages: ChatCompletionMessageParam[] = [
+  const messages: ChatMessage[] = [
     { role: 'system', content: buildSystemPrompt(type) },
     { role: 'user', content: message }
   ];
