@@ -3,6 +3,7 @@
 
 import { Request, Response } from 'express';
 import { ArcanosAuditService } from '../services/arcanos-audit';
+import { getNLPInterpreter } from '../modules/nlp-interpreter';
 
 export class AuditHandler {
   private auditService: ArcanosAuditService;
@@ -18,6 +19,9 @@ export class AuditHandler {
     
     try {
       const { message, domain, useHRC } = req.body;
+      const interpreter = getNLPInterpreter();
+      const parsed = interpreter ? interpreter.parse(message || '') : { text: message } as any;
+      const processedMessage = parsed.text;
       
       // Log audit trigger activity
       this.logAuditActivity('audit_triggered', {
@@ -37,7 +41,7 @@ export class AuditHandler {
       }
 
       const auditRequest = {
-        message,
+        message: processedMessage,
         domain: domain || 'general',
         useHRC: useHRC !== false
       };
