@@ -6,6 +6,7 @@
 import axios from "axios";
 import express from "express";
 import { getUnifiedOpenAI } from "../services/unified-openai";
+import { getAIConfig } from "../config/ai-defaults";
 import { storeMemory, getMemory } from "../services/memory"; // Update paths as needed
 
 const router = express.Router();
@@ -60,8 +61,8 @@ export async function webLookupAndSummarize(topic: string, injectToMemory: boole
     ];
 
     const gptResponse = await unifiedOpenAI.chat(messages, {
-      model: "gpt-4",
-      maxTokens: 1000
+      ...getAIConfig('analysis'),
+      model: "gpt-4"
     });
 
     const summary = gptResponse.content || "No summary available";

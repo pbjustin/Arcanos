@@ -5,6 +5,7 @@
  */
 
 import { getUnifiedOpenAI, type ChatMessage } from '../services/unified-openai';
+import { getAIConfig } from '../config/ai-defaults';
 import { createServiceLogger } from '../utils/logger';
 import { databaseService } from '../services/database';
 import fs from 'fs';
@@ -104,11 +105,7 @@ Please provide:
           analysisContent += token;
         }
       },
-      {
-        maxTokens: 1500,
-        temperature: 0.6,
-        stream: true
-      }
+      getAIConfig('stream')
     );
 
     fileStream.end();
@@ -157,10 +154,7 @@ Extract specific actionable recommendations and return them as a JSON array.`
     ];
 
     const unifiedOpenAI = getUnifiedOpenAI();
-    const result = await unifiedOpenAI.chat(messages, {
-      maxTokens: 500,
-      temperature: 0.3
-    });
+    const result = await unifiedOpenAI.chat(messages, getAIConfig('extraction'));
 
     if (!result.success) {
       return ['Continue current progress', 'Review goal timeline', 'Seek additional resources'];

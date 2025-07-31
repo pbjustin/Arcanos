@@ -5,6 +5,7 @@
  */
 
 import { getUnifiedOpenAI, type ChatMessage } from '../services/unified-openai';
+import { getAIConfig } from '../config/ai-defaults';
 import { createServiceLogger } from '../utils/logger';
 import { sanitizeJsonString } from '../utils/json';
 import fs from 'fs';
@@ -270,11 +271,7 @@ Please analyze and provide:
           analysisContent += token;
         }
       },
-      {
-        maxTokens: 2000,
-        temperature: 0.4,
-        stream: true
-      }
+      getAIConfig('stream')
     );
 
     if (!result.success) {
@@ -338,10 +335,7 @@ Please analyze and provide:
     ];
 
     const unifiedOpenAI = getUnifiedOpenAI();
-    const result = await unifiedOpenAI.chat(messages, {
-      maxTokens: 500,
-      temperature: 0.2
-    });
+    const result = await unifiedOpenAI.chat(messages, getAIConfig('extraction'));
 
     if (!result.success) {
       return {

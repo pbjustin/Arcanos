@@ -1,4 +1,5 @@
 import { getUnifiedOpenAI, type ChatMessage } from '../../services/unified-openai';
+import { getAIConfig } from '../../config/ai-defaults';
 import fs from 'fs';
 import path from 'path';
 import { createServiceLogger } from '../../utils/logger';
@@ -86,10 +87,7 @@ async function generateEmailBody({
             fullResponse += token;
           }
         },
-        {
-          maxTokens: 1500,
-          temperature: 0.6
-        }
+        getAIConfig('stream')
       );
 
       fileStream.end();
@@ -110,10 +108,7 @@ async function generateEmailBody({
 
     const result = await unifiedOpenAI.chat(
       messages, 
-      {
-        maxTokens: 1500,
-        temperature: 0.6
-      }
+      getAIConfig('writing')
     );
 
     fileStream.write(result.content);
