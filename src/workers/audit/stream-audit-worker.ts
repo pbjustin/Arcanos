@@ -1,4 +1,5 @@
 import { getUnifiedOpenAI, type ChatMessage } from '../../services/unified-openai';
+import { getAIConfig } from '../../config/ai-defaults';
 import fs from 'fs';
 import path from 'path';
 import { createServiceLogger } from '../../utils/logger';
@@ -52,10 +53,7 @@ export async function runStreamAudit({ message, domain = 'general', logFilePath 
           fullResponse += token;
         }
       },
-      {
-        maxTokens: 2000,
-        temperature: 0.4
-      }
+      getAIConfig('stream')
     );
 
     fileStream.end();
