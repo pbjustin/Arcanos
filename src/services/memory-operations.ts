@@ -38,6 +38,12 @@ export interface MemorySearchOptions {
 class MemoryOperationsService {
   private memoryCache = new Map<string, MemoryRecord>();
 
+  getStatus() {
+    return {
+      cacheEntries: this.memoryCache.size,
+    };
+  }
+
   /**
    * Store memory using OpenAI SDK-compatible patterns
    */
