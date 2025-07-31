@@ -269,3 +269,4 @@ export { saveGameGuide } from './services/game-guides';
 
 // Export AI patch system for external usage
 export { aiPatchSystem, createAIPatch } from './services/ai-patch-system';
+export { initializeBackend } from './initializeBackend';
