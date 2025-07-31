@@ -69,6 +69,8 @@ test-guide-handler.js
 test-formatter.js
 test-integration.js
 demo-ai-patch-system.sh
+test-ai-service-dispatcher.ts
+test-dispatcher-integration.ts
 
 # Development and debugging scripts  
 dev-tests/
