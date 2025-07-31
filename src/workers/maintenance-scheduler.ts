@@ -3,8 +3,8 @@
  * Handles automated system maintenance, cleanup, and optimization tasks
  */
 
-import { coreAIService } from '../services/ai/core-ai-service';
-import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { coreAIService } from '../services/ai-service-consolidated';
+import type { ChatMessage } from '../services/unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { sanitizeJsonString } from '../utils/json';
 import fs from 'fs';
@@ -225,7 +225,7 @@ class MaintenanceSchedulerWorker {
   }> {
     const systemInfo = await this.gatherSystemInformation();
     
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: `You are ARCANOS performing system maintenance analysis. Your task is to:
@@ -324,7 +324,7 @@ Please analyze and provide:
     actions: string[];
     recommendations: string[];
   }> {
-    const messages: ChatCompletionMessageParam[] = [
+    const messages: ChatMessage[] = [
       {
         role: 'system',
         content: 'Extract maintenance information from the analysis and return as JSON with keys: issues, actions, recommendations (all arrays of strings).'

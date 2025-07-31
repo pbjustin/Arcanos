@@ -1,4 +1,4 @@
-import { runCodexPrompt } from './codexService';
+import { runCodexPrompt } from './ai-service-consolidated';
 
 export async function handleCodexPrompt(payload: any): Promise<any> {
   const { prompt, model = 'gpt-4' } = payload || {};
