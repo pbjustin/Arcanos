@@ -49,7 +49,7 @@ import './services/database-connection';
 import './services/cron-worker';
 import './worker-init';
 
-// Import AI reflection handler (initializes 7:00 AM daily schedule)
+// Import AI reflection handler (initializes 8:30 AM daily schedule)
 import './services/backend-ai-reflection-handler';
 
 // Import sleep manager
