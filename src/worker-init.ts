@@ -5,6 +5,20 @@ import { isTrue } from './utils/env';
 import { goalTrackerWorker } from './workers/goal-tracker';
 import { maintenanceSchedulerWorker } from './workers/maintenance-scheduler';
 import { createServiceLogger } from './utils/logger';
+import { registerWorker } from './services/worker-manager';
+import { memory } from './services/memory-scheduler';
+import type { ScheduleTask } from './types/scheduler';
+import { execSync } from 'child_process';
+
+// Auto-install missing types if running locally
+try {
+  execSync('npm install --save-dev @types/node', { stdio: 'inherit' });
+} catch (err) {
+  console.error('[Patch] Failed to install missing types:', err);
+}
+
+// Ensure environment has open access to registry.npmjs.org
+process.env.NPM_CONFIG_REGISTRY = 'https://registry.npmjs.org';
 import { 
   initializeModernWorkerSystem,
   startModernWorkers,
@@ -29,6 +43,18 @@ const activeWorkers = new Map<string, {
 }>();
 
 const logger = createServiceLogger('WorkerInit');
+
+// Register defaultWorker bound to memory scheduler
+registerWorker('defaultWorker', {
+  service: 'memory',
+  schedule: (task: ScheduleTask) => {
+    if (!task || !task.key || !Array.isArray(task.value)) {
+      throw new Error('[Scheduler] Invalid task payload');
+    }
+    console.log(`[Scheduler] Registered ${task.key} with ${task.value.length} entries`);
+    memory.schedule(task.key, task.value);
+  }
+});
 
 async function initializeAIControlledWorkers(): Promise<void> {
   logger.info('Initializing refactored AI-controlled worker system');

@@ -5,6 +5,8 @@ import { AIDispatcher } from './ai-dispatcher';
 
 // Use a Set for active workers
 const activeWorkers: Set<string> = new Set();
+// Optional schedule callbacks per worker
+const workerSchedules: Record<string, (task: any) => void> = {};
 
 // Scoped dispatch locks per worker type
 const dispatchLocks: Record<string, boolean> = {};
@@ -17,14 +19,26 @@ export function isValidWorker(name: string): boolean {
 /**
  * Register a worker if valid and not already registered
  */
-export function registerWorker(name: string): void {
+export interface WorkerOptions {
+  service?: string;
+  schedule?: (task: any) => void;
+}
+
+export function registerWorker(name: string, options: WorkerOptions = {}): void {
   if (!isValidWorker(name)) {
     console.warn(`Rejected worker: ${name}`);
     return;
   }
   if (activeWorkers.has(name)) return;
   activeWorkers.add(name);
+  if (options.schedule) {
+    workerSchedules[name] = options.schedule;
+  }
   initializeWorker(name);
+}
+
+export function getWorkerSchedule(name: string): ((task: any) => void) | undefined {
+  return workerSchedules[name];
 }
 
 /**
