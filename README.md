@@ -325,6 +325,11 @@ The worker registry exposes several built-in workers with explicit routing logic
 | `scheduled_emails_worker` | cron | `/email/schedule` |
 | `auditProcessor` | logic | CLEAR mode |
 
+### AI Worker Dispatcher
+Use `dispatchTask` from `src/services/worker-dispatcher.ts` to route tasks
+through AI-defined workers. The dispatcher rejects use of `defaultWorker`
+unless `manualOverride` is explicitly set.
+
 ### Sleep & Wake Configuration
 - `SLEEP_ENABLED` - Enable sleep mode (default: false)
 - `SLEEP_START` - Sleep start time in HH:MM format (default: 02:00)
