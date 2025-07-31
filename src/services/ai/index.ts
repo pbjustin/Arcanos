@@ -5,6 +5,7 @@
 
 import { coreAIService } from '../ai-service-consolidated';
 import { selfReflectionService } from '../self-reflection';
+import { getNLPInterpreter } from '../../modules/nlp-interpreter';
 import { saveMemory } from '../memory';
 import type { ChatMessage } from '../unified-openai';
 
@@ -41,6 +42,10 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
     commitIfChanged = false,
     targetPath = 'ai_outputs/reflections/'
   } = options;
+
+  const interpreter = getNLPInterpreter();
+  const parsed = interpreter ? interpreter.parse(label) : { text: label } as any;
+  const processedLabel = parsed.text;
 
   // Create reflection prompt
   const messages: ChatMessage[] = [
@@ -81,7 +86,7 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
 
   // Create reflection snapshot
   const snapshot: ReflectionSnapshot = {
-    label,
+    label: processedLabel,
     timestamp: new Date().toISOString(),
     reflection: aiResponse.content,
     systemState,
@@ -97,12 +102,12 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
   if (persist) {
     await selfReflectionService.saveSelfReflection(
       snapshot,
-      label,
+      processedLabel,
       `reflection_${Date.now()}`
     );
 
     // Also save to memory with the target path as key
-    const memoryKey = `${targetPath}${label}`;
+    const memoryKey = `${targetPath}${processedLabel}`;
     await saveMemory(memoryKey, snapshot, 'reflections');
   }
 
