@@ -98,4 +98,17 @@ router.post('/sleep/log', async (_req, res) => {
   }
 });
 
+// Webhook listener for external events
+router.post('/event', (req, res) => {
+  console.log('\uD83D\uDD14 Webhook triggered:', req.body);
+
+  // Placeholder for future event handling logic
+  // - Log to memory
+  // - Trigger fallback routines
+  // - Flag status for analytics
+  // - Patch Codex or MyAI context
+
+  res.status(200).send({ success: true });
+});
+
 export default router;
