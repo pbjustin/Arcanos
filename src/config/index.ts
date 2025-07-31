@@ -1,9 +1,11 @@
 // Centralized Configuration Management for ARCANOS Backend
-import * as dotenv from 'dotenv';
+import { safeImport } from '../utils/safeImport';
+
+const dotenv = safeImport<typeof import('dotenv')>('dotenv');
 import type { IdentityOverride } from '../types/IdentityOverride';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables if dotenv is available
+dotenv?.config();
 
 function parseIdentityOverride(value?: string): string | IdentityOverride | undefined {
   if (!value) {
@@ -60,6 +62,9 @@ export interface Config {
     rateLimit: boolean;
     logToFile: boolean;
   };
+  network: {
+    allowExternal: boolean;
+  };
 }
 
 // Configuration with defaults and validation
@@ -105,6 +110,9 @@ export const config: Config = {
     allowPostMethods: false,
     rateLimit: true,
     logToFile: false,
+  },
+  network: {
+    allowExternal: process.env.ALLOW_NETWORK !== 'false',
   },
 };
 
@@ -177,6 +185,7 @@ export function getEnvironmentStatus() {
     deploymentMode: config.deployment.mode,
     githubIntegration: config.deployment.githubIntegration,
     githubActionsEnabled: config.github.enableActions,
+    networkAccess: config.network.allowExternal,
   };
 }
 
@@ -191,3 +200,4 @@ export const deploymentConfig = config.deployment;
 export const githubConfig = config.github;
 export const workerLogic = config.features.workerLogic;
 export const chatgptConfig = config.chatgpt;
+export const networkConfig = config.network;
