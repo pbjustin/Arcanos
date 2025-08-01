@@ -52,6 +52,9 @@ import './worker-init';
 // Import AI reflection handler (initializes 8:30 AM daily schedule)
 import './services/backend-ai-reflection-handler';
 
+// Trigger self-reflection when entering sleep mode
+import './sleep-self-reflection';
+
 // Import sleep manager
 import { sleepManager } from './services/sleep-manager';
 

@@ -4,6 +4,7 @@
 
 import cron from 'node-cron';
 import { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } from './sleep-config';
+import { emitServerSleep } from '../events/system-events';
 import { modelControlHooks } from './model-control-hooks';
 import { workerStatusService } from './worker-status';
 
@@ -89,6 +90,16 @@ export class SleepManager {
     if (this.maintenanceTasksScheduled) {
       return;
     }
+
+    // Emit server-sleep event at the start of the sleep window (7 AM ET)
+    cron.schedule(
+      '0 7 * * *',
+      () => {
+        console.log('[SLEEP-MANAGER] Emitting server-sleep event');
+        emitServerSleep();
+      },
+      { timezone: 'America/New_York' }
+    );
 
     // Memory sync and snapshot - every 2 hours during sleep window
     cron.schedule('0 */2 * * *', async () => {
