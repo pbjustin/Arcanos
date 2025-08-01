@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getUnifiedOpenAI, type FunctionDefinition } from '../services/unified-openai';
+import { selectModel } from '../utils/model-router';
 import { diagnosticsService } from '../services/diagnostics';
 import { GameGuideService } from '../services/game-guide';
 import { MemoryStorage } from '../storage/memory-storage';
@@ -48,7 +49,7 @@ async function runFineTunedModel(prompt: string): Promise<string> {
   const response = await unifiedOpenAI.chat([
     { role: 'user', content: prompt }
   ], {
-    model: aiConfig.fineTunedModel || "gpt-4-turbo",
+    model: aiConfig.fineTunedModel || 'ft:gpt-3.5-turbo',
     temperature: 0.7,
   });
   
@@ -110,9 +111,10 @@ async function generateGuide(prompt: string): Promise<string> {
 
 // Reflective logic runner - Updated to use UnifiedOpenAIService
 async function runReflectiveLogic(query: string): Promise<string> {
+  const model = selectModel(query);
   const response = await unifiedOpenAI.chat([
     { role: 'user', content: query }
-  ]);
+  ], { model });
   
   if (!response.success) {
     throw new Error(response.error || 'Reflective logic failed');
@@ -271,7 +273,8 @@ async function askHandler(req: Request, res: Response) {
           } else {
             res.end();
           }
-        }
+        },
+        { model: selectModel(cleaned) }
       );
 
       // Queue reflection for streaming responses

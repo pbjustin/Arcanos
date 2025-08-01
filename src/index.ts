@@ -4,8 +4,7 @@
 import express from 'express';
 import path from 'path';
 import bodyParser from 'body-parser';
-import { safeImport } from './utils/safeImport';
-const cors = safeImport<typeof import('cors')>('cors');
+import cors from 'cors';
 
 // Centralized configuration
 import { config, validateConfig, getEnvironmentStatus } from './config';
@@ -93,11 +92,7 @@ if (process.env.ADMIN_KEY) {
 }
 
 // Middleware stack
-if (cors) {
-  app.use(cors());
-} else {
-  console.warn('⚠️ CORS middleware unavailable');
-}
+app.use(cors());
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(performanceMiddleware); // Add performance tracking
@@ -254,11 +249,6 @@ serverService.start(app, PORT).then(async () => {
     console.log(`🚂 Railway Environment: ${config.railway.environment}`);
   }
 
-  console.log('\n[OPTIMIZATION] ⚡ Backend optimization completed:');
-  console.log('✅ Modular route architecture');
-  console.log('✅ Centralized error handling');
-  console.log('✅ Centralized configuration management');
-  console.log('✅ Improved separation of concerns');
   
   if (!config.features.runWorkers) {
     console.log('[SERVER] RUN_WORKERS not enabled - keeping process alive');
