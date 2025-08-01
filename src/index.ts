@@ -39,6 +39,7 @@ import { serverService } from './services/server';
 import { chatGPTUserWhitelist } from './services/chatgpt-user-whitelist';
 import { diagnosticsService } from './services/diagnostics';
 import { memoryMonitor } from './services/memory-monitor';
+import { recordUptime, getLastUptime } from './utils/uptime';
 
 // Handlers (for initialization)
 import { memoryHandler } from './handlers/memory-handler';
@@ -194,6 +195,11 @@ process.on("unhandledRejection", (reason, promise) => {
 // Server startup with optimized initialization
 serverService.start(app, PORT).then(async () => {
   console.log(`[SERVER] Running on port ${PORT}`);
+  const lastBoot = getLastUptime();
+  recordUptime();
+  if (lastBoot) {
+    console.log(`[UPTIME] Previous boot at ${lastBoot}`);
+  }
   console.log(`[INFO] ENV:`, {
     NODE_ENV: config.server.nodeEnv,
     PORT: config.server.port,
