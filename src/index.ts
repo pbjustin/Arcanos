@@ -57,6 +57,8 @@ import './sleep-self-reflection';
 
 // Import sleep manager
 import { sleepManager } from './services/sleep-manager';
+// Schedule pre-sleep preparation tasks
+import './services/sleep-prep';
 
 // Validate configuration on startup
 const configValidation = validateConfig();
