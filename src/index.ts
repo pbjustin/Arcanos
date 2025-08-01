@@ -39,6 +39,7 @@ import { serverService } from './services/server';
 import { chatGPTUserWhitelist } from './services/chatgpt-user-whitelist';
 import { diagnosticsService } from './services/diagnostics';
 import { memoryMonitor } from './services/memory-monitor';
+import { runMemoryWatchdog } from './services/memory-watchdog';
 
 // Handlers (for initialization)
 import { memoryHandler } from './handlers/memory-handler';
@@ -242,6 +243,7 @@ serverService.start(app, PORT).then(async () => {
   const memStats = process.memoryUsage();
   console.log('🧠 [MEMORY] Initial RSS:', (memStats.rss / 1024 / 1024).toFixed(2), 'MB');
   memoryMonitor.start();
+  runMemoryWatchdog();
   
   // Railway-specific logging
   if (config.railway.environment) {
