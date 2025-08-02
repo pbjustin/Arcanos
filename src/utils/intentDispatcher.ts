@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { routeByIntent, type IntentMode } from './routeByIntent';
-import { callArcanosModel } from '../config/ai-model';
+import { callArcanosModel, ARCANOS_MODEL_ID } from '../config/ai-model';
 
 // Initialize OpenAI client with API key from environment
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -24,7 +24,8 @@ export async function intentDispatcher(prompt: string): Promise<DispatchResult> 
       messages: [{ role: 'user', content: prompt }]
     });
 
-    return { mode, model: 'arcanos-v2', response };
+    // PATCHED: full model ID - return full model ID instead of alias
+    return { mode, model: ARCANOS_MODEL_ID, response };
   } catch (error) {
     console.error('[intentDispatcher] Error dispatching prompt:', error);
     throw error;
