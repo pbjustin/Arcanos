@@ -91,6 +91,12 @@ For CI environments like Railway, use the optimized build script:
 npm run ci:build
 ```
 
+### Memory Diagnostics
+The default start script launches Node with `--expose-gc` so garbage collection can be
+triggered and memory usage logged. These diagnostics run only when `NODE_ENV` is not
+set to `production`.
+
+
 ## API Endpoints
 
 ### Core Endpoints
