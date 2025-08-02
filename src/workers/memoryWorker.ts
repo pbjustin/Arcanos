@@ -4,6 +4,7 @@
  */
 
 import { createServiceLogger } from '../utils/logger';
+import { normalizeMemoryUsage } from '../utils/memory-normalizer';
 import fs from 'fs';
 import path from 'path';
 
@@ -188,15 +189,18 @@ async function createMemorySnapshot(): Promise<any> {
   }
 
   const memoryUsage = process.memoryUsage();
+  const normalized = normalizeMemoryUsage(memoryUsage);
   const timestamp = new Date().toISOString();
-  
+  const id = `mem_${Date.now()}`;
+
   const snapshot = {
+    id,
+    type: 'system',
     timestamp,
-    memoryUsage,
     nodeVersion: process.version,
-    uptime: process.uptime(),
-    platform: process.platform,
-    arch: process.arch
+    normalized: {
+      memory: normalized
+    }
   };
 
   const snapshotFile = path.join(storageDir, `memory-snapshot-${Date.now()}.json`);
