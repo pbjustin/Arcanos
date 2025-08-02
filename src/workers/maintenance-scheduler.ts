@@ -7,6 +7,7 @@ import { coreAIService } from '../services/ai-service-consolidated';
 import type { ChatMessage } from '../services/unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { sanitizeJsonString } from '../utils/json';
+import { normalizeMemoryUsage } from '../utils/memory-normalizer';
 import fs from 'fs';
 import path from 'path';
 import * as cron from 'node-cron';
@@ -299,14 +300,29 @@ Please analyze and provide:
    */
   private async gatherSystemInformation(): Promise<any> {
     const memoryUsage = process.memoryUsage();
+    const normalized = normalizeMemoryUsage(memoryUsage);
     const uptime = process.uptime();
-    
+
+    const heapPercent = parseInt(normalized.heap.percent);
+    const baselinePercent = 60;
+    const deltaPercent = heapPercent - baselinePercent;
+    if (Math.abs(deltaPercent) > 15) {
+      logger.info('Memory usage deviates from baseline', {
+        baselinePercent,
+        currentPercent: heapPercent,
+        deltaPercent
+      });
+    }
+
     return {
       memory: {
         rss: Math.round(memoryUsage.rss / 1024 / 1024), // MB
         heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024), // MB
         heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024), // MB
         external: Math.round(memoryUsage.external / 1024 / 1024) // MB
+      },
+      normalized: {
+        memory: normalized
       },
       uptime: Math.round(uptime / 3600 * 100) / 100, // hours
       nodeVersion: process.version,
