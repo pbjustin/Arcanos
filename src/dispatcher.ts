@@ -11,6 +11,7 @@ import { installNLPInterpreter, getNLPInterpreter } from './modules/nlp-interpre
 import { installPagedOutputHandler, getPagedOutputHandler } from './modules/paged-output-handler';
 import { installMemoryAuditStreamSerializer } from './modules/memory-audit-stream-serializer';
 import dispatchService, { type ServiceTask, createManualOverrideTask, requiresAIRouting } from './services/ai-service-dispatcher';
+import { runDeepResearch } from './modules/deepResearchHandler';
 
 // Install NLP interpreter with default configuration
 installNLPInterpreter({
@@ -50,6 +51,24 @@ export async function dispatcher(req: Request, res: Response) {
     }
 
     const paged = getPagedOutputHandler();
+
+    // Direct deep research routing
+    if (mode === 'deepresearch') {
+      try {
+        const result = await runDeepResearch(message, req.body?.context);
+        const pages = paged ? paged.paginate(typeof result === 'string' ? result : JSON.stringify(result)) : undefined;
+        return res.json({
+          status: '🔍 Deep research analysis complete',
+          result,
+          pages,
+        });
+      } catch (error: any) {
+        return res.status(500).json({
+          status: '❌ Deep research failed',
+          error: error.message,
+        });
+      }
+    }
 
     // Handle AI-bound service routing for memory and API services
     if (service && (service === 'memory' || service === 'api')) {
