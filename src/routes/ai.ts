@@ -7,9 +7,12 @@ import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatc
 import { codeInterpreterService } from '../services/ai-service-consolidated';
 import { gameGuideService } from '../services/game-guide';
 import { recoverOutput, recoverJSON } from '../utils/output-recovery';
+import OpenAI from 'openai';
 
 
 const router = Router();
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Fine-tune routing status endpoint
 router.get('/finetune-status', async (req, res) => {
@@ -286,8 +289,38 @@ router.post('/ai-patch/retry', async (req, res) => {
 // POST /ask endpoint - AI dispatcher controlled (fallback route)
 router.post('/ask', async (req, res) => {
   console.log('📝 /ask endpoint called - routing to AI dispatcher');
-  
+
   try {
+    const { mode, payload = {}, query } = req.body || {};
+
+    if (mode === 'write') {
+      const prompt = payload.prompt || query;
+
+      if (!prompt || typeof prompt !== 'string') {
+        return sendErrorResponse(res, 400, 'Prompt is required for write mode');
+      }
+
+      const generated = await openai.chat.completions.create({
+        model: 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a high-precision content generation engine. Respond only with the content requested — no explanations, diagnostics, or meta-routing.'
+          },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 1000
+      });
+
+      const response = generated.choices?.[0]?.message?.content || '⚠️ No content returned.';
+
+      return res.json({
+        output: response,
+        route: 'WRITE>GEN'
+      });
+    }
+
     const result = await modelControlHooks.handleApiRequest(
       '/ask',
       'POST',
