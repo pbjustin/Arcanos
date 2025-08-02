@@ -4,6 +4,7 @@
  */
 
 import { createServiceLogger } from '../utils/logger';
+import { normalizeMemoryUsage } from '../utils/memory-normalizer';
 import fs from 'fs';
 import path from 'path';
 
@@ -25,22 +26,19 @@ export default async function memorySync(): Promise<void> {
 
     // Get current memory usage
     const memoryUsage = process.memoryUsage();
+    const normalized = normalizeMemoryUsage(memoryUsage);
     const timestamp = new Date().toISOString();
-    
+    const id = `mem_${Date.now()}`;
+
     // Create memory snapshot data
     const snapshot = {
+      id,
+      type: 'system',
       timestamp,
-      memoryUsage: {
-        rss: memoryUsage.rss,
-        heapTotal: memoryUsage.heapTotal,
-        heapUsed: memoryUsage.heapUsed,
-        external: memoryUsage.external,
-        arrayBuffers: memoryUsage.arrayBuffers
-      },
       nodeVersion: process.version,
-      uptime: process.uptime(),
-      platform: process.platform,
-      arch: process.arch
+      normalized: {
+        memory: normalized
+      }
     };
 
     // Write snapshot to file
@@ -49,10 +47,8 @@ export default async function memorySync(): Promise<void> {
 
     // Log memory statistics
     logger.info('Memory snapshot created', {
-      heapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
-      heapTotalMB: Math.round(memoryUsage.heapTotal / 1024 / 1024),
-      rssMB: Math.round(memoryUsage.rss / 1024 / 1024),
-      snapshotFile
+      snapshotFile,
+      normalized
     });
 
     // Clean up old snapshots (keep last 7 days)
