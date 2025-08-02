@@ -5,6 +5,9 @@ FROM node:20.11.1-alpine AS builder
 # Set working directory
 WORKDIR /app
 
+# Enable garbage collection access
+ENV NODE_OPTIONS=--expose-gc=true
+
 # Copy package files and .npmrc for dependency installation
 COPY package*.json .npmrc ./
 
@@ -34,6 +37,7 @@ FROM node:20.11.1-alpine AS production
 
 # Set production environment
 ENV NODE_ENV=production
+ENV NODE_OPTIONS=--expose-gc=true
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
