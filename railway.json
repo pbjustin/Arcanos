@@ -9,9 +9,9 @@
   },
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev && npm run build",
+    "buildCommand": "NODE_OPTIONS=\"--max_old_space_size=256 --require ./fallback-gc-loader --expose-gc\" npm install --omit=dev && npm run build",
     "env": {
-      "NODE_OPTIONS": "--max_old_space_size=2048"
+      "NODE_OPTIONS": "--max_old_space_size=2048 --require ./fallback-gc-loader --expose-gc"
     }
   },
   "postDeployCommand": "bash ./scripts/postdeploy.sh",
@@ -19,7 +19,8 @@
     "production": {
       "variables": {
         "NODE_ENV": "production",
-        "PORT": "3000"
+        "PORT": "3000",
+        "NODE_OPTIONS": "--require ./fallback-gc-loader --expose-gc"
       }
     }
   },
