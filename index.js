@@ -5,6 +5,7 @@ console.log('🤖 ARCANOS: Delegating full operational control to AI model...');
 
 // Memory diagnostics and garbage collection helpers
 require('./diagnostics');
+require('./memory.js');
 
 // All logic has been moved to TypeScript AI-controlled backend
 // This ensures the fine-tuned ARCANOS model has complete operational control
