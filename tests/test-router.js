@@ -108,7 +108,7 @@ function startTestServer() {
       res.json({ 
         status: 'healthy',
         service: 'ARCANOS Router',
-        model: 'gpt-3.5-turbo-0125:personal:arcanos-v2',
+        model: 'REDACTED_FINE_TUNED_MODEL_ID', // PATCHED: full model ID
         timestamp: new Date().toISOString()
       });
     });
@@ -122,7 +122,7 @@ function startTestServer() {
           'POST /query': 'Submit queries to fine-tuned model',
           'GET /health': 'Health check for Railway deployment'
         },
-        model: 'gpt-3.5-turbo-0125:personal:arcanos-v2',
+        model: 'REDACTED_FINE_TUNED_MODEL_ID', // PATCHED: full model ID
         fallback: false
       });
     });

@@ -14,7 +14,7 @@
  */
 
 import OpenAI from 'openai';
-import { ARCANOS_MODEL_ALIAS, ARCANOS_MODEL_ID } from '../config/ai-model';
+import { ARCANOS_MODEL_ID } from '../config/ai-model';
 import type { 
   ChatCompletionCreateParams,
   ChatCompletionMessageParam,
@@ -152,7 +152,7 @@ class UnifiedOpenAIService {
     });
 
     // Set defaults
-    this.defaultModel = ARCANOS_MODEL_ALIAS;
+    this.defaultModel = ARCANOS_MODEL_ID;
     this.defaultConfig = {
       model: this.defaultModel,
       maxTokens: config.maxTokens || 2000, // Increased default
@@ -221,7 +221,7 @@ class UnifiedOpenAIService {
 
       // Prepare completion parameters with enhanced defaults
       const params: ChatCompletionCreateParams = {
-        model: ARCANOS_MODEL_ALIAS,
+        model: ARCANOS_MODEL_ID, // PATCHED: full model ID
         messages: openaiMessages,
         max_tokens: options.maxTokens || this.defaultConfig.maxTokens,
         temperature: options.temperature ?? this.defaultConfig.temperature,
@@ -238,25 +238,9 @@ class UnifiedOpenAIService {
         maxTokens: params.max_tokens,
       });
 
-      console.log('[ARCANOS] Routed to fine-tuned model: arcanos-v2 [BxRSDrhH]');
-      let completion;
-      try {
-        completion = await this.client.chat.completions.create(params);
-      } catch (error: any) {
-        if (
-          error?.status === 404 ||
-          error?.code === 'model_not_found' ||
-          error?.error?.code === 'model_not_found'
-        ) {
-          console.warn('[ARCANOS] Alias failed, retrying with full model ID');
-          completion = await this.client.chat.completions.create({
-            ...params,
-            model: ARCANOS_MODEL_ID,
-          });
-        } else {
-          throw error;
-        }
-      }
+      console.log('[ARCANOS] Locked routing to fine-tuned model: arcanos-v2 [BxRSDrhH]');
+      // PATCHED: full model ID - removed fallback logic, use full model ID directly
+      const completion = await this.client.chat.completions.create(params);
       const endTime = Date.now();
       const responseTime = endTime - startTime;
 
@@ -558,7 +542,7 @@ class UnifiedOpenAIService {
     
     try {
       const completion = await this.client.chat.completions.create({
-        model: ARCANOS_MODEL_ALIAS,
+        model: ARCANOS_MODEL_ID, // PATCHED: full model ID
         messages: [{ role: 'user', content: prompt }],
         tools: [{ type: 'code_interpreter' }] as any,
         max_tokens: this.defaultConfig.maxTokens,

@@ -6,7 +6,7 @@
 
 import { getUnifiedOpenAI, type ChatMessage, type ChatOptions, type CodeInterpreterResult } from './unified-openai';
 import { createServiceLogger } from '../utils/logger';
-import { ARCANOS_MODEL_ALIAS } from '../config/ai-model';
+import { ARCANOS_MODEL_ID } from '../config/ai-model'; // PATCHED: full model ID
 
 const logger = createServiceLogger('AIServiceConsolidated');
 
@@ -27,7 +27,7 @@ export class CodeInterpreterService {
   private model: string;
 
   constructor() {
-    this.model = ARCANOS_MODEL_ALIAS;
+    this.model = ARCANOS_MODEL_ID; // PATCHED: full model ID
   }
 
   async run(prompt: string): Promise<CodeInterpreterResult> {
@@ -62,7 +62,7 @@ export class CoreAIService {
   private defaultModel: string;
 
   constructor() {
-    this.defaultModel = ARCANOS_MODEL_ALIAS;
+    this.defaultModel = ARCANOS_MODEL_ID; // PATCHED: full model ID
     logger.info('Core AI Service initialized with unified backend', {
       model: this.defaultModel
     });

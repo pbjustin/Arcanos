@@ -2,7 +2,7 @@
 // Replaces static logic, conditionals, and routing trees with AI-controlled decision making
 
 import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
-import { ARCANOS_MODEL_ALIAS } from '../config/ai-model';
+import { ARCANOS_MODEL_ID } from '../config/ai-model'; // PATCHED: full model ID
 
 // Helper to resolve workers from schedule keys
 function resolveWorkerFromKey(key: string): string | null {
@@ -64,7 +64,7 @@ export class AIDispatcher {
   private model: string;
 
   constructor() {
-    this.model = ARCANOS_MODEL_ALIAS;
+    this.model = ARCANOS_MODEL_ID; // PATCHED: full model ID
 
     try {
       this.unifiedOpenAI = getUnifiedOpenAI();
