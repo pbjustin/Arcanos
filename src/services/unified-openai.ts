@@ -14,6 +14,7 @@
  */
 
 import OpenAI from 'openai';
+import { ARCANOS_MODEL_ALIAS, ARCANOS_MODEL_ID } from '../config/ai-model';
 import type { 
   ChatCompletionCreateParams,
   ChatCompletionMessageParam,
@@ -151,7 +152,7 @@ class UnifiedOpenAIService {
     });
 
     // Set defaults
-    this.defaultModel = config.model || process.env.AI_MODEL || 'gpt-4-turbo-preview';
+    this.defaultModel = ARCANOS_MODEL_ALIAS;
     this.defaultConfig = {
       model: this.defaultModel,
       maxTokens: config.maxTokens || 2000, // Increased default
@@ -220,7 +221,7 @@ class UnifiedOpenAIService {
 
       // Prepare completion parameters with enhanced defaults
       const params: ChatCompletionCreateParams = {
-        model: options.model || this.defaultModel,
+        model: ARCANOS_MODEL_ALIAS,
         messages: openaiMessages,
         max_tokens: options.maxTokens || this.defaultConfig.maxTokens,
         temperature: options.temperature ?? this.defaultConfig.temperature,
@@ -237,7 +238,25 @@ class UnifiedOpenAIService {
         maxTokens: params.max_tokens,
       });
 
-      const completion = await this.client.chat.completions.create(params);
+      console.log('[ARCANOS] Routed to fine-tuned model: arcanos-v2 [BxRSDrhH]');
+      let completion;
+      try {
+        completion = await this.client.chat.completions.create(params);
+      } catch (error: any) {
+        if (
+          error?.status === 404 ||
+          error?.code === 'model_not_found' ||
+          error?.error?.code === 'model_not_found'
+        ) {
+          console.warn('[ARCANOS] Alias failed, retrying with full model ID');
+          completion = await this.client.chat.completions.create({
+            ...params,
+            model: ARCANOS_MODEL_ID,
+          });
+        } else {
+          throw error;
+        }
+      }
       const endTime = Date.now();
       const responseTime = endTime - startTime;
 
@@ -539,7 +558,7 @@ class UnifiedOpenAIService {
     
     try {
       const completion = await this.client.chat.completions.create({
-        model: model || process.env.CODE_INTERPRETER_MODEL || 'gpt-4',
+        model: ARCANOS_MODEL_ALIAS,
         messages: [{ role: 'user', content: prompt }],
         tools: [{ type: 'code_interpreter' }] as any,
         max_tokens: this.defaultConfig.maxTokens,

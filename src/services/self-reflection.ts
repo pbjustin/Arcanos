@@ -1,5 +1,6 @@
 import { databaseService } from './database';
 import cron from 'node-cron';
+import { ARCANOS_MODEL_ID } from '../config/ai-model';
 
 interface ReflectionEntry {
   timestamp: string;
@@ -24,7 +25,7 @@ export class SelfReflectionService {
       content: reflection,
       context_id,
       interaction_id,
-      source: process.env.FINE_TUNE_MODEL || 'unknown'
+      source: ARCANOS_MODEL_ID
     };
     this.pending.push(entry);
     await this.persist();

@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParams, ChatCompletionMessageParam } from 'openai/resources';
+import { callArcanosModel } from '../config/ai-model';
 import { runDeepResearch } from '../modules/deepResearchHandler';
 import { webFetchHandler } from '../handlers/webFetchHandler';
 
@@ -18,28 +19,28 @@ if (!apiKey) {
 
 const openai = new OpenAI({ apiKey });
 
-function buildParams(message: string, temperature: number, model: string): ChatCompletionCreateParams {
+function buildParams(message: string, temperature: number): ChatCompletionCreateParams {
   const messages: ChatCompletionMessageParam[] = [{ role: 'user', content: message }];
-  return { model, messages, temperature };
+  return { messages, temperature } as ChatCompletionCreateParams;
 }
 
 async function runWriteHandler(query: string) {
-  return openai.chat.completions.create(buildParams(query, 0.7, 'gpt-4'));
+  return callArcanosModel(openai, buildParams(query, 0.7));
 }
 
 async function runSimHandler(query: string, context: Record<string, any>) {
   const simPrompt = `Simulate the following scenario:\n\n${query}\n\nContext: ${JSON.stringify(context)}`;
-  return openai.chat.completions.create(buildParams(simPrompt, 0.75, 'gpt-4'));
+  return callArcanosModel(openai, buildParams(simPrompt, 0.75));
 }
 
 async function runAuditHandler(query: string) {
   const auditPrompt = `Audit this logic using CLEAR:\n\n${query}`;
-  return openai.chat.completions.create(buildParams(auditPrompt, 0.3, 'gpt-3.5-turbo'));
+  return callArcanosModel(openai, buildParams(auditPrompt, 0.3));
 }
 
 async function runCodegenHandler(query: string) {
   const codePrompt = `Generate clean code:\n\n${query}`;
-  return openai.chat.completions.create(buildParams(codePrompt, 0.2, 'gpt-4'));
+  return callArcanosModel(openai, buildParams(codePrompt, 0.2));
 }
 
 async function runDeepResearchHandler(query: string, context: Record<string, any>) {
