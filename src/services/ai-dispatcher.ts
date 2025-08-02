@@ -2,6 +2,7 @@
 // Replaces static logic, conditionals, and routing trees with AI-controlled decision making
 
 import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
+import { ARCANOS_MODEL_ALIAS } from '../config/ai-model';
 
 // Helper to resolve workers from schedule keys
 function resolveWorkerFromKey(key: string): string | null {
@@ -63,12 +64,10 @@ export class AIDispatcher {
   private model: string;
 
   constructor() {
-    this.model = process.env.AI_MODEL || 'gpt-4-turbo';
-    
+    this.model = ARCANOS_MODEL_ALIAS;
+
     try {
-      this.unifiedOpenAI = getUnifiedOpenAI({
-        model: this.model,
-      });
+      this.unifiedOpenAI = getUnifiedOpenAI();
       console.log('🤖 AI Dispatcher initialized with model:', this.model);
     } catch (error) {
       console.warn('⚠️ AI Dispatcher initialized without OpenAI (testing mode):', error);
