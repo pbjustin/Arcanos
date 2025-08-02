@@ -5,11 +5,14 @@ FROM node:20.11.1-alpine AS builder
 # Set working directory
 WORKDIR /app
 
+# Enable garbage collection access with fallback loader
+ENV NODE_OPTIONS="--require ./fallback-gc-loader --expose-gc"
+
 # Copy package files and .npmrc for dependency installation
-COPY package*.json .npmrc ./
+COPY package*.json .npmrc fallback-gc-loader.js ./
 
 # Install production dependencies with capped memory
-RUN NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev --no-audit --no-fund
+RUN NODE_OPTIONS="--max_old_space_size=256 --require ./fallback-gc-loader --expose-gc" npm install --omit=dev --no-audit --no-fund
 
 # Copy source code
 COPY src/ ./src/
@@ -34,6 +37,7 @@ FROM node:20.11.1-alpine AS production
 
 # Set production environment
 ENV NODE_ENV=production
+ENV NODE_OPTIONS="--require ./fallback-gc-loader --expose-gc"
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -43,10 +47,10 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copy package files and .npmrc
-COPY package*.json .npmrc ./
+COPY package*.json .npmrc fallback-gc-loader.js ./
 
 # Install only production dependencies with capped memory
-RUN NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev --no-audit --no-fund
+RUN NODE_OPTIONS="--max_old_space_size=256 --require ./fallback-gc-loader --expose-gc" npm install --omit=dev --no-audit --no-fund
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
