@@ -242,7 +242,7 @@ serverService.start(app, PORT).then(async () => {
   // Memory usage monitoring
   const memStats = process.memoryUsage();
   console.log('🧠 [MEMORY] Initial RSS:', (memStats.rss / 1024 / 1024).toFixed(2), 'MB');
-  memoryMonitor.start();
+  memoryMonitor.start(undefined, 0.83);
   
   // Railway-specific logging
   if (config.railway.environment) {
