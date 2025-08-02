@@ -19,13 +19,34 @@ function buildPrompt(mode: HandlerMode, prompt: string, context: any = {}): stri
   }
 }
 
+async function generateContentDirectly(payload: string): Promise<string> {
+  const direct = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: payload }],
+    temperature: 0.7,
+  });
+  return direct.choices[0]?.message?.content ?? '';
+}
+
 export async function run(mode: HandlerMode, prompt: string, context?: any): Promise<{ result: string }> {
   const response = await openai.chat.completions.create({
     model: 'gpt-4',
     messages: [{ role: 'user', content: buildPrompt(mode, prompt, context) }],
     temperature: 0.5,
   });
-  return { result: response.choices[0]?.message?.content ?? '' };
+  let result = response.choices[0]?.message?.content ?? '';
+
+  // Override diagnostic fallback in WRITE mode
+  if (
+    mode === 'write' &&
+    prompt.toLowerCase().includes('summary') &&
+    result.toLowerCase().includes('instructional')
+  ) {
+    console.log('⚠️ Diagnostic fallback detected in WRITE mode. Generating content directly.');
+    result = await generateContentDirectly(prompt);
+  }
+
+  return { result };
 }
 
 export default { run };
