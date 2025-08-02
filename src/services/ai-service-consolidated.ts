@@ -6,6 +6,7 @@
 
 import { getUnifiedOpenAI, type ChatMessage, type ChatOptions, type CodeInterpreterResult } from './unified-openai';
 import { createServiceLogger } from '../utils/logger';
+import { ARCANOS_MODEL_ALIAS } from '../config/ai-model';
 
 const logger = createServiceLogger('AIServiceConsolidated');
 
@@ -26,7 +27,7 @@ export class CodeInterpreterService {
   private model: string;
 
   constructor() {
-    this.model = process.env.CODE_INTERPRETER_MODEL || 'gpt-4';
+    this.model = ARCANOS_MODEL_ALIAS;
   }
 
   async run(prompt: string): Promise<CodeInterpreterResult> {
@@ -61,9 +62,9 @@ export class CoreAIService {
   private defaultModel: string;
 
   constructor() {
-    this.defaultModel = process.env.AI_MODEL || 'gpt-4-turbo';
-    logger.info('Core AI Service initialized with unified backend', { 
-      model: this.defaultModel 
+    this.defaultModel = ARCANOS_MODEL_ALIAS;
+    logger.info('Core AI Service initialized with unified backend', {
+      model: this.defaultModel
     });
   }
 
@@ -88,7 +89,7 @@ export class CoreAIService {
       }
 
       const response = await openaiService.chat(messages, {
-        model: config.model || this.defaultModel,
+        model: this.defaultModel,
         maxTokens: config.maxTokens || 1000,
         temperature: config.temperature || 0.7,
       });

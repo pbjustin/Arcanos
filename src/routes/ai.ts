@@ -3,6 +3,7 @@
 import { Router } from 'express';
 import path from 'path';
 import { modelControlHooks } from '../services/model-control-hooks';
+import { callArcanosModel } from '../config/ai-model';
 import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
 import { codeInterpreterService } from '../services/ai-service-consolidated';
 import { gameGuideService } from '../services/game-guide';
@@ -300,8 +301,7 @@ router.post('/ask', async (req, res) => {
         return sendErrorResponse(res, 400, 'Prompt is required for write mode');
       }
 
-      const generated = await openai.chat.completions.create({
-        model: 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2',
+      const generated = await callArcanosModel(openai, {
         messages: [
           {
             role: 'system',
