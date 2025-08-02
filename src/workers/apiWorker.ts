@@ -4,6 +4,7 @@
  */
 
 import { createServiceLogger } from '../utils/logger';
+import { exponentialDelay } from '../utils/delay';
 import axios from 'axios';
 
 const logger = createServiceLogger('ApiWorker');
@@ -159,9 +160,8 @@ async function makeApiRequest(task: ApiTask): Promise<any> {
       });
 
       if (attempt < maxRetries) {
-        // Exponential backoff
-        const delay = Math.pow(2, attempt) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
+        // Exponential backoff with modernized delay pattern
+        await exponentialDelay(attempt);
       }
     }
   }

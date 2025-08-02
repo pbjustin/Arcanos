@@ -1,30 +1,50 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
+import { delay } from '../utils/delay';
+import { 
+  createRateLimitMiddleware, 
+  asyncHandler, 
+  requestTimingMiddleware 
+} from '../middleware/modern-middleware';
 
 const router = Router();
 
 const CONCURRENT_LIMIT = 3;
-let activeJobs = 0;
 
 async function performJob(data: any): Promise<string> {
   // Simulate async work; replace with real logic
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  // Use modern delay utility for better async/await pattern
+  await delay(1000);
   return 'done';
 }
 
-router.post('/job', async (req, res) => {
-  if (activeJobs >= CONCURRENT_LIMIT) {
-    return res.status(429).json({ error: 'Too many jobs in progress' });
+// Apply modern middleware stack
+router.use(requestTimingMiddleware);
+router.use(createRateLimitMiddleware(CONCURRENT_LIMIT, 'jobs'));
+
+router.post('/job', asyncHandler(async (req: Request, res: Response) => {
+  const { rateLimit } = req as any;
+  
+  if (rateLimit.isAtLimit()) {
+    return res.status(429).json({ 
+      error: 'Too many jobs in progress',
+      activeJobs: rateLimit.getCount(),
+      limit: rateLimit.getLimit(),
+      retryAfter: '5s'
+    });
   }
 
-  activeJobs++;
+  rateLimit.increment();
   try {
     const result = await performJob(req.body);
-    res.json({ result });
-  } catch (err: any) {
-    res.status(500).json({ error: 'Job failed', details: err.message });
+    res.json({ 
+      result,
+      jobsCompleted: true,
+      activeJobs: rateLimit.getCount(),
+      maxJobs: rateLimit.getLimit()
+    });
   } finally {
-    activeJobs--;
+    rateLimit.decrement();
   }
-});
+}));
 
 export default router;
