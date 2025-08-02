@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParams, ChatCompletionMessageParam } from 'openai/resources';
 import { runDeepResearch } from '../modules/deepResearchHandler';
+import { webFetchHandler } from '../handlers/webFetchHandler';
 
 export type Mode = 'write' | 'sim' | 'audit' | 'codegen' | 'deepresearch';
 
@@ -54,6 +55,10 @@ const handlers: Record<Mode, (query: string, context: Record<string, any>) => Pr
 };
 
 export async function handleOpenAIRequest({ query, mode = 'write', context = {} }: RequestOptions) {
+  if (/(latest|news|current)/i.test(query)) {
+    const webResult = await webFetchHandler(query, context);
+    if (webResult) return webResult;
+  }
   const handler = handlers[mode];
   if (!handler) {
     return {
