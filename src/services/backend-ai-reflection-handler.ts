@@ -5,6 +5,7 @@ import path from 'path';
 
 // OpenAI SDK integration
 import OpenAI from 'openai';
+import { callArcanosModel } from '../config/ai-model';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -38,8 +39,7 @@ function performSelfReflection(): void {
 async function generateReflection(): Promise<any> {
   try {
 
-    const response = await openai.chat.completions.create({
-      model: process.env.FINE_TUNE_MODEL || 'gpt-4',
+    const response = await callArcanosModel(openai, {
       messages: [
         {
           role: 'system',

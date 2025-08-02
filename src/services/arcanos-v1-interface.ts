@@ -157,7 +157,7 @@ export async function getActiveModel(): Promise<ArcanosModel | null> {
     }
 
     // Check if a fine-tuned model is configured
-    const fineTunedModel = aiConfig.fineTunedModel || process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
+    const fineTunedModel = aiConfig.fineTunedModel;
     if (!fineTunedModel) {
       console.warn("No fine-tuned model configured");
       return null;
@@ -191,7 +191,7 @@ export async function askArcanosV1_Safe({
   useHRC?: boolean;
 }): Promise<{ response: string; model?: string }> {
   // Get the actual model name from environment (if available)
-  const modelName = process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL;
+  const modelName = aiConfig.fineTunedModel;
   
   const model = await getActiveModel(); // ← Your current backend model hook
 

@@ -1,5 +1,6 @@
 // Centralized Configuration Management for ARCANOS Backend
 import { safeImport } from '../utils/safeImport';
+import { ARCANOS_MODEL_ID } from './ai-model';
 
 const dotenv = safeImport<typeof import('dotenv')>('dotenv');
 import type { IdentityOverride } from '../types/IdentityOverride';
@@ -76,7 +77,7 @@ export const config: Config = {
   },
   ai: {
     openaiApiKey: process.env.OPENAI_API_KEY,
-    fineTunedModel: process.env.AI_MODEL || process.env.FINE_TUNE_MODEL || process.env.FINE_TUNED_MODEL || process.env.OPENAI_FINE_TUNED_MODEL,
+    fineTunedModel: ARCANOS_MODEL_ID,
     gptToken: process.env.GPT_TOKEN,
     identityOverride: parseIdentityOverride(process.env.IDENTITY_OVERRIDE),
     identityTriggerPhrase: process.env.IDENTITY_TRIGGER_PHRASE || 'I am Skynet',
@@ -153,16 +154,9 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     console.warn('⚠️ GITHUB_WEBHOOK_SECRET not set - webhook signature verification will be skipped');
   }
 
-  const expectedModel = 'gpt-4-turbo';
-  if (!config.ai.fineTunedModel) {
-    errors.push(`AI_MODEL is required and should be set to a supported model like ${expectedModel}`);
-  } else {
-    // Validate model is from supported list
-    const supportedModels = ['gpt-4', 'gpt-4-turbo', 'gpt-4o', 'gpt-3.5-turbo'];
-    const isSupported = supportedModels.some(model => config.ai.fineTunedModel?.includes(model));
-    if (!isSupported) {
-      errors.push(`AI_MODEL must be a supported model: ${supportedModels.join(', ')}`);
-    }
+  const expectedModel = ARCANOS_MODEL_ID;
+  if (config.ai.fineTunedModel !== expectedModel) {
+    errors.push(`Fine-tuned model must be locked to ${expectedModel}`);
   }
 
   return {
