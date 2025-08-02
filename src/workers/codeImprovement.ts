@@ -4,6 +4,7 @@
  */
 
 import { createServiceLogger } from '../utils/logger';
+import { delay } from '../utils/delay';
 import fs from 'fs';
 import path from 'path';
 
@@ -78,8 +79,8 @@ async function generateImprovementSuggestions(): Promise<string[]> {
     'Implement proper backup and recovery procedures for critical data'
   ];
 
-  // Simulate some analysis time
-  await new Promise(resolve => setTimeout(resolve, 100));
+  // Simulate some analysis time with modernized delay
+  await delay(100);
 
   // Return a random subset of suggestions (3-7 suggestions)
   const count = Math.floor(Math.random() * 5) + 3;

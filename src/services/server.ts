@@ -1,5 +1,6 @@
 import express from 'express';
 import * as http from 'http';
+import { promisify } from 'util';
 import { databaseService } from './database';
 import { isTrue } from '../utils/env';
 
@@ -10,23 +11,56 @@ export class ServerService {
     if (this.server) {
       throw new Error('Server already started');
     }
+    
     this.server = http.createServer(app);
-    await new Promise<void>((resolve, reject) => {
-      this.server!.listen(port, resolve);
-      this.server!.on('error', reject);
-    });
-    console.log(`[SERVER] Running on port ${port}`);
+    
+    // Use modern async/await with proper Promise wrapping for server.listen
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.server!.listen(port, (err?: Error) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+        
+        // Handle server errors during startup
+        this.server!.once('error', reject);
+      });
+      
+      console.log(`[SERVER] Running on port ${port}`);
+    } catch (error) {
+      console.error(`[SERVER] Failed to start on port ${port}:`, error);
+      throw error;
+    }
   }
 
   async shutdown(): Promise<void> {
     if (!this.server) return;
-    await new Promise<void>((resolve, reject) => {
-      this.server!.close(err => (err ? reject(err) : resolve()));
-    });
-    console.log('✅ Server closed successfully');
-    await databaseService.close();
-    console.log('✅ Database pool closed');
-    this.server = null;
+    
+    // Use modern async/await with proper Promise wrapping
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.server!.close((err?: Error) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+      
+      console.log('✅ Server closed successfully');
+      
+      await databaseService.close();
+      console.log('✅ Database pool closed');
+    } catch (error) {
+      console.error('❌ Error during server shutdown:', error);
+      throw error;
+    } finally {
+      this.server = null;
+    }
   }
 
   setupSignalHandlers(): void {
