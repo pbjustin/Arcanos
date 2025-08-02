@@ -5,6 +5,7 @@ import { workerStatusService } from '../services/worker-status';
 import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from '../services/email';
 import { sendEmailIntent } from '../intents/send_email';
 import { sendEmailAndRespond } from '../intents/send_email_and_respond';
+import { runValidationPipeline } from '../services/ai-validation-pipeline'; // [AI-PATCH: RAG+HRC+CLEAR]
 import assistantsRouter from './assistants';
 
 const router = Router();
@@ -50,31 +51,26 @@ router.get('/', async (req, res) => {
 // AI-controlled ask endpoint
 router.post('/ask', async (req, res) => {
   try {
-    const result = await modelControlHooks.handleApiRequest(
-      '/api/ask',
-      'POST',
-      req.body,
-      {
-        userId: req.headers['x-user-id'] as string || 'default',
-        sessionId: req.headers['x-session-id'] as string || 'default',
-        source: 'api',
-        metadata: { headers: req.headers }
-      }
-    );
+    const { query, payload = {} } = req.body || {};
+    const prompt = payload.prompt || query;
 
-    if (result.success) {
-      res.json({ 
-        response: result.response,
-        aiControlled: true,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      res.status(500).json({
-        error: result.error,
-        aiControlled: true,
-        timestamp: new Date().toISOString()
-      });
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'Prompt is required', aiControlled: true });
     }
+
+    const result = await runValidationPipeline(prompt); // [AI-PATCH: RAG+HRC+CLEAR]
+
+    (req as any).meta = (req as any).meta || {}; // [AI-PATCH: RAG+HRC+CLEAR]
+    (req as any).meta.audit = result.audit; // [AI-PATCH: RAG+HRC+CLEAR]
+    res.locals.audit = result.audit; // [AI-PATCH: RAG+HRC+CLEAR]
+
+    res.json({
+      response: result.output,
+      audit: result.audit,
+      flagged: result.flagged,
+      aiControlled: true,
+      timestamp: new Date().toISOString()
+    });
   } catch (error: any) {
     res.status(500).json({
       error: error.message,
