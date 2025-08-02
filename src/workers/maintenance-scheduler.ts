@@ -8,6 +8,7 @@ import type { ChatMessage } from '../services/unified-openai';
 import { createServiceLogger } from '../utils/logger';
 import { sanitizeJsonString } from '../utils/json';
 import { normalizeMemoryUsage } from '../utils/memory-normalizer';
+import { delay } from '../utils/delay';
 import fs from 'fs';
 import path from 'path';
 import * as cron from 'node-cron';
@@ -430,7 +431,7 @@ Please analyze and provide:
   // Placeholder maintenance action methods
   private async performCleanupAction(action: string): Promise<void> {
     logger.info('Simulating cleanup action', { action });
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await delay(100);
   }
 
   private async performOptimizationAction(action: string): Promise<void> {
@@ -438,22 +439,22 @@ Please analyze and provide:
     if (action.toLowerCase().includes('garbage')) {
       global.gc && global.gc();
     }
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await delay(200);
   }
 
   private async performMonitoringAction(action: string): Promise<void> {
     logger.info('Simulating monitoring action', { action });
-    await new Promise(resolve => setTimeout(resolve, 150));
+    await delay(150);
   }
 
   private async performSecurityAction(action: string): Promise<void> {
     logger.info('Simulating security action', { action });
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await delay(300);
   }
 
   private async performBackupAction(action: string): Promise<void> {
     logger.info('Simulating backup action', { action });
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await delay(500);
   }
 
   /**
@@ -552,12 +553,16 @@ if (require.main === module) {
   const [, , taskId] = process.argv;
   
   if (taskId) {
-    maintenanceSchedulerWorker.executeMaintenanceTask(taskId).then(report => {
-      console.log('Maintenance report:', JSON.stringify(report, null, 2));
-    }).catch(err => {
-      logger.error('Maintenance execution failed', err);
-      process.exit(1);
-    });
+    // Modernized to use async/await instead of .then chains
+    (async () => {
+      try {
+        const report = await maintenanceSchedulerWorker.executeMaintenanceTask(taskId);
+        console.log('Maintenance report:', JSON.stringify(report, null, 2));
+      } catch (err) {
+        logger.error('Maintenance execution failed', err);
+        process.exit(1);
+      }
+    })();
   } else {
     maintenanceSchedulerWorker.start().catch(err => {
       logger.error('Maintenance scheduler start failed', err);
