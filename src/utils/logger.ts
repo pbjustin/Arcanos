@@ -4,6 +4,7 @@
  */
 
 import { relayLog } from '../services/log-relay';
+import { normalizeMemoryUsage } from './memory-normalizer';
 
 export type LogLevel = 'info' | 'success' | 'warning' | 'error' | 'debug';
 
@@ -188,16 +189,18 @@ export const arcanosLogger = {
    * Log memory operations
    */
   memorySnapshot(operation: string, data: any): void {
-    console.log(`💾 [MEMORY-SNAPSHOT] ${operation}:`, {
-      ...data,
-      timestamp: new Date().toISOString()
-    });
+    const payload = { ...data, timestamp: new Date().toISOString() };
+    if (data && data.memoryUsage) {
+      payload.normalized = { memory: normalizeMemoryUsage(data.memoryUsage) };
+      delete payload.memoryUsage;
+    }
+    console.log(`💾 [MEMORY-SNAPSHOT] ${operation}:`, payload);
     relayLog({
       timestamp: new Date().toISOString(),
       level: 'info',
       service: 'Memory',
       message: `Snapshot ${operation}`,
-      context: data,
+      context: payload,
     });
   }
 };
