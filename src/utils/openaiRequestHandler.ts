@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParams, ChatCompletionMessageParam } from 'openai/resources';
+import { runDeepResearch } from '../modules/deepResearchHandler';
 
-export type Mode = 'write' | 'sim' | 'audit' | 'codegen';
+export type Mode = 'write' | 'sim' | 'audit' | 'codegen' | 'deepresearch';
 
 export interface RequestOptions {
   query: string;
@@ -40,18 +41,23 @@ async function runCodegenHandler(query: string) {
   return openai.chat.completions.create(buildParams(codePrompt, 0.2, 'gpt-4'));
 }
 
+async function runDeepResearchHandler(query: string, context: Record<string, any>) {
+  return runDeepResearch(query, context);
+}
+
 const handlers: Record<Mode, (query: string, context: Record<string, any>) => Promise<any>> = {
   write: async (q) => runWriteHandler(q),
   sim: runSimHandler,
   audit: async (q) => runAuditHandler(q),
   codegen: async (q) => runCodegenHandler(q),
+  deepresearch: runDeepResearchHandler,
 };
 
 export async function handleOpenAIRequest({ query, mode = 'write', context = {} }: RequestOptions) {
   const handler = handlers[mode];
   if (!handler) {
     return {
-      error: 'Unrecognized mode. Valid modes: write, sim, audit, codegen.',
+      error: 'Unrecognized mode. Valid modes: write, sim, audit, codegen, deepresearch.',
     };
   }
   return handler(query, context);
