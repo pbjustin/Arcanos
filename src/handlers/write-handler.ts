@@ -2,7 +2,7 @@
 // Content validation and OpenAI SDK-compatible write operations
 
 import { Request, Response } from 'express';
-import { ArcanosWriteService } from '../services/arcanos-write';
+import { ArcanosWriteService } from '../services/arcanos-write.js';
 
 export class WriteHandler {
   private writeService: ArcanosWriteService;

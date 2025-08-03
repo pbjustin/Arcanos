@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { enqueue } from '../services/jobQueue';
+import { enqueue } from '../services/jobQueue.js';
 
 const router = Router();
 

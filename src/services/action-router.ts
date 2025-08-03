@@ -1,8 +1,8 @@
-import { executionEngine } from './execution-engine';
-import { DispatchInstruction } from './ai-dispatcher';
-import { createServiceLogger } from '../utils/logger';
-import { memoryOperations } from './memory-operations';
-import { activeWorkers } from '../worker-init';
+import { executionEngine } from './execution-engine.js';
+import { DispatchInstruction } from './ai-dispatcher.js';
+import { createServiceLogger } from '../utils/logger.js';
+import { memoryOperations } from './memory-operations.js';
+import { activeWorkers } from '../worker-init.js';
 import * as cron from 'node-cron';
 
 const logger = createServiceLogger('ActionRouter');

@@ -2,15 +2,17 @@
 // Enhanced with GPT-4 fallback for malformed or incomplete outputs
 import { Router } from 'express';
 import path from 'path';
-import { modelControlHooks } from '../services/model-control-hooks';
-import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response';
-import { codeInterpreterService } from '../services/ai-service-consolidated';
-import { gameGuideService } from '../services/game-guide';
-import { recoverOutput, recoverJSON } from '../utils/output-recovery';
-import { runValidationPipeline } from '../services/ai-validation-pipeline'; // [AI-PATCH: RAG+HRC+CLEAR]
+import { fileURLToPath } from 'url';
+import { modelControlHooks } from '../services/model-control-hooks.js';
+import { sendErrorResponse, sendSuccessResponse, handleServiceResult, handleCatchError } from '../utils/response.js';
+import { codeInterpreterService } from '../services/ai-service-consolidated.js';
+import { gameGuideService } from '../services/game-guide.js';
+import { recoverOutput, recoverJSON } from '../utils/output-recovery.js';
+import { runValidationPipeline } from '../services/ai-validation-pipeline.js'; // [AI-PATCH: RAG+HRC+CLEAR]
 
 
 const router = Router();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 
 // Fine-tune routing status endpoint
@@ -19,7 +21,7 @@ router.get('/finetune-status', async (req, res) => {
   const sessionId = req.headers['x-session-id'] as string || 'default';
   
   try {
-    const { fineTuneRoutingService } = await import('../services/finetune-routing');
+    const { fineTuneRoutingService } = await import('../services/finetune-routing.js');
     
     const isActive = await fineTuneRoutingService.isFineTuneRoutingActive(userId, sessionId);
     const statusMessage = await fineTuneRoutingService.getStatusMessage(userId, sessionId);
@@ -232,7 +234,7 @@ router.post('/ai-patch', async (req, res) => {
   }
 
   try {
-    const { aiPatchSystem } = await import('../services/ai-patch-system');
+    const { aiPatchSystem } = await import('../services/ai-patch-system.js');
     
     const result = await aiPatchSystem.processPatch({
       content,
@@ -259,7 +261,7 @@ router.post('/ai-patch', async (req, res) => {
 // GET /ai-patch/status - Get AI Patch System status
 router.get('/ai-patch/status', async (req, res) => {
   try {
-    const { aiPatchSystem } = await import('../services/ai-patch-system');
+    const { aiPatchSystem } = await import('../services/ai-patch-system.js');
     
     const status = await aiPatchSystem.getSystemStatus();
     
@@ -273,7 +275,7 @@ router.get('/ai-patch/status', async (req, res) => {
 // POST /ai-patch/retry - Manually trigger retry queue processing
 router.post('/ai-patch/retry', async (req, res) => {
   try {
-    const { aiPatchSystem } = await import('../services/ai-patch-system');
+    const { aiPatchSystem } = await import('../services/ai-patch-system.js');
     
     await aiPatchSystem.processRetryQueue();
     const status = await aiPatchSystem.getRetryQueueStatus();

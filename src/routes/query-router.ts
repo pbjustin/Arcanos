@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
-import { askArcanosV1_Safe } from '../services/arcanos-v1-interface';
-import { createServiceLogger } from '../utils/logger';
+import { askArcanosV1_Safe } from '../services/arcanos-v1-interface.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 const router = express.Router();
 const logger = createServiceLogger('QueryRouter');

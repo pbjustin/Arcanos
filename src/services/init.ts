@@ -3,7 +3,7 @@
  * Provides a unified interface for initializing different types of workers
  */
 
-import { createServiceLogger } from '../utils/logger';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('WorkerInit');
 
@@ -25,7 +25,7 @@ export async function initializeWorker(workerName: string): Promise<void> {
   try {
     switch (workerName) {
       case 'goalTracker': {
-        const { goalTrackerWorker } = await import('../workers/goal-tracker');
+        const { goalTrackerWorker } = await import('../workers/goal-tracker.js');
         await goalTrackerWorker.start();
         initializedWorkers.set(workerName, true);
         logger.success(`✅ ${workerName} initialized successfully`);
@@ -33,7 +33,7 @@ export async function initializeWorker(workerName: string): Promise<void> {
       }
 
       case 'maintenanceScheduler': {
-        const { maintenanceSchedulerWorker } = await import('../workers/maintenance-scheduler');
+        const { maintenanceSchedulerWorker } = await import('../workers/maintenance-scheduler.js');
         await maintenanceSchedulerWorker.start();
         initializedWorkers.set(workerName, true);
         logger.success(`✅ ${workerName} initialized successfully`);
@@ -42,7 +42,7 @@ export async function initializeWorker(workerName: string): Promise<void> {
 
       case 'emailDispatcher':
         // Email dispatcher is a function-based worker, we initialize it by ensuring it's available
-        const { dispatchEmail } = await import('../workers/email/email-dispatcher');
+        const { dispatchEmail } = await import('../workers/email/email-dispatcher.js');
         logger.info('Email dispatcher service is now available');
         initializedWorkers.set(workerName, true);
         logger.success(`✅ ${workerName} initialized successfully`);
@@ -50,7 +50,7 @@ export async function initializeWorker(workerName: string): Promise<void> {
 
       case 'auditProcessor':
         // Audit processor is a function-based worker, we initialize it by making it available
-        const { runStreamAudit } = await import('../workers/audit/stream-audit-worker');
+        const { runStreamAudit } = await import('../workers/audit/stream-audit-worker.js');
         logger.info('Audit processor service is now available');
         initializedWorkers.set(workerName, true);
         logger.success(`✅ ${workerName} initialized successfully`);

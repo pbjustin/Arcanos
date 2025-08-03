@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import '../services/clarke-handler'; // Import to ensure ClarkeHandler is available
-import { genericFallback, ClarkeHandler } from '../services/clarke-handler';
+import '../services/clarke-handler.js'; // Import to ensure ClarkeHandler is available
+import { genericFallback, ClarkeHandler } from '../services/clarke-handler.js';
 
 // Use the new resilience handler pattern
 let openai: ClarkeHandler;

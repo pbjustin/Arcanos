@@ -3,15 +3,15 @@
 // Ensures smooth routing for Codex, audit-mode diagnostics, and AI-bound services
 
 import { Request, Response } from 'express';
-import { handleCodexPrompt } from './services/codex';
-import { handleAudit } from './services/audit';
-import { diagnosticsService } from './services/diagnostics';
-import { handleLogic as handleGenericLogic } from './routes/logic';
-import { installNLPInterpreter, getNLPInterpreter } from './modules/nlp-interpreter';
-import { installPagedOutputHandler, getPagedOutputHandler } from './modules/paged-output-handler';
-import { installMemoryAuditStreamSerializer } from './modules/memory-audit-stream-serializer';
-import dispatchService, { type ServiceTask, createManualOverrideTask, requiresAIRouting } from './services/ai-service-dispatcher';
-import { runDeepResearch } from './modules/deepResearchHandler';
+import { handleCodexPrompt } from './services/codex.js';
+import { handleAudit } from './services/audit.js';
+import { diagnosticsService } from './services/diagnostics.js';
+import { handleLogic as handleGenericLogic } from './routes/logic.js';
+import { installNLPInterpreter, getNLPInterpreter } from './modules/nlp-interpreter.js';
+import { installPagedOutputHandler, getPagedOutputHandler } from './modules/paged-output-handler.js';
+import { installMemoryAuditStreamSerializer } from './modules/memory-audit-stream-serializer.js';
+import dispatchService, { type ServiceTask, createManualOverrideTask, requiresAIRouting } from './services/ai-service-dispatcher.js';
+import { runDeepResearch } from './modules/deepResearchHandler.js';
 
 // Install NLP interpreter with default configuration
 installNLPInterpreter({

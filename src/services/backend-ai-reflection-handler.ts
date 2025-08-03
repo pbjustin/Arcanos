@@ -5,7 +5,7 @@ import path from 'path';
 
 // OpenAI SDK integration
 import OpenAI from 'openai';
-import { callArcanosModel } from '../config/ai-model';
+import { callArcanosModel } from '../config/ai-model.js';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 

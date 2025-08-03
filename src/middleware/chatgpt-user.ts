@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { chatGPTUserWhitelist } from '../services/chatgpt-user-whitelist';
+import { chatGPTUserWhitelist } from '../services/chatgpt-user-whitelist.js';
 
 // Define the exact ChatGPT-User agent string
 const CHATGPT_USER_AGENT = 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot';

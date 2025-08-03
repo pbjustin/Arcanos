@@ -1,4 +1,4 @@
-import { getUnifiedOpenAI } from './services/unified-openai';
+import { getUnifiedOpenAI } from './services/unified-openai.js';
 
 const unifiedOpenAI = getUnifiedOpenAI();
 

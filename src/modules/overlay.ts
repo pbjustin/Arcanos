@@ -1,4 +1,4 @@
-import { HRCCore } from './hrc';
+import { HRCCore } from './hrc.js';
 
 export interface OverlayResult {
   allowed: boolean;

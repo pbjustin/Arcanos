@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import { sendEmail } from '../services/email';
-import { getUnifiedOpenAI, type ChatMessage } from '../services/unified-openai';
-import { aiConfig } from '../config';
+import { sendEmail } from '../services/email.js';
+import { getUnifiedOpenAI, type ChatMessage } from '../services/unified-openai.js';
+import { aiConfig } from '../config/index.js';
 
 let unifiedOpenAI: ReturnType<typeof getUnifiedOpenAI> | null = null;
 

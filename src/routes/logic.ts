@@ -1,4 +1,4 @@
-import { processArcanosRequest } from '../services/arcanos-router';
+import { processArcanosRequest } from '../services/arcanos-router.js';
 
 export async function handleLogic(payload: any): Promise<any> {
   const { message = '', domain = 'general', useRAG = true, useHRC = true } = payload || {};

@@ -5,9 +5,9 @@
  */
 
 import { Request, Response } from 'express';
-import { getMemory } from '../services/memory';
-import { formatGuideChunks } from '../utils/formatter';
-import { recoverGameGuide, isMalformed } from '../utils/output-recovery';
+import { getMemory } from '../services/memory.js';
+import { formatGuideChunks } from '../utils/formatter.js';
+import { recoverGameGuide, isMalformed } from '../utils/output-recovery.js';
 
 export interface GuideSection {
   sections: string[];

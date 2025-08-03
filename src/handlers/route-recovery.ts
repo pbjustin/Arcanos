@@ -3,11 +3,11 @@
 
 import { Express, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { memoryHandler } from './memory-handler';
-import { writeHandler } from './write-handler';
-import { auditHandler } from './audit-handler';
-import { diagnosticHandler } from './diagnostic-handler';
-import { createServiceLogger } from '../utils/logger';
+import { memoryHandler } from './memory-handler.js';
+import { writeHandler } from './write-handler.js';
+import { auditHandler } from './audit-handler.js';
+import { diagnosticHandler } from './diagnostic-handler.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('RouteRecovery');
 
@@ -336,7 +336,7 @@ export class RouteRecovery {
       switch (route) {
         case '/memory':
           // Bootstrap memory handler
-          const { memoryHandler } = await import('./memory-handler');
+          const { memoryHandler } = await import('./memory-handler.js');
           // Check if initialize method exists, otherwise skip
           if (typeof (memoryHandler as any).initialize === 'function') {
             await (memoryHandler as any).initialize();
@@ -345,7 +345,7 @@ export class RouteRecovery {
 
         case '/write':
           // Bootstrap write handler
-          const { writeHandler } = await import('./write-handler');
+          const { writeHandler } = await import('./write-handler.js');
           // Check if initialize method exists, otherwise skip
           if (typeof (writeHandler as any).initialize === 'function') {
             await (writeHandler as any).initialize();
@@ -354,7 +354,7 @@ export class RouteRecovery {
 
         case '/audit':
           // Bootstrap audit handler
-          const { auditHandler } = await import('./audit-handler');
+          const { auditHandler } = await import('./audit-handler.js');
           // Check if initialize method exists, otherwise skip
           if (typeof (auditHandler as any).initialize === 'function') {
             await (auditHandler as any).initialize();
@@ -363,7 +363,7 @@ export class RouteRecovery {
 
         case '/diagnostic':
           // Bootstrap diagnostic handler with enhanced recovery
-          const { diagnosticHandler } = await import('./diagnostic-handler');
+          const { diagnosticHandler } = await import('./diagnostic-handler.js');
           // Check if performFullBootstrap method exists, otherwise use basic recovery
           if (typeof (diagnosticHandler as any).performFullBootstrap === 'function') {
             const diagnosticResult = await (diagnosticHandler as any).performFullBootstrap();

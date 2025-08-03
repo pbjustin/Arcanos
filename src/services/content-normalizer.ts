@@ -1,5 +1,5 @@
-import { getMemory, saveMemory } from './memory';
-import { aiDispatcher } from './ai-dispatcher';
+import { getMemory, saveMemory } from './memory.js';
+import { aiDispatcher } from './ai-dispatcher.js';
 
 interface GuideOptions {
   defaultAction: string;

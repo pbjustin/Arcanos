@@ -1,15 +1,15 @@
 // ARCANOS Main Entry Point - GitHub Integration Enabled
 // This is the main entry point as specified in the requirements
 
-import './index';
+import './index.js';
 // Import the AI Reflection Scheduler to enable it
-import './ai-reflection-scheduler';
+import './ai-reflection-scheduler.js';
 
 // Export main ARCANOS interface for external usage
-export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arcanos-v1-interface';
-export { githubWebhookService } from './services/github-webhook-service';
-export { githubActionsService, executeGitHubAction } from './services/github-actions-service';
-export { aiReflectionScheduler } from './ai-reflection-scheduler';
+export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arcanos-v1-interface.js';
+export { githubWebhookService } from './services/github-webhook-service.js';
+export { githubActionsService, executeGitHubAction } from './services/github-actions-service.js';
+export { aiReflectionScheduler } from './ai-reflection-scheduler.js';
 
 console.log('🤖 ARCANOS Main Entry Point - Full Backend Controller Ready');
 console.log('📋 GitHub Integration Features:');

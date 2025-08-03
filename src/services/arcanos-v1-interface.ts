@@ -2,11 +2,11 @@
 // Purpose: Safe, fallback-proof logic interface for model routing
 // Enhanced with GPT-4 fallback for malformed outputs
 
-import { getUnifiedOpenAI } from './unified-openai';
-import { HRCCore } from '../modules/hrc';
-import { MemoryStorage } from '../storage/memory-storage';
-import { aiConfig } from '../config';
-import { recoverOutput } from '../utils/output-recovery';
+import { getUnifiedOpenAI } from './unified-openai.js';
+import { HRCCore } from '../modules/hrc.js';
+import { MemoryStorage } from '../storage/memory-storage.js';
+import { aiConfig } from '../config/index.js';
+import { recoverOutput } from '../utils/output-recovery.js';
 
 // Model interface that all models must implement
 export interface ArcanosModel {

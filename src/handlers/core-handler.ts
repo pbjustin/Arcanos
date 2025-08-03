@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { getUnifiedOpenAI } from '../services/unified-openai';
-import { aiConfig } from '../config';
+import { getUnifiedOpenAI } from '../services/unified-openai.js';
+import { aiConfig } from '../config/index.js';
 
 // Use unified OpenAI service
 const unifiedOpenAI = getUnifiedOpenAI();

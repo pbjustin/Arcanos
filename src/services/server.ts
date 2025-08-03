@@ -1,8 +1,8 @@
 import express from 'express';
 import * as http from 'http';
 import { promisify } from 'util';
-import { databaseService } from './database';
-import { isTrue } from '../utils/env';
+import { databaseService } from './database.js';
+import { isTrue } from '../utils/env.js';
 
 export class ServerService {
   private server: http.Server | null = null;

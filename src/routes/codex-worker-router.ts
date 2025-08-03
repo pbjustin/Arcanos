@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { runDiagnostics } from '../handlers/diagnostics';
-import { runRefactor } from '../handlers/refactor';
-import { createDraftBranch } from '../handlers/branchDraft';
-import { editBackendCode } from '../handlers/backendEdit';
-import { validateCodexIntent, CodexIntent } from '../utils/intentParser';
-import { logToStudio } from '../studio/logger';
+import { runDiagnostics } from '../handlers/diagnostics.js';
+import { runRefactor } from '../handlers/refactor.js';
+import { createDraftBranch } from '../handlers/branchDraft.js';
+import { editBackendCode } from '../handlers/backendEdit.js';
+import { validateCodexIntent, CodexIntent } from '../utils/intentParser.js';
+import { logToStudio } from '../studio/logger.js';
 
 const router = Router();
 

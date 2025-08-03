@@ -1,10 +1,11 @@
+import { fileURLToPath } from 'url';
 /**
  * Memory Sync Worker - Handles memory synchronization and snapshots
  * This file provides the interface expected by sleep-manager
  */
 
-import { createServiceLogger } from '../utils/logger';
-import { normalizeMemoryUsage } from '../utils/memory-normalizer';
+import { createServiceLogger } from '../utils/logger.js';
+import { normalizeMemoryUsage } from '../utils/memory-normalizer.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -91,7 +92,7 @@ async function cleanupOldSnapshots(storageDir: string): Promise<void> {
 }
 
 // Allow running directly from node
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   memorySync().catch(err => {
     logger.error('Memory sync execution failed', err);
     process.exit(1);

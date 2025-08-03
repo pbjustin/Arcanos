@@ -3,11 +3,11 @@
  * Exports reflect function for the AI Reflection Scheduler
  */
 
-import { coreAIService } from '../ai-service-consolidated';
-import { selfReflectionService } from '../self-reflection';
-import { getNLPInterpreter } from '../../modules/nlp-interpreter';
-import { saveMemory } from '../memory';
-import type { ChatMessage } from '../unified-openai';
+import { coreAIService } from '../ai-service-consolidated.js';
+import { selfReflectionService } from '../self-reflection.js';
+import { getNLPInterpreter } from '../../modules/nlp-interpreter.js';
+import { saveMemory } from '../memory.js';
+import type { ChatMessage } from '../unified-openai.js';
 
 export interface ReflectionOptions {
   label: string;
@@ -115,4 +115,4 @@ export async function reflect(options: ReflectionOptions): Promise<ReflectionSna
 }
 
 // Re-export consolidated AI service for direct access
-export { coreAIService } from '../ai-service-consolidated';
+export { coreAIService } from '../ai-service-consolidated.js';

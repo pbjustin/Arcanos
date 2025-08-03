@@ -3,8 +3,8 @@
 // Enhanced with GPT-4 fallback for malformed memory outputs
 
 import { Request, Response } from 'express';
-import { memoryOperations } from '../services/memory-operations';
-import { recoverOutput } from '../utils/output-recovery';
+import { memoryOperations } from '../services/memory-operations.js';
+import { recoverOutput } from '../utils/output-recovery.js';
 
 export class MemoryHandler {
   async handleMemoryRequest(req: Request, res: Response): Promise<void> {

@@ -4,9 +4,9 @@
  * Uses the unified OpenAI service for all operations
  */
 
-import { getUnifiedOpenAI, type ChatMessage, type ChatOptions, type CodeInterpreterResult } from './unified-openai';
-import { createServiceLogger } from '../utils/logger';
-import { ARCANOS_MODEL_ID } from '../config/ai-model'; // PATCHED: full model ID
+import { getUnifiedOpenAI, type ChatMessage, type ChatOptions, type CodeInterpreterResult } from './unified-openai.js';
+import { createServiceLogger } from '../utils/logger.js';
+import { ARCANOS_MODEL_ID } from '../config/ai-model.js'; // PATCHED: full model ID
 
 const logger = createServiceLogger('AIServiceConsolidated');
 
@@ -222,4 +222,4 @@ export const unifiedAIService = {
 };
 
 // Export types
-export type { CodeInterpreterResult } from './unified-openai';
+export type { CodeInterpreterResult } from './unified-openai.js';

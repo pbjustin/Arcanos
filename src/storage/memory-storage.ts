@@ -1,4 +1,4 @@
-import { databaseService } from '../services/database';
+import { databaseService } from '../services/database.js';
 
 export interface MemoryEntry {
   id: string;

@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { modelControlHooks, memoryControl } from '../services/model-control-hooks';
-import { sendErrorResponse, sendSuccessResponse, handleCatchError } from '../utils/response';
+import { modelControlHooks, memoryControl } from '../services/model-control-hooks.js';
+import { sendErrorResponse, sendSuccessResponse, handleCatchError } from '../utils/response.js';
 
 const router = Router();
 

@@ -1,7 +1,7 @@
-import { config } from '../config';
-import { askArcanosV1_Safe } from './arcanos-v1-interface';
-import { executeGitHubAction } from './github-actions-service';
-import { getUnifiedOpenAI } from './unified-openai';
+import { config } from '../config/index.js';
+import { askArcanosV1_Safe } from './arcanos-v1-interface.js';
+import { executeGitHubAction } from './github-actions-service.js';
+import { getUnifiedOpenAI } from './unified-openai.js';
 
 const unifiedOpenAI = getUnifiedOpenAI();
 

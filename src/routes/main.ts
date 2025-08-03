@@ -1,14 +1,14 @@
 // ARCANOS Main Routes - Extracted from index.ts for better modularity
 import { Router } from 'express';
-import { memoryHandler } from '../handlers/memory-handler';
-import { auditHandler } from '../handlers/audit-handler';
-import { diagnosticHandler } from '../handlers/diagnostic-handler';
-import { writeHandler } from '../handlers/write-handler';
-import { routeRecovery } from '../handlers/route-recovery';
-import { getChatGPTUserDiagnostics } from '../middleware/chatgpt-user';
-import { getPagedOutputHandler } from '../modules/paged-output-handler';
-import { memoryOperations } from '../services/memory-operations';
-import { getMemoryAuditStreamSerializer } from '../modules/memory-audit-stream-serializer';
+import { memoryHandler } from '../handlers/memory-handler.js';
+import { auditHandler } from '../handlers/audit-handler.js';
+import { diagnosticHandler } from '../handlers/diagnostic-handler.js';
+import { writeHandler } from '../handlers/write-handler.js';
+import { routeRecovery } from '../handlers/route-recovery.js';
+import { getChatGPTUserDiagnostics } from '../middleware/chatgpt-user.js';
+import { getPagedOutputHandler } from '../modules/paged-output-handler.js';
+import { memoryOperations } from '../services/memory-operations.js';
+import { getMemoryAuditStreamSerializer } from '../modules/memory-audit-stream-serializer.js';
 import fs from 'fs';
 import path from 'path';
 

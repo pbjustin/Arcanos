@@ -4,8 +4,8 @@
  * as specified in the problem statement.
  */
 
-import './services/clarke-handler'; // Import to ensure ClarkeHandler is attached to OpenAI namespace
-import { genericFallback, ClarkeHandler } from './services/clarke-handler';
+import './services/clarke-handler.js'; // Import to ensure ClarkeHandler is attached to OpenAI namespace
+import { genericFallback, ClarkeHandler } from './services/clarke-handler.js';
 import OpenAI from 'openai';
 
 /**

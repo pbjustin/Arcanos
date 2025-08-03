@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { loadPlugins } from '../plugins';
-import { pluginManager } from '../services/plugin-manager';
-import { MemoryStorage } from '../storage/memory-storage';
+import { loadPlugins } from '../plugins/index.js';
+import { pluginManager } from '../services/plugin-manager.js';
+import { MemoryStorage } from '../storage/memory-storage.js';
 
 const router = Router();
 let pluginsLoaded = false;

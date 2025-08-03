@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { databaseService, SaveMemoryRequest, LoadMemoryRequest } from '../services/database';
-import { fallbackMemory } from '../services/memory';
-import { sendErrorResponse, sendSuccessResponse, handleCatchError } from '../utils/response';
-import { arcanosLogger } from '../utils/logger';
+import { databaseService, SaveMemoryRequest, LoadMemoryRequest } from '../services/database.js';
+import { fallbackMemory } from '../services/memory.js';
+import { sendErrorResponse, sendSuccessResponse, handleCatchError } from '../utils/response.js';
+import { arcanosLogger } from '../utils/logger.js';
 
 const router = Router();
 const useDatabase = !!process.env.DATABASE_URL;

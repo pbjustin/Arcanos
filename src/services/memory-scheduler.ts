@@ -1,5 +1,5 @@
 // Fix: Ensure module declarations and unlock npm registry access
-import type { ScheduleTask } from '../types/scheduler';
+import type { ScheduleTask } from '../types/scheduler.js';
 
 export const scheduleRegistry = new Map<string, ScheduleTask['value']>();
 

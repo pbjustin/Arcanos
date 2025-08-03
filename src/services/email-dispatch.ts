@@ -1,6 +1,6 @@
-import { createServiceLogger } from '../utils/logger'
-import { sendEmailPrimary, sendEmailFallback, EmailPayload } from '../plugins/email'
-import { trackDiagnostics } from '../middleware/diagnostics'
+import { createServiceLogger } from '../utils/logger.js'
+import { sendEmailPrimary, sendEmailFallback, EmailPayload } from '../plugins/email.js'
+import { trackDiagnostics } from '../middleware/diagnostics.js'
 
 const logger = createServiceLogger('EmailDispatch')
 
