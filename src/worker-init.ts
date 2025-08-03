@@ -64,14 +64,15 @@ async function initializeAIControlledWorkers(): Promise<void> {
     await initializeModernWorkerSystem();
     logger.success('✅ Modern worker system initialized successfully');
   } catch (modernError: any) {
-    logger.warning(`⚠️ Modern system failed: ${modernError.message}, falling back to legacy`);
+    logger.error(`❌ Modern system failed: ${modernError.message}`);
+    throw modernError; // Fail fast instead of falling back to legacy
   }
   
   // Check system status
   const systemStatus = getModernWorkerStatus();
   if (!systemStatus.initialized) {
-    logger.warning(`⚠️ Modern system not available: ${systemStatus.error}`);
-    logger.info('🔄 Will attempt legacy orchestration methods');
+    logger.error(`❌ Modern system not available: ${systemStatus.error}`);
+    throw new Error('Modern worker system required - legacy fallback removed');
   }
   
   // Register workers using the modern system or fallback to legacy
@@ -102,7 +103,7 @@ async function initializeAIControlledWorkers(): Promise<void> {
         }
       });
 
-      // Try modern system first
+      // Try modern system only - no legacy fallback
       let orchestrationSuccess = false;
       if (systemStatus.initialized) {
         try {
@@ -114,28 +115,11 @@ async function initializeAIControlledWorkers(): Promise<void> {
           orchestrationSuccess = true;
           logger.success(`✅ Worker ${workerName} registered via modern system`);
         } catch (modernError: any) {
-          logger.warning(`⚠️ Modern registration failed for ${workerName}:`, modernError.message);
+          logger.error(`❌ Modern registration failed for ${workerName}:`, modernError.message);
+          throw modernError; // Fail fast instead of legacy fallback
         }
-      }
-
-      // Fallback to model control hooks if modern system failed
-      if (!orchestrationSuccess) {
-        try {
-          await modelControlHooks.orchestrateWorker(
-            workerName,
-            'ondemand',
-            { initialized: true },
-            {
-              userId: 'system',
-              sessionId: 'worker-init',
-              source: 'system'
-            }
-          );
-          orchestrationSuccess = true;
-          logger.success(`✅ Worker ${workerName} registered via legacy control hooks`);
-        } catch (legacyError: any) {
-          logger.error(`❌ All orchestration methods failed for ${workerName}:`, legacyError.message);
-        }
+      } else {
+        throw new Error(`Modern system not available for ${workerName}`);
       }
       
       // Update worker registry
@@ -145,7 +129,7 @@ async function initializeAIControlledWorkers(): Promise<void> {
         registeredAt: Date.now(),
         lastError: orchestrationSuccess ? undefined : 'Orchestration failed',
         retryCount: 0,
-        system: orchestrationSuccess ? 'modern' : 'legacy'
+        system: 'modern'
       });
       
       if (orchestrationSuccess) {
@@ -164,13 +148,13 @@ async function initializeAIControlledWorkers(): Promise<void> {
         registeredAt: Date.now(),
         lastError: error.message,
         retryCount: 0,
-        system: 'failed'
+        system: 'modern'
       });
       errorCount++;
     }
   }
   
-  logger.info(`📊 Refactored worker system initialized: ${successCount} successful, ${errorCount} failed`, { 
+  logger.info(`📊 Modern worker system initialized: ${successCount} successful, ${errorCount} failed`, { 
     totalWorkers: availableWorkers.length,
     modernSystemAvailable: systemStatus.initialized
   });
@@ -181,9 +165,9 @@ async function initializeAIControlledWorkers(): Promise<void> {
 }
 
 async function startBackgroundWorkers(): Promise<void> {
-  logger.info('Starting refactored background workers');
+  logger.info('Starting modern background workers');
 
-  // Try modern system first
+  // Use modern system only - no legacy fallback
   const systemStatus = getModernWorkerStatus();
   if (systemStatus.initialized) {
     try {
@@ -191,86 +175,11 @@ async function startBackgroundWorkers(): Promise<void> {
       logger.success('✅ Modern background workers started successfully');
       return;
     } catch (modernError: any) {
-      logger.warning(`⚠️ Modern worker startup failed: ${modernError.message}, falling back to legacy`);
+      logger.error(`❌ Modern worker startup failed: ${modernError.message}`);
+      throw modernError; // Fail fast instead of falling back
     }
-  }
-
-  // Legacy fallback startup
-  try {
-    const workersToStart = ['goalTracker', 'maintenanceScheduler'];
-    let startedCount = 0;
-    
-    for (const workerName of workersToStart) {
-      let workerCtx = activeWorkers.get(workerName);
-      if (!workerCtx) {
-        logger.warning(`⚠️ Worker context not found for ${workerName} - creating placeholder`);
-        workerCtx = {
-          instance: null,
-          started: false,
-          registeredAt: Date.now(),
-          lastError: 'context_missing',
-          retryCount: 0,
-          system: 'legacy'
-        };
-        activeWorkers.set(workerName, workerCtx);
-      }
-
-      if (workerCtx.started) {
-        logger.info(`ℹ️ Worker ${workerName} already started`);
-        continue;
-      }
-
-      try {
-        // Attempt to start the worker with error handling
-        if (workerName === 'goalTracker') {
-          workerCtx.instance = goalTrackerWorker;
-          await goalTrackerWorker.start();
-          workerCtx.started = true;
-          workerCtx.lastError = undefined;
-          logger.success('Goal Tracker Worker started');
-          startedCount++;
-          
-        } else if (workerName === 'maintenanceScheduler') {
-          workerCtx.instance = maintenanceSchedulerWorker;
-          await maintenanceSchedulerWorker.start();
-          workerCtx.started = true;
-          workerCtx.lastError = undefined;
-          logger.success('Maintenance Scheduler Worker started');
-          startedCount++;
-        }
-        
-      } catch (workerError: any) {
-        logger.error(`❌ Failed to start worker ${workerName}:`, workerError.message);
-        workerCtx.lastError = `Start failed: ${workerError.message}`;
-        workerCtx.retryCount++;
-        
-        // Attempt retry for critical workers
-        if (workerCtx.retryCount < 3) {
-          logger.info(`🔄 Scheduling retry for worker ${workerName} (attempt ${workerCtx.retryCount + 1})`);
-          setTimeout(async () => {
-            try {
-              if (workerName === 'goalTracker') {
-                await goalTrackerWorker.start();
-              } else if (workerName === 'maintenanceScheduler') {
-                await maintenanceSchedulerWorker.start();
-              }
-              workerCtx.started = true;
-              workerCtx.lastError = undefined;
-              logger.success(`✅ Worker ${workerName} started on retry`);
-            } catch (retryError: any) {
-              logger.error(`❌ Retry failed for worker ${workerName}:`, retryError.message);
-              workerCtx.lastError = `Retry failed: ${retryError.message}`;
-            }
-          }, 5000 * workerCtx.retryCount); // Exponential backoff
-        }
-      }
-    }
-    
-    logger.info(`📊 Legacy background workers startup completed: ${startedCount}/${workersToStart.length} started successfully`);
-    
-  } catch (error: any) {
-    logger.error('❌ Critical error during background worker startup:', error.message);
-    throw error;
+  } else {
+    throw new Error('Modern worker system not available - cannot start workers');
   }
 }
 
@@ -353,37 +262,15 @@ async function startWorkers(): Promise<void> {
   }
 }
 
-// Initialize minimal system workers for status tracking
-workerStatusService.initializeMinimalWorkers();
+// Initialize optimized system workers for status tracking
+workerStatusService.initializeOptimizedWorkers();
 console.log('[WORKER-INIT] Minimal system workers initialized');
 
-// Initialize AI-controlled worker system with comprehensive error handling
+// Initialize AI-controlled worker system with modern approach only
 initializeAIControlledWorkers().catch(error => {
   logger.error('[AI-WORKERS] Failed to initialize AI-controlled workers:', error.message);
-  
-  // 🔁 Enhanced fallback to modern refactored worker system
-  logger.info('[AI-WORKERS] Attempting enhanced fallback to refactored system...');
-  
-  initializeModernWorkerSystem().catch(fallbackError => {
-    logger.error('[AI-WORKERS] Fallback modern system also failed:', fallbackError.message);
-    logger.warning('⚠️ System will run with minimal worker functionality');
-    
-    // Final fallback - register workers locally without orchestration
-    const minimalWorkers = ['goalTracker', 'maintenanceScheduler'];
-    minimalWorkers.forEach(workerName => {
-      if (!activeWorkers.has(workerName)) {
-        activeWorkers.set(workerName, {
-          instance: null,
-          started: false,
-          registeredAt: Date.now(),
-          lastError: 'Registered in minimal mode - orchestration unavailable',
-          retryCount: 0,
-          system: 'minimal'
-        });
-        logger.info(`📝 Worker ${workerName} registered in minimal mode`);
-      }
-    });
-  });
+  logger.error('[AI-WORKERS] Modern system required - exiting');
+  process.exit(1); // Fail fast instead of degraded mode
 });
 
 // Conditional worker startup based on environment variable with enhanced error handling
