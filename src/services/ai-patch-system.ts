@@ -3,6 +3,16 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { setInterval } from 'node:timers';
+
+if (global.gc) {
+  setInterval(() => {
+    console.log('[GC] Forcing garbage collection...');
+    (global.gc as () => void)();
+  }, 30000);
+} else {
+  console.warn('[GC] Garbage collection is not exposed. Use: node --expose-gc');
+}
 
 // Helper for dynamic imports
 const loadModule = async (specifier: string): Promise<any> => {
