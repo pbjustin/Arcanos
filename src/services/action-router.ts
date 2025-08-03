@@ -18,10 +18,10 @@ export interface ActionContext {
   invokeWorker: (worker: string, task: any) => Promise<void>;
 }
 
-// Store for registered action handlers
+// Store for registered action handlers with clear hierarchy
 const registeredActions = new Map<string, (payload: any, context: ActionContext) => any>();
 
-// Streamlined action handlers - no fallback logic
+// Clear action handlers with explicit routing - no ambiguous fallbacks
 const actions: Record<string, ActionHandler> = {
   respond: (instruction: DispatchInstruction) => executionEngine.handleResponse(instruction),
   execute: (instruction: DispatchInstruction) => executionEngine.handleExecution(instruction),
@@ -31,24 +31,45 @@ const actions: Record<string, ActionHandler> = {
 };
 
 export function routeAction(instruction: DispatchInstruction) {
-  // Check for registered sub-actions first (e.g., "write::registerCronJob")
-  if (instruction.action && instruction.service) {
-    const actionKey = `${instruction.action}::${instruction.service}`;
-    const registeredHandler = registeredActions.get(actionKey);
-    if (registeredHandler) {
-      const context = createActionContext();
-      return registeredHandler(instruction.parameters || {}, context);
-    }
+  // Clear routing hierarchy: action::service::subaction format
+  // This removes ambiguity between similar action names
+  const routingKey = buildRoutingKey(instruction);
+  
+  // Check for registered handlers using unambiguous key
+  const registeredHandler = registeredActions.get(routingKey);
+  if (registeredHandler) {
+    const context = createActionContext();
+    return registeredHandler(instruction.parameters || {}, context);
   }
 
+  // Fallback to base action if no specific handler found
   const handler = actions[instruction.action];
   if (handler) {
     return handler(instruction);
   }
   
-  // No fallback - fail fast for unknown actions
-  logger.error(`Unknown action: ${instruction.action}`);
-  return { success: false, error: `Unknown action: ${instruction.action}` };
+  // Clear error handling - no ambiguous routing attempts
+  const errorMessage = `No handler found for action routing key: ${routingKey}`;
+  logger.error(errorMessage, { instruction });
+  return { success: false, error: errorMessage, routingKey };
+}
+
+/**
+ * Build unambiguous routing key to eliminate nested rule conflicts
+ */
+function buildRoutingKey(instruction: DispatchInstruction): string {
+  const parts = [instruction.action];
+  
+  if (instruction.service) {
+    parts.push(instruction.service);
+  }
+  
+  // Add sub-action if present in parameters
+  if (instruction.parameters?.subAction) {
+    parts.push(instruction.parameters.subAction);
+  }
+  
+  return parts.join('::');
 }
 
 /**
@@ -91,12 +112,51 @@ function createActionContext(): ActionContext {
 }
 
 /**
- * Router object with register method for action registration
+ * Router object with clear registration method to avoid action conflicts
  */
 export const router = {
   register: (actionName: string, handler: (payload: any, context: ActionContext) => any) => {
+    // Validate actionName follows clear routing pattern
+    if (!actionName.includes('::')) {
+      logger.warning(`Action name should follow 'action::service' pattern: ${actionName}`);
+    }
+    
+    if (registeredActions.has(actionName)) {
+      logger.warning(`Overwriting existing handler for: ${actionName}`);
+    }
+    
     registeredActions.set(actionName, handler);
-    logger.info(`Registered action handler: ${actionName}`);
+    logger.info(`Registered unambiguous action handler: ${actionName}`);
+  },
+  
+  // Add method to list all registered actions for debugging
+  list: () => {
+    return Array.from(registeredActions.keys()).sort();
+  },
+  
+  // Method to check for routing conflicts
+  validateRouting: () => {
+    const conflicts: string[] = [];
+    const actionKeys = Array.from(registeredActions.keys());
+    
+    // Check for potential conflicts (same prefix with different suffixes)
+    for (let i = 0; i < actionKeys.length; i++) {
+      for (let j = i + 1; j < actionKeys.length; j++) {
+        const key1 = actionKeys[i];
+        const key2 = actionKeys[j];
+        
+        // Check if one key is a prefix of another (potential ambiguity)
+        if (key1.startsWith(key2) || key2.startsWith(key1)) {
+          conflicts.push(`Potential conflict: ${key1} <-> ${key2}`);
+        }
+      }
+    }
+    
+    if (conflicts.length > 0) {
+      logger.warning('Potential routing conflicts detected:', conflicts);
+    }
+    
+    return conflicts;
   }
 };
 
