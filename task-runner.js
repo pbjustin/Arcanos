@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
-const OpenAI = require('openai');
-const Ajv = require('ajv');
+import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
+import axios from 'axios';
+import { OpenAI } from 'openai';
+import Ajv from 'ajv';
 
 const ajv = new Ajv({ strict: true });
 
 function loadSchema(filename) {
-  const file = path.join(__dirname, 'schemas', filename);
+  const file = path.join(process.cwd(), 'schemas', filename);
   return JSON.parse(fs.readFileSync(file, 'utf-8'));
 }
 
@@ -71,7 +71,7 @@ async function triggerAssistant(id, command, payload, retries = 1) {
   return result;
 }
 
-async function execute(command, payload) {
+export async function execute(command, payload) {
   const assistant = command === 'runtime' ? RUNTIME_COMPANION_ID : OVERSEER_ID;
   if (!assistant) throw new Error('Assistant ID not configured');
   const response = await triggerAssistant(assistant, command, payload).catch(async (err) => {
@@ -100,8 +100,7 @@ async function main() {
   }
 }
 
-if (require.main === module) {
+// ESM module entry point detection
+if (import.meta.url === `file://${process.argv[1]}`) {
   main();
 }
-
-module.exports = { execute };

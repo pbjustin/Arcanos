@@ -27,4 +27,4 @@ function memoryMonitor(threshold = 0.83) {
 enableGC();
 memoryMonitor();
 
-module.exports = { enableGC, memoryMonitor };
+export { enableGC, memoryMonitor };
