@@ -3,8 +3,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { pushPRToGitHub } from './services/git';
-import { buildPatchSet } from './services/ai-reflections';
+import { pushPRToGitHub } from './services/git.js';
+import { buildPatchSet } from './services/ai-reflections.js';
 
 (async () => {
   try {

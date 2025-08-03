@@ -1,9 +1,9 @@
 // AI Reflection Scheduler + Long-Term Memory (OpenAI SDK Compliant)
 // Summary: Triggers self-reflection every 40 minutes, stores results persistently, and prunes snapshots older than 7 days
 
-import { reflect } from './src/services/ai';
-import { writeToRepo } from './src/utils/git';
-import { pruneOldReflections } from './src/utils/cleanup';
+import { reflect } from './src/services/ai/index.js';
+import { writeToRepo } from './src/utils/git.js';
+import { pruneOldReflections } from './src/utils/cleanup.js';
 
 console.log('🧠 Testing Problem Statement Implementation\n');
 
