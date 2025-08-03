@@ -30,10 +30,10 @@ async function testReflectionSchedulerStructure() {
     // Test 1: Import structure
     console.log('1. Testing imports...');
     
-    const { aiReflectionScheduler } = await import('./src/ai-reflection-scheduler');
-    const aiModule = await import('./src/services/ai');
-    const gitModule = await import('./src/utils/git');
-    const cleanupModule = await import('./src/utils/cleanup');
+    const { aiReflectionScheduler } = await import('./src/ai-reflection-scheduler.js');
+    const aiModule = await import('./src/services/ai/index.js');
+    const gitModule = await import('./src/utils/git.js');
+    const cleanupModule = await import('./src/utils/cleanup.js');
 
     console.log('✅ All modules imported successfully');
     console.log('   - AI services module loaded');

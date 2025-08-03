@@ -1,6 +1,6 @@
 // Backend Optimization + AI Control Elevation Command Block
 
-import { optimizeCodebase, removeDeprecated, grantAIAccess } from './src/services/ai/aiControlService';
+import { optimizeCodebase, removeDeprecated, grantAIAccess } from './src/services/ai/aiControlService.js';
 import OpenAI from 'openai';
 
 // Step 1: Initialize OpenAI SDK
