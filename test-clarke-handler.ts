@@ -4,8 +4,8 @@
  * Verifies the resilience pattern works as specified
  */
 
-import './src/services/clarke-handler';
-import { initializeResilienceHandler, exampleUsage } from './src/resilience-handler-example';
+import './src/services/clarke-handler.js';
+import { initializeResilienceHandler, exampleUsage } from './src/resilience-handler-example.js';
 
 async function testClarkeHandler() {
   console.log('🧪 Testing ClarkeHandler Implementation');

@@ -1,5 +1,5 @@
 // Patch: Force Worker Activation & Module Init
-import { initializeWorker } from './src/services/init';
+import { initializeWorker } from './src/services/init.js';
 
 const workers = ['goalTracker', 'maintenanceScheduler', 'emailDispatcher', 'auditProcessor'];
 

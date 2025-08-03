@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import OpenAI from 'openai';
-import { aiPatchSystem } from './src/services/ai-patch-system';
+import { aiPatchSystem } from './src/services/ai-patch-system.js';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
