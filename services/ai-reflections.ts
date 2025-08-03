@@ -3,8 +3,7 @@
  * Builds patch sets without relying on memory orchestration
  */
 
-import { reflect, ReflectionSnapshot } from '../src/services/ai';
-import { coreAIService } from '../src/services/ai/core-ai-service';
+import { reflect, ReflectionSnapshot, coreAIService } from '../src/services/ai/index.js';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 export interface PatchSetOptions {
