@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { handleCatchError, sendSuccessResponse } from '../utils/response';
-import { githubWebhookService } from '../services/github-webhook-service';
-import { config } from '../config';
+import { handleCatchError, sendSuccessResponse } from '../utils/response.js';
+import { githubWebhookService } from '../services/github-webhook-service.js';
+import { config } from '../config/index.js';
 
 const router = Router();
 

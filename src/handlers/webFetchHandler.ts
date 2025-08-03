@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
-import '../services/clarke-handler'; // Import to ensure ClarkeHandler is available
-import { genericFallback, ClarkeHandler } from '../services/clarke-handler';
-import { fetchWebSearch } from '../utils/webSearch';
-import { storeMemory } from '../services/memory';
+import '../services/clarke-handler.js'; // Import to ensure ClarkeHandler is available
+import { genericFallback, ClarkeHandler } from '../services/clarke-handler.js';
+import { fetchWebSearch } from '../utils/webSearch.js';
+import { storeMemory } from '../services/memory.js';
 
 // Use the new resilience handler pattern
 let openai: ClarkeHandler;

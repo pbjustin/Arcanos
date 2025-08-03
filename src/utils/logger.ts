@@ -3,8 +3,8 @@
  * Consolidates repeated logging patterns
  */
 
-import { relayLog } from '../services/log-relay';
-import { normalizeMemoryUsage } from './memory-normalizer';
+import { relayLog } from '../services/log-relay.js';
+import { normalizeMemoryUsage } from './memory-normalizer.js';
 
 export type LogLevel = 'info' | 'success' | 'warning' | 'error' | 'debug';
 

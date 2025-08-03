@@ -3,9 +3,9 @@
  * Streamlined memory handling following OpenAI assistant patterns
  */
 
-import { coreAIService } from './ai-service-consolidated';
-import { createServiceLogger } from '../utils/logger';
-import { databaseService } from './database';
+import { coreAIService } from './ai-service-consolidated.js';
+import { createServiceLogger } from '../utils/logger.js';
+import { databaseService } from './database.js';
 
 const logger = createServiceLogger('MemoryOperations');
 

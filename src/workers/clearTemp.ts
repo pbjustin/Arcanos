@@ -1,9 +1,10 @@
+import { fileURLToPath } from 'url';
 /**
  * Clear Temp Worker - Handles cleanup of temporary files and logs
  * This file provides the interface expected by sleep-manager
  */
 
-import { createServiceLogger } from '../utils/logger';
+import { createServiceLogger } from '../utils/logger.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -123,7 +124,7 @@ async function cleanupDirectory(dirPath: string): Promise<number> {
 }
 
 // Allow running directly from node
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   clearTemp().catch(err => {
     logger.error('Clear temp execution failed', err);
     process.exit(1);

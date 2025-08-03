@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { sleepManager } from '../services/sleep-manager';
-import { getCurrentSleepWindowStatus, logSleepWindowStatus } from '../services/sleep-config';
-import { diagnosticsService } from '../services/diagnostics';
+import { sleepManager } from '../services/sleep-manager.js';
+import { getCurrentSleepWindowStatus, logSleepWindowStatus } from '../services/sleep-config.js';
+import { diagnosticsService } from '../services/diagnostics.js';
 
 const router = Router();
 

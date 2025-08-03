@@ -3,8 +3,8 @@
  * Integrated with AI dispatcher for intelligent API routing and processing
  */
 
-import { createServiceLogger } from '../utils/logger';
-import { exponentialDelay } from '../utils/delay';
+import { createServiceLogger } from '../utils/logger.js';
+import { exponentialDelay } from '../utils/delay.js';
 import axios from 'axios';
 
 const logger = createServiceLogger('ApiWorker');

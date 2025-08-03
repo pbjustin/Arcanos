@@ -5,9 +5,11 @@
 import { Router, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
-import { logEndpointCall } from '../services/endpoint-logger';
+import { logEndpointCall } from '../services/endpoint-logger.js';
+import { fileURLToPath } from 'url';
 
 // Use project-relative path since /containers is not accessible
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CANON_PATH = path.join(__dirname, '../../storage/canon');
 const router = Router();
 

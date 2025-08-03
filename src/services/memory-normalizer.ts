@@ -2,7 +2,7 @@
 // Purpose: Every time storeMemory() is called, auto-index the entry using normalized aliases
 // Example: 'baldurs gate 3' → also stores alias keys like 'bg3', 'baldur', 'baldurs_gate_3'
 
-import { writeMemory, indexMemory } from "./memory"; // adjust as needed
+import { writeMemory, indexMemory } from "./memory.js"; // adjust as needed
 
 function normalizeAliases(topic: string): string[] {
   const base = topic.toLowerCase();

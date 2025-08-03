@@ -1,8 +1,8 @@
 // ARCANOS Model Control Hooks - Unified control interface for AI model to manage system operations
 // Provides hooks for memory management, audits, cron triggers, and worker orchestration
 
-import { aiDispatcher, DispatchRequest } from './ai-dispatcher';
-import { executionEngine, ExecutionResult } from './execution-engine';
+import { aiDispatcher, DispatchRequest } from './ai-dispatcher.js';
+import { executionEngine, ExecutionResult } from './execution-engine.js';
 
 export interface ModelControlContext {
   userId?: string;

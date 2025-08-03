@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { sendEmail } from '../services/email';
+import { sendEmail } from '../services/email.js';
 
 export async function sendEmailIntent(req: Request, res: Response) {
   const { to, subject, body } = req.body;

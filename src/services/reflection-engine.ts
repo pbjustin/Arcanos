@@ -1,5 +1,5 @@
-import { reflect } from './ai';
-import { createServiceLogger } from '../utils/logger';
+import { reflect } from './ai/index.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 export interface ReflectionTriggerOptions {
   source?: string;

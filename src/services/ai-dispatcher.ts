@@ -1,8 +1,8 @@
 // ARCANOS AI Dispatcher - Unified dispatch system that sends all requests to fine-tuned model
 // Replaces static logic, conditionals, and routing trees with AI-controlled decision making
 
-import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
-import { ARCANOS_MODEL_ID } from '../config/ai-model'; // PATCHED: full model ID
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai.js';
+import { ARCANOS_MODEL_ID } from '../config/ai-model.js'; // PATCHED: full model ID
 
 // Helper to resolve workers from schedule keys
 function resolveWorkerFromKey(key: string): string | null {

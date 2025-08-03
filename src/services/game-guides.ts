@@ -3,7 +3,7 @@
  * Designed for ARCANOS memory backend with OpenAI SDK compliance
  */
 
-import { saveMemory, getMemory } from './memory';
+import { saveMemory, getMemory } from './memory.js';
 
 export interface SaveGameGuideParams {
   gameId: string;

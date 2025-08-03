@@ -1,17 +1,17 @@
 // ARCANOS Execution Engine - Streamlined for OpenAI SDK patterns
 // Provides efficient execution for AI-controlled operations
 
-import { DispatchInstruction } from './ai-dispatcher';
-import { getUnifiedOpenAI } from './unified-openai';
-import { aiConfig } from '../config';
-import { memoryOperations } from './memory-operations';
-import { diagnosticsService } from './diagnostics';
-import { workerStatusService } from './worker-status';
+import { DispatchInstruction } from './ai-dispatcher.js';
+import { getUnifiedOpenAI } from './unified-openai.js';
+import { aiConfig } from '../config/index.js';
+import { memoryOperations } from './memory-operations.js';
+import { diagnosticsService } from './diagnostics.js';
+import { workerStatusService } from './worker-status.js';
 import * as cron from 'node-cron';
-import { databaseService } from './database';
-import { isValidWorker } from './worker-manager';
-import { activeWorkers } from '../worker-init';
-import { createServiceLogger } from '../utils/logger';
+import { databaseService } from './database.js';
+import { isValidWorker } from './worker-manager.js';
+import { activeWorkers } from '../worker-init.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('ExecutionEngine');
 
@@ -71,7 +71,7 @@ export class ExecutionEngine {
       }
 
       // Route action using centralized action router
-      const { routeAction } = await import('./action-router');
+      const { routeAction } = await import('./action-router.js');
       return await routeAction(instruction);
 
     } catch (error: any) {

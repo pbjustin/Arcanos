@@ -1,7 +1,7 @@
-import { installNLPInterpreter } from './modules/nlp-interpreter';
-import { installPagedOutputHandler } from './modules/paged-output-handler';
-import { installMemoryAuditStreamSerializer } from './modules/memory-audit-stream-serializer';
-import { createServiceLogger } from './utils/logger';
+import { installNLPInterpreter } from './modules/nlp-interpreter.js';
+import { installPagedOutputHandler } from './modules/paged-output-handler.js';
+import { installMemoryAuditStreamSerializer } from './modules/memory-audit-stream-serializer.js';
+import { createServiceLogger } from './utils/logger.js';
 
 export interface BackendInitializationOptions {
   environment?: string;

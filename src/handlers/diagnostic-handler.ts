@@ -2,7 +2,7 @@
 // Ensures readiness logging during startup and route recovery
 
 import { Request, Response } from 'express';
-import { diagnosticsService } from '../services/diagnostics';
+import { diagnosticsService } from '../services/diagnostics.js';
 
 export class DiagnosticHandler {
   private diagnosticLog: any[] = [];

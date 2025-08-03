@@ -3,8 +3,8 @@
  * Provides easy integration of GPT-4 fallback functionality across the codebase
  */
 
-import { getGPT4FallbackService, FallbackOptions, FallbackResult } from '../services/gpt4-fallback';
-import { createServiceLogger } from './logger';
+import { getGPT4FallbackService, FallbackOptions, FallbackResult } from '../services/gpt4-fallback.js';
+import { createServiceLogger } from './logger.js';
 
 const logger = createServiceLogger('OutputRecovery');
 

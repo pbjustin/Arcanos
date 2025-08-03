@@ -1,6 +1,6 @@
-import { databaseService } from './database';
+import { databaseService } from './database.js';
 import cron from 'node-cron';
-import { ARCANOS_MODEL_ID } from '../config/ai-model';
+import { ARCANOS_MODEL_ID } from '../config/ai-model.js';
 
 interface ReflectionEntry {
   timestamp: string;

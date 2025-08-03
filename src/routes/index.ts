@@ -1,13 +1,13 @@
 import { Router } from 'express';
-import { modelControlHooks } from '../services/model-control-hooks';
-import { diagnosticsService } from '../services/diagnostics';
-import { workerStatusService } from '../services/worker-status';
-import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from '../services/email';
-import { sendEmailIntent } from '../intents/send_email';
-import { sendEmailAndRespond } from '../intents/send_email_and_respond';
-import { runValidationPipeline } from '../services/ai-validation-pipeline'; // [AI-PATCH: RAG+HRC+CLEAR]
-import { handleInternetResult } from '../utils/internet-lookup';
-import assistantsRouter from './assistants';
+import { modelControlHooks } from '../services/model-control-hooks.js';
+import { diagnosticsService } from '../services/diagnostics.js';
+import { workerStatusService } from '../services/worker-status.js';
+import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from '../services/email.js';
+import { sendEmailIntent } from '../intents/send_email.js';
+import { sendEmailAndRespond } from '../intents/send_email_and_respond.js';
+import { runValidationPipeline } from '../services/ai-validation-pipeline.js'; // [AI-PATCH: RAG+HRC+CLEAR]
+import { handleInternetResult } from '../utils/internet-lookup.js';
+import assistantsRouter from './assistants.js';
 
 const router = Router();
 

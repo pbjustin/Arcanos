@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import { writeMemory, getMemory } from "../services/memory";
+import { writeMemory, getMemory } from "../services/memory.js";
 
 const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 

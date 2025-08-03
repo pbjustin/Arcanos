@@ -5,7 +5,7 @@ import * as os from 'os';
 
 async function getManifest() {
   try {
-    return await import('../../memory/modules/manifest' as any);
+    return await import('../../memory/modules/manifest.js' as any);
   } catch {
     return { add: async () => {} }; // Mock implementation
   }

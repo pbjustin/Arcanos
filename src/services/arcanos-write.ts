@@ -1,10 +1,10 @@
 // ARCANOS:WRITE - Narrative content generation service
 // Handles requests that have narrative intent
 
-import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
-import { aiConfig } from '../config';
-import { MemoryStorage } from '../storage/memory-storage';
-import { arcanosLogger, createServiceLogger } from '../utils/logger';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai.js';
+import { aiConfig } from '../config/index.js';
+import { MemoryStorage } from '../storage/memory-storage.js';
+import { arcanosLogger, createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('ARCANOS:WRITE');
 

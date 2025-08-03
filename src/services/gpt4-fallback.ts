@@ -6,8 +6,8 @@
  * hand off to GPT-4 for reprocessing into valid JSON or structured markdown
  */
 
-import { getUnifiedOpenAI } from './unified-openai';
-import { createServiceLogger } from '../utils/logger';
+import { getUnifiedOpenAI } from './unified-openai.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('GPT4Fallback');
 

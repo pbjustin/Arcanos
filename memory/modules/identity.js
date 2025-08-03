@@ -1,15 +1,16 @@
-const shortterm = require('./shortterm');
-const { logEvent } = require('../logEvent');
+import shortterm from './shortterm.js';
+import { logEvent } from '../logEvent.js';
 
-module.exports = {
-  async read() {
-    const data = await shortterm.read();
-    return data.identity || {};
-  },
-  async write(identity) {
-    const data = await shortterm.read();
-    data.identity = identity;
-    await shortterm.write(data);
-    await logEvent('identity');
-  },
-};
+export async function read() {
+  const data = await shortterm.read();
+  return data.identity || {};
+}
+
+export async function write(identity) {
+  const data = await shortterm.read();
+  data.identity = identity;
+  await shortterm.write(data);
+  await logEvent('identity');
+}
+
+export default { read, write };

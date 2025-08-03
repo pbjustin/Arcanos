@@ -1,10 +1,10 @@
 // Modern Worker Initialization - Refactored for OpenAI SDK v1.0.0 compatibility
 // Replaces outdated orchestration logic with modular control hooks and unified fallback
 
-import { refactorAIWorkerSystem, RefactoredAIWorkerSystem, OptimizedScheduleFormat } from './ai-worker-refactor';
-import { createServiceLogger } from '../utils/logger';
-import { isTrue } from '../utils/env';
-import { workerStatusService } from './worker-status';
+import { refactorAIWorkerSystem, RefactoredAIWorkerSystem, OptimizedScheduleFormat } from './ai-worker-refactor.js';
+import { createServiceLogger } from '../utils/logger.js';
+import { isTrue } from '../utils/env.js';
+import { workerStatusService } from './worker-status.js';
 
 const logger = createServiceLogger('ModernWorkerInit');
 

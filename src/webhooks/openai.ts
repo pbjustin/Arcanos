@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { handleCatchError, sendSuccessResponse } from '../utils/response';
+import { handleCatchError, sendSuccessResponse } from '../utils/response.js';
 
 const router = Router();
 

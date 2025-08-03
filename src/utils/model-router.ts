@@ -1,5 +1,5 @@
-import { aiConfig } from '../config';
-import { routeByIntent } from './routeByIntent';
+import { aiConfig } from '../config/index.js';
+import { routeByIntent } from './routeByIntent.js';
 
 /**
  * Determine which OpenAI model should handle a prompt.

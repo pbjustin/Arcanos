@@ -1,9 +1,9 @@
-import { coreAIService } from '../../services/ai-service-consolidated';
-import type { ChatMessage } from '../../services/unified-openai';
+import { coreAIService } from '../../services/ai-service-consolidated.js';
+import type { ChatMessage } from '../../services/unified-openai.js';
 import fs from 'fs';
 import path from 'path';
-import { createServiceLogger } from '../../utils/logger';
-import { sendEmail } from '../../services/email';
+import { createServiceLogger } from '../../utils/logger.js';
+import { sendEmail } from '../../services/email.js';
 
 const logger = createServiceLogger('EmailDispatcher');
 

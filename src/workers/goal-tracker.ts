@@ -1,12 +1,13 @@
+import { fileURLToPath } from 'url';
 /**
  * Goal Tracker Worker - Monitors and tracks user goals using OpenAI SDK
  * Uses streaming for long-running goal analysis operations
  */
 
-import { coreAIService } from '../services/ai-service-consolidated';
-import type { ChatMessage } from '../services/unified-openai';
-import { createServiceLogger } from '../utils/logger';
-import { databaseService } from '../services/database';
+import { coreAIService } from '../services/ai-service-consolidated.js';
+import type { ChatMessage } from '../services/unified-openai.js';
+import { createServiceLogger } from '../utils/logger.js';
+import { databaseService } from '../services/database.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -286,7 +287,7 @@ Extract specific actionable recommendations and return them as a JSON array.`
 export const goalTrackerWorker = new GoalTrackerWorker();
 
 // Allow running directly from node
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [, , userId] = process.argv;
   if (!userId) {
     console.log('Usage: node goal-tracker.js <userId>');

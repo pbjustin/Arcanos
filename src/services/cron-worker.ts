@@ -3,10 +3,10 @@
 
 import cron from 'node-cron';
 import axios from 'axios';
-import { workerStatusService } from './worker-status';
-import { modelControlHooks } from './model-control-hooks';
-import { openAIAssistantsService } from './openai-assistants';
-import { serviceAlreadyRegistered } from './service-registry';
+import { workerStatusService } from './worker-status.js';
+import { modelControlHooks } from './model-control-hooks.js';
+import { openAIAssistantsService } from './openai-assistants.js';
+import { serviceAlreadyRegistered } from './service-registry.js';
 
 const SERVER_URL =
   process.env.SERVER_URL ||
@@ -292,7 +292,7 @@ async function executePatchRetry(): Promise<void> {
     console.log('[AI-PATCH-RETRY] Running AI-approved patch retry processing');
     
     // Import and execute patch retry processing
-    const { aiPatchSystem } = await import('./ai-patch-system');
+    const { aiPatchSystem } = await import('./ai-patch-system.js');
     await aiPatchSystem.processRetryQueue();
     
     const status = await aiPatchSystem.getRetryQueueStatus();

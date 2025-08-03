@@ -14,7 +14,7 @@
  */
 
 import OpenAI from 'openai';
-import { ARCANOS_MODEL_ID } from '../config/ai-model';
+import { ARCANOS_MODEL_ID } from '../config/ai-model.js';
 import type { 
   ChatCompletionCreateParams,
   ChatCompletionMessageParam,
@@ -31,7 +31,7 @@ import type {
 import type {
   Run
 } from 'openai/resources/beta/threads/runs';
-import { createServiceLogger } from '../utils/logger';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('UnifiedOpenAI');
 
