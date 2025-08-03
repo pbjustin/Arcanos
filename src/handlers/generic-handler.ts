@@ -1,6 +1,22 @@
 import OpenAI from 'openai';
+import '../services/clarke-handler'; // Import to ensure ClarkeHandler is available
+import { genericFallback, ClarkeHandler } from '../services/clarke-handler';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Use the new resilience handler pattern
+let openai: ClarkeHandler;
+
+if (!global.resilienceHandlerInitialized) {
+  let handler = new OpenAI.ClarkeHandler({ ...process.env });
+  handler.initialzeResilience({ retries: 3 });
+  handler.fallbackTo(genericFallback());
+  global.resilienceHandlerInitialized = true;
+  openai = handler;
+} else {
+  // Create new instance if already initialized globally
+  openai = new OpenAI.ClarkeHandler({ ...process.env });
+  openai.initialzeResilience({ retries: 3 });
+  openai.fallbackTo(genericFallback());
+}
 
 export type HandlerMode = 'write' | 'sim' | 'audit' | 'deepresearch';
 
@@ -20,33 +36,31 @@ function buildPrompt(mode: HandlerMode, prompt: string, context: any = {}): stri
 }
 
 async function generateContentDirectly(payload: string): Promise<string> {
-  const direct = await openai.chat.completions.create({
+  const result = await openai.chat([{ role: 'user', content: payload }], {
     model: 'gpt-4',
-    messages: [{ role: 'user', content: payload }],
     temperature: 0.7,
   });
-  return direct.choices[0]?.message?.content ?? '';
+  return result.content ?? '';
 }
 
 export async function run(mode: HandlerMode, prompt: string, context?: any): Promise<{ result: string }> {
-  const response = await openai.chat.completions.create({
+  const result = await openai.chat([{ role: 'user', content: buildPrompt(mode, prompt, context) }], {
     model: 'gpt-4',
-    messages: [{ role: 'user', content: buildPrompt(mode, prompt, context) }],
     temperature: 0.5,
   });
-  let result = response.choices[0]?.message?.content ?? '';
+  let resultContent = result.content ?? '';
 
   // Override diagnostic fallback in WRITE mode
   if (
     mode === 'write' &&
     prompt.toLowerCase().includes('summary') &&
-    result.toLowerCase().includes('instructional')
+    resultContent.toLowerCase().includes('instructional')
   ) {
     console.log('⚠️ Diagnostic fallback detected in WRITE mode. Generating content directly.');
-    result = await generateContentDirectly(prompt);
+    resultContent = await generateContentDirectly(prompt);
   }
 
-  return { result };
+  return { result: resultContent };
 }
 
 export default { run };
