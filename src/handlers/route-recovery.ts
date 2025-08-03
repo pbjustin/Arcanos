@@ -1,5 +1,5 @@
-// ARCANOS:ROUTE-RECOVERY - Route recovery logic for missing controllers or invalid schemas
-// Handles route failures and provides recovery mechanisms
+// ARCANOS:ROUTE-RECOVERY - Clear route recovery with unambiguous patterns
+// Simplified recovery logic that avoids nested rule conflicts
 
 import { Express, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
@@ -17,7 +17,36 @@ export interface RouteRecoveryConfig {
   recovery_attempts: number;
   last_recovery?: string;
   status: 'active' | 'recovering' | 'failed';
+  maxAttempts: number; // Clear limit to prevent infinite recovery loops
 }
+
+// Define clear recovery strategies for each route type
+const RECOVERY_STRATEGIES = {
+  '/memory': {
+    handler: memoryHandler,
+    method: 'handleMemoryRequest',
+    allowedMethods: ['POST', 'GET'],
+    maxAttempts: 2
+  },
+  '/write': {
+    handler: writeHandler,
+    method: 'handleWriteRequest', 
+    allowedMethods: ['POST'],
+    maxAttempts: 2
+  },
+  '/audit': {
+    handler: auditHandler,
+    method: 'handleAuditRequest',
+    allowedMethods: ['POST'],
+    maxAttempts: 2
+  },
+  '/diagnostic': {
+    handler: diagnosticHandler,
+    method: 'handleDiagnosticRequest',
+    allowedMethods: ['GET', 'POST'],
+    maxAttempts: 1 // Diagnostics should fail fast
+  }
+} as const;
 
 export class RouteRecovery {
   private recoveryLog: any[] = [];
@@ -34,23 +63,17 @@ export class RouteRecovery {
   }
 
   private initializeRouteStatuses(): void {
-    const routes = [
-      { route: '/memory', handler: 'memory-handler' },
-      { route: '/write', handler: 'write-handler' },
-      { route: '/audit', handler: 'audit-handler' },
-      { route: '/diagnostic', handler: 'diagnostic-handler' }
-    ];
-
-    routes.forEach(({ route, handler }) => {
+    Object.entries(RECOVERY_STRATEGIES).forEach(([route, strategy]) => {
       this.routeStatuses.set(route, {
         route,
-        handler,
+        handler: strategy.handler.constructor.name,
         recovery_attempts: 0,
-        status: 'active'
+        status: 'active',
+        maxAttempts: strategy.maxAttempts
       });
     });
 
-    console.log('🔄 ROUTE-RECOVERY: Initialized route statuses for recovery tracking');
+    console.log('🔄 ROUTE-RECOVERY: Initialized clear recovery strategies for', Object.keys(RECOVERY_STRATEGIES).length, 'routes');
   }
 
   private setupRouteRecoveryMiddleware(): void {
@@ -77,16 +100,35 @@ export class RouteRecovery {
   }
 
   private async handleRouteFailure(route: string, error: any, req: Request, res: Response): Promise<void> {
-    const routeConfig = this.routeStatuses.get(route)!;
+    const routeConfig = this.routeStatuses.get(route);
+    if (!routeConfig) {
+      logger.error('No recovery config found for route:', route);
+      res.status(500).json({ error: 'Route recovery not configured' });
+      return;
+    }
+
     const timestamp = new Date().toISOString();
 
-    // Log the failure
+    // Check if we've exceeded maximum recovery attempts
+    if (routeConfig.recovery_attempts >= routeConfig.maxAttempts) {
+      logger.error(`Maximum recovery attempts exceeded for ${route}`, {
+        attempts: routeConfig.recovery_attempts,
+        maxAttempts: routeConfig.maxAttempts
+      });
+      
+      routeConfig.status = 'failed';
+      await this.sendFailureResponse(route, req, res, 'Maximum recovery attempts exceeded');
+      return;
+    }
+
+    // Log the failure with clear context
     this.logRecoveryActivity('route_failure', {
       route,
       handler: routeConfig.handler,
       error: error.message,
       recovery_attempts: routeConfig.recovery_attempts,
-      timestamp
+      timestamp,
+      method: req.method
     });
 
     // Update route status
@@ -94,25 +136,14 @@ export class RouteRecovery {
     routeConfig.recovery_attempts += 1;
     routeConfig.last_recovery = timestamp;
 
-    logger.info('🔄 Attempting recovery for route:', { 
+    logger.info('🔄 Attempting route recovery', { 
       route, 
-      attempt: routeConfig.recovery_attempts 
+      attempt: routeConfig.recovery_attempts,
+      maxAttempts: routeConfig.maxAttempts
     });
 
     try {
-      // First attempt: Route-specific recovery
-      let recoveryResult = await this.attemptRouteRecovery(route, req, res);
-      
-      // If that fails, try bootstrap recovery
-      if (!recoveryResult.success && routeConfig.recovery_attempts === 1) {
-        logger.info(`🔧 Attempting bootstrap recovery for route: ${route}`);
-        const bootstrapResult = await this.bootstrapFailedRoute(route);
-        
-        if (bootstrapResult.success) {
-          // Retry route recovery after bootstrap
-          recoveryResult = await this.attemptRouteRecovery(route, req, res);
-        }
-      }
+      const recoveryResult = await this.attemptRouteRecovery(route, req, res);
       
       if (recoveryResult.success) {
         routeConfig.status = 'active';
@@ -140,83 +171,76 @@ export class RouteRecovery {
         timestamp: new Date().toISOString()
       });
 
-      // Send fallback response
-      await this.sendFallbackResponse(route, req, res);
+      await this.sendFailureResponse(route, req, res, recoveryError.message);
     }
   }
 
   private async attemptRouteRecovery(route: string, req: Request, res: Response): Promise<{ success: boolean; message: string }> {
+    const strategy = RECOVERY_STRATEGIES[route as keyof typeof RECOVERY_STRATEGIES];
+    if (!strategy) {
+      return { success: false, message: `No recovery strategy defined for route: ${route}` };
+    }
+
+    // Check if method is allowed for this route
+    if (!strategy.allowedMethods.includes(req.method as any)) {
+      return { 
+        success: false, 
+        message: `Method ${req.method} not allowed for route ${route}. Allowed: [${strategy.allowedMethods.join(', ')}]` 
+      };
+    }
+
     try {
-      switch (route) {
-        case '/memory':
-          // Test memory handler functionality
-          if (req.method === 'POST') {
-            await memoryHandler.handleMemoryRequest(req, res);
-            return { success: true, message: 'Memory route recovered' };
-          }
-          break;
-
-        case '/write':
-          // Test write handler functionality
-          if (req.method === 'POST') {
-            await writeHandler.handleWriteRequest(req, res);
-            return { success: true, message: 'Write route recovered' };
-          }
-          break;
-
-        case '/audit':
-          // Test audit handler functionality
-          if (req.method === 'POST') {
-            await auditHandler.handleAuditRequest(req, res);
-            return { success: true, message: 'Audit route recovered' };
-          }
-          break;
-
-        case '/diagnostic':
-          // Test diagnostic handler functionality and use its recovery method
-          const diagnosticRecovery = await diagnosticHandler.recoverRoute();
-          if (diagnosticRecovery.success && req.method === 'GET') {
-            await diagnosticHandler.handleDiagnosticRequest(req, res);
-            return { success: true, message: 'Diagnostic route recovered' };
-          }
-          return diagnosticRecovery;
-
-        default:
-          return { success: false, message: 'Unknown route for recovery' };
+      // Attempt to call the handler method directly
+      const handler = strategy.handler as any;
+      const method = strategy.method;
+      
+      if (typeof handler[method] === 'function') {
+        await handler[method](req, res);
+        return { success: true, message: `Route ${route} recovered successfully` };
+      } else {
+        return { success: false, message: `Handler method ${method} not found on ${strategy.handler.constructor.name}` };
       }
-
-      return { success: false, message: 'Recovery method not applicable for request type' };
     } catch (error: any) {
       return { success: false, message: `Recovery attempt failed: ${error.message}` };
     }
   }
 
-  private async sendFallbackResponse(route: string, req: Request, res: Response): Promise<void> {
+  private async sendFailureResponse(route: string, req: Request, res: Response, reason: string): Promise<void> {
     try {
-      let fallbackType: 'memory' | 'write' | 'audit' | 'diagnostic' | 'general' = 'general';
+      // Clear failure response based on route type
+      const routeType = route.substring(1); // Remove leading slash
       
-      if (route === '/memory') fallbackType = 'memory';
-      else if (route === '/write') fallbackType = 'write';
-      else if (route === '/audit') fallbackType = 'audit';
-      else if (route === '/diagnostic') fallbackType = 'diagnostic';
-
-      // Streamlined error response - no fallback logic
-      res.status(503).json({
-        error: 'Route temporarily unavailable',
+      const failureResponse = {
+        success: false,
+        error: `Route ${route} is temporarily unavailable`,
+        reason,
         route,
-        recovery_status: 'failed',
-        message: 'Service degraded - route not available',
-        timestamp: new Date().toISOString()
-      });
+        method: req.method,
+        timestamp: new Date().toISOString(),
+        recovery: {
+          status: 'failed',
+          attempts: this.routeStatuses.get(route)?.recovery_attempts || 0,
+          maxAttempts: RECOVERY_STRATEGIES[route as keyof typeof RECOVERY_STRATEGIES]?.maxAttempts || 0
+        }
+      };
 
-    } catch (fallbackError: any) {
-      console.error('❌ FALLBACK-RESPONSE: Even fallback failed:', fallbackError);
-      res.status(503).json({
-        error: 'Service completely unavailable',
-        route,
-        message: 'All recovery attempts failed',
-        timestamp: new Date().toISOString()
-      });
+      // Send appropriate status code based on failure type
+      const statusCode = reason.includes('Maximum recovery') ? 503 : 500;
+      
+      res.status(statusCode).json(failureResponse);
+      
+      logger.info(`Sent failure response for ${route}`, { statusCode, reason });
+    } catch (error: any) {
+      logger.error('Failed to send failure response:', error.message);
+      
+      // Last resort fallback
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          error: 'Service temporarily unavailable',
+          timestamp: new Date().toISOString()
+        });
+      }
     }
   }
 

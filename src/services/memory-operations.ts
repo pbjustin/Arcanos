@@ -1,6 +1,6 @@
 /**
  * OpenAI SDK-Compatible Memory Operations
- * Streamlined memory handling following OpenAI assistant patterns
+ * Memory-optimized with efficient querying, batching, and caching
  */
 
 import { coreAIService } from './ai-service-consolidated.js';
@@ -32,20 +32,86 @@ export interface MemorySearchOptions {
 }
 
 /**
- * Streamlined Memory Operations Service
- * Follows OpenAI SDK patterns for context management
+ * Memory-Optimized Operations Service
+ * Enhanced with efficient indexing, batching, and caching strategies
  */
 class MemoryOperationsService {
   private memoryCache = new Map<string, MemoryRecord>();
+  private batchQueue: MemoryRecord[] = [];
+  private batchTimeout: NodeJS.Timeout | null = null;
+  private readonly BATCH_SIZE = parseInt(process.env.MEMORY_BATCH_SIZE || '50');
+  private readonly BATCH_TIMEOUT = parseInt(process.env.MEMORY_BATCH_TIMEOUT || '5000');
+  
+  // Optimized indexes for fast querying
+  private userIndex = new Map<string, Set<string>>();
+  private typeIndex = new Map<string, Set<string>>();
+  private sessionIndex = new Map<string, Set<string>>();
 
   getStatus() {
     return {
       cacheEntries: this.memoryCache.size,
+      batchQueueSize: this.batchQueue.length,
+      indexSizes: {
+        users: this.userIndex.size,
+        types: this.typeIndex.size,
+        sessions: this.sessionIndex.size
+      }
     };
   }
 
+  private updateIndexes(record: MemoryRecord): void {
+    // Update user index
+    if (!this.userIndex.has(record.userId)) {
+      this.userIndex.set(record.userId, new Set());
+    }
+    this.userIndex.get(record.userId)!.add(record.id);
+    
+    // Update type index
+    if (!this.typeIndex.has(record.metadata.type)) {
+      this.typeIndex.set(record.metadata.type, new Set());
+    }
+    this.typeIndex.get(record.metadata.type)!.add(record.id);
+    
+    // Update session index
+    if (!this.sessionIndex.has(record.sessionId)) {
+      this.sessionIndex.set(record.sessionId, new Set());
+    }
+    this.sessionIndex.get(record.sessionId)!.add(record.id);
+  }
+
+  private async processBatch(): Promise<void> {
+    if (this.batchQueue.length === 0) return;
+    
+    const batch = this.batchQueue.splice(0, this.BATCH_SIZE);
+    
+    try {
+      // Batch persist to database
+      const persistPromises = batch.map(record => this.persistMemory(record));
+      await Promise.allSettled(persistPromises);
+      
+      logger.info('Batch processed', { size: batch.length });
+    } catch (error: any) {
+      logger.error('Batch processing failed', { error: error.message });
+    }
+    
+    // Schedule next batch if queue still has items
+    if (this.batchQueue.length > 0) {
+      this.scheduleBatchProcessing();
+    }
+  }
+
+  private scheduleBatchProcessing(): void {
+    if (this.batchTimeout) {
+      clearTimeout(this.batchTimeout);
+    }
+    
+    this.batchTimeout = setTimeout(() => {
+      this.processBatch();
+    }, this.BATCH_TIMEOUT);
+  }
+
   /**
-   * Store memory using OpenAI SDK-compatible patterns
+   * Store memory using optimized batching and indexing
    */
   async storeMemory(record: Omit<MemoryRecord, 'id'>): Promise<MemoryRecord> {
     const id = `mem_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -61,53 +127,94 @@ class MemoryOperationsService {
 
     // Cache in memory for fast access
     this.memoryCache.set(id, memoryRecord);
+    this.updateIndexes(memoryRecord);
 
-    // Persist to database if available
-    try {
-      await this.persistMemory(memoryRecord);
-    } catch (error: any) {
-      logger.warning('Failed to persist memory to database', { error: error.message });
+    // Add to batch queue for optimized persistence
+    this.batchQueue.push(memoryRecord);
+    
+    // Trigger batch processing if queue is full or schedule timeout
+    if (this.batchQueue.length >= this.BATCH_SIZE) {
+      await this.processBatch();
+    } else {
+      this.scheduleBatchProcessing();
     }
 
-    logger.info('Memory stored', { 
+    logger.info('Memory stored with optimized batching', { 
       id, 
       type: memoryRecord.metadata.type,
-      importance: memoryRecord.metadata.importance
+      importance: memoryRecord.metadata.importance,
+      batchQueueSize: this.batchQueue.length
     });
 
     return memoryRecord;
   }
 
   /**
-   * Retrieve memories with OpenAI SDK-compatible search
+   * Retrieve memories with memory-optimized search using indexes
    */
   async searchMemories(options: MemorySearchOptions = {}): Promise<MemoryRecord[]> {
     const { userId, sessionId, type, tags, limit = 50, importance } = options;
 
-    let results: MemoryRecord[] = [];
-
-    // Try database first
-    try {
-      results = await this.searchInDatabase(options);
-    } catch (error: any) {
-      logger.warning('Database search failed, using cache', { error: error.message });
-      results = this.searchInCache(options);
-    }
-
-    // Apply filters
-    let filtered = results;
-
+    // Memory-optimized search using indexes
+    let candidateIds: Set<string> | undefined;
+    
+    // Start with the most restrictive filter to minimize candidate set
     if (userId) {
-      filtered = filtered.filter(m => m.userId === userId);
+      candidateIds = this.userIndex.get(userId);
+      if (!candidateIds || candidateIds.size === 0) {
+        // Fallback to database search
+        try {
+          return await this.searchInDatabase(options);
+        } catch (error: any) {
+          logger.warning('Database search failed', { error: error.message });
+          return [];
+        }
+      }
     }
-
+    
     if (sessionId) {
-      filtered = filtered.filter(m => m.sessionId === sessionId);
+      const sessionIds = this.sessionIndex.get(sessionId);
+      if (sessionIds) {
+        candidateIds = candidateIds 
+          ? new Set([...candidateIds].filter(id => sessionIds.has(id)))
+          : sessionIds;
+      } else {
+        candidateIds = new Set(); // No results for this session
+      }
+    }
+    
+    if (type) {
+      const typeIds = this.typeIndex.get(type);
+      if (typeIds) {
+        candidateIds = candidateIds 
+          ? new Set([...candidateIds].filter(id => typeIds.has(id)))
+          : typeIds;
+      } else {
+        candidateIds = new Set(); // No results for this type
+      }
+    }
+    
+    // If no candidates found in cache, try database
+    if (!candidateIds || candidateIds.size === 0) {
+      try {
+        return await this.searchInDatabase(options);
+      } catch (error: any) {
+        logger.warning('Database search failed, no cache results', { error: error.message });
+        return [];
+      }
     }
 
-    if (type) {
-      filtered = filtered.filter(m => m.metadata.type === type);
+    // Retrieve records from cache
+    const results: MemoryRecord[] = [];
+    for (const id of candidateIds) {
+      const record = this.memoryCache.get(id);
+      if (record) {
+        results.push(record);
+      }
     }
+
+    // Apply remaining filters
+    let filtered = results;
 
     if (importance) {
       filtered = filtered.filter(m => m.metadata.importance === importance);
