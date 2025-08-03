@@ -1,10 +1,10 @@
 // ARCANOS Intent-Based Router
 // Routes inputs to ARCANOS:WRITE or ARCANOS:AUDIT based on intent analysis
 
-import { IntentAnalyzer, IntentType } from './intent-analyzer';
-import { ArcanosWriteService, WriteRequest } from './arcanos-write';
-import { ArcanosAuditService, AuditRequest } from './arcanos-audit';
-import { diagnosticsService } from './diagnostics';
+import { IntentAnalyzer, IntentType } from './intent-analyzer.js';
+import { ArcanosWriteService, WriteRequest } from './arcanos-write.js';
+import { ArcanosAuditService, AuditRequest } from './arcanos-audit.js';
+import { diagnosticsService } from './diagnostics.js';
 
 export interface RouterRequest {
   message: string;

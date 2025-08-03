@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { createServiceLogger } from './logger';
+import { createServiceLogger } from './logger.js';
+import { fileURLToPath } from 'url';
 
 const logger = createServiceLogger('OverlayDiagnostics');
 
@@ -10,6 +11,7 @@ const logger = createServiceLogger('OverlayDiagnostics');
  * event so the AI can diagnose missing hooks.
  */
 export async function checkModelControlHooks(): Promise<boolean> {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const hooksPath = path.join(__dirname, '../services/model-control-hooks.js');
   const exists = fs.existsSync(hooksPath);
 

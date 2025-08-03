@@ -1,4 +1,4 @@
-import { dispatchJob } from './services/execution-engine';
+import { dispatchJob } from './services/execution-engine.js';
 
 export async function scheduleMemoryWorker(tag: string, payload: any, delay: number = 0) {
   const timestamp = new Date(Date.now() + delay).toISOString();

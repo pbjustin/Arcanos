@@ -1,13 +1,13 @@
 // AI-Controlled Worker Initialization - Refactored for OpenAI SDK v1.0.0 compatibility
-import { workerStatusService } from './services/worker-status';
-import { modelControlHooks } from './services/model-control-hooks';
-import { isTrue } from './utils/env';
-import { goalTrackerWorker } from './workers/goal-tracker';
-import { maintenanceSchedulerWorker } from './workers/maintenance-scheduler';
-import { createServiceLogger } from './utils/logger';
-import { registerWorker } from './services/worker-manager';
-import { memory } from './services/memory-scheduler';
-import type { ScheduleTask } from './types/scheduler';
+import { workerStatusService } from './services/worker-status.js';
+import { modelControlHooks } from './services/model-control-hooks.js';
+import { isTrue } from './utils/env.js';
+import { goalTrackerWorker } from './workers/goal-tracker.js';
+import { maintenanceSchedulerWorker } from './workers/maintenance-scheduler.js';
+import { createServiceLogger } from './utils/logger.js';
+import { registerWorker } from './services/worker-manager.js';
+import { memory } from './services/memory-scheduler.js';
+import type { ScheduleTask } from './types/scheduler.js';
 import { execSync } from 'child_process';
 
 // Auto-install missing types if running locally
@@ -25,12 +25,12 @@ import {
   getModernWorkerStatus,
   registerModernWorker,
   orchestrateModernWorker
-} from './services/modern-worker-init';
+} from './services/modern-worker-init.js';
 import { 
   validateWorkerDispatch, 
   isKnownWorker, 
   KNOWN_WORKERS 
-} from './utils/worker-validation';
+} from './utils/worker-validation.js';
 
 // Simplified worker registry - explicit and persistent
 const activeWorkers = new Map<string, { 

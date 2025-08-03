@@ -1,6 +1,6 @@
 import cron from 'node-cron';
-import { runReflectionSweep, finalizeMemoryWrite, queueSleepTasks } from './sleep-handlers';
-import { ServiceLogger } from '../utils/logger';
+import { runReflectionSweep, finalizeMemoryWrite, queueSleepTasks } from './sleep-handlers.js';
+import { ServiceLogger } from '../utils/logger.js';
 
 const logger = new ServiceLogger('SleepPrep');
 

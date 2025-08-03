@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
-import { getUnifiedOpenAI, type FunctionDefinition } from '../services/unified-openai';
-import { selectModel } from '../utils/model-router';
-import { diagnosticsService } from '../services/diagnostics';
-import { GameGuideService } from '../services/game-guide';
-import { MemoryStorage } from '../storage/memory-storage';
-import { aiConfig } from '../config';
+import { getUnifiedOpenAI, type FunctionDefinition } from '../services/unified-openai.js';
+import { selectModel } from '../utils/model-router.js';
+import { diagnosticsService } from '../services/diagnostics.js';
+import { GameGuideService } from '../services/game-guide.js';
+import { MemoryStorage } from '../storage/memory-storage.js';
+import { aiConfig } from '../config/index.js';
 
 // Unified stripReflections helper for frontend filtering
 function stripReflections(response: string): string {

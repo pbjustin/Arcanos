@@ -1,5 +1,5 @@
-import { reflect } from './ai';
-import { selfReflectionService } from './self-reflection';
+import { reflect } from './ai/index.js';
+import { selfReflectionService } from './self-reflection.js';
 
 /**
  * Run an AI reflection sweep before sleep.

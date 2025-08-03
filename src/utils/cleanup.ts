@@ -3,8 +3,8 @@
  * Manages reflection memory and file cleanup based on age
  */
 
-import { databaseService } from '../services/database';
-import { getMemory, saveMemory } from '../services/memory';
+import { databaseService } from '../services/database.js';
+import { getMemory, saveMemory } from '../services/memory.js';
 import { DateTime } from 'luxon';
 
 export interface PruneOptions {

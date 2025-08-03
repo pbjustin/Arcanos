@@ -1,12 +1,11 @@
-import { createServiceLogger } from './logger';
-import { networkAllowed } from './network';
+import { createServiceLogger } from './logger.js';
+import { networkAllowed } from './network.js';
 
 const logger = createServiceLogger('ModuleLoader');
 
-export function safeImport<T = any>(moduleName: string): T | null {
+export async function safeImport<T = any>(moduleName: string): Promise<T | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require(moduleName) as T;
+    return (await import(moduleName)) as T;
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND') {
       logger.error(`Module "${moduleName}" not found`, err);

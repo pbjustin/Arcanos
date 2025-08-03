@@ -1,9 +1,9 @@
 // AI Worker System Refactor - Using Unified OpenAI Service
 // Unified worker orchestration with modular control hooks and fallback dispatch
 
-import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
-import { createServiceLogger } from '../utils/logger';
-import { validateWorkerTask } from '../utils/worker-validation';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai.js';
+import { createServiceLogger } from '../utils/logger.js';
+import { validateWorkerTask } from '../utils/worker-validation.js';
 
 const logger = createServiceLogger('AIWorkerRefactor');
 

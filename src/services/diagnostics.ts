@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import axios from 'axios';
-import { getQueueAudit, getQueueStats } from './jobQueue';
+import { getQueueAudit, getQueueStats } from './jobQueue.js';
 
 const execAsync = promisify(exec);
 

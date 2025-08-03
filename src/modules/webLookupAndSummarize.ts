@@ -5,8 +5,8 @@
 
 import axios from "axios";
 import express from "express";
-import { getUnifiedOpenAI } from "../services/unified-openai";
-import { storeMemory, getMemory } from "../services/memory"; // Update paths as needed
+import { getUnifiedOpenAI } from "../services/unified-openai.js";
+import { storeMemory, getMemory } from "../services/memory.js"; // Update paths as needed
 
 const router = express.Router();
 

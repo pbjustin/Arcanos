@@ -3,8 +3,8 @@
  * Provides simplified interface for async memory operations compatible with OpenAI SDK patterns
  */
 
-import { databaseService } from './database';
-import { MemoryStorage } from '../storage/memory-storage';
+import { databaseService } from './database.js';
+import { MemoryStorage } from '../storage/memory-storage.js';
 
 // Shared fallback memory instance to ensure consistency across modules
 export const fallbackMemory = new MemoryStorage();

@@ -1,9 +1,9 @@
 // ARCANOS:AUDIT - Content validation and audit service
 // Handles requests that require validation, checking, or auditing
 
-import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
-import { aiConfig } from '../config';
-import { HRCCore } from '../modules/hrc';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai.js';
+import { aiConfig } from '../config/index.js';
+import { HRCCore } from '../modules/hrc.js';
 
 export interface AuditRequest {
   message: string;

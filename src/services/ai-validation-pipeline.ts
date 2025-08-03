@@ -1,6 +1,6 @@
-import { getUnifiedOpenAI, type ChatMessage } from './unified-openai';
-import { runDeepResearch } from '../modules/deepResearchHandler';
-import { webFetchHandler } from '../handlers/webFetchHandler';
+import { getUnifiedOpenAI, type ChatMessage } from './unified-openai.js';
+import { runDeepResearch } from '../modules/deepResearchHandler.js';
+import { webFetchHandler } from '../handlers/webFetchHandler.js';
 
 export interface ValidationAudit {
   contextBlock?: string;

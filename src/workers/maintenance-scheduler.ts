@@ -1,14 +1,15 @@
+import { fileURLToPath } from 'url';
 /**
  * Maintenance Scheduler Worker - AI-driven system maintenance using OpenAI SDK
  * Handles automated system maintenance, cleanup, and optimization tasks
  */
 
-import { coreAIService } from '../services/ai-service-consolidated';
-import type { ChatMessage } from '../services/unified-openai';
-import { createServiceLogger } from '../utils/logger';
-import { sanitizeJsonString } from '../utils/json';
-import { normalizeMemoryUsage } from '../utils/memory-normalizer';
-import { delay } from '../utils/delay';
+import { coreAIService } from '../services/ai-service-consolidated.js';
+import type { ChatMessage } from '../services/unified-openai.js';
+import { createServiceLogger } from '../utils/logger.js';
+import { sanitizeJsonString } from '../utils/json.js';
+import { normalizeMemoryUsage } from '../utils/memory-normalizer.js';
+import { delay } from '../utils/delay.js';
 import fs from 'fs';
 import path from 'path';
 import * as cron from 'node-cron';
@@ -549,7 +550,7 @@ Please analyze and provide:
 export const maintenanceSchedulerWorker = new MaintenanceSchedulerWorker();
 
 // Allow running directly from node
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [, , taskId] = process.argv;
   
   if (taskId) {

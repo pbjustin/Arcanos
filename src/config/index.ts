@@ -1,9 +1,9 @@
 // Centralized Configuration Management for ARCANOS Backend
-import { safeImport } from '../utils/safeImport';
-import { ARCANOS_MODEL_ID } from './ai-model';
+import { safeImport } from '../utils/safeImport.js';
+import { ARCANOS_MODEL_ID } from './ai-model.js';
 
-const dotenv = safeImport<typeof import('dotenv')>('dotenv');
-import type { IdentityOverride } from '../types/IdentityOverride';
+const dotenv = await safeImport<typeof import('dotenv')>('dotenv');
+import type { IdentityOverride } from '../types/IdentityOverride.js';
 
 // Load environment variables if dotenv is available
 dotenv?.config();

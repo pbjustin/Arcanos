@@ -4,7 +4,7 @@
  * WARNING: This worker should not be used in normal operation
  */
 
-import { createServiceLogger } from '../utils/logger';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('DefaultWorker');
 

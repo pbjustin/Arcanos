@@ -1,8 +1,9 @@
-import { coreAIService } from '../../services/ai-service-consolidated';
-import type { ChatMessage } from '../../services/unified-openai';
+import { fileURLToPath } from 'url';
+import { coreAIService } from '../../services/ai-service-consolidated.js';
+import type { ChatMessage } from '../../services/unified-openai.js';
 import fs from 'fs';
 import path from 'path';
-import { createServiceLogger } from '../../utils/logger';
+import { createServiceLogger } from '../../utils/logger.js';
 
 const logger = createServiceLogger('StreamAuditWorker');
 
@@ -86,7 +87,7 @@ export async function runStreamAudit({ message, domain = 'general', logFilePath 
 }
 
 // Allow running directly from node
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [, , ...args] = process.argv;
   const message = args.join(' ') || 'Audit this message.';
   runStreamAudit({ message }).catch(err => {

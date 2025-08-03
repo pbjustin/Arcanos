@@ -4,9 +4,9 @@
  */
 
 import { Router } from 'express';
-import { webFallbackToGPT, getWebFallbackService } from '../services/web-fallback';
-import { sendErrorResponse, sendSuccessResponse } from '../utils/response';
-import { requireApiToken } from '../middleware/api-token';
+import { webFallbackToGPT, getWebFallbackService } from '../services/web-fallback.js';
+import { sendErrorResponse, sendSuccessResponse } from '../utils/response.js';
+import { requireApiToken } from '../middleware/api-token.js';
 
 const router = Router();
 

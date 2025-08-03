@@ -3,10 +3,10 @@
 // Sleep Window: 7:00 AM to 2:00 PM Eastern Time daily
 
 import cron from 'node-cron';
-import { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } from './sleep-config';
-import { emitServerSleep } from '../events/system-events';
-import { modelControlHooks } from './model-control-hooks';
-import { workerStatusService } from './worker-status';
+import { getCurrentSleepWindowStatus, shouldReduceServerActivity, logSleepWindowStatus } from './sleep-config.js';
+import { emitServerSleep } from '../events/system-events.js';
+import { modelControlHooks } from './model-control-hooks.js';
+import { workerStatusService } from './worker-status.js';
 
 export interface SleepManagerConfig {
   enabled: boolean;
@@ -181,7 +181,7 @@ export class SleepManager {
    */
   private async runMemorySyncSnapshot(): Promise<void> {
     try {
-      const memorySync = await import('../../dist/workers/memorySync' as any);
+      const memorySync = await import('../../dist/workers/memorySync.js' as any);
       await memorySync.default();
     } catch (error) {
       console.warn('Memory sync worker not available:', error);
@@ -216,7 +216,7 @@ export class SleepManager {
    */
   private async runGoalWatcherAudit(): Promise<void> {
     try {
-      const goalWatcher = await import('../../dist/workers/goalWatcher' as any);
+      const goalWatcher = await import('../../dist/workers/goalWatcher.js' as any);
       await goalWatcher.default();
     } catch (error) {
       console.warn('Goal watcher worker not available:', error);
@@ -247,7 +247,7 @@ export class SleepManager {
    */
   private async runClearTempLogs(): Promise<void> {
     try {
-      const clearTemp = await import('../../dist/workers/clearTemp' as any);
+      const clearTemp = await import('../../dist/workers/clearTemp.js' as any);
       await clearTemp.default();
     } catch (error) {
       console.warn('Clear temp worker not available:', error);
@@ -279,7 +279,7 @@ export class SleepManager {
    */
   private async runCodeImprovementSuggestions(): Promise<void> {
     try {
-      const codeImprovement = await import('../../dist/workers/codeImprovement' as any);
+      const codeImprovement = await import('../../dist/workers/codeImprovement.js' as any);
       await codeImprovement.default();
     } catch (error) {
       console.warn('Code improvement worker not available:', error);

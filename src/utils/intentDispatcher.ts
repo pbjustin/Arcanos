@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import { routeByIntent, type IntentMode } from './routeByIntent';
-import { callArcanosModel, ARCANOS_MODEL_ID } from '../config/ai-model';
+import { routeByIntent, type IntentMode } from './routeByIntent.js';
+import { callArcanosModel, ARCANOS_MODEL_ID } from '../config/ai-model.js';
 
 // Initialize OpenAI client with API key from environment
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

@@ -2,8 +2,8 @@
 // Ensures logging when triggered and malformed response tracking
 
 import { Request, Response } from 'express';
-import { ArcanosAuditService } from '../services/arcanos-audit';
-import { getNLPInterpreter } from '../modules/nlp-interpreter';
+import { ArcanosAuditService } from '../services/arcanos-audit.js';
+import { getNLPInterpreter } from '../modules/nlp-interpreter.js';
 
 export class AuditHandler {
   private auditService: ArcanosAuditService;

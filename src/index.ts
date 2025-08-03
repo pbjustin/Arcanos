@@ -5,60 +5,63 @@ import express from 'express';
 import path from 'path';
 import bodyParser from 'body-parser';
 import cors from 'cors';
+import { fileURLToPath } from 'url';
 
 // Centralized configuration
 import { config, validateConfig, getEnvironmentStatus } from './config/index.js';
-import { applyCLEAROverlay } from './modules/clear-overlay';
+import { applyCLEAROverlay } from './modules/clear-overlay.js';
 
 // Core route modules (extracted for better modularity)
-import router from './routes/index';
-import mainRoutes from './routes/main';
-import aiRoutes from './routes/ai';
-import memoryRouter from './routes/memory';
-import guidesRouter from './routes/guides';
-import systemRouter from './routes/system';
-import codexRouter from './routes/codex';
-import logsRouter from './routes/logs';
-import webFallbackRouter from './routes/web-fallback';
-import webLookupAndSummarizeRouter from './modules/webLookupAndSummarize';
-import researchRouter from './modules/research';
-import openaiWebhookRouter from './webhooks/openai';
-import githubWebhookRouter from './webhooks/github';
-import { enableAdminControl, getAdminRouter } from './system/auth';
+import router from './routes/index.js';
+import mainRoutes from './routes/main.js';
+import aiRoutes from './routes/ai.js';
+import memoryRouter from './routes/memory.js';
+import guidesRouter from './routes/guides.js';
+import systemRouter from './routes/system.js';
+import codexRouter from './routes/codex.js';
+import logsRouter from './routes/logs.js';
+import webFallbackRouter from './routes/web-fallback.js';
+import webLookupAndSummarizeRouter from './modules/webLookupAndSummarize.js';
+import researchRouter from './modules/research.js';
+import openaiWebhookRouter from './webhooks/openai.js';
+import githubWebhookRouter from './webhooks/github.js';
+import { enableAdminControl, getAdminRouter } from './system/auth.js';
 
 // Middleware
-import { requireApiToken } from './middleware/api-token';
-import { chatGPTUserMiddleware } from './middleware/chatgpt-user';
-import { errorHandler, notFoundHandler } from './middleware/error-handler';
-import { performanceMiddleware } from './utils/performance';
+import { requireApiToken } from './middleware/api-token.js';
+import { chatGPTUserMiddleware } from './middleware/chatgpt-user.js';
+import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
+import { performanceMiddleware } from './utils/performance.js';
 
 // Services
-import { databaseService } from './services/database';
-import { serverService } from './services/server';
-import { chatGPTUserWhitelist } from './services/chatgpt-user-whitelist';
-import { diagnosticsService } from './services/diagnostics';
-import { memoryMonitor } from './services/memory-monitor';
-import { recordUptime, getLastUptime } from './utils/uptime';
+import { databaseService } from './services/database.js';
+import { serverService } from './services/server.js';
+import { chatGPTUserWhitelist } from './services/chatgpt-user-whitelist.js';
+import { diagnosticsService } from './services/diagnostics.js';
+import { memoryMonitor } from './services/memory-monitor.js';
+import { recordUptime, getLastUptime } from './utils/uptime.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Handlers (for initialization)
-import { memoryHandler } from './handlers/memory-handler';
-import { routeRecovery } from './handlers/route-recovery';
+import { memoryHandler } from './handlers/memory-handler.js';
+import { routeRecovery } from './handlers/route-recovery.js';
 
 // Import system modules
-import './services/database-connection';
-import './services/cron-worker';
-import './worker-init';
+import './services/database-connection.js';
+import './services/cron-worker.js';
+import './worker-init.js';
 
 // Import AI reflection handler (initializes 8:30 AM daily schedule)
-import './services/backend-ai-reflection-handler';
+import './services/backend-ai-reflection-handler.js';
 
 // Trigger self-reflection when entering sleep mode
-import './sleep-self-reflection';
+import './sleep-self-reflection.js';
 
 // Import sleep manager
-import { sleepManager } from './services/sleep-manager';
+import { sleepManager } from './services/sleep-manager.js';
 // Schedule pre-sleep preparation tasks
-import './services/sleep-prep';
+import './services/sleep-prep.js';
 
 // Validate configuration on startup
 const configValidation = validateConfig();
@@ -131,7 +134,7 @@ app.get('/health', (_, res) => res.send('✅ OK'));
 
 // Performance monitoring endpoint
 app.get('/performance', async (_req, res) => {
-  const { performanceMonitor } = await import('./utils/performance');
+  const { performanceMonitor } = await import('./utils/performance.js');
   const metrics = performanceMonitor.getMetrics();
   const memoryStatus = performanceMonitor.getMemoryPressureStatus();
   const sleepStatus = sleepManager.getSleepStatus();
@@ -259,21 +262,21 @@ serverService.start(app, PORT).then(async () => {
 export default app;
 
 // Export the ARCANOS V1 Safe Interface for direct usage
-export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arcanos-v1-interface';
+export { askArcanosV1_Safe, getActiveModel, ArcanosModel } from './services/arcanos-v1-interface.js';
 
 // Export sleep schedule functions for copilot integration
-export { getCoreSleepWindow } from './services/sleep-config';
+export { getCoreSleepWindow } from './services/sleep-config.js';
 
 // Export email service functions for global access
-export { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from './services/email';
-export { selfReflectionService } from './services/self-reflection';
+export { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType } from './services/email.js';
+export { selfReflectionService } from './services/self-reflection.js';
 
 // Export backend AI reflection handler
-export { reflectIfScheduled } from './services/backend-ai-reflection-handler';
+export { reflectIfScheduled } from './services/backend-ai-reflection-handler.js';
 
 // Export game guide storage functionality
-export { saveGameGuide } from './services/game-guides';
+export { saveGameGuide } from './services/game-guides.js';
 
 // Export AI patch system for external usage
-export { aiPatchSystem, createAIPatch } from './services/ai-patch-system';
-export { initializeBackend } from './initializeBackend';
+export { aiPatchSystem, createAIPatch } from './services/ai-patch-system.js';
+export { initializeBackend } from './initializeBackend.js';

@@ -1,6 +1,6 @@
-import { performanceMonitor } from '../utils/performance';
+import { performanceMonitor } from '../utils/performance.js';
 import { getHeapStatistics } from 'v8';
-import { maybeReflect } from '../utils/executionGuard';
+import { maybeReflect } from '../utils/executionGuard.js';
 
 class MemoryMonitor {
   private logIntervalId?: NodeJS.Timeout;

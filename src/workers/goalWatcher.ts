@@ -1,10 +1,11 @@
+import { fileURLToPath } from 'url';
 /**
  * Goal Watcher Worker - Bridge to goal-tracker functionality
  * This file provides the interface expected by sleep-manager
  */
 
-import { goalTrackerWorker } from './goal-tracker';
-import { createServiceLogger } from '../utils/logger';
+import { goalTrackerWorker } from './goal-tracker.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('GoalWatcher');
 
@@ -46,7 +47,7 @@ export default async function goalWatcher(): Promise<void> {
 }
 
 // Allow running directly from node
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   goalWatcher().catch(err => {
     logger.error('Goal watcher execution failed', err);
     process.exit(1);

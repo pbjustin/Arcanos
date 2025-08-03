@@ -1,4 +1,4 @@
-import { splitResponse } from '../utils/response-splitter';
+import { splitResponse } from '../utils/response-splitter.js';
 
 export interface PagedOutputConfig {
   maxPayloadSize?: number;

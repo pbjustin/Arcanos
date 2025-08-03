@@ -1,5 +1,5 @@
-import { createServiceLogger } from './logger';
-import { isTrue } from './env';
+import { createServiceLogger } from './logger.js';
+import { isTrue } from './env.js';
 
 const logger = createServiceLogger('Network');
 

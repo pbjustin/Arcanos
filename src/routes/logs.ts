@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getRecentLogs } from '../services/log-relay';
+import { getRecentLogs } from '../services/log-relay.js';
 
 const router = Router();
 
