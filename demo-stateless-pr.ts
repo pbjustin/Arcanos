@@ -1,8 +1,8 @@
 // Demo: Stateless PR Generation Test
 // Demonstrates the bypass of memory orchestration and force push functionality
 
-import { generatePR } from './services/git';
-import { buildPatchSet } from './services/ai-reflections';
+import { generatePR } from './services/git.js';
+import { buildPatchSet } from './services/ai-reflections.js';
 
 async function demonstrateStatelessPR() {
   console.log('🚀 Starting Stateless PR Generation Demo');

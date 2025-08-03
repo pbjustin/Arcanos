@@ -2,7 +2,7 @@
  * Test script for worker initialization functionality
  */
 
-import { initializeWorker, isWorkerInitialized, getInitializedWorkers, resetWorkerInitialization } from './src/services/init';
+import { initializeWorker, isWorkerInitialized, getInitializedWorkers, resetWorkerInitialization } from './src/services/init.js';
 
 async function testWorkerInitialization() {
   console.log('🧪 Testing Worker Initialization Service');

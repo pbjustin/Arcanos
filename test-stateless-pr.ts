@@ -1,8 +1,8 @@
 // PATCH: Bypass PR memory lock and force stateless push to GitHub
 // Description: Finalizes commit without relying on orchestration or memory locking routines
 
-import { generatePR } from './services/git';
-import { buildPatchSet } from './services/ai-reflections';
+import { generatePR } from './services/git.js';
+import { buildPatchSet } from './services/ai-reflections.js';
 
 (async () => {
   const patch = await buildPatchSet({ useMemory: false }); // bypass memory orchestration
