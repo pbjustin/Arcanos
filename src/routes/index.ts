@@ -6,6 +6,7 @@ import { sendEmail, verifyEmailConnection, getEmailSender, getEmailTransportType
 import { sendEmailIntent } from '../intents/send_email';
 import { sendEmailAndRespond } from '../intents/send_email_and_respond';
 import { runValidationPipeline } from '../services/ai-validation-pipeline'; // [AI-PATCH: RAG+HRC+CLEAR]
+import { handleInternetResult } from '../utils/internet-lookup';
 import assistantsRouter from './assistants';
 
 const router = Router();
@@ -209,6 +210,22 @@ router.post('/email/send', async (req, res) => {
       error: error.message,
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+// External lookup endpoint with RAG + HRC + CLEAR post-processing
+router.get('/lookup', async (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'url query parameter is required' });
+    }
+
+    const content = await fetch(url).then(r => r.text());
+    const result = handleInternetResult(content);
+    res.json({ answer: result });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 
