@@ -1,6 +1,7 @@
 {
   "name": "arcanos-backend",
   "version": "1.0.0",
+  "type": "module",
   "main": "dist/main.js",
   "engines": {
     "node": ">=20.11.1",
