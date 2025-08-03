@@ -1,4 +1,4 @@
-import { createServiceLogger } from '../utils/logger';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('Studio');
 

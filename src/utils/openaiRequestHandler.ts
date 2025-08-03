@@ -1,8 +1,8 @@
 import OpenAI from 'openai';
 import type { ChatCompletionCreateParams, ChatCompletionMessageParam } from 'openai/resources';
-import { callArcanosModel } from '../config/ai-model';
-import { runDeepResearch } from '../modules/deepResearchHandler';
-import { webFetchHandler } from '../handlers/webFetchHandler';
+import { callArcanosModel } from '../config/ai-model.js';
+import { runDeepResearch } from '../modules/deepResearchHandler.js';
+import { webFetchHandler } from '../handlers/webFetchHandler.js';
 
 export type Mode = 'write' | 'sim' | 'audit' | 'codegen' | 'deepresearch';
 

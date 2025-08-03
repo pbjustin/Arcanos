@@ -1,5 +1,5 @@
-import { getUnifiedOpenAI } from './unified-openai';
-import { createServiceLogger } from '../utils/logger';
+import { getUnifiedOpenAI } from './unified-openai.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('GameGuideService');
 

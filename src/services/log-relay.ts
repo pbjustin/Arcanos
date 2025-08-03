@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import type { LogLevel } from '../utils/logger';
+import type { LogLevel } from '../utils/logger.js';
 
 export interface LogRecord {
   timestamp: string;

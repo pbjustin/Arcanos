@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { config } from '../config';
+import { config } from '../config/index.js';
 
 interface GitHubActionTrigger {
   repo: string; // Format: "owner/repo"

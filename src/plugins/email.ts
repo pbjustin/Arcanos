@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { sendEmail } from '../services/email'
+import { sendEmail } from '../services/email.js'
 
 export interface EmailPayload {
   to: string

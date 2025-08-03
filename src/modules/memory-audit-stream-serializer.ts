@@ -5,7 +5,7 @@ export interface MemoryAuditStreamConfig {
   logTrunc?: number;
 }
 
-import { splitResponse } from '../utils/response-splitter';
+import { splitResponse } from '../utils/response-splitter.js';
 import { Response } from 'express';
 
 export class MemoryAuditStreamSerializer {

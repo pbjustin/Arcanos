@@ -3,8 +3,8 @@
  * Uses existing GitHub integration for stable operations
  */
 
-import { pushFileWithStability } from './githubPushStable';
-import type { ReflectionSnapshot } from '../services/ai';
+import { pushFileWithStability } from './githubPushStable.js';
+import type { ReflectionSnapshot } from '../services/ai/index.js';
 
 export interface WriteToRepoOptions {
   path: string;

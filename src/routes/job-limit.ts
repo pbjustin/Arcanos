@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { delay } from '../utils/delay';
+import { delay } from '../utils/delay.js';
 import { 
   createRateLimitMiddleware, 
   asyncHandler, 
   requestTimingMiddleware 
-} from '../middleware/modern-middleware';
+} from '../middleware/modern-middleware.js';
 
 const router = Router();
 

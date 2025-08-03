@@ -5,8 +5,8 @@
  */
 
 import OpenAI from 'openai';
-import { getGPT4FallbackService } from './gpt4-fallback';
-import { createServiceLogger } from '../utils/logger';
+import { getGPT4FallbackService } from './gpt4-fallback.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 const logger = createServiceLogger('ClarkeHandler');
 
@@ -258,7 +258,7 @@ export class ClarkeHandler {
 // Module augmentation to add ClarkeHandler to OpenAI namespace
 declare module 'openai' {
   namespace OpenAI {
-    export const ClarkeHandler: typeof import('./clarke-handler').ClarkeHandler;
+    export const ClarkeHandler: typeof import('./clarke-handler.js').ClarkeHandler;
   }
 }
 

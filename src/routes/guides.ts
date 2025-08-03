@@ -3,9 +3,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { fetchGuideHandler } from '../handlers/guide-handler';
-import { saveGameGuide, fetchGuideSegment } from '../services/game-guides';
-import { sendSuccessResponse, sendErrorResponse, handleCatchError } from '../utils/response';
+import { fetchGuideHandler } from '../handlers/guide-handler.js';
+import { saveGameGuide, fetchGuideSegment } from '../services/game-guides.js';
+import { sendSuccessResponse, sendErrorResponse, handleCatchError } from '../utils/response.js';
 
 const router = Router();
 

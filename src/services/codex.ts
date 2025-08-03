@@ -1,4 +1,4 @@
-import { getUnifiedOpenAI } from './unified-openai';
+import { getUnifiedOpenAI } from './unified-openai.js';
 
 export async function handleCodexPrompt(payload: any): Promise<any> {
   const { prompt, model = 'gpt-4' } = payload || {};

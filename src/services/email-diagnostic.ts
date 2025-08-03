@@ -1,11 +1,11 @@
 import { randomUUID } from 'crypto';
-import { sendEmail } from './email';
-import { sendEmailFallback } from '../plugins/email';
-import { createServiceLogger } from '../utils/logger';
+import { sendEmail } from './email.js';
+import { sendEmailFallback } from '../plugins/email.js';
+import { createServiceLogger } from '../utils/logger.js';
 
 async function getReceiptFailMap() {
   try {
-    const module = await import('../../memory/modules/receipt_fail_map' as any);
+    const module = await import('../../memory/modules/receipt_fail_map.js' as any);
     return module;
   } catch {
     return { flag: async () => {} }; // Mock implementation
@@ -14,7 +14,7 @@ async function getReceiptFailMap() {
 
 async function getEmailDiagnostics() {
   try {
-    const module = await import('../../memory/modules/email_diagnostics' as any);
+    const module = await import('../../memory/modules/email_diagnostics.js' as any);
     return module;
   } catch {
     return { add: async () => {} }; // Mock implementation

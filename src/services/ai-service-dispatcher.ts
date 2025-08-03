@@ -10,8 +10,8 @@
  * - OpenAI SDK v5.10+ compatible
  */
 
-import { createServiceLogger } from '../utils/logger';
-import { aiDispatcher, type DispatchRequest, type DispatchResponse } from '../services/ai-dispatcher';
+import { createServiceLogger } from '../utils/logger.js';
+import { aiDispatcher, type DispatchRequest, type DispatchResponse } from '../services/ai-dispatcher.js';
 
 const logger = createServiceLogger('AIServiceDispatcher');
 
@@ -249,7 +249,7 @@ async function executeInstruction(instruction: any, originalTask: ServiceTask): 
  * Execute memory worker
  */
 async function executeMemoryWorker(task: ServiceTask): Promise<any> {
-  const { handle } = await import('../workers/memoryWorker');
+  const { handle } = await import('../workers/memoryWorker.js');
   
   const memoryTask = {
     action: (task.action as 'store' | 'retrieve' | 'delete' | 'sync' | 'snapshot') || 'retrieve',
@@ -268,7 +268,7 @@ async function executeMemoryWorker(task: ServiceTask): Promise<any> {
  * Execute API worker
  */
 async function executeApiWorker(task: ServiceTask): Promise<any> {
-  const { handle } = await import('../workers/apiWorker');
+  const { handle } = await import('../workers/apiWorker.js');
   
   const apiTask = {
     action: (task.action as 'request' | 'webhook' | 'proxy' | 'batch' | 'monitor') || 'request',
@@ -291,7 +291,7 @@ async function executeApiWorker(task: ServiceTask): Promise<any> {
 async function executeDefaultWorkerOverride(task: ServiceTask): Promise<ServiceResponse> {
   logger.warning('[OVERRIDE] Executing fallback defaultWorker...');
   
-  const { handle, isAuthorized } = await import('../workers/defaultWorker');
+  const { handle, isAuthorized } = await import('../workers/defaultWorker.js');
   
   if (!isAuthorized(task.context?.manualOverride)) {
     throw new Error('DefaultWorker access denied: Manual override not properly authorized');
@@ -333,15 +333,15 @@ async function executeWorkerByName(workerName: string, taskData: any): Promise<a
 
   switch (workerName) {
     case 'memorySync':
-      const { default: memorySync } = await import('../workers/memorySync');
+      const { default: memorySync } = await import('../workers/memorySync.js');
       return await memorySync();
 
     case 'goalWatcher':
-      const { default: goalWatcher } = await import('../workers/goalWatcher');
+      const { default: goalWatcher } = await import('../workers/goalWatcher.js');
       return await goalWatcher();
 
     case 'clearTemp':
-      const { default: clearTemp } = await import('../workers/clearTemp');
+      const { default: clearTemp } = await import('../workers/clearTemp.js');
       return await clearTemp();
 
     default:

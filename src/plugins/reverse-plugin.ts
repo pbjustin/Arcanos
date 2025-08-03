@@ -1,4 +1,4 @@
-import { ArcanosPlugin, PluginRequest, PluginResponse } from '../services/plugin-manager';
+import { ArcanosPlugin, PluginRequest, PluginResponse } from '../services/plugin-manager.js';
 
 const reversePlugin: ArcanosPlugin = {
   name: 'reverse',

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { getMemory, storeMemory } from '../services/memory';
+import { getMemory, storeMemory } from '../services/memory.js';
 
 /**
  * Structured result for the deep research flow

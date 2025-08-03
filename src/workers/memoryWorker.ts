@@ -3,8 +3,8 @@
  * Integrated with AI dispatcher for intelligent memory management
  */
 
-import { createServiceLogger } from '../utils/logger';
-import { normalizeMemoryUsage } from '../utils/memory-normalizer';
+import { createServiceLogger } from '../utils/logger.js';
+import { normalizeMemoryUsage } from '../utils/memory-normalizer.js';
 import fs from 'fs';
 import path from 'path';
 

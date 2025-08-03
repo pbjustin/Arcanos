@@ -15,7 +15,7 @@ export interface AssistantMap {
 }
 
 export class OpenAIAssistantsService {
-  private unifiedOpenAI: ReturnType<typeof import('./unified-openai').getUnifiedOpenAI>;
+  private unifiedOpenAI: ReturnType<typeof import('./unified-openai.js').getUnifiedOpenAI>;
   private configPath: string;
 
   constructor() {

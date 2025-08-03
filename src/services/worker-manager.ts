@@ -1,7 +1,7 @@
 // Worker registration and dispatch utilities
 // Adds name validation and per-worker dispatch locking
 
-import { AIDispatcher } from './ai-dispatcher';
+import { AIDispatcher } from './ai-dispatcher.js';
 
 // Use a Set for active workers
 const activeWorkers: Set<string> = new Set();

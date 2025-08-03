@@ -15,7 +15,7 @@ export function shouldRun(taskId: string, intervalMs: number): boolean {
   return false;
 }
 
-import { enqueue } from '../services/jobQueue';
+import { enqueue } from '../services/jobQueue.js';
 
 export interface QueuedTask {
   name: string;

@@ -1,4 +1,4 @@
-import { ArcanosAuditService } from './arcanos-audit';
+import { ArcanosAuditService } from './arcanos-audit.js';
 
 const auditService = new ArcanosAuditService();
 

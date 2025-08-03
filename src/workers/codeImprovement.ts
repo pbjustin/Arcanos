@@ -1,10 +1,11 @@
+import { fileURLToPath } from 'url';
 /**
  * Code Improvement Worker - Generates daily code improvement suggestions
  * This file provides the interface expected by sleep-manager
  */
 
-import { createServiceLogger } from '../utils/logger';
-import { delay } from '../utils/delay';
+import { createServiceLogger } from '../utils/logger.js';
+import { delay } from '../utils/delay.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -118,7 +119,7 @@ async function cleanupOldSuggestions(storageDir: string): Promise<void> {
 }
 
 // Allow running directly from node
-if (require.main === module) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   codeImprovement().catch(err => {
     logger.error('Code improvement execution failed', err);
     process.exit(1);

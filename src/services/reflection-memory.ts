@@ -1,7 +1,7 @@
 // Patch: Resilient Reflection Memory Handling
 // Ensures safe memory serialization, fallback recovery, and OpenAI-compatible logic
 
-import { storeMemory, getMemory } from "./memory";
+import { storeMemory, getMemory } from "./memory.js";
 
 // 🔐 Safe serializer to prevent malformed writes
 function safeSerialize(obj: any): string {

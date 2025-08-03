@@ -3,7 +3,9 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import { pipeline } from 'stream/promises';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_DIR = path.resolve(__dirname, '../logs');
 const MAX_LOG_SIZE_MB = 5;
 
