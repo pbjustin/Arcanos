@@ -1,9 +1,13 @@
-const fs = require('fs').promises;
-const path = require('path');
-const { logEvent } = require('../logEvent');
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { logEvent } from '../logEvent.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const FILE = path.join(__dirname, '../state/cache.json');
 
-module.exports = {
+export default {
   async read() {
     try {
       const data = await fs.readFile(FILE, 'utf8');

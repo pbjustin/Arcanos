@@ -1,6 +1,6 @@
-const { execSync } = require('child_process');
+import { execSync } from 'child_process';
 
-function validateSyntax(file) {
+export function validateSyntax(file) {
   try {
     execSync(`node --check ${file}`, { stdio: 'ignore' });
     return true;
@@ -9,5 +9,3 @@ function validateSyntax(file) {
     return false;
   }
 }
-
-module.exports = { validateSyntax };
