@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
-      "start": "node --expose-gc --max-old-space-size=28672 index.js",
+    "start": "node --max-old-space-size=7168 dist/index.js",
     "start:main": "node dist/main.js",
     "start:agent-control": "DEPLOY_MODE=agent-control node dist/main.js",
     "start:railway": "node --max-old-space-size=7168 dist/index.js",
