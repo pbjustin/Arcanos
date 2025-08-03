@@ -239,8 +239,8 @@ export function addModernFallbackStrategy(name: string, strategy: Function): voi
   logger.info(`Custom fallback strategy added: ${name}`);
 }
 
-// Initialize minimal system workers for compatibility
-workerStatusService.initializeMinimalWorkers();
+// Initialize optimized system workers for modern system
+workerStatusService.initializeOptimizedWorkers();
 logger.info('Minimal system workers initialized for compatibility');
 
 // Conditional startup based on environment

@@ -197,22 +197,11 @@ export class WorkerStatusService {
   }
 
   /**
-   * Initialize minimal system workers for optimized backend
+   * Initialize optimized system workers for modern backend
    */
-  initializeMinimalWorkers(): void {
+  initializeOptimizedWorkers(): void {
     this.registerWorker('worker-health', 'health_monitoring', 'idle');
     this.registerWorker('worker-maintenance', 'awaiting_job', 'idle');
-  }
-
-  /**
-   * Initialize default system workers (legacy - for compatibility)
-   */
-  initializeSystemWorkers(): void {
-    this.registerWorker('worker-1', 'memory_diagnostics', 'running');
-    this.registerWorker('worker-2', 'awaiting_job', 'idle');
-    this.registerWorker('worker-3', 'health_monitoring', 'running');
-    this.registerWorker('worker-4', 'maintenance_sweep', 'idle');
-    this.registerWorker('worker-5', 'model_probe', 'idle');
   }
 
   /**
