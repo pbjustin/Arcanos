@@ -40,9 +40,9 @@ class EmailService {
   }
 
   private createTransport(): { transporter: nodemailer.Transporter, transportType: string, senderEmail: string } {
-    // Priority order: Standard EMAIL_* vars > Generic SMTP > Ethereal > Mailtrap > Gmail
+    // Priority order: Standard EMAIL_* vars > Generic SMTP > Ethereal > Mailtrap
     
-    // Standard EMAIL_HOST, EMAIL_USER, EMAIL_PASS (as requested in refactor)
+    // Standard EMAIL_HOST, EMAIL_USER, EMAIL_PASS (primary configuration)
     if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
       const senderEmail = process.env.EMAIL_USER;
       const port = parseInt(process.env.EMAIL_PORT || '587', 10);
@@ -139,23 +139,7 @@ class EmailService {
       }
     }
 
-    // Gmail SMTP (legacy - not recommended for Railway due to potential restrictions)
-    if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
-      const senderEmail = process.env.GMAIL_USER;
-      return {
-        transporter: nodemailer.createTransport({
-          service: 'gmail',
-          auth: {
-            user: process.env.GMAIL_USER,
-            pass: process.env.GMAIL_APP_PASSWORD
-          }
-        }),
-        transportType: 'Gmail SMTP (Legacy)',
-        senderEmail
-      };
-    }
-
-    throw new Error('No email service configured. For Railway production, set SMTP_HOST, SMTP_USER, SMTP_PASS. For testing, set ETHEREAL_USER/ETHEREAL_PASS or MAILTRAP_USER/MAILTRAP_PASS. Legacy Gmail via GMAIL_USER/GMAIL_APP_PASSWORD is also supported.');
+    throw new Error('No email service configured. For Railway production, set SMTP_HOST, SMTP_USER, SMTP_PASS. For testing, set ETHEREAL_USER/ETHEREAL_PASS or MAILTRAP_USER/MAILTRAP_PASS.');
   }
 
   async sendEmail(to: string, subject: string, html: string, from?: string): Promise<EmailResponse> {
