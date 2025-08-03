@@ -1,7 +1,12 @@
 // Convenience wrapper for the compiled Codex integrator
+let codexIntegrator;
 try {
-  module.exports = require('./dist/codex-integrator');
+  const module = await import('./dist/codex-integrator.js');
+  codexIntegrator = module;
 } catch (err) {
   // Fallback to TypeScript source for development environments
-  module.exports = require('./src/codex-integrator');
+  const module = await import('./src/codex-integrator.js');
+  codexIntegrator = module;
 }
+
+export default codexIntegrator;
