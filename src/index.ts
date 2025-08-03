@@ -7,7 +7,7 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 
 // Centralized configuration
-import { config, validateConfig, getEnvironmentStatus } from './config';
+import { config, validateConfig, getEnvironmentStatus } from './config/index.js';
 import { applyCLEAROverlay } from './modules/clear-overlay';
 
 // Core route modules (extracted for better modularity)

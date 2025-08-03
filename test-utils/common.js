@@ -5,15 +5,16 @@
 
 let axios;
 try {
-  axios = require('axios');
+  const axiosModule = await import('axios');
+  axios = axiosModule.default;
 } catch (err) {
   console.warn('Axios module not found. Falling back to http requests.');
   axios = null;
 }
-const http = require('http');
+import http from 'http';
 
 // Common test configuration
-const TEST_CONFIG = {
+export const TEST_CONFIG = {
   BASE_URL: process.env.TEST_URL || 'http://localhost:8080',
   LEGACY_PORT: process.env.TEST_PORT || 3000,
   TIMEOUT: 10000,
@@ -27,7 +28,7 @@ const TEST_CONFIG = {
  * @param {Object} options - Request options
  * @returns {Promise<Object>} - Response with status and data
  */
-async function makeAxiosRequest(method, endpoint, options = {}) {
+export async function makeAxiosRequest(method, endpoint, options = {}) {
   const { data, headers = {}, timeout = TEST_CONFIG.TIMEOUT, includeAuth = false } = options;
   
   // Ensure endpoint starts with /
@@ -90,7 +91,7 @@ async function makeAxiosRequest(method, endpoint, options = {}) {
  * @param {Object} data - Request data
  * @returns {Promise<Object>} - Response with statusCode and body
  */
-function makeLegacyRequest(method, path, data = null) {
+export function makeLegacyRequest(method, path, data = null) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
@@ -140,7 +141,7 @@ function makeLegacyRequest(method, path, data = null) {
  * @param {Object} result - Test result object
  * @param {boolean} verbose - Whether to show detailed output
  */
-function logTestResult(testName, result, verbose = false) {
+export function logTestResult(testName, result, verbose = false) {
   const status = result.success ? '✅' : '❌';
   const statusCode = result.status || result.statusCode || 'N/A';
   
@@ -167,7 +168,7 @@ function logTestResult(testName, result, verbose = false) {
  * @param {Object} options - Runner options
  * @returns {Promise<Object>} - Test summary
  */
-async function runEndpointTests(tests, options = {}) {
+export async function runEndpointTests(tests, options = {}) {
   const { verbose = false, stopOnFailure = false } = options;
   
   console.log(`🧪 Running ${tests.length} endpoint tests...\n`);
@@ -236,7 +237,7 @@ async function runEndpointTests(tests, options = {}) {
  * @param {string} token - Optional override token
  * @returns {Object} - Headers object
  */
-function getAuthHeaders(token = null) {
+export function getAuthHeaders(token = null) {
   return {
     Authorization: `Bearer ${token || TEST_CONFIG.AUTH_TOKEN}`
   };
@@ -247,17 +248,7 @@ function getAuthHeaders(token = null) {
  * @param {string} endpoint - Memory endpoint path
  * @returns {string} - Full memory API URL
  */
-function getMemoryEndpoint(endpoint = '') {
+export function getMemoryEndpoint(endpoint = '') {
   const baseMemoryUrl = `${TEST_CONFIG.BASE_URL}/api/memory`;
   return endpoint ? `${baseMemoryUrl}/${endpoint.replace(/^\//, '')}` : baseMemoryUrl;
 }
-
-module.exports = {
-  TEST_CONFIG,
-  makeAxiosRequest,
-  makeLegacyRequest,
-  logTestResult,
-  runEndpointTests,
-  getAuthHeaders,
-  getMemoryEndpoint
-};

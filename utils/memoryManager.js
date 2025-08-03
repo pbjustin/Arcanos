@@ -1,4 +1,4 @@
-const os = require('os');
+import os from 'os';
 
 const memoryState = {
   lastGC: 0,
@@ -34,7 +34,7 @@ function performGC() {
   console.log('[MEMORY] Manual GC triggered');
 }
 
-function monitorMemory() {
+export function monitorMemory() {
   const stats = getHeapStats();
   console.log(`[MEMORY] RSS: ${stats.rss}MB, Heap Used: ${stats.heapUsed}MB / ${memoryState.heapLimitMB}MB`);
 
@@ -49,7 +49,3 @@ function monitorMemory() {
     process.exit(1);
   }
 }
-
-module.exports = {
-  monitorMemory,
-};

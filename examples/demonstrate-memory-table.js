@@ -6,10 +6,10 @@
  * CREATE TABLE IF NOT EXISTS memory (key TEXT PRIMARY KEY, value JSONB NOT NULL);
  */
 
-const { Client } = require('pg');
-require('dotenv').config();
+import { Client } from 'pg';
+import 'dotenv/config';
 
-async function demonstrateMemoryTable() {
+export async function demonstrateMemoryTable() {
   console.log('🎯 Demonstrating memory table creation as per problem statement...');
   
   const databaseUrl = process.env.DATABASE_URL;
@@ -92,8 +92,7 @@ async function demonstrateMemoryTable() {
   }
 }
 
-if (require.main === module) {
+// ESM module entry point detection
+if (import.meta.url === `file://${process.argv[1]}`) {
   demonstrateMemoryTable().catch(console.error);
 }
-
-module.exports = { demonstrateMemoryTable };
