@@ -1,9 +1,9 @@
 // PATCH: Finalize GitHub PR Push with Clean Return Serialization
 // Fixes: PR data truncation, memory hydration lag, and broken response formatting
 
-import { generatePR } from './services/git';
-import { buildPatchSet } from './services/ai-reflections';
-import { safeStringify } from './utils/serialization'; // helper to avoid circular JSON
+import { generatePR } from './services/git.js';
+import { buildPatchSet } from './services/ai-reflections.js';
+import { safeStringify } from './utils/serialization.js'; // helper to avoid circular JSON
 
 (async () => {
   try {

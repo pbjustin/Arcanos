@@ -3,7 +3,7 @@
  * Validates the new AI-enhanced service dispatcher functionality
  */
 
-import dispatchService, { createManualOverrideTask, requiresAIRouting } from './src/services/ai-service-dispatcher';
+import dispatchService, { createManualOverrideTask, requiresAIRouting } from './src/services/ai-service-dispatcher.js';
 
 async function testAIServiceDispatcher() {
   console.log('🧪 Testing AI Service Dispatcher...\n');

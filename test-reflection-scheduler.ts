@@ -3,10 +3,10 @@
  * Verifies the implementation works correctly
  */
 
-import { reflect } from './src/services/ai';
-import { writeToRepo } from './src/utils/git';
-import { pruneOldReflections } from './src/utils/cleanup';
-import { aiReflectionScheduler } from './src/ai-reflection-scheduler';
+import { reflect } from './src/services/ai/index.js';
+import { writeToRepo } from './src/utils/git.js';
+import { pruneOldReflections } from './src/utils/cleanup.js';
+import { aiReflectionScheduler } from './src/ai-reflection-scheduler.js';
 
 async function testReflectionComponents() {
   console.log('🧪 Testing AI Reflection Scheduler Components\n');
