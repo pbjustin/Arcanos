@@ -1,9 +1,13 @@
-const fs = require('fs');
-const path = require('path');
-const { Pool } = require('pg');
+import fs from 'fs';
+import path from 'path';
+import { Pool } from 'pg';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const pool = new Pool(); // assumes DATABASE_URL env is set
 
-module.exports = async function bootstrapMemory() {
+export default async function bootstrapMemory() {
   const sqlPath = path.resolve(__dirname, '../state/memory_state.sql');
 
   if (!fs.existsSync(sqlPath)) {
@@ -20,4 +24,4 @@ module.exports = async function bootstrapMemory() {
     }
     return { error: err.message };
   }
-};
+}

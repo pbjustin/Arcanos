@@ -1,8 +1,12 @@
-const fs = require('fs').promises;
-const path = require('path');
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const EVENTS_FILE = path.join(__dirname, 'events.json');
 
-async function logEvent(moduleName) {
+export async function logEvent(moduleName) {
   try {
     let events = [];
     try {
@@ -15,5 +19,3 @@ async function logEvent(moduleName) {
     console.error('[MEMORY] Failed to log event:', err.message);
   }
 }
-
-module.exports = { logEvent };

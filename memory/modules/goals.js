@@ -1,7 +1,7 @@
-const shortterm = require('./shortterm');
-const { logEvent } = require('../logEvent');
+import shortterm from './shortterm.js';
+import { logEvent } from '../logEvent.js';
 
-module.exports = {
+export default {
   async read() {
     const data = await shortterm.read();
     return data.goals || [];
