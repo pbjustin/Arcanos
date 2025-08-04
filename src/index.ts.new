@@ -1,6 +1,0 @@
-/**
- * ARCANOS Backend - Main Entry Point
- * Production-ready TypeScript server with OpenAI SDK v4
- */
-
-import './main.js';
