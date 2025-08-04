@@ -1,102 +1,53 @@
 /**
  * Optimized OpenAI Client Factory
- * Provides a centralized way to create optimized OpenAI clients
- * Reduces duplication and ensures consistent optimization across the codebase
+ * Simplified version that uses the main openaiClient
  */
 
-import { getUnifiedOpenAI } from '../services/unified-openai.js';
-import { ClarkeHandler } from '../services/clarke-handler.js';
+import { openaiClient } from './openaiClient.js';
 import { createServiceLogger } from './logger.js';
 
 const logger = createServiceLogger('OptimizedOpenAIClient');
 
-// Client reuse cache to prevent duplicate instantiations
+// Client cache for different configurations
 const clientCache = new Map<string, any>();
 
 export interface OptimizedClientOptions {
-  useUnifiedService?: boolean;
-  useClarkeHandler?: boolean;
-  enableResilience?: boolean;
-  enableOptimizations?: boolean;
   cacheKey?: string;
+  enableLogging?: boolean;
 }
 
 /**
- * Get optimized OpenAI client instance with caching and best practices
+ * Get optimized OpenAI client instance with caching
  */
 export function getOptimizedOpenAIClient(options: OptimizedClientOptions = {}) {
   const {
-    useUnifiedService = true,
-    useClarkeHandler = false,
-    enableResilience = true,
-    enableOptimizations = true,
-    cacheKey = 'default'
+    cacheKey = 'default',
+    enableLogging = true
   } = options;
 
   // Check cache first
   if (clientCache.has(cacheKey)) {
-    logger.debug('Returning cached OpenAI client', { cacheKey });
+    if (enableLogging) {
+      logger.debug('Returning cached OpenAI client', { cacheKey });
+    }
     return clientCache.get(cacheKey);
   }
 
-  let client: any;
-
-  if (useClarkeHandler) {
-    // Use ClarkeHandler for enhanced resilience
-    client = new ClarkeHandler({
-      apiKey: process.env.OPENAI_API_KEY,
-      ...process.env
-    });
-
-    if (enableResilience) {
-      client.initialzeResilience({
-        retries: 3,
-        backoffMultiplier: 2,
-        maxBackoffMs: 30000,
-        failsafeEnabled: true,
-        rollbackEnabled: true,
-        isolatedRollback: true
-      });
-    }
-
-    logger.info('Created ClarkeHandler client with resilience', { 
-      cacheKey, 
-      resilience: enableResilience 
-    });
-
-  } else if (useUnifiedService) {
-    // Use UnifiedOpenAI service for optimization
-    client = getUnifiedOpenAI({
-      enableConnectionPooling: enableOptimizations,
-      enableRequestBatching: false, // Disabled by default to prevent latency
-      enableCircuitBreaker: enableResilience,
-      adaptiveTimeout: enableOptimizations,
-      circuitBreakerThreshold: 5
-    });
-
-    logger.info('Created UnifiedOpenAI client with optimizations', { 
-      cacheKey, 
-      optimizations: enableOptimizations,
-      resilience: enableResilience 
-    });
-
-  } else {
-    // Fallback to basic OpenAI client (not recommended)
-    logger.warning('Using basic OpenAI client - consider using optimized options');
-    const { OpenAI } = await import('openai');
-    client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
-  }
+  // Use the main OpenAI client
+  const client = openaiClient;
 
   // Cache the client
   clientCache.set(cacheKey, client);
+
+  if (enableLogging) {
+    logger.info('Created optimized OpenAI client', { cacheKey });
+  }
 
   return client;
 }
 
 /**
- * Clear client cache (useful for testing or configuration changes)
+ * Clear client cache
  */
 export function clearClientCache(cacheKey?: string): void {
   if (cacheKey) {
@@ -127,34 +78,20 @@ export function getClientCacheStats(): {
 export const RECOMMENDED_CONFIGS = {
   // For high-throughput operations
   highThroughput: {
-    useUnifiedService: true,
-    enableOptimizations: true,
-    enableResilience: true,
-    cacheKey: 'high-throughput'
-  },
-
-  // For critical operations requiring maximum resilience
-  criticalOperations: {
-    useClarkeHandler: true,
-    enableResilience: true,
-    enableOptimizations: false, // Focus on reliability over speed
-    cacheKey: 'critical'
+    cacheKey: 'high-throughput',
+    enableLogging: false
   },
 
   // For development and testing
   development: {
-    useUnifiedService: true,
-    enableOptimizations: false,
-    enableResilience: false,
-    cacheKey: 'dev'
+    cacheKey: 'dev',
+    enableLogging: true
   },
 
-  // For production with balanced performance and reliability
+  // For production
   production: {
-    useUnifiedService: true,
-    enableOptimizations: true,
-    enableResilience: true,
-    cacheKey: 'production'
+    cacheKey: 'production',
+    enableLogging: false
   }
 } as const;
 
