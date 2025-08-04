@@ -2,11 +2,11 @@
   "name": "arcanos-backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "dist/main.js",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node dist/main.js",
-    "dev": "tsx src/main.ts",
+    "start": "npm run build && node dist/index.js",
+    "dev": "tsx src/index.ts",
     "test": "echo \"No test specified\" && exit 0",
     "health": "curl -f http://localhost:3000/health || exit 1"
   },

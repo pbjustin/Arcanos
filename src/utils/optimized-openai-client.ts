@@ -83,7 +83,7 @@ export function getOptimizedOpenAIClient(options: OptimizedClientOptions = {}) {
   } else {
     // Fallback to basic OpenAI client (not recommended)
     logger.warning('Using basic OpenAI client - consider using optimized options');
-    const OpenAI = require('openai');
+    const { OpenAI } = await import('openai');
     client = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY
     });
