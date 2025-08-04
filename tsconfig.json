@@ -1,23 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
+    "target": "ES2020",
     "module": "ESNext",
-    "moduleResolution": "node",
-    "baseUrl": ".",
-    "paths": {
-      "@types/*": ["types/*"],
-      "@/*": ["src/*"]
-    },
-    "resolveJsonModule": true,
+    "moduleResolution": "Node",
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "skipLibCheck": true,
+    "resolveJsonModule": true,
     "strict": true,
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": [
-    "src/**/*"
-  ],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src"]
 }
