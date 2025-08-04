@@ -5,7 +5,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node dist/main.js",
+    "start": "node dist/server.js",
     "dev": "tsx src/main.ts",
     "test": "echo \"No test specified\" && exit 0",
     "health": "curl -f http://localhost:3000/health || exit 1"
@@ -19,7 +19,10 @@
     "axios": "^1.7.9",
     "@octokit/rest": "^21.0.2",
     "body-parser": "^1.20.3",
-    "luxon": "^3.5.0"
+    "luxon": "^3.5.0",
+    "pg": "^8.11.3",
+    "nodemailer": "^6.9.7",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/node": "^20.19.9",
@@ -27,6 +30,8 @@
     "@types/cors": "^2.8.17",
     "@types/node-cron": "^3.0.11",
     "@types/luxon": "^3.4.2",
+    "@types/pg": "^8.10.7",
+    "@types/nodemailer": "^6.4.14",
     "typescript": "^5.9.2",
     "tsx": "^4.20.3"
   },
