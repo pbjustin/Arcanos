@@ -1,32 +1,10 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
-  "deploy": {
-    "startCommand": "node --max-old-space-size=7168 dist/index.js",
-    "healthcheckPath": "/health",
-    "healthcheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10
-  },
   "build": {
-    "builder": "NIXPACKS",
-    "buildCommand": "NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev && npm run build",
     "env": {
-      "NODE_OPTIONS": "--max_old_space_size=2048"
+      "NODE_ENV": "production"
     }
   },
-  "postDeployCommand": "bash ./scripts/postdeploy.sh",
-  "environments": {
-    "production": {
-      "variables": {
-        "NODE_ENV": "production",
-        "PORT": "3000"
-      }
-    }
-  },
-  "crons": [
-    {
-      "schedule": "*/10 * * * *",
-      "command": "node task-runner.js"
-    }
-  ]
+  "deploy": {
+    "startCommand": "npm run start"
+  }
 }
