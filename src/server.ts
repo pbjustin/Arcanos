@@ -4,6 +4,7 @@ import cors from 'cors';
 import cron from 'node-cron';
 import askRoute from './routes/ask.js';
 import { runHealthCheck } from './utils/diagnostics.js';
+import './logic/aiCron.js';
 
 // Load environment variables
 dotenv.config();
