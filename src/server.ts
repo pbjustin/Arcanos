@@ -6,7 +6,7 @@ import askRoute from './routes/ask.js';
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT) || 3000;
 
 // Middleware
 app.use(cors()); // Enable CORS for all routes
@@ -20,6 +20,6 @@ app.get('/health', (_, res) => {
 });
 
 // Start server with enhanced logging
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
   console.log(`ARCANOS core listening on port ${port}`);
 });
