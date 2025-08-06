@@ -1,7 +1,9 @@
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import cron from 'node-cron';
 import askRoute from './routes/ask.js';
+import { runHealthCheck } from './utils/diagnostics.js';
 
 // Load environment variables
 dotenv.config();
@@ -25,6 +27,12 @@ app.use((req: Request, _: Response, next: NextFunction) => {
 
 // API routes
 app.use('/', askRoute);
+
+// Setup health monitoring cron job
+cron.schedule("*/5 * * * *", async () => {
+  const report = await runHealthCheck();
+  console.log(`[📡 ARCANOS:HEALTH] ${report.summary}`);
+});
 
 // Health check endpoint
 app.get('/health', (_: Request, res: Response) => {
@@ -73,6 +81,7 @@ process.on('SIGINT', () => {
 });
 
 // Start server with enhanced logging
+console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`ARCANOS core listening on port ${port}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
