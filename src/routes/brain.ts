@@ -4,7 +4,6 @@ import { runThroughBrain } from '../logic/trinity.js';
 
 const router = express.Router();
 
-// Initialize OpenAI with validation
 let openai: OpenAI | null = null;
 
 try {
@@ -18,11 +17,11 @@ try {
   console.error('❌ Failed to initialize OpenAI client:', error);
 }
 
-interface AskRequest {
+interface BrainRequest {
   prompt: string;
 }
 
-interface AskResponse {
+interface BrainResponse {
   result: string;
   module: string;
   meta: {
@@ -41,9 +40,8 @@ interface ErrorResponse {
   details?: string;
 }
 
-// Primary ask endpoint routed through the Trinity brain
-router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequest>, res: Response<AskResponse | ErrorResponse>) => {
-  console.log('📨 /ask received');
+router.post('/brain', async (req: Request<{}, BrainResponse | ErrorResponse, BrainRequest>, res: Response<BrainResponse | ErrorResponse>) => {
+  console.log('📨 /brain received');
   const { prompt } = req.body;
 
   if (!prompt || typeof prompt !== 'string') {
