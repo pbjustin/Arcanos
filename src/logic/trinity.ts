@@ -21,15 +21,30 @@ interface BrainHook {
   input?: string;
 }
 
+// Check for the fine-tuned model, fallback to GPT-4 if unavailable
+const MODEL_ID = process.env.MODEL_ID || "ft:arcanos-v2";
+
+const validateModel = async (client: OpenAI) => {
+  try {
+    await client.models.retrieve(MODEL_ID);
+    return MODEL_ID;
+  } catch (err) {
+    console.warn(`[ARCANOS WARNING] Model ${MODEL_ID} unavailable. Falling back to GPT-4.`);
+    return "gpt-4";
+  }
+};
+
 /**
  * Process a user prompt through the Trinity brain.
- * 1. Send prompt to ft:arcanos-v2.
- * 2. If the brain responds with a JSON hook specifying next_model,
+ * 1. Validate and get the available brain model (ft:arcanos-v2 or fallback to gpt-4).
+ * 2. Send prompt to the brain model.
+ * 3. If the brain responds with a JSON hook specifying next_model,
  *    route the request to that model.
- * 3. Send the external model's output back through the brain for finalization.
+ * 4. Send the external model's output back through the brain for finalization.
  */
 export async function runThroughBrain(client: OpenAI, prompt: string): Promise<TrinityResult> {
-  const brainModel = 'ft:arcanos-v2';
+  // Validate model availability and get the brain model to use
+  const brainModel = await validateModel(client);
 
   // First pass: brain decides what to do
   const brainResponse = await createCompletionWithLogging(client, {
