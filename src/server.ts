@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import askRoute from './routes/ask.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,32 +9,11 @@ const PORT = process.env.PORT || 3000;
 app.use(cors()); // Enable CORS for all routes
 app.use(express.json()); // Parse JSON bodies
 
+app.use('/', askRoute);
+
 // Health check endpoint
 app.get('/health', (_, res) => {
   res.status(200).send('OK');
-});
-
-// POST /ask endpoint
-app.post('/ask', (req, res) => {
-  const { prompt } = req.body;
-  
-  // Validate that prompt is provided
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({
-      error: 'Missing or invalid prompt in request body'
-    });
-  }
-  
-  // Return mock AI response in the specified format
-  const response = {
-    result: `Echoed: ${prompt}`, // Echo the prompt as placeholder AI output
-    module: 'mock-AI',
-    meta: {
-      timestamp: new Date().toISOString() // Current UTC timestamp
-    }
-  };
-  
-  res.json(response);
 });
 
 // Start server with enhanced logging
