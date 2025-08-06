@@ -5,6 +5,7 @@ import cron from 'node-cron';
 import { runHealthCheck } from './utils/diagnostics.js';
 import './logic/aiCron.js';
 import askRouter from './routes/ask.js';
+import brainRouter from './routes/brain.js';
 
 // Load environment variables
 dotenv.config();
@@ -36,8 +37,8 @@ cron.schedule("*/5 * * * *", async () => {
 
 // Health check endpoint
 app.get('/health', (_: Request, res: Response) => {
-  res.status(200).json({ 
-    status: 'OK', 
+  res.status(200).json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     service: 'ARCANOS',
     version: process.env.npm_package_version || '1.0.0'
@@ -51,6 +52,7 @@ app.get('/', (_: Request, res: Response) => {
 
 // API routes
 app.use('/', askRouter);
+app.use('/', brainRouter);
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
