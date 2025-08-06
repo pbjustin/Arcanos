@@ -1,17 +1,58 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import OpenAI from 'openai';
 
 const router = express.Router();
 
-const openai = new OpenAI({
-  apiKey: process.env.API_KEY,
-});
+// Initialize OpenAI with validation
+let openai: OpenAI | null = null;
 
-router.post('/ask', async (req, res) => {
+try {
+  const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
+  if (apiKey) {
+    openai = new OpenAI({ apiKey });
+  } else {
+    console.warn('⚠️  No OpenAI API key found. AI endpoints will return errors.');
+  }
+} catch (error) {
+  console.error('❌ Failed to initialize OpenAI client:', error);
+}
+
+interface AskRequest {
+  prompt: string;
+}
+
+interface AskResponse {
+  result: string;
+  module?: string;
+  meta: {
+    tokens?: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    } | undefined;
+    id: string;
+    created: number;
+  };
+}
+
+interface ErrorResponse {
+  error: string;
+  details?: string;
+}
+
+router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequest>, res: Response<AskResponse | ErrorResponse>) => {
   const { prompt } = req.body;
 
-  if (!prompt) {
-    return res.status(400).json({ error: 'Missing prompt in request body' });
+  if (!prompt || typeof prompt !== 'string') {
+    return res.status(400).json({ error: 'Missing or invalid prompt in request body' });
+  }
+
+  // Check if OpenAI client is available
+  if (!openai) {
+    return res.status(503).json({ 
+      error: 'AI service unavailable', 
+      details: 'OpenAI client not initialized. Please check API key configuration.' 
+    });
   }
 
   try {
@@ -19,24 +60,42 @@ router.post('/ask', async (req, res) => {
       model: process.env.AI_MODEL || 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
+      max_tokens: 1000,
     });
 
-    const output = response.choices[0].message.content;
+    const output = response.choices[0]?.message?.content;
+
+    if (!output) {
+      return res.status(500).json({ 
+        error: 'No response from AI model',
+        details: 'Empty response received from OpenAI'
+      });
+    }
 
     return res.json({
       result: output,
-      module: process.env.AI_MODEL,
+      module: process.env.AI_MODEL || 'gpt-3.5-turbo',
       meta: {
-        tokens: response.usage,
+        tokens: response.usage || undefined,
         id: response.id,
         created: response.created,
       },
     });
   } catch (err) {
-    console.error('OpenAI Error:', err instanceof Error ? err.message : String(err));
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error('OpenAI Error:', errorMessage);
+    
+    // Handle specific OpenAI errors
+    if (err instanceof OpenAI.APIError) {
+      return res.status(err.status || 500).json({ 
+        error: 'OpenAI API error', 
+        details: err.message 
+      });
+    }
+    
     return res.status(500).json({ 
-      error: 'AI failure', 
-      details: err instanceof Error ? err.message : String(err) 
+      error: 'AI service failure', 
+      details: errorMessage
     });
   }
 });
