@@ -2,10 +2,10 @@
   "name": "arcanos-backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "dist/server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node dist/server.js",
-    "dev": "node --loader ts-node/esm src/server.ts",
+    "start": "node app.js",
+    "dev": "node app.js",
     "build": "tsc"
   },
   "dependencies": {
