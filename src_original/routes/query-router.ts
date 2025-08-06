@@ -1,21 +1,19 @@
 import express, { Request, Response } from 'express';
 import { askArcanosV1_Safe } from '../services/arcanos-v1-interface.js';
-import { createServiceLogger } from '../utils/logger.js';
 
 const router = express.Router();
-const logger = createServiceLogger('QueryRouter');
 
 router.post('/query', async (req: Request, res: Response) => {
   const startTime = Date.now();
   const prompt = req.body.prompt;
 
   if (typeof prompt !== 'string') {
-    logger.error('Invalid prompt format', { prompt: typeof prompt });
+    console.error('Invalid prompt format', { prompt: typeof prompt });
     return res.status(400).json({ error: 'Invalid prompt format' });
   }
 
   // Log the AI interaction start
-  logger.info('AI interaction started', {
+  console.log('AI interaction started', {
     timestamp: new Date().toISOString(),
     taskType: 'query',
     promptLength: prompt.length
@@ -33,7 +31,7 @@ router.post('/query', async (req: Request, res: Response) => {
     const completionTime = Date.now() - startTime;
     
     // Log successful completion
-    logger.info('AI interaction completed', {
+    console.log('AI interaction completed', {
       timestamp: new Date().toISOString(),
       taskType: 'query',
       completionStatus: 'success',
@@ -51,7 +49,7 @@ router.post('/query', async (req: Request, res: Response) => {
     const completionTime = Date.now() - startTime;
     
     // Log failed completion
-    logger.error('AI interaction failed', {
+    console.error('AI interaction failed', {
       timestamp: new Date().toISOString(),
       taskType: 'query',
       completionStatus: 'error',

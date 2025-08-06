@@ -1,8 +1,5 @@
 import fs from 'fs'
 import path from 'path'
-import { createServiceLogger } from '../utils/logger.js'
-
-const logger = createServiceLogger('DiagnosticsMiddleware')
 
 export interface DiagnosticPayload {
   error: any
@@ -20,5 +17,5 @@ export function trackDiagnostics(payload: DiagnosticPayload): void {
     timestamp: new Date().toISOString()
   }
   fs.appendFileSync(logPath, JSON.stringify(entry) + '\n')
-  logger.info('Diagnostics event tracked', { logPath })
+  console.log('Diagnostics event tracked', { logPath })
 }
