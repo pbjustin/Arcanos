@@ -1,19 +1,26 @@
 #!/usr/bin/env node
 
 // Simple API endpoint test for ARCANOS backend
-const { runEndpointTests } = require('./test-utils/common');
+import { runEndpointTests } from '../test-utils/common.js';
+import axios from 'axios';
+
+const BASE_URL = 'http://localhost:3000';
 
 async function testEndpoints() {
   const tests = [
     { name: 'Health Check', method: 'GET', endpoint: '/health' },
-    { name: 'Fine-tune Status', method: 'GET', endpoint: '/finetune-status' },
-    { name: 'Main Endpoint', method: 'POST', endpoint: '/', data: { message: 'test' } },
-    { name: 'Query Fine-tune', method: 'POST', endpoint: '/query-finetune', data: { query: 'test query' } },
-    { name: 'Ask Endpoint', method: 'POST', endpoint: '/ask', data: { message: 'test question' } },
-    { name: 'Diagnostics', method: 'GET', endpoint: '/sync/diagnostics', includeAuth: true }
+    { name: 'Root Endpoint', method: 'GET', endpoint: '/' },
+    { name: 'Ask Endpoint (no API key)', method: 'POST', endpoint: '/ask', data: { prompt: 'test question' } },
   ];
 
-  await runEndpointTests(tests, { verbose: true });
+  let failed = 0;
+  
+  try {
+    await runEndpointTests(tests, { verbose: true, baseUrl: BASE_URL });
+  } catch (error) {
+    console.error('Test suite failed:', error.message);
+    failed = 1;
+  }
   
   if (failed === 0) {
     console.log('🎉 All tests passed!');
@@ -38,7 +45,7 @@ async function main() {
   const isRunning = await checkServer();
   
   if (!isRunning) {
-    console.log('❌ Server is not running on localhost:8080');
+    console.log('❌ Server is not running on localhost:3000');
     console.log('Please start the server first:');
     console.log('  npm run dev  (or)  npm start');
     process.exit(1);
@@ -47,8 +54,8 @@ async function main() {
   await testEndpoints();
 }
 
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   main();
 }
 
-module.exports = { testEndpoints, checkServer };
+export { testEndpoints, checkServer };

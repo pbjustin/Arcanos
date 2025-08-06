@@ -4,30 +4,85 @@ A comprehensive TypeScript + Express backend for the Arcanos AI project, featuri
 
 Arcanos is designed as an **AI-managed backend**. A fine-tuned GPT model controls background workers, decides when to run maintenance tasks, and processes incoming requests through an intent router. Persistent memory is stored in PostgreSQL with an in-memory fallback so the system can maintain context even if the database is unavailable. In short, Arcanos provides a conventional HTTP API that is orchestrated by an AI model.
 
-## ⚠️ Current Build Status
+# Arcanos Backend
 
-**Note**: The current codebase has TypeScript compilation dependencies that may need to be installed. If you encounter build errors, ensure all dependencies are properly installed:
+A modern TypeScript + Express backend for the Arcanos AI project, featuring OpenAI integration, clean API routing, and comprehensive error handling.
 
-```bash
-npm install
-# Dependencies are installed using settings in `.npmrc` to keep builds fast:
-#   prefer-offline=true
-#   cache-min=999999
-# If you still see TypeScript errors, you may need to:
-npm audit fix
-```
+Arcanos provides a clean HTTP API for AI-powered interactions with robust error handling, graceful degradation, and modern Node.js best practices.
 
-**Build Issues**: Some dependencies like `dotenv`, `cors`, `openai`, etc. may show TypeScript compilation errors. The core application functionality works despite these warnings, and the test suite passes with a placeholder implementation.
+## ✅ Recent Refactoring (v1.0.0)
 
-**Known Status**: This is a working system with active development. The TypeScript compilation issues are dependency-related and don't affect runtime functionality.
+**Major cleanup and modernization completed:**
+- ✅ Consolidated to single TypeScript-based server implementation
+- ✅ Improved OpenAI SDK integration with graceful fallbacks
+- ✅ Enhanced error handling and request validation  
+- ✅ Organized project structure (docs moved to `docs/`, utilities to `utils/`)
+- ✅ Modern TypeScript configuration with strict typing
+- ✅ Dependency cleanup and optimization
 
-## Setup
+## Quick Start
 
-1. **Clone the repository**
+### Prerequisites
+- Node.js 18+ 
+- npm 8+
+
+### Installation & Setup
+
+1. **Clone and install**
    ```bash
    git clone <repository-url>
    cd Arcanos
+   npm install
    ```
+
+2. **Environment setup**
+   ```bash
+   cp .env.example .env
+   # Edit .env and add your OpenAI API key:
+   # OPENAI_API_KEY=your-api-key-here
+   ```
+
+3. **Build and run**
+   ```bash
+   npm run build
+   npm start
+   ```
+
+   Or for development:
+   ```bash
+   npm run dev
+   ```
+
+## API Endpoints
+
+### Core Endpoints
+
+- **GET /health** - Health check with service metadata
+- **GET /** - API documentation and available endpoints
+- **POST /ask** - AI chat completion endpoint
+
+### Example Usage
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# AI interaction (requires OPENAI_API_KEY)
+curl -X POST http://localhost:3000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hello, how are you?"}'
+```
+
+## Development
+
+### Available Scripts
+
+- `npm run build` - Build TypeScript to dist/
+- `npm run dev` - Run development server with hot reload
+- `npm start` - Run production server from dist/
+- `npm run type-check` - Run TypeScript type checking
+- `npm run clean` - Clean build artifacts
+- `npm run rebuild` - Clean and rebuild
 
 2. **Install dependencies**
    ```bash
@@ -466,6 +521,40 @@ curl $PORT/api/memory/health
 ```
 
 ## Project Structure
+
+```
+./src/
+  ├── server.ts             # Main server entry point (TypeScript)
+  └── routes/
+      └── ask.ts            # AI chat completion endpoint
+
+./dist/                     # Compiled TypeScript output
+./docs/                     # Documentation
+  ├── ai-guides/            # AI-related documentation
+  └── deployment/           # Deployment guides
+
+./utils/                    # Utility scripts and tools
+./tests/                    # Test files
+./examples/                 # Example implementations
+./scripts/                  # Build and deployment scripts
+
+# Configuration Files
+./package.json              # Dependencies and scripts  
+./tsconfig.json             # TypeScript configuration
+./.env.example              # Environment variables template
+./README.md                 # This file
+```
+
+### Core Files
+
+- **src/server.ts** - Main Express server with middleware and routing
+- **src/routes/ask.ts** - OpenAI integration endpoint with error handling
+- **package.json** - Modern dependencies (Express 4.x, OpenAI 5.x, TypeScript 5.x)
+- **tsconfig.json** - Strict TypeScript configuration for ES2022
+
+### Legacy Structure
+
+The `src_original/`, `backend/`, and other directories contain previous implementations and are preserved for reference. The active codebase is now consolidated in the `src/` directory.
 
 ```
 ./src/index.ts              # Main server entry point (TypeScript)
