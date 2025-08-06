@@ -6,6 +6,7 @@ import { runHealthCheck } from './utils/diagnostics.js';
 import './logic/aiCron.js';
 import askRouter from './routes/ask.js';
 import brainRouter from './routes/brain.js';
+import arcanosRouter from './routes/arcanos.js';
 
 // Load environment variables
 dotenv.config();
@@ -53,6 +54,7 @@ app.get('/', (_: Request, res: Response) => {
 // API routes
 app.use('/', askRouter);
 app.use('/', brainRouter);
+app.use('/', arcanosRouter);
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
