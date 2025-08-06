@@ -4,6 +4,7 @@ import cors from 'cors';
 import cron from 'node-cron';
 import { runHealthCheck } from './utils/diagnostics.js';
 import './logic/aiCron.js';
+import askRouter from './routes/ask.js';
 
 // Load environment variables
 dotenv.config();
@@ -45,21 +46,11 @@ app.get('/health', (_: Request, res: Response) => {
 
 // Root endpoint
 app.get('/', (_: Request, res: Response) => {
-  res.json({
-    message: 'Welcome to ARCANOS AI Service',
-    endpoints: {
-      health: '/health',
-      ask: '/ask (POST)'
-    }
-  });
+  res.send('ARCANOS is live');
 });
 
-app.post("/ask", async (req, res) => {
-  const { prompt } = req.body;
-  console.log("🛰️ AI /ask received:", prompt);
-  // TODO: Replace with actual model dispatcher call
-  res.json({ result: "ARCANOS responding to: " + prompt });
-});
+// API routes
+app.use('/', askRouter);
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _: NextFunction) => {

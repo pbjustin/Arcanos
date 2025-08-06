@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import OpenAI from 'openai';
+import { createCompletionWithLogging } from '../utils/aiLogger.js';
 
 const router = express.Router();
 
@@ -41,7 +42,7 @@ interface ErrorResponse {
 }
 
 router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequest>, res: Response<AskResponse | ErrorResponse>) => {
-  console.log("🛰 /ask received → Dispatching to model...");
+  console.log('📨 /ask received');
   const start = Date.now();
   
   const { prompt } = req.body;
@@ -61,12 +62,13 @@ router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequ
   try {
     const modelId = process.env.AI_MODEL || 'gpt-3.5-turbo';
     console.log(`[🤖 DISPATCH] Sending prompt to ${modelId}`);
-    
-    const response = await openai.chat.completions.create({
+
+    const response = await createCompletionWithLogging(openai, {
       model: modelId,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
       max_tokens: 1000,
+      stream: false,
     });
 
     const output = response.choices[0]?.message?.content;
