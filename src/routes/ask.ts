@@ -41,6 +41,9 @@ interface ErrorResponse {
 }
 
 router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequest>, res: Response<AskResponse | ErrorResponse>) => {
+  console.log("🛰 /ask received → Dispatching to model...");
+  const start = Date.now();
+  
   const { prompt } = req.body;
 
   if (!prompt || typeof prompt !== 'string') {
@@ -56,8 +59,11 @@ router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequ
   }
 
   try {
+    const modelId = process.env.AI_MODEL || 'gpt-3.5-turbo';
+    console.log(`[🤖 DISPATCH] Sending prompt to ${modelId}`);
+    
     const response = await openai.chat.completions.create({
-      model: process.env.AI_MODEL || 'gpt-3.5-turbo',
+      model: modelId,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
       max_tokens: 1000,
@@ -72,9 +78,14 @@ router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequ
       });
     }
 
+    const duration = Date.now() - start;
+    const totalTokens = response.usage?.total_tokens || 0;
+    
+    console.log(`✅ Model responded [${modelId}] | Tokens: ${totalTokens} | Time: ${duration}ms`);
+
     return res.json({
       result: output,
-      module: process.env.AI_MODEL || 'gpt-3.5-turbo',
+      module: modelId,
       meta: {
         tokens: response.usage || undefined,
         id: response.id,
@@ -82,8 +93,9 @@ router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequ
       },
     });
   } catch (err) {
+    const duration = Date.now() - start;
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('OpenAI Error:', errorMessage);
+    console.error(`❌ OpenAI Error after ${duration}ms:`, errorMessage);
     
     // Handle specific OpenAI errors
     if (err instanceof OpenAI.APIError) {
