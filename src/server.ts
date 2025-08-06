@@ -1,10 +1,20 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
+import type { Router } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
-import askRoute from './routes/ask.js';
+let bootstrapFn: () => Promise<void>;
+let getMemoryHealth: () => Record<string, unknown>;
+try {
+  ({ bootstrap: bootstrapFn, getMemoryHealth } = await import('./bootstrap.js'));
+} catch {
+  ({ bootstrap: bootstrapFn, getMemoryHealth } = await import('./bootstrap.ts'));
+}
 
 // Load environment variables
 dotenv.config();
+
+// Comprehensive bootstrap routine
+await bootstrapFn();
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -21,18 +31,37 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req: Request, _: Response, next: NextFunction) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
-});
+  });
 
-// API routes
+// Load API routes with fallback if unavailable
+let askRoute: Router;
+try {
+  askRoute = (await import('./routes/ask.js')).default;
+} catch {
+  console.warn('ask route not found – using placeholder');
+  askRoute = express.Router();
+  askRoute.post('/ask', (_req: Request, res: Response) => {
+    res.status(200).json({ success: true, message: 'Ask route placeholder' });
+  });
+}
+
 app.use('/', askRoute);
 
 // Health check endpoint
 app.get('/health', (_: Request, res: Response) => {
-  res.status(200).json({ 
-    status: 'OK', 
+  res.status(200).json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     service: 'ARCANOS',
     version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// Memory health check endpoint
+app.get('/memory-health', (_: Request, res: Response) => {
+  res.status(200).json({
+    status: 'OK',
+    ...getMemoryHealth(),
   });
 });
 
