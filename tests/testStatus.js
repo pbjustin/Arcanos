@@ -3,7 +3,7 @@
 const https = require('https');
 
 const options = {
-  hostname: 'arcanos-production-426d.up.railway.app',
+  hostname: 'arcanos-v2-production.up.railway.app',
   path: '/status',
   method: 'GET',
 };
