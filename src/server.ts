@@ -2,7 +2,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import cron from 'node-cron';
-import askRoute from './routes/ask.js';
 import { runHealthCheck } from './utils/diagnostics.js';
 import './logic/aiCron.js';
 
@@ -27,7 +26,6 @@ app.use((req: Request, _: Response, next: NextFunction) => {
 });
 
 // API routes
-app.use('/', askRoute);
 
 // Setup health monitoring cron job
 cron.schedule("*/5 * * * *", async () => {
@@ -54,6 +52,13 @@ app.get('/', (_: Request, res: Response) => {
       ask: '/ask (POST)'
     }
   });
+});
+
+app.post("/ask", async (req, res) => {
+  const { prompt } = req.body;
+  console.log("🛰️ AI /ask received:", prompt);
+  // TODO: Replace with actual model dispatcher call
+  res.json({ result: "ARCANOS responding to: " + prompt });
 });
 
 // Global error handler
