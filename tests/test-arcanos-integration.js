@@ -8,11 +8,10 @@ import { arcanosPrompt, runARCANOS } from '../dist/logic/arcanos.js';
 // Mock OpenAI client for testing (without requiring actual API key)
 class MockOpenAI {
   constructor() {
-    this.chat = {
-      completions: {
-        create: async (params) => {
-          // Simulate a realistic ARCANOS response
-          const mockResponse = `
+    this.responses = {
+      create: async (params) => {
+        // Simulate a realistic ARCANOS response
+        const mockResponse = `
 ✅ Component Status Table
 - Node.js Runtime: Running (v${process.version})
 - Memory Usage: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)}MB
@@ -34,21 +33,24 @@ class MockOpenAI {
 5. Formatted response in ARCANOS diagnostic format
 `;
 
-          return {
-            choices: [{
-              message: {
-                content: mockResponse.trim()
-              }
-            }],
-            usage: {
-              prompt_tokens: 150,
-              completion_tokens: 200,
-              total_tokens: 350
-            },
-            id: 'mock-response-123',
-            created: Math.floor(Date.now() / 1000)
-          };
-        }
+        return {
+          output: [
+            {
+              id: 'msg-1',
+              role: 'assistant',
+              type: 'message',
+              content: [{ type: 'output_text', text: mockResponse.trim() }]
+            }
+          ],
+          output_text: mockResponse.trim(),
+          usage: {
+            prompt_tokens: 150,
+            completion_tokens: 200,
+            total_tokens: 350
+          },
+          id: 'mock-response-123',
+          created: Math.floor(Date.now() / 1000)
+        };
       }
     };
   }
