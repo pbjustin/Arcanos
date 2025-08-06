@@ -1,7 +1,7 @@
 ### ARCANOS API - GitHub Copilot Compatible HTTP Requests
 ### Use these examples with GitHub Copilot and REST Client extensions
 
-@baseUrl = https://arcanos-production-426d.up.railway.app
+@baseUrl = https://arcanos-v2-production.up.railway.app
 @localUrl = http://localhost:8080
 
 ### Health Check - Verify Railway deployment is active

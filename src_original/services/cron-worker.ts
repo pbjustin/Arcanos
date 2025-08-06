@@ -11,7 +11,7 @@ import { serviceAlreadyRegistered } from './service-registry.js';
 const SERVER_URL =
   process.env.SERVER_URL ||
   (process.env.NODE_ENV === 'production'
-    ? 'https://arcanos-production-426d.up.railway.app'
+    ? 'https://arcanos-v2-production.up.railway.app'
     : `http://localhost:${process.env.PORT || 8080}`);
 
 // JSON-based cron instruction templates for AI model

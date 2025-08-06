@@ -12,7 +12,7 @@
 | `FINE_TUNED_MODEL` | `REDACTED_FINE_TUNED_MODEL_ID` | Primary fine-tuned model ID (supports multiple variable names) |
 | `RUN_WORKERS` | `true` | Enable AI-controlled CRON worker processes |
 | `WORKER_LOGIC` | `arcanos` | Default logic mode for background workers |
-| `SERVER_URL` | `https://arcanos-production-426d.up.railway.app` | Production server URL for health checks |
+| `SERVER_URL` | `https://arcanos-v2-production.up.railway.app` | Production server URL for health checks |
 | `DATABASE_URL` | `[OPTIONAL]` | PostgreSQL connection string (fallback to in-memory if not set) |
 | `ADMIN_KEY` | `[OPTIONAL]` | Enable admin router and protect `/admin/*` routes |
 
@@ -239,7 +239,7 @@ process.on("SIGTERM", () => {
 ```
 
 ### Production Monitoring
-- **Public URL**: [`https://arcanos-production-426d.up.railway.app`](https://arcanos-production-426d.up.railway.app)
+- **Public URL**: [`https://arcanos-v2-production.up.railway.app`](https://arcanos-v2-production.up.railway.app)
 - **Health Endpoint**: `GET /health` returns `✅ OK`
 - **Uptime Monitoring**: Railway health checks every 5 minutes
 - **Restart Policy**: `ON_FAILURE` with max 10 retries
