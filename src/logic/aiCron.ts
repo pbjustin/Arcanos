@@ -5,6 +5,7 @@ import cron from 'node-cron';
  * Currently runs a heartbeat log every minute.
  */
 function initAICron(): void {
+  console.log('[🤖 AI Cron] initialized. Heartbeat scheduled every minute');
   cron.schedule('* * * * *', () => {
     console.log('[🤖 AI Cron] heartbeat', new Date().toISOString());
   });
