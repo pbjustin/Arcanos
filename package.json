@@ -2,9 +2,9 @@
   "name": "arcanos-backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "app.js",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node app.js",
+    "start": "node dist/server.js",
     "dev": "node app.js",
     "build": "tsc"
   },
