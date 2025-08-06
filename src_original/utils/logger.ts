@@ -209,5 +209,22 @@ export const arcanosLogger = {
  * Create a service-specific logger
  */
 export function createServiceLogger(serviceName: string): ServiceLogger {
-  return new ServiceLogger(serviceName);
+  const base = new ServiceLogger(serviceName);
+
+  return new Proxy(base, {
+    get(target, prop) {
+      if (typeof prop === 'string') {
+        const value = (target as any)[prop];
+        if (value !== undefined) {
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+        return (message: string, context?: any) => {
+          target.warning(`Unknown log level "${prop}" - defaulting to info`, { message, context });
+          target.info(message, context);
+        };
+      }
+      const value = (target as any)[prop as any];
+      return typeof value === 'function' ? value.bind(target) : value;
+    }
+  }) as ServiceLogger;
 }
