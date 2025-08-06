@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import { databaseService, SaveMemoryRequest, LoadMemoryRequest } from '../services/database.js';
 import { fallbackMemory } from '../services/memory.js';
 import { sendErrorResponse, sendSuccessResponse, handleCatchError } from '../utils/response.js';
-import { arcanosLogger } from '../utils/logger.js';
 
 const router = Router();
 const useDatabase = !!process.env.DATABASE_URL;
@@ -51,9 +50,9 @@ router.post('/save', async (req: Request, res: Response) => {
       ? await databaseService.saveMemory(saveRequest)
       : await fallbackMemory.storeMemory(container_id, 'default', 'context', memory_key, memory_value);
     
-    arcanosLogger.memorySnapshot('Memory saved successfully', { 
-      memory_key, 
-      container_id, 
+    console.log('[MEMORY] Memory saved successfully', {
+      memory_key,
+      container_id,
       success: true
     });
     
@@ -63,7 +62,7 @@ router.post('/save', async (req: Request, res: Response) => {
     });
     
   } catch (error: any) {
-    arcanosLogger.memorySnapshot('Error saving memory', { error: error.message });
+    console.error('[MEMORY] Error saving memory', { error: error.message });
     handleCatchError(res, error, 'Memory save operation');
   }
 });
