@@ -2,7 +2,7 @@
 ### Quick test commands for Railway deployment validation
 
 # Set the base URL for Railway deployment
-@API_URL = https://arcanos-production-426d.up.railway.app
+@API_URL = https://arcanos-v2-production.up.railway.app
 @MODEL_ROUTE = /query-finetune
 @LOGIC_ROUTE = /ask
 
@@ -26,6 +26,6 @@ Content-Type: application/json
 GET {{API_URL}}/health
 
 ### 4. cURL equivalent test (reference)
-# curl -X POST "https://arcanos-production-426d.up.railway.app/query-finetune" \
+# curl -X POST "https://arcanos-v2-production.up.railway.app/query-finetune" \
 #   -H "Content-Type: application/json" \
 #   -d '{"query": "What is ARCANOS?"}'
