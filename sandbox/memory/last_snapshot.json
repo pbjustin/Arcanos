@@ -1,11 +1,10 @@
 {
-  "timestamp": "2025-08-06T17:15:00.014Z",
-  "heap": "8.38MB",
-  "uptime": "25.1s",
-  "cpu": [
-    0.26,
-    0.38,
-    0.19
-  ],
-  "pid": 2180
+  "timestamp": "2025-08-06T19:19:41.271Z",
+  "heap": {
+    "rss": 40812544,
+    "heapTotal": 4169728,
+    "heapUsed": 3170616,
+    "external": 1120415,
+    "arrayBuffers": 10515
+  }
 }
