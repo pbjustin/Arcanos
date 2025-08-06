@@ -13,14 +13,22 @@
     "test": "node tests/test-api-endpoints.js",
     "type-check": "tsc --noEmit"
   },
-  "keywords": ["ai", "openai", "api", "backend", "arcanos"],
+  "keywords": [
+    "ai",
+    "openai",
+    "api",
+    "backend",
+    "arcanos"
+  ],
   "author": "Justin",
   "license": "MIT",
   "dependencies": {
+    "@prisma/client": "^6.13.0",
     "@types/node": "^24.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^4.18.2",
+    "node-cron": "^4.2.1",
     "openai": "^5.12.0"
   },
   "devDependencies": {
