@@ -49,13 +49,12 @@ export async function runThroughBrain(client: OpenAI, prompt: string): Promise<T
   // First pass: brain decides what to do
   const brainResponse = await createResponseWithLogging(client, {
     model: brainModel,
-    input: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: prompt }],
     temperature: 0.2,
-    max_output_tokens: 1000,
-    stream: false,
+    max_tokens: 1000,
   });
 
-  const brainContent = brainResponse.output_text || '';
+  const brainContent = brainResponse.choices[0]?.message?.content || '';
   let hook: BrainHook | null = null;
 
   try {
@@ -81,28 +80,26 @@ export async function runThroughBrain(client: OpenAI, prompt: string): Promise<T
   // External model execution
   const externalResponse = await createResponseWithLogging(client, {
     model: hook.next_model,
-    input: [{ role: 'user', content: hook.input || prompt }],
+    messages: [{ role: 'user', content: hook.input || prompt }],
     temperature: 0,
-    max_output_tokens: 1000,
-    stream: false,
+    max_tokens: 1000,
   });
 
-  const externalOutput = externalResponse.output_text || '';
+  const externalOutput = externalResponse.choices[0]?.message?.content || '';
 
   // Final pass: filter external output back through the brain
   const finalBrain = await createResponseWithLogging(client, {
     model: brainModel,
-    input: [
+    messages: [
       { role: 'system', content: `External model (${hook.next_model}) responded. Craft the final answer for the user.` },
       { role: 'user', content: prompt },
       { role: 'assistant', content: externalOutput },
     ],
     temperature: 0.2,
-    max_output_tokens: 1000,
-    stream: false,
+    max_tokens: 1000,
   });
 
-  const finalText = finalBrain.output_text || '';
+  const finalText = finalBrain.choices[0]?.message?.content || '';
 
   return {
     result: finalText,
