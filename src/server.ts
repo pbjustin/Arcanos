@@ -2,8 +2,10 @@ import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import cron from 'node-cron';
+import path from 'path';
 import { runHealthCheck } from './utils/diagnostics.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
+import { ModuleLoader } from './utils/moduleLoader.js';
 import './logic/aiCron.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
@@ -25,6 +27,9 @@ console.log("[✅ ARCANOS CONFIG] Configuration validation complete");
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
+
+// Initialize module loader
+const moduleLoader = new ModuleLoader(app);
 
 // Middleware
 app.use(cors({
@@ -76,51 +81,90 @@ app.get('/', (_: Request, res: Response) => {
   res.send('ARCANOS is live');
 });
 
-// API routes
+// Core API routes
 app.use('/', askRouter);
 app.use('/', arcanosRouter);
 app.use('/', aiEndpointsRouter);
 app.use('/', memoryRouter);
 
-// Global error handler
-app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
-  });
-});
+// Initialize dynamic module loading
+async function initializeServer() {
+  // Load dynamic modules
+  console.log('[🔌 ARCANOS MODULES] Initializing dynamic module loader...');
+  await moduleLoader.loadAllModules();
 
-// 404 handler
-app.use((_: Request, res: Response) => {
-  res.status(404).json({ error: 'Endpoint not found' });
-});
+  // Global error handler
+  app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    });
+  });
+
+  // 404 handler
+  app.use((_: Request, res: Response) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+  });
+
+  // Start server with enhanced logging
+  const server = app.listen(port, '0.0.0.0', () => {
+    console.log(`[🚀 ARCANOS CORE] Server running on port ${port}`);
+    console.log(`[🌍 ARCANOS ENV] Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`[⚙️  ARCANOS PID] Process ID: ${process.pid}`);
+    console.log(`[🧠 ARCANOS AI] Model: ${getDefaultModel()}`);
+    console.log(`[🔄 ARCANOS AI] Fallback: gpt-4`);
+    
+    // Boot summary as requested
+    console.log('\n=== 🧠 ARCANOS BOOT SUMMARY ===');
+    console.log(`🤖 Active Model: ${getDefaultModel()}`);
+    console.log(`💾 Memory Path: ${path.join(process.cwd(), 'memory')}`);
+    console.log(`📦 Mounted Modules: ${moduleLoader.getModuleCount()}`);
+    
+    const loadedModules = moduleLoader.getLoadedModules();
+    if (loadedModules.length > 0) {
+      console.log('📋 Active Modules:');
+      loadedModules.forEach((module: any) => {
+        console.log(`   🔌 /${module.name}`);
+      });
+    }
+    
+    console.log('🔧 Core Routes:');
+    console.log('   🔌 /ask');
+    console.log('   🔌 /arcanos'); 
+    console.log('   🔌 /ai-endpoints');
+    console.log('   🔌 /memory');
+    console.log('   🔌 /health');
+    console.log('===============================\n');
+    
+    console.log("[✅ ARCANOS READY] All systems operational");
+  });
+
+  // Handle server errors
+  server.on('error', (err: Error) => {
+    console.error('Server error:', err);
+    process.exit(1);
+  });
+
+  return server;
+}
+
+// Initialize the server
+const server = await initializeServer();
 
 // Graceful shutdown handling
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
-  process.exit(0);
+  server.close(() => {
+    process.exit(0);
+  });
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
-
-// Start server with enhanced logging
-const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`[🚀 ARCANOS CORE] Server running on port ${port}`);
-  console.log(`[🌍 ARCANOS ENV] Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`[⚙️  ARCANOS PID] Process ID: ${process.pid}`);
-  console.log(`[🧠 ARCANOS AI] Model: ${getDefaultModel()}`);
-  console.log(`[🔄 ARCANOS AI] Fallback: gpt-4`);
-  console.log("[✅ ARCANOS READY] All systems operational");
-});
-
-// Handle server errors
-server.on('error', (err: Error) => {
-  console.error('Server error:', err);
-  process.exit(1);
+  server.close(() => {
+    process.exit(0);
+  });
 });
 
 export default app;
