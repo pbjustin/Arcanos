@@ -24,6 +24,11 @@ interface ArcanosResponse {
   };
   activeModel?: string;
   fallbackFlag?: boolean;
+  gpt5Delegation?: {
+    used: boolean;
+    reason?: string;
+    delegatedQuery?: string;
+  };
   error?: string;
 }
 
