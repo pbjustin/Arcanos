@@ -76,22 +76,26 @@ class WorkerManager {
       const files = fs.readdirSync(this.workersDir);
       
       for (const file of files) {
-        if (file.endsWith('.js')) {
-          const filePath = path.join(this.workersDir, file);
-          try {
-            const content = fs.readFileSync(filePath, 'utf8');
-            
-            // Check if file uses OpenAI SDK
-            if (content.includes('openai') && 
-                (content.includes('chat.completions.create') || 
-                 content.includes('from \'openai\'') || 
-                 content.includes('import OpenAI'))) {
-              workerFiles.push(file);
-              this.logActivity(`Found OpenAI SDK worker: ${file}`);
-            }
-          } catch (error) {
-            this.logActivity(`Error reading worker file ${file}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        // Skip shared directory and non-JS files
+        if (file === 'shared' || !file.endsWith('.js')) {
+          continue;
+        }
+        
+        const filePath = path.join(this.workersDir, file);
+        try {
+          const content = fs.readFileSync(filePath, 'utf8');
+          
+          // Check if file uses OpenAI SDK (updated patterns for shared utilities)
+          if ((content.includes('openai') || content.includes('createOpenAIClient')) && 
+              (content.includes('chat.completions.create') || 
+               content.includes('from \'openai\'') || 
+               content.includes('import OpenAI') ||
+               content.includes('executeWorker'))) {
+            workerFiles.push(file);
+            this.logActivity(`Found OpenAI SDK worker: ${file}`);
           }
+        } catch (error) {
+          this.logActivity(`Error reading worker file ${file}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       }
     } catch (error) {
@@ -116,12 +120,17 @@ class WorkerManager {
     this.logActivity(`Launching worker: ${workerId}`);
 
     try {
-      // Inject environment variables
+      // Inject environment variables with validation
       const env = {
         ...process.env,
         OPENAI_API_KEY: process.env.OPENAI_API_KEY,
         AI_MODEL: process.env.AI_MODEL || 'gpt-3.5-turbo'
       };
+
+      // Log warning for missing API key but continue
+      if (!env.OPENAI_API_KEY) {
+        this.logActivity(`Warning: Worker ${workerId} starting without OPENAI_API_KEY`);
+      }
 
       const childProcess = fork(workerPath, [], {
         env,
