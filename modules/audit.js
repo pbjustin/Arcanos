@@ -2,6 +2,9 @@ import express from 'express';
 
 const router = express.Router();
 
+// audit module stub - auto-generated fallback
+router.get("/", (req, res) => res.send("🧠 /audit route active"));
+
 router.post('/audit', async (req, res) => {
   res.json({
     status: 'stub',
@@ -16,7 +19,8 @@ router.get('/audit/status', (req, res) => {
     module: 'audit',
     status: 'stub',
     version: '0.0.1',
-    endpoints: ['/audit', '/audit/status']
+    endpoints: ['/', '/audit', '/audit/status'],
+    note: 'Auto-generated fallback module'
   });
 });
 

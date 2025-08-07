@@ -2,6 +2,9 @@ import express from 'express';
 
 const router = express.Router();
 
+// write module stub - auto-generated fallback
+router.get("/", (req, res) => res.send("🧠 /write route active"));
+
 router.post('/write', async (req, res) => {
   res.json({
     status: 'stub',
@@ -16,7 +19,8 @@ router.get('/write/status', (req, res) => {
     module: 'write',
     status: 'stub',
     version: '0.0.1',
-    endpoints: ['/write', '/write/status']
+    endpoints: ['/', '/write', '/write/status'],
+    note: 'Auto-generated fallback module'
   });
 });
 
