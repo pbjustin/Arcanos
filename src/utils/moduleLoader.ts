@@ -79,6 +79,9 @@ export class ModuleLoader {
         await this.loadModule(file);
       }
 
+      // Also scan /app/modules/ directory if it exists
+      await this.scanAppModules();
+
       console.log(`[✅ MODULE LOADER] Successfully loaded ${this.loadedModules.size} modules`);
       
       // Log active modules in the requested format
@@ -234,6 +237,62 @@ export class ModuleLoader {
       stubModules: [], // No longer creating stubs
       totalModules: this.loadedModules.size
     };
+  }
+
+  /**
+   * Scan /app/modules/ directory for additional modules
+   */
+  private async scanAppModules(): Promise<void> {
+    const appModulesDir = '/app/modules';
+    
+    try {
+      await fs.access(appModulesDir);
+      console.log(`[🔌 MODULE LOADER] Scanning additional modules directory: ${appModulesDir}`);
+      
+      const files = await fs.readdir(appModulesDir);
+      const moduleFiles = files.filter(file =>
+        (file.endsWith('.js') || file.endsWith('.ts')) &&
+        !file.startsWith('.') &&
+        file !== 'index.js' &&
+        file !== 'index.ts'
+      );
+
+      console.log(`[🔌 MODULE LOADER] Found ${moduleFiles.length} additional modules in ${appModulesDir}: ${moduleFiles.join(', ')}`);
+
+      // Load each module (but they're likely data modules, not route modules)
+      for (const file of moduleFiles) {
+        await this.loadAppModule(file, appModulesDir);
+      }
+    } catch (error) {
+      // Silent fail - /app/modules/ is optional
+      console.log(`[ℹ️ MODULE LOADER] /app/modules/ directory not accessible or doesn't exist - skipping`);
+    }
+  }
+
+  /**
+   * Load a module from /app/modules/ (data/utility modules, not routes)
+   */
+  private async loadAppModule(filename: string, moduleDir: string): Promise<void> {
+    try {
+      const modulePath = path.join(moduleDir, filename);
+      const moduleName = path.basename(filename, path.extname(filename));
+      
+      console.log(`[🔌 MODULE LOADER] Loading app module: ${moduleName} from ${filename}`);
+
+      // Verify file exists
+      try {
+        await fs.access(modulePath);
+      } catch (error) {
+        console.error(`[❌ MODULE LOADER] App module file not found: ${modulePath}`);
+        return;
+      }
+
+      // For now, just log the discovery - these may be data modules not route modules
+      console.log(`[ℹ️ MODULE LOADER] Discovered app module: ${moduleName} (data/utility module)`);
+      
+    } catch (error: any) {
+      console.error(`[❌ MODULE LOADER] Error loading app module ${filename}:`, error.message);
+    }
   }
 }
 
