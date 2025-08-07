@@ -1,22 +1,8 @@
 import express, { Request, Response } from 'express';
-import OpenAI from 'openai';
+import { getOpenAIClient } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
 
 const router = express.Router();
-
-// Initialize OpenAI with validation
-let openai: OpenAI | null = null;
-
-try {
-  const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
-  if (apiKey) {
-    openai = new OpenAI({ apiKey });
-  } else {
-    console.warn('⚠️  No OpenAI API key found. AI endpoints will return errors.');
-  }
-} catch (error) {
-  console.error('❌ Failed to initialize OpenAI client:', error);
-}
 
 interface AskRequest {
   prompt: string;
@@ -41,15 +27,16 @@ interface ErrorResponse {
   details?: string;
 }
 
-// Primary ask endpoint routed through the Trinity brain
-router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequest>, res: Response<AskResponse | ErrorResponse>) => {
-  console.log('📨 /ask received');
+// Shared handler for both ask and brain endpoints
+const handleAIRequest = async (req: Request<{}, AskResponse | ErrorResponse, AskRequest>, res: Response<AskResponse | ErrorResponse>, endpointName: string) => {
+  console.log(`📨 /${endpointName} received`);
   const { prompt } = req.body;
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid prompt in request body' });
   }
 
+  const openai = getOpenAIClient();
   if (!openai) {
     return res.status(503).json({
       error: 'AI service unavailable',
@@ -68,6 +55,12 @@ router.post('/ask', async (req: Request<{}, AskResponse | ErrorResponse, AskRequ
       details: errorMessage
     });
   }
-});
+};
+
+// Primary ask endpoint routed through the Trinity brain
+router.post('/ask', (req, res) => handleAIRequest(req, res, 'ask'));
+
+// Brain endpoint (alias for ask with same functionality)
+router.post('/brain', (req, res) => handleAIRequest(req, res, 'brain'));
 
 export default router;

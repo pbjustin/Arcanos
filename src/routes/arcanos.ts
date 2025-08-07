@@ -1,22 +1,8 @@
 import express, { Request, Response } from 'express';
-import OpenAI from 'openai';
+import { getOpenAIClient } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 
 const router = express.Router();
-
-// Initialize OpenAI with validation
-let openai: OpenAI | null = null;
-
-try {
-  const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
-  if (apiKey) {
-    openai = new OpenAI({ apiKey });
-  } else {
-    console.warn('⚠️  No OpenAI API key found. ARCANOS endpoints will return errors.');
-  }
-} catch (error) {
-  console.error('❌ Failed to initialize OpenAI client:', error);
-}
 
 interface ArcanosRequest {
   userInput: string;
@@ -52,6 +38,7 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
     return res.status(400).json({ error: 'Missing or invalid userInput in request body' });
   }
 
+  const openai = getOpenAIClient();
   if (!openai) {
     return res.status(503).json({
       error: 'AI service unavailable',

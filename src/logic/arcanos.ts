@@ -58,10 +58,10 @@ Current System Status:
 
 ${prompt}`;
 
-  // Use GPT-4.1 for diagnostic capabilities
+  // Use GPT-4o-mini for diagnostic capabilities
   const response = await createResponseWithLogging(client, {
-    model: 'gpt-4.1-mini',
-    input: [
+    model: 'gpt-4o-mini',
+    messages: [
       {
         role: 'system',
         content: 'You are ARCANOS, an AI operating core. Provide detailed system diagnostics in the exact format requested. Be precise and actionable.'
@@ -72,11 +72,10 @@ ${prompt}`;
       }
     ],
     temperature: 0.1, // Low temperature for consistent diagnostic output
-    max_output_tokens: 2000,
-    stream: false,
+    max_tokens: 2000,
   });
 
-  const fullResult = response.output_text || '';
+  const fullResult = response.choices[0]?.message?.content || '';
   
   // Parse the structured response
   const componentStatusMatch = fullResult.match(/✅ Component Status Table\s*([\s\S]*?)(?=🛠|$)/);
