@@ -36,14 +36,30 @@ class WorkerManager {
   private restartDelay = 5000; // 5 seconds
 
   constructor() {
-    // Use /app/workers/ directory as specified in requirements
+    // Use /app/workers/ directory as specified in requirements, with fallback
     this.workersDir = '/app/workers';
     this.ensureWorkersDirectory();
   }
 
   private ensureWorkersDirectory(): void {
     if (!fs.existsSync(this.workersDir)) {
-      fs.mkdirSync(this.workersDir, { recursive: true });
+      try {
+        fs.mkdirSync(this.workersDir, { recursive: true });
+        this.logActivity(`Created workers directory: ${this.workersDir}`);
+      } catch (error) {
+        // Fallback to local workers directory if permission denied
+        this.workersDir = './workers';
+        this.logActivity(`Permission denied for /app/workers, using fallback: ${this.workersDir}`);
+        
+        if (!fs.existsSync(this.workersDir)) {
+          try {
+            fs.mkdirSync(this.workersDir, { recursive: true });
+            this.logActivity(`Created fallback workers directory: ${this.workersDir}`);
+          } catch (fallbackError) {
+            this.logActivity(`Failed to create workers directory: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`);
+          }
+        }
+      }
     }
   }
 
@@ -52,16 +68,32 @@ class WorkerManager {
     const logEntry = `[${timestamp}] [WorkerManager] ${message}`;
     console.log(logEntry);
 
-    // Log to session.log
+    // Log to session.log with enhanced error handling
     try {
       const logPath = process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log';
       const logDir = path.dirname(logPath);
+      
       if (!fs.existsSync(logDir)) {
-        fs.mkdirSync(logDir, { recursive: true });
+        try {
+          fs.mkdirSync(logDir, { recursive: true });
+        } catch (dirError) {
+          // If we can't create the production log dir, use fallback
+          if (logPath.includes('/var/arc')) {
+            const fallbackPath = './memory/session.log';
+            const fallbackDir = path.dirname(fallbackPath);
+            if (!fs.existsSync(fallbackDir)) {
+              fs.mkdirSync(fallbackDir, { recursive: true });
+            }
+            fs.appendFileSync(fallbackPath, logEntry + '\n');
+            return;
+          }
+          throw dirError;
+        }
       }
       fs.appendFileSync(logPath, logEntry + '\n');
     } catch (error) {
       console.error('Failed to write to session log:', error instanceof Error ? error.message : 'Unknown error');
+      // Continue without crashing - logging failure shouldn't stop the worker manager
     }
   }
 

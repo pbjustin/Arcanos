@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { createResponseWithLogging, logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
-import { getDefaultModel } from '../services/openai.js';
+import { getDefaultModel, createChatCompletionWithFallback } from '../services/openai.js';
 
 interface TrinityResult {
   result: string;
@@ -57,8 +57,6 @@ export async function runThroughBrain(client: OpenAI, prompt: string): Promise<T
   // Validate model availability and get the ARCANOS brain model to use
   const defaultModel = getDefaultModel();
   const arcanosModel = await validateModel(client);
-  const isFallback = arcanosModel !== defaultModel;
-  
   logArcanosRouting('STARTING', arcanosModel, `Input length: ${prompt.length}`);
   routingStages.push(`ARCANOS-START:${arcanosModel}`);
 
@@ -76,8 +74,7 @@ For complex requests requiring advanced reasoning, analysis, or specialized proc
 
 Remember: GPT-5 responses will be filtered back through you for final processing. Never let GPT-5 respond directly to users.`;
 
-  const brainResponse = await createResponseWithLogging(client, {
-    model: arcanosModel,
+  const brainResponse = await createChatCompletionWithFallback(client, {
     messages: [
       { role: 'system', content: arcanosSystemPrompt },
       { role: 'user', content: prompt }
@@ -85,6 +82,10 @@ Remember: GPT-5 responses will be filtered back through you for final processing
     temperature: 0.2,
     max_tokens: 1000,
   });
+
+  // Get the actual model used (could be fallback)
+  const actualModel = brainResponse.activeModel || arcanosModel;
+  const isFallback = brainResponse.fallbackFlag || false;
 
   const brainContent = brainResponse.choices[0]?.message?.content || '';
   let hook: BrainHook | null = null;
@@ -109,8 +110,8 @@ Remember: GPT-5 responses will be filtered back through you for final processing
     logRoutingSummary(arcanosModel, false, 'ARCANOS-DIRECT');
     return {
       result: brainContent,
-      module: arcanosModel,
-      activeModel: arcanosModel,
+      module: actualModel,
+      activeModel: actualModel,
       fallbackFlag: isFallback,
       routingStages,
       gpt5Used: false,
@@ -135,9 +136,8 @@ Remember: GPT-5 responses will be filtered back through you for final processing
   routingStages.push('GPT5-COMPLETED');
 
   // STAGE 3: Filter GPT-5 output back through ARCANOS (CRITICAL - ensures GPT-5 never responds directly)
-  logArcanosRouting('FINAL_FILTERING', arcanosModel, 'Processing GPT-5 output through ARCANOS');
-  const finalBrain = await createResponseWithLogging(client, {
-    model: arcanosModel,
+  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 output through ARCANOS');
+  const finalBrain = await createChatCompletionWithFallback(client, {
     messages: [
       { 
         role: 'system', 
@@ -163,8 +163,8 @@ IMPORTANT: The user should receive a response from ARCANOS, not directly from GP
   
   return {
     result: finalText,
-    module: arcanosModel,
-    activeModel: arcanosModel,
+    module: actualModel,
+    activeModel: actualModel,
     fallbackFlag: isFallback,
     routingStages,
     gpt5Used: true,
