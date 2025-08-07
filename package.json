@@ -5,13 +5,14 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "start": "node dist/server.js",
+    "probe": "node probe.js",
+    "start": "npm run probe && node index.js",
     "dev": "tsc && node dist/server.js",
     "dev:watch": "tsc --watch",
     "build": "tsc",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "test": "node tests/test-api-endpoints.js",
+    "test": "npm run probe && node tests/test-arcanos-api.js",
     "type-check": "tsc --noEmit"
   },
   "keywords": [
