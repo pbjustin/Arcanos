@@ -7,7 +7,9 @@
   "scripts": {
     "main": "node server.cjs",
     "cron": "node cron.cjs",
+    "probot": "node probot-server.js",
     "start": "concurrently \"npm:main\" \"npm:cron\"",
+    "start-with-probot": "concurrently \"npm:main\" \"npm:cron\" \"npm:probot\"",
     "dev": "nodemon server.cjs",
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -34,6 +36,7 @@
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
     "openai": "^5.12.0",
+    "probot": "^14.0.2",
     "winston": "^3.17.0"
   },
   "devDependencies": {
