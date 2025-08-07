@@ -17,6 +17,8 @@ interface ArcanosResult {
     id: string;
     created: number;
   };
+  activeModel: string;
+  fallbackFlag: boolean;
 }
 
 /**
@@ -62,6 +64,7 @@ ${prompt}`;
   // Use the fine-tuned model with fallback to gpt-4
   const defaultModel = getDefaultModel();
   let modelToUse = defaultModel;
+  let isFallback = false;
   
   try {
     // Try the fine-tuned model first
@@ -84,10 +87,11 @@ ${prompt}`;
     const fullResult = response.choices[0]?.message?.content || '';
     console.log(`[🔬 ARCANOS] Diagnosis complete using model: ${modelToUse}`);
     
-    return parseArcanosResponse(fullResult, response);
+    return parseArcanosResponse(fullResult, response, modelToUse, isFallback);
   } catch (err) {
     console.warn(`⚠️  Fine-tuned model failed, falling back to gpt-4: ${err instanceof Error ? err.message : 'Unknown error'}`);
     modelToUse = 'gpt-4';
+    isFallback = true;
     
     const response = await createResponseWithLogging(client, {
       model: modelToUse,
@@ -108,11 +112,11 @@ ${prompt}`;
     const fullResult = response.choices[0]?.message?.content || '';
     console.log(`[🔬 ARCANOS] Diagnosis complete using fallback model: ${modelToUse}`);
     
-    return parseArcanosResponse(fullResult, response);
+    return parseArcanosResponse(fullResult, response, modelToUse, isFallback);
   }
 }
 
-function parseArcanosResponse(fullResult: string, response: OpenAI.Chat.Completions.ChatCompletion): ArcanosResult {
+function parseArcanosResponse(fullResult: string, response: OpenAI.Chat.Completions.ChatCompletion, activeModel: string, fallbackFlag: boolean): ArcanosResult {
   // Parse the structured response
   const componentStatusMatch = fullResult.match(/✅ Component Status Table\s*([\s\S]*?)(?=🛠|$)/);
   const suggestedFixesMatch = fullResult.match(/🛠 Suggested Fixes\s*([\s\S]*?)(?=🧠|$)/);
@@ -127,6 +131,8 @@ function parseArcanosResponse(fullResult: string, response: OpenAI.Chat.Completi
     componentStatus,
     suggestedFixes,
     coreLogicTrace,
+    activeModel,
+    fallbackFlag,
     meta: {
       tokens: response.usage || undefined,
       id: response.id,
