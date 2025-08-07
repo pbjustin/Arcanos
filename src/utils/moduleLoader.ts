@@ -27,6 +27,7 @@ export class ModuleLoader {
   private app: Express;
   private modulesDir: string;
   private loadedModules: Map<string, ModuleInfo>;
+  private requiredModules: string[] = ['write', 'guide', 'audit', 'sim', 'track'];
 
   constructor(app: Express, modulesDir: string | null = null) {
     this.app = app;
@@ -39,15 +40,9 @@ export class ModuleLoader {
    */
   async loadAllModules(): Promise<void> {
     console.log(`[🔌 MODULE LOADER] Scanning modules directory: ${this.modulesDir}`);
-
     try {
-      await fs.access(this.modulesDir);
-    } catch {
-      console.log(`[⚠️  MODULE LOADER] Modules directory not found: ${this.modulesDir}`);
-      return;
-    }
+      await fs.mkdir(this.modulesDir, { recursive: true });
 
-    try {
       const files = await fs.readdir(this.modulesDir);
       const moduleFiles = files.filter(file =>
         (file.endsWith('.js') || file.endsWith('.ts')) &&
@@ -55,6 +50,14 @@ export class ModuleLoader {
         file !== 'index.js' &&
         file !== 'index.ts'
       );
+
+      const existingNames = moduleFiles.map(file => path.basename(file, path.extname(file)));
+      const missingModules = this.requiredModules.filter(name => !existingNames.includes(name));
+
+      for (const mod of missingModules) {
+        await this.createStubModule(mod);
+        moduleFiles.push(`${mod}.js`);
+      }
 
       console.log(`[🔌 MODULE LOADER] Found ${moduleFiles.length} potential modules: ${moduleFiles.join(', ')}`);
 
@@ -67,6 +70,36 @@ export class ModuleLoader {
     } catch (error) {
       console.error('[❌ MODULE LOADER] Error scanning modules directory:', error);
     }
+  }
+
+  private async createStubModule(name: string): Promise<void> {
+    const stubPath = path.join(this.modulesDir, `${name}.js`);
+    const template = `import express from 'express';
+
+const router = express.Router();
+
+router.post('/${name}', async (req, res) => {
+  res.json({
+    status: 'stub',
+    message: '${name} module stub response',
+    data: req.body || {},
+    timestamp: new Date().toISOString()
+  });
+});
+
+router.get('/${name}/status', (req, res) => {
+  res.json({
+    module: '${name}',
+    status: 'stub',
+    version: '0.0.1',
+    endpoints: ['/${name}', '/${name}/status']
+  });
+});
+
+export default router;\n`;
+
+    await fs.writeFile(stubPath, template, 'utf8');
+    console.log(`[🧩 MODULE LOADER] Created stub for missing module: ${name}`);
   }
 
   /**

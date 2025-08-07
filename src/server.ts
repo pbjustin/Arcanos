@@ -2,7 +2,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import cron from 'node-cron';
-import path from 'path';
 import { runHealthCheck } from './utils/diagnostics.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import { ModuleLoader } from './utils/moduleLoader.js';
@@ -11,6 +10,8 @@ import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
 import memoryRouter from './routes/memory.js';
+
+const KERNEL_MEMORY_PATH = '/var/arc/log/session.log';
 
 // Load environment variables
 dotenv.config();
@@ -118,7 +119,7 @@ async function initializeServer() {
     // Boot summary as requested
     console.log('\n=== 🧠 ARCANOS BOOT SUMMARY ===');
     console.log(`🤖 Active Model: ${getDefaultModel()}`);
-    console.log(`💾 Memory Path: ${path.join(process.cwd(), 'memory')}`);
+    console.log(`💾 Memory Path: ${KERNEL_MEMORY_PATH}`);
     console.log(`📦 Mounted Modules: ${moduleLoader.getModuleCount()}`);
     
     const loadedModules = moduleLoader.getLoadedModules();
@@ -136,8 +137,8 @@ async function initializeServer() {
     console.log('   🔌 /memory');
     console.log('   🔌 /health');
     console.log('===============================\n');
-    
-    console.log("[✅ ARCANOS READY] All systems operational");
+
+    console.log('✅ ARCANOS backend fully operational');
   });
 
   // Handle server errors
