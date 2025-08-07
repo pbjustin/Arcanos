@@ -96,9 +96,7 @@ app.get('/init', (_: Request, res: Response) => {
         loadedAt: m.loadedAt
       }))
     },
-    message: fallbackStatus.inFallbackMode ? 
-      '🔧 System running in fallback-safe mode with stub modules' :
-      '✅ System running with custom modules',
+    message: 'System using TypeScript routes for core endpoints (/write, /guide, /audit, /sim). Custom modules loaded from /modules directory.',
     endpoints: {
       health: '/health',
       init: '/init',

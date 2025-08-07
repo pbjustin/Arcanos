@@ -27,7 +27,9 @@ export class ModuleLoader {
   private app: Express;
   private modulesDir: string;
   private loadedModules: Map<string, ModuleInfo>;
-  private requiredModules: string[] = ['write', 'guide', 'audit', 'sim', 'track'];
+  // Note: Core modules (write, guide, audit, sim) are now handled by TypeScript routes in ai-endpoints.ts
+  // Only custom extension modules should be loaded from /modules directory
+  private requiredModules: string[] = [];
 
   constructor(app: Express, modulesDir: string | null = null) {
     this.app = app;
@@ -65,13 +67,9 @@ export class ModuleLoader {
       const existingNames = moduleFiles.map(file => path.basename(file, path.extname(file)));
       const missingModules = this.requiredModules.filter(name => !existingNames.includes(name));
 
-      // Create stub modules for missing required modules
+      // No longer creating stub modules - core functionality handled by TypeScript routes
       if (missingModules.length > 0) {
-        console.log(`[🧩 MODULE LOADER] Creating stub modules for: ${missingModules.join(', ')}`);
-        for (const mod of missingModules) {
-          await this.createStubModule(mod);
-          moduleFiles.push(`${mod}.js`);
-        }
+        console.log(`[📝 MODULE LOADER] Note: ${missingModules.join(', ')} handled by TypeScript routes, not creating stubs`);
       }
 
       console.log(`[🔌 MODULE LOADER] Found ${moduleFiles.length} potential modules: ${moduleFiles.join(', ')}`);
@@ -93,9 +91,9 @@ export class ModuleLoader {
 
       this.printLoadedModules();
       
-      // Log fallback mode if directory was created or only stubs exist
-      if (directoryCreated || missingModules.length === this.requiredModules.length) {
-        console.log('[⚠️ MODULE LOADER] System is running in fallback-safe mode with stub modules');
+      // Log fallback mode if directory was created
+      if (directoryCreated) {
+        console.log('[ℹ️ MODULE LOADER] System using TypeScript routes for core endpoints, modules directory for extensions only');
       }
       
     } catch (error) {
@@ -111,40 +109,6 @@ export class ModuleLoader {
         console.log('[⚠️ MODULE LOADER] Server will continue but module functionality may be limited');
       }
     }
-  }
-
-  private async createStubModule(name: string): Promise<void> {
-    const stubPath = path.join(this.modulesDir, `${name}.js`);
-    const template = `import express from 'express';
-
-const router = express.Router();
-
-// ${name} module stub - auto-generated fallback
-router.get("/", (req, res) => res.send("🧠 /${name} route active"));
-
-router.post('/${name}', async (req, res) => {
-  res.json({
-    status: 'stub',
-    message: '${name} module stub response',
-    data: req.body || {},
-    timestamp: new Date().toISOString()
-  });
-});
-
-router.get('/${name}/status', (req, res) => {
-  res.json({
-    module: '${name}',
-    status: 'stub',
-    version: '0.0.1',
-    endpoints: ['/', '/${name}', '/${name}/status'],
-    note: 'Auto-generated fallback module'
-  });
-});
-
-export default router;\n`;
-
-    await fs.writeFile(stubPath, template, 'utf8');
-    console.log(`[🧩 MODULE LOADER] Created stub for missing module: ${name}`);
   }
 
   /**
@@ -254,27 +218,20 @@ export default router;\n`;
 
   /**
    * Check if system is running in fallback mode
+   * Note: No longer applicable since core modules are in TypeScript
    */
   isInFallbackMode(): boolean {
-    // Check if all loaded modules are newly created stubs
-    const moduleNames = Array.from(this.loadedModules.keys());
-    const stubModuleCount = moduleNames.filter(name => 
-      this.requiredModules.includes(name)
-    ).length;
-    
-    return stubModuleCount === this.loadedModules.size && this.loadedModules.size > 0;
+    return false; // Core modules now handled by TypeScript routes
   }
 
   /**
    * Get fallback status information
+   * Note: Updated for TypeScript-first architecture
    */
   getFallbackStatus(): { inFallbackMode: boolean; stubModules: string[]; totalModules: number } {
-    const moduleNames = Array.from(this.loadedModules.keys());
-    const stubModules = moduleNames.filter(name => this.requiredModules.includes(name));
-    
     return {
-      inFallbackMode: this.isInFallbackMode(),
-      stubModules,
+      inFallbackMode: false, // Core modules handled by TypeScript
+      stubModules: [], // No longer creating stubs
       totalModules: this.loadedModules.size
     };
   }
