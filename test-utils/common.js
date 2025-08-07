@@ -41,7 +41,8 @@ export async function makeAxiosRequest(method, endpoint, options = {}) {
     headers: {
       'Content-Type': 'application/json',
       ...headers
-    }
+    },
+    proxy: false
   };
 
   // Add auth header if requested
