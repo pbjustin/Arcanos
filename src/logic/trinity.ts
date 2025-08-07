@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { createCompletionWithLogging } from '../utils/aiLogger.js';
+import { createResponseWithLogging } from '../utils/aiLogger.js';
 
 interface TrinityResult {
   result: string;
@@ -47,15 +47,15 @@ export async function runThroughBrain(client: OpenAI, prompt: string): Promise<T
   const brainModel = await validateModel(client);
 
   // First pass: brain decides what to do
-  const brainResponse = await createCompletionWithLogging(client, {
+  const brainResponse = await createResponseWithLogging(client, {
     model: brainModel,
-    messages: [{ role: 'user', content: prompt }],
+    input: [{ role: 'user', content: prompt }],
     temperature: 0.2,
-    max_tokens: 1000,
+    max_output_tokens: 1000,
     stream: false,
   });
 
-  const brainContent = brainResponse.choices[0]?.message?.content || '';
+  const brainContent = brainResponse.output_text || '';
   let hook: BrainHook | null = null;
 
   try {
@@ -79,30 +79,30 @@ export async function runThroughBrain(client: OpenAI, prompt: string): Promise<T
   }
 
   // External model execution
-  const externalResponse = await createCompletionWithLogging(client, {
+  const externalResponse = await createResponseWithLogging(client, {
     model: hook.next_model,
-    messages: [{ role: 'user', content: hook.input || prompt }],
+    input: [{ role: 'user', content: hook.input || prompt }],
     temperature: 0,
-    max_tokens: 1000,
+    max_output_tokens: 1000,
     stream: false,
   });
 
-  const externalOutput = externalResponse.choices[0]?.message?.content || '';
+  const externalOutput = externalResponse.output_text || '';
 
   // Final pass: filter external output back through the brain
-  const finalBrain = await createCompletionWithLogging(client, {
+  const finalBrain = await createResponseWithLogging(client, {
     model: brainModel,
-    messages: [
+    input: [
       { role: 'system', content: `External model (${hook.next_model}) responded. Craft the final answer for the user.` },
       { role: 'user', content: prompt },
       { role: 'assistant', content: externalOutput },
     ],
     temperature: 0.2,
-    max_tokens: 1000,
+    max_output_tokens: 1000,
     stream: false,
   });
 
-  const finalText = finalBrain.choices[0]?.message?.content || '';
+  const finalText = finalBrain.output_text || '';
 
   return {
     result: finalText,
