@@ -2,21 +2,21 @@ import express from 'express';
 
 const router = express.Router();
 
-router.post('/write', async (req, res) => {
+router.post('/track', async (req, res) => {
   res.json({
     status: 'stub',
-    message: 'write module stub response',
+    message: 'track module stub response',
     data: req.body || {},
     timestamp: new Date().toISOString()
   });
 });
 
-router.get('/write/status', (req, res) => {
+router.get('/track/status', (req, res) => {
   res.json({
-    module: 'write',
+    module: 'track',
     status: 'stub',
     version: '0.0.1',
-    endpoints: ['/write', '/write/status']
+    endpoints: ['/track', '/track/status']
   });
 });
 
