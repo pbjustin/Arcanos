@@ -1,3 +1,9 @@
+/**
+ * Core AI Endpoints - Primary Implementation
+ * Handles /write, /guide, /audit, and /sim endpoints using OpenAI SDK
+ * These are the main endpoints for ARCANOS AI functionality
+ */
+
 import express, { Request, Response } from 'express';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
@@ -36,7 +42,7 @@ interface ErrorResponse {
   details?: string;
 }
 
-// Shared handler for AI endpoints that routes through ARCANOS brain
+// Primary handler for core AI endpoints - routes through ARCANOS brain architecture
 const handleAIEndpoint = async (
   req: Request<{}, AIResponse | ErrorResponse, AIRequest>, 
   res: Response<AIResponse | ErrorResponse>, 
@@ -165,16 +171,16 @@ ${userInput}
     `[ARCANOS SYSTEM SHELL] You are ARCANOS, the primary fine-tuned AI routing shell. Process this request directly or invoke GPT-5 if needed for complex reasoning: ${userInput}`;
 };
 
-// Write endpoint - for content generation
+// Write endpoint - Primary content generation endpoint
 router.post('/write', (req, res) => handleAIEndpoint(req, res, 'write'));
 
-// Guide endpoint - for step-by-step guidance
+// Guide endpoint - Primary step-by-step guidance endpoint  
 router.post('/guide', (req, res) => handleAIEndpoint(req, res, 'guide'));
 
-// Audit endpoint - for analysis and evaluation
+// Audit endpoint - Primary analysis and evaluation endpoint
 router.post('/audit', (req, res) => handleAIEndpoint(req, res, 'audit'));
 
-// Sim endpoint - for simulations and modeling
+// Sim endpoint - Primary simulations and modeling endpoint
 router.post('/sim', (req, res) => handleAIEndpoint(req, res, 'sim'));
 
 export default router;
