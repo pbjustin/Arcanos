@@ -30,7 +30,12 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
         result: `[MOCK ARCANOS RESPONSE] System analysis for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
         componentStatus: 'MOCK: All systems simulated as operational',
         suggestedFixes: 'MOCK: Configure OPENAI_API_KEY for real analysis',
-        coreLogicTrace: 'MOCK: Trinity -> ARCANOS -> Mock Response Generator'
+        coreLogicTrace: 'MOCK: Trinity -> ARCANOS -> Mock Response Generator',
+        gpt5Delegation: {
+          used: false,
+          reason: 'Mock mode - delegation detection disabled',
+          delegatedQuery: undefined
+        }
       };
     case 'ask':
     case 'brain':
