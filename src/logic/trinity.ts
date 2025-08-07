@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { createResponseWithLogging } from '../utils/aiLogger.js';
+import { getDefaultModel } from '../services/openai.js';
 
 interface TrinityResult {
   result: string;
@@ -22,14 +23,17 @@ interface BrainHook {
 }
 
 // Check for the fine-tuned model, fallback to GPT-4 if unavailable
-const MODEL_ID = process.env.MODEL_ID || "ft:arcanos-v2";
-
 const validateModel = async (client: OpenAI) => {
+  const defaultModel = getDefaultModel();
   try {
-    await client.models.retrieve(MODEL_ID);
-    return MODEL_ID;
+    // Extract model name from fine-tuned ID for validation
+    const modelToCheck = defaultModel.startsWith('ft:') ? defaultModel : defaultModel;
+    await client.models.retrieve(modelToCheck);
+    console.log(`✅ Fine-tuned model ${defaultModel} is available`);
+    return defaultModel;
   } catch (err) {
-    console.warn(`[ARCANOS WARNING] Model ${MODEL_ID} unavailable. Falling back to GPT-4.`);
+    console.warn(`⚠️  Model ${defaultModel} unavailable. Falling back to GPT-4.`);
+    console.warn(`🔄 Fallback reason: ${err instanceof Error ? err.message : 'Unknown error'}`);
     return "gpt-4";
   }
 };
