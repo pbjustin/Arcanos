@@ -36,9 +36,8 @@ class WorkerManager {
   private restartDelay = 5000; // 5 seconds
 
   constructor() {
-    // Find the root directory by going up from the dist folder
-    const rootDir = path.resolve(__dirname, '../../');
-    this.workersDir = path.join(rootDir, 'workers');
+    // Use /app/workers/ directory as specified in requirements
+    this.workersDir = '/app/workers';
     this.ensureWorkersDirectory();
   }
 
