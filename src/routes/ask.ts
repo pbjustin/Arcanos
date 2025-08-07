@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
+import fs from 'fs';
 
 const router = express.Router();
 
@@ -58,6 +59,19 @@ const handleAIRequest = async (req: Request<{}, AskResponse | ErrorResponse, Ask
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid prompt in request body' });
+  }
+
+  // Log request for feedback loop
+  try {
+    const feedbackData = {
+      timestamp: new Date().toISOString(),
+      endpoint: endpointName,
+      prompt: prompt.substring(0, 500) // Limit length for privacy
+    };
+    fs.writeFileSync('/tmp/last-gpt-request', JSON.stringify(feedbackData));
+  } catch (error) {
+    // Silently fail - feedback logging is not critical
+    console.log('Could not write feedback file:', error instanceof Error ? error.message : 'Unknown error');
   }
 
   // Check if we have a valid API key
