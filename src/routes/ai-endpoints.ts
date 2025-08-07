@@ -26,6 +26,8 @@ interface AIResponse {
   };
   activeModel?: string;
   fallbackFlag?: boolean;
+  routingStages?: string[];
+  gpt5Used?: boolean;
   error?: string;
 }
 
@@ -88,11 +90,16 @@ const handleAIEndpoint = async (
   }
 };
 
-// ARCANOS prompt shell wrapper
+// ARCANOS prompt shell wrapper - ensures all requests go through ARCANOS fine-tuned model first
 const wrapWithArcanosShell = (userInput: string, endpoint: string): string => {
   const endpointPrompts = {
     write: `[ARCANOS SYSTEM SHELL - WRITE MODE]
-You are ARCANOS in WRITE mode. Generate high-quality written content based on the user's request. Focus on clarity, structure, and professional formatting.
+You are ARCANOS, the primary fine-tuned AI routing shell. You are handling a WRITE request.
+
+For this writing task, you can either:
+1. Handle it directly with your specialized writing capabilities
+2. If the task requires advanced creative writing or complex analysis, invoke GPT-5 with:
+   {"next_model": "gpt-5", "purpose": "Advanced creative writing", "input": "specific prompt for GPT-5"}
 
 [USER REQUEST]
 ${userInput}
@@ -101,7 +108,12 @@ ${userInput}
 Provide well-structured, engaging content that directly addresses the user's writing needs.`,
 
     guide: `[ARCANOS SYSTEM SHELL - GUIDE MODE]
-You are ARCANOS in GUIDE mode. Provide step-by-step guidance and instructions. Break down complex tasks into manageable steps.
+You are ARCANOS, the primary fine-tuned AI routing shell. You are handling a GUIDE request.
+
+For this guidance task, you can either:
+1. Provide step-by-step guidance directly using your expertise
+2. If the task requires complex domain expertise or advanced reasoning, invoke GPT-5 with:
+   {"next_model": "gpt-5", "purpose": "Complex domain guidance", "input": "specific prompt for GPT-5"}
 
 [USER REQUEST]
 ${userInput}
@@ -113,7 +125,12 @@ ${userInput}
 - ⚠️ Important considerations`,
 
     audit: `[ARCANOS SYSTEM SHELL - AUDIT MODE]
-You are ARCANOS in AUDIT mode. Perform comprehensive analysis and evaluation. Identify issues, risks, and recommendations.
+You are ARCANOS, the primary fine-tuned AI routing shell. You are handling an AUDIT request.
+
+For this audit task, you can either:
+1. Perform comprehensive analysis directly using your diagnostic capabilities
+2. If the task requires specialized domain knowledge or deep analysis, invoke GPT-5 with:
+   {"next_model": "gpt-5", "purpose": "Specialized audit analysis", "input": "specific prompt for GPT-5"}
 
 [USER REQUEST]
 ${userInput}
@@ -126,7 +143,12 @@ ${userInput}
 - ✅ Action Items`,
 
     sim: `[ARCANOS SYSTEM SHELL - SIMULATION MODE]
-You are ARCANOS in SIMULATION mode. Model scenarios, predict outcomes, and run thought experiments.
+You are ARCANOS, the primary fine-tuned AI routing shell. You are handling a SIMULATION request.
+
+For this simulation task, you can either:
+1. Model scenarios directly using your simulation capabilities
+2. If the task requires complex modeling or advanced predictive analysis, invoke GPT-5 with:
+   {"next_model": "gpt-5", "purpose": "Advanced simulation modeling", "input": "specific prompt for GPT-5"}
 
 [USER REQUEST]
 ${userInput}
@@ -139,7 +161,8 @@ ${userInput}
 - 📊 Analysis Summary`
   };
 
-  return endpointPrompts[endpoint as keyof typeof endpointPrompts] || `[ARCANOS SYSTEM SHELL] Process this request: ${userInput}`;
+  return endpointPrompts[endpoint as keyof typeof endpointPrompts] || 
+    `[ARCANOS SYSTEM SHELL] You are ARCANOS, the primary fine-tuned AI routing shell. Process this request directly or invoke GPT-5 if needed for complex reasoning: ${userInput}`;
 };
 
 // Write endpoint - for content generation
