@@ -77,6 +77,40 @@ app.get('/health', async (_: Request, res: Response) => {
   });
 });
 
+// Fallback/Init status endpoint
+app.get('/init', (_: Request, res: Response) => {
+  const fallbackStatus = moduleLoader.getFallbackStatus();
+  const loadedModules = moduleLoader.getLoadedModules();
+  
+  res.status(200).json({
+    status: 'ARCANOS System Status',
+    timestamp: new Date().toISOString(),
+    fallbackMode: fallbackStatus.inFallbackMode,
+    modules: {
+      total: fallbackStatus.totalModules,
+      stubModules: fallbackStatus.stubModules,
+      loadedModules: loadedModules.map(m => ({
+        name: m.name,
+        type: fallbackStatus.stubModules.includes(m.name) ? 'stub' : 'custom',
+        loadedAt: m.loadedAt
+      }))
+    },
+    message: fallbackStatus.inFallbackMode ? 
+      '🔧 System running in fallback-safe mode with stub modules' :
+      '✅ System running with custom modules',
+    endpoints: {
+      health: '/health',
+      init: '/init',
+      modules: loadedModules.map(m => `/${m.name}`)
+    }
+  });
+});
+
+// Fallback route alias
+app.get('/fallback', (_: Request, res: Response) => {
+  res.redirect('/init');
+});
+
 // Root endpoint
 app.get('/', (_: Request, res: Response) => {
   res.send('ARCANOS is live');
