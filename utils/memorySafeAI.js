@@ -1,5 +1,5 @@
 // memorySafeAI.js
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 import cron from "node-cron";
 import os from "os";
 

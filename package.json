@@ -11,7 +11,9 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "test": "node tests/test-api-endpoints.js",
+    "pretest": "npm run build && NODE_ENV=test USE_MOCK_OPENAI=true PORT=8080 node dist/server.js & echo $! > .server.pid",
+    "test": "USE_MOCK_OPENAI=true node tests/test-api-endpoints.js",
+    "posttest": "kill $(cat .server.pid 2>/dev/null) 2>/dev/null || true; rm -f .server.pid",
     "type-check": "tsc --noEmit"
   },
   "keywords": [

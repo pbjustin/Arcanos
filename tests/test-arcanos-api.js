@@ -7,6 +7,25 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+const BASE_URL = process.env.TEST_URL || 'http://localhost:8080';
+const hasAPIKey = !!(process.env.OPENAI_API_KEY || process.env.API_KEY);
+
+if (!process.env.RUN_ARCANOS_TEST || !hasAPIKey) {
+  console.log('⚠️ Skipping ARCANOS API test. Set RUN_ARCANOS_TEST=true and provide OPENAI_API_KEY to run.');
+  process.exit(0);
+}
+
+async function waitForServer(url, attempts = 10, delay = 500) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await execAsync(`curl -s ${url}`);
+      return;
+    } catch {
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error(`Server did not start at ${url}`);
+}
 
 async function testArcanosAPI() {
   console.log('🌐 ARCANOS API Endpoint Test');
@@ -18,10 +37,12 @@ async function testArcanosAPI() {
     // Assume server is started externally
     console.log('1. Using existing ARCANOS server...');
 
+    await waitForServer(`${BASE_URL}/health`);
+
     // Test health endpoint against live Railway deployment
     console.log('\n2. Testing health endpoint...');
     try {
-      const { stdout } = await execAsync('curl -s https://arcanos-v2-production.up.railway.app/health');
+      const { stdout } = await execAsync(`curl -s ${BASE_URL}/health`);
       const healthData = JSON.parse(stdout);
       console.log('✅ Health check:', healthData.status === 'OK' ? 'PASSED' : 'FAILED');
     } catch (error) {
@@ -32,7 +53,7 @@ async function testArcanosAPI() {
     // Test ARCANOS endpoint structure
       console.log('\n3. Testing ARCANOS endpoint structure...');
     try {
-      const { stdout } = await execAsync('curl -s -X POST https://arcanos-v2-production.up.railway.app/arcanos -H "Content-Type: application/json" -d \'{"userInput": "Run system diagnosis."}\'');
+      const { stdout } = await execAsync(`curl -s -X POST ${BASE_URL}/arcanos -H "Content-Type: application/json" -d '{"userInput": "Run system diagnosis."}'`);
       const response = JSON.parse(stdout);
 
       if (response.result && response.componentStatus && response.suggestedFixes && response.coreLogicTrace) {
@@ -49,7 +70,7 @@ async function testArcanosAPI() {
     // Test endpoint with missing userInput
     console.log('\n4. Testing validation (missing userInput)...');
     try {
-      const { stdout } = await execAsync('curl -s -X POST https://arcanos-v2-production.up.railway.app/arcanos -H "Content-Type: application/json" -d \'{}\'');
+      const { stdout } = await execAsync(`curl -s -X POST ${BASE_URL}/arcanos -H "Content-Type: application/json" -d '{}'`);
       const response = JSON.parse(stdout);
       
       if (response.error && response.error.includes('Missing or invalid userInput')) {
@@ -66,7 +87,7 @@ async function testArcanosAPI() {
     // Test endpoint with invalid JSON
     console.log('\n5. Testing malformed JSON handling...');
     try {
-      const { stdout } = await execAsync('curl -s -X POST https://arcanos-v2-production.up.railway.app/arcanos -H "Content-Type: application/json" -d \'invalid json\'');
+      const { stdout } = await execAsync(`curl -s -X POST ${BASE_URL}/arcanos -H "Content-Type: application/json" -d 'invalid json'`);
       const response = JSON.parse(stdout);
       
       if (response.error) {

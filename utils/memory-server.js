@@ -1,5 +1,5 @@
 import express from "express";
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 import cron from "node-cron";
 import dotenv from "dotenv";
 import os from "os";
