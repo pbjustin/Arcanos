@@ -10,6 +10,7 @@ import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
 import memoryRouter from './routes/memory.js';
+import workersRouter from './routes/workers.js';
 
 const KERNEL_MEMORY_PATH = '/var/arc/log/session.log';
 
@@ -121,6 +122,7 @@ app.use('/', askRouter);
 app.use('/', arcanosRouter);
 app.use('/', aiEndpointsRouter);
 app.use('/', memoryRouter);
+app.use('/', workersRouter);
 
 // Initialize dynamic module loading
 async function initializeServer() {
@@ -169,6 +171,7 @@ async function initializeServer() {
     console.log('   🔌 /arcanos'); 
     console.log('   🔌 /ai-endpoints');
     console.log('   🔌 /memory');
+    console.log('   🔌 /workers/status');
     console.log('   🔌 /health');
     console.log('===============================\n');
 
