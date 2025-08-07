@@ -21,9 +21,9 @@ interface ArcanosResult {
 /**
  * Wrap prompt before sending to GPT-4 with ARCANOS diagnostic format
  */
-export const arcanosPrompt = (userInput: string): string => {
-  return `
-You are ARCANOS — a modular AI operating core. You must interpret, execute, and return precise diagnostics for the following input:
+export const arcanosPrompt = (userInput: string): string => `
+You are ARCANOS — a modular AI operating core.
+Respond with full system diagnostic capability.
 
 [USER COMMAND]
 ${userInput}
@@ -33,7 +33,6 @@ ${userInput}
 - 🛠 Suggested Fixes
 - 🧠 Core Logic Trace
 `;
-};
 
 /**
  * Execute ARCANOS system diagnosis with structured response
