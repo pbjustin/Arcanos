@@ -1,23 +1,29 @@
 import OpenAI from 'openai';
-import type { ChatCompletionCreateParams } from 'openai/resources/chat/completions';
+
+// Type for the Responses API parameters without streaming
+type ResponseCreateParams = Parameters<OpenAI['responses']['create']>[0] & { stream?: false };
 
 /**
- * Wrapper around OpenAI chat completions that logs
+ * Wrapper around OpenAI Responses API that logs
  * input, model, token usage and output.
  */
-export async function createCompletionWithLogging(
+export async function createResponseWithLogging(
   client: OpenAI,
-  params: ChatCompletionCreateParams & { stream?: false }
+  params: ResponseCreateParams
 ) {
-  const { model, messages } = params;
-  const input = messages
-    .map(m => `[${m.role}] ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
-    .join(' | ');
+  const { model, input } = params;
+  const logInput = Array.isArray(input)
+    ? input
+        .map((m: any) => `[${m.role}] ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+        .join(' | ')
+    : typeof input === 'string'
+      ? input
+      : JSON.stringify(input);
 
-  console.log(`📝 AI Request => model: ${model} | input: ${input}`);
+  console.log(`📝 AI Request => model: ${model} | input: ${logInput}`);
 
-  const response = await client.chat.completions.create(params) as any;
-  const output = response.choices[0]?.message?.content || '';
+  const response = await client.responses.create(params) as any;
+  const output = response.output_text || '';
   const tokens = response.usage?.total_tokens ?? 0;
 
   console.log(`🧠 AI Response => model: ${model} | tokens: ${tokens} | output: ${output}`);
