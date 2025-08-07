@@ -29,8 +29,8 @@ function runProbe() {
   // 1. Environment Variables Check
   console.log('🌍 Environment Variables Check:');
   
-  const requiredEnvVars = ['OPENAI_API_KEY'];
-  const optionalEnvVars = ['AI_MODEL', 'PORT', 'NODE_ENV'];
+  const requiredEnvVars = []; // OPENAI_API_KEY is now optional - will use mock responses
+  const optionalEnvVars = ['OPENAI_API_KEY', 'AI_MODEL', 'PORT', 'NODE_ENV'];
   
   for (const envVar of requiredEnvVars) {
     const value = process.env[envVar];
@@ -45,11 +45,20 @@ function runProbe() {
 
   for (const envVar of optionalEnvVars) {
     const value = process.env[envVar];
-    if (!value || value.trim() === '') {
-      console.log(`   ⚠️  ${envVar}: NOT SET (optional)`);
-      warnings.push(`Optional environment variable not set: ${envVar}`);
+    if (!value || value.trim() === '' || value === 'your-openai-api-key-here' || value === 'your-openai-key-here') {
+      if (envVar === 'OPENAI_API_KEY') {
+        console.log(`   ⚠️  ${envVar}: NOT SET - will use mock responses`);
+        warnings.push(`${envVar} not set - will return mock responses instead of real AI`);
+      } else {
+        console.log(`   ⚠️  ${envVar}: NOT SET (optional)`);
+        warnings.push(`Optional environment variable not set: ${envVar}`);
+      }
     } else {
-      console.log(`   ✅ ${envVar}: ${value}`);
+      if (envVar === 'OPENAI_API_KEY') {
+        console.log(`   ✅ ${envVar}: SET (${value.substring(0, 8)}...)`);
+      } else {
+        console.log(`   ✅ ${envVar}: ${value}`);
+      }
     }
   }
 

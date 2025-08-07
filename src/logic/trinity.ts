@@ -14,6 +14,8 @@ interface TrinityResult {
     id: string;
     created: number;
   };
+  activeModel: string;
+  fallbackFlag: boolean;
 }
 
 interface BrainHook {
@@ -48,7 +50,9 @@ const validateModel = async (client: OpenAI) => {
  */
 export async function runThroughBrain(client: OpenAI, prompt: string): Promise<TrinityResult> {
   // Validate model availability and get the brain model to use
+  const defaultModel = getDefaultModel();
   const brainModel = await validateModel(client);
+  const isFallback = brainModel !== defaultModel;
 
   // First pass: brain decides what to do
   const brainResponse = await createResponseWithLogging(client, {
@@ -73,6 +77,8 @@ export async function runThroughBrain(client: OpenAI, prompt: string): Promise<T
     return {
       result: brainContent,
       module: brainModel,
+      activeModel: brainModel,
+      fallbackFlag: isFallback,
       meta: {
         tokens: brainResponse.usage || undefined,
         id: brainResponse.id,
@@ -108,6 +114,8 @@ export async function runThroughBrain(client: OpenAI, prompt: string): Promise<T
   return {
     result: finalText,
     module: brainModel,
+    activeModel: brainModel,
+    fallbackFlag: isFallback,
     meta: {
       tokens: finalBrain.usage || undefined,
       id: finalBrain.id,

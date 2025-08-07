@@ -16,10 +16,7 @@ dotenv.config();
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
 console.log("[🔧 ARCANOS CONFIG] Validating configuration...");
 
-if (!validateAPIKeyAtStartup()) {
-  console.error("❌ STARTUP FAILED: Missing required OPENAI_API_KEY");
-  process.exit(1);
-}
+validateAPIKeyAtStartup(); // Always continue, but log warnings
 
 console.log(`[🧠 ARCANOS AI] Default Model: ${getDefaultModel()}`);
 console.log(`[🔄 ARCANOS AI] Fallback Model: gpt-4`);
