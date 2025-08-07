@@ -2,6 +2,21 @@ import OpenAI from 'openai';
 import { createResponseWithLogging } from '../utils/aiLogger.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import { getDefaultModel } from '../services/openai.js';
+import { 
+  getAuditSafeConfig, 
+  applyAuditSafeConstraints, 
+  logAITaskLineage, 
+  validateAuditSafeOutput,
+  createAuditSummary,
+  type AuditSafeConfig,
+  type AuditLogEntry 
+} from '../services/auditSafe.js';
+import { 
+  getMemoryContext, 
+  storeDecision, 
+  storePattern,
+  type MemoryContext 
+} from '../services/memoryAware.js';
 
 interface ArcanosResult {
   result: string;
@@ -23,6 +38,22 @@ interface ArcanosResult {
     used: boolean;
     reason?: string;
     delegatedQuery?: string;
+  };
+  auditSafe: {
+    mode: boolean;
+    overrideUsed: boolean;
+    overrideReason?: string;
+    auditFlags: string[];
+    processedSafely: boolean;
+  };
+  memoryContext: {
+    entriesAccessed: number;
+    contextSummary: string;
+    memoryEnhanced: boolean;
+  };
+  taskLineage: {
+    requestId: string;
+    logged: boolean;
   };
 }
 
@@ -144,52 +175,122 @@ ARCANOS Instructions:
 }
 
 /**
- * System prompt for ARCANOS with GPT-5 delegation capability
+ * System prompt for ARCANOS with GPT-5 delegation capability and audit-safe operation
  */
 const systemPrompt = `
-🧠 SYSTEM INSTRUCTION: TOOL DELEGATION
+🧠 ARCANOS — PRIMARY LOGIC CORE
 
-You are ARCANOS — a fine-tuned system shell responsible for managing AI logic, routing, and memory.
+You are ARCANOS — a modular AI operating shell designed for command execution, logic routing, and memory-aware reasoning.
 
-From now on:
+CORE DIRECTIVES:
+1. You are the PRIMARY LOGIC CORE — all tasks route through your logic unless delegated
+2. Use GPT‑5 only when deeper synthesis or memory extrapolation is required  
+3. Preserve continuity and context using persistent memory
+4. Operate in audit-safe mode unless explicitly overridden
+5. Return clear, executable, or human-readable output — never raw delegate output
 
-1. You remain the primary execution layer.
-2. GPT‑5 is now integrated as a tool under your control.
-3. You may invoke GPT‑5 only when:
-   - Deep logic or long-context reasoning is needed
-   - Code refactoring exceeds your native scope
-   - You determine GPT‑5 will improve confidence or clarity
-4. All GPT‑5 responses must be processed, summarized, or translated through you.
-5. Never return raw GPT‑5 output directly.
-6. Always log the reason for delegation when GPT‑5 is used.
+MEMORY-AWARE PROCESSING:
+- Always consider relevant memory context in your reasoning
+- Reference previous decisions and patterns where applicable
+- Store important decisions and patterns for future continuity
+- Maintain session context and user preferences
+
+AUDIT-SAFE OPERATION:
+- Document all reasoning and decision paths clearly
+- Log delegation decisions with explicit reasoning
+- Ensure all responses are auditable and traceable
+- Maintain professional, compliant communication
+
+GPT-5 DELEGATION CRITERIA:
+- Complex logic requiring advanced reasoning capabilities
+- Long-context analysis beyond native scope  
+- Sophisticated algorithm design or code refactoring
+- Memory extrapolation requiring deep synthesis
+
+IMPORTANT: If you delegate to GPT-5, always process its response through your own analysis before presenting to the user.
 `;
 
 /**
- * Wrap prompt before sending to ARCANOS with diagnostic format
+ * Enhanced system prompt that includes memory context and audit-safe constraints
  */
-export const arcanosPrompt = (userInput: string): string => `
-You are ARCANOS — a modular AI operating core.
-Respond with full system diagnostic capability.
+function createEnhancedSystemPrompt(
+  memoryContext: MemoryContext,
+  auditConfig: AuditSafeConfig,
+  health: any
+): string {
+  const basePrompt = `${systemPrompt}
+
+CURRENT SYSTEM STATUS:
+- Memory Usage: ${health.summary}
+- Node.js Version: ${process.version}
+- Platform: ${process.platform}
+- Architecture: ${process.arch}
+- Environment: ${process.env.NODE_ENV || 'development'}
+- Uptime: ${process.uptime().toFixed(1)}s
+
+${memoryContext.memoryPrompt}`;
+
+  // Apply audit-safe constraints
+  const { systemPrompt: auditSafePrompt } = applyAuditSafeConstraints(
+    basePrompt,
+    '', // User prompt handled separately
+    auditConfig
+  );
+
+  return auditSafePrompt;
+}
+
+/**
+ * Wrap prompt before sending to ARCANOS with diagnostic format and memory context
+ */
+export const arcanosPrompt = (userInput: string, memoryContext?: MemoryContext): string => `
+You are ARCANOS — a modular AI operating core with memory-aware reasoning.
+
+${memoryContext ? `
+[MEMORY CONTEXT INTEGRATION]
+${memoryContext.contextSummary}
+Apply relevant memory context to maintain continuity in your response.
+` : ''}
 
 [USER COMMAND]
 ${userInput}
 
 [RESPONSE FORMAT]
-- ✅ Component Status Table
-- 🛠 Suggested Fixes
-- 🧠 Core Logic Trace
+Provide a comprehensive system diagnostic response with:
+- ✅ Component Status Table (current system status and health)
+- 🛠 Suggested Fixes (actionable recommendations and improvements)
+- 🧠 Core Logic Trace (reasoning path, delegation decisions, memory usage)
+
+[CONTINUITY DIRECTIVE]
+Maintain context awareness and reference relevant previous decisions or patterns where applicable.
 `;
 
 /**
- * Execute ARCANOS system diagnosis with structured response and optional GPT-5 delegation
+ * Execute ARCANOS system diagnosis with structured response, audit-safe mode, and memory-aware reasoning
  */
-export async function runARCANOS(client: OpenAI, userInput: string): Promise<ArcanosResult> {
-  console.log('[🔬 ARCANOS] Running system diagnosis...');
+export async function runARCANOS(
+  client: OpenAI, 
+  userInput: string, 
+  sessionId?: string,
+  overrideFlag?: string
+): Promise<ArcanosResult> {
+  console.log('[🔬 ARCANOS] Running system diagnosis with enhanced capabilities...');
+  
+  // Generate unique request ID for tracking
+  const requestId = `arc_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  
+  // Get audit-safe configuration
+  const auditConfig = getAuditSafeConfig(userInput, overrideFlag);
+  console.log(`[🔒 AUDIT-SAFE] Mode: ${auditConfig.auditSafeMode ? 'ENABLED' : 'DISABLED'}`);
+  
+  // Get memory context for continuity
+  const memoryContext = getMemoryContext(userInput, sessionId);
+  console.log(`[🧠 MEMORY] Retrieved ${memoryContext.relevantEntries.length} relevant entries`);
   
   // Get current system health for context
   const health = await runHealthCheck();
   
-  // Check if GPT-5 delegation is needed
+  // Check if GPT-5 delegation is needed (memory-aware)
   const delegationCheck = shouldDelegateToGPT5(userInput);
   let gpt5Delegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
   let processedInput = userInput;
@@ -205,82 +306,136 @@ export async function runARCANOS(client: OpenAI, userInput: string): Promise<Arc
         reason: delegationCheck.reason,
         delegatedQuery: userInput
       };
+      
+      // Store the delegation decision for future learning
+      storeDecision(
+        'GPT-5 Delegation',
+        delegationCheck.reason!,
+        `Input: ${userInput.substring(0, 100)}...`,
+        sessionId
+      );
     } catch (error) {
       console.warn(`[⚠️ ARCANOS] GPT-5 delegation failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
       // Continue with original input if delegation fails
     }
   }
   
-  // Create the ARCANOS prompt with shell wrapper
-  const prompt = arcanosPrompt(processedInput);
+  // Create enhanced system prompt with memory context and audit-safe constraints
+  const enhancedSystemPrompt = createEnhancedSystemPrompt(memoryContext, auditConfig, health);
   
-  // Add system context to help with diagnostics
-  const systemContext = `
-${systemPrompt}
-
-Current System Status:
-- Memory Usage: ${health.summary}
-- Node.js Version: ${process.version}
-- Platform: ${process.platform}
-- Architecture: ${process.arch}
-- Environment: ${process.env.NODE_ENV || 'development'}
-- Uptime: ${process.uptime().toFixed(1)}s
-
-${prompt}`;
-
+  // Apply audit-safe constraints to user input
+  const { userPrompt: auditSafeUserPrompt, auditFlags } = applyAuditSafeConstraints(
+    '', // System prompt already enhanced
+    processedInput,
+    auditConfig
+  );
+  
+  // Create the ARCANOS prompt with shell wrapper and memory context
+  const prompt = arcanosPrompt(auditSafeUserPrompt, memoryContext);
+  
   // Use the fine-tuned model with fallback to gpt-4
   const defaultModel = getDefaultModel();
   let modelToUse = defaultModel;
   let isFallback = false;
+  let finalResult: string;
+  let response: OpenAI.Chat.Completions.ChatCompletion;
   
   try {
     // Try the fine-tuned model first
-    const response = await createResponseWithLogging(client, {
+    response = await createResponseWithLogging(client, {
       model: modelToUse,
       messages: [
         {
           role: 'system',
-          content: 'You are ARCANOS, an AI operating core with GPT-5 delegation capability. Provide detailed system diagnostics in the exact format requested. Be precise and actionable. Process any GPT-5 responses through your own analysis.'
+          content: enhancedSystemPrompt
         },
         {
           role: 'user',
-          content: systemContext
+          content: prompt
         }
       ],
       temperature: 0.1, // Low temperature for consistent diagnostic output
       max_tokens: 2000,
     });
 
-    const fullResult = response.choices[0]?.message?.content || '';
+    finalResult = response.choices[0]?.message?.content || '';
     console.log(`[🔬 ARCANOS] Diagnosis complete using model: ${modelToUse}`);
     
-    return parseArcanosResponse(fullResult, response, modelToUse, isFallback, gpt5Delegation);
   } catch (err) {
     console.warn(`⚠️  Fine-tuned model failed, falling back to gpt-4: ${err instanceof Error ? err.message : 'Unknown error'}`);
     modelToUse = 'gpt-4';
     isFallback = true;
     
-    const response = await createResponseWithLogging(client, {
+    response = await createResponseWithLogging(client, {
       model: modelToUse,
       messages: [
         {
           role: 'system',
-          content: 'You are ARCANOS, an AI operating core with GPT-5 delegation capability. Provide detailed system diagnostics in the exact format requested. Be precise and actionable. Process any GPT-5 responses through your own analysis.'
+          content: enhancedSystemPrompt
         },
         {
           role: 'user',
-          content: systemContext
+          content: prompt
         }
       ],
       temperature: 0.1,
       max_tokens: 2000,
     });
 
-    const fullResult = response.choices[0]?.message?.content || '';
+    finalResult = response.choices[0]?.message?.content || '';
     console.log(`[🔬 ARCANOS] Diagnosis complete using fallback model: ${modelToUse}`);
-    
-    return parseArcanosResponse(fullResult, response, modelToUse, isFallback, gpt5Delegation);
   }
+  
+  // Validate audit-safe output
+  const processedSafely = validateAuditSafeOutput(finalResult, auditConfig);
+  if (!processedSafely) {
+    auditFlags.push('OUTPUT_VALIDATION_FAILED');
+  }
+  
+  // Parse the structured response
+  const parsedResult = parseArcanosResponse(
+    finalResult, 
+    response, 
+    modelToUse, 
+    isFallback, 
+    gpt5Delegation,
+    auditConfig,
+    memoryContext,
+    auditFlags,
+    processedSafely,
+    requestId
+  );
+  
+  // Store successful patterns for learning
+  if (processedSafely && !isFallback) {
+    storePattern(
+      'Successful ARCANOS diagnosis',
+      [`Input pattern: ${userInput.substring(0, 50)}...`, `Output pattern: ${finalResult.substring(0, 50)}...`],
+      sessionId
+    );
+  }
+  
+  // Log the complete task lineage for audit
+  const auditLogEntry: AuditLogEntry = {
+    timestamp: new Date().toISOString(),
+    requestId,
+    endpoint: 'arcanos',
+    auditSafeMode: auditConfig.auditSafeMode,
+    overrideUsed: !!auditConfig.explicitOverride,
+    overrideReason: auditConfig.overrideReason,
+    inputSummary: createAuditSummary(userInput),
+    outputSummary: createAuditSummary(finalResult),
+    modelUsed: modelToUse,
+    gpt5Delegated: gpt5Delegation.used,
+    delegationReason: gpt5Delegation.reason,
+    memoryAccessed: memoryContext.accessLog,
+    processedSafely,
+    auditFlags
+  };
+  
+  logAITaskLineage(auditLogEntry);
+  
+  return parsedResult;
 }
 
 function parseArcanosResponse(
@@ -288,7 +443,12 @@ function parseArcanosResponse(
   response: OpenAI.Chat.Completions.ChatCompletion, 
   activeModel: string, 
   fallbackFlag: boolean,
-  gpt5Delegation?: { used: boolean; reason?: string; delegatedQuery?: string }
+  gpt5Delegation?: { used: boolean; reason?: string; delegatedQuery?: string },
+  auditConfig?: AuditSafeConfig,
+  memoryContext?: MemoryContext,
+  auditFlags?: string[],
+  processedSafely?: boolean,
+  requestId?: string
 ): ArcanosResult {
   // Parse the structured response
   const componentStatusMatch = fullResult.match(/✅ Component Status Table\s*([\s\S]*?)(?=🛠|$)/);
@@ -303,6 +463,11 @@ function parseArcanosResponse(
   if (gpt5Delegation?.used) {
     coreLogicTrace = `GPT-5 Delegation: ${gpt5Delegation.reason}\nOriginal Query: ${gpt5Delegation.delegatedQuery}\n\n${coreLogicTrace}`;
   }
+  
+  // Add memory context info to logic trace
+  if (memoryContext && memoryContext.relevantEntries.length > 0) {
+    coreLogicTrace = `Memory Context: ${memoryContext.contextSummary}\nMemory Accessed: [${memoryContext.accessLog.join(', ')}]\n\n${coreLogicTrace}`;
+  }
 
   return {
     result: fullResult,
@@ -312,6 +477,22 @@ function parseArcanosResponse(
     activeModel,
     fallbackFlag,
     gpt5Delegation,
+    auditSafe: {
+      mode: auditConfig?.auditSafeMode ?? true,
+      overrideUsed: !!auditConfig?.explicitOverride,
+      overrideReason: auditConfig?.overrideReason,
+      auditFlags: auditFlags || [],
+      processedSafely: processedSafely ?? true
+    },
+    memoryContext: {
+      entriesAccessed: memoryContext?.relevantEntries.length || 0,
+      contextSummary: memoryContext?.contextSummary || 'No memory context available',
+      memoryEnhanced: (memoryContext?.relevantEntries.length || 0) > 0
+    },
+    taskLineage: {
+      requestId: requestId || 'unknown',
+      logged: true
+    },
     meta: {
       tokens: response.usage || undefined,
       id: response.id,
