@@ -7,6 +7,8 @@ const router = express.Router();
 
 interface AskRequest {
   prompt: string;
+  sessionId?: string;
+  overrideAuditSafe?: string;
 }
 
 interface AskResponse {
@@ -25,6 +27,22 @@ interface AskResponse {
   fallbackFlag?: boolean;
   routingStages?: string[];
   gpt5Used?: boolean;
+  auditSafe?: {
+    mode: boolean;
+    overrideUsed: boolean;
+    overrideReason?: string;
+    auditFlags: string[];
+    processedSafely: boolean;
+  };
+  memoryContext?: {
+    entriesAccessed: number;
+    contextSummary: string;
+    memoryEnhanced: boolean;
+  };
+  taskLineage?: {
+    requestId: string;
+    logged: boolean;
+  };
   error?: string;
 }
 
@@ -55,11 +73,13 @@ Provide a comprehensive, accurate, and helpful response that directly addresses 
 // Shared handler for both ask and brain endpoints
 const handleAIRequest = async (req: Request<{}, AskResponse | ErrorResponse, AskRequest>, res: Response<AskResponse | ErrorResponse>, endpointName: string) => {
   console.log(`📨 /${endpointName} received`);
-  const { prompt } = req.body;
+  const { prompt, sessionId, overrideAuditSafe } = req.body;
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid prompt in request body' });
   }
+
+  console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}`);
 
   // Log request for feedback loop
   try {
@@ -91,7 +111,7 @@ const handleAIRequest = async (req: Request<{}, AskResponse | ErrorResponse, Ask
   try {
     // Inject ARCANOS shell before processing
     const wrappedPrompt = injectArcanosShell(prompt);
-    const output = await runThroughBrain(openai, wrappedPrompt);
+    const output = await runThroughBrain(openai, wrappedPrompt, sessionId, overrideAuditSafe);
     return res.json(output);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
