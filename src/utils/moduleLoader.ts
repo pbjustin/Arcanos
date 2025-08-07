@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import fs_sync from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Express, Router } from 'express';
@@ -33,8 +34,29 @@ export class ModuleLoader {
 
   constructor(app: Express, modulesDir: string | null = null) {
     this.app = app;
-    this.modulesDir = modulesDir || path.join(process.cwd(), 'modules');
+    // First try /app/modules as specified, then fallback to local
+    this.modulesDir = modulesDir || this.getModulesDirectory();
     this.loadedModules = new Map();
+  }
+
+  /**
+   * Determine the modules directory with proper fallbacks
+   */
+  private getModulesDirectory(): string {
+    const preferredDir = '/app/modules';
+    
+    try {
+      // Try to create/access the preferred directory
+      if (!fs_sync.existsSync(preferredDir)) {
+        fs_sync.mkdirSync(preferredDir, { recursive: true });
+      }
+      return preferredDir;
+    } catch (error) {
+      // Permission denied, use local fallback
+      const fallbackDir = path.join(process.cwd(), 'modules');
+      console.log(`[🔧 MODULE LOADER] Permission denied for ${preferredDir}, using fallback: ${fallbackDir}`);
+      return fallbackDir;
+    }
   }
 
   /**
@@ -81,6 +103,9 @@ export class ModuleLoader {
 
       // Also scan /app/modules/ directory if it exists
       await this.scanAppModules();
+
+      // Re-scan repository for worker-compatible modules to populate modules directory
+      await this.scanAndPopulateWorkerModules();
 
       console.log(`[✅ MODULE LOADER] Successfully loaded ${this.loadedModules.size} modules`);
       
@@ -266,6 +291,70 @@ export class ModuleLoader {
     } catch (error) {
       // Silent fail - /app/modules/ is optional
       console.log(`[ℹ️ MODULE LOADER] /app/modules/ directory not accessible or doesn't exist - skipping`);
+    }
+  }
+
+  /**
+   * Scan and populate worker-compatible modules from the repository
+   */
+  private async scanAndPopulateWorkerModules(): Promise<void> {
+    console.log(`[🔌 MODULE LOADER] Scanning repository for worker-compatible modules...`);
+    
+    const workersDir = './workers';
+    
+    try {
+      if (fs_sync.existsSync(workersDir)) {
+        const files = await fs.readdir(workersDir);
+        const workerFiles = files.filter(file => 
+          (file.endsWith('.js') || file.endsWith('.ts')) && 
+          file !== 'shared' &&
+          !file.startsWith('.')
+        );
+        
+        console.log(`[🔌 MODULE LOADER] Found ${workerFiles.length} potential worker modules in ${workersDir}`);
+        
+        for (const file of workerFiles) {
+          await this.checkAndAddWorkerModule(file, workersDir);
+        }
+      }
+    } catch (error) {
+      console.log(`[ℹ️ MODULE LOADER] Error scanning workers directory: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Check if a worker file is compatible and add it to modules directory
+   */
+  private async checkAndAddWorkerModule(filename: string, sourceDir: string): Promise<void> {
+    try {
+      const sourcePath = path.join(sourceDir, filename);
+      const content = await fs.readFile(sourcePath, 'utf8');
+      
+      // Check if file uses OpenAI SDK and has compatible patterns
+      if ((content.includes('openai') || content.includes('createOpenAIClient')) && 
+          (content.includes('chat.completions.create') || 
+           content.includes('from \'openai\'') || 
+           content.includes('import OpenAI') ||
+           content.includes('executeWorker'))) {
+        
+        const moduleName = path.basename(filename, path.extname(filename));
+        const targetPath = path.join(this.modulesDir, filename);
+        
+        // Ensure modules directory exists
+        if (!fs_sync.existsSync(this.modulesDir)) {
+          await fs.mkdir(this.modulesDir, { recursive: true });
+        }
+        
+        // Copy the worker file to modules directory if it doesn't exist
+        if (!fs_sync.existsSync(targetPath)) {
+          await fs.copyFile(sourcePath, targetPath);
+          console.log(`[✅ MODULE LOADER] Added worker-compatible module: ${moduleName}`);
+        } else {
+          console.log(`[ℹ️ MODULE LOADER] Worker module already exists: ${moduleName}`);
+        }
+      }
+    } catch (error) {
+      console.error(`[❌ MODULE LOADER] Error processing worker file ${filename}:`, error instanceof Error ? error.message : 'Unknown error');
     }
   }
 
