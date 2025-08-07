@@ -3,12 +3,27 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import cron from 'node-cron';
 import { runHealthCheck } from './utils/diagnostics.js';
+import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import './logic/aiCron.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
+import aiEndpointsRouter from './routes/ai-endpoints.js';
 
 // Load environment variables
 dotenv.config();
+
+// Validate required environment variables at startup
+console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
+console.log("[🔧 ARCANOS CONFIG] Validating configuration...");
+
+if (!validateAPIKeyAtStartup()) {
+  console.error("❌ STARTUP FAILED: Missing required OPENAI_API_KEY");
+  process.exit(1);
+}
+
+console.log(`[🧠 ARCANOS AI] Default Model: ${getDefaultModel()}`);
+console.log(`[🔄 ARCANOS AI] Fallback Model: gpt-4`);
+console.log("[✅ ARCANOS CONFIG] Configuration validation complete");
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -36,12 +51,25 @@ cron.schedule("*/5 * * * *", async () => {
 });
 
 // Health check endpoint
-app.get('/health', (_: Request, res: Response) => {
+app.get('/health', async (_: Request, res: Response) => {
+  const healthReport = await runHealthCheck();
+  const defaultModel = getDefaultModel();
+  
   res.status(200).json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     service: 'ARCANOS',
-    version: process.env.npm_package_version || '1.0.0'
+    version: process.env.npm_package_version || '1.0.0',
+    ai: {
+      defaultModel: defaultModel,
+      fallbackModel: 'gpt-4'
+    },
+    system: {
+      memory: healthReport.summary,
+      uptime: `${process.uptime().toFixed(1)}s`,
+      nodeVersion: process.version,
+      environment: process.env.NODE_ENV || 'development'
+    }
   });
 });
 
@@ -53,6 +81,7 @@ app.get('/', (_: Request, res: Response) => {
 // API routes
 app.use('/', askRouter);
 app.use('/', arcanosRouter);
+app.use('/', aiEndpointsRouter);
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
@@ -80,11 +109,13 @@ process.on('SIGINT', () => {
 });
 
 // Start server with enhanced logging
-console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`ARCANOS core listening on port ${port}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Process ID: ${process.pid}`);
+  console.log(`[🚀 ARCANOS CORE] Server running on port ${port}`);
+  console.log(`[🌍 ARCANOS ENV] Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`[⚙️  ARCANOS PID] Process ID: ${process.pid}`);
+  console.log(`[🧠 ARCANOS AI] Model: ${getDefaultModel()}`);
+  console.log(`[🔄 ARCANOS AI] Fallback: gpt-4`);
+  console.log("[✅ ARCANOS READY] All systems operational");
 });
 
 // Handle server errors
