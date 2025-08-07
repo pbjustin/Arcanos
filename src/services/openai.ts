@@ -92,7 +92,7 @@ const initializeOpenAI = (): OpenAI | null => {
     }
 
     openai = new OpenAI({ apiKey });
-    defaultModel = process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
+    defaultModel = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:arcanos-v1-1106';
     
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
@@ -110,7 +110,7 @@ export const getOpenAIClient = (): OpenAI | null => {
 };
 
 export const getDefaultModel = (): string => {
-  return defaultModel || process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
+  return defaultModel || process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:arcanos-v1-1106';
 };
 
 export const validateAPIKeyAtStartup = (): boolean => {

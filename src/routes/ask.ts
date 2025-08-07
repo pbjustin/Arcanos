@@ -22,6 +22,8 @@ interface AskResponse {
   };
   activeModel?: string;
   fallbackFlag?: boolean;
+  routingStages?: string[];
+  gpt5Used?: boolean;
   error?: string;
 }
 
@@ -30,10 +32,17 @@ interface ErrorResponse {
   details?: string;
 }
 
-// Inject ARCANOS prompt shell before processing
+// Inject ARCANOS prompt shell before processing - ensures all requests go through ARCANOS first
 const injectArcanosShell = (userPrompt: string): string => {
   return `[ARCANOS SYSTEM SHELL]
-You are ARCANOS, an advanced AI system. Process the following user request with your full capabilities.
+You are ARCANOS, the primary fine-tuned AI routing shell. ALL requests must be processed through you first.
+
+For simple requests, respond directly with your comprehensive capabilities.
+
+For complex requests requiring advanced reasoning, specialized knowledge, or sophisticated analysis, you may invoke GPT-5 by responding with:
+{"next_model": "gpt-5", "purpose": "Brief explanation of why GPT-5 is needed", "input": "The specific input to send to GPT-5"}
+
+Remember: If you invoke GPT-5, its response will be filtered back through you for final processing. Users always receive responses from ARCANOS, never directly from GPT-5.
 
 [USER REQUEST]
 ${userPrompt}
