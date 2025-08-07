@@ -5,7 +5,6 @@ import cron from 'node-cron';
 import { runHealthCheck } from './utils/diagnostics.js';
 import './logic/aiCron.js';
 import askRouter from './routes/ask.js';
-import brainRouter from './routes/brain.js';
 import arcanosRouter from './routes/arcanos.js';
 
 // Load environment variables
@@ -53,7 +52,6 @@ app.get('/', (_: Request, res: Response) => {
 
 // API routes
 app.use('/', askRouter);
-app.use('/', brainRouter);
 app.use('/', arcanosRouter);
 
 // Global error handler
