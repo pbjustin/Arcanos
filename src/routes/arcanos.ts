@@ -6,6 +6,8 @@ const router = express.Router();
 
 interface ArcanosRequest {
   userInput: string;
+  sessionId?: string;
+  overrideAuditSafe?: string;
 }
 
 interface ArcanosResponse {
@@ -29,6 +31,22 @@ interface ArcanosResponse {
     reason?: string;
     delegatedQuery?: string;
   };
+  auditSafe?: {
+    mode: boolean;
+    overrideUsed: boolean;
+    overrideReason?: string;
+    auditFlags: string[];
+    processedSafely: boolean;
+  };
+  memoryContext?: {
+    entriesAccessed: number;
+    contextSummary: string;
+    memoryEnhanced: boolean;
+  };
+  taskLineage?: {
+    requestId: string;
+    logged: boolean;
+  };
   error?: string;
 }
 
@@ -40,11 +58,13 @@ interface ErrorResponse {
 // ARCANOS system diagnosis endpoint
 router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse, ArcanosRequest>, res: Response<ArcanosResponse | ErrorResponse>) => {
   console.log('🔬 /arcanos received');
-  const { userInput } = req.body;
+  const { userInput, sessionId, overrideAuditSafe } = req.body;
 
   if (!userInput || typeof userInput !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid userInput in request body' });
   }
+
+  console.log(`[🔬 ARCANOS] Processing request with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}`);
 
   // Check if we have a valid API key
   if (!hasValidAPIKey()) {
@@ -61,7 +81,7 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
   }
 
   try {
-    const output = await runARCANOS(openai, userInput);
+    const output = await runARCANOS(openai, userInput, sessionId, overrideAuditSafe);
     return res.json(output);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

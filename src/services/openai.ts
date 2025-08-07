@@ -20,6 +20,22 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
     },
     activeModel: 'MOCK',
     fallbackFlag: false,
+    auditSafe: {
+      mode: true,
+      overrideUsed: input.toLowerCase().includes('override'),
+      overrideReason: input.toLowerCase().includes('override') ? 'Mock override detected in input' : undefined,
+      auditFlags: ['MOCK_MODE', 'AUDIT_SAFE_ACTIVE'],
+      processedSafely: true
+    },
+    memoryContext: {
+      entriesAccessed: Math.floor(Math.random() * 3),
+      contextSummary: 'Mock memory context - no real memory system active',
+      memoryEnhanced: Math.random() > 0.5
+    },
+    taskLineage: {
+      requestId: mockId,
+      logged: true
+    },
     error: 'OPENAI_API_KEY not configured - returning mock response'
   };
 
