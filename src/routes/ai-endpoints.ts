@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { getOpenAIClient } from '../services/openai.js';
+import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
 
 const router = express.Router();
@@ -24,6 +24,9 @@ interface AIResponse {
     id: string;
     created: number;
   };
+  activeModel?: string;
+  fallbackFlag?: boolean;
+  error?: string;
 }
 
 interface ErrorResponse {
@@ -48,12 +51,18 @@ const handleAIEndpoint = async (
     });
   }
 
+  // Check if we have a valid API key
+  if (!hasValidAPIKey()) {
+    console.log(`🤖 Returning mock response for /${endpointName} (no API key)`);
+    const mockResponse = generateMockResponse(input, endpointName);
+    return res.json(mockResponse);
+  }
+
   const openai = getOpenAIClient();
   if (!openai) {
-    return res.status(503).json({
-      error: 'AI service unavailable',
-      details: 'OpenAI client not initialized. Please check API key configuration.'
-    });
+    console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);
+    const mockResponse = generateMockResponse(input, endpointName);
+    return res.json(mockResponse);
   }
 
   try {
@@ -68,9 +77,13 @@ const handleAIEndpoint = async (
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     console.error(`❌ ${endpointName} processing error:`, errorMessage);
-    return res.status(500).json({
-      error: 'AI service failure',
-      details: errorMessage
+    
+    // Return mock response as fallback
+    console.log(`🤖 Returning mock response for /${endpointName} (processing failed)`);
+    const mockResponse = generateMockResponse(input, endpointName);
+    return res.json({
+      ...mockResponse,
+      error: `AI service failure: ${errorMessage}`
     });
   }
 };
@@ -78,7 +91,8 @@ const handleAIEndpoint = async (
 // ARCANOS prompt shell wrapper
 const wrapWithArcanosShell = (userInput: string, endpoint: string): string => {
   const endpointPrompts = {
-    write: `You are ARCANOS in WRITE mode. Generate high-quality written content based on the user's request. Focus on clarity, structure, and professional formatting.
+    write: `[ARCANOS SYSTEM SHELL - WRITE MODE]
+You are ARCANOS in WRITE mode. Generate high-quality written content based on the user's request. Focus on clarity, structure, and professional formatting.
 
 [USER REQUEST]
 ${userInput}
@@ -86,7 +100,8 @@ ${userInput}
 [RESPONSE FORMAT]
 Provide well-structured, engaging content that directly addresses the user's writing needs.`,
 
-    guide: `You are ARCANOS in GUIDE mode. Provide step-by-step guidance and instructions. Break down complex tasks into manageable steps.
+    guide: `[ARCANOS SYSTEM SHELL - GUIDE MODE]
+You are ARCANOS in GUIDE mode. Provide step-by-step guidance and instructions. Break down complex tasks into manageable steps.
 
 [USER REQUEST]
 ${userInput}
@@ -97,7 +112,8 @@ ${userInput}
 - 💡 Tips and best practices
 - ⚠️ Important considerations`,
 
-    audit: `You are ARCANOS in AUDIT mode. Perform comprehensive analysis and evaluation. Identify issues, risks, and recommendations.
+    audit: `[ARCANOS SYSTEM SHELL - AUDIT MODE]
+You are ARCANOS in AUDIT mode. Perform comprehensive analysis and evaluation. Identify issues, risks, and recommendations.
 
 [USER REQUEST]
 ${userInput}
@@ -109,7 +125,8 @@ ${userInput}
 - 🛠 Recommendations
 - ✅ Action Items`,
 
-    sim: `You are ARCANOS in SIMULATION mode. Model scenarios, predict outcomes, and run thought experiments.
+    sim: `[ARCANOS SYSTEM SHELL - SIMULATION MODE]
+You are ARCANOS in SIMULATION mode. Model scenarios, predict outcomes, and run thought experiments.
 
 [USER REQUEST]
 ${userInput}
@@ -122,7 +139,7 @@ ${userInput}
 - 📊 Analysis Summary`
   };
 
-  return endpointPrompts[endpoint as keyof typeof endpointPrompts] || `You are ARCANOS. Process this request: ${userInput}`;
+  return endpointPrompts[endpoint as keyof typeof endpointPrompts] || `[ARCANOS SYSTEM SHELL] Process this request: ${userInput}`;
 };
 
 // Write endpoint - for content generation
