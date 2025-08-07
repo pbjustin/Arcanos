@@ -115,7 +115,58 @@ export const getOpenAIClient = (): OpenAI | null => {
 };
 
 export const getDefaultModel = (): string => {
-  return defaultModel || process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:arcanos-v1-1106';
+  return defaultModel || process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
+};
+
+export const getFallbackModel = (): string => {
+  return 'gpt-4';
+};
+
+/**
+ * Make a chat completion with automatic fallback to GPT-4 if fine-tuned model fails
+ */
+export const createChatCompletionWithFallback = async (
+  client: OpenAI,
+  params: any
+): Promise<any> => {
+  const primaryModel = getDefaultModel();
+  const fallbackModel = getFallbackModel();
+  
+  try {
+    // First attempt with the fine-tuned model
+    console.log(`🧠 Attempting with primary model: ${primaryModel}`);
+    const response = await client.chat.completions.create({
+      ...params,
+      model: primaryModel
+    });
+    
+    return {
+      ...response,
+      activeModel: primaryModel,
+      fallbackFlag: false
+    };
+  } catch (error) {
+    console.warn(`⚠️ Primary model ${primaryModel} failed, falling back to ${fallbackModel}`);
+    console.warn(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    
+    try {
+      // Fallback to GPT-4
+      const fallbackResponse = await client.chat.completions.create({
+        ...params,
+        model: fallbackModel
+      });
+      
+      return {
+        ...fallbackResponse,
+        activeModel: fallbackModel,
+        fallbackFlag: true,
+        fallbackReason: `Primary model ${primaryModel} failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    } catch (fallbackError) {
+      console.error(`❌ Fallback model ${fallbackModel} also failed:`, fallbackError);
+      throw fallbackError;
+    }
+  }
 };
 
 export const validateAPIKeyAtStartup = (): boolean => {
