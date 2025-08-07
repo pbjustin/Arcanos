@@ -3,7 +3,7 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
-import { OpenAI } from 'openai';
+import OpenAI from 'openai';
 import Ajv from 'ajv';
 
 const ajv = new Ajv({ strict: true });

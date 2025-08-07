@@ -11,7 +11,9 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
+    "pretest": "npm run build && PORT=8080 node dist/server.js & echo $! > .server.pid && sleep 1",
     "test": "node tests/test-api-endpoints.js",
+    "posttest": "kill $(cat .server.pid) && rm .server.pid",
     "type-check": "tsc --noEmit"
   },
   "keywords": [
