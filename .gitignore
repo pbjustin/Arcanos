@@ -76,6 +76,7 @@ demo-ai-patch-system.sh
 test-ai-service-dispatcher.ts
 test-dispatcher-integration.ts
 test-worker-loading.js
+requirements-verification.js
 
 # Development and debugging scripts  
 dev-tests/
