@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { createCompletionWithLogging } from '../utils/aiLogger.js';
+import { createResponseWithLogging } from '../utils/aiLogger.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 
 interface ArcanosResult {
@@ -59,10 +59,10 @@ Current System Status:
 
 ${prompt}`;
 
-  // Use GPT-4 for best diagnostic capabilities
-  const response = await createCompletionWithLogging(client, {
-    model: 'gpt-4',
-    messages: [
+  // Use GPT-4.1 for diagnostic capabilities
+  const response = await createResponseWithLogging(client, {
+    model: 'gpt-4.1-mini',
+    input: [
       {
         role: 'system',
         content: 'You are ARCANOS, an AI operating core. Provide detailed system diagnostics in the exact format requested. Be precise and actionable.'
@@ -73,11 +73,11 @@ ${prompt}`;
       }
     ],
     temperature: 0.1, // Low temperature for consistent diagnostic output
-    max_tokens: 2000,
+    max_output_tokens: 2000,
     stream: false,
   });
 
-  const fullResult = response.choices[0]?.message?.content || '';
+  const fullResult = response.output_text || '';
   
   // Parse the structured response
   const componentStatusMatch = fullResult.match(/✅ Component Status Table\s*([\s\S]*?)(?=🛠|$)/);
