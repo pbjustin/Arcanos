@@ -8,6 +8,7 @@ import './logic/aiCron.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
+import memoryRouter from './routes/memory.js';
 
 // Load environment variables
 dotenv.config();
@@ -79,6 +80,7 @@ app.get('/', (_: Request, res: Response) => {
 app.use('/', askRouter);
 app.use('/', arcanosRouter);
 app.use('/', aiEndpointsRouter);
+app.use('/', memoryRouter);
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
