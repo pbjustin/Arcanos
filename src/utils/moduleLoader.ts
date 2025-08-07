@@ -1,4 +1,4 @@
-import fs from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Express, Router } from 'express';
@@ -25,12 +25,12 @@ interface LoadedModuleInfo {
  */
 export class ModuleLoader {
   private app: Express;
-  private modulesPath: string;
+  private modulesDir: string;
   private loadedModules: Map<string, ModuleInfo>;
 
-  constructor(app: Express, modulesPath: string | null = null) {
+  constructor(app: Express, modulesDir: string | null = null) {
     this.app = app;
-    this.modulesPath = modulesPath || path.join(process.cwd(), 'modules');
+    this.modulesDir = modulesDir || path.join(process.cwd(), 'modules');
     this.loadedModules = new Map();
   }
 
@@ -38,17 +38,19 @@ export class ModuleLoader {
    * Scan and load all modules from the modules directory
    */
   async loadAllModules(): Promise<void> {
-    console.log(`[🔌 MODULE LOADER] Scanning modules directory: ${this.modulesPath}`);
-    
-    if (!fs.existsSync(this.modulesPath)) {
-      console.log(`[⚠️  MODULE LOADER] Modules directory not found: ${this.modulesPath}`);
+    console.log(`[🔌 MODULE LOADER] Scanning modules directory: ${this.modulesDir}`);
+
+    try {
+      await fs.access(this.modulesDir);
+    } catch {
+      console.log(`[⚠️  MODULE LOADER] Modules directory not found: ${this.modulesDir}`);
       return;
     }
 
     try {
-      const files = fs.readdirSync(this.modulesPath);
-      const moduleFiles = files.filter(file => 
-        (file.endsWith('.js') || file.endsWith('.ts')) && 
+      const files = await fs.readdir(this.modulesDir);
+      const moduleFiles = files.filter(file =>
+        (file.endsWith('.js') || file.endsWith('.ts')) &&
         !file.startsWith('.') &&
         file !== 'index.js' &&
         file !== 'index.ts'
@@ -72,7 +74,7 @@ export class ModuleLoader {
    */
   async loadModule(filename: string): Promise<void> {
     try {
-      const modulePath = path.join(this.modulesPath, filename);
+      const modulePath = path.join(this.modulesDir, filename);
       const moduleName = path.basename(filename, path.extname(filename));
       
       console.log(`[🔌 MODULE LOADER] Loading module: ${moduleName} from ${filename}`);
