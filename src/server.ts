@@ -126,19 +126,35 @@ async function initializeServer() {
 
 const server = await initializeServer();
 
-// Graceful shutdown handling
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+function logAndShutdown(signal: string) {
+  const mem = process.memoryUsage();
+  console.log(
+    `${signal} received. uptime=${process.uptime().toFixed(1)}s heapMB=${(mem.heapUsed / 1024 / 1024).toFixed(1)} rssMB=${(mem.rss / 1024 / 1024).toFixed(1)}`
+  );
+  console.log('railway vars', {
+    release: process.env.RAILWAY_RELEASE_ID,
+    deployment: process.env.RAILWAY_DEPLOYMENT_ID
+  });
   server.close(() => {
     process.exit(0);
   });
+}
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => logAndShutdown('SIGTERM'));
+process.on('SIGINT', () => logAndShutdown('SIGINT'));
+
+process.on('beforeExit', (code) => {
+  const handles = (process as any)._getActiveHandles?.() || [];
+  console.log('beforeExit', code, 'open handles', handles.length);
 });
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    process.exit(0);
-  });
+process.on('unhandledRejection', (err) => {
+  console.error('unhandledRejection', err);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException', err);
 });
 
 export default app;
