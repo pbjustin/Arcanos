@@ -4,7 +4,7 @@
  * Handles memory synchronization tasks using OpenAI API
  */
 
-import { createOpenAIClient, executeWorker, createCompletion, isMainModule } from './shared/workerUtils.js';
+import { createOpenAIClient, executeWorker, createCompletion, isMainModule, registerWithManager } from './shared/workerUtils.js';
 
 async function performMemorySync(logger) {
   try {
@@ -15,10 +15,10 @@ async function performMemorySync(logger) {
       throw new Error('Failed to initialize OpenAI client');
     }
 
-    // Use shared completion function for memory analysis
+    // Use shared completion function for memory analysis with fine-tuned model
     const completion = await createCompletion(
       openai,
-      'You are a memory synchronization AI worker. Analyze and optimize memory patterns.',
+      'You are ARCANOS memory synchronization AI worker. Analyze and optimize memory patterns.',
       'Perform memory synchronization analysis for current session data.',
       { max_tokens: 150, temperature: 0.3 }
     );
@@ -38,6 +38,23 @@ async function performMemorySync(logger) {
 
 // Export for testing
 export { performMemorySync };
+
+// CommonJS-compatible export for WorkerManager integration
+const runWorkerTask = async function(input, context) {
+  const logger = context?.logger || ((msg) => console.log(`[memorySync] ${msg}`));
+  return await performMemorySync(logger);
+};
+
+// Export in the format requested by requirements
+export default runWorkerTask;
+
+// For CommonJS compatibility
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = runWorkerTask;
+}
+
+// Register with WorkerManager
+registerWithManager('memorySync', runWorkerTask);
 
 // Run if called directly
 if (isMainModule()) {

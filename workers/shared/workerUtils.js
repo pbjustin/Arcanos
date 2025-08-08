@@ -78,7 +78,7 @@ export async function executeWorker(workerName, workerFunction) {
   const logger = createLogger(workerName);
   setupProcessHandlers(logger);
   
-  logger(`Worker ${workerName} started with model: ${process.env.AI_MODEL || 'gpt-3.5-turbo'}`);
+  logger(`Worker ${workerName} started with model: ${process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2'}`);
   
   try {
     const result = await workerFunction(logger);
@@ -95,7 +95,7 @@ export async function executeWorker(workerName, workerFunction) {
  */
 export async function createCompletion(openai, systemPrompt, userPrompt, options = {}) {
   const defaultOptions = {
-    model: process.env.AI_MODEL || 'gpt-3.5-turbo',
+    model: process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2',
     max_tokens: 200,
     temperature: 0.2
   };
@@ -139,4 +139,29 @@ export async function createCompletion(openai, systemPrompt, userPrompt, options
  */
 export function isMainModule() {
   return import.meta.url === `file://${process.argv[1]}`;
+}
+
+/**
+ * Register worker with WorkerManager (for auto-boot integration)
+ */
+export async function registerWithManager(workerName, workerFunction) {
+  try {
+    // Check if we're running in a managed environment
+    if (process.env.WORKER_MANAGED === 'true') {
+      // Worker is being managed by WorkerManager, export function for external use
+      return workerFunction;
+    }
+    
+    // Try to register with WorkerManager if available
+    const managerPath = process.env.WORKER_MANAGER_PATH || '../src/services/workerManager.js';
+    
+    // For now, just log registration attempt
+    console.log(`[${workerName}] Attempting registration with WorkerManager`);
+    
+    return workerFunction;
+  } catch (error) {
+    // Registration failed, but continue with standalone execution
+    console.log(`[${workerName}] Registration with WorkerManager failed: ${error.message}`);
+    return workerFunction;
+  }
 }
