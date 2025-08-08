@@ -22,6 +22,8 @@ export interface MemoryEntry {
     tags: string[];
     sessionId?: string;
     userId?: string;
+    moduleId?: string;
+    loopState?: 'init' | 'active' | 'complete';
   };
 }
 
@@ -38,6 +40,7 @@ const MEMORY_DIR = process.env.ARC_MEMORY_PATH || '/tmp/arc/memory';
 mkdirSync(MEMORY_DIR, { recursive: true });
 const MEMORY_INDEX_FILE = join(MEMORY_DIR, 'index.json');
 const MEMORY_LOG_FILE = join(MEMORY_DIR, 'memory.log');
+const SUPPRESSION_LOG_FILE = join(MEMORY_DIR, 'suppressed.log');
 
 // In-memory cache for performance
 let memoryIndex: MemoryEntry[] = [];
@@ -80,6 +83,27 @@ function saveMemoryIndex() {
 }
 
 /**
+ * Validate memory entry before committing to storage
+ */
+function isValidMemoryEntry(entry: MemoryEntry): boolean {
+  if (!entry.key || !entry.value || !entry.metadata.moduleId) return false;
+  if (entry.metadata.loopState && entry.metadata.loopState !== 'complete') return false;
+  return true;
+}
+
+/**
+ * Log suppression events without touching runtime memory
+ */
+function logSuppressionEvent(moduleId: string, reason: string) {
+  try {
+    const logEntry = `${new Date().toISOString()} | ${moduleId} | ${reason}\n`;
+    appendFileSync(SUPPRESSION_LOG_FILE, logEntry);
+  } catch {
+    /* Silent fail - diagnostics only */
+  }
+}
+
+/**
  * Store a memory entry
  */
 export function storeMemory(
@@ -87,7 +111,7 @@ export function storeMemory(
   value: string,
   type: MemoryEntry['type'] = 'context',
   metadata: Partial<MemoryEntry['metadata']> = {}
-): MemoryEntry {
+): MemoryEntry | null {
   initializeMemory();
 
   const entry: MemoryEntry = {
@@ -104,6 +128,11 @@ export function storeMemory(
       ...metadata
     }
   };
+
+  if (!isValidMemoryEntry(entry)) {
+    logSuppressionEvent(entry.metadata.moduleId || 'unknown', `INVALID_ENTRY:${key}`);
+    return null;
+  }
 
   // Check if key already exists and update instead
   const existingIndex = memoryIndex.findIndex(m => m.key === key);
@@ -233,14 +262,15 @@ export function storeDecision(
   reasoning: string,
   context: string,
   sessionId?: string
-): MemoryEntry {
+): MemoryEntry | null {
   const key = `decision_${Date.now()}`;
   const value = `Decision: ${decision}\nReasoning: ${reasoning}\nContext: ${context}`;
   
   return storeMemory(key, value, 'decision', {
     source: 'arcanos_decision',
     tags: ['decision', 'reasoning'],
-    sessionId
+    sessionId,
+    moduleId: 'decision'
   });
 }
 
@@ -251,14 +281,15 @@ export function storePattern(
   pattern: string,
   examples: string[],
   sessionId?: string
-): MemoryEntry {
+): MemoryEntry | null {
   const key = `pattern_${Date.now()}`;
   const value = `Pattern: ${pattern}\nExamples: ${examples.join('; ')}`;
   
   return storeMemory(key, value, 'pattern', {
     source: 'arcanos_pattern',
     tags: ['pattern', 'learning'],
-    sessionId
+    sessionId,
+    moduleId: 'pattern'
   });
 }
 
