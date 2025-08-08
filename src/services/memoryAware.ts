@@ -42,6 +42,45 @@ const MEMORY_INDEX_FILE = join(MEMORY_DIR, 'index.json');
 const MEMORY_LOG_FILE = join(MEMORY_DIR, 'memory.log');
 const SUPPRESSION_LOG_FILE = join(MEMORY_DIR, 'suppressed.log');
 
+/**
+ * Sanitize a raw memory entry to match current schema
+ */
+function sanitizeMemoryEntry(raw: any): MemoryEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const entry: MemoryEntry = {
+    id: typeof raw.id === 'string' ? raw.id : generateMemoryId(),
+    timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString(),
+    key: typeof raw.key === 'string' ? raw.key : '',
+    value: typeof raw.value === 'string' ? raw.value : '',
+    type: raw.type === 'fact' || raw.type === 'preference' || raw.type === 'decision' || raw.type === 'pattern'
+      ? raw.type
+      : 'context',
+    relevanceScore: raw.relevanceScore,
+    accessCount: typeof raw.accessCount === 'number' ? raw.accessCount : 0,
+    lastAccessed: typeof raw.lastAccessed === 'string' ? raw.lastAccessed : new Date().toISOString(),
+    metadata: {
+      source: raw.metadata?.source || 'arcanos',
+      tags: Array.isArray(raw.metadata?.tags) ? raw.metadata.tags : [],
+      sessionId: raw.metadata?.sessionId,
+      userId: raw.metadata?.userId,
+      moduleId: raw.metadata?.moduleId,
+      loopState: raw.metadata?.loopState,
+    },
+  };
+
+  return isValidMemoryEntry(entry) ? entry : null;
+}
+
+function sanitizeMemoryIndex(rawEntries: any[]): MemoryEntry[] {
+  const sanitized: MemoryEntry[] = [];
+  for (const raw of rawEntries) {
+    const entry = sanitizeMemoryEntry(raw);
+    if (entry) sanitized.push(entry);
+  }
+  return sanitized;
+}
+
 // In-memory cache for performance
 let memoryIndex: MemoryEntry[] = [];
 let memoryLoaded = false;
@@ -55,7 +94,7 @@ function initializeMemory() {
   try {
     if (existsSync(MEMORY_INDEX_FILE)) {
       const data = readFileSync(MEMORY_INDEX_FILE, 'utf-8');
-      memoryIndex = JSON.parse(data);
+      memoryIndex = sanitizeMemoryIndex(JSON.parse(data));
       console.log(`🧠 [MEMORY] Loaded ${memoryIndex.length} memory entries`);
     } else {
       memoryIndex = [];
@@ -378,4 +417,12 @@ export function cleanupMemory(maxAge: number = 30, minAccessCount: number = 0): 
   }
 
   return removed;
+}
+
+/**
+ * Verify memory integrity to prevent schema conflicts
+ */
+export function checkMemoryIntegrity(): boolean {
+  initializeMemory();
+  return memoryIndex.every(entry => isValidMemoryEntry(entry));
 }

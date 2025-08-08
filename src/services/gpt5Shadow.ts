@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { appendFileSync } from 'fs';
 import { ensureLogDirectory, getGPT5TracePath, getAuditShadowPath } from '../utils/logPath.js';
 import { validateAuditSafeOutput, createAuditSummary } from './auditSafe.js';
+import { ensureShadowReady, disableShadowMode } from './shadowControl.js';
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
 
@@ -31,6 +32,8 @@ export async function mirrorDecisionEvent(
   original: string,
   tag: ShadowTag
 ): Promise<void> {
+  if (!ensureShadowReady()) return;
+
   try {
     const shadowInput = `Event: ${event}\nTask ID: ${taskId}\nOriginal Data: ${original}`;
     const gpt5Output = await routeToModule(client, tag, shadowInput);
@@ -60,6 +63,7 @@ export async function mirrorDecisionEvent(
       getAuditShadowPath(),
       `${timestamp} | ${taskId} | ${event} | FALLBACK:${msg}\n`
     );
+    disableShadowMode(msg);
   }
 }
 
