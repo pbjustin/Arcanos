@@ -4,7 +4,7 @@
  * Handles temporary file cleanup using OpenAI API guidance
  */
 
-import { createOpenAIClient, executeWorker, createCompletion, isMainModule } from './shared/workerUtils.js';
+import { createOpenAIClient, executeWorker, createCompletion, isMainModule, registerWithManager } from './shared/workerUtils.js';
 
 async function clearTempFiles(logger) {
   try {
@@ -15,10 +15,10 @@ async function clearTempFiles(logger) {
       throw new Error('Failed to initialize OpenAI client');
     }
 
-    // Use shared completion function for cleanup strategy
+    // Use shared completion function for cleanup strategy with fine-tuned model
     const completion = await createCompletion(
       openai,
-      'You are a file cleanup AI worker. Analyze and recommend optimal temporary file cleanup strategies.',
+      'You are ARCANOS file cleanup AI worker. Analyze and recommend optimal temporary file cleanup strategies.',
       'Analyze current temporary file usage and recommend cleanup actions for the ARCANOS system.',
       { max_tokens: 150, temperature: 0.1 }
     );
@@ -38,6 +38,23 @@ async function clearTempFiles(logger) {
 
 // Export for testing
 export { clearTempFiles };
+
+// CommonJS-compatible export for WorkerManager integration
+const runWorkerTask = async function(input, context) {
+  const logger = context?.logger || ((msg) => console.log(`[clearTemp] ${msg}`));
+  return await clearTempFiles(logger);
+};
+
+// Export in the format requested by requirements
+export default runWorkerTask;
+
+// For CommonJS compatibility
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = runWorkerTask;
+}
+
+// Register with WorkerManager
+registerWithManager('clearTemp', runWorkerTask);
 
 // Run if called directly
 if (isMainModule()) {
