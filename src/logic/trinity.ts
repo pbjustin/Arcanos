@@ -10,12 +10,13 @@ import {
   type AuditSafeConfig,
   type AuditLogEntry 
 } from '../services/auditSafe.js';
-import { 
-  getMemoryContext, 
-  storeDecision, 
+import {
+  getMemoryContext,
+  storeDecision,
   storePattern,
-  type MemoryContext 
+  type MemoryContext
 } from '../services/memoryAware.js';
+import { mirrorDecisionEvent } from '../services/gpt5Shadow.js';
 
 interface TrinityResult {
   result: string;
@@ -103,6 +104,7 @@ export async function runThroughBrain(
   // Get memory context for continuity and better reasoning
   const memoryContext = getMemoryContext(prompt, sessionId);
   console.log(`[🧠 TRINITY MEMORY] Retrieved ${memoryContext.relevantEntries.length} relevant entries`);
+  await mirrorDecisionEvent(client, requestId, 'memory_sync', memoryContext.contextSummary, 'agent_role_check');
   
   // Validate model availability and get the ARCANOS brain model to use
   const defaultModel = getDefaultModel();
@@ -216,7 +218,10 @@ IMPORTANT: GPT-5 responses will be filtered back through you for final processin
     };
     
     logAITaskLineage(auditLogEntry);
-    
+
+    await mirrorDecisionEvent(client, requestId, 'audit', JSON.stringify(auditLogEntry), 'agent_role_check');
+    await mirrorDecisionEvent(client, requestId, 'task_dispatch', brainContent, 'content_generation');
+
     return {
       result: brainContent,
       module: actualModel,
@@ -328,7 +333,10 @@ IMPORTANT: The user receives a response from ARCANOS, never directly from GPT-5.
   };
   
   logAITaskLineage(auditLogEntry);
-  
+
+  await mirrorDecisionEvent(client, requestId, 'audit', JSON.stringify(auditLogEntry), 'agent_role_check');
+  await mirrorDecisionEvent(client, requestId, 'task_dispatch', finalText, 'content_generation');
+
   return {
     result: finalText,
     module: actualModel,
