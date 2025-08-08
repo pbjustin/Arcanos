@@ -33,7 +33,9 @@ export interface MemoryContext {
 }
 
 // Memory storage paths
-const MEMORY_DIR = '/var/arc/memory';
+const MEMORY_DIR = process.env.ARC_MEMORY_PATH || '/tmp/arc/memory';
+// Ensure memory directory exists at runtime
+mkdirSync(MEMORY_DIR, { recursive: true });
 const MEMORY_INDEX_FILE = join(MEMORY_DIR, 'index.json');
 const MEMORY_LOG_FILE = join(MEMORY_DIR, 'memory.log');
 
@@ -48,10 +50,6 @@ function initializeMemory() {
   if (memoryLoaded) return;
 
   try {
-    if (!existsSync(MEMORY_DIR)) {
-      mkdirSync(MEMORY_DIR, { recursive: true });
-    }
-
     if (existsSync(MEMORY_INDEX_FILE)) {
       const data = readFileSync(MEMORY_INDEX_FILE, 'utf-8');
       memoryIndex = JSON.parse(data);
