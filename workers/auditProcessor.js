@@ -4,58 +4,36 @@
  * Performs system audits using OpenAI API
  */
 
-import { createOpenAIClient, executeWorker, createCompletion, isMainModule, registerWithManager } from './shared/workerUtils.js';
+import { createOpenAIClient, createCompletion } from './shared/workerUtils.js';
 
-async function processAudit(logger) {
+// Worker metadata and main function in required format
+export const id = 'auditProcessor';
+export const description = 'Performs comprehensive system audits including security, performance, and operational status analysis';
+
+export async function run(input, tools) {
   try {
-    logger('Starting system audit task');
-    
     const openai = createOpenAIClient();
     if (!openai) {
       throw new Error('Failed to initialize OpenAI client');
     }
 
-    // Use shared completion function for audit analysis with fine-tuned model
+    // Use shared completion function for audit analysis
     const completion = await createCompletion(
       openai,
       'You are ARCANOS audit AI worker. Analyze system performance, security, and compliance using advanced diagnostic capabilities.',
-      'Perform a comprehensive audit of the ARCANOS system including security, performance, and operational status.',
+      input.query || 'Perform a comprehensive audit of the ARCANOS system including security, performance, and operational status.',
       { max_tokens: 300, temperature: 0.1 }
     );
 
     const result = completion.choices[0].message.content;
-    logger(`Audit analysis: ${result}`);
     
-    logger('System audit completed successfully');
-    
-    return { success: true, result, timestamp: new Date().toISOString() };
+    return { 
+      success: true, 
+      result, 
+      timestamp: new Date().toISOString(),
+      worker: id
+    };
   } catch (error) {
-    logger(`Error during audit processing: ${error.message}`);
-    throw error;
+    throw new Error(`Audit processing failed: ${error.message}`);
   }
-}
-
-// Export for testing
-export { processAudit };
-
-// CommonJS-compatible export for WorkerManager integration
-const runWorkerTask = async function(input, context) {
-  const logger = context?.logger || ((msg) => console.log(`[auditProcessor] ${msg}`));
-  return await processAudit(logger);
-};
-
-// Export in the format requested by requirements
-export default runWorkerTask;
-
-// For CommonJS compatibility
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = runWorkerTask;
-}
-
-// Register with WorkerManager
-registerWithManager('auditProcessor', runWorkerTask);
-
-// Run if called directly
-if (isMainModule()) {
-  executeWorker('auditProcessor', processAudit);
 }
