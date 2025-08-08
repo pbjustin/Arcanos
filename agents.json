@@ -1,0 +1,22 @@
+[
+  {
+    "worker": "ARCANOS_MAINTENANCE_AGENT",
+    "role": "System diagnostics, API health checks, memory fault detection",
+    "frequency": "every 30 minutes",
+    "tasks": [
+      "System Diagnostics",
+      "API Route Ping"
+    ],
+    "fallback_on_failure": "PLUTO"
+  },
+  {
+    "worker": "ARCANOS Overseer",
+    "role": "Memory integrity check, logic validation, prompt audit",
+    "frequency": "every 20 minutes",
+    "tasks": [
+      "Memory Snapshot Sync",
+      "Prompt Logic Audit"
+    ],
+    "fallback_on_failure": "GPT Shell 1"
+  }
+]
