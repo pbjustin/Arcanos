@@ -47,6 +47,22 @@ export function getFeedbackLogPath(): string {
 }
 
 /**
+ * Get the GPT-5 trace output log file path
+ */
+export function getGPT5TracePath(): string {
+  const logDir = getLogPath();
+  return path.join(logDir, 'gpt5_trace_output');
+}
+
+/**
+ * Get the audit shadow log file path
+ */
+export function getAuditShadowPath(): string {
+  const logDir = getLogPath();
+  return path.join(logDir, 'audit_shadow_log');
+}
+
+/**
  * Ensure the log directory exists
  */
 export function ensureLogDirectory(): void {
