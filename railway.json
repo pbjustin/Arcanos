@@ -12,7 +12,8 @@
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "env": {
-      "ARC_MEMORY_PATH": "/tmp/arc/memory"
+      "ARC_MEMORY_PATH": "/tmp/arc/memory",
+      "ARC_SHADOW_MODE": "enabled"
     }
   },
   "root": "."
