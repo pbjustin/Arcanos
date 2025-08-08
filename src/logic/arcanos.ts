@@ -11,12 +11,13 @@ import {
   type AuditSafeConfig,
   type AuditLogEntry 
 } from '../services/auditSafe.js';
-import { 
-  getMemoryContext, 
-  storeDecision, 
+import {
+  getMemoryContext,
+  storeDecision,
   storePattern,
-  type MemoryContext 
+  type MemoryContext
 } from '../services/memoryAware.js';
+import { mirrorDecisionEvent } from '../services/gpt5Shadow.js';
 
 interface ArcanosResult {
   result: string;
@@ -286,6 +287,7 @@ export async function runARCANOS(
   // Get memory context for continuity
   const memoryContext = getMemoryContext(userInput, sessionId);
   console.log(`[🧠 MEMORY] Retrieved ${memoryContext.relevantEntries.length} relevant entries`);
+  await mirrorDecisionEvent(client, requestId, 'memory_sync', memoryContext.contextSummary, 'agent_role_check');
   
   // Get current system health for context
   const health = await runHealthCheck();
@@ -434,7 +436,10 @@ export async function runARCANOS(
   };
   
   logAITaskLineage(auditLogEntry);
-  
+
+  await mirrorDecisionEvent(client, requestId, 'audit', JSON.stringify(auditLogEntry), 'agent_role_check');
+  await mirrorDecisionEvent(client, requestId, 'task_dispatch', finalResult, 'content_generation');
+
   return parsedResult;
 }
 
