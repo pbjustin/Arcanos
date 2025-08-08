@@ -5,6 +5,7 @@ import config from './config/index.js';
 import { runHealthCheck } from './utils/diagnostics.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import './logic/aiCron.js';
+import { initializeWorkers } from './utils/workerBoot.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
@@ -77,6 +78,9 @@ app.use('/', workersRouter);
 
 // Initialize the server
 async function initializeServer() {
+  // Initialize workers first
+  const workerResults = await initializeWorkers();
+  
   // Global error handler
   app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
     console.error('Unhandled error:', err);
@@ -103,6 +107,11 @@ async function initializeServer() {
     console.log('\n=== 🧠 ARCANOS BOOT SUMMARY ===');
     console.log(`🤖 Active Model: ${getDefaultModel()}`);
     console.log(`📁 Workers Directory: ./workers`);
+    console.log(`🔧 Workers Initialized: ${workerResults.initialized.length}`);
+    console.log(`📅 Workers Scheduled: ${workerResults.scheduled.length}`);
+    if (workerResults.failed.length > 0) {
+      console.log(`❌ Workers Failed: ${workerResults.failed.length}`);
+    }
     console.log('🔧 Core Routes:');
     console.log('   🔌 /ask - AI query endpoint');
     console.log('   🔌 /arcanos - Main AI interface'); 
