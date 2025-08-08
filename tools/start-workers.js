@@ -18,7 +18,7 @@ if (!process.env.OPENAI_API_KEY) {
   console.warn('⚠️  OPENAI_API_KEY not set - workers may not function properly');
 }
 
-console.log(`🤖 AI Model: ${process.env.AI_MODEL || 'gpt-3.5-turbo'}`);
+console.log(`🤖 AI Model: ${process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2'}`);
 console.log(`💾 Memory Path: ${process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log'}`);
 console.log('');
 

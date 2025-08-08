@@ -155,7 +155,7 @@ class WorkerManager {
       const env = {
         ...process.env,
         OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-        AI_MODEL: process.env.AI_MODEL || 'gpt-3.5-turbo'
+        AI_MODEL: process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2'
       };
 
       // Log warning for missing API key but continue
