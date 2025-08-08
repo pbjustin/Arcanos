@@ -34,12 +34,13 @@ class WorkerManager {
   private workersDir: string;
   private maxRestarts = 3;
   private restartDelay = 5000; // 5 seconds
+  private replacedStubs: string[] = [];
 
   constructor() {
     // Use /app/workers/ directory as specified in requirements, with fallback
     this.workersDir = '/app/workers';
     this.ensureWorkersDirectory();
-    
+
     // Initialize workers on construction
     setTimeout(() => {
       this.initializeWorkers();
@@ -51,12 +52,11 @@ class WorkerManager {
       try {
         fs.mkdirSync(this.workersDir, { recursive: true });
         this.logActivity(`Created workers directory: ${this.workersDir}`);
-        this.createDefaultWorkerStubs();
       } catch (error) {
         // Fallback to local workers directory if permission denied
         this.workersDir = './workers';
         this.logActivity(`Permission denied for /app/workers, using fallback: ${this.workersDir}`);
-        
+
         if (!fs.existsSync(this.workersDir)) {
           try {
             fs.mkdirSync(this.workersDir, { recursive: true });
@@ -67,32 +67,74 @@ class WorkerManager {
         }
       }
     }
+
+    // After ensuring the directory exists, populate it with valid workers
+    this.replacedStubs = this.syncWorkerModules();
   }
 
   /**
-   * Create default worker stubs if /app/workers is empty
+   * Populate workers directory with valid modules, replacing stubs
    */
-  private createDefaultWorkerStubs(): void {
+  private syncWorkerModules(): string[] {
+    const replaced: string[] = [];
     try {
-      const files = fs.readdirSync(this.workersDir);
-      const workerFiles = files.filter(file => file.endsWith('.js'));
-      
-      if (workerFiles.length === 0) {
-        this.logActivity('No worker files found in /app/workers, checking for stubs...');
-        
-        // Check if our default stubs exist
-        const defaultWorkerPath = path.join(this.workersDir, 'defaultWorker.js');
-        const diagnosticWorkerPath = path.join(this.workersDir, 'diagnosticWorker.js');
-        
-        if (!fs.existsSync(defaultWorkerPath) && !fs.existsSync(diagnosticWorkerPath)) {
-          this.logActivity('Worker stubs already exist in /app/workers');
+      const sourceDir = path.join(__dirname, '../../workers');
+      if (!fs.existsSync(sourceDir)) {
+        this.logActivity(`Source workers directory not found: ${sourceDir}`);
+        return replaced;
+      }
+
+      // Remove known stub files
+      ['defaultWorker.js', 'diagnosticWorker.js'].forEach(stub => {
+        const stubPath = path.join(this.workersDir, stub);
+        if (fs.existsSync(stubPath)) {
+          fs.unlinkSync(stubPath);
+          replaced.push(stub);
+        }
+      });
+
+      // Ensure shared utilities are available
+      const sharedSrc = path.join(sourceDir, 'shared');
+      const sharedDest = path.join(this.workersDir, 'shared');
+      if (fs.existsSync(sharedSrc)) {
+        try {
+          fs.cpSync(sharedSrc, sharedDest, { recursive: true });
+        } catch (copyErr) {
+          this.logActivity(`Failed to copy shared utilities: ${copyErr instanceof Error ? copyErr.message : 'Unknown error'}`);
+        }
+      }
+
+      const files = fs.readdirSync(sourceDir).filter(f => f.endsWith('.js') && f !== 'shared');
+      for (const file of files) {
+        const srcPath = path.join(sourceDir, file);
+        const destPath = path.join(this.workersDir, file);
+        let needsCopy = true;
+        if (fs.existsSync(destPath)) {
+          const destContent = fs.readFileSync(destPath, 'utf8');
+          if (destContent.includes('chat.completions.create')) {
+            needsCopy = false;
+          } else {
+            replaced.push(file);
+          }
         } else {
-          this.logActivity('Found worker stubs in /app/workers');
+          replaced.push(file);
+        }
+        if (needsCopy) {
+          fs.copyFileSync(srcPath, destPath);
         }
       }
     } catch (error) {
-      this.logActivity(`Error checking worker stubs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.logActivity(`Error syncing worker modules: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+
+    return replaced;
+  }
+
+  /**
+   * Expose list of replaced stub files
+   */
+  getReplacedStubs(): string[] {
+    return this.replacedStubs;
   }
 
   /**
