@@ -109,13 +109,14 @@ try {
   console.log(`   🆔 Request ID: ${auditResult.taskLineage?.requestId}`);
   // Get log directory from environment
   const logDir = process.env.ARC_LOG_PATH || '/tmp/arc/log';
+  const memoryDir = process.env.ARC_MEMORY_PATH || '/tmp/arc/memory';
   
   // Check if log files were created
   const logFiles = [
     `${logDir}/audit.log`,
     `${logDir}/lineage.log`,
-    '/var/arc/memory/index.json',
-    '/var/arc/memory/memory.log'
+    `${memoryDir}/index.json`,
+    `${memoryDir}/memory.log`
   ];
   
   console.log('\n6. Checking Log File Creation...');
