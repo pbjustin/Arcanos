@@ -88,4 +88,7 @@ storage/canon/test-logger.json
 storage/memory-snapshots/
 storage/code-improvements/
 
+# Runtime heartbeat file
+memory/heartbeat.json
+
 /src/generated/prisma
