@@ -5,6 +5,7 @@
 
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
+import path from 'path';
 import WorkerManager from '../services/workerManager.js';
 
 const router = Router();
@@ -140,6 +141,78 @@ router.get('/workers/logs/:workerId', (req: Request, res: Response) => {
     res.status(500).json({
       error: 'Failed to get worker logs',
       message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * GET /workers/diagnosis - ARCANOS worker system diagnosis as requested
+ * Returns diagnostic JSON with workers_detected, stubs_created, memory_status
+ */
+router.get('/workers/diagnosis', (req: Request, res: Response) => {
+  try {
+    // Check /app/workers directory
+    const appWorkersPath = '/app/workers';
+    let workersDetected = 0;
+    let stubsCreated: string[] = [];
+    let memoryStatus = 'OK';
+    
+    // Scan for workers in /app/workers
+    if (fs.existsSync(appWorkersPath)) {
+      const files = fs.readdirSync(appWorkersPath);
+      const workerFiles = files.filter(file => file.endsWith('.js'));
+      workersDetected = workerFiles.length;
+      stubsCreated = workerFiles.map(file => file.replace('.js', ''));
+    } else {
+      memoryStatus = 'error - /app/workers directory not found';
+    }
+    
+    // Check memory system
+    const memoryLogPath = process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log';
+    if (!fs.existsSync(path.dirname(memoryLogPath))) {
+      memoryStatus = 'error - memory directory not accessible';
+    } else if (memoryStatus === 'OK') {
+      try {
+        // Test write to memory
+        const testLogPath = path.join(path.dirname(memoryLogPath), 'test.log');
+        fs.writeFileSync(testLogPath, 'test');
+        fs.unlinkSync(testLogPath);
+      } catch (error) {
+        memoryStatus = 'error - memory write test failed';
+      }
+    }
+    
+    // Get worker manager status for additional context
+    const status = workerManager.getWorkerStatus();
+    
+    const diagnosticResult = {
+      workers_detected: workersDetected,
+      stubs_created: stubsCreated,
+      memory_status: memoryStatus,
+      timestamp: new Date().toISOString(),
+      additional_info: {
+        app_workers_path: appWorkersPath,
+        app_workers_exists: fs.existsSync(appWorkersPath),
+        running_workers: status.activeWorkers.length,
+        total_registered: status.activeWorkers.length + Object.keys(status.errors).length,
+        memory_log_path: memoryLogPath,
+        fine_tuned_model: 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2'
+      }
+    };
+    
+    // Log the diagnosis for tracking
+    const logMessage = `ARCANOS DIAGNOSIS: ${workersDetected} workers detected, stubs: [${stubsCreated.join(', ')}], memory: ${memoryStatus}`;
+    console.log(`[${new Date().toISOString()}] [WorkerManager] ${logMessage}`);
+    
+    res.json(diagnosticResult);
+  } catch (error) {
+    console.error('Error in worker diagnosis:', error);
+    res.status(500).json({
+      workers_detected: 0,
+      stubs_created: [],
+      memory_status: 'error - diagnosis failed',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
     });
   }
 });
