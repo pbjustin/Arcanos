@@ -16,7 +16,11 @@ fi
 # Create feedback loop directories
 echo "Creating feedback loop directories..."
 mkdir -p /tmp 2>/dev/null || mkdir -p ./tmp
-mkdir -p /var/arc/log 2>/dev/null || mkdir -p ./memory
+
+# Create log directory using ARC_LOG_PATH environment variable
+LOG_DIR="${ARC_LOG_PATH:-/tmp/arc/log}"
+mkdir -p "$LOG_DIR" 2>/dev/null || mkdir -p ./memory
+echo "📁 Log directory: $LOG_DIR"
 
 # Add cron job for feedback loop (every 5 minutes)
 echo "Setting up cron job for feedback loop..."

@@ -7,6 +7,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import WorkerManager from '../services/workerManager.js';
+import { getEnvironmentLogPath } from '../utils/logPath.js';
 
 const router = Router();
 const workerManager = new WorkerManager();
@@ -36,7 +37,7 @@ router.get('/workers/status', (req: Request, res: Response) => {
       },
       system: {
         model: process.env.AI_MODEL || 'gpt-3.5-turbo',
-        memoryPath: process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log',
+        memoryPath: getEnvironmentLogPath(),
         environment: process.env.NODE_ENV || 'development'
       }
     });
@@ -115,7 +116,7 @@ router.get('/workers/logs/:workerId', (req: Request, res: Response) => {
   
   try {
     // Read from session log
-    const logPath = process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log';
+    const logPath = getEnvironmentLogPath();
     
     if (fs.existsSync(logPath)) {
       const logs = fs.readFileSync(logPath, 'utf8');
@@ -168,7 +169,7 @@ router.get('/workers/diagnosis', (req: Request, res: Response) => {
     }
     
     // Check memory system
-    const memoryLogPath = process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log';
+    const memoryLogPath = getEnvironmentLogPath();
     if (!fs.existsSync(path.dirname(memoryLogPath))) {
       memoryStatus = 'error - memory directory not accessible';
     } else if (memoryStatus === 'OK') {

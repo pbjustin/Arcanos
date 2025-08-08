@@ -8,7 +8,25 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 
-const MEMORY_LOG_PATH = process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log';
+/**
+ * Get the log path from environment variable or default
+ */
+function getLogPath() {
+  return process.env.ARC_LOG_PATH || '/tmp/arc/log';
+}
+
+/**
+ * Get environment-appropriate log path
+ */
+function getEnvironmentLogPath() {
+  if (process.env.NODE_ENV === 'production') {
+    return path.join(getLogPath(), 'session.log');
+  } else {
+    return './memory/session.log';
+  }
+}
+
+const MEMORY_LOG_PATH = getEnvironmentLogPath();
 
 /**
  * Initialize OpenAI client with error handling

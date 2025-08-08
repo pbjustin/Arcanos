@@ -7,6 +7,7 @@ import { fork, ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getEnvironmentLogPath, ensureLogDirectory } from '../utils/logPath.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -159,24 +160,21 @@ class WorkerManager {
 
     // Log to session.log with enhanced error handling
     try {
-      const logPath = process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log';
+      const logPath = getEnvironmentLogPath();
       const logDir = path.dirname(logPath);
       
       if (!fs.existsSync(logDir)) {
         try {
           fs.mkdirSync(logDir, { recursive: true });
         } catch (dirError) {
-          // If we can't create the production log dir, use fallback
-          if (logPath.includes('/var/arc')) {
-            const fallbackPath = './memory/session.log';
-            const fallbackDir = path.dirname(fallbackPath);
-            if (!fs.existsSync(fallbackDir)) {
-              fs.mkdirSync(fallbackDir, { recursive: true });
-            }
-            fs.appendFileSync(fallbackPath, logEntry + '\n');
-            return;
+          // If we can't create the log dir, use fallback
+          const fallbackPath = './memory/session.log';
+          const fallbackDir = path.dirname(fallbackPath);
+          if (!fs.existsSync(fallbackDir)) {
+            fs.mkdirSync(fallbackDir, { recursive: true });
           }
-          throw dirError;
+          fs.appendFileSync(fallbackPath, logEntry + '\n');
+          return;
         }
       }
       fs.appendFileSync(logPath, logEntry + '\n');
