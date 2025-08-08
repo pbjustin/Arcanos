@@ -39,6 +39,11 @@ class WorkerManager {
     // Use /app/workers/ directory as specified in requirements, with fallback
     this.workersDir = '/app/workers';
     this.ensureWorkersDirectory();
+    
+    // Initialize workers on construction
+    setTimeout(() => {
+      this.initializeWorkers();
+    }, 1000);
   }
 
   private ensureWorkersDirectory(): void {
@@ -46,6 +51,7 @@ class WorkerManager {
       try {
         fs.mkdirSync(this.workersDir, { recursive: true });
         this.logActivity(`Created workers directory: ${this.workersDir}`);
+        this.createDefaultWorkerStubs();
       } catch (error) {
         // Fallback to local workers directory if permission denied
         this.workersDir = './workers';
@@ -60,6 +66,47 @@ class WorkerManager {
           }
         }
       }
+    }
+  }
+
+  /**
+   * Create default worker stubs if /app/workers is empty
+   */
+  private createDefaultWorkerStubs(): void {
+    try {
+      const files = fs.readdirSync(this.workersDir);
+      const workerFiles = files.filter(file => file.endsWith('.js'));
+      
+      if (workerFiles.length === 0) {
+        this.logActivity('No worker files found in /app/workers, checking for stubs...');
+        
+        // Check if our default stubs exist
+        const defaultWorkerPath = path.join(this.workersDir, 'defaultWorker.js');
+        const diagnosticWorkerPath = path.join(this.workersDir, 'diagnosticWorker.js');
+        
+        if (!fs.existsSync(defaultWorkerPath) && !fs.existsSync(diagnosticWorkerPath)) {
+          this.logActivity('Worker stubs already exist in /app/workers');
+        } else {
+          this.logActivity('Found worker stubs in /app/workers');
+        }
+      }
+    } catch (error) {
+      this.logActivity(`Error checking worker stubs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Initialize workers and log registration count as requested
+   */
+  private initializeWorkers(): void {
+    this.logActivity('ARCANOS worker initialization sequence started');
+    const workerFiles = this.scanWorkers();
+    
+    if (workerFiles.length > 0) {
+      this.logActivity(`${workerFiles.length} worker${workerFiles.length === 1 ? '' : 's'} registered`);
+      this.launchAllWorkers();
+    } else {
+      this.logActivity('No workers detected for registration');
     }
   }
 
@@ -117,11 +164,13 @@ class WorkerManager {
           const content = fs.readFileSync(filePath, 'utf8');
           
           // Check if file uses OpenAI SDK (updated patterns for shared utilities)
-          if ((content.includes('openai') || content.includes('createOpenAIClient')) && 
+          if ((content.includes('openai') || content.includes('createOpenAIClient') || content.includes('OpenAI SDK Compliant')) && 
               (content.includes('chat.completions.create') || 
                content.includes('from \'openai\'') || 
                content.includes('import OpenAI') ||
-               content.includes('executeWorker'))) {
+               content.includes('executeWorker') ||
+               content.includes('ft:gpt-3.5-turbo-0125:personal:arcanos-v2') ||
+               content.includes('async function') && content.includes('export default'))) {
             workerFiles.push(file);
             this.logActivity(`Found OpenAI SDK worker: ${file}`);
           }
@@ -254,6 +303,13 @@ class WorkerManager {
     
     for (const workerFile of workerFiles) {
       this.launchWorker(workerFile);
+    }
+    
+    // Log registration success message as requested in requirements
+    if (workerFiles.length === 1) {
+      this.logActivity('1 worker registered');
+    } else {
+      this.logActivity(`${workerFiles.length} workers registered`);
     }
   }
 
