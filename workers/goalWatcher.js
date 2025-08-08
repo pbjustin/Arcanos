@@ -4,7 +4,7 @@
  * Monitors and tracks goals using OpenAI API
  */
 
-import { createOpenAIClient, executeWorker, createCompletion, isMainModule } from './shared/workerUtils.js';
+import { createOpenAIClient, executeWorker, createCompletion, isMainModule, registerWithManager } from './shared/workerUtils.js';
 
 async function watchGoals(logger) {
   try {
@@ -15,10 +15,10 @@ async function watchGoals(logger) {
       throw new Error('Failed to initialize OpenAI client');
     }
 
-    // Use shared completion function for goal analysis
+    // Use shared completion function for goal analysis with fine-tuned model
     const completion = await createCompletion(
       openai,
-      'You are a goal monitoring AI worker. Track and analyze goal progress and completion status.',
+      'You are ARCANOS goal monitoring AI worker. Track and analyze goal progress and completion status.',
       'Analyze current goals and provide progress assessment for the ARCANOS system.',
       { max_tokens: 200, temperature: 0.2 }
     );
@@ -37,6 +37,23 @@ async function watchGoals(logger) {
 
 // Export for testing
 export { watchGoals };
+
+// CommonJS-compatible export for WorkerManager integration
+const runWorkerTask = async function(input, context) {
+  const logger = context?.logger || ((msg) => console.log(`[goalWatcher] ${msg}`));
+  return await watchGoals(logger);
+};
+
+// Export in the format requested by requirements
+export default runWorkerTask;
+
+// For CommonJS compatibility
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = runWorkerTask;
+}
+
+// Register with WorkerManager
+registerWithManager('goalWatcher', runWorkerTask);
 
 // Run if called directly
 if (isMainModule()) {
