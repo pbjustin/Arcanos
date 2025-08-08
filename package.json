@@ -13,7 +13,8 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "test": "npm run probe && node tests/test-arcanos-api.js",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "assistants-sync": "node scripts/assistants-sync.js"
   },
   "keywords": [
     "ai",
