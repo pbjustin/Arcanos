@@ -13,7 +13,6 @@ RUN NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev --no-audit --no
 
 # Copy source code
 COPY src/ ./src/
-COPY sql/ ./sql/
 COPY tsconfig.json ./
 
 # Copy everything and let npm build handle optional directories conditionally
@@ -50,8 +49,6 @@ RUN NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev --no-audit --no
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/sql ./sql
-COPY --from=builder /app/public ./public
 COPY --from=builder /app/memory ./memory
 
 # Change ownership to non-root user
@@ -66,4 +63,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 8080) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
 # Start the application with optimized memory settings for 8GB Railway Hobby Plan
-CMD ["node", "--max-old-space-size=7168", "dist/index.js"]
+CMD ["node", "--max-old-space-size=7168", "dist/server.js"]
