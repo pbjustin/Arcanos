@@ -5,6 +5,7 @@ import cron from 'node-cron';
 import { runHealthCheck } from './utils/diagnostics.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import { ModuleLoader } from './utils/moduleLoader.js';
+import { getSessionLogPath, ensureLogDirectory } from './utils/logPath.js';
 import './logic/aiCron.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
@@ -12,10 +13,11 @@ import aiEndpointsRouter from './routes/ai-endpoints.js';
 import memoryRouter from './routes/memory.js';
 import workersRouter from './routes/workers.js';
 
-const KERNEL_MEMORY_PATH = '/var/arc/log/session.log';
-
 // Load environment variables
 dotenv.config();
+
+// Ensure log directory exists early in startup
+ensureLogDirectory();
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -153,7 +155,7 @@ async function initializeServer() {
     // Boot summary as requested
     console.log('\n=== 🧠 ARCANOS BOOT SUMMARY ===');
     console.log(`🤖 Active Model: ${getDefaultModel()}`);
-    console.log(`💾 Memory Path: ${KERNEL_MEMORY_PATH}`);
+    console.log(`💾 Memory Path: ${getSessionLogPath()}`);
     console.log(`📦 Mounted Modules: ${moduleLoader.getModuleCount()}`);
     
     const loadedModules = moduleLoader.getLoadedModules();

@@ -31,7 +31,7 @@
 - **Process monitoring** with exit code and signal handling
 
 ### 5. Memory & Logging ✅
-- **Session logging** to `/var/arc/log/session.log` (production) or `./memory/session.log` (development)
+- **Session logging** to `${ARC_LOG_PATH}/session.log` (production) or `./memory/session.log` (development)
 - **Activity piping** - all worker results logged to memory system
 - **Comprehensive logging** of worker lifecycle events
 

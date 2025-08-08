@@ -8,6 +8,7 @@
 
 import { writeFileSync, appendFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { getLogPath, getAuditLogPath, getLineageLogPath, ensureLogDirectory } from '../utils/logPath.js';
 
 export interface AuditSafeConfig {
   auditSafeMode: boolean;
@@ -32,17 +33,11 @@ export interface AuditLogEntry {
   auditFlags: string[];
 }
 
-// Audit log directory
-const AUDIT_LOG_DIR = '/var/arc/log';
-const AUDIT_LOG_FILE = join(AUDIT_LOG_DIR, 'audit.log');
-const LINEAGE_LOG_FILE = join(AUDIT_LOG_DIR, 'lineage.log');
+// Audit log directory and files - now using centralized log path management
+const AUDIT_LOG_FILE = getAuditLogPath();
+const LINEAGE_LOG_FILE = getLineageLogPath();
 
-// Ensure log directory exists
-function ensureLogDirectory() {
-  if (!existsSync(AUDIT_LOG_DIR)) {
-    mkdirSync(AUDIT_LOG_DIR, { recursive: true });
-  }
-}
+// Ensure log directory exists is now handled by ensureLogDirectory() function
 
 /**
  * Determine if audit-safe mode should be active
