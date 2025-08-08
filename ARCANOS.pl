@@ -8,11 +8,22 @@ use warnings;
 
 # Configuration
 my $FEEDBACK_FILE = '/tmp/last-gpt-request';
-my $LOG_FILE = '/var/arc/log/feedback.log';
+my $LOG_DIR = $ENV{'ARC_LOG_PATH'} || '/tmp/arc/log';
+my $LOG_FILE = "$LOG_DIR/feedback.log";
 my $ARCANOS_ENDPOINT = 'http://localhost:8080/ask';
 
-# Fallback log file if /var/arc/log is not accessible
+# Fallback log file if ARC_LOG_PATH is not accessible
 my $FALLBACK_LOG = './memory/feedback.log';
+
+# Ensure log directory exists
+sub ensure_log_dir {
+    my ($dir) = @_;
+    unless (-d $dir) {
+        system("mkdir -p '$dir'");
+        return $? == 0;
+    }
+    return 1;
+}
 
 sub log_message {
     my ($message) = @_;
@@ -23,7 +34,7 @@ sub log_message {
     print $log_entry;
     
     # Try to write to primary log, fallback to local if needed
-    if (open(my $fh, '>>', $LOG_FILE)) {
+    if (ensure_log_dir($LOG_DIR) && open(my $fh, '>>', $LOG_FILE)) {
         print $fh $log_entry;
         close($fh);
     } else {

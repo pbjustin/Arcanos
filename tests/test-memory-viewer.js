@@ -7,7 +7,20 @@ import http from 'http';
 import fs from 'fs';
 
 const PORT = process.env.PORT || 8080;
-const MEMORY_PATH = "/var/arc/log/session.log";
+
+/**
+ * Get environment-appropriate log path
+ */
+function getEnvironmentLogPath() {
+  const logDir = process.env.ARC_LOG_PATH || '/tmp/arc/log';
+  if (process.env.NODE_ENV === 'production') {
+    return `${logDir}/session.log`;
+  } else {
+    return './memory/session.log';
+  }
+}
+
+const MEMORY_PATH = getEnvironmentLogPath();
 
 async function testMemoryEndpoint() {
   console.log('🧪 Testing ARCANOS Memory Viewer');

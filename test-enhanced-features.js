@@ -107,11 +107,13 @@ try {
   console.log('\n5. Testing Task Lineage Logging...');
   console.log(`   📝 Task Lineage Logged: ${auditResult.taskLineage?.logged}`);
   console.log(`   🆔 Request ID: ${auditResult.taskLineage?.requestId}`);
+  // Get log directory from environment
+  const logDir = process.env.ARC_LOG_PATH || '/tmp/arc/log';
   
   // Check if log files were created
   const logFiles = [
-    '/var/arc/log/audit.log',
-    '/var/arc/log/lineage.log',
+    `${logDir}/audit.log`,
+    `${logDir}/lineage.log`,
     '/var/arc/memory/index.json',
     '/var/arc/memory/memory.log'
   ];

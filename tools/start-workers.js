@@ -18,8 +18,20 @@ if (!process.env.OPENAI_API_KEY) {
   console.warn('⚠️  OPENAI_API_KEY not set - workers may not function properly');
 }
 
+/**
+ * Get environment-appropriate log path
+ */
+function getEnvironmentLogPath() {
+  const logDir = process.env.ARC_LOG_PATH || '/tmp/arc/log';
+  if (process.env.NODE_ENV === 'production') {
+    return `${logDir}/session.log`;
+  } else {
+    return './memory/session.log';
+  }
+}
+
 console.log(`🤖 AI Model: ${process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2'}`);
-console.log(`💾 Memory Path: ${process.env.NODE_ENV === 'production' ? '/var/arc/log/session.log' : './memory/session.log'}`);
+console.log(`💾 Memory Path: ${getEnvironmentLogPath()}`);
 console.log('');
 
 // Initialize worker manager
