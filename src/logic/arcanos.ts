@@ -59,9 +59,9 @@ interface ArcanosResult {
 }
 
 /**
- * Detect if GPT-5 delegation is needed based on user input
+ * Detect if GPT-4 delegation is needed based on user input
  */
-function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; reason?: string } {
+function shouldDelegateToGPT4(userInput: string): { shouldDelegate: boolean; reason?: string } {
   const lowercaseInput = userInput.toLowerCase();
   
   // Deep logic indicators
@@ -112,7 +112,7 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
     }
   }
   
-  // Check input length - very long inputs may benefit from GPT-5
+  // Check input length - very long inputs may benefit from GPT-4
   if (userInput.length > 1000) {
     return { 
       shouldDelegate: true, 
@@ -126,7 +126,7 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
 /**
  * Delegate query to GPT-5 and process the response through ARCANOS
  */
-async function delegateToGPT5(client: OpenAI, userInput: string, reason: string): Promise<string> {
+async function delegateToGPT4(client: OpenAI, userInput: string, reason: string): Promise<string> {
   console.log(`[🔀 ARCANOS->GPT4] Delegating to GPT-4 Turbo: ${reason}`);
   
   try {
@@ -295,7 +295,7 @@ export async function runARCANOS(
   const health = await runHealthCheck();
   
   // Check if GPT-5 delegation is needed (memory-aware)
-  const delegationCheck = shouldDelegateToGPT5(userInput);
+  const delegationCheck = shouldDelegateToGPT4(userInput);
   let gpt5Delegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
   let processedInput = userInput;
   
@@ -304,7 +304,7 @@ export async function runARCANOS(
     
     try {
       // Delegate to GPT-5 and get processed prompt
-      processedInput = await delegateToGPT5(client, userInput, delegationCheck.reason!);
+      processedInput = await delegateToGPT4(client, userInput, delegationCheck.reason!);
       gpt5Delegation = {
         used: true,
         reason: delegationCheck.reason,
