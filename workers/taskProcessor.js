@@ -7,6 +7,7 @@
 
 import { logExecution } from '../dist/db.js';
 import { getOpenAIClient, generateMockResponse } from '../dist/services/openai.js';
+import { getTokenParameter } from '../dist/utils/tokenParameterHelper.js';
 
 export const id = 'task-processor';
 
@@ -37,8 +38,10 @@ export async function processTask(taskData) {
     let result;
     if (client) {
       // Use real OpenAI for task processing
+      const model = 'gpt-4';
+      const tokenParams = getTokenParameter(model, 500);
       const response = await client.chat.completions.create({
-        model: 'gpt-4',
+        model,
         messages: [
           {
             role: 'system',
@@ -49,7 +52,7 @@ export async function processTask(taskData) {
             content: `Process this task: ${JSON.stringify(taskData)}`
           }
         ],
-        max_tokens: 500
+        ...tokenParams
       });
       
       result = {
