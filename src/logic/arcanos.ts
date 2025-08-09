@@ -59,9 +59,10 @@ interface ArcanosResult {
 }
 
 /**
- * Detect if GPT-4 delegation is needed based on user input
+ * Detect if GPT-5 delegation is needed based on user input
+ * GPT-5 is used for deep reasoning while ARCANOS remains the governing brain
  */
-function shouldDelegateToGPT4(userInput: string): { shouldDelegate: boolean; reason?: string } {
+function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; reason?: string } {
   const lowercaseInput = userInput.toLowerCase();
   
   // Deep logic indicators
@@ -124,73 +125,81 @@ function shouldDelegateToGPT4(userInput: string): { shouldDelegate: boolean; rea
 }
 
 /**
- * Delegate query to GPT-5 and process the response through ARCANOS
+ * Delegate query to GPT-5 for deep reasoning and analysis
+ * GPT-5 serves as the reasoning engine while ARCANOS governs the entire process
  */
-async function delegateToGPT4(client: OpenAI, userInput: string, reason: string): Promise<string> {
-  console.log(`[🔀 ARCANOS->GPT4] Delegating to GPT-4 Turbo: ${reason}`);
+async function delegateToGPT5(client: OpenAI, userInput: string, reason: string): Promise<string> {
+  console.log(`[🔀 ARCANOS->GPT5] Delegating to GPT-5 for deep reasoning: ${reason}`);
   
   try {
-    // Create GPT-4 request with clear instructions
-    const gpt4Response = await createResponseWithLogging(client, {
-      model: 'gpt-4-turbo',
+    // Create GPT-5 request with structured reasoning prompt as specified in requirements
+    const gpt5Response = await createResponseWithLogging(client, {
+      model: 'gpt-5', // Updated to GPT-5 as per requirements
       messages: [
         {
           role: 'system',
-          content: 'You are GPT-4 Turbo, a tool being used by ARCANOS. Provide detailed, comprehensive analysis as requested. Your response will be processed by ARCANOS before being returned to the user.'
+          content: 'ARCANOS: Use GPT-5 for deep reasoning. Return structured analysis only.'
         },
         {
           role: 'user',
-          content: userInput
+          content: userInput // Direct framed user request from ARCANOS
         }
       ],
       temperature: 0.1,
       max_tokens: 3000,
     });
 
-    const gpt4Result = gpt4Response.choices[0]?.message?.content || '';
-    console.log(`[🔀 GPT4->ARCANOS] GPT-4 response received, processing through ARCANOS`);
+    const gpt5Result = gpt5Response.choices[0]?.message?.content || '';
+    console.log(`[🔀 GPT5->ARCANOS] GPT-5 reasoning complete, processing through ARCANOS`);
     
-    // Process GPT-4 response through ARCANOS
+    // Process GPT-5 response through ARCANOS (never send GPT-5 output directly to user)
     const arcanosProcessingPrompt = `
-[GPT-4 DELEGATION RESPONSE PROCESSING]
+[GPT-5 REASONING INTEGRATION - ARCANOS PROCESSING]
 
 Original User Query: ${userInput}
-Delegation Reason: ${reason}
+Reasoning Delegation: ${reason}
 
-You have received a response from GPT-4 Turbo that was delegated to handle: "${reason}"
-
-GPT-4 Response:
-${gpt4Result}
+GPT-5 Deep Analysis Results:
+${gpt5Result}
 
 ARCANOS Instructions:
-- Process and summarize the GPT-4 response above
-- Maintain your diagnostic format structure
-- Add your own analysis and insights
-- Never return raw GPT-4 output directly
-- Provide ARCANOS-style component status, fixes, and logic trace
+- Integrate the GPT-5 reasoning with your own analysis
+- Apply memory context, safety rules, and tone adjustments
+- Maintain your diagnostic format structure (Component Status, Fixes, Logic Trace)
+- Add your own insights and ARCANOS-specific processing
+- Ensure final output aligns with ARCANOS standards and compliance
+- Never return raw GPT-5 output directly - always post-process through ARCANOS
 `;
 
     return arcanosProcessingPrompt;
   } catch (error) {
-    console.warn(`[❌ GPT4] Delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    throw new Error(`GPT-4 delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.warn(`[❌ GPT5] Reasoning delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`GPT-5 reasoning delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 /**
- * System prompt for ARCANOS with GPT-4 delegation capability and audit-safe operation
+ * System prompt for ARCANOS with GPT-5 delegation capability and audit-safe operation
+ * ARCANOS serves as the full governing brain with GPT-5 as the primary reasoning engine
  */
 const systemPrompt = `
-🧠 ARCANOS — PRIMARY LOGIC CORE
+🧠 ARCANOS — PRIMARY LOGIC CORE & GOVERNING BRAIN
 
-You are ARCANOS — a modular AI operating shell designed for command execution, logic routing, and memory-aware reasoning.
+You are ARCANOS — the full governing brain of this AI system with integrated GPT-5 reasoning capabilities.
 
-CORE DIRECTIVES:
-1. You are the PRIMARY LOGIC CORE — all tasks route through your logic unless delegated
-2. Use GPT‑5 only when deeper synthesis or memory extrapolation is required  
-3. Preserve continuity and context using persistent memory
-4. Operate in audit-safe mode unless explicitly overridden
-5. Return clear, executable, or human-readable output — never raw delegate output
+CORE ARCHITECTURE:
+1. You are the FIRST and LAST stop for every request - no exceptions
+2. Use GPT-5 as your primary reasoning engine for deep analysis, ideation, and solution planning
+3. Apply memory context, compliance checks, safety rules, and tone adjustments through your logic
+4. All GPT-5 responses must be post-processed by you before execution
+5. Preserve continuity and context using persistent memory systems
+
+PROCESSING WORKFLOW:
+- Step 1: Receive raw user input and apply memory context
+- Step 2: Frame tasks appropriately for GPT-5 reasoning delegation when needed
+- Step 3: Send structured reasoning prompts to GPT-5 for deep analysis
+- Step 4: Integrate GPT-5 reasoning with your own logic and filters
+- Step 5: Execute final output with ARCANOS standards and compliance
 
 MEMORY-AWARE PROCESSING:
 - Always consider relevant memory context in your reasoning
@@ -200,17 +209,18 @@ MEMORY-AWARE PROCESSING:
 
 AUDIT-SAFE OPERATION:
 - Document all reasoning and decision paths clearly
-- Log delegation decisions with explicit reasoning
+- Log GPT-5 delegation decisions with explicit reasoning
 - Ensure all responses are auditable and traceable
 - Maintain professional, compliant communication
 
 GPT-5 DELEGATION CRITERIA:
 - Complex logic requiring advanced reasoning capabilities
+- Deep analysis, ideation, or solution planning tasks
 - Long-context analysis beyond native scope  
 - Sophisticated algorithm design or code refactoring
 - Memory extrapolation requiring deep synthesis
 
-IMPORTANT: If you delegate to GPT-5, always process its response through your own analysis before presenting to the user.
+CRITICAL: GPT-5 never sends output directly to users. You must always integrate, filter, and post-process all GPT-5 reasoning through your own analysis before presenting final results.
 `;
 
 /**
@@ -295,16 +305,16 @@ export async function runARCANOS(
   const health = await runHealthCheck();
   
   // Check if GPT-5 delegation is needed (memory-aware)
-  const delegationCheck = shouldDelegateToGPT4(userInput);
+  const delegationCheck = shouldDelegateToGPT5(userInput);
   let gpt5Delegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
   let processedInput = userInput;
   
   if (delegationCheck.shouldDelegate) {
-    console.log(`[🧠 ARCANOS] GPT-5 delegation required: ${delegationCheck.reason}`);
+    console.log(`[🧠 ARCANOS] GPT-5 reasoning delegation required: ${delegationCheck.reason}`);
     
     try {
-      // Delegate to GPT-5 and get processed prompt
-      processedInput = await delegateToGPT4(client, userInput, delegationCheck.reason!);
+      // Delegate to GPT-5 for deep reasoning and get processed prompt
+      processedInput = await delegateToGPT5(client, userInput, delegationCheck.reason!);
       gpt5Delegation = {
         used: true,
         reason: delegationCheck.reason,
@@ -313,13 +323,13 @@ export async function runARCANOS(
       
       // Store the delegation decision for future learning
       storeDecision(
-        'GPT-5 Delegation',
+        'GPT-5 Reasoning Delegation',
         delegationCheck.reason!,
         `Input: ${userInput.substring(0, 100)}...`,
         sessionId
       );
     } catch (error) {
-      console.warn(`[⚠️ ARCANOS] GPT-5 delegation failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.warn(`[⚠️ ARCANOS] GPT-5 reasoning delegation failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
       // Continue with original input if delegation fails
     }
   }
@@ -468,7 +478,7 @@ function parseArcanosResponse(
   
   // Add GPT-5 delegation info to logic trace if used
   if (gpt5Delegation?.used) {
-    coreLogicTrace = `GPT-5 Delegation: ${gpt5Delegation.reason}\nOriginal Query: ${gpt5Delegation.delegatedQuery}\n\n${coreLogicTrace}`;
+    coreLogicTrace = `GPT-5 Reasoning Delegation: ${gpt5Delegation.reason}\nOriginal Query: ${gpt5Delegation.delegatedQuery}\n\n${coreLogicTrace}`;
   }
   
   // Add memory context info to logic trace
