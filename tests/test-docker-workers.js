@@ -4,8 +4,8 @@
  * This addresses the issue: Error: Cannot find module '/app/railway/workers.js'
  */
 
-const { exec } = require('child_process');
-const path = require('path');
+import { exec } from 'child_process';
+import path from 'path';
 
 console.log('🧪 Testing Docker container workers.js resolution...');
 
