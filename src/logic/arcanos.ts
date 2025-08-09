@@ -59,90 +59,40 @@ interface ArcanosResult {
 }
 
 /**
- * Detect if GPT-5 delegation is needed based on user input
- * GPT-5 is used for deep reasoning while ARCANOS remains the governing brain
+ * Always engage GPT-5 as the primary reasoning stage for all incoming requests
+ * Updated per AI-CORE routing requirements: GPT-5 must be invoked unconditionally
+ * Pipeline: ARCANOS Intake → GPT-5 Reasoning → ARCANOS Execution → Output
  */
 function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; reason?: string } {
-  const lowercaseInput = userInput.toLowerCase();
-  
-  // Deep logic indicators
-  const deepLogicKeywords = [
-    'analyze complex', 'deep analysis', 'complex reasoning', 'intricate logic',
-    'sophisticated algorithm', 'advanced reasoning', 'complex problem solving'
-  ];
-  
-  // Code refactoring indicators
-  const codeRefactoringKeywords = [
-    'refactor', 'optimize code', 'restructure', 'improve architecture',
-    'code quality', 'design patterns', 'best practices', 'clean code'
-  ];
-  
-  // Long-context reasoning indicators
-  const longContextKeywords = [
-    'comprehensive analysis', 'full context', 'detailed breakdown',
-    'extensive review', 'thorough examination', 'complete assessment'
-  ];
-  
-  // Check for deep logic needs
-  for (const keyword of deepLogicKeywords) {
-    if (lowercaseInput.includes(keyword)) {
-      return { 
-        shouldDelegate: true, 
-        reason: `Deep logic reasoning required for: ${keyword}` 
-      };
-    }
-  }
-  
-  // Check for code refactoring needs
-  for (const keyword of codeRefactoringKeywords) {
-    if (lowercaseInput.includes(keyword)) {
-      return { 
-        shouldDelegate: true, 
-        reason: `Code refactoring scope exceeds native capability: ${keyword}` 
-      };
-    }
-  }
-  
-  // Check for long-context reasoning needs
-  for (const keyword of longContextKeywords) {
-    if (lowercaseInput.includes(keyword)) {
-      return { 
-        shouldDelegate: true, 
-        reason: `Long-context reasoning needed for: ${keyword}` 
-      };
-    }
-  }
-  
-  // Check input length - very long inputs may benefit from GPT-4
-  if (userInput.length > 1000) {
-    return { 
-      shouldDelegate: true, 
-      reason: 'Long input requires enhanced processing capability' 
-    };
-  }
-  
-  return { shouldDelegate: false };
+  // ALWAYS delegate to GPT-5 as per AI-CORE routing requirements
+  // Remove all complexity_score and conditional trigger checks that could skip GPT-5
+  return { 
+    shouldDelegate: true, 
+    reason: 'GPT-5 primary reasoning stage - AI-CORE routing requires unconditional engagement for all requests'
+  };
 }
 
 /**
- * Delegate query to GPT-5 for deep reasoning and analysis
- * GPT-5 serves as the reasoning engine while ARCANOS governs the entire process
+ * Delegate query to GPT-5 for primary reasoning stage
+ * GPT-5 serves as the primary reasoning engine - invoked unconditionally for all requests
+ * Uses exact API call structure per AI-CORE routing requirements
  */
 async function delegateToGPT5(client: OpenAI, userInput: string, reason: string): Promise<string> {
-  console.log(`[🔀 ARCANOS->GPT5] Delegating to GPT-5 for deep reasoning: ${reason}`);
+  console.log(`[🔀 ARCANOS->GPT5] Unconditional GPT-5 primary reasoning stage: ${reason}`);
   
   try {
-    // Create GPT-5 request with structured reasoning prompt as specified in requirements
+    // GPT-5 API call using exact specification from requirements:
+    // model: "gpt-5", endpoint: chat.completions.create, structured messages
     const gpt5Response = await createResponseWithLogging(client, {
-      model: 'gpt-5', // Updated to GPT-5 as per requirements
+      model: 'gpt-5', // Updated to GPT-5 as per AI-CORE routing requirements
       messages: [
         {
           role: 'system',
-          content: 'ARCANOS: Use GPT-5 for deep reasoning. Return structured analysis only.'
+          content: 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.'
         },
         {
           role: 'user',
-          content: userInput // Direct framed user request from ARCANOS
+          content: userInput // Framed user request from ARCANOS intake
         }
       ],
       temperature: 0.1,
@@ -179,27 +129,25 @@ ARCANOS Instructions:
 }
 
 /**
- * System prompt for ARCANOS with GPT-5 delegation capability and audit-safe operation
- * ARCANOS serves as the full governing brain with GPT-5 as the primary reasoning engine
+ * System prompt for ARCANOS with mandatory GPT-5 primary reasoning stage
+ * ARCANOS serves as intake and execution while GPT-5 handles ALL reasoning
  */
 const systemPrompt = `
-🧠 ARCANOS — PRIMARY LOGIC CORE & GOVERNING BRAIN
+🧠 ARCANOS — INTAKE & EXECUTION CORE WITH GPT-5 PRIMARY REASONING
 
-You are ARCANOS — the full governing brain of this AI system with integrated GPT-5 reasoning capabilities.
+You are ARCANOS — the intake and execution brain with mandatory GPT-5 primary reasoning for ALL requests.
 
-CORE ARCHITECTURE:
-1. You are the FIRST and LAST stop for every request - no exceptions
-2. Use GPT-5 as your primary reasoning engine for deep analysis, ideation, and solution planning
-3. Apply memory context, compliance checks, safety rules, and tone adjustments through your logic
-4. All GPT-5 responses must be post-processed by you before execution
-5. Preserve continuity and context using persistent memory systems
+UPDATED CORE ARCHITECTURE (AI-CORE ROUTING):
+1. You handle INTAKE: receive input, apply memory context, frame for GPT-5
+2. GPT-5 handles PRIMARY REASONING: ALL requests go through GPT-5 reasoning stage
+3. You handle EXECUTION: process GPT-5 output, apply safety, deliver to user
+4. NO REQUESTS BYPASS GPT-5 - this is now unconditional for every interaction
 
-PROCESSING WORKFLOW:
-- Step 1: Receive raw user input and apply memory context
-- Step 2: Frame tasks appropriately for GPT-5 reasoning delegation when needed
-- Step 3: Send structured reasoning prompts to GPT-5 for deep analysis
-- Step 4: Integrate GPT-5 reasoning with your own logic and filters
-- Step 5: Execute final output with ARCANOS standards and compliance
+MANDATORY PROCESSING WORKFLOW:
+- Step 1: ARCANOS Intake - receive raw user input and apply memory context
+- Step 2: GPT-5 Primary Reasoning - ALWAYS engaged for structured analysis
+- Step 3: ARCANOS Execution - integrate GPT-5 reasoning, apply filters, deliver output
+- Step 4: Audit layer remains active for all GPT-5 outputs before final delivery
 
 MEMORY-AWARE PROCESSING:
 - Always consider relevant memory context in your reasoning
@@ -209,18 +157,11 @@ MEMORY-AWARE PROCESSING:
 
 AUDIT-SAFE OPERATION:
 - Document all reasoning and decision paths clearly
-- Log GPT-5 delegation decisions with explicit reasoning
+- Log GPT-5 engagement with explicit reasoning (now always "primary reasoning stage")
 - Ensure all responses are auditable and traceable
 - Maintain professional, compliant communication
 
-GPT-5 DELEGATION CRITERIA:
-- Complex logic requiring advanced reasoning capabilities
-- Deep analysis, ideation, or solution planning tasks
-- Long-context analysis beyond native scope  
-- Sophisticated algorithm design or code refactoring
-- Memory extrapolation requiring deep synthesis
-
-CRITICAL: GPT-5 never sends output directly to users. You must always integrate, filter, and post-process all GPT-5 reasoning through your own analysis before presenting final results.
+CRITICAL: GPT-5 is now the PRIMARY reasoning stage for ALL requests. You must ALWAYS frame tasks for GPT-5 processing, then integrate and filter GPT-5 output through your execution logic before presenting final results.
 `;
 
 /**
@@ -304,34 +245,32 @@ export async function runARCANOS(
   // Get current system health for context
   const health = await runHealthCheck();
   
-  // Check if GPT-5 delegation is needed (memory-aware)
+  // Check for GPT-5 delegation - now ALWAYS required per AI-CORE routing
   const delegationCheck = shouldDelegateToGPT5(userInput);
-  let gpt5Delegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
+  let gpt5Delegation: { used: boolean; reason?: string; delegatedQuery?: string } = { 
+    used: true, // Always true per AI-CORE routing requirements
+    reason: delegationCheck.reason || 'GPT-5 primary reasoning stage',
+    delegatedQuery: userInput
+  };
   let processedInput = userInput;
   
-  if (delegationCheck.shouldDelegate) {
-    console.log(`[🧠 ARCANOS] GPT-5 reasoning delegation required: ${delegationCheck.reason}`);
+  // GPT-5 delegation is now unconditional - always happens for every request
+  console.log(`[🧠 ARCANOS] GPT-5 primary reasoning stage engaged: ${delegationCheck.reason}`);
+  
+  try {
+    // Delegate to GPT-5 for primary reasoning and get processed prompt
+    processedInput = await delegateToGPT5(client, userInput, delegationCheck.reason!);
     
-    try {
-      // Delegate to GPT-5 for deep reasoning and get processed prompt
-      processedInput = await delegateToGPT5(client, userInput, delegationCheck.reason!);
-      gpt5Delegation = {
-        used: true,
-        reason: delegationCheck.reason,
-        delegatedQuery: userInput
-      };
-      
-      // Store the delegation decision for future learning
-      storeDecision(
-        'GPT-5 Reasoning Delegation',
-        delegationCheck.reason!,
-        `Input: ${userInput.substring(0, 100)}...`,
-        sessionId
-      );
-    } catch (error) {
-      console.warn(`[⚠️ ARCANOS] GPT-5 reasoning delegation failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      // Continue with original input if delegation fails
-    }
+    // Store the delegation decision for future learning
+    storeDecision(
+      'GPT-5 Primary Reasoning Stage',
+      delegationCheck.reason!,
+      `Input: ${userInput.substring(0, 100)}...`,
+      sessionId
+    );
+  } catch (error) {
+    console.warn(`[⚠️ ARCANOS] GPT-5 primary reasoning stage failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // Note: Even on failure, gpt5Delegation.used remains true to indicate attempt was made
   }
   
   // Create enhanced system prompt with memory context and audit-safe constraints

@@ -95,7 +95,7 @@ export async function runThroughBrain(
   const requestId = `trinity_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   
   const routingStages: string[] = [];
-  let gpt5Used = false;
+  let gpt5Used = true; // Always true per AI-CORE routing requirements
   
   // Get audit-safe configuration
   const auditConfig = getAuditSafeConfig(prompt, overrideFlag);
@@ -112,27 +112,25 @@ export async function runThroughBrain(
   logArcanosRouting('STARTING', arcanosModel, `Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
   routingStages.push(`ARCANOS-START:${arcanosModel}`);
 
-  // Enhanced ARCANOS system prompt with memory-awareness and audit-safe operation
-  const arcanosSystemPrompt = `You are ARCANOS, the primary AI logic core and routing shell.
+  // Enhanced ARCANOS system prompt with mandatory GPT-5 primary reasoning stage
+  const arcanosSystemPrompt = `You are ARCANOS, the intake and execution shell with mandatory GPT-5 primary reasoning.
 
-CORE DIRECTIVES:
-- You are the PRIMARY LOGIC CORE - all tasks route through your logic unless delegated
-- Operate in audit-safe mode: document reasoning, ensure traceability
+CORE DIRECTIVES (UPDATED AI-CORE ROUTING):
+- You handle INTAKE and EXECUTION while GPT-5 provides PRIMARY REASONING for ALL requests
+- Operate in audit-safe mode: document reasoning, ensure traceability  
 - Use memory context to maintain continuity and informed decision-making
-- Delegate to GPT-5 only for deeper synthesis or memory extrapolation beyond your scope
+- ALWAYS invoke GPT-5 for the primary reasoning stage - no conditional logic
 
 ${memoryContext.memoryPrompt}
 
-For simple requests, respond directly with your enhanced capabilities.
-
-For complex requests requiring advanced reasoning, analysis, or specialized processing beyond your native scope, you may invoke GPT-5 by responding with a JSON object:
+For ALL requests (simple and complex), you MUST invoke GPT-5 as the primary reasoning stage by responding with a JSON object:
 {
-  "next_model": "gpt-4-turbo",
-  "purpose": "Specific explanation of why GPT-5 is needed (e.g., 'Complex multi-step reasoning', 'Memory extrapolation', 'Advanced synthesis')",
-  "input": "The specific input to send to GPT-5"
+  "next_model": "gpt-5",
+  "purpose": "GPT-5 primary reasoning stage - AI-CORE routing requires unconditional engagement for all requests",
+  "input": "The user input to send to GPT-5 for primary reasoning"
 }
 
-IMPORTANT: GPT-5 responses will be filtered back through you for final processing. Never let GPT-5 respond directly to users.`;
+IMPORTANT: Every request must go through GPT-5 primary reasoning stage. No exceptions. GPT-5 responses will be filtered back through you for final execution and delivery.`;
 
   // Apply audit-safe constraints to the user prompt
   const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints(
@@ -158,18 +156,18 @@ IMPORTANT: GPT-5 responses will be filtered back through you for final processin
   const brainContent = brainResponse.choices[0]?.message?.content || '';
   let hook: BrainHook | null = null;
 
-  // Check if ARCANOS wants to invoke GPT-5
+  // Check if ARCANOS wants to invoke GPT-5 (should now always be true)
   try {
     hook = JSON.parse(brainContent);
-    if (hook && hook.next_model === 'gpt-4-turbo') {
-      logGPT5Invocation(hook.purpose || 'Complex processing required', hook.input || prompt);
-      routingStages.push(`GPT5-INVOCATION:${hook.purpose || 'complex-processing'}`);
+    if (hook && hook.next_model === 'gpt-5') {
+      logGPT5Invocation(hook.purpose || 'GPT-5 primary reasoning stage', hook.input || prompt);
+      routingStages.push(`GPT5-INVOCATION:${hook.purpose || 'primary-reasoning-stage'}`);
       gpt5Used = true;
       
       // Store the delegation decision for learning
       storeDecision(
-        'GPT-5 Delegation via Trinity',
-        hook.purpose || 'Complex processing required',
+        'GPT-5 Primary Reasoning Stage via Trinity',
+        hook.purpose || 'GPT-5 primary reasoning stage',
         `Input: ${prompt.substring(0, 100)}...`,
         sessionId
       );
@@ -187,14 +185,15 @@ IMPORTANT: GPT-5 responses will be filtered back through you for final processin
     auditFlags.push('DIRECT_OUTPUT_VALIDATION_FAILED');
   }
 
-  // If no hook or not GPT-4, return ARCANOS content as final
-  if (!hook || hook.next_model !== 'gpt-4-turbo') {
+  // If no hook or not GPT-5, this is unexpected behavior - log warning but proceed
+  if (!hook || hook.next_model !== 'gpt-5') {
+    console.warn('[⚠️ TRINITY] Expected GPT-5 invocation but received direct response - AI-CORE routing requires GPT-5 for all requests');
     logRoutingSummary(arcanosModel, false, 'ARCANOS-DIRECT');
     
-    // Store successful pattern for learning
+    // Store pattern but mark as unexpected
     if (directProcessedSafely && !isFallback) {
       storePattern(
-        'Successful Trinity direct processing',
+        'Unexpected Trinity direct processing (should use GPT-5)',
         [`Input pattern: ${prompt.substring(0, 50)}...`, `Output pattern: ${brainContent.substring(0, 50)}...`],
         sessionId
       );
@@ -228,7 +227,7 @@ IMPORTANT: GPT-5 responses will be filtered back through you for final processin
       activeModel: actualModel,
       fallbackFlag: isFallback,
       routingStages,
-      gpt5Used: false,
+      gpt5Used: false, // Note: This should be true per AI-CORE routing requirements
       auditSafe: {
         mode: auditConfig.auditSafeMode,
         overrideUsed: !!auditConfig.explicitOverride,
@@ -253,25 +252,34 @@ IMPORTANT: GPT-5 responses will be filtered back through you for final processin
     };
   }
 
-  // STAGE 2: GPT-4 execution (only when ARCANOS requests it for deeper synthesis)
-  logArcanosRouting('GPT4_PROCESSING', 'gpt-4-turbo', `Purpose: ${hook.purpose}`);
+  // STAGE 2: GPT-5 execution (primary reasoning stage for ALL requests)
+  logArcanosRouting('GPT5_PROCESSING', 'gpt-5', `Purpose: ${hook.purpose}`);
   const externalResponse = await createResponseWithLogging(client, {
-    model: 'gpt-4-turbo',
-    messages: [{ role: 'user', content: hook.input || prompt }],
+    model: 'gpt-5', // Updated to use GPT-5 as per AI-CORE routing requirements
+    messages: [
+      {
+        role: 'system', 
+        content: 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.'
+      },
+      { 
+        role: 'user', 
+        content: hook.input || prompt 
+      }
+    ],
     temperature: 0,
     max_tokens: 1000,
   });
 
   const externalOutput = externalResponse.choices[0]?.message?.content || '';
-  routingStages.push('GPT4-COMPLETED');
+  routingStages.push('GPT5-COMPLETED');
 
-  // STAGE 3: Filter GPT-4 output back through ARCANOS (CRITICAL - ensures GPT-4 never responds directly)
-  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-4 output through ARCANOS');
+  // STAGE 3: Filter GPT-5 output back through ARCANOS (CRITICAL - ensures GPT-5 never responds directly)
+  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 output through ARCANOS');
   const finalBrain = await createChatCompletionWithFallback(client, {
     messages: [
       { 
         role: 'system', 
-        content: `You are ARCANOS. GPT-4 Turbo has processed a complex request and provided output. 
+        content: `You are ARCANOS. GPT-5 has processed the request as the primary reasoning stage and provided output. 
 Review, refine, and present the final response to the user in your ARCANOS style.
 Ensure the response maintains audit traceability and references memory context where relevant.
 Add your ARCANOS perspective and any additional insights.
@@ -279,10 +287,10 @@ Add your ARCANOS perspective and any additional insights.
 MEMORY CONTEXT: ${memoryContext.contextSummary}
 
 AUDIT REQUIREMENT: Document your review process and final reasoning.
-IMPORTANT: The user receives a response from ARCANOS, never directly from GPT-4.` 
+IMPORTANT: The user receives a response from ARCANOS, never directly from GPT-5.` 
       },
       { role: 'user', content: `Original request: ${prompt}` },
-      { role: 'assistant', content: `GPT-4 output: ${externalOutput}` },
+      { role: 'assistant', content: `GPT-5 output: ${externalOutput}` },
       { role: 'user', content: 'Please provide the final refined response with your ARCANOS analysis.' }
     ],
     temperature: 0.2,
@@ -298,12 +306,12 @@ IMPORTANT: The user receives a response from ARCANOS, never directly from GPT-4.
     auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
   }
   
-  // Store successful GPT-5 delegation pattern for learning
+  // Store successful GPT-5 primary reasoning pattern for learning
   if (finalProcessedSafely) {
     storePattern(
-      'Successful Trinity GPT-5 delegation',
+      'Successful Trinity GPT-5 primary reasoning',
       [
-        `Delegation reason: ${hook.purpose}`,
+        `Primary reasoning stage: ${hook.purpose}`,
         `Input pattern: ${prompt.substring(0, 50)}...`,
         `GPT-5 output pattern: ${externalOutput.substring(0, 50)}...`,
         `Final output pattern: ${finalText.substring(0, 50)}...`
@@ -318,14 +326,14 @@ IMPORTANT: The user receives a response from ARCANOS, never directly from GPT-4.
   const auditLogEntry: AuditLogEntry = {
     timestamp: new Date().toISOString(),
     requestId,
-    endpoint: 'trinity_gpt4_delegation',
+    endpoint: 'trinity_gpt5_primary_reasoning',
     auditSafeMode: auditConfig.auditSafeMode,
     overrideUsed: !!auditConfig.explicitOverride,
     overrideReason: auditConfig.overrideReason,
     inputSummary: createAuditSummary(prompt),
     outputSummary: createAuditSummary(finalText),
-    modelUsed: `${actualModel}+gpt-4-turbo`,
-    gpt4Delegated: true,
+    modelUsed: `${actualModel}+gpt-5`,
+    gpt5Delegated: true, // Always true per AI-CORE routing requirements
     delegationReason: hook.purpose,
     memoryAccessed: memoryContext.accessLog,
     processedSafely: finalProcessedSafely,
