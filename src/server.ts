@@ -6,6 +6,7 @@ import { runHealthCheck } from './utils/diagnostics.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import './logic/aiCron.js';
 import { initializeWorkers } from './utils/workerBoot.js';
+import { getAvailablePort } from './utils/portUtils.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
@@ -78,8 +79,22 @@ app.use('/', workersRouter);
 
 // Initialize the server
 async function initializeServer() {
-  // Initialize workers first
-  const workerResults = await initializeWorkers();
+  // Check port availability and get an available port
+  console.log(`[🔌 ARCANOS PORT] Checking port availability...`);
+  
+  try {
+    const portResult = await getAvailablePort(config.server.port, config.server.host);
+    
+    if (!portResult.isPreferred) {
+      console.log(`[⚠️  ARCANOS PORT] ${portResult.message}`);
+      console.log(`[🔀 ARCANOS PORT] Consider stopping other services or setting a different PORT in .env`);
+    }
+    
+    // Update the actual port to use
+    const actualPort = portResult.port;
+    
+    // Initialize workers first
+    const workerResults = await initializeWorkers();
   
   // Global error handler
   app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
@@ -96,8 +111,11 @@ async function initializeServer() {
   });
 
   // Start server with enhanced logging
-  const server = app.listen(config.server.port, config.server.host, () => {
-    console.log(`[🚀 ARCANOS CORE] Server running on port ${config.server.port}`);
+  const server = app.listen(actualPort, config.server.host, () => {
+    console.log(`[🚀 ARCANOS CORE] Server running on port ${actualPort}`);
+    if (actualPort !== config.server.port) {
+      console.log(`[🔀 ARCANOS PORT] Originally configured for port ${config.server.port}, using ${actualPort} instead`);
+    }
     console.log(`[🌍 ARCANOS ENV] Environment: ${config.server.environment}`);
     console.log(`[⚙️  ARCANOS PID] Process ID: ${process.pid}`);
     console.log(`[🧠 ARCANOS AI] Model: ${getDefaultModel()}`);
@@ -131,6 +149,11 @@ async function initializeServer() {
   });
 
   return server;
+  
+  } catch (error) {
+    console.error('[❌ ARCANOS PORT] Failed to find available port:', error);
+    process.exit(1);
+  }
 }
 
 const server = await initializeServer();
