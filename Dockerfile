@@ -52,6 +52,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/memory ./memory
 COPY --from=builder /app/railway ./railway
 COPY --from=builder /app/workers ./workers
+COPY --from=builder /app/package.json ./package.json
 
 # Change ownership to non-root user
 RUN chown -R arcanos:nodejs /app
@@ -64,5 +65,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 8080) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
-# Start the application with optimized memory settings for 8GB Railway Hobby Plan
-CMD ["node", "--max-old-space-size=7168", "dist/server.js"]
+# Start the application using npm start (which runs railway/workers.js)
+# with optimized memory settings for 8GB Railway Hobby Plan
+CMD ["sh", "-c", "NODE_OPTIONS='--max-old-space-size=7168' npm run start"]
