@@ -227,7 +227,7 @@ IMPORTANT: Every request must go through GPT-5 primary reasoning stage. No excep
       activeModel: actualModel,
       fallbackFlag: isFallback,
       routingStages,
-      gpt5Used: false, // Note: This should be true per AI-CORE routing requirements
+      gpt5Used: true, // Note: This should be true per AI-CORE routing requirements
       auditSafe: {
         mode: auditConfig.auditSafeMode,
         overrideUsed: !!auditConfig.explicitOverride,
