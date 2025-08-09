@@ -50,12 +50,25 @@ router.get('/workers/status', async (req: Request, res: Response) => {
       }
     }
     
+    // Include ARCANOS worker configuration status
+    const arcanosWorkers = {
+      runWorkers: process.env.RUN_WORKERS === 'true' || process.env.RUN_WORKERS === '1',
+      count: parseInt(process.env.WORKER_COUNT || '4', 10),
+      model: process.env.WORKER_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH'
+    };
+    
     res.json({
       timestamp: new Date().toISOString(),
       workersDirectory: workersDir,
       totalWorkers: workers.length,
       availableWorkers: workers.filter(w => w.available).length,
       workers,
+      arcanosWorkers: {
+        enabled: arcanosWorkers.runWorkers,
+        count: arcanosWorkers.count,
+        model: arcanosWorkers.model,
+        status: arcanosWorkers.runWorkers ? 'Active' : 'Disabled'
+      },
       system: {
         model: process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2',
         environment: process.env.NODE_ENV || 'development'
