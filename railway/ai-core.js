@@ -7,6 +7,7 @@
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { createRequire } from 'module';
+import path from 'path';
 
 const require = createRequire(import.meta.url);
 
@@ -24,7 +25,7 @@ let isShuttingDown = false;
  * Check if the compiled server exists
  */
 function checkServerExists() {
-  const serverPath = './dist/server.js';
+  const serverPath = path.resolve(process.cwd(), 'dist', 'server.js');
   if (!existsSync(serverPath)) {
     throw new Error(`Server file not found at ${serverPath}. Please run 'npm run build' first.`);
   }

@@ -6,10 +6,18 @@
  * - Maintenance sweep every 30 minutes
  */
 
-import cron from 'node-cron';
 import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
+
+let cron;
+try {
+  const nodeModulesPath = path.resolve(process.cwd(), 'node_modules', 'node-cron');
+  cron = await import('node-cron');
+} catch (error) {
+  console.warn('[📅 SCHEDULER] node-cron not available, using fallback intervals');
+  cron = null;
+}
 
 const require = createRequire(import.meta.url);
 
@@ -150,22 +158,44 @@ async function performMaintenanceSweep() {
 }
 
 // Schedule memory check every 20 minutes
-cron.schedule('*/20 * * * *', async () => {
-  try {
-    await performMemoryCheck();
-  } catch (error) {
-    console.error(`[📅 SCHEDULER] Scheduled memory check failed: ${error.message}`);
-  }
-});
+if (cron && cron.schedule) {
+  cron.schedule('*/20 * * * *', async () => {
+    try {
+      await performMemoryCheck();
+    } catch (error) {
+      console.error(`[📅 SCHEDULER] Scheduled memory check failed: ${error.message}`);
+    }
+  });
+} else {
+  // Fallback to setInterval if cron is not available
+  setInterval(async () => {
+    try {
+      await performMemoryCheck();
+    } catch (error) {
+      console.error(`[📅 SCHEDULER] Scheduled memory check failed: ${error.message}`);
+    }
+  }, 20 * 60 * 1000); // 20 minutes
+}
 
 // Schedule maintenance sweep every 30 minutes
-cron.schedule('*/30 * * * *', async () => {
-  try {
-    await performMaintenanceSweep();
-  } catch (error) {
-    console.error(`[📅 SCHEDULER] Scheduled maintenance sweep failed: ${error.message}`);
-  }
-});
+if (cron && cron.schedule) {
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      await performMaintenanceSweep();
+    } catch (error) {
+      console.error(`[📅 SCHEDULER] Scheduled maintenance sweep failed: ${error.message}`);
+    }
+  });
+} else {
+  // Fallback to setInterval if cron is not available
+  setInterval(async () => {
+    try {
+      await performMaintenanceSweep();
+    } catch (error) {
+      console.error(`[📅 SCHEDULER] Scheduled maintenance sweep failed: ${error.message}`);
+    }
+  }, 30 * 60 * 1000); // 30 minutes
+}
 
 // Run initial memory check and maintenance sweep on startup
 console.log('[📅 SCHEDULER] Running initial checks...');

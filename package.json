@@ -6,7 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "probe": "node probe.js",
-    "start": "concurrently \"node railway/worker-logger.js\" \"node railway/heartbeat.js\" \"node railway/scheduler.js\" \"node railway/ai-core.js\"",
+    "start": "node railway/workers.js",
     "dev": "tsc && node dist/server.js",
     "dev:watch": "tsc --watch",
     "build": "tsc",

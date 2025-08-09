@@ -5,7 +5,23 @@
  */
 
 import { createRequire } from 'module';
+import path from 'path';
+
 const require = createRequire(import.meta.url);
+
+// Try to get fetch, fallback if not available
+let fetch;
+try {
+  // Try node's built-in fetch first (Node 18+)
+  fetch = globalThis.fetch;
+  if (!fetch) {
+    // Fallback to require if available
+    fetch = require('node-fetch');
+  }
+} catch (error) {
+  console.warn('[🔄 HEARTBEAT] Fetch not available, HTTP heartbeats disabled');
+  fetch = null;
+}
 
 const HEARTBEAT_INTERVAL = 60 * 1000; // 60 seconds
 const HEALTH_CHECK_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
@@ -19,7 +35,7 @@ console.log(`[🔄 HEARTBEAT] Health check URL: ${HEALTH_CHECK_URL || 'Not confi
  * Send HTTP request to keep container active
  */
 async function sendHeartbeatRequest() {
-  if (!HEALTH_CHECK_URL) {
+  if (!HEALTH_CHECK_URL || !fetch) {
     return null;
   }
 
