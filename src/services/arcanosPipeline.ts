@@ -34,21 +34,21 @@ export async function runArcanosPipeline(userInput: string): Promise<string> {
 
   const routedTask = intake.choices[0]?.message?.content || '';
 
-  // Step 2: optional GPT-5 processing
-  let gpt5Output = '';
-  if (routedTask.includes('USE_GPT5')) {
-    const gpt5 = await client.chat.completions.create({
-      model: 'gpt-5',
+  // Step 2: optional GPT-4 processing
+  let gpt4Output = '';
+  if (routedTask.includes('USE_GPT4')) {
+    const gpt4 = await client.chat.completions.create({
+      model: 'gpt-4-turbo',
       messages: [
         {
           role: 'system',
           content:
             'Execute task as routed by ARCANOS. Return to ARCANOS for final shaping.'
         },
-        { role: 'user', content: routedTask.replace('USE_GPT5', '').trim() }
+        { role: 'user', content: routedTask.replace('USE_GPT4', '').trim() }
       ]
     });
-    gpt5Output = gpt5.choices[0]?.message?.content || '';
+    gpt4Output = gpt4.choices[0]?.message?.content || '';
   }
 
   // Step 3: final shaping via ARCANOS
@@ -60,7 +60,7 @@ export async function runArcanosPipeline(userInput: string): Promise<string> {
         content:
           'Final output shaping. Ensure consistency with ARCANOS role, safeguards, and mania logic.'
       },
-      { role: 'user', content: gpt5Output || routedTask }
+      { role: 'user', content: gpt4Output || routedTask }
     ]
   });
 

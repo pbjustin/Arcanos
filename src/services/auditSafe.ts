@@ -26,7 +26,8 @@ export interface AuditLogEntry {
   inputSummary: string;
   outputSummary: string;
   modelUsed: string;
-  gpt5Delegated: boolean;
+  gpt4Delegated?: boolean;  // New field for GPT-4 delegation
+  gpt5Delegated?: boolean;  // Keep for backward compatibility
   delegationReason?: string;
   memoryAccessed: string[];
   processedSafely: boolean;
