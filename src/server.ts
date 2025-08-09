@@ -13,6 +13,7 @@ import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
 import memoryRouter from './routes/memory.js';
 import workersRouter from './routes/workers.js';
+import sdkRouter from './routes/sdk.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -77,6 +78,7 @@ app.use('/', arcanosRouter);
 app.use('/', aiEndpointsRouter);
 app.use('/', memoryRouter);
 app.use('/', workersRouter);
+app.use('/sdk', sdkRouter);
 
 // Initialize the server
 async function initializeServer() {
@@ -143,6 +145,7 @@ async function initializeServer() {
     console.log('   🔌 /ai-endpoints - AI processing endpoints');
     console.log('   🔌 /memory - Memory management');
     console.log('   🔌 /workers/* - Worker management');
+    console.log('   🔌 /sdk/* - OpenAI SDK interface');
     console.log('   🔌 /health - System health');
     console.log('===============================\n');
 
