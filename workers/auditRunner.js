@@ -7,6 +7,7 @@
 
 import { logExecution, query, getStatus } from '../dist/db.js';
 import { getOpenAIClient, generateMockResponse } from '../dist/services/openai.js';
+import { getTokenParameter } from '../dist/utils/tokenParameterHelper.js';
 
 export const id = 'audit-runner';
 
@@ -62,10 +63,12 @@ export async function runAudit() {
     const client = getOpenAIClient();
     if (client) {
       try {
+        const model = 'gpt-4';
+        const tokenParams = getTokenParameter(model, 10);
         const testResponse = await client.chat.completions.create({
-          model: 'gpt-4',
+          model,
           messages: [{ role: 'user', content: 'Health check - respond with OK' }],
-          max_tokens: 10
+          ...tokenParams
         });
         
         auditResults.results.ai = {
@@ -90,8 +93,10 @@ export async function runAudit() {
     let auditSummary;
     if (client) {
       try {
+        const summaryModel = 'gpt-4';
+        const summaryTokenParams = getTokenParameter(summaryModel, 300);
         const summaryResponse = await client.chat.completions.create({
-          model: 'gpt-4',
+          model: summaryModel,
           messages: [
             {
               role: 'system',
@@ -102,7 +107,7 @@ export async function runAudit() {
               content: `Analyze these audit results and provide recommendations: ${JSON.stringify(auditResults.results)}`
             }
           ],
-          max_tokens: 300
+          ...summaryTokenParams
         });
         
         auditSummary = summaryResponse.choices[0]?.message?.content;

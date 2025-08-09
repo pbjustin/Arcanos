@@ -7,6 +7,7 @@
 
 import { getOpenAIClient } from '../dist/services/openai.js';
 import { logReasoning, logExecution, getStatus } from '../dist/db.js';
+import { getTokenParameter } from '../dist/utils/tokenParameterHelper.js';
 
 export const id = 'worker-gpt5-reasoning';
 
@@ -42,13 +43,15 @@ export async function performReasoning(input, context = {}) {
 
 Keep responses focused and valuable.`;
 
+    const model = process.env.GPT5_MODEL || 'gpt-4o'; // Fallback to GPT-4o if GPT-5 not available
+    const tokenParams = getTokenParameter(model, 2000);
     const completion = await client.chat.completions.create({
-      model: process.env.GPT5_MODEL || 'gpt-4o', // Fallback to GPT-4o if GPT-5 not available
+      model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: input }
       ],
-      max_tokens: 2000,
+      ...tokenParams,
       temperature: 0.7
     });
 

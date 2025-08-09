@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 
 let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
@@ -218,13 +219,16 @@ export const createGPT5Reasoning = async (
     const gpt5Model = getGPT5Model();
     console.log(`🚀 [GPT-5 REASONING] Using model: ${gpt5Model}`);
     
+    // Use token parameter utility for correct parameter selection
+    const tokenParams = getTokenParameter(gpt5Model, 1024);
+    
     const response = await client.chat.completions.create({
       model: gpt5Model,
       messages: [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'user' as const, content: prompt }
       ],
-      max_tokens: 1024,
+      ...tokenParams,
       // Temperature omitted to use default (1) for GPT-5
     });
     
