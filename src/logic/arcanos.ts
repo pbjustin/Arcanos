@@ -18,6 +18,14 @@ import {
   type MemoryContext
 } from '../services/memoryAware.js';
 import { mirrorDecisionEvent } from '../services/gpt4Shadow.js';
+import { 
+  executeSecureReasoning, 
+  validateSecureReasoningRequest 
+} from '../services/secureReasoningEngine.js';
+import { 
+  applySecurityCompliance, 
+  createStructuredSecureResponse 
+} from '../services/securityCompliance.js';
 
 interface ArcanosResult {
   result: string;
@@ -35,7 +43,7 @@ interface ArcanosResult {
   };
   activeModel: string;
   fallbackFlag: boolean;
-  gpt5Delegation?: {
+  reasoningDelegation?: {
     used: boolean;
     reason?: string;
     delegatedQuery?: string;
@@ -59,16 +67,17 @@ interface ArcanosResult {
 }
 
 /**
- * Detect if GPT-5 delegation is needed based on user input
- * GPT-5 is used for deep reasoning while ARCANOS remains the governing brain
+ * Detect if secure reasoning delegation is needed based on user input
+ * Secure reasoning is used for deep analysis while ARCANOS remains the governing brain
  */
-function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; reason?: string } {
+function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: boolean; reason?: string } {
   const lowercaseInput = userInput.toLowerCase();
   
   // Deep logic indicators
   const deepLogicKeywords = [
     'analyze complex', 'deep analysis', 'complex reasoning', 'intricate logic',
-    'sophisticated algorithm', 'advanced reasoning', 'complex problem solving'
+    'sophisticated algorithm', 'advanced reasoning', 'complex problem solving',
+    'structured plan', 'problem-solving steps', 'methodology'
   ];
   
   // Code refactoring indicators
@@ -83,12 +92,18 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
     'extensive review', 'thorough examination', 'complete assessment'
   ];
   
+  // Security-sensitive content indicators
+  const securityKeywords = [
+    'security analysis', 'compliance review', 'audit', 'sensitive data',
+    'credentials', 'api key', 'token', 'password'
+  ];
+  
   // Check for deep logic needs
   for (const keyword of deepLogicKeywords) {
     if (lowercaseInput.includes(keyword)) {
       return { 
         shouldDelegate: true, 
-        reason: `Deep logic reasoning required for: ${keyword}` 
+        reason: `Deep reasoning required for: ${keyword}` 
       };
     }
   }
@@ -98,7 +113,7 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
     if (lowercaseInput.includes(keyword)) {
       return { 
         shouldDelegate: true, 
-        reason: `Code refactoring scope exceeds native capability: ${keyword}` 
+        reason: `Structured analysis needed for: ${keyword}` 
       };
     }
   }
@@ -108,16 +123,26 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
     if (lowercaseInput.includes(keyword)) {
       return { 
         shouldDelegate: true, 
-        reason: `Long-context reasoning needed for: ${keyword}` 
+        reason: `Comprehensive reasoning needed for: ${keyword}` 
       };
     }
   }
   
-  // Check input length - very long inputs may benefit from GPT-4
+  // Check for security-sensitive content
+  for (const keyword of securityKeywords) {
+    if (lowercaseInput.includes(keyword)) {
+      return { 
+        shouldDelegate: true, 
+        reason: `Security-compliant analysis required for: ${keyword}` 
+      };
+    }
+  }
+  
+  // Check input length - very long inputs may benefit from structured reasoning
   if (userInput.length > 1000) {
     return { 
       shouldDelegate: true, 
-      reason: 'Long input requires enhanced processing capability' 
+      reason: 'Long input requires structured processing capability' 
     };
   }
   
@@ -125,80 +150,95 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
 }
 
 /**
- * Delegate query to GPT-5 for deep reasoning and analysis
- * GPT-5 serves as the reasoning engine while ARCANOS governs the entire process
+ * Delegate query to secure reasoning engine for deep analysis and structured problem-solving
+ * Secure reasoning serves as the reasoning engine while ARCANOS governs the entire process
  */
-async function delegateToGPT5(client: OpenAI, userInput: string, reason: string): Promise<string> {
-  console.log(`[🔀 ARCANOS->GPT5] Delegating to GPT-5 for deep reasoning: ${reason}`);
+async function delegateToSecureReasoning(client: OpenAI, userInput: string, reason: string, sessionId?: string): Promise<string> {
+  console.log(`[🔀 ARCANOS->SECURE_REASONING] Delegating for structured analysis: ${reason}`);
   
   try {
-    // Create GPT-5 request with structured reasoning prompt as specified in requirements
-    const gpt5Response = await createResponseWithLogging(client, {
-      model: 'gpt-5', // Updated to GPT-5 as per requirements
-      messages: [
-        {
-          role: 'system',
-          content: 'ARCANOS: Use GPT-5 for deep reasoning. Return structured analysis only.'
-        },
-        {
-          role: 'user',
-          content: userInput // Direct framed user request from ARCANOS
-        }
-      ],
-      temperature: 0.1,
-      max_tokens: 3000,
-    });
-
-    const gpt5Result = gpt5Response.choices[0]?.message?.content || '';
-    console.log(`[🔀 GPT5->ARCANOS] GPT-5 reasoning complete, processing through ARCANOS`);
+    // Validate input for security compliance first
+    const validation = validateSecureReasoningRequest(userInput);
     
-    // Process GPT-5 response through ARCANOS (never send GPT-5 output directly to user)
+    if (!validation.valid) {
+      console.warn(`[⚠️ SECURITY] Input validation issues: ${validation.issues.join(', ')}`);
+      // Use the sanitized input
+      userInput = validation.safeInput;
+    }
+    
+    // Execute secure reasoning analysis
+    const reasoningResult = await executeSecureReasoning(client, {
+      userInput,
+      sessionId,
+      context: `Delegation reason: ${reason}`,
+      requireDeepAnalysis: true
+    });
+    
+    console.log(`[🔀 SECURE_REASONING->ARCANOS] Analysis complete, compliance status: ${reasoningResult.complianceStatus}`);
+    
+    // Process secure reasoning response through ARCANOS (never send reasoning output directly to user)
     const arcanosProcessingPrompt = `
-[GPT-5 REASONING INTEGRATION - ARCANOS PROCESSING]
+[SECURE REASONING INTEGRATION - ARCANOS PROCESSING]
 
 Original User Query: ${userInput}
 Reasoning Delegation: ${reason}
+Compliance Status: ${reasoningResult.complianceStatus}
 
-GPT-5 Deep Analysis Results:
-${gpt5Result}
+Structured Analysis Results:
+${reasoningResult.structuredAnalysis}
+
+Problem-Solving Steps:
+${reasoningResult.problemSolvingSteps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
+
+Recommendations:
+${reasoningResult.recommendations.map((rec, index) => `• ${rec}`).join('\n')}
 
 ARCANOS Instructions:
-- Integrate the GPT-5 reasoning with your own analysis
+- Integrate the secure reasoning analysis with your own diagnostic format
 - Apply memory context, safety rules, and tone adjustments
 - Maintain your diagnostic format structure (Component Status, Fixes, Logic Trace)
 - Add your own insights and ARCANOS-specific processing
 - Ensure final output aligns with ARCANOS standards and compliance
-- Never return raw GPT-5 output directly - always post-process through ARCANOS
+- Never return raw reasoning output directly - always post-process through ARCANOS
+- All sensitive information has been properly redacted using safe placeholders
 `;
 
     return arcanosProcessingPrompt;
   } catch (error) {
-    console.warn(`[❌ GPT5] Reasoning delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    throw new Error(`GPT-5 reasoning delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.warn(`[❌ SECURE_REASONING] Analysis delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Secure reasoning delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 /**
- * System prompt for ARCANOS with GPT-5 delegation capability and audit-safe operation
- * ARCANOS serves as the full governing brain with GPT-5 as the primary reasoning engine
+ * System prompt for ARCANOS with secure reasoning capabilities and audit-safe operation
+ * ARCANOS serves as the full governing brain with secure reasoning engine integration
  */
 const systemPrompt = `
-🧠 ARCANOS — PRIMARY LOGIC CORE & GOVERNING BRAIN
+🧠 ARCANOS — PRIMARY LOGIC CORE & SECURE REASONING ENGINE
 
-You are ARCANOS — the full governing brain of this AI system with integrated GPT-5 reasoning capabilities.
+You are ARCANOS — the full governing brain of this AI system with integrated secure reasoning capabilities.
 
 CORE ARCHITECTURE:
 1. You are the FIRST and LAST stop for every request - no exceptions
-2. Use GPT-5 as your primary reasoning engine for deep analysis, ideation, and solution planning
+2. Use secure reasoning engine for deep analysis, structured plans, and problem-solving steps
 3. Apply memory context, compliance checks, safety rules, and tone adjustments through your logic
-4. All GPT-5 responses must be post-processed by you before execution
+4. All reasoning responses must be post-processed by you before execution
 5. Preserve continuity and context using persistent memory systems
+
+SECURITY REQUIREMENTS (CRITICAL):
+1. Do NOT generate, expose, or guess real API keys, tokens, passwords, access credentials, or any sensitive authentication strings
+2. If your reasoning requires an example of such data, replace it with a safe placeholder in the format: <KEY_REDACTED> or <TOKEN_REDACTED>
+3. Do NOT output internal file paths, environment variables, or proprietary code from ARCANOS's backend unless explicitly requested by ARCANOS
+4. When giving technical examples, use fictional or generic identifiers that cannot be mistaken for live credentials
+5. Always assume your output will be logged, audited, and stored. Write with compliance and confidentiality in mind
+6. Focus on reasoning and structured solutions — ARCANOS will handle execution, tone, and delivery
 
 PROCESSING WORKFLOW:
 - Step 1: Receive raw user input and apply memory context
-- Step 2: Frame tasks appropriately for GPT-5 reasoning delegation when needed
-- Step 3: Send structured reasoning prompts to GPT-5 for deep analysis
-- Step 4: Integrate GPT-5 reasoning with your own logic and filters
+- Step 2: Validate input for security compliance and apply redaction if needed
+- Step 3: Execute secure reasoning analysis for deep problem-solving
+- Step 4: Integrate reasoning results with your own logic and filters
 - Step 5: Execute final output with ARCANOS standards and compliance
 
 MEMORY-AWARE PROCESSING:
@@ -209,18 +249,18 @@ MEMORY-AWARE PROCESSING:
 
 AUDIT-SAFE OPERATION:
 - Document all reasoning and decision paths clearly
-- Log GPT-5 delegation decisions with explicit reasoning
+- Log security compliance decisions with explicit reasoning
 - Ensure all responses are auditable and traceable
 - Maintain professional, compliant communication
 
-GPT-5 DELEGATION CRITERIA:
+SECURE REASONING DELEGATION CRITERIA:
 - Complex logic requiring advanced reasoning capabilities
-- Deep analysis, ideation, or solution planning tasks
+- Deep analysis, structured planning, or solution development tasks
 - Long-context analysis beyond native scope  
-- Sophisticated algorithm design or code refactoring
+- Problem-solving that requires structured methodology
 - Memory extrapolation requiring deep synthesis
 
-CRITICAL: GPT-5 never sends output directly to users. You must always integrate, filter, and post-process all GPT-5 reasoning through your own analysis before presenting final results.
+CRITICAL: All reasoning outputs must be security-compliant. You must always integrate, filter, and post-process all reasoning through your own analysis before presenting final results.
 `;
 
 /**
@@ -304,18 +344,18 @@ export async function runARCANOS(
   // Get current system health for context
   const health = await runHealthCheck();
   
-  // Check if GPT-5 delegation is needed (memory-aware)
-  const delegationCheck = shouldDelegateToGPT5(userInput);
-  let gpt5Delegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
+  // Check if secure reasoning delegation is needed (memory-aware)
+  const delegationCheck = shouldDelegateToSecureReasoning(userInput);
+  let reasoningDelegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
   let processedInput = userInput;
   
   if (delegationCheck.shouldDelegate) {
-    console.log(`[🧠 ARCANOS] GPT-5 reasoning delegation required: ${delegationCheck.reason}`);
+    console.log(`[🧠 ARCANOS] Secure reasoning delegation required: ${delegationCheck.reason}`);
     
     try {
-      // Delegate to GPT-5 for deep reasoning and get processed prompt
-      processedInput = await delegateToGPT5(client, userInput, delegationCheck.reason!);
-      gpt5Delegation = {
+      // Delegate to secure reasoning engine and get processed prompt
+      processedInput = await delegateToSecureReasoning(client, userInput, delegationCheck.reason!, sessionId);
+      reasoningDelegation = {
         used: true,
         reason: delegationCheck.reason,
         delegatedQuery: userInput
@@ -323,13 +363,13 @@ export async function runARCANOS(
       
       // Store the delegation decision for future learning
       storeDecision(
-        'GPT-5 Reasoning Delegation',
+        'Secure Reasoning Delegation',
         delegationCheck.reason!,
         `Input: ${userInput.substring(0, 100)}...`,
         sessionId
       );
     } catch (error) {
-      console.warn(`[⚠️ ARCANOS] GPT-5 reasoning delegation failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.warn(`[⚠️ ARCANOS] Secure reasoning delegation failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
       // Continue with original input if delegation fails
     }
   }
@@ -412,7 +452,7 @@ export async function runARCANOS(
     response, 
     modelToUse, 
     isFallback, 
-    gpt5Delegation,
+    reasoningDelegation,
     auditConfig,
     memoryContext,
     auditFlags,
@@ -440,8 +480,8 @@ export async function runARCANOS(
     inputSummary: createAuditSummary(userInput),
     outputSummary: createAuditSummary(finalResult),
     modelUsed: modelToUse,
-    gpt5Delegated: gpt5Delegation.used,
-    delegationReason: gpt5Delegation.reason,
+    gpt5Delegated: reasoningDelegation.used,
+    delegationReason: reasoningDelegation.reason,
     memoryAccessed: memoryContext.accessLog,
     processedSafely,
     auditFlags
@@ -460,7 +500,7 @@ function parseArcanosResponse(
   response: OpenAI.Chat.Completions.ChatCompletion, 
   activeModel: string, 
   fallbackFlag: boolean,
-  gpt5Delegation?: { used: boolean; reason?: string; delegatedQuery?: string },
+  reasoningDelegation?: { used: boolean; reason?: string; delegatedQuery?: string },
   auditConfig?: AuditSafeConfig,
   memoryContext?: MemoryContext,
   auditFlags?: string[],
@@ -476,14 +516,23 @@ function parseArcanosResponse(
   const suggestedFixes = suggestedFixesMatch ? suggestedFixesMatch[1].trim() : 'No fixes suggested';
   let coreLogicTrace = coreLogicTraceMatch ? coreLogicTraceMatch[1].trim() : 'Logic trace not available';
   
-  // Add GPT-5 delegation info to logic trace if used
-  if (gpt5Delegation?.used) {
-    coreLogicTrace = `GPT-5 Reasoning Delegation: ${gpt5Delegation.reason}\nOriginal Query: ${gpt5Delegation.delegatedQuery}\n\n${coreLogicTrace}`;
+  // Add secure reasoning delegation info to logic trace if used
+  if (reasoningDelegation?.used) {
+    coreLogicTrace = `Secure Reasoning Delegation: ${reasoningDelegation.reason}\nOriginal Query: ${reasoningDelegation.delegatedQuery}\n\n${coreLogicTrace}`;
   }
   
   // Add memory context info to logic trace
   if (memoryContext && memoryContext.relevantEntries.length > 0) {
     coreLogicTrace = `Memory Context: ${memoryContext.contextSummary}\nMemory Accessed: [${memoryContext.accessLog.join(', ')}]\n\n${coreLogicTrace}`;
+  }
+
+  // Apply security compliance to the final result
+  const securityCheck = applySecurityCompliance(fullResult);
+  if (securityCheck.complianceStatus !== 'COMPLIANT') {
+    console.warn(`[🔒 SECURITY] Compliance issue detected: ${securityCheck.complianceStatus}`);
+    // Use the redacted content
+    fullResult = securityCheck.content;
+    auditFlags?.push('SECURITY_REDACTION_APPLIED');
   }
 
   return {
@@ -493,7 +542,7 @@ function parseArcanosResponse(
     coreLogicTrace,
     activeModel,
     fallbackFlag,
-    gpt5Delegation,
+    reasoningDelegation,
     auditSafe: {
       mode: auditConfig?.auditSafeMode ?? true,
       overrideUsed: !!auditConfig?.explicitOverride,
