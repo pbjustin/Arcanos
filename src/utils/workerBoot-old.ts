@@ -6,16 +6,11 @@
 
 import fs from 'fs';
 import path from 'path';
-import { initializeDatabase, getStatus } from '../db.js';
 
 interface WorkerInitResult {
   initialized: string[];
   failed: Array<{ worker: string; error: string }>;
   scheduled: string[];
-  database: {
-    connected: boolean;
-    error?: string | null;
-  };
 }
 
 // Dynamic import for workers
@@ -24,31 +19,12 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
   
   console.log(`[🔧 WORKER-BOOT] Worker initialization - RUN_WORKERS: ${runWorkers}`);
   
-  // Initialize database first
-  console.log('[🔧 WORKER-BOOT] Initializing database connection...');
-  const dbInitialized = await initializeDatabase();
-  const dbStatus = getStatus();
-  
-  if (dbInitialized) {
-    console.log('[🔧 WORKER-BOOT] ✅ Database initialized successfully');
-  } else {
-    console.log('[🔧 WORKER-BOOT] ⚠️  Database initialization failed - workers will use fallback mode');
-    
-    if (!process.env.DATABASE_URL) {
-      console.log('[🔧 WORKER-BOOT] ℹ️  DATABASE_URL not set - this is expected for development');
-    }
-  }
-  
   if (!runWorkers) {
     console.log('[🔧 WORKER-BOOT] Workers disabled via RUN_WORKERS environment variable');
     return {
       initialized: [],
       failed: [],
-      scheduled: [],
-      database: {
-        connected: dbStatus.connected,
-        error: dbStatus.error
-      }
+      scheduled: []
     };
   }
 
@@ -58,18 +34,12 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
   const results: WorkerInitResult = {
     initialized: [],
     failed: [],
-    scheduled: [],
-    database: {
-      connected: dbStatus.connected,
-      error: dbStatus.error
-    }
+    scheduled: []
   };
 
   try {
     if (!fs.existsSync(workersDir)) {
-      console.log(`[🔧 WORKER-BOOT] Workers directory not found: ${workersDir}`);
-      console.log('[🔧 WORKER-BOOT] Skipping worker initialization');
-      return results;
+      throw new Error(`Workers directory not found: ${workersDir}`);
     }
 
     const files = fs.readdirSync(workersDir);
@@ -82,9 +52,6 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
     if (fs.existsSync(loggerPath)) {
       try {
         const workerLogger = await import(loggerPath);
-        if (typeof workerLogger.run === 'function') {
-          await workerLogger.run();
-        }
         console.log(`[🔧 WORKER-BOOT] ✅ worker-logger initialized`);
         results.initialized.push('worker-logger');
       } catch (error) {
@@ -99,19 +66,11 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
     if (fs.existsSync(plannerPath)) {
       try {
         const plannerEngine = await import(plannerPath);
-        
-        if (typeof plannerEngine.run === 'function') {
-          await plannerEngine.run();
-        }
-        
-        if (typeof plannerEngine.startScheduling === 'function' && dbStatus.connected) {
+        if (typeof plannerEngine.startScheduling === 'function') {
           plannerEngine.startScheduling();
           console.log(`[🔧 WORKER-BOOT] ✅ worker-planner-engine scheduled`);
           results.scheduled.push('worker-planner-engine');
-        } else if (!dbStatus.connected) {
-          console.log(`[🔧 WORKER-BOOT] ⚠️  worker-planner-engine scheduling disabled (no database)`);
         }
-        
         results.initialized.push('worker-planner-engine');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -134,7 +93,6 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
         const worker = await import(workerPath);
         
         if (worker.id && worker.run) {
-          await worker.run();
           console.log(`[🔧 WORKER-BOOT] ✅ ${worker.id} initialized`);
           results.initialized.push(worker.id);
         } else {
@@ -149,26 +107,15 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
     }
 
     console.log(`[🔧 WORKER-BOOT] Initialization complete:`);
-    console.log(`   🔌 Database: ${dbStatus.connected ? 'Connected' : 'Disconnected'}`);
     console.log(`   ✅ Initialized: ${results.initialized.length} workers`);
     console.log(`   📅 Scheduled: ${results.scheduled.length} workers`);
-    if (results.failed.length > 0) {
-      console.log(`   ❌ Failed: ${results.failed.length} workers`);
-    }
+    console.log(`   ❌ Failed: ${results.failed.length} workers`);
 
     return results;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[🔧 WORKER-BOOT] Fatal error during worker initialization:', error);
-    return { 
-      initialized: [], 
-      failed: [{ worker: 'boot', error: errorMessage }], 
-      scheduled: [],
-      database: {
-        connected: dbStatus.connected,
-        error: dbStatus.error
-      }
-    };
+    return { initialized: [], failed: [{ worker: 'boot', error: errorMessage }], scheduled: [] };
   }
 }
 
