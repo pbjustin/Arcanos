@@ -97,7 +97,7 @@ export async function runThroughBrain(
       { role: 'user', content: auditSafePrompt }
     ],
     temperature: 0.2,
-    max_completion_tokens: 500
+    max_tokens: 500
   });
   const framedRequest = intakeResponse.choices[0]?.message?.content || auditSafePrompt;
   const actualModel = intakeResponse.activeModel || arcanosModel;
@@ -123,7 +123,7 @@ export async function runThroughBrain(
       { role: 'user', content: 'Provide the final ARCANOS response.' }
     ],
     temperature: 0.2,
-    max_completion_tokens: 1000
+    max_tokens: 1000
   });
   const finalText = finalResponse.choices[0]?.message?.content || '';
 
