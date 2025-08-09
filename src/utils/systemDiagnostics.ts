@@ -47,6 +47,7 @@ interface SystemDiagnostics {
     connected: boolean;
     error?: string | null;
   };
+  job_data_entry?: any;
   system_error?: string;
 }
 
@@ -260,6 +261,15 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
       getErrorRate()
     ]);
 
+    // Get latest job record if database is connected
+    let latestJob = null;
+    try {
+      const { getLatestJob } = await import('../db.js');
+      latestJob = await getLatestJob();
+    } catch (error) {
+      // Database not connected or function not available
+    }
+
     const diagnostics: SystemDiagnostics = {
       workers,
       scheduler,
@@ -271,6 +281,11 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
         error: getStatus().error
       }
     };
+
+    // Include latest job if available
+    if (latestJob) {
+      diagnostics.job_data_entry = latestJob;
+    }
 
     return diagnostics;
   } catch (error) {
@@ -325,6 +340,33 @@ export function formatDiagnosticsAsYAML(diagnostics: SystemDiagnostics): string 
       yamlLines.push(`    requests_1h: ${route.requests1h}`);
     }
   });
+  
+  // Job data entry
+  if (diagnostics.job_data_entry) {
+    yamlLines.push('job_data_entry:');
+    yamlLines.push(`  id: "${diagnostics.job_data_entry.id || 'unknown'}"`);
+    yamlLines.push(`  worker_id: "${diagnostics.job_data_entry.worker_id || 'unknown'}"`);
+    yamlLines.push(`  job_type: "${diagnostics.job_data_entry.job_type || 'unknown'}"`);
+    yamlLines.push(`  status: "${diagnostics.job_data_entry.status || 'unknown'}"`);
+    if (diagnostics.job_data_entry.input) {
+      const input = typeof diagnostics.job_data_entry.input === 'string' 
+        ? diagnostics.job_data_entry.input 
+        : JSON.stringify(diagnostics.job_data_entry.input);
+      yamlLines.push(`  input: "${input}"`);
+    }
+    if (diagnostics.job_data_entry.output) {
+      const output = typeof diagnostics.job_data_entry.output === 'string' 
+        ? diagnostics.job_data_entry.output 
+        : JSON.stringify(diagnostics.job_data_entry.output);
+      yamlLines.push(`  output: "${output}"`);
+    }
+    if (diagnostics.job_data_entry.created_at) {
+      yamlLines.push(`  created_at: "${diagnostics.job_data_entry.created_at}"`);
+    }
+    if (diagnostics.job_data_entry.completed_at) {
+      yamlLines.push(`  completed_at: "${diagnostics.job_data_entry.completed_at}"`);
+    }
+  }
   
   // Error rate
   yamlLines.push(`error_rate: ${diagnostics.error_rate}`);
