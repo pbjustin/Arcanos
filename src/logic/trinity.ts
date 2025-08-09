@@ -113,7 +113,7 @@ export async function runThroughBrain(
       { role: 'user', content: framedRequest }
     ],
     temperature: 0,
-    max_tokens: 1000
+    max_completion_tokens: 1000
   });
   const gpt5Output = gpt5Response.choices[0]?.message?.content || '';
 
