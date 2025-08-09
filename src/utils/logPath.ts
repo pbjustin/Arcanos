@@ -47,11 +47,11 @@ export function getFeedbackLogPath(): string {
 }
 
 /**
- * Get the GPT-5 trace output log file path
+ * Get the GPT-4 trace output log file path
  */
-export function getGPT5TracePath(): string {
+export function getGPT4TracePath(): string {
   const logDir = getLogPath();
-  return path.join(logDir, 'gpt5_trace_output');
+  return path.join(logDir, 'gpt4_trace_output');
 }
 
 /**

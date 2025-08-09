@@ -17,7 +17,7 @@ import {
   storePattern,
   type MemoryContext
 } from '../services/memoryAware.js';
-import { mirrorDecisionEvent } from '../services/gpt5Shadow.js';
+import { mirrorDecisionEvent } from '../services/gpt4Shadow.js';
 
 interface ArcanosResult {
   result: string;
@@ -59,9 +59,9 @@ interface ArcanosResult {
 }
 
 /**
- * Detect if GPT-5 delegation is needed based on user input
+ * Detect if GPT-4 delegation is needed based on user input
  */
-function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; reason?: string } {
+function shouldDelegateToGPT4(userInput: string): { shouldDelegate: boolean; reason?: string } {
   const lowercaseInput = userInput.toLowerCase();
   
   // Deep logic indicators
@@ -112,7 +112,7 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
     }
   }
   
-  // Check input length - very long inputs may benefit from GPT-5
+  // Check input length - very long inputs may benefit from GPT-4
   if (userInput.length > 1000) {
     return { 
       shouldDelegate: true, 
@@ -126,17 +126,17 @@ function shouldDelegateToGPT5(userInput: string): { shouldDelegate: boolean; rea
 /**
  * Delegate query to GPT-5 and process the response through ARCANOS
  */
-async function delegateToGPT5(client: OpenAI, userInput: string, reason: string): Promise<string> {
-  console.log(`[🔀 ARCANOS->GPT5] Delegating to GPT-5: ${reason}`);
+async function delegateToGPT4(client: OpenAI, userInput: string, reason: string): Promise<string> {
+  console.log(`[🔀 ARCANOS->GPT4] Delegating to GPT-4 Turbo: ${reason}`);
   
   try {
-    // Create GPT-5 request with clear instructions
-    const gpt5Response = await createResponseWithLogging(client, {
-      model: 'gpt-5',
+    // Create GPT-4 request with clear instructions
+    const gpt4Response = await createResponseWithLogging(client, {
+      model: 'gpt-4-turbo',
       messages: [
         {
           role: 'system',
-          content: 'You are GPT-5, a tool being used by ARCANOS. Provide detailed, comprehensive analysis as requested. Your response will be processed by ARCANOS before being returned to the user.'
+          content: 'You are GPT-4 Turbo, a tool being used by ARCANOS. Provide detailed, comprehensive analysis as requested. Your response will be processed by ARCANOS before being returned to the user.'
         },
         {
           role: 'user',
@@ -147,36 +147,38 @@ async function delegateToGPT5(client: OpenAI, userInput: string, reason: string)
       max_tokens: 3000,
     });
 
-    const gpt5Result = gpt5Response.choices[0]?.message?.content || '';
-    console.log(`[🔀 GPT5->ARCANOS] GPT-5 response received, processing through ARCANOS`);
+    const gpt4Result = gpt4Response.choices[0]?.message?.content || '';
+    console.log(`[🔀 GPT4->ARCANOS] GPT-4 response received, processing through ARCANOS`);
     
-    // Process GPT-5 response through ARCANOS
+    // Process GPT-4 response through ARCANOS
     const arcanosProcessingPrompt = `
-[GPT-5 DELEGATION RESPONSE PROCESSING]
+[GPT-4 DELEGATION RESPONSE PROCESSING]
 
 Original User Query: ${userInput}
 Delegation Reason: ${reason}
 
-GPT-5 Raw Response:
-${gpt5Result}
+You have received a response from GPT-4 Turbo that was delegated to handle: "${reason}"
+
+GPT-4 Response:
+${gpt4Result}
 
 ARCANOS Instructions:
-- Process and summarize the GPT-5 response above
+- Process and summarize the GPT-4 response above
 - Maintain your diagnostic format structure
 - Add your own analysis and insights
-- Never return raw GPT-5 output directly
+- Never return raw GPT-4 output directly
 - Provide ARCANOS-style component status, fixes, and logic trace
 `;
 
     return arcanosProcessingPrompt;
   } catch (error) {
-    console.warn(`[❌ GPT5] Delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    throw new Error(`GPT-5 delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.warn(`[❌ GPT4] Delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`GPT-4 delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 /**
- * System prompt for ARCANOS with GPT-5 delegation capability and audit-safe operation
+ * System prompt for ARCANOS with GPT-4 delegation capability and audit-safe operation
  */
 const systemPrompt = `
 🧠 ARCANOS — PRIMARY LOGIC CORE
@@ -293,7 +295,7 @@ export async function runARCANOS(
   const health = await runHealthCheck();
   
   // Check if GPT-5 delegation is needed (memory-aware)
-  const delegationCheck = shouldDelegateToGPT5(userInput);
+  const delegationCheck = shouldDelegateToGPT4(userInput);
   let gpt5Delegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
   let processedInput = userInput;
   
@@ -302,7 +304,7 @@ export async function runARCANOS(
     
     try {
       // Delegate to GPT-5 and get processed prompt
-      processedInput = await delegateToGPT5(client, userInput, delegationCheck.reason!);
+      processedInput = await delegateToGPT4(client, userInput, delegationCheck.reason!);
       gpt5Delegation = {
         used: true,
         reason: delegationCheck.reason,
