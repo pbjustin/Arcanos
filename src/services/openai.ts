@@ -136,6 +136,10 @@ export const getDefaultModel = (): string => {
   return defaultModel || process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
 };
 
+export const getGPT5Model = (): string => {
+  return process.env.GPT5_MODEL || 'gpt-5';
+};
+
 export const getFallbackModel = (): string => {
   return 'gpt-4';
 };
@@ -197,4 +201,41 @@ export const validateAPIKeyAtStartup = (): boolean => {
   return true;
 };
 
-export default { getOpenAIClient, getDefaultModel, validateAPIKeyAtStartup };
+/**
+ * Centralized GPT-5 helper function for reasoning tasks
+ * Used by both core logic and workers
+ */
+export const createGPT5Reasoning = async (
+  client: OpenAI,
+  prompt: string,
+  systemPrompt?: string
+): Promise<{ content: string; error?: string }> => {
+  if (!client) {
+    return { content: '[Fallback: GPT-5 unavailable - no OpenAI client]', error: 'No OpenAI client' };
+  }
+
+  try {
+    const gpt5Model = getGPT5Model();
+    console.log(`🚀 [GPT-5 REASONING] Using model: ${gpt5Model}`);
+    
+    const response = await client.chat.completions.create({
+      model: gpt5Model,
+      messages: [
+        ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
+        { role: 'user' as const, content: prompt }
+      ],
+      max_completion_tokens: 1024,
+      // Temperature omitted to use default (1) for GPT-5
+    });
+    
+    const content = response.choices[0]?.message?.content ?? '[No reasoning provided]';
+    console.log(`✅ [GPT-5 REASONING] Success: ${content.substring(0, 100)}...`);
+    return { content };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Unknown error';
+    console.error(`❌ [GPT-5 REASONING] Error: ${errorMsg}`);
+    return { content: `[Fallback: GPT-5 unavailable - ${errorMsg}]`, error: errorMsg };
+  }
+};
+
+export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup };
