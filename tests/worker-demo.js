@@ -59,7 +59,7 @@ try {
 
 console.log('\n✅ Worker Configuration Summary:');
 console.log('   - Environment variables properly set');
-console.log('   - GPT-5 reasoning with correct parameters (max_completion_tokens: 1024, temperature: 1)');
+console.log('   - GPT-5 reasoning with correct parameters (max_tokens: 1024, temperature: 1)');
 console.log('   - ARCANOS core logic integration working');
 console.log('   - Worker task follows problem statement workflow');
 console.log('   - Workers start automatically when RUN_WORKERS = "true"');

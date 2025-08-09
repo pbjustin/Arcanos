@@ -19,7 +19,7 @@ async function routeToModule(client: OpenAI, tag: ShadowTag, content: string): P
       { role: 'user', content }
     ],
     temperature: 0.2,
-    max_completion_tokens: 500
+    max_tokens: 500
   });
 
   return response.choices[0]?.message?.content || '';

@@ -224,7 +224,7 @@ export const createGPT5Reasoning = async (
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'user' as const, content: prompt }
       ],
-      max_completion_tokens: 1024,
+      max_tokens: 1024,
       // Temperature omitted to use default (1) for GPT-5
     });
     
