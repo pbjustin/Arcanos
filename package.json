@@ -27,11 +27,13 @@
   "license": "MIT",
   "dependencies": {
     "@types/node": "^24.2.1",
+    "@types/pg": "^8.15.5",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^4.21.2",
     "node-cron": "^4.2.1",
-    "openai": "^5.12.2"
+    "openai": "^5.12.2",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
