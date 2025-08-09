@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { createResponseWithLogging, logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
-import { getDefaultModel, createChatCompletionWithFallback } from '../services/openai.js';
+import { getDefaultModel, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
 import {
   getAuditSafeConfig,
   applyAuditSafeConstraints,
@@ -106,16 +106,8 @@ export async function runThroughBrain(
   // GPT-5 reasoning stage (always invoked)
   logGPT5Invocation('Primary reasoning stage', framedRequest);
   routingStages.push('GPT5-REASONING');
-  const gpt5Response = await createResponseWithLogging(client, {
-    model: 'gpt-5',
-    messages: [
-      { role: 'system', content: 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.' },
-      { role: 'user', content: framedRequest }
-    ],
-    temperature: 1, // GPT-5 requires temperature: 1 or omitted for default
-    max_completion_tokens: 1000
-  });
-  const gpt5Output = gpt5Response.choices[0]?.message?.content || '';
+  const gpt5Result = await createGPT5Reasoning(client, framedRequest, 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.');
+  const gpt5Output = gpt5Result.content;
 
   // Final ARCANOS execution and filtering
   logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 output through ARCANOS');
