@@ -28,8 +28,17 @@ export function logRoutingSummary(arcanosModel: string, gpt5Used: boolean, final
 }
 
 /**
- * Wrapper around OpenAI Chat Completions API that logs
- * input, model, token usage and output.
+ * Wrapper around OpenAI Chat Completions API that provides comprehensive logging
+ * 
+ * This function logs all AI interactions for debugging, auditing, and analysis:
+ * - Logs input prompts (truncated for readability)
+ * - Tracks model usage and token consumption
+ * - Records AI responses for debugging
+ * - Maintains consistent logging format across ARCANOS
+ * 
+ * @param client - OpenAI client instance
+ * @param params - Chat completion parameters (without streaming)
+ * @returns Promise<OpenAI.Chat.Completions.ChatCompletion> - The AI response with full metadata
  */
 export async function createResponseWithLogging(
   client: OpenAI,
