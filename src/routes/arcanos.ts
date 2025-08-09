@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
+import { handleAIError } from '../utils/requestHandler.js';
 
 const router = express.Router();
 
@@ -55,7 +56,9 @@ interface ErrorResponse {
   details?: string;
 }
 
-// ARCANOS system diagnosis endpoint
+/**
+ * ARCANOS system diagnosis endpoint with standardized request handling
+ */
 router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse, ArcanosRequest>, res: Response<ArcanosResponse | ErrorResponse>) => {
   console.log('🔬 /arcanos received');
   const { userInput, sessionId, overrideAuditSafe } = req.body;
@@ -66,7 +69,7 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
 
   console.log(`[🔬 ARCANOS] Processing request with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}`);
 
-  // Check if we have a valid API key
+  // Use shared validation logic for OpenAI client
   if (!hasValidAPIKey()) {
     console.log('🤖 Returning mock response for /arcanos (no API key)');
     const mockResponse = generateMockResponse(userInput, 'arcanos');
@@ -84,16 +87,7 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
     const output = await runARCANOS(openai, userInput, sessionId, overrideAuditSafe);
     return res.json(output);
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('❌ ARCANOS processing error:', errorMessage);
-    
-    // Return mock response as fallback
-    console.log('🤖 Returning mock response for /arcanos (processing failed)');
-    const mockResponse = generateMockResponse(userInput, 'arcanos');
-    return res.json({
-      ...mockResponse,
-      error: `ARCANOS service failure: ${errorMessage}`
-    });
+    handleAIError(err, userInput, 'arcanos', res);
   }
 });
 
