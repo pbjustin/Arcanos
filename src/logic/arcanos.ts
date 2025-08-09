@@ -410,7 +410,7 @@ export async function runARCANOS(
         }
       ],
       temperature: 0.1, // Low temperature for consistent diagnostic output
-      max_tokens: 2000,
+      max_completion_tokens: 2000,
     });
 
     finalResult = response.choices[0]?.message?.content || '';
@@ -434,7 +434,7 @@ export async function runARCANOS(
         }
       ],
       temperature: 0.1,
-      max_tokens: 2000,
+      max_completion_tokens: 2000,
     });
 
     finalResult = response.choices[0]?.message?.content || '';

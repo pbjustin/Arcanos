@@ -89,7 +89,7 @@ Your output should be structured, clear, and free of any confidential or securit
         }
       ],
       temperature: 0.3, // Balanced for reasoning consistency
-      max_tokens: 2000
+      max_completion_tokens: 2000
     });
 
     const rawAnalysis = response.choices[0]?.message?.content || '';
