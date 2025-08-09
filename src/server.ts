@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import cron from 'node-cron';
 import config from './config/index.js';
+import './config/workerConfig.js'; // Import worker configuration to start workers
 import { runHealthCheck } from './utils/diagnostics.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import './logic/aiCron.js';
