@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 
 // Type for the Chat Completions API parameters (non-streaming)
-type ChatCompletionCreateParams = Omit<Parameters<OpenAI['chat']['completions']['create']>[0], 'stream'> & { stream?: false };
+type ChatCompletionCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParams & { stream?: false };
 
 /**
  * Enhanced logging for ARCANOS routing stages
