@@ -15,6 +15,19 @@ interface WorkerInitResult {
 
 // Dynamic import for workers
 async function initializeWorkers(): Promise<WorkerInitResult> {
+  const runWorkers = process.env.RUN_WORKERS === 'true' || process.env.RUN_WORKERS === '1';
+  
+  console.log(`[🔧 WORKER-BOOT] Worker initialization - RUN_WORKERS: ${runWorkers}`);
+  
+  if (!runWorkers) {
+    console.log('[🔧 WORKER-BOOT] Workers disabled via RUN_WORKERS environment variable');
+    return {
+      initialized: [],
+      failed: [],
+      scheduled: []
+    };
+  }
+
   console.log('[🔧 WORKER-BOOT] Starting worker initialization...');
   
   const workersDir = path.resolve(process.cwd(), 'workers');

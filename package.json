@@ -6,7 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "probe": "node probe.js",
-    "start": "node railway/workers.js",
+    "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",
     "dev:watch": "tsc --watch",
     "build": "tsc",
