@@ -35,14 +35,14 @@ export async function isPortAvailable(port: number, host: string = '0.0.0.0'): P
  * Find the next available port starting from the given port
  * @param startPort Starting port number
  * @param host Host to bind to (default: '0.0.0.0')
- * @param maxAttempts Maximum number of ports to try (default: 10)
+ * @param maxAttempts Maximum number of ports to try (default: 50)
  * @returns Promise<number> Next available port number
  * @throws Error if no available port found within maxAttempts
  */
 export async function findAvailablePort(
   startPort: number, 
   host: string = '0.0.0.0', 
-  maxAttempts: number = 10
+  maxAttempts: number = 50
 ): Promise<number> {
   for (let port = startPort; port < startPort + maxAttempts; port++) {
     if (await isPortAvailable(port, host)) {
@@ -52,7 +52,8 @@ export async function findAvailablePort(
   
   throw new Error(
     `No available port found in range ${startPort}-${startPort + maxAttempts - 1}. ` +
-    'Please check for services using these ports or specify a different PORT in your environment.'
+    `Tried ${maxAttempts} ports. Please stop other services using these ports, ` +
+    'use a different PORT in your environment, or increase the port search range.'
   );
 }
 
@@ -96,6 +97,7 @@ export async function getAvailablePort(
   } catch (error) {
     throw new Error(
       `Port ${preferredPort} is in use and no alternative ports are available. ` +
+      `Searched ${preferredPort + 1}-${preferredPort + 50} but all were in use. ` +
       'Please stop other services or choose a different port range.'
     );
   }
