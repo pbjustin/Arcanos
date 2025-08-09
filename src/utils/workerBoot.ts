@@ -6,7 +6,9 @@
 
 import fs from 'fs';
 import path from 'path';
+import cron from 'node-cron';
 import { initializeDatabase, getStatus } from '../db.js';
+import { createWorkerContext } from './workerContext.js';
 
 interface WorkerInitResult {
   initialized: string[];
@@ -17,6 +19,9 @@ interface WorkerInitResult {
     error?: string | null;
   };
 }
+
+// Store scheduled tasks for cleanup
+const scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
 
 // Dynamic import for workers
 async function initializeWorkers(): Promise<WorkerInitResult> {
@@ -133,9 +138,49 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
         const workerPath = path.join(workersDir, file);
         const worker = await import(workerPath);
         
-        if (worker.id && worker.run) {
+        // Check for new worker pattern (context-based with schedule)
+        if (worker.default && typeof worker.default === 'object' && 
+            worker.default.name && worker.default.run && worker.default.schedule) {
+          
+          const workerModule = worker.default;
+          const context = createWorkerContext(workerId);
+          
+          // Schedule the worker if it has a schedule
+          if (workerModule.schedule) {
+            try {
+              const task = cron.schedule(workerModule.schedule, async () => {
+                try {
+                  await context.log(`Running scheduled worker: ${workerModule.name}`);
+                  await workerModule.run(context);
+                } catch (error) {
+                  const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+                  await context.error(`Scheduled execution failed: ${errorMsg}`);
+                }
+              });
+              
+              task.start();
+              scheduledTasks.set(workerId, task);
+              
+              console.log(`[🔧 WORKER-BOOT] ✅ ${workerModule.name} scheduled (${workerModule.schedule})`);
+              results.scheduled.push(workerId);
+              results.initialized.push(workerId);
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+              console.error(`[🔧 WORKER-BOOT] ❌ Failed to schedule ${workerModule.name}:`, errorMessage);
+              results.failed.push({ worker: workerId, error: `Scheduling failed: ${errorMessage}` });
+            }
+          } else {
+            // Initialize worker without scheduling
+            await workerModule.run(context);
+            console.log(`[🔧 WORKER-BOOT] ✅ ${workerModule.name} initialized`);
+            results.initialized.push(workerId);
+          }
+          
+        }
+        // Check for old worker pattern (legacy)
+        else if (worker.id && worker.run) {
           await worker.run();
-          console.log(`[🔧 WORKER-BOOT] ✅ ${worker.id} initialized`);
+          console.log(`[🔧 WORKER-BOOT] ✅ ${worker.id} initialized (legacy pattern)`);
           results.initialized.push(worker.id);
         } else {
           console.warn(`[🔧 WORKER-BOOT] ⚠️  ${workerId} missing required exports`);
@@ -173,3 +218,21 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
 }
 
 export { initializeWorkers, type WorkerInitResult };
+
+/**
+ * Stop all scheduled workers
+ */
+export function stopScheduledWorkers(): void {
+  for (const [workerId, task] of scheduledTasks) {
+    task.stop();
+    console.log(`[🔧 WORKER-BOOT] ⏹️  Stopped scheduled worker: ${workerId}`);
+  }
+  scheduledTasks.clear();
+}
+
+/**
+ * Get list of scheduled workers
+ */
+export function getScheduledWorkers(): string[] {
+  return Array.from(scheduledTasks.keys());
+}

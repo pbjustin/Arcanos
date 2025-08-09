@@ -7,6 +7,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createWorkerContext } from '../utils/workerContext.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,22 +102,50 @@ router.post('/workers/run/:workerId', async (req: Request, res: Response) => {
     }
     
     const worker = await import(workerPath);
+    const startTime = Date.now();
+    let result: any;
+    let workerInfo: any = {};
     
-    if (typeof worker.run !== 'function') {
+    // Check for new worker pattern (context-based)
+    if (worker.default && typeof worker.default === 'object' && 
+        worker.default.name && worker.default.run) {
+      
+      const workerModule = worker.default;
+      const context = createWorkerContext(workerId);
+      
+      result = await workerModule.run(context);
+      workerInfo = {
+        id: workerId,
+        name: workerModule.name,
+        description: workerModule.name,
+        pattern: 'context-based'
+      };
+      
+    }
+    // Check for old worker pattern (legacy)
+    else if (typeof worker.run === 'function') {
+      result = await worker.run(input, {});
+      workerInfo = {
+        id: worker.id || workerId,
+        description: worker.description || 'Legacy worker',
+        pattern: 'legacy'
+      };
+    } 
+    else {
       return res.status(400).json({
         success: false,
-        error: `Worker ${workerId} does not export a run function`
+        error: `Worker ${workerId} does not export a valid run function`
       });
     }
     
-    const startTime = Date.now();
-    const result = await worker.run(input, {});
     const duration = Date.now() - startTime;
     
     res.json({
       success: true,
-      workerId: worker.id || workerId,
-      description: worker.description,
+      workerId: workerInfo.id,
+      name: workerInfo.name,
+      description: workerInfo.description,
+      pattern: workerInfo.pattern,
       result,
       executionTime: `${duration}ms`,
       timestamp: new Date().toISOString()
