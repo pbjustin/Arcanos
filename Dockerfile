@@ -49,10 +49,11 @@ RUN NODE_OPTIONS=--max_old_space_size=256 npm install --omit=dev --no-audit --no
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/memory ./memory
-COPY --from=builder /app/railway ./railway
-COPY --from=builder /app/workers ./workers
+COPY --from=builder /app/.railway ./.railway
 COPY --from=builder /app/package.json ./package.json
+
+# Create runtime directories that the application expects
+RUN mkdir -p ./memory ./workers
 
 # Change ownership to non-root user
 RUN chown -R arcanos:nodejs /app
