@@ -5,9 +5,8 @@
  * Handles worker.queue route for async task processing
  */
 
-import { logExecution } from '../dist/db.js';
-import { getOpenAIClient, generateMockResponse } from '../dist/services/openai.js';
-import { getTokenParameter } from '../dist/utils/tokenParameterHelper.js';
+import { logExecution, createJob, updateJob } from '../dist/db.js';
+import { callOpenAI } from '../dist/services/openai.js';
 
 export const id = 'task-processor';
 
@@ -15,8 +14,15 @@ export const id = 'task-processor';
  * Process a task from the worker queue
  */
 export async function processTask(taskData) {
+  let job;
   try {
-    await logExecution(id, 'info', 'Processing task from worker.queue', { taskData });
+    job = await createJob(id, taskData.type || 'task', taskData, 'running');
+  } catch (err) {
+    job = { id: `job-${Date.now()}` };
+  }
+
+  try {
+    await logExecution(id, 'info', 'Processing task from worker.queue', { taskData, jobId: job.id });
 
     // Handle specific test_job type with expected response
     if (taskData.type === 'test_job' && taskData.input === 'Diagnostics verification task') {
@@ -26,60 +32,33 @@ export async function processTask(taskData) {
         taskId: taskData.id || `task-${Date.now()}`,
         aiResponse: 'Test completed successfully',
         processedAt: new Date().toISOString(),
-        model: 'TEST'
+        model: 'TEST',
+        jobId: job.id
       };
+      await updateJob(job.id, 'completed', result);
       await logExecution(id, 'info', `Test job completed successfully: ${result.taskId}`);
       return result;
     }
 
-    // Get OpenAI client for task processing
-    const client = getOpenAIClient();
-    
-    let result;
-    if (client) {
-      // Use real OpenAI for task processing
-      const model = 'gpt-4';
-      const tokenParams = getTokenParameter(model, 500);
-      const response = await client.chat.completions.create({
-        model,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a task processor. Process the given task efficiently and return structured results.'
-          },
-          {
-            role: 'user',
-            content: `Process this task: ${JSON.stringify(taskData)}`
-          }
-        ],
-        ...tokenParams
-      });
-      
-      result = {
-        success: true,
-        processed: true,
-        taskId: taskData.id || `task-${Date.now()}`,
-        aiResponse: response.choices[0]?.message?.content || 'No response',
-        processedAt: new Date().toISOString(),
-        model: 'gpt-4'
-      };
-    } else {
-      // Use mock response
-      const mockResponse = generateMockResponse(`Task processing: ${JSON.stringify(taskData)}`, 'ask');
-      result = {
-        success: true,
-        processed: true,
-        taskId: taskData.id || `task-${Date.now()}`,
-        aiResponse: mockResponse.result,
-        processedAt: new Date().toISOString(),
-        model: 'MOCK'
-      };
-    }
+    const model = 'gpt-4';
+    const { output } = await callOpenAI(model, `Process this task: ${JSON.stringify(taskData)}`, 500);
 
+    const result = {
+      success: true,
+      processed: true,
+      taskId: taskData.id || `task-${Date.now()}`,
+      aiResponse: output,
+      processedAt: new Date().toISOString(),
+      model,
+      jobId: job.id
+    };
+
+    await updateJob(job.id, 'completed', result);
     await logExecution(id, 'info', `Task processed successfully: ${result.taskId}`);
     return result;
   } catch (error) {
-    await logExecution(id, 'error', `Task processing failed: ${error.message}`, { taskData });
+    await updateJob(job.id, 'failed', { error: error.message }, error.message);
+    await logExecution(id, 'error', `Task processing failed: ${error.message}`, { taskData, jobId: job.id });
     throw error;
   }
 }
