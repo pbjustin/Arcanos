@@ -182,6 +182,45 @@ export const getFallbackModel = (): string => {
 };
 
 /**
+ * Unified OpenAI call helper with token parameter fallback
+ */
+export async function callOpenAI(model: string, prompt: string, tokenLimit: number): Promise<{ response: any; output: string }> {
+  const client = getOpenAIClient();
+  if (!client) {
+    const mock = generateMockResponse(prompt, 'ask');
+    return { response: mock, output: mock.result };
+  }
+
+  const messages = [
+    { role: 'system' as const, content: 'You are a helpful AI assistant.' },
+    { role: 'user' as const, content: prompt }
+  ];
+
+  try {
+    const response = await client.chat.completions.create({
+      model,
+      messages,
+      max_tokens: tokenLimit
+    });
+
+    const output = response.choices?.[0]?.message?.content || '';
+    return { response, output };
+  } catch (err: any) {
+    const message = err?.message?.toLowerCase() || '';
+    if (message.includes('max_tokens')) {
+      const response = await client.chat.completions.create({
+        model,
+        messages,
+        max_completion_tokens: tokenLimit
+      });
+      const output = response.choices?.[0]?.message?.content || '';
+      return { response, output };
+    }
+    throw err;
+  }
+}
+
+/**
  * Make a chat completion with automatic fallback to GPT-4 if fine-tuned model fails
  */
 export const createChatCompletionWithFallback = async (
@@ -278,4 +317,4 @@ export const createGPT5Reasoning = async (
   }
 };
 
-export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup };
+export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI };

@@ -5,7 +5,7 @@
  * Handles job.cleanup route for hourly maintenance tasks
  */
 
-import { logExecution, query, getStatus } from '../dist/db.js';
+import { logExecution, query, getStatus, createJob, updateJob } from '../dist/db.js';
 
 export const id = 'cleanup-worker';
 
@@ -154,12 +154,20 @@ export async function optimizeDatabase() {
  * Run comprehensive cleanup
  */
 export async function runComprehensiveCleanup() {
+  let job;
   try {
-    await logExecution(id, 'info', 'Starting comprehensive cleanup cycle');
+    job = await createJob(id, 'runComprehensiveCleanup', {}, 'running');
+  } catch (err) {
+    job = { id: `job-${Date.now()}` };
+  }
+
+  try {
+    await logExecution(id, 'info', 'Starting comprehensive cleanup cycle', { jobId: job.id });
 
     const results = {
       timestamp: new Date().toISOString(),
-      operations: {}
+      operations: {},
+      jobId: job.id
     };
 
     // Run all cleanup operations
@@ -178,10 +186,12 @@ export async function runComprehensiveCleanup() {
       success: successCount === totalCount
     };
 
+    await updateJob(job.id, 'completed', results);
     await logExecution(id, 'info', `Comprehensive cleanup completed: ${successCount}/${totalCount} operations successful`);
-    
+
     return results;
   } catch (error) {
+    await updateJob(job.id, 'failed', { error: error.message }, error.message);
     await logExecution(id, 'error', `Comprehensive cleanup failed: ${error.message}`);
     throw error;
   }
