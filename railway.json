@@ -8,12 +8,14 @@
     }
   },
   "deploy": {
-    "startCommand": "node dist/server.js",
+    "startCommand": "npm run start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "env": {
       "ARC_MEMORY_PATH": "/tmp/arc/memory",
-      "ARC_SHADOW_MODE": "enabled"
+      "ARC_SHADOW_MODE": "enabled",
+      "ARC_WORKERS_ENABLED": "true",
+      "ARC_WORKER_LOGGING": "enabled"
     }
   },
   "root": "."
