@@ -265,7 +265,7 @@ async function deleteMemory(key: string): Promise<boolean> {
 }
 
 /**
- * Execution logging functions
+ * Execution logging functions - optimized with batch processing capability
  */
 async function logExecution(workerId: string, level: string, message: string, metadata: any = {}): Promise<void> {
   if (!isConnected) {
@@ -282,6 +282,39 @@ async function logExecution(workerId: string, level: string, message: string, me
     console.error('[🔌 DB] Failed to log execution:', (error as Error).message);
     // Fallback to console logging
     console.log(`[${workerId}] ${level.toUpperCase()}: ${message}`);
+  }
+}
+
+/**
+ * Batch log multiple execution entries for improved performance
+ */
+async function logExecutionBatch(entries: Array<{workerId: string, level: string, message: string, metadata?: any}>): Promise<void> {
+  if (!isConnected || entries.length === 0) {
+    entries.forEach(entry => console.log(`[${entry.workerId}] ${entry.level.toUpperCase()}: ${entry.message}`));
+    return;
+  }
+
+  try {
+    const values = entries.map((entry, index) => {
+      const base = index * 4;
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`;
+    }).join(', ');
+    
+    const params = entries.flatMap(entry => [
+      entry.workerId,
+      entry.level,
+      entry.message,
+      JSON.stringify(entry.metadata || {})
+    ]);
+
+    await query(
+      `INSERT INTO execution_logs (worker_id, level, message, metadata) VALUES ${values}`,
+      params
+    );
+  } catch (error) {
+    console.error('[🔌 DB] Failed to batch log execution:', (error as Error).message);
+    // Fallback to individual console logging
+    entries.forEach(entry => console.log(`[${entry.workerId}] ${entry.level.toUpperCase()}: ${entry.message}`));
   }
 }
 
@@ -393,6 +426,7 @@ export {
   loadMemory,
   deleteMemory,
   logExecution,
+  logExecutionBatch,
   createJob,
   updateJob,
   getLatestJob,
