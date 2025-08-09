@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { getOpenAIClient } from '../services/openai.js';
+import { getOpenAIClient, createGPT5Reasoning } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 
 // ✅ Environment setup
@@ -30,23 +30,13 @@ class WorkerTaskQueue extends EventEmitter {
 
 export const workerTaskQueue = new WorkerTaskQueue();
 
-// ✅ GPT-5 reasoning function (SDK-compatible fix)
+// ✅ GPT-5 reasoning function using centralized helper
 export async function gpt5Reasoning(prompt: string): Promise<string> {
   const client = getOpenAIClient();
   if (!client) return '[Fallback: GPT-5 unavailable]';
 
-  try {
-    const response = await client.chat.completions.create({
-      model: 'gpt-5',
-      messages: [{ role: 'user', content: prompt }],
-      max_completion_tokens: 1024, // ✅ Correct parameter
-      temperature: 1 // ✅ GPT-5 only supports default (1)
-    });
-    return response.choices[0]?.message?.content ?? '[No reasoning provided]';
-  } catch (err: any) {
-    console.error('[GPT-5 ERROR]', err.message);
-    return '[Fallback: GPT-5 unavailable]';
-  }
+  const result = await createGPT5Reasoning(client, prompt, 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.');
+  return result.content;
 }
 
 // Use the return type of runARCANOS to keep compatibility
