@@ -80,7 +80,12 @@ app.use('/', memoryRouter);
 app.use('/', workersRouter);
 app.use('/sdk', sdkRouter);
 
-// Initialize the server
+/**
+ * Bootstraps the Express application and all worker services.
+ *
+ * Performs port availability checks, initializes workers and database,
+ * and starts the HTTP server with global error handling in place.
+ */
 async function initializeServer() {
   // Check port availability and get an available port
   console.log(`[🔌 ARCANOS PORT] Checking port availability...`);
@@ -105,9 +110,10 @@ async function initializeServer() {
     }
   
   // Global error handler
-  app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, _: NextFunction) => {
     console.error('Unhandled error:', err);
-    res.status(500).json({
+    const status = typeof err.status === 'number' ? err.status : 500;
+    res.status(status).json({
       error: 'Internal server error',
       message: config.server.environment === 'development' ? err.message : 'Something went wrong'
     });
