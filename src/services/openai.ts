@@ -4,7 +4,13 @@ import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
 
-// Mock response generator for when API key is not available
+/**
+ * Generates mock AI responses when OpenAI API key is not available
+ * 
+ * @param input - User input text to generate a mock response for
+ * @param endpoint - API endpoint name (ask, write, guide, audit, sim, etc.)
+ * @returns Mock response object with realistic structure matching real AI responses
+ */
 export const generateMockResponse = (input: string, endpoint: string = 'ask'): any => {
   const mockId = `mock_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const timestamp = Math.floor(Date.now() / 1000);
@@ -100,11 +106,21 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
   }
 };
 
+/**
+ * Validates whether a proper OpenAI API key is configured
+ * 
+ * @returns True if API key is set and valid, false otherwise
+ */
 export const hasValidAPIKey = (): boolean => {
   const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
   return !!(apiKey && apiKey.trim() !== '' && apiKey !== 'your-openai-api-key-here' && apiKey !== 'your-openai-key-here');
 };
 
+/**
+ * Initializes OpenAI client with API key validation and default model configuration
+ * 
+ * @returns OpenAI client instance or null if initialization fails
+ */
 const initializeOpenAI = (): OpenAI | null => {
   if (openai) return openai;
 
@@ -129,18 +145,38 @@ const initializeOpenAI = (): OpenAI | null => {
   }
 };
 
+/**
+ * Gets the active OpenAI client instance, initializing if needed
+ * 
+ * @returns OpenAI client instance or null if unavailable
+ */
 export const getOpenAIClient = (): OpenAI | null => {
   return openai || initializeOpenAI();
 };
 
+/**
+ * Gets the configured default AI model (typically fine-tuned)
+ * 
+ * @returns Model identifier string
+ */
 export const getDefaultModel = (): string => {
   return defaultModel || process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
 };
 
+/**
+ * Gets the configured GPT-5 model identifier
+ * 
+ * @returns GPT-5 model string (defaults to 'gpt-5')
+ */
 export const getGPT5Model = (): string => {
   return process.env.GPT5_MODEL || 'gpt-5';
 };
 
+/**
+ * Gets the fallback model when primary model fails
+ * 
+ * @returns Fallback model identifier (always 'gpt-4')
+ */
 export const getFallbackModel = (): string => {
   return 'gpt-4';
 };
