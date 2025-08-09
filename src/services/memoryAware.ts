@@ -191,6 +191,23 @@ export function storeMemory(
 /**
  * Retrieve relevant memory context for a given input
  */
+/**
+ * Retrieve and build memory context for AI reasoning
+ * 
+ * This function analyzes user input and retrieves relevant memory entries to enhance
+ * AI responses with contextual continuity. It implements:
+ * 
+ * - Keyword-based relevance scoring for content matching
+ * - Session-based relevance bonuses for conversation continuity 
+ * - Recent activity prioritization for temporal relevance
+ * - Access frequency weighting for important memories
+ * - Comprehensive logging for memory access tracking
+ * 
+ * @param userInput - The user's input to find relevant context for
+ * @param sessionId - Optional session ID for conversation continuity
+ * @param maxEntries - Maximum number of memory entries to return (default: 5)
+ * @returns MemoryContext - Object containing relevant memories and context summary
+ */
 export function getMemoryContext(
   userInput: string,
   sessionId?: string,

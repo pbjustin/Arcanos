@@ -88,7 +88,6 @@ async function initializeDatabase(): Promise<boolean> {
       min: 2,  // Maintain minimum connections for responsiveness
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
-      acquireTimeoutMillis: 20000, // Allow more time for connection acquisition
     });
 
     // Test the connection with a simple query
