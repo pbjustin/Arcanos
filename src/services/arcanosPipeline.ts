@@ -2,11 +2,11 @@ import OpenAI from 'openai';
 import { getOpenAIClient, getDefaultModel } from './openai.js';
 
 /**
- * Run the ARCANOS → GPT-5 → ARCANOS pipeline.
+ * Run the ARCANOS → GPT-4 → ARCANOS pipeline.
  *
  * The request is first routed through the ARCANOS fine-tuned model. If the
  * intake response includes the "USE_GPT5" flag the content is processed by
- * GPT-5 before being returned to ARCANOS for final shaping.
+ * GPT-4 before being returned to ARCANOS for final shaping.
  *
  * @param userInput - The raw user input to process
  * @returns The final ARCANOS-shaped response
@@ -26,7 +26,7 @@ export async function runArcanosPipeline(userInput: string): Promise<string> {
       {
         role: 'system',
         content:
-          'ARCANOS v2 core intake. Route input for optimal GPT-5 involvement without bypass.'
+          'ARCANOS v2 core intake. Route input for optimal GPT-4 involvement without bypass.'
       },
       { role: 'user', content: userInput }
     ]
