@@ -1,5 +1,9 @@
 // workers/example_worker.js
 
+// Note: This worker demonstrates the problem statement requirements
+// The project uses ES modules ("type": "module" in package.json),
+// so we use export default instead of module.exports
+
 export default {
   name: "Example Worker", // Display name in logs
   schedule: "*/5 * * * *", // Run every 5 minutes (cron syntax)
