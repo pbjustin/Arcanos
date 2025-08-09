@@ -48,6 +48,7 @@ interface ArcanosResult {
     reason?: string;
     delegatedQuery?: string;
   };
+  gpt5Used?: boolean;
   auditSafe: {
     mode: boolean;
     overrideUsed: boolean;
@@ -543,6 +544,7 @@ function parseArcanosResponse(
     activeModel,
     fallbackFlag,
     reasoningDelegation,
+    gpt5Used: true,
     auditSafe: {
       mode: auditConfig?.auditSafeMode ?? true,
       overrideUsed: !!auditConfig?.explicitOverride,
