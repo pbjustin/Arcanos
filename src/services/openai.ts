@@ -20,6 +20,8 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
     },
     activeModel: 'MOCK',
     fallbackFlag: false,
+    gpt5Used: true,
+    routingStages: ['ARCANOS-INTAKE:MOCK', 'GPT5-REASONING', 'ARCANOS-FINAL'],
     auditSafe: {
       mode: true,
       overrideUsed: input.toLowerCase().includes('override'),
@@ -48,9 +50,9 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
         suggestedFixes: 'MOCK: Configure OPENAI_API_KEY for real analysis',
         coreLogicTrace: 'MOCK: Trinity -> ARCANOS -> Mock Response Generator',
         gpt5Delegation: {
-          used: false,
-          reason: 'Mock mode - delegation detection disabled',
-          delegatedQuery: undefined
+          used: true,
+          reason: 'Unconditional GPT-5 routing (mock)',
+          delegatedQuery: input
         }
       };
     case 'ask':
