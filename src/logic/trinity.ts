@@ -97,7 +97,7 @@ export async function runThroughBrain(
       { role: 'user', content: auditSafePrompt }
     ],
     temperature: 0.2,
-    max_tokens: 500
+    max_completion_tokens: 500
   });
   const framedRequest = intakeResponse.choices[0]?.message?.content || auditSafePrompt;
   const actualModel = intakeResponse.activeModel || arcanosModel;
@@ -112,7 +112,7 @@ export async function runThroughBrain(
       { role: 'system', content: 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.' },
       { role: 'user', content: framedRequest }
     ],
-    temperature: 0,
+    temperature: 1, // GPT-5 requires temperature: 1 or omitted for default
     max_completion_tokens: 1000
   });
   const gpt5Output = gpt5Response.choices[0]?.message?.content || '';
@@ -131,7 +131,7 @@ export async function runThroughBrain(
       { role: 'user', content: 'Provide the final ARCANOS response.' }
     ],
     temperature: 0.2,
-    max_tokens: 1000
+    max_completion_tokens: 1000
   });
   const finalText = finalResponse.choices[0]?.message?.content || '';
 
