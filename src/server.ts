@@ -96,6 +96,11 @@ async function initializeServer() {
     
     // Initialize workers first
     const workerResults = await initializeWorkers();
+    
+    console.log(`[🔌 ARCANOS DB] Database Status: ${workerResults.database.connected ? 'Connected' : 'Disconnected'}`);
+    if (workerResults.database.error) {
+      console.log(`[🔌 ARCANOS DB] Database Error: ${workerResults.database.error}`);
+    }
   
   // Global error handler
   app.use((err: Error, req: Request, res: Response, _: NextFunction) => {
@@ -125,6 +130,7 @@ async function initializeServer() {
     // Boot summary
     console.log('\n=== 🧠 ARCANOS BOOT SUMMARY ===');
     console.log(`🤖 Active Model: ${getDefaultModel()}`);
+    console.log(`🔌 Database: ${workerResults.database.connected ? 'Connected' : 'Disconnected'}`);
     console.log(`📁 Workers Directory: ./workers`);
     console.log(`🔧 Workers Initialized: ${workerResults.initialized.length}`);
     console.log(`📅 Workers Scheduled: ${workerResults.scheduled.length}`);
