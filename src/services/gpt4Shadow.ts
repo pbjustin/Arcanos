@@ -3,6 +3,7 @@ import { appendFileSync } from 'fs';
 import { ensureLogDirectory, getGPT4TracePath, getAuditShadowPath } from '../utils/logPath.js';
 import { validateAuditSafeOutput, createAuditSummary } from './auditSafe.js';
 import { ensureShadowReady, disableShadowMode } from './shadowControl.js';
+import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
 
@@ -12,14 +13,16 @@ async function routeToModule(client: OpenAI, tag: ShadowTag, content: string): P
       ? 'You are creative_architect, an advanced AI module for synthesizing content. Mirror the described ARCANOS event and respond.'
       : 'You are role_alignment_tracker, an advanced AI module monitoring role adherence and drift. Mirror the described ARCANOS event and respond.';
 
+  const model = 'gpt-4-turbo';
+  const tokenParams = getTokenParameter(model, 500);
   const response = await client.chat.completions.create({
-    model: 'gpt-4-turbo',
+    model,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content }
     ],
     temperature: 0.2,
-    max_tokens: 500
+    ...tokenParams
   });
 
   return response.choices[0]?.message?.content || '';

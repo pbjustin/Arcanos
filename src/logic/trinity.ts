@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { createResponseWithLogging, logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
 import { getDefaultModel, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
+import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import {
   getAuditSafeConfig,
   applyAuditSafeConstraints,
@@ -91,13 +92,14 @@ export async function runThroughBrain(
 
   // ARCANOS intake prepares framed request for GPT-5
   const intakeSystemPrompt = `You are ARCANOS, the primary AI logic core. Integrate memory context and prepare the user's request for GPT-5 reasoning. Return only the framed request.\n\nMEMORY CONTEXT:\n${memoryContext.contextSummary}`;
+  const intakeTokenParams = getTokenParameter(arcanosModel, 500);
   const intakeResponse = await createChatCompletionWithFallback(client, {
     messages: [
       { role: 'system', content: intakeSystemPrompt },
       { role: 'user', content: auditSafePrompt }
     ],
     temperature: 0.2,
-    max_tokens: 500
+    ...intakeTokenParams
   });
   const framedRequest = intakeResponse.choices[0]?.message?.content || auditSafePrompt;
   const actualModel = intakeResponse.activeModel || arcanosModel;
@@ -112,6 +114,7 @@ export async function runThroughBrain(
   // Final ARCANOS execution and filtering
   logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
+  const finalTokenParams = getTokenParameter(actualModel, 1000);
   const finalResponse = await createChatCompletionWithFallback(client, {
     messages: [
       {
@@ -123,7 +126,7 @@ export async function runThroughBrain(
       { role: 'user', content: 'Provide the final ARCANOS response.' }
     ],
     temperature: 0.2,
-    max_tokens: 1000
+    ...finalTokenParams
   });
   const finalText = finalResponse.choices[0]?.message?.content || '';
 

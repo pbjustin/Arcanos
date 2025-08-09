@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { createResponseWithLogging } from '../utils/aiLogger.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import { getDefaultModel } from '../services/openai.js';
+import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { 
   getAuditSafeConfig, 
   applyAuditSafeConstraints, 
@@ -397,6 +398,7 @@ export async function runARCANOS(
   
   try {
     // Try the fine-tuned model first
+    const tokenParams = getTokenParameter(modelToUse, 2000);
     response = await createResponseWithLogging(client, {
       model: modelToUse,
       messages: [
@@ -410,7 +412,7 @@ export async function runARCANOS(
         }
       ],
       temperature: 0.1, // Low temperature for consistent diagnostic output
-      max_tokens: 2000,
+      ...tokenParams,
     });
 
     finalResult = response.choices[0]?.message?.content || '';
@@ -421,6 +423,7 @@ export async function runARCANOS(
     modelToUse = 'gpt-4';
     isFallback = true;
     
+    const fallbackTokenParams = getTokenParameter(modelToUse, 2000);
     response = await createResponseWithLogging(client, {
       model: modelToUse,
       messages: [
@@ -434,7 +437,7 @@ export async function runARCANOS(
         }
       ],
       temperature: 0.1,
-      max_tokens: 2000,
+      ...fallbackTokenParams,
     });
 
     finalResult = response.choices[0]?.message?.content || '';

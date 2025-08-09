@@ -8,6 +8,7 @@
 
 import OpenAI from 'openai';
 import { getDefaultModel, createChatCompletionWithFallback } from './openai.js';
+import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { 
   applySecurityCompliance, 
   createSecureReasoningPrompt, 
@@ -68,6 +69,7 @@ export async function executeSecureReasoning(
   
   try {
     // Execute reasoning with enhanced error handling
+    const tokenParams = getTokenParameter(model, 2000);
     const response = await createChatCompletionWithFallback(client, {
       messages: [
         {
@@ -89,7 +91,7 @@ Your output should be structured, clear, and free of any confidential or securit
         }
       ],
       temperature: 0.3, // Balanced for reasoning consistency
-      max_tokens: 2000
+      ...tokenParams
     });
 
     const rawAnalysis = response.choices[0]?.message?.content || '';

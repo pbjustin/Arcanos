@@ -1,0 +1,35 @@
+files_patched:
+  - path: src/services/openai.ts
+    lines_changed: 3
+  - path: src/logic/arcanos.ts
+    lines_changed: 6
+  - path: src/logic/trinity.ts
+    lines_changed: 6
+  - path: src/services/gpt4Shadow.ts
+    lines_changed: 3
+  - path: src/services/secureReasoningEngine.ts
+    lines_changed: 3
+  - path: workers/taskProcessor.js
+    lines_changed: 3
+  - path: workers/auditRunner.js
+    lines_changed: 6
+  - path: workers/worker-gpt5-reasoning.js
+    lines_changed: 3
+  - path: src/utils/tokenParameterHelper.ts
+    lines_changed: 226
+models_tested:
+  - name: "gpt-4"
+    parameter_used: max_tokens
+  - name: "gpt-3.5-turbo"
+    parameter_used: max_tokens
+  - name: "gpt-5"
+    parameter_used: max_tokens
+  - name: "ft:gpt-3.5-turbo-0125:arcanos-v1-1106"
+    parameter_used: max_tokens
+  - name: "REDACTED_FINE_TUNED_MODEL_ID"
+    parameter_used: max_tokens
+  - name: "gpt-4o"
+    parameter_used: max_tokens
+  - name: "gpt-4-turbo"
+    parameter_used: max_tokens
+result: pass
