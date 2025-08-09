@@ -48,9 +48,9 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
         suggestedFixes: 'MOCK: Configure OPENAI_API_KEY for real analysis',
         coreLogicTrace: 'MOCK: Trinity -> ARCANOS -> Mock Response Generator',
         gpt5Delegation: {
-          used: false,
-          reason: 'Mock mode - delegation detection disabled',
-          delegatedQuery: undefined
+          used: true, // Always true per AI-CORE routing requirements (mock reflects actual logic)
+          reason: 'GPT-5 primary reasoning stage - AI-CORE routing requires unconditional engagement for all requests',
+          delegatedQuery: input
         }
       };
     case 'ask':
@@ -58,41 +58,47 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
       return {
         ...baseMockResponse,
         result: `[MOCK AI RESPONSE] Processed request: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
-        module: 'MockBrain'
+        module: 'MockBrain',
+        gpt5Used: true // Always true per AI-CORE routing requirements
       };
     case 'write':
       return {
         ...baseMockResponse,
         result: `[MOCK WRITE RESPONSE] Generated content for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
         module: 'MockWriter',
-        endpoint: 'write'
+        endpoint: 'write',
+        gpt5Used: true // Always true per AI-CORE routing requirements
       };
     case 'guide':
       return {
         ...baseMockResponse,
         result: `[MOCK GUIDE RESPONSE] Step-by-step guidance for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
         module: 'MockGuide',
-        endpoint: 'guide'
+        endpoint: 'guide',
+        gpt5Used: true // Always true per AI-CORE routing requirements
       };
     case 'audit':
       return {
         ...baseMockResponse,
         result: `[MOCK AUDIT RESPONSE] Analysis and evaluation of: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
         module: 'MockAuditor',
-        endpoint: 'audit'
+        endpoint: 'audit',
+        gpt5Used: true // Always true per AI-CORE routing requirements
       };
     case 'sim':
       return {
         ...baseMockResponse,
         result: `[MOCK SIMULATION RESPONSE] Scenario modeling for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
         module: 'MockSimulator',
-        endpoint: 'sim'
+        endpoint: 'sim',
+        gpt5Used: true // Always true per AI-CORE routing requirements
       };
     default:
       return {
         ...baseMockResponse,
         result: `[MOCK RESPONSE] Processed request: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
-        module: 'MockProcessor'
+        module: 'MockProcessor',
+        gpt5Used: true // Always true per AI-CORE routing requirements
       };
   }
 };
