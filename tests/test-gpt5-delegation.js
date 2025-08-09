@@ -1,6 +1,6 @@
 /**
  * Test for GPT-5 delegation functionality in ARCANOS
- * Tests the delegation detection and integration
+ * Tests the delegation detection and integration with GPT-5 as primary reasoning engine
  */
 
 import { exec, spawn } from 'child_process';
@@ -155,11 +155,11 @@ async function testGPT5Delegation() {
     console.log('\n🎉 All GPT-5 delegation tests passed!');
     console.log('\n📋 GPT-5 Delegation Test Summary:');
     console.log('- GPT-5 delegation field present in all responses');
-    console.log('- Delegation detection logic integrated');
-    console.log('- ARCANOS structure maintained with delegation');
-    console.log('- System prompt includes delegation instructions');
-    console.log('- Response processing through ARCANOS preserved');
-    console.log('- Logging and reason tracking in place');
+    console.log('- GPT-5 delegation detection logic integrated');
+    console.log('- ARCANOS structure maintained with GPT-5 delegation');
+    console.log('- System prompt includes GPT-5 delegation instructions');
+    console.log('- GPT-5 response processing through ARCANOS preserved');
+    console.log('- GPT-5 logging and reason tracking in place');
     
     return true;
 
