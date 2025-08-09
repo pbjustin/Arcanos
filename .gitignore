@@ -21,7 +21,9 @@ src/**/*.js.map
 .env.production.local
 
 # Logs
-logs
+logs/*.log
+logs/*.txt
+!logs/.gitkeep
 *.log
 !memory/state/audit.log
 
