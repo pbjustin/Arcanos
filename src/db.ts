@@ -58,6 +58,17 @@ interface ReasoningLog {
 /**
  * Initialize database connection pool
  */
+/**
+ * Initialize database connection pool and verify connectivity
+ * 
+ * Sets up a PostgreSQL connection pool with optimized settings for ARCANOS:
+ * - SSL configuration based on environment (localhost vs production)
+ * - Connection pooling for efficient resource usage
+ * - Graceful handling of missing DATABASE_URL
+ * - Automatic table initialization on successful connection
+ * 
+ * @returns Promise<boolean> - True if database initialized successfully, false otherwise
+ */
 async function initializeDatabase(): Promise<boolean> {
   const databaseUrl = process.env.DATABASE_URL;
   
@@ -69,15 +80,18 @@ async function initializeDatabase(): Promise<boolean> {
   try {
     console.log('[🔌 DB] Initializing PostgreSQL connection pool...');
     
+    // Optimized connection pool configuration for ARCANOS workloads
     pool = new Pool({
       connectionString: databaseUrl,
       ssl: databaseUrl.includes('localhost') ? false : { rejectUnauthorized: false },
-      max: 20,
+      max: 10, // Reduced from 20 - sufficient for typical ARCANOS usage
+      min: 2,  // Maintain minimum connections for responsiveness
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      acquireTimeoutMillis: 20000, // Allow more time for connection acquisition
     });
 
-    // Test the connection
+    // Test the connection with a simple query
     const client = await pool.connect();
     await client.query('SELECT NOW()');
     client.release();
@@ -85,7 +99,7 @@ async function initializeDatabase(): Promise<boolean> {
     isConnected = true;
     console.log('[🔌 DB] ✅ Database connection established successfully');
     
-    // Initialize tables
+    // Initialize required tables for ARCANOS operations
     await initializeTables();
     
     return true;

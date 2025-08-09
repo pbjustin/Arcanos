@@ -46,8 +46,15 @@ interface TrinityResult {
   };
 }
 
-// Check for the fine-tuned model, fallback to GPT-4 if unavailable
-const validateModel = async (client: OpenAI) => {
+/**
+ * Validates the availability of the configured AI model
+ * Attempts to retrieve the default model (typically fine-tuned) from OpenAI
+ * Falls back to GPT-4 if the primary model is unavailable
+ * 
+ * @param client - OpenAI client instance
+ * @returns Promise<string> - The validated model name (either default or 'gpt-4')
+ */
+const validateModel = async (client: OpenAI): Promise<string> => {
   const defaultModel = getDefaultModel();
   try {
     const modelToCheck = defaultModel.startsWith('ft:') ? defaultModel : defaultModel;
@@ -62,9 +69,25 @@ const validateModel = async (client: OpenAI) => {
 };
 
 /**
- * Universal Trinity pipeline
- * ARCANOS Intake → GPT-5 Reasoning → ARCANOS Execution → Output
- * GPT-5 is always invoked as the primary reasoning stage.
+ * Universal Trinity pipeline - Core AI processing workflow for ARCANOS
+ * 
+ * This function implements a three-stage AI processing pipeline:
+ * 1. ARCANOS Intake - Initial request processing and model validation
+ * 2. GPT-5 Reasoning - Advanced reasoning and analysis stage (always invoked)
+ * 3. ARCANOS Execution - Final processing and response generation
+ * 
+ * Features:
+ * - Automatic model validation and fallback handling
+ * - Audit-safe constraint application for secure processing
+ * - Memory context integration for enhanced responses
+ * - Comprehensive logging and routing stage tracking
+ * - Task lineage tracking for debugging and analysis
+ * 
+ * @param client - OpenAI client instance for API communication
+ * @param prompt - User input prompt to process
+ * @param sessionId - Optional session identifier for context continuity
+ * @param overrideFlag - Optional audit-safe override flag for special handling
+ * @returns Promise<TrinityResult> - Comprehensive result with AI response and metadata
  */
 export async function runThroughBrain(
   client: OpenAI,

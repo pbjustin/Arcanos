@@ -1,30 +1,23 @@
 import express, { Request, Response } from 'express';
-import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
-import fs from 'fs';
+import { 
+  validateAIRequest, 
+  handleAIError, 
+  logRequestFeedback,
+  StandardAIRequest,
+  StandardAIResponse,
+  ErrorResponse
+} from '../utils/requestHandler.js';
 
 const router = express.Router();
 
-interface AskRequest {
+interface AskRequest extends StandardAIRequest {
   prompt: string;
   sessionId?: string;
   overrideAuditSafe?: string;
 }
 
-interface AskResponse {
-  result: string;
-  module: string;
-  meta: {
-    tokens?: {
-      prompt_tokens: number;
-      completion_tokens: number;
-      total_tokens: number;
-    } | undefined;
-    id: string;
-    created: number;
-  };
-  activeModel?: string;
-  fallbackFlag?: boolean;
+interface AskResponse extends StandardAIResponse {
   routingStages?: string[];
   gpt5Used?: boolean;
   auditSafe?: {
@@ -43,71 +36,36 @@ interface AskResponse {
     requestId: string;
     logged: boolean;
   };
-  error?: string;
 }
 
-interface ErrorResponse {
-  error: string;
-  details?: string;
-}
-
-// Shared handler for both ask and brain endpoints
+/**
+ * Shared handler for both ask and brain endpoints
+ * Handles AI request processing with standardized error handling and validation
+ */
 const handleAIRequest = async (
   req: Request<{}, AskResponse | ErrorResponse, AskRequest>,
   res: Response<AskResponse | ErrorResponse>,
   endpointName: string
 ) => {
-  console.log(`📨 /${endpointName} received`);
-  const { prompt, sessionId, overrideAuditSafe } = req.body;
+  const { sessionId, overrideAuditSafe } = req.body;
 
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ error: 'Missing or invalid prompt in request body' });
-  }
+  // Use shared validation logic
+  const validation = validateAIRequest(req, res, endpointName);
+  if (!validation) return; // Response already sent
+
+  const { client: openai, input: prompt } = validation;
 
   console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}`);
 
   // Log request for feedback loop
-  try {
-    const feedbackData = {
-      timestamp: new Date().toISOString(),
-      endpoint: endpointName,
-      prompt: prompt.substring(0, 500) // Limit length for privacy
-    };
-    fs.writeFileSync('/tmp/last-gpt-request', JSON.stringify(feedbackData));
-  } catch (error) {
-    // Silently fail - feedback logging is not critical
-    console.log('Could not write feedback file:', error instanceof Error ? error.message : 'Unknown error');
-  }
-
-  // Check if we have a valid API key
-  if (!hasValidAPIKey()) {
-    console.log(`🤖 Returning mock response for /${endpointName} (no API key)`);
-    const mockResponse = generateMockResponse(prompt, endpointName);
-    return res.json(mockResponse);
-  }
-
-  const openai = getOpenAIClient();
-  if (!openai) {
-    console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);
-    const mockResponse = generateMockResponse(prompt, endpointName);
-    return res.json(mockResponse);
-  }
+  logRequestFeedback(prompt, endpointName);
 
   try {
     // runThroughBrain now unconditionally routes through GPT-5 before final ARCANOS processing
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe);
     return res.json(output);
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('❌ Trinity processing error:', errorMessage);
-    
-    // Return mock response as fallback
-    console.log(`🤖 Returning mock response for /${endpointName} (processing failed)`);
-    const mockResponse = generateMockResponse(prompt, endpointName);
-    return res.json({
-      ...mockResponse,
-      error: `AI service failure: ${errorMessage}`
-    });
+    handleAIError(err, prompt, endpointName, res);
   }
 };
 
