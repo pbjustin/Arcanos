@@ -29,13 +29,20 @@ async function importWorkerFunctions(): Promise<WorkerModule> {
         failed: [],
         retryCount: 1
       }),
-      dispatchJob: async (workerId: string, jobType: string, jobData: any) => ({
-        success: true,
-        workerId,
-        jobType,
-        processedAt: new Date().toISOString(),
-        result: `Mock job ${jobType} processed by ${workerId}`
-      }),
+      dispatchJob: async (workerId: string, jobType: string, jobData: any) => {
+        if (workerId === 'worker.queue' || workerId === 'task-processor') {
+          // @ts-ignore Dynamic worker import without types
+          const worker = await import('../../workers/taskProcessor.js');
+          return worker.processTask(jobData);
+        }
+        return {
+          success: true,
+          workerId,
+          jobType,
+          processedAt: new Date().toISOString(),
+          result: `Mock job ${jobType} processed by ${workerId}`
+        };
+      },
       getWorkerStatus: () => ({
         count: 4,
         healthy: 4,

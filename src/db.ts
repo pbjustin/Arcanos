@@ -42,6 +42,7 @@ interface JobData {
   status: string;
   input: any;
   output?: any;
+  error_message?: string;
   created_at: Date;
   updated_at: Date;
   completed_at?: Date;
@@ -144,6 +145,7 @@ async function initializeTables(): Promise<void> {
       status VARCHAR(50) NOT NULL DEFAULT 'pending',
       input JSONB NOT NULL,
       output JSONB,
+      error_message TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW(),
       completed_at TIMESTAMPTZ
@@ -321,30 +323,30 @@ async function logExecutionBatch(entries: Array<{workerId: string, level: string
 /**
  * Job data functions
  */
-async function createJob(workerId: string, jobType: string, input: any): Promise<JobData> {
+async function createJob(workerId: string, jobType: string, input: any, status: string = 'pending'): Promise<JobData> {
   if (!isConnected) {
     throw new Error('Database not configured');
   }
 
   const result = await query(
-    'INSERT INTO job_data (worker_id, job_type, input) VALUES ($1, $2, $3) RETURNING *',
-    [workerId, jobType, JSON.stringify(input)]
+    'INSERT INTO job_data (worker_id, job_type, status, input) VALUES ($1, $2, $3, $4) RETURNING *',
+    [workerId, jobType, status, JSON.stringify(input)]
   );
-  
+
   return result.rows[0];
 }
 
-async function updateJob(jobId: string, status: string, output: any = null): Promise<JobData> {
+async function updateJob(jobId: string, status: string, output: any = null, errorMessage: string | null = null): Promise<JobData> {
   if (!isConnected) {
     throw new Error('Database not configured');
   }
 
   const completedAt = status === 'completed';
   const result = await query(
-    `UPDATE job_data 
-     SET status = $1, output = $2, updated_at = NOW(), completed_at = ${completedAt ? 'NOW()' : 'completed_at'}
-     WHERE id = $3 RETURNING *`,
-    [status, JSON.stringify(output), jobId]
+    `UPDATE job_data
+     SET status = $1, output = $2, error_message = $3, updated_at = NOW(), completed_at = ${completedAt ? 'NOW()' : 'completed_at'}
+     WHERE id = $4 RETURNING *`,
+    [status, JSON.stringify(output), errorMessage, jobId]
   );
   
   return result.rows[0];

@@ -5,9 +5,8 @@
  * Handles audit.cron route for nightly auditing tasks
  */
 
-import { logExecution, query, getStatus } from '../dist/db.js';
-import { getOpenAIClient, generateMockResponse } from '../dist/services/openai.js';
-import { getTokenParameter } from '../dist/utils/tokenParameterHelper.js';
+import { logExecution, query, getStatus, createJob, updateJob } from '../dist/db.js';
+import { callOpenAI, getOpenAIClient } from '../dist/services/openai.js';
 
 export const id = 'audit-runner';
 
@@ -15,14 +14,22 @@ export const id = 'audit-runner';
  * Run comprehensive system audit
  */
 export async function runAudit() {
+  let job;
   try {
-    await logExecution(id, 'info', 'Starting comprehensive system audit');
+    job = await createJob(id, 'runAudit', {}, 'running');
+  } catch (err) {
+    job = { id: `job-${Date.now()}` };
+  }
+
+  try {
+    await logExecution(id, 'info', 'Starting comprehensive system audit', { jobId: job.id });
 
     const auditResults = {
       auditId: `audit-${Date.now()}`,
       timestamp: new Date().toISOString(),
       type: 'nightly-audit',
-      results: {}
+      results: {},
+      jobId: job.id
     };
 
     // Database health check
@@ -63,18 +70,11 @@ export async function runAudit() {
     const client = getOpenAIClient();
     if (client) {
       try {
-        const model = 'gpt-4';
-        const tokenParams = getTokenParameter(model, 10);
-        const testResponse = await client.chat.completions.create({
-          model,
-          messages: [{ role: 'user', content: 'Health check - respond with OK' }],
-          ...tokenParams
-        });
-        
+        const { output } = await callOpenAI('gpt-4', 'Health check - respond with OK', 10);
         auditResults.results.ai = {
           status: 'healthy',
           model: 'gpt-4',
-          testResponse: testResponse.choices[0]?.message?.content
+          testResponse: output
         };
       } catch (error) {
         auditResults.results.ai = {
@@ -83,40 +83,25 @@ export async function runAudit() {
         };
       }
     } else {
+      const { output } = await callOpenAI('gpt-4', 'Health check - respond with OK', 10);
       auditResults.results.ai = {
         status: 'mock-mode',
-        reason: 'No OpenAI API key configured'
+        reason: 'No OpenAI API key configured',
+        testResponse: output
       };
     }
 
     // Generate AI-powered audit summary
     let auditSummary;
-    if (client) {
-      try {
-        const summaryModel = 'gpt-4';
-        const summaryTokenParams = getTokenParameter(summaryModel, 300);
-        const summaryResponse = await client.chat.completions.create({
-          model: summaryModel,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an expert system auditor. Analyze the audit results and provide a concise summary with recommendations.'
-            },
-            {
-              role: 'user',
-              content: `Analyze these audit results and provide recommendations: ${JSON.stringify(auditResults.results)}`
-            }
-          ],
-          ...summaryTokenParams
-        });
-        
-        auditSummary = summaryResponse.choices[0]?.message?.content;
-      } catch (error) {
-        auditSummary = `AI summary generation failed: ${error.message}`;
-      }
-    } else {
-      const mockResponse = generateMockResponse(`Audit results: ${JSON.stringify(auditResults.results)}`, 'audit');
-      auditSummary = mockResponse.result;
+    try {
+      const { output } = await callOpenAI(
+        'gpt-4',
+        `Analyze these audit results and provide recommendations: ${JSON.stringify(auditResults.results)}`,
+        300
+      );
+      auditSummary = output;
+    } catch (error) {
+      auditSummary = `AI summary generation failed: ${error.message}`;
     }
 
     auditResults.summary = auditSummary;
@@ -133,9 +118,11 @@ export async function runAudit() {
       }
     }
 
+    await updateJob(job.id, 'completed', auditResults);
     await logExecution(id, 'info', 'System audit completed successfully', auditResults);
     return auditResults;
   } catch (error) {
+    await updateJob(job.id, 'failed', { error: error.message }, error.message);
     await logExecution(id, 'error', `Audit execution failed: ${error.message}`);
     throw error;
   }
@@ -145,8 +132,15 @@ export async function runAudit() {
  * Run security audit
  */
 export async function runSecurityAudit() {
+  let job;
   try {
-    await logExecution(id, 'info', 'Running security audit');
+    job = await createJob(id, 'runSecurityAudit', {}, 'running');
+  } catch (err) {
+    job = { id: `job-${Date.now()}` };
+  }
+
+  try {
+    await logExecution(id, 'info', 'Running security audit', { jobId: job.id });
 
     const securityChecks = {
       timestamp: new Date().toISOString(),
@@ -162,12 +156,15 @@ export async function runSecurityAudit() {
         dataIntegrity: {
           status: 'verified'
         }
-      }
+      },
+      jobId: job.id
     };
 
+    await updateJob(job.id, 'completed', securityChecks);
     await logExecution(id, 'info', 'Security audit completed', securityChecks);
     return securityChecks;
   } catch (error) {
+    await updateJob(job.id, 'failed', { error: error.message }, error.message);
     await logExecution(id, 'error', `Security audit failed: ${error.message}`);
     throw error;
   }
