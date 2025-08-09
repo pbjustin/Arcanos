@@ -304,6 +304,24 @@ async function updateJob(jobId: string, status: string, output: any = null): Pro
   return result.rows[0];
 }
 
+async function getLatestJob(): Promise<JobData | null> {
+  if (!isConnected) {
+    return null;
+  }
+
+  try {
+    const result = await query(
+      'SELECT * FROM job_data ORDER BY created_at DESC LIMIT 1',
+      []
+    );
+    
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error fetching latest job:', error);
+    return null;
+  }
+}
+
 /**
  * Reasoning logs functions
  */
@@ -364,6 +382,7 @@ export {
   logExecution,
   createJob,
   updateJob,
+  getLatestJob,
   logReasoning,
   getStatus,
   close,
