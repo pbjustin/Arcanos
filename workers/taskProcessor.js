@@ -8,6 +8,26 @@
 import { logExecution, createJob, updateJob } from '../dist/db.js';
 import { callOpenAI } from '../dist/services/openai.js';
 
+const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
+const MAX_API_RETRIES = 3;
+const MAX_ITERATIONS = 100;
+
+async function safeCallOpenAI(model, prompt, tokens) {
+  for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt++) {
+    try {
+      return await Promise.race([
+        callOpenAI(model, prompt, tokens),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('API request timed out')), API_TIMEOUT_MS)
+        )
+      ]);
+    } catch (error) {
+      await logExecution(id, 'error', `OpenAI call failed (attempt ${attempt}): ${error.message}`);
+      if (attempt === MAX_API_RETRIES) throw error;
+    }
+  }
+}
+
 export const id = 'task-processor';
 
 /**
@@ -41,7 +61,7 @@ export async function processTask(taskData) {
     }
 
     const model = 'gpt-4';
-    const { output } = await callOpenAI(model, `Process this task: ${JSON.stringify(taskData)}`, 500);
+    const { output } = await safeCallOpenAI(model, `Process this task: ${JSON.stringify(taskData)}`, 500);
 
     const result = {
       success: true,
@@ -68,12 +88,24 @@ export async function processTask(taskData) {
  */
 export async function processBatch(tasks) {
   const results = [];
-  
+  let iterations = 0;
+
   for (const task of tasks) {
+    if (iterations++ >= MAX_ITERATIONS) {
+      await logExecution(id, 'warn', 'Max iteration limit reached in processBatch');
+      break;
+    }
+
     try {
-      const result = await processTask(task);
+      const result = await Promise.race([
+        processTask(task),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Job timed out')), API_TIMEOUT_MS)
+        )
+      ]);
       results.push(result);
     } catch (error) {
+      await logExecution(id, 'error', `Batch task failed: ${error.message}`, { taskId: task.id });
       results.push({
         success: false,
         taskId: task.id || 'unknown',

@@ -181,21 +181,31 @@ async function initializeTables(): Promise<void> {
 /**
  * Generic query helper function
  */
-async function query(text: string, params: any[] = []): Promise<QueryResult> {
+async function query(text: string, params: any[] = [], attempt = 1): Promise<QueryResult> {
   if (!isConnected || !pool) {
     throw new Error('Database not configured or not connected');
   }
 
+  const client = await pool.connect();
+
   try {
     const start = Date.now();
-    const result = await pool.query(text, params);
+    const result = await client.query(text, params);
     const duration = Date.now() - start;
-    
+
     console.log(`[🔌 DB] Query executed in ${duration}ms`);
     return result;
   } catch (error) {
     console.error('[🔌 DB] Query error:', (error as Error).message);
+
+    if (attempt < 3) {
+      console.log(`[🔌 DB] Retry attempt ${attempt} for query`);
+      return query(text, params, attempt + 1);
+    }
+
     throw error;
+  } finally {
+    client.release();
   }
 }
 
