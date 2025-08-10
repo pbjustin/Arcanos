@@ -31,7 +31,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
   
   // Initialize database first
   console.log('[🔧 WORKER-BOOT] Initializing database connection...');
-  const dbInitialized = await initializeDatabase();
+  const dbInitialized = await initializeDatabase('worker-boot');
   const dbStatus = getStatus();
   
   if (dbInitialized) {

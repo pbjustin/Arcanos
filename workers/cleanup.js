@@ -14,7 +14,7 @@ dotenv.config();
 export const id = 'cleanup-worker';
 
 // Verify database connectivity before processing jobs
-await initializeDatabase();
+await initializeDatabase(id);
 await logExecution(id, 'info', 'db_connection_verified');
 
 /**
