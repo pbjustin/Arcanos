@@ -5,8 +5,12 @@
  * Handles audit.cron route for nightly auditing tasks
  */
 
-import { logExecution, query, getStatus, createJob, updateJob } from '../dist/db.js';
+import dotenv from 'dotenv';
+import { initializeDatabase, logExecution, query, getStatus, createJob, updateJob } from '../dist/db.js';
 import { callOpenAI, getOpenAIClient } from '../dist/services/openai.js';
+
+// Load environment variables
+dotenv.config();
 
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
 const MAX_API_RETRIES = 3;
@@ -28,6 +32,10 @@ async function safeCallOpenAI(model, prompt, tokens) {
 }
 
 export const id = 'audit-runner';
+
+// Verify database connectivity before processing jobs
+await initializeDatabase();
+await logExecution(id, 'info', 'db_connection_verified');
 
 /**
  * Run comprehensive system audit

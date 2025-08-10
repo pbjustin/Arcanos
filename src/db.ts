@@ -7,6 +7,10 @@
  */
 
 import { Pool, PoolClient, QueryResult } from 'pg';
+import dotenv from 'dotenv';
+
+// Load environment variables for worker runtime
+dotenv.config();
 
 let pool: Pool | null = null;
 let isConnected = false;
@@ -71,44 +75,80 @@ interface ReasoningLog {
  * @returns Promise<boolean> - True if database initialized successfully, false otherwise
  */
 async function initializeDatabase(): Promise<boolean> {
-  const databaseUrl = process.env.DATABASE_URL;
-  
+  // Ensure all expected environment variables are loaded
+  const envVars = [
+    'DATABASE_URL',
+    'DATABASE_PUBLIC_URL',
+    'PGDATA',
+    'PGDATABASE',
+    'PGHOST',
+    'PGPASSWORD',
+    'PGPORT',
+    'PGUSER',
+    'POSTGRES_PASSWORD',
+    'POSTGRES_USER'
+  ];
+  envVars.forEach(v => process.env[v] = process.env[v]);
+
+  let databaseUrl = process.env.DATABASE_URL || '';
+
+  // Construct DATABASE_URL if not provided
   if (!databaseUrl) {
-    console.log('[🔌 DB] DATABASE_URL not set - database features disabled');
-    return false;
+    const required = ['PGUSER', 'PGPASSWORD', 'PGHOST', 'PGPORT', 'PGDATABASE'];
+    const missing = required.filter(v => !process.env[v]);
+    if (missing.length) {
+      console.error('[🔌 DB] Missing environment variables:', missing.join(', '));
+      console.error('DB connection failed after retries - worker halted.');
+      process.exit(1);
+    }
+    databaseUrl = `postgresql://${process.env.PGUSER}:${process.env.PGPASSWORD}@${process.env.PGHOST}:${process.env.PGPORT}/${process.env.PGDATABASE}`;
+    process.env.DATABASE_URL = databaseUrl;
   }
 
-  try {
-    console.log('[🔌 DB] Initializing PostgreSQL connection pool...');
-    
-    // Optimized connection pool configuration for ARCANOS workloads
-    pool = new Pool({
-      connectionString: databaseUrl,
-      ssl: databaseUrl.includes('localhost') ? false : { rejectUnauthorized: false },
-      max: 10, // Reduced from 20 - sufficient for typical ARCANOS usage
-      min: 2,  // Maintain minimum connections for responsiveness
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
-
-    // Test the connection with a simple query
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-
-    isConnected = true;
-    console.log('[🔌 DB] ✅ Database connection established successfully');
-    
-    // Initialize required tables for ARCANOS operations
-    await initializeTables();
-    
-    return true;
-  } catch (error) {
-    connectionError = error as Error;
-    console.error('[🔌 DB] ❌ Failed to connect to database:', (error as Error).message);
-    console.error('[🔌 DB] Database features will be disabled');
-    return false;
+  // Enforce SSL when not connecting to localhost
+  const host = process.env.PGHOST || 'localhost';
+  if (host !== 'localhost' && host !== '127.0.0.1' && !databaseUrl.includes('sslmode=')) {
+    databaseUrl += databaseUrl.includes('?') ? '&sslmode=require' : '?sslmode=require';
+    process.env.DATABASE_URL = databaseUrl;
   }
+
+  console.log('[🔌 DB] Initializing PostgreSQL connection pool...');
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      pool = new Pool({
+        connectionString: databaseUrl,
+        ssl: host === 'localhost' || host === '127.0.0.1' ? false : { rejectUnauthorized: false },
+        max: 10,
+        min: 2,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+      });
+
+      const client = await pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+
+      isConnected = true;
+      console.log('DB connection successful - ready for job processing.');
+
+      // Initialize required tables for ARCANOS operations
+      await initializeTables();
+      return true;
+    } catch (error) {
+      connectionError = error as Error;
+      console.error(`[🔌 DB] Connection attempt ${attempt} failed: ${(error as Error).message}`);
+      if (attempt === 5) {
+        console.error('DB connection failed after retries - worker halted.');
+        process.exit(1);
+      }
+
+      const waitMs = Math.pow(2, attempt) * 1000; // 2s,4s,8s,16s,32s
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+  }
+
+  return false;
 }
 
 /**

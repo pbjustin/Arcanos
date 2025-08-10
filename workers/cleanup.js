@@ -5,9 +5,17 @@
  * Handles job.cleanup route for hourly maintenance tasks
  */
 
-import { logExecution, query, getStatus, createJob, updateJob } from '../dist/db.js';
+import dotenv from 'dotenv';
+import { initializeDatabase, logExecution, query, getStatus, createJob, updateJob } from '../dist/db.js';
+
+// Load environment variables
+dotenv.config();
 
 export const id = 'cleanup-worker';
+
+// Verify database connectivity before processing jobs
+await initializeDatabase();
+await logExecution(id, 'info', 'db_connection_verified');
 
 /**
  * Clean up old log entries

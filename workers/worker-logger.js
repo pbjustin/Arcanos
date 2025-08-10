@@ -5,9 +5,17 @@
  * Centralized logging worker that stores logs in database when available
  */
 
-import { logExecution, getStatus } from '../dist/db.js';
+import dotenv from 'dotenv';
+import { initializeDatabase, logExecution, getStatus } from '../dist/db.js';
+
+// Load environment variables
+dotenv.config();
 
 export const id = 'worker-logger';
+
+// Verify database connectivity before processing jobs
+await initializeDatabase();
+await logExecution(id, 'info', 'db_connection_verified');
 
 const logs = [];
 const maxMemoryLogs = 1000;
