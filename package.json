@@ -14,7 +14,8 @@
     "rebuild": "npm run clean && npm run build",
     "test": "npm run build && npm run probe && node tests/test-arcanos-api.js",
     "type-check": "tsc --noEmit",
-    "assistants-sync": "node scripts/assistants-sync.js"
+    "assistants-sync": "node scripts/assistants-sync.js",
+    "repair-migrations": "node scripts/migration-repair.js"
   },
   "keywords": [
     "ai",
