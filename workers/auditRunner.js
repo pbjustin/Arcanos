@@ -34,7 +34,7 @@ async function safeCallOpenAI(model, prompt, tokens) {
 export const id = 'audit-runner';
 
 // Verify database connectivity before processing jobs
-await initializeDatabase();
+await initializeDatabase(id);
 await logExecution(id, 'info', 'db_connection_verified');
 
 /**

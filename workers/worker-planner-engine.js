@@ -18,7 +18,7 @@ const MAX_ITERATIONS = 100;
 export const id = 'worker-planner-engine';
 
 // Verify database connectivity before processing jobs
-await initializeDatabase();
+await initializeDatabase(id);
 await logExecution(id, 'info', 'db_connection_verified');
 
 let scheduledTasks = [];
