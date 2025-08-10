@@ -3,6 +3,7 @@ import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 
 let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
+const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
 
 /**
  * Generates mock AI responses when OpenAI API key is not available
@@ -131,7 +132,7 @@ const initializeOpenAI = (): OpenAI | null => {
       return null; // Return null to indicate mock mode
     }
 
-    openai = new OpenAI({ apiKey });
+    openai = new OpenAI({ apiKey, timeout: API_TIMEOUT_MS });
     defaultModel = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:arcanos-v1-1106';
     
     console.log('✅ OpenAI client initialized');
@@ -184,7 +185,11 @@ export const getFallbackModel = (): string => {
 /**
  * Unified OpenAI call helper with token parameter fallback
  */
-export async function callOpenAI(model: string, prompt: string, tokenLimit: number): Promise<{ response: any; output: string }> {
+export async function callOpenAI(
+  model: string,
+  prompt: string,
+  tokenLimit: number
+): Promise<{ response: any; output: string }> {
   const client = getOpenAIClient();
   if (!client) {
     const mock = generateMockResponse(prompt, 'ask');
@@ -196,28 +201,44 @@ export async function callOpenAI(model: string, prompt: string, tokenLimit: numb
     { role: 'user' as const, content: prompt }
   ];
 
-  try {
-    const response = await client.chat.completions.create({
-      model,
-      messages,
-      max_tokens: tokenLimit
-    });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response: any = await Promise.race([
+        client.chat.completions.create({
+          model,
+          messages,
+          max_tokens: tokenLimit
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('OpenAI request timed out')), API_TIMEOUT_MS)
+        )
+      ]);
 
-    const output = response.choices?.[0]?.message?.content || '';
-    return { response, output };
-  } catch (err: any) {
-    const message = err?.message?.toLowerCase() || '';
-    if (message.includes('max_tokens')) {
-      const response = await client.chat.completions.create({
-        model,
-        messages,
-        max_completion_tokens: tokenLimit
-      });
       const output = response.choices?.[0]?.message?.content || '';
       return { response, output };
+    } catch (err: any) {
+      const message = err?.message?.toLowerCase() || '';
+      if (message.includes('max_tokens')) {
+        const response = await client.chat.completions.create({
+          model,
+          messages,
+          max_completion_tokens: tokenLimit
+        });
+        const output = response.choices?.[0]?.message?.content || '';
+        return { response, output };
+      }
+
+      if (attempt < 3) {
+        console.warn(`OpenAI call failed (attempt ${attempt}): ${err.message}`);
+        continue;
+      }
+
+      throw err;
     }
-    throw err;
   }
+
+  // Should never reach here
+  throw new Error('OpenAI call failed');
 }
 
 /**
