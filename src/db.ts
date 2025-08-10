@@ -74,7 +74,7 @@ interface ReasoningLog {
  * 
  * @returns Promise<boolean> - True if database initialized successfully, false otherwise
  */
-async function initializeDatabase(): Promise<boolean> {
+async function initializeDatabase(workerId = ''): Promise<boolean> {
   // Ensure all expected environment variables are loaded
   const envVars = [
     'DATABASE_URL',
@@ -98,8 +98,7 @@ async function initializeDatabase(): Promise<boolean> {
     const missing = required.filter(v => !process.env[v]);
     if (missing.length) {
       console.error('[🔌 DB] Missing environment variables:', missing.join(', '));
-      console.error('DB connection failed after retries - worker halted.');
-      process.exit(1);
+      return false;
     }
     databaseUrl = `postgresql://${process.env.PGUSER}:${process.env.PGPASSWORD}@${process.env.PGHOST}:${process.env.PGPORT}/${process.env.PGDATABASE}`;
     process.env.DATABASE_URL = databaseUrl;
@@ -114,41 +113,42 @@ async function initializeDatabase(): Promise<boolean> {
 
   console.log('[🔌 DB] Initializing PostgreSQL connection pool...');
 
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      pool = new Pool({
-        connectionString: databaseUrl,
-        ssl: host === 'localhost' || host === '127.0.0.1' ? false : { rejectUnauthorized: false },
-        max: 10,
-        min: 2,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 10000,
-      });
+  try {
+    const isRailway = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.PGHOST;
+    pool = new Pool({
+      connectionString: databaseUrl,
+      ...(isRailway ? { ssl: { rejectUnauthorized: false } } : {}),
+      max: 10,
+      min: 2,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
 
-      const client = await pool.connect();
-      await client.query('SELECT 1');
-      client.release();
+    await pool.query('SELECT 1');
+    isConnected = true;
+    console.log('DB connection successful');
 
-      isConnected = true;
-      console.log('DB connection successful - ready for job processing.');
+    // Initialize required tables for ARCANOS operations
+    await initializeTables();
 
-      // Initialize required tables for ARCANOS operations
-      await initializeTables();
-      return true;
-    } catch (error) {
-      connectionError = error as Error;
-      console.error(`[🔌 DB] Connection attempt ${attempt} failed: ${(error as Error).message}`);
-      if (attempt === 5) {
-        console.error('DB connection failed after retries - worker halted.');
-        process.exit(1);
+    if (workerId) {
+      try {
+        await pool.query(
+          'INSERT INTO execution_logs (worker_id, timestamp, level, message, metadata) VALUES ($1, NOW(), $2, $3, $4)',
+          [workerId, 'status', 'online', {}]
+        );
+      } catch (hbErr) {
+        console.error('[🔌 DB] Heartbeat insert failed:', (hbErr as Error).message);
       }
-
-      const waitMs = Math.pow(2, attempt) * 1000; // 2s,4s,8s,16s,32s
-      await new Promise(resolve => setTimeout(resolve, waitMs));
     }
-  }
 
-  return false;
+    return true;
+  } catch (error) {
+    connectionError = error as Error;
+    isConnected = false;
+    console.error('[🔌 DB] Connection failed:', (error as Error).message);
+    return false;
+  }
 }
 
 /**
