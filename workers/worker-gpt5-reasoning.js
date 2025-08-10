@@ -9,6 +9,26 @@ import { getOpenAIClient } from '../dist/services/openai.js';
 import { logReasoning, logExecution, getStatus } from '../dist/db.js';
 import { getTokenParameter } from '../dist/utils/tokenParameterHelper.js';
 
+const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
+const MAX_API_RETRIES = 3;
+const MAX_ITERATIONS = 100;
+
+async function safeChatCompletion(client, params) {
+  for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt++) {
+    try {
+      return await Promise.race([
+        client.chat.completions.create(params),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('API request timed out')), API_TIMEOUT_MS)
+        )
+      ]);
+    } catch (error) {
+      await logExecution(id, 'error', `OpenAI chat completion failed (attempt ${attempt}): ${error.message}`);
+      if (attempt === MAX_API_RETRIES) throw error;
+    }
+  }
+}
+
 export const id = 'worker-gpt5-reasoning';
 
 /**
@@ -45,7 +65,7 @@ Keep responses focused and valuable.`;
 
     const model = process.env.GPT5_MODEL || 'gpt-4o'; // Fallback to GPT-4o if GPT-5 not available
     const tokenParams = getTokenParameter(model, 2000);
-    const completion = await client.chat.completions.create({
+    const completion = await safeChatCompletion(client, {
       model,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -95,19 +115,35 @@ Keep responses focused and valuable.`;
  */
 export async function performBatchReasoning(inputs, context = {}) {
   const results = [];
-  
+  let iterations = 0;
+
   for (const [index, input] of inputs.entries()) {
+    if (iterations++ >= MAX_ITERATIONS) {
+      await logExecution(id, 'warn', 'Max iteration limit reached in performBatchReasoning');
+      break;
+    }
+
     await logExecution(id, 'info', `Processing batch item ${index + 1}/${inputs.length}`);
-    
-    const result = await performReasoning(input, { 
-      ...context, 
-      batchIndex: index, 
-      batchTotal: inputs.length 
-    });
-    
-    results.push(result);
+
+    try {
+      const result = await Promise.race([
+        performReasoning(input, {
+          ...context,
+          batchIndex: index,
+          batchTotal: inputs.length
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Job timed out')), API_TIMEOUT_MS)
+        )
+      ]);
+
+      results.push(result);
+    } catch (error) {
+      await logExecution(id, 'error', `Batch reasoning failed: ${error.message}`, { index });
+      results.push(`[ERROR] ${error.message}`);
+    }
   }
-  
+
   return results;
 }
 
