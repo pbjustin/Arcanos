@@ -74,6 +74,32 @@ async function testArcanosAPI() {
       throw error;
     }
 
+    // Test heartbeat endpoint
+    console.log('\n3. Testing heartbeat endpoint...');
+    try {
+      const hbPayload = {
+        timestamp: new Date().toISOString(),
+        mode: 'AUDIT_SAFE_ENABLED',
+        payload: {
+          write_override: true,
+          db_write_enable: true,
+          suppression_level: 'LOW',
+          confirmation: 'HEARTBEAT_ENTRY_SUCCESS'
+        }
+      };
+      const { stdout } = await execAsync(`curl -s -X POST ${baseUrl}/heartbeat -H "Content-Type: application/json" -d '${JSON.stringify(hbPayload)}'`);
+      const hbResponse = JSON.parse(stdout);
+      if (hbResponse.message && hbResponse.message.includes('HEARTBEAT_ENTRY_SUCCESS')) {
+        console.log('✅ Heartbeat endpoint: PASSED');
+      } else {
+        console.log('❌ Heartbeat endpoint invalid response:', hbResponse);
+        throw new Error('Heartbeat endpoint validation failed');
+      }
+    } catch (error) {
+      console.log('❌ Heartbeat endpoint test failed:', error.message);
+      throw error;
+    }
+
     // Test all required endpoints: /ask, /arcanos, /write, /guide, /audit, /sim
     const endpoints = [
       { name: 'ask', path: '/ask', payload: { prompt: 'Test the ask endpoint' } },
@@ -86,7 +112,7 @@ async function testArcanosAPI() {
 
     for (let i = 0; i < endpoints.length; i++) {
       const endpoint = endpoints[i];
-      console.log(`\n${3 + i}. Testing ${endpoint.name} endpoint (${endpoint.path})...`);
+      console.log(`\n${4 + i}. Testing ${endpoint.name} endpoint (${endpoint.path})...`);
       
       try {
         const curlCmd = `curl -s -X POST ${baseUrl}${endpoint.path} -H "Content-Type: application/json" -d '${JSON.stringify(endpoint.payload)}'`;
@@ -119,7 +145,7 @@ async function testArcanosAPI() {
     }
 
     // Test input validation
-    console.log(`\n${3 + endpoints.length}. Testing validation (missing input)...`);
+    console.log(`\n${4 + endpoints.length}. Testing validation (missing input)...`);
     try {
       const { stdout } = await execAsync(`curl -s -X POST ${baseUrl}/ask -H "Content-Type: application/json" -d '{}'`);
       const response = JSON.parse(stdout);
@@ -136,7 +162,7 @@ async function testArcanosAPI() {
     }
 
     // Test malformed JSON handling
-    console.log(`\n${4 + endpoints.length}. Testing malformed JSON handling...`);
+    console.log(`\n${5 + endpoints.length}. Testing malformed JSON handling...`);
     try {
       const { stdout } = await execAsync(`curl -s -X POST ${baseUrl}/ask -H "Content-Type: application/json" -d 'invalid json'`);
       const response = JSON.parse(stdout);
@@ -154,6 +180,7 @@ async function testArcanosAPI() {
     console.log('\n🎉 All API endpoint tests passed!');
     console.log('\n📋 Test Summary:');
     console.log('- Health endpoint (/health) works correctly');
+    console.log('- Heartbeat endpoint (/heartbeat) logging and acknowledgement');
     console.log('- Ask endpoint (/ask) with ARCANOS shell injection');
     console.log('- ARCANOS endpoint (/arcanos) with structured diagnostics');
     console.log('- Write endpoint (/write) for content generation');
@@ -174,7 +201,7 @@ async function testArcanosAPI() {
   } finally {
     // Clean up - kill the server process
     if (serverProcess) {
-      console.log('\n11. Cleaning up server process...');
+      console.log('\n12. Cleaning up server process...');
       serverProcess.kill('SIGTERM');
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
