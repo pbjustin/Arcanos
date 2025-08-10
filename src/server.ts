@@ -14,6 +14,7 @@ import aiEndpointsRouter from './routes/ai-endpoints.js';
 import memoryRouter from './routes/memory.js';
 import workersRouter from './routes/workers.js';
 import sdkRouter from './routes/sdk.js';
+import heartbeatRouter from './routes/heartbeat.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -78,6 +79,7 @@ app.use('/', arcanosRouter);
 app.use('/', aiEndpointsRouter);
 app.use('/', memoryRouter);
 app.use('/', workersRouter);
+app.use('/', heartbeatRouter);
 app.use('/sdk', sdkRouter);
 
 /**
