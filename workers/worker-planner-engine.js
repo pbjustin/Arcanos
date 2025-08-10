@@ -6,12 +6,20 @@
  */
 
 import cron from 'node-cron';
-import { createJob, updateJob, query, logExecution, getStatus } from '../dist/db.js';
+import dotenv from 'dotenv';
+import { initializeDatabase, createJob, updateJob, query, logExecution, getStatus } from '../dist/db.js';
+
+// Load environment variables
+dotenv.config();
 
 const JOB_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
 const MAX_ITERATIONS = 100;
 
 export const id = 'worker-planner-engine';
+
+// Verify database connectivity before processing jobs
+await initializeDatabase();
+await logExecution(id, 'info', 'db_connection_verified');
 
 let scheduledTasks = [];
 let isScheduling = false;

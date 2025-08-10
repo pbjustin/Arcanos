@@ -5,8 +5,12 @@
  * Handles worker.queue route for async task processing
  */
 
-import { logExecution, createJob, updateJob } from '../dist/db.js';
+import dotenv from 'dotenv';
+import { initializeDatabase, logExecution, createJob, updateJob } from '../dist/db.js';
 import { callOpenAI } from '../dist/services/openai.js';
+
+// Load environment variables
+dotenv.config();
 
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
 const MAX_API_RETRIES = 3;
@@ -29,6 +33,10 @@ async function safeCallOpenAI(model, prompt, tokens) {
 }
 
 export const id = 'task-processor';
+
+// Verify database connectivity before processing jobs
+await initializeDatabase();
+await logExecution(id, 'info', 'db_connection_verified');
 
 /**
  * Process a task from the worker queue
