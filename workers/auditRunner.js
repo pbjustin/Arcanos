@@ -8,6 +8,25 @@
 import { logExecution, query, getStatus, createJob, updateJob } from '../dist/db.js';
 import { callOpenAI, getOpenAIClient } from '../dist/services/openai.js';
 
+const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
+const MAX_API_RETRIES = 3;
+
+async function safeCallOpenAI(model, prompt, tokens) {
+  for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt++) {
+    try {
+      return await Promise.race([
+        callOpenAI(model, prompt, tokens),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('API request timed out')), API_TIMEOUT_MS)
+        )
+      ]);
+    } catch (error) {
+      await logExecution(id, 'error', `OpenAI call failed (attempt ${attempt}): ${error.message}`);
+      if (attempt === MAX_API_RETRIES) throw error;
+    }
+  }
+}
+
 export const id = 'audit-runner';
 
 /**
@@ -70,7 +89,7 @@ export async function runAudit() {
     const client = getOpenAIClient();
     if (client) {
       try {
-        const { output } = await callOpenAI('gpt-4', 'Health check - respond with OK', 10);
+        const { output } = await safeCallOpenAI('gpt-4', 'Health check - respond with OK', 10);
         auditResults.results.ai = {
           status: 'healthy',
           model: 'gpt-4',
@@ -83,7 +102,7 @@ export async function runAudit() {
         };
       }
     } else {
-      const { output } = await callOpenAI('gpt-4', 'Health check - respond with OK', 10);
+      const { output } = await safeCallOpenAI('gpt-4', 'Health check - respond with OK', 10);
       auditResults.results.ai = {
         status: 'mock-mode',
         reason: 'No OpenAI API key configured',
@@ -94,7 +113,7 @@ export async function runAudit() {
     // Generate AI-powered audit summary
     let auditSummary;
     try {
-      const { output } = await callOpenAI(
+      const { output } = await safeCallOpenAI(
         'gpt-4',
         `Analyze these audit results and provide recommendations: ${JSON.stringify(auditResults.results)}`,
         300

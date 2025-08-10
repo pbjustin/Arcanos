@@ -8,6 +8,9 @@
 import cron from 'node-cron';
 import { createJob, updateJob, query, logExecution, getStatus } from '../dist/db.js';
 
+const JOB_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
+const MAX_ITERATIONS = 100;
+
 export const id = 'worker-planner-engine';
 
 let scheduledTasks = [];
@@ -87,21 +90,33 @@ async function processJobs() {
     
     await logExecution(id, 'info', `Processing ${result.rows.length} pending jobs`);
     
+    let iterations = 0;
     for (const job of result.rows) {
+      if (iterations++ >= MAX_ITERATIONS) {
+        await logExecution(id, 'warn', 'Max iteration limit reached in processJobs');
+        break;
+      }
+
       try {
-        // Mark job as in progress
-        await updateJobStatus(job.id, 'in_progress');
-        
-        // Simulate job processing (in real implementation, this would delegate to appropriate worker)
-        const mockOutput = {
-          processed: true,
-          timestamp: new Date().toISOString(),
-          result: `Processed job ${job.id} of type ${job.job_type}`
-        };
-        
-        // Mark job as completed
-        await updateJobStatus(job.id, 'completed', mockOutput);
-        
+        await Promise.race([
+          (async () => {
+            // Mark job as in progress
+            await updateJobStatus(job.id, 'in_progress');
+
+            // Simulate job processing (in real implementation, delegate to worker)
+            const mockOutput = {
+              processed: true,
+              timestamp: new Date().toISOString(),
+              result: `Processed job ${job.id} of type ${job.job_type}`
+            };
+
+            // Mark job as completed
+            await updateJobStatus(job.id, 'completed', mockOutput);
+          })(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Job timed out')), JOB_TIMEOUT_MS)
+          )
+        ]);
       } catch (error) {
         await updateJobStatus(job.id, 'failed', { error: error.message });
         await logExecution(id, 'error', `Job processing failed: ${job.id}`, { error: error.message });
