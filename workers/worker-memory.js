@@ -5,9 +5,17 @@
  * Handles persistent memory storage using database when available
  */
 
-import { saveMemory, loadMemory, deleteMemory, getStatus, logExecution } from '../dist/db.js';
+import dotenv from 'dotenv';
+import { initializeDatabase, saveMemory, loadMemory, deleteMemory, getStatus, logExecution } from '../dist/db.js';
+
+// Load environment variables
+dotenv.config();
 
 export const id = 'worker-memory';
+
+// Verify database connectivity before processing jobs
+await initializeDatabase();
+await logExecution(id, 'info', 'db_connection_verified');
 
 // Fallback memory store when database unavailable
 const memoryStore = new Map();

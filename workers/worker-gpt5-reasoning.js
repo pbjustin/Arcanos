@@ -5,8 +5,12 @@
  * Handles GPT-5 reasoning delegation with database logging
  */
 
+import dotenv from 'dotenv';
 import { getOpenAIClient } from '../dist/services/openai.js';
-import { logReasoning, logExecution, getStatus } from '../dist/db.js';
+import { initializeDatabase, logReasoning, logExecution, getStatus } from '../dist/db.js';
+
+// Load environment variables
+dotenv.config();
 import { getTokenParameter } from '../dist/utils/tokenParameterHelper.js';
 
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
@@ -30,6 +34,10 @@ async function safeChatCompletion(client, params) {
 }
 
 export const id = 'worker-gpt5-reasoning';
+
+// Verify database connectivity before processing jobs
+await initializeDatabase();
+await logExecution(id, 'info', 'db_connection_verified');
 
 /**
  * Perform GPT-5 reasoning and log results
