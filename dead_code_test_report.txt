@@ -1,0 +1,34 @@
+# ARCANOS Dead Code Analysis Report
+# Base Directory: /home/runner/work/Arcanos/Arcanos
+# Generated: Mon Aug 11 07:08:04 UTC 2025
+
+
+## find_unused_code.py (.py)
+### Issues Found:
+No obvious dead code detected.
+
+## dead_code_scanner.py (.py)
+### Issues Found:
+No obvious dead code detected.
+
+## arcanos_strict.py (.py)
+### Issues Found:
+=== /home/runner/work/Arcanos/Arcanos/arcanos_strict.py ===
+Unused Functions:
+  - call_arcanos_strict
+
+## arcanos_strict_legacy.py (.py)
+### Issues Found:
+=== /home/runner/work/Arcanos/Arcanos/arcanos_strict_legacy.py ===
+Unused Functions:
+  - call_arcanos_strict
+
+## integration_demo.py (.py)
+### Issues Found:
+No obvious dead code detected.
+
+## orchestration-demo.js (.js)
+### Issues Found:
+  12:8  error  'fs' is defined but never used  no-unused-vars
+
+📊 Analysis complete. Found issues in 6 files out of 15 processed.
