@@ -8,6 +8,8 @@ import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import './logic/aiCron.js';
 import { initializeWorkers } from './utils/workerBoot.js';
 import { getAvailablePort } from './utils/portUtils.js';
+import { runSystemDiagnostic } from './services/gptSync.js';
+import { updateState } from './services/stateManager.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
@@ -16,6 +18,7 @@ import workersRouter from './routes/workers.js';
 import sdkRouter from './routes/sdk.js';
 import heartbeatRouter from './routes/heartbeat.js';
 import orchestrationRouter from './routes/orchestration.js';
+import statusRouter from './routes/status.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -82,6 +85,7 @@ app.use('/', memoryRouter);
 app.use('/', workersRouter);
 app.use('/', heartbeatRouter);
 app.use('/', orchestrationRouter);
+app.use('/', statusRouter);
 app.use('/sdk', sdkRouter);
 
 /**
@@ -157,10 +161,35 @@ async function initializeServer() {
     console.log('   🔌 /workers/* - Worker management');
     console.log('   🔌 /orchestration/* - GPT-5 Orchestration Shell');
     console.log('   🔌 /sdk/* - OpenAI SDK interface');
+    console.log('   🔌 /status - System state (Backend Sync)');
     console.log('   🔌 /health - System health');
     console.log('===============================\n');
 
     console.log('✅ ARCANOS backend fully operational');
+    
+    // Initialize system state with startup information
+    try {
+      updateState({
+        status: 'running',
+        version: process.env.npm_package_version || '1.0.0',
+        startTime: new Date().toISOString(),
+        port: actualPort,
+        environment: config.server.environment
+      });
+      console.log('[🔄 BACKEND-SYNC] System state initialized');
+    } catch (error) {
+      console.error('[❌ BACKEND-SYNC] Failed to initialize system state:', error);
+    }
+    
+    // Run GPT diagnostic after a short delay (non-blocking)
+    setTimeout(async () => {
+      try {
+        console.log('[🤖 GPT-SYNC] Running system diagnostic...');
+        await runSystemDiagnostic(actualPort);
+      } catch (error) {
+        console.error('[❌ GPT-SYNC] System diagnostic failed:', error);
+      }
+    }, 2000); // 2 second delay to ensure server is ready
   });
 
   // Handle server errors
