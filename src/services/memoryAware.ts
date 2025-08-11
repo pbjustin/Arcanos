@@ -443,3 +443,35 @@ export function checkMemoryIntegrity(): boolean {
   initializeMemory();
   return memoryIndex.every(entry => isValidMemoryEntry(entry));
 }
+
+/**
+ * Clear memory state for a specific context or session
+ * Used by orchestration shell for memory purging
+ */
+export async function clearMemoryState(context: string = 'orchestration'): Promise<number> {
+  initializeMemory();
+  
+  const initialCount = memoryIndex.length;
+  
+  // Filter out entries related to the specified context
+  memoryIndex = memoryIndex.filter(entry => {
+    const shouldRemove = 
+      entry.metadata.moduleId === context ||
+      entry.metadata.tags.includes(context) ||
+      entry.key.toLowerCase().includes(context.toLowerCase());
+    
+    if (shouldRemove) {
+      logMemoryAccess('CLEAR', entry.key, entry.id);
+    }
+    
+    return !shouldRemove;
+  });
+  
+  const removed = initialCount - memoryIndex.length;
+  if (removed > 0) {
+    saveMemoryIndex();
+    console.log(`🧠 [MEMORY] Cleared ${removed} memory entries for context: ${context}`);
+  }
+  
+  return removed;
+}
