@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { createResponseWithLogging, logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
+import { logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
 import { getDefaultModel, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import {

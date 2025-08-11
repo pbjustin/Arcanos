@@ -6,9 +6,8 @@
  * validated for audit compliance.
  */
 
-import { writeFileSync, appendFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { getLogPath, getAuditLogPath, getLineageLogPath, ensureLogDirectory } from '../utils/logPath.js';
+import { appendFileSync } from 'fs';
+import { getAuditLogPath, getLineageLogPath, ensureLogDirectory } from '../utils/logPath.js';
 
 export interface AuditSafeConfig {
   auditSafeMode: boolean;

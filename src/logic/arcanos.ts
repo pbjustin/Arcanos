@@ -1,7 +1,6 @@
 import OpenAI from 'openai';
-import { createResponseWithLogging } from '../utils/aiLogger.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
-import { getOpenAIClient, getDefaultModel, call_gpt5_strict, getGPT5Model } from '../services/openai.js';
+import { call_gpt5_strict, getGPT5Model } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { 
   getAuditSafeConfig, 
@@ -24,8 +23,7 @@ import {
   validateSecureReasoningRequest 
 } from '../services/secureReasoningEngine.js';
 import { 
-  applySecurityCompliance, 
-  createStructuredSecureResponse 
+  applySecurityCompliance
 } from '../services/securityCompliance.js';
 
 interface ArcanosResult {
@@ -193,7 +191,7 @@ Problem-Solving Steps:
 ${reasoningResult.problemSolvingSteps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
 
 Recommendations:
-${reasoningResult.recommendations.map((rec, index) => `• ${rec}`).join('\n')}
+${reasoningResult.recommendations.map((rec) => `• ${rec}`).join('\n')}
 
 ARCANOS Instructions:
 - Integrate the secure reasoning analysis with your own diagnostic format
