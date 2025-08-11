@@ -1,6 +1,3 @@
 # Modern OpenAI SDK (recommended)
 openai>=1.0.0
 python-dotenv>=1.0.0
-
-# Legacy OpenAI SDK (for arcanos_strict_legacy.py)
-# openai==0.28.1
