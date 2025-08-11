@@ -1,4 +1,4 @@
-export async function runHealthCheck() {
+export function runHealthCheck() {
   console.log('[🩺 HealthCheck] Running diagnostics');
   const mem = process.memoryUsage();
   const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
