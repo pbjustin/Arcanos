@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { createResponseWithLogging } from '../utils/aiLogger.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
-import { getDefaultModel } from '../services/openai.js';
+import { getOpenAIClient, getDefaultModel, call_gpt5_strict, getGPT5Model } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { 
   getAuditSafeConfig, 
@@ -389,59 +389,34 @@ export async function runARCANOS(
   // Create the ARCANOS prompt with shell wrapper and memory context
   const prompt = arcanosPrompt(auditSafeUserPrompt, memoryContext);
   
-  // Use the fine-tuned model with fallback to gpt-4
-  const defaultModel = getDefaultModel();
-  let modelToUse = defaultModel;
-  let isFallback = false;
+  // Use strict GPT-5 calls only - no fallback allowed
+  const gpt5Model = getGPT5Model();
   let finalResult: string;
   let response: OpenAI.Chat.Completions.ChatCompletion;
   
   try {
-    // Try the fine-tuned model first
-    const tokenParams = getTokenParameter(modelToUse, 2000);
-    response = await createResponseWithLogging(client, {
-      model: modelToUse,
-      messages: [
-        {
-          role: 'system',
-          content: enhancedSystemPrompt
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
+    // Use strict GPT-5 call with no fallback
+    const tokenParams = getTokenParameter(gpt5Model, 2000);
+    
+    // Prepare messages for call_gpt5_strict
+    const systemMessage = enhancedSystemPrompt;
+    const userMessage = prompt;
+    const combinedPrompt = `${systemMessage}\n\nUser: ${userMessage}`;
+    
+    console.log(`[🎯 ARCANOS] Using strict GPT-5 call with model: ${gpt5Model}`);
+    response = await call_gpt5_strict(combinedPrompt, {
       temperature: 0.1, // Low temperature for consistent diagnostic output
       ...tokenParams,
     });
 
     finalResult = response.choices[0]?.message?.content || '';
-    console.log(`[🔬 ARCANOS] Diagnosis complete using model: ${modelToUse}`);
+    console.log(`[🔬 ARCANOS] Diagnosis complete using strict GPT-5: ${gpt5Model}`);
     
   } catch (err) {
-    console.warn(`⚠️  Fine-tuned model failed, falling back to gpt-4: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    modelToUse = 'gpt-4';
-    isFallback = true;
-    
-    const fallbackTokenParams = getTokenParameter(modelToUse, 2000);
-    response = await createResponseWithLogging(client, {
-      model: modelToUse,
-      messages: [
-        {
-          role: 'system',
-          content: enhancedSystemPrompt
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.1,
-      ...fallbackTokenParams,
-    });
-
-    finalResult = response.choices[0]?.message?.content || '';
-    console.log(`[🔬 ARCANOS] Diagnosis complete using fallback model: ${modelToUse}`);
+    // No fallback - throw error immediately
+    const errorMessage = `GPT-5 strict call failed — no fallback allowed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    console.error(`❌ [ARCANOS] ${errorMessage}`);
+    throw new Error(errorMessage);
   }
   
   // Validate audit-safe output
@@ -454,8 +429,8 @@ export async function runARCANOS(
   const parsedResult = parseArcanosResponse(
     finalResult, 
     response, 
-    modelToUse, 
-    isFallback, 
+    gpt5Model, 
+    false, // No fallback used - always strict GPT-5
     reasoningDelegation,
     auditConfig,
     memoryContext,
@@ -465,9 +440,9 @@ export async function runARCANOS(
   );
   
   // Store successful patterns for learning
-  if (processedSafely && !isFallback) {
+  if (processedSafely) {
     storePattern(
-      'Successful ARCANOS diagnosis',
+      'Successful ARCANOS diagnosis with strict GPT-5',
       [`Input pattern: ${userInput.substring(0, 50)}...`, `Output pattern: ${finalResult.substring(0, 50)}...`],
       sessionId
     );
@@ -483,7 +458,7 @@ export async function runARCANOS(
     overrideReason: auditConfig.overrideReason,
     inputSummary: createAuditSummary(userInput),
     outputSummary: createAuditSummary(finalResult),
-    modelUsed: modelToUse,
+    modelUsed: gpt5Model,
     gpt5Delegated: reasoningDelegation.used,
     delegationReason: reasoningDelegation.reason,
     memoryAccessed: memoryContext.accessLog,

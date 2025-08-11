@@ -334,4 +334,38 @@ export const createGPT5Reasoning = async (
   }
 };
 
-export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI };
+/**
+ * Strict GPT-5 call function that only uses GPT-5 with no fallback
+ * Raises RuntimeError if the response doesn't come from GPT-5
+ */
+export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promise<any> {
+  const client = getOpenAIClient();
+  if (!client) {
+    throw new Error("GPT-5 call failed — no fallback allowed. OpenAI client not available.");
+  }
+
+  const gpt5Model = getGPT5Model();
+  
+  try {
+    console.log(`🎯 [GPT-5 STRICT] Making strict call with model: ${gpt5Model}`);
+    
+    const response = await client.chat.completions.create({
+      model: gpt5Model,
+      messages: [{ role: "user", content: prompt }],
+      ...kwargs
+    });
+
+    // Validate that the response actually came from GPT-5
+    if (!response.model || response.model !== gpt5Model) {
+      throw new Error(`GPT-5 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`);
+    }
+
+    console.log(`✅ [GPT-5 STRICT] Success with model: ${response.model}`);
+    return response;
+  } catch (error: any) {
+    // Re-throw with clear error message indicating no fallback
+    throw new Error(`GPT-5 call failed — no fallback allowed. ${error.message}`);
+  }
+}
+
+export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict };
