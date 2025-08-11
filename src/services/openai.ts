@@ -183,6 +183,23 @@ export const getFallbackModel = (): string => {
 };
 
 /**
+ * Prepare payloads for GPT-5 by migrating deprecated max_tokens
+ * to max_completion_tokens and providing a sensible default.
+ */
+function prepareGPT5Request(payload: any): any {
+  if (payload.model && typeof payload.model === 'string' && payload.model.includes('gpt-5')) {
+    if (payload.max_tokens) {
+      payload.max_completion_tokens = payload.max_tokens;
+      delete payload.max_tokens;
+    }
+    if (!payload.max_completion_tokens) {
+      payload.max_completion_tokens = 1024;
+    }
+  }
+  return payload;
+}
+
+/**
  * Unified OpenAI call helper with token parameter fallback
  */
 export async function callOpenAI(
@@ -205,12 +222,15 @@ export async function callOpenAI(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     try {
+      const tokenParams = getTokenParameter(model, tokenLimit);
+      const requestPayload = prepareGPT5Request({
+        model,
+        messages,
+        ...tokenParams
+      });
+
       const response: any = await client.chat.completions.create(
-        {
-          model,
-          messages,
-          max_tokens: tokenLimit
-        },
+        requestPayload,
         { signal: controller.signal }
       );
       clearTimeout(timeout);
@@ -313,8 +333,8 @@ export const createGPT5Reasoning = async (
     
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, 1024);
-    
-    const response = await client.chat.completions.create({
+
+    const requestPayload = prepareGPT5Request({
       model: gpt5Model,
       messages: [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
@@ -323,6 +343,8 @@ export const createGPT5Reasoning = async (
       ...tokenParams,
       // Temperature omitted to use default (1) for GPT-5
     });
+
+    const response = await client.chat.completions.create(requestPayload);
     
     const content = response.choices[0]?.message?.content ?? '[No reasoning provided]';
     console.log(`✅ [GPT-5 REASONING] Success: ${content.substring(0, 100)}...`);
@@ -348,12 +370,14 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
   
   try {
     console.log(`🎯 [GPT-5 STRICT] Making strict call with model: ${gpt5Model}`);
-    
-    const response = await client.chat.completions.create({
+
+    const requestPayload = prepareGPT5Request({
       model: gpt5Model,
       messages: [{ role: "user", content: prompt }],
       ...kwargs
     });
+
+    const response = await client.chat.completions.create(requestPayload);
 
     // Validate that the response actually came from GPT-5
     if (!response.model || response.model !== gpt5Model) {
