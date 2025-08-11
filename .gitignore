@@ -110,3 +110,7 @@ ENV/
 env.bak/
 venv.bak/
 .pytest_cache/
+
+# Dead code scanner reports
+dead_code_report.txt
+dead_code_test_report.txt
