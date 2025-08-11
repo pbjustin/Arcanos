@@ -4,11 +4,9 @@
  * Integrates with existing ARCANOS infrastructure
  */
 
-import OpenAI from "openai";
 import { getOpenAIClient, getGPT5Model, call_gpt5_strict } from './openai.js';
-import { createResponseWithLogging, logArcanosRouting } from '../utils/aiLogger.js';
+import { logArcanosRouting } from '../utils/aiLogger.js';
 import { 
-  getAuditSafeConfig, 
   logAITaskLineage,
   type AuditLogEntry 
 } from './auditSafe.js';
@@ -56,7 +54,6 @@ export async function resetOrchestrationShell(): Promise<OrchestrationResult> {
   }
 
   // Log task lineage using existing audit system
-  const auditConfig = getAuditSafeConfig('GPT-5 Orchestration Shell purge and redeploy');
   const auditEntry: AuditLogEntry = {
     requestId,
     timestamp: new Date().toISOString(),
@@ -113,7 +110,7 @@ export async function resetOrchestrationShell(): Promise<OrchestrationResult> {
     logs.push("✅ Verifying deployment and ARCANOS integration...");
     console.log("✅ Verifying deployment and ARCANOS integration...");
     
-    const verificationResponse = await call_gpt5_strict("Verify orchestration shell deployment. Check integration with ARCANOS Trinity pipeline, audit-safe constraints, and memory awareness systems. Report operational status.", {
+    await call_gpt5_strict("Verify orchestration shell deployment. Check integration with ARCANOS Trinity pipeline, audit-safe constraints, and memory awareness systems. Report operational status.", {
       max_tokens: 200
     });
 

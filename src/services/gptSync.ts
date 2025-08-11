@@ -4,7 +4,6 @@
  */
 
 import OpenAI from 'openai';
-import config from '../config/index.js';
 import { getBackendState, SystemState } from './stateManager.js';
 
 // Initialize OpenAI client only if API key is available

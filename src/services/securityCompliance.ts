@@ -301,7 +301,6 @@ Note: This analysis is designed for audit compliance and confidentiality standar
  * Create a safe summary of user input without exposing sensitive details
  */
 function createSafeInputSummary(userInput: string): string {
-  const safeInput = applySecurityCompliance(userInput);
   const inputLength = userInput.length;
   const wordCount = userInput.split(/\s+/).length;
   
