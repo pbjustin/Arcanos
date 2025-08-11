@@ -15,6 +15,7 @@ import memoryRouter from './routes/memory.js';
 import workersRouter from './routes/workers.js';
 import sdkRouter from './routes/sdk.js';
 import heartbeatRouter from './routes/heartbeat.js';
+import orchestrationRouter from './routes/orchestration.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -80,6 +81,7 @@ app.use('/', aiEndpointsRouter);
 app.use('/', memoryRouter);
 app.use('/', workersRouter);
 app.use('/', heartbeatRouter);
+app.use('/', orchestrationRouter);
 app.use('/sdk', sdkRouter);
 
 /**
@@ -153,6 +155,7 @@ async function initializeServer() {
     console.log('   🔌 /ai-endpoints - AI processing endpoints');
     console.log('   🔌 /memory - Memory management');
     console.log('   🔌 /workers/* - Worker management');
+    console.log('   🔌 /orchestration/* - GPT-5 Orchestration Shell');
     console.log('   🔌 /sdk/* - OpenAI SDK interface');
     console.log('   🔌 /health - System health');
     console.log('===============================\n');
