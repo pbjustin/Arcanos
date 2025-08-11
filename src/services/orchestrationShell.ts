@@ -6,6 +6,7 @@
 
 import { getOpenAIClient, getGPT5Model, call_gpt5_strict } from './openai.js';
 import { logArcanosRouting } from '../utils/aiLogger.js';
+import { initializeGPT5Orchestration, type GPT5OrchestrationConfig } from './orchestrationInit.js';
 import { 
   logAITaskLineage,
   type AuditLogEntry 
@@ -28,11 +29,11 @@ interface OrchestrationResult {
  * Orchestration reset function - purges and redeploys GPT-5 orchestration shell
  * Integrates with existing ARCANOS infrastructure for audit safety and logging
  */
-export async function resetOrchestrationShell(): Promise<OrchestrationResult> {
+export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfig): Promise<OrchestrationResult> {
   const requestId = `orchestration_reset_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   const stages: string[] = [];
   const logs: string[] = [];
-  
+
   logs.push("🔄 Starting GPT-5 Orchestration Shell purge...");
   console.log("🔄 Starting GPT-5 Orchestration Shell purge...");
 
@@ -71,6 +72,8 @@ export async function resetOrchestrationShell(): Promise<OrchestrationResult> {
   logAITaskLineage(auditEntry);
 
   try {
+    await initializeGPT5Orchestration(initConfig);
+
     // Step 1: Isolate module
     stages.push("ISOLATE_MODULE");
     logs.push("📦 Isolating orchestration shell...");
