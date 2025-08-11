@@ -18,6 +18,9 @@ src/**/*.js.map
 .env.local
 .env.development.local
 .env.test.local
+
+# Runtime state files
+systemState.json
 .env.production.local
 
 # Logs
