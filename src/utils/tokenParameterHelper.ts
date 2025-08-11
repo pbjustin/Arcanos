@@ -14,6 +14,7 @@ import OpenAI from 'openai';
 const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
   // Add specific model names here as they are discovered
   // This will be populated based on API testing and documentation
+  'gpt-5'
 ]);
 
 // Cache for model capability testing to avoid repeated API calls
@@ -115,10 +116,9 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
     return 'max_tokens';
   }
 
-  // GPT-5 - Since this is a newer model, we'll start with max_tokens
-  // but this can be updated based on actual API behavior
+  // GPT-5 models require max_completion_tokens
   if (lowerModelName.includes('gpt-5')) {
-    return 'max_tokens';
+    return 'max_completion_tokens';
   }
 
   // Default to max_tokens for unknown models, with fallback capability
