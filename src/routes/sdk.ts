@@ -64,7 +64,7 @@ async function importWorkerFunctions(): Promise<WorkerModule> {
 /**
  * Initialize workers via SDK call
  */
-router.post('/workers/init', async (req, res) => {
+router.post('/workers/init', async (_, res) => {
   try {
     const { initializeWorkers } = await importWorkerFunctions();
     
@@ -93,7 +93,7 @@ router.post('/workers/init', async (req, res) => {
 /**
  * Register routes via SDK call
  */
-router.post('/routes/register', async (req, res) => {
+router.post('/routes/register', async (_, res) => {
   try {
     const routes = [
       {
@@ -171,7 +171,7 @@ router.post('/routes/register', async (req, res) => {
 /**
  * Activate scheduler via SDK call
  */
-router.post('/scheduler/activate', async (req, res) => {
+router.post('/scheduler/activate', async (_, res) => {
   try {
     const scheduledJobs = [
       {
@@ -297,10 +297,10 @@ router.post('/jobs/dispatch', async (req, res) => {
 /**
  * Dispatch test verification job as specified in problem statement
  */
-router.post('/test-job', async (req, res) => {
+router.post('/test-job', async (_, res) => {
   try {
     // Import necessary functions
-    const { createJob, query } = await import('../db.js');
+    const { createJob } = await import('../db.js');
     
     const jobData = {
       type: 'test_job',
@@ -326,10 +326,6 @@ router.post('/test-job', async (req, res) => {
     // Process the job using taskProcessor
     let result: any;
     try {
-      // Try to dynamically load and process the task
-      const fs = await import('fs');
-      const taskProcessorPath = '../../../workers/taskProcessor.js';
-      
       // For now, simulate the task processing result
       if (jobData.type === 'test_job' && jobData.input === 'Diagnostics verification task') {
         result = {
@@ -389,7 +385,7 @@ router.post('/test-job', async (req, res) => {
 /**
  * Get worker status via SDK call
  */
-router.get('/workers/status', async (req, res) => {
+router.get('/workers/status', async (_, res) => {
   try {
     // Import status function
     const { getWorkerStatus } = await importWorkerFunctions();
@@ -416,7 +412,7 @@ router.get('/workers/status', async (req, res) => {
 /**
  * Run full SDK initialization sequence
  */
-router.post('/init-all', async (req, res) => {
+router.post('/init-all', async (_, res) => {
   try {
     const results: {
       workers: any;
@@ -487,7 +483,7 @@ router.post('/init-all', async (req, res) => {
 /**
  * Full ARCANOS SDK system test according to problem statement
  */
-router.post('/system-test', async (req, res) => {
+router.post('/system-test', async (_, res) => {
   try {
     const results: any = {};
 

@@ -8,7 +8,7 @@ import { requireField } from '../utils/validation.js';
 const router = express.Router();
 
 // Database health check endpoint
-router.get("/memory/health", (req: Request, res: Response) => {
+router.get("/memory/health", (_: Request, res: Response) => {
   const dbStatus = getStatus();
   res.json({
     database: dbStatus.connected,
