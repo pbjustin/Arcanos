@@ -16,6 +16,8 @@ const router = express.Router();
 
 interface OrchestrationRequest extends StandardAIRequest {
   action?: 'reset' | 'status';
+  agentId?: string;
+  contextSnapshotTag?: string;
 }
 
 interface OrchestrationResponse extends StandardAIResponse {
@@ -60,14 +62,24 @@ interface OrchestrationResponse extends StandardAIResponse {
  * Performs purge and redeploy sequence with safeguards
  */
 router.post('/orchestration/reset', async (
-  _: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>, 
+  req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>,
   res: Response<OrchestrationResponse | ErrorResponse>
 ) => {
   try {
     console.log('🔄 [ORCHESTRATION] Reset request received');
-    
+
+    const { agentId, sessionId, contextSnapshotTag } = req.body;
+    if (!agentId || !sessionId) {
+      res.status(400).json({ error: 'Missing agentId or sessionId' });
+      return;
+    }
+
     // Execute orchestration shell reset
-    const result = await resetOrchestrationShell();
+    const result = await resetOrchestrationShell({
+      agentId,
+      sessionId,
+      contextSnapshotTag
+    });
     
     const response: OrchestrationResponse = {
       result: result.message,
@@ -180,15 +192,25 @@ router.get('/orchestration/status', async (
  * Executes the exact orchestration reset functionality as specified
  */
 router.post('/orchestration/purge', async (
-  _: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>, 
+  req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>,
   res: Response<OrchestrationResponse | ErrorResponse>
 ) => {
   // This endpoint provides the exact same functionality as /reset
   // but with the specific naming from the problem statement
   try {
     console.log('🔄 [ORCHESTRATION] Purge + Redeploy request received');
-    
-    const result = await resetOrchestrationShell();
+
+    const { agentId, sessionId, contextSnapshotTag } = req.body;
+    if (!agentId || !sessionId) {
+      res.status(400).json({ error: 'Missing agentId or sessionId' });
+      return;
+    }
+
+    const result = await resetOrchestrationShell({
+      agentId,
+      sessionId,
+      contextSnapshotTag
+    });
     
     const response: OrchestrationResponse = {
       result: "GPT-5 orchestration shell has been purged and redeployed.",
