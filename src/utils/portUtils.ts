@@ -21,13 +21,7 @@ export async function isPortAvailable(port: number, host: string = '0.0.0.0'): P
       });
     });
     
-    server.on('error', (err: any) => {
-      if (err.code === 'EADDRINUSE') {
-        resolve(false);
-      } else {
-        resolve(false);
-      }
-    });
+    server.on('error', () => resolve(false));
   });
 }
 

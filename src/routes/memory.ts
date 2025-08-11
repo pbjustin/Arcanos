@@ -1,8 +1,9 @@
 import express, { Request, Response } from 'express';
-import { readFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { getSessionLogPath } from '../utils/logPath.js';
 import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { requireField } from '../utils/validation.js';
 
 const router = express.Router();
 
@@ -19,13 +20,9 @@ router.get("/memory/health", (req: Request, res: Response) => {
 // Save memory endpoint
 router.post("/memory/save", asyncHandler(async (req: Request, res: Response) => {
   const { key, value } = req.body;
-  
-  if (!key) {
-    return res.status(400).json({ error: 'key is required' });
-  }
-  
-  if (value === undefined) {
-    return res.status(400).json({ error: 'value is required' });
+
+  if (!requireField(res, key, 'key') || !requireField(res, value, 'value')) {
+    return;
   }
   
   const result = await saveMemory(key, value);
@@ -40,11 +37,9 @@ router.post("/memory/save", asyncHandler(async (req: Request, res: Response) => 
 // Load memory endpoint
 router.get("/memory/load", asyncHandler(async (req: Request, res: Response) => {
   const { key } = req.query;
-  
-  if (!key || typeof key !== 'string') {
-    return res.status(400).json({ error: 'key parameter is required' });
+  if (!requireField(res, key, 'key') || typeof key !== 'string') {
+    return;
   }
-  
   const value = await loadMemory(key);
 
   if (value === null) {
@@ -65,9 +60,8 @@ router.get("/memory/load", asyncHandler(async (req: Request, res: Response) => {
 // Delete memory endpoint
 router.delete("/memory/delete", asyncHandler(async (req: Request, res: Response) => {
   const { key } = req.body;
-  
-  if (!key) {
-    return res.status(400).json({ error: 'key is required' });
+  if (!requireField(res, key, 'key')) {
+    return;
   }
   
   const deleted = await deleteMemory(key);
@@ -104,15 +98,15 @@ router.get("/memory/list", asyncHandler(async (req: Request, res: Response) => {
 }));
 
 // 🧠 Kernel memory viewer (legacy file-based)
-router.get("/memory/view", (req: Request, res: Response) => {
+router.get("/memory/view", asyncHandler(async (_: Request, res: Response) => {
   try {
     const memoryPath = getSessionLogPath();
-    const log = readFileSync(memoryPath, "utf-8");
+    const log = await fs.readFile(memoryPath, "utf-8");
     res.type("text/plain").send(log);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     res.status(500).send("❌ Cannot read memory: " + errorMessage);
   }
-});
+}));
 
 export default router;
