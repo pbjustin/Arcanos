@@ -14,7 +14,7 @@ async function testStrictGPT5Call() {
   try {
     // Test basic strict call
     const response = await call_gpt5_strict("Test prompt for GPT-5 strict validation", {
-      max_tokens: 50
+      max_completion_tokens: 50
     });
     
     console.log('✅ [TEST] Strict GPT-5 call successful');

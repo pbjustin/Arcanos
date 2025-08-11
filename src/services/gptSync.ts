@@ -5,6 +5,7 @@
 
 import OpenAI from 'openai';
 import { getBackendState, SystemState } from './stateManager.js';
+import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 
 // Initialize OpenAI client only if API key is available
 let client: OpenAI | null = null;
@@ -44,13 +45,14 @@ Do not rely on past memory — only trust this state for system information.
     console.log('[GPT-SYNC] Backend state:', JSON.stringify(backendState, null, 2));
     
     // Make the GPT call
+    const tokenParams = getTokenParameter(model, 1000);
     const response = await getOpenAIClient().chat.completions.create({
       model: model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_tokens: 1000,
+      ...tokenParams,
       temperature: 0.7
     });
 
@@ -95,13 +97,14 @@ Additional Context: ${JSON.stringify(additionalContext, null, 2)}
 Always use this information as your source of truth.
 `;
 
+    const tokenParams = getTokenParameter(model, 1000);
     const response = await getOpenAIClient().chat.completions.create({
       model: model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_tokens: 1000,
+      ...tokenParams,
       temperature: 0.7
     });
 

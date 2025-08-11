@@ -28,7 +28,7 @@ console.log('   - Model configurable via GPT5_MODEL environment variable\n');
 // Demonstrate error handling when no OpenAI client available
 console.log('🧪 Testing error handling (no API key scenario):');
 try {
-  await call_gpt5_strict("Test prompt", { max_tokens: 50 });
+  await call_gpt5_strict("Test prompt", { max_completion_tokens: 50 });
 } catch (error) {
   console.log('✅ Correctly throws error with "no fallback allowed" message:');
   console.log(`   Error: ${error.message}\n`);

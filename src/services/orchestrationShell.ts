@@ -80,7 +80,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     console.log("📦 Isolating orchestration shell...");
     
     await call_gpt5_strict("Isolate orchestration shell module to prevent interference with other services. Mark this session as ORCHESTRATION_ISOLATION mode.", {
-      max_tokens: 100
+      max_completion_tokens: 100
     });
 
     // Step 2: Purge stale memory / state using existing memory system
@@ -96,7 +96,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     }
     
     await call_gpt5_strict("Clear all cached context, persistent variables, and stored configs in orchestration shell. Reset internal state to factory defaults.", {
-      max_tokens: 100
+      max_completion_tokens: 100
     });
 
     // Step 3: Redeploy with fallback safeguards
@@ -105,7 +105,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     console.log("🚀 Redeploying with safeguards...");
     
     await call_gpt5_strict("Redeploy orchestration shell module with fallback safeguards enabled. Apply 'rebirth-osiris' v1.04 configuration. Enable audit-safe mode and memory context restoration.", {
-      max_tokens: 150
+      max_completion_tokens: 150
     });
 
     // Step 4: Verify deployment with ARCANOS integration
@@ -114,7 +114,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     console.log("✅ Verifying deployment and ARCANOS integration...");
     
     await call_gpt5_strict("Verify orchestration shell deployment. Check integration with ARCANOS Trinity pipeline, audit-safe constraints, and memory awareness systems. Report operational status.", {
-      max_tokens: 200
+      max_completion_tokens: 200
     });
 
     // Log successful completion
