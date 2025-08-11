@@ -32,7 +32,10 @@ async function resetOrchestrationShellStandalone() {
     console.warn("⚠️ OPENAI_API_KEY not configured - using ARCANOS integrated version");
     
     // Use the integrated ARCANOS version
-    const result = await resetOrchestrationShell();
+    const result = await resetOrchestrationShell({
+      agentId: 'demo-cli',
+      sessionId: 'standalone'
+    });
     console.log(result.success ? "✅" : "❌", result.message);
     
     if (result.logs) {
@@ -102,7 +105,10 @@ async function demonstrateArcanosIntegration() {
   
   // Perform reset with full ARCANOS integration
   console.log("\n🔄 Performing reset with ARCANOS integration...");
-  const result = await resetOrchestrationShell();
+  const result = await resetOrchestrationShell({
+    agentId: 'demo-cli',
+    sessionId: 'integration'
+  });
   console.log("Reset result:", {
     success: result.success,
     stages: result.meta.stages,

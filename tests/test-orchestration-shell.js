@@ -45,7 +45,10 @@ async function testOrchestrationReset() {
   console.log('🧪 [TEST] Testing orchestration shell reset...');
   
   try {
-    const result = await resetOrchestrationShell();
+    const result = await resetOrchestrationShell({
+      agentId: 'test-agent',
+      sessionId: 'test-session'
+    });
     
     console.log('✅ [TEST] Reset completed:', {
       success: result.success,
