@@ -11,7 +11,7 @@ const router = express.Router();
 /**
  * GET /status - Retrieve current system state
  */
-router.get('/status', (req: Request, res: Response) => {
+router.get('/status', (_: Request, res: Response) => {
   try {
     const state = loadState();
     res.json(state);

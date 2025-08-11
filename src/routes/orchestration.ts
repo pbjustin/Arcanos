@@ -6,7 +6,6 @@
 import express, { Request, Response } from 'express';
 import { resetOrchestrationShell, getOrchestrationShellStatus } from '../services/orchestrationShell.js';
 import { 
-  validateAIRequest, 
   handleAIError,
   StandardAIRequest,
   StandardAIResponse,
@@ -61,7 +60,7 @@ interface OrchestrationResponse extends StandardAIResponse {
  * Performs purge and redeploy sequence with safeguards
  */
 router.post('/orchestration/reset', async (
-  req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>, 
+  _: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>, 
   res: Response<OrchestrationResponse | ErrorResponse>
 ) => {
   try {
@@ -125,7 +124,7 @@ router.post('/orchestration/reset', async (
  * Returns current status and configuration
  */
 router.get('/orchestration/status', async (
-  req: Request, 
+  _: Request, 
   res: Response<OrchestrationResponse | ErrorResponse>
 ) => {
   try {
@@ -181,7 +180,7 @@ router.get('/orchestration/status', async (
  * Executes the exact orchestration reset functionality as specified
  */
 router.post('/orchestration/purge', async (
-  req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>, 
+  _: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>, 
   res: Response<OrchestrationResponse | ErrorResponse>
 ) => {
   // This endpoint provides the exact same functionality as /reset

@@ -347,7 +347,7 @@ async function logExecutionBatch(entries: Array<{workerId: string, level: string
   }
 
   try {
-    const values = entries.map((entry, index) => {
+    const values = entries.map((_, index) => {
       const base = index * 4;
       return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`;
     }).join(', ');

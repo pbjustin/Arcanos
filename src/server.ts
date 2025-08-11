@@ -118,7 +118,7 @@ async function initializeServer() {
     }
   
   // Global error handler
-  app.use((err: any, req: Request, res: Response, _: NextFunction) => {
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     console.error('Unhandled error:', err);
     const status = typeof err.status === 'number' ? err.status : 500;
     res.status(status).json({

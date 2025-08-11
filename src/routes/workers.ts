@@ -6,11 +6,7 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createWorkerContext } from '../utils/workerContext.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const router = Router();
 
@@ -20,7 +16,7 @@ const workersDir = path.resolve(process.cwd(), 'workers');
 /**
  * GET /workers/status - Get available workers
  */
-router.get('/workers/status', async (req: Request, res: Response) => {
+router.get('/workers/status', async (_: Request, res: Response) => {
   try {
     const workers = [];
     

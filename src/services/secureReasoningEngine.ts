@@ -15,7 +15,6 @@ import {
   createStructuredSecureResponse, 
   logSecurityAudit
 } from './securityCompliance.js';
-import { createResponseWithLogging } from '../utils/aiLogger.js';
 
 interface SecureReasoningRequest {
   userInput: string;
@@ -183,7 +182,7 @@ function parseSecureAnalysis(structuredResponse: string): {
  * Create secure fallback response in case of errors
  */
 function createSecureFallbackResponse(
-  request: SecureReasoningRequest,
+  _: SecureReasoningRequest,
   requestId: string,
   timestamp: string,
   error: Error
