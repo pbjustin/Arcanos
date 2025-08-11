@@ -202,37 +202,33 @@ export async function callOpenAI(
   ];
 
   for (let attempt = 1; attempt <= 3; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     try {
-      const response: any = await Promise.race([
-        client.chat.completions.create({
+      const response: any = await client.chat.completions.create(
+        {
           model,
           messages,
           max_tokens: tokenLimit
-        }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('OpenAI request timed out')), API_TIMEOUT_MS)
-        )
-      ]);
-
+        },
+        { signal: controller.signal }
+      );
+      clearTimeout(timeout);
       const output = response.choices?.[0]?.message?.content || '';
       return { response, output };
     } catch (err: any) {
-      const message = err?.message?.toLowerCase() || '';
-      if (message.includes('max_tokens')) {
-        const response = await client.chat.completions.create({
-          model,
-          messages,
-          max_completion_tokens: tokenLimit
-        });
-        const output = response.choices?.[0]?.message?.content || '';
-        return { response, output };
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        if (attempt < 3) {
+          console.warn(`OpenAI call timed out (attempt ${attempt})`);
+          continue;
+        }
+        throw new Error('OpenAI request timed out');
       }
-
       if (attempt < 3) {
         console.warn(`OpenAI call failed (attempt ${attempt}): ${err.message}`);
         continue;
       }
-
       throw err;
     }
   }
