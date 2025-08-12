@@ -194,7 +194,7 @@ export async function run() {
       database: dbStatus.connected,
       schedulingEnabled: dbStatus.connected 
     });
-  } catch (error) {
+  } catch (_error) {
     console.log('[📅 WORKER-PLANNER] Startup logging failed, using fallback');
   }
 }

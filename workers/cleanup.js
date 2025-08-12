@@ -165,7 +165,7 @@ export async function runComprehensiveCleanup() {
   let job;
   try {
     job = await createJob(id, 'runComprehensiveCleanup', {}, 'running');
-  } catch (err) {
+  } catch (_err) {
     job = { id: `job-${Date.now()}` };
   }
 

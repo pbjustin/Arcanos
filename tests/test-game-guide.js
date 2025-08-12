@@ -4,7 +4,7 @@
 // This script tests the game guide service directly and via API
 
 const axios = require('axios');
-const path = require('path');
+// const path = require('path'); // TODO: use if needed for file operations
 
 // Test the game guide service directly
 async function testGameGuideService() {

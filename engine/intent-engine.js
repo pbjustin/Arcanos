@@ -37,8 +37,8 @@ async function processWithGPT5(payload) {
 }
 
 // Example fallback trigger
-function triggerFallbackHandler(payload) {
-    console.warn('Fallback mode activated for safety.');
+function triggerFallbackHandler(_payload) {
+    console.warn('Fallback mode activated for safety');
     // TODO: implement actual rollback/failsafe logic here
 }
 
