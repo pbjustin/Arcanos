@@ -156,7 +156,7 @@ async function verifyGPT5Requirements() {
       } else {
         throw new Error('OpenAI SDK syntax not correctly implemented');
       }
-    } catch (error) {
+    } catch (_error) {
       console.log('✅ Latest OpenAI SDK syntax confirmed (implementation verified)');
       console.log('   - model: "gpt-5" implemented in source code');
       console.log('   - chat.completions.create endpoint used');
