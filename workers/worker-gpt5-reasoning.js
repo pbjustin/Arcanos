@@ -43,7 +43,7 @@ await logExecution(id, 'info', 'db_connection_verified');
  * Perform GPT-5 reasoning and log results
  */
 export async function performReasoning(input, context = {}) {
-  const dbStatus = getStatus();
+  const _dbStatus = getStatus();
   
   try {
     await logExecution(id, 'info', 'Starting GPT-5 reasoning', { inputLength: input.length });
@@ -178,7 +178,7 @@ export async function run() {
       openaiClient: hasClient,
       model: process.env.GPT5_MODEL || 'gpt-4o'
     });
-  } catch (error) {
+  } catch (_error) {
     console.log('[🧠 WORKER-GPT5] Startup logging failed, using fallback');
   }
   

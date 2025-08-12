@@ -22,7 +22,7 @@ function makeRequest(path, callback) {
       try {
         const jsonData = JSON.parse(data);
         callback(null, jsonData, res.statusCode);
-      } catch (e) {
+      } catch (_e) {
         callback(null, data, res.statusCode);
       }
     });

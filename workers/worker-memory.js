@@ -28,7 +28,7 @@ export async function store(key, value) {
     await saveMemory(key, value);
     await logExecution(id, 'info', `Memory stored: ${key}`);
     return true;
-  } catch (error) {
+  } catch (_error) {
     // Fallback to in-memory storage
     memoryStore.set(key, { value, timestamp: Date.now() });
     console.log(`[💾 WORKER-MEMORY] Fallback storage: ${key}`);
@@ -47,7 +47,7 @@ export async function retrieve(key) {
       return value;
     }
     return null;
-  } catch (error) {
+  } catch (_error) {
     // Fallback to in-memory storage
     const stored = memoryStore.get(key);
     if (stored) {
@@ -68,7 +68,7 @@ export async function remove(key) {
       await logExecution(id, 'info', `Memory deleted: ${key}`);
     }
     return deleted;
-  } catch (error) {
+  } catch (_error) {
     // Fallback to in-memory storage
     const existed = memoryStore.has(key);
     memoryStore.delete(key);
@@ -108,7 +108,7 @@ export async function run() {
       database: dbStatus.connected,
       fallbackMode: !dbStatus.connected 
     });
-  } catch (error) {
+  } catch (_error) {
     console.log('[💾 WORKER-MEMORY] Startup logging failed, using fallback');
   }
 }

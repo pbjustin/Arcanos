@@ -45,7 +45,7 @@ export async function processTask(taskData) {
   let job;
   try {
     job = await createJob(id, taskData.type || 'task', taskData, 'running');
-  } catch (err) {
+  } catch (_err) {
     job = { id: `job-${Date.now()}` };
   }
 
