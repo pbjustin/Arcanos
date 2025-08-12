@@ -8,8 +8,8 @@ import {
   workerSettings, 
   gpt5Reasoning, 
   workerTask, 
-  arcanosCoreLogic, 
-  startWorkers 
+  arcanosCoreLogic
+  // startWorkers // TODO: use if needed for worker demo
 } from '../dist/config/workerConfig.js';
 
 console.log('🔧 WORKER CONFIGURATION DEMONSTRATION');

@@ -9,7 +9,7 @@
  */
 
 import OpenAI from "openai";
-import fs from "fs";
+// import fs from "fs"; // TODO: use if file operations needed
 import { resetOrchestrationShell, getOrchestrationShellStatus } from "./dist/services/orchestrationShell.js";
 
 // Initialize client (make sure your OPENAI_API_KEY is set in env)

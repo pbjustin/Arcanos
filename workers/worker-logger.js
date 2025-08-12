@@ -30,7 +30,7 @@ export async function log(workerId, level, message, metadata = {}) {
   try {
     // Try to store in database
     await logExecution(workerId, level, message, metadata);
-  } catch (error) {
+  } catch (_error) {
     // Fallback to memory storage
     logs.push(logEntry);
     

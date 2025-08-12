@@ -44,7 +44,7 @@ export async function runAudit() {
   let job;
   try {
     job = await createJob(id, 'runAudit', {}, 'running');
-  } catch (err) {
+  } catch (_err) {
     job = { id: `job-${Date.now()}` };
   }
 
@@ -162,7 +162,7 @@ export async function runSecurityAudit() {
   let job;
   try {
     job = await createJob(id, 'runSecurityAudit', {}, 'running');
-  } catch (err) {
+  } catch (_err) {
     job = { id: `job-${Date.now()}` };
   }
 

@@ -9,7 +9,7 @@ import { arcanosPrompt, runARCANOS } from '../dist/logic/arcanos.js';
 class MockOpenAI {
   constructor() {
     this.responses = {
-      create: async (params) => {
+      create: async (_params) => {
         // Simulate a realistic ARCANOS response
         const mockResponse = `
 ✅ Component Status Table
