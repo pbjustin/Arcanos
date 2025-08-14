@@ -104,6 +104,7 @@ async function testArcanosAPI() {
     const endpoints = [
       { name: 'ask', path: '/ask', payload: { prompt: 'Test the ask endpoint' } },
       { name: 'arcanos', path: '/arcanos', payload: { userInput: 'Run system diagnosis.' } },
+      { name: 'siri', path: '/siri', payload: { query: 'Hello from Siri' } },
       { name: 'write', path: '/write', payload: { prompt: 'Generate test content' } },
       { name: 'guide', path: '/guide', payload: { prompt: 'Provide guidance' } },
       { name: 'audit', path: '/audit', payload: { prompt: 'Audit the system' } },
@@ -183,6 +184,7 @@ async function testArcanosAPI() {
     console.log('- Heartbeat endpoint (/heartbeat) logging and acknowledgement');
     console.log('- Ask endpoint (/ask) with ARCANOS shell injection');
     console.log('- ARCANOS endpoint (/arcanos) with structured diagnostics');
+    console.log('- Siri endpoint (/siri) for voice queries');
     console.log('- Write endpoint (/write) for content generation');
     console.log('- Guide endpoint (/guide) for step-by-step guidance');
     console.log('- Audit endpoint (/audit) for analysis and evaluation');

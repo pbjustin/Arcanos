@@ -12,6 +12,7 @@ export interface StandardAIRequest {
   userInput?: string;
   content?: string;
   text?: string;
+  query?: string;
   sessionId?: string;
   overrideAuditSafe?: string;
 }
@@ -43,7 +44,7 @@ export interface ErrorResponse {
  * Extract input text from various possible field names in request body
  */
 export function extractInput(body: StandardAIRequest): string | null {
-  return body.prompt || body.userInput || body.content || body.text || null;
+  return body.prompt || body.userInput || body.content || body.text || body.query || null;
 }
 
 /**
@@ -61,7 +62,7 @@ export function validateAIRequest(
   
   if (!input || typeof input !== 'string') {
     res.status(400).json({ 
-      error: `Missing or invalid input in request body. Use 'prompt', 'userInput', 'content', or 'text' field.` 
+      error: `Missing or invalid input in request body. Use 'prompt', 'userInput', 'content', 'text', or 'query' field.`
     });
     return null;
   }
