@@ -19,6 +19,7 @@ import sdkRouter from './routes/sdk.js';
 import heartbeatRouter from './routes/heartbeat.js';
 import orchestrationRouter from './routes/orchestration.js';
 import statusRouter from './routes/status.js';
+import siriRouter from './routes/siri.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -86,6 +87,7 @@ app.use('/', workersRouter);
 app.use('/', heartbeatRouter);
 app.use('/', orchestrationRouter);
 app.use('/', statusRouter);
+app.use('/', siriRouter);
 app.use('/sdk', sdkRouter);
 
 /**
@@ -155,13 +157,14 @@ async function initializeServer() {
     }
     console.log('🔧 Core Routes:');
     console.log('   🔌 /ask - AI query endpoint');
-    console.log('   🔌 /arcanos - Main AI interface'); 
+    console.log('   🔌 /arcanos - Main AI interface');
     console.log('   🔌 /ai-endpoints - AI processing endpoints');
     console.log('   🔌 /memory - Memory management');
     console.log('   🔌 /workers/* - Worker management');
     console.log('   🔌 /orchestration/* - GPT-5 Orchestration Shell');
     console.log('   🔌 /sdk/* - OpenAI SDK interface');
     console.log('   🔌 /status - System state (Backend Sync)');
+    console.log('   🔌 /siri - Siri query endpoint');
     console.log('   🔌 /health - System health');
     console.log('===============================\n');
 
