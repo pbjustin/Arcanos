@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 import { handleAIError } from '../utils/requestHandler.js';
+import { runSystemDiagnostics } from '../utils/systemDiagnostics.js';
 
 const router = express.Router();
 
@@ -56,6 +57,10 @@ interface ErrorResponse {
   details?: string;
 }
 
+async function runCommand(_command: string, _params: any) {
+  return await runSystemDiagnostics();
+}
+
 /**
  * ARCANOS system diagnosis endpoint with standardized request handling
  */
@@ -88,6 +93,24 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
     return res.json(output);
   } catch (err) {
     handleAIError(err, userInput, 'arcanos', res);
+  }
+});
+
+router.post('/arcanos/diagnostics', async (req: Request, res: Response) => {
+  const authToken = req.headers['x-arcanos-token'] as string | undefined;
+  if (!authToken || authToken !== process.env.ARCANOS_AUTH_TOKEN) {
+    return res.status(403).json({
+      error: 'Unauthorized: Missing or invalid ARCANOS_AUTH_TOKEN'
+    });
+  }
+
+  try {
+    const { command, params } = req.body;
+    const result = await runCommand(command, params);
+    res.json({ success: true, result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ success: false, error: message });
   }
 });
 
