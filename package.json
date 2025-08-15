@@ -14,7 +14,7 @@
     "rebuild": "npm run clean && npm run build",
     "test": "npm run build && npm run probe && node tests/test-arcanos-api.js",
     "type-check": "tsc --noEmit",
-    "assistants-sync": "node scripts/assistants-sync.js",
+    "assistants-sync": "npx ts-node scripts/assistants-sync.ts",
     "repair-migrations": "node scripts/migration-repair.js"
   },
   "keywords": [
@@ -29,7 +29,6 @@
   "dependencies": {
     "@types/node": "^24.2.1",
     "@types/pg": "^8.15.5",
-    "body-parser": "1.20.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "4.18.2",
