@@ -19,7 +19,7 @@ export async function getAllAssistants(): Promise<AssistantInfo[]> {
 
   while (true) {
     const resp = await client.beta.assistants.list({ limit: 20, after: cursor });
-    resp.data.forEach(a => {
+    resp.data.forEach((a: any) => {
       assistants.push({
         id: a.id,
         name: a.name ?? null,
