@@ -44,7 +44,11 @@ app.post('/api/arcanos/diagnostics', authenticate, async (req, res) => {
 });
 
 // ✅ Start the bridge server
+
+// Use Railway's assigned port or fallback to 4000
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`Arcanos backend bridge running on port ${PORT}`);
+
+// Bind to 0.0.0.0 so it’s reachable externally
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Arcanos backend bridge running on port ${PORT} and bound to 0.0.0.0`);
 });
