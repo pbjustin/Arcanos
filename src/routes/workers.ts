@@ -7,6 +7,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { createWorkerContext } from '../utils/workerContext.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = Router();
 
@@ -83,7 +84,7 @@ router.get('/workers/status', async (_: Request, res: Response) => {
 /**
  * POST /workers/run/:workerId - Run a specific worker
  */
-router.post('/workers/run/:workerId', async (req: Request, res: Response) => {
+router.post('/workers/run/:workerId', confirmGate, async (req: Request, res: Response) => {
   const { workerId } = req.params;
   const input = req.body;
   

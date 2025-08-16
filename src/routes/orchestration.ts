@@ -11,6 +11,7 @@ import {
   StandardAIResponse,
   ErrorResponse
 } from '../utils/requestHandler.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -61,7 +62,7 @@ interface OrchestrationResponse extends StandardAIResponse {
  * POST /orchestration/reset - Reset GPT-5 orchestration shell
  * Performs purge and redeploy sequence with safeguards
  */
-router.post('/orchestration/reset', async (
+router.post('/orchestration/reset', confirmGate, async (
   req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>,
   res: Response<OrchestrationResponse | ErrorResponse>
 ) => {
@@ -191,7 +192,7 @@ router.get('/orchestration/status', async (
  * POST /orchestration/purge - Legacy endpoint for the exact script from problem statement
  * Executes the exact orchestration reset functionality as specified
  */
-router.post('/orchestration/purge', async (
+router.post('/orchestration/purge', confirmGate, async (
   req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>,
   res: Response<OrchestrationResponse | ErrorResponse>
 ) => {

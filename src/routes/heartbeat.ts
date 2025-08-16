@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 interface HeartbeatPayload {
   write_override: boolean;
@@ -27,7 +28,7 @@ function logHeartbeat(entry: HeartbeatRequest): void {
   appendFileSync(logFile, JSON.stringify(entry) + '\n');
 }
 
-router.post('/heartbeat', (req: Request<{}, any, HeartbeatRequest>, res: Response) => {
+router.post('/heartbeat', confirmGate, (req: Request<{}, any, HeartbeatRequest>, res: Response) => {
   const { timestamp, mode, payload } = req.body;
 
   if (!timestamp || !mode || !payload) {

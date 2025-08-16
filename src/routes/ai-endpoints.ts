@@ -13,6 +13,7 @@ import {
   StandardAIResponse,
   ErrorResponse
 } from '../utils/requestHandler.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -59,15 +60,15 @@ const handleAIEndpoint = async (
 };
 
 // Write endpoint - Primary content generation endpoint
-router.post('/write', (req, res) => handleAIEndpoint(req, res, 'write'));
+router.post('/write', confirmGate, (req, res) => handleAIEndpoint(req, res, 'write'));
 
 // Guide endpoint - Primary step-by-step guidance endpoint  
-router.post('/guide', (req, res) => handleAIEndpoint(req, res, 'guide'));
+router.post('/guide', confirmGate, (req, res) => handleAIEndpoint(req, res, 'guide'));
 
 // Audit endpoint - Primary analysis and evaluation endpoint
-router.post('/audit', (req, res) => handleAIEndpoint(req, res, 'audit'));
+router.post('/audit', confirmGate, (req, res) => handleAIEndpoint(req, res, 'audit'));
 
 // Sim endpoint - Primary simulations and modeling endpoint
-router.post('/sim', (req, res) => handleAIEndpoint(req, res, 'sim'));
+router.post('/sim', confirmGate, (req, res) => handleAIEndpoint(req, res, 'sim'));
 
 export default router;
