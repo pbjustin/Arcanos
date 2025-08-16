@@ -13,6 +13,8 @@
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
     "test": "npm run build && npm run probe && node tests/test-arcanos-api.js",
+    "test:git": "npm run build && node test-implementation.js",
+    "git:workflow": "npm run build && node run-workflow.js",
     "type-check": "tsc --noEmit",
     "assistants-sync": "npx ts-node scripts/assistants-sync.ts",
     "repair-migrations": "node scripts/migration-repair.js"
@@ -27,7 +29,6 @@
   "author": "Justin",
   "license": "MIT",
   "dependencies": {
-    "@types/node": "^24.2.1",
     "@types/pg": "^8.15.5",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
@@ -40,6 +41,7 @@
     "@types/cors": "^2.8.19",
     "@types/dotenv": "^6.1.1",
     "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
     "@types/node-cron": "^3.0.11",
     "typescript": "^5.9.2"
   },
