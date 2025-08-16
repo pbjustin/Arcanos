@@ -42,7 +42,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Request logging middleware
 app.use((req: Request, _: Response, next: NextFunction) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log(`${new Date().toISOString()} - ${req.ip} - ${req.method} ${req.path}`);
   next();
 });
 
@@ -213,7 +213,13 @@ async function initializeServer() {
   }
 }
 
-const server = await initializeServer();
+let server: any;
+try {
+  server = await initializeServer();
+} catch (err) {
+  console.error('[❌ ARCANOS CORE] Failed to initialize server:', err);
+  process.exit(1);
+}
 
 function logAndShutdown(signal: string) {
   const mem = process.memoryUsage();
