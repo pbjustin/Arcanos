@@ -7,12 +7,20 @@ This implementation provides stateless PR generation functionality that bypasses
 
 ### `/services/git.ts`
 - **Function**: `generatePR(options: PROptions): Promise<PRResult>`
+- **Function**: `executePRWorkflow(prNumber: number): Promise<PRResult>`
 - **Features**:
   - Supports `forcePush: true` for stateless operations
   - Supports `verifyLock: false` to bypass memory locking
   - Automatic branch creation with timestamp naming
   - PR generation via GitHub API
   - Graceful handling when GitHub token is unavailable (simulation mode)
+  - **Direct implementation of problem statement commands**:
+    - `checkoutPR(prNumber)` - Executes `gh pr checkout <number>`
+    - `checkoutBranch(branchName)` - Executes `git checkout <branch>`
+    - `hardReset()` - Executes `git reset --hard HEAD`
+    - `mergeWithStrategy(target, strategy)` - Executes `git merge --strategy=<strategy> <target>`
+    - `forcePush(remote, branch)` - Executes `git push --force <remote> <branch>`
+  - Complete workflow integration via `executePRWorkflow(541)`
 
 ### `/services/ai-reflections.ts`
 - **Function**: `buildPatchSet(options: PatchSetOptions): Promise<PatchSet>`
@@ -56,14 +64,29 @@ import { buildPatchSet } from './services/ai-reflections';
 - ✅ **TypeScript Compatibility**: Full TypeScript support with proper type definitions
 - ✅ **Error Handling**: Graceful error handling and logging
 - ✅ **Existing Code Integration**: Reuses existing utilities and services where possible
+- ✅ **Problem Statement Commands**: Direct implementation of the specific git workflow:
+  - `gh pr checkout 541`
+  - `git checkout main` 
+  - `git reset --hard HEAD`
+  - `git merge --strategy=ours origin/main`
+  - `git push --force`
 
 ## Testing
 
-Three test files are available:
+The implementation can be tested via npm scripts:
 
-1. `test-stateless-pr.ts` - Exact implementation of problem statement
-2. `demo-stateless-pr.ts` - Comprehensive demonstration with detailed logging
-3. Available via npm scripts or direct TypeScript execution
+```bash
+# Test the git service functionality
+npm run test:git
+
+# Run the complete workflow from problem statement
+npm run git:workflow
+```
+
+Individual test files:
+1. `tests/test-stateless-pr.ts` - Exact implementation of problem statement
+2. Available via npm scripts for easy testing
+3. Comprehensive error handling with graceful degradation
 
 ## Environment Requirements
 
