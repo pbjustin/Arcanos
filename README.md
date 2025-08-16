@@ -199,7 +199,7 @@ node utils/pin_memory_resource.js --label MY_LABEL --type task --file ./workflow
 
 ### Diagnostics & Monitoring
 - `POST /api/diagnostics` - Natural language diagnostic commands
-- `POST /api/arcanos/diagnostics` - Backend bridge with token auth
+- `POST /api/arcanos/diagnostics` - Backend bridge diagnostics (open access)
 - `GET /system/diagnostics` - System diagnostics information
 - `GET /system/workers` - Worker status information
 - `GET /sync/diagnostics` - GPT-accessible system metrics
@@ -503,7 +503,7 @@ curl http://localhost:8080/health
 
 ### Diagnostic & Management
 - `POST /api/diagnostics` - Natural language system commands
-- `POST /api/arcanos/diagnostics` - Authenticated backend diagnostics bridge
+- `POST /api/arcanos/diagnostics` - Backend diagnostics bridge (no auth)
 - `GET /system/workers` - Background process monitoring (verify workers after setting `RUN_WORKERS=true`)
 - `GET /system/diagnostics` - Comprehensive system diagnostics
 - `GET /sync/diagnostics` - GPT-accessible system metrics
