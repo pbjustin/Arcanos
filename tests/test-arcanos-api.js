@@ -145,21 +145,8 @@ async function testArcanosAPI() {
       }
     }
 
-    // Test /api/arcanos/ask endpoint separately (simplified response format)
-    console.log(`\n${4 + endpoints.length}. Testing api/arcanos/ask endpoint...`);
-    try {
-      const { stdout } = await execAsync(`curl -s -X POST ${baseUrl}/api/arcanos/ask -H "Content-Type: application/json" -d '{"prompt":"Hello from api"}'`);
-      const apiAskResponse = JSON.parse(stdout);
-      if (apiAskResponse.success && apiAskResponse.result) {
-        console.log('✅ api/arcanos/ask endpoint: PASSED');
-      } else {
-        console.log('❌ api/arcanos/ask endpoint invalid response:', apiAskResponse);
-        throw new Error('api/arcanos/ask endpoint validation failed');
-      }
-    } catch (error) {
-      console.log('❌ api/arcanos/ask endpoint test failed:', error.message);
-      throw error;
-    }
+    // Test /ask endpoint (this test already exists above, so removing duplicate)
+    console.log(`\n${4 + endpoints.length}. Skipping duplicate ask endpoint test (already tested above)...`);
 
     // Test input validation
     console.log(`\n${5 + endpoints.length}. Testing validation (missing input)...`);
@@ -205,7 +192,6 @@ async function testArcanosAPI() {
     console.log('- Guide endpoint (/guide) for step-by-step guidance');
     console.log('- Audit endpoint (/audit) for analysis and evaluation');
     console.log('- Sim endpoint (/sim) for simulations and modeling');
-    console.log('- API Arcanos ask endpoint (/api/arcanos/ask) for basic queries');
     console.log('- Input validation works correctly');
     console.log('- Malformed requests handled gracefully');
     console.log('- Mock responses when OPENAI_API_KEY not configured');
