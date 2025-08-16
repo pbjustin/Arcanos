@@ -11,6 +11,7 @@ import { getAvailablePort } from './utils/portUtils.js';
 import { runSystemDiagnostic } from './services/gptSync.js';
 import { updateState } from './services/stateManager.js';
 import askRouter from './routes/ask.js';
+import askLiteRouter from './routes/ask-lite.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
 import memoryRouter from './routes/memory.js';
@@ -82,6 +83,7 @@ app.get('/', (_: Request, res: Response) => {
 
 // Core API routes
 app.use('/', askRouter);
+app.use('/', askLiteRouter);
 app.use('/', arcanosRouter);
 app.use('/', aiEndpointsRouter);
 app.use('/', memoryRouter);
@@ -161,6 +163,7 @@ async function initializeServer() {
     }
     console.log('🔧 Core Routes:');
     console.log('   🔌 /ask - AI query endpoint');
+    console.log('   🔌 /ask-lite - Lite AI plugin endpoint (ChatGPT compatible)');
     console.log('   🔌 /arcanos - Main AI interface');
     console.log('   🔌 /ai-endpoints - AI processing endpoints');
     console.log('   🔌 /memory - Memory management');
