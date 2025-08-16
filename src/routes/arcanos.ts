@@ -57,6 +57,31 @@ interface ErrorResponse {
   details?: string;
 }
 
+interface ArcanosAskRequest {
+  prompt: string;
+}
+
+interface ArcanosAskEndpointResponse {
+  success: boolean;
+  result?: ArcanosResponse;
+  error?: string;
+}
+
+async function handleArcanosPrompt(prompt: string): Promise<ArcanosResponse> {
+  if (!hasValidAPIKey()) {
+    console.log('🤖 Returning mock response for handleArcanosPrompt (no API key)');
+    return generateMockResponse(prompt, 'arcanos') as ArcanosResponse;
+  }
+
+  const openai = getOpenAIClient();
+  if (!openai) {
+    console.log('🤖 Returning mock response for handleArcanosPrompt (client init failed)');
+    return generateMockResponse(prompt, 'arcanos') as ArcanosResponse;
+  }
+
+  return await runARCANOS(openai, prompt);
+}
+
 async function runCommand(_command: string, _params: any) {
   return await runSystemDiagnostics();
 }
@@ -93,6 +118,26 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
     return res.json(output);
   } catch (err) {
     handleAIError(err, userInput, 'arcanos', res);
+  }
+});
+
+router.post('/api/arcanos/ask', async (
+  req: Request<{}, ArcanosAskEndpointResponse, ArcanosAskRequest>,
+  res: Response<ArcanosAskEndpointResponse>
+) => {
+  try {
+    const { prompt } = req.body;
+
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ success: false, error: 'Missing or invalid prompt in request body' });
+    }
+
+    const result = await handleArcanosPrompt(prompt);
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error('ARCANOS /ask error:', err);
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ success: false, error: message });
   }
 });
 
