@@ -2,7 +2,6 @@ import express, { Request, Response } from 'express';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 import { handleAIError } from '../utils/requestHandler.js';
-import { runSystemDiagnostics } from '../utils/systemDiagnostics.js';
 
 const router = express.Router();
 
@@ -57,35 +56,6 @@ interface ErrorResponse {
   details?: string;
 }
 
-interface ArcanosAskRequest {
-  prompt: string;
-}
-
-interface ArcanosAskEndpointResponse {
-  success: boolean;
-  result?: ArcanosResponse;
-  error?: string;
-}
-
-async function handleArcanosPrompt(prompt: string): Promise<ArcanosResponse> {
-  if (!hasValidAPIKey()) {
-    console.log('🤖 Returning mock response for handleArcanosPrompt (no API key)');
-    return generateMockResponse(prompt, 'arcanos') as ArcanosResponse;
-  }
-
-  const openai = getOpenAIClient();
-  if (!openai) {
-    console.log('🤖 Returning mock response for handleArcanosPrompt (client init failed)');
-    return generateMockResponse(prompt, 'arcanos') as ArcanosResponse;
-  }
-
-  return await runARCANOS(openai, prompt);
-}
-
-async function runCommand(_command: string, _params: any) {
-  return await runSystemDiagnostics();
-}
-
 /**
  * ARCANOS system diagnosis endpoint with standardized request handling
  */
@@ -118,32 +88,6 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
     return res.json(output);
   } catch (err) {
     handleAIError(err, userInput, 'arcanos', res);
-  }
-});
-
-// Reset: /ask endpoint with no token or IP checks
-router.post('/api/arcanos/ask', async (
-  req: Request<{}, ArcanosAskEndpointResponse, ArcanosAskRequest>,
-  res: Response<ArcanosAskEndpointResponse>
-) => {
-  try {
-    const { prompt } = req.body;
-    const result = await handleArcanosPrompt(prompt);
-    res.json({ success: true, result });
-  } catch (err) {
-    console.error('ARCANOS /ask error:', err);
-    res.status(500).json({ success: false, error: (err as Error).message });
-  }
-});
-
-router.post('/arcanos/diagnostics', async (req: Request, res: Response) => {
-  try {
-    const { command, params } = req.body;
-    const result = await runCommand(command, params);
-    res.json({ success: true, result });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    res.status(500).json({ success: false, error: message });
   }
 });
 
