@@ -98,6 +98,7 @@ The CRON worker system runs when `RUN_WORKERS=true` and implements **AI-controll
 - `GET /` - API status message  
 - `POST /` - Main chat endpoint with intent-based routing
 - `POST /ask` - Simple query processing endpoint (primary AI interface)
+- `POST /ask-lite` - Lightweight AI endpoint for ChatGPT plugin compatibility (flat schema)
 - `POST /webhook` - GitHub webhook integration
 
 #### AI Chat Endpoints
