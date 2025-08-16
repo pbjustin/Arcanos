@@ -121,23 +121,18 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
   }
 });
 
+// Reset: /ask endpoint with no token or IP checks
 router.post('/api/arcanos/ask', async (
   req: Request<{}, ArcanosAskEndpointResponse, ArcanosAskRequest>,
   res: Response<ArcanosAskEndpointResponse>
 ) => {
   try {
     const { prompt } = req.body;
-
-    if (!prompt || typeof prompt !== 'string') {
-      return res.status(400).json({ success: false, error: 'Missing or invalid prompt in request body' });
-    }
-
     const result = await handleArcanosPrompt(prompt);
     res.json({ success: true, result });
   } catch (err) {
     console.error('ARCANOS /ask error:', err);
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    res.status(500).json({ success: false, error: message });
+    res.status(500).json({ success: false, error: (err as Error).message });
   }
 });
 
