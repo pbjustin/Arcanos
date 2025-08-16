@@ -58,8 +58,9 @@ Arcanos provides a clean HTTP API for AI-powered interactions with robust error 
 ### Core Endpoints
 
 - **GET /health** - Health check with service metadata
+- **GET /status** - Backend status and runtime information
 - **GET /** - API documentation and available endpoints
-- **POST /ask** - AI chat completion endpoint
+- **POST /ask** - AI chat completion endpoint (primary)
 
 ### Example Usage
 
@@ -67,11 +68,16 @@ Arcanos provides a clean HTTP API for AI-powered interactions with robust error 
 # Health check
 curl http://localhost:3000/health
 
+# Backend status
+curl http://localhost:3000/status
+
 # AI interaction (requires OPENAI_API_KEY)
 curl -X POST http://localhost:3000/ask \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Hello, how are you?"}'
 ```
+
+**Note**: Use `/ask` for general AI queries, `/health` for system health checks, and `/status` for backend state monitoring.
 
 ## Development
 
