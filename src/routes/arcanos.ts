@@ -97,13 +97,6 @@ router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse,
 });
 
 router.post('/arcanos/diagnostics', async (req: Request, res: Response) => {
-  const authToken = req.headers['x-arcanos-token'] as string | undefined;
-  if (!authToken || authToken !== process.env.ARCANOS_AUTH_TOKEN) {
-    return res.status(403).json({
-      error: 'Unauthorized: Missing or invalid ARCANOS_AUTH_TOKEN'
-    });
-  }
-
   try {
     const { command, params } = req.body;
     const result = await runCommand(command, params);
