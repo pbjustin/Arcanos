@@ -1,6 +1,6 @@
 /**
- * Test for ping/pong healthcheck functionality in /api/arcanos/ask endpoint
- * Validates the new ping/pong feature without disrupting existing functionality
+ * Test for health check functionality using /health endpoint
+ * Tests the dedicated health endpoint instead of ping/pong in AI endpoints
  */
 
 import { exec, spawn } from 'child_process';
@@ -8,8 +8,8 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
-async function testPingPongHealthcheck() {
-  console.log('🏓 ARCANOS Ping/Pong Healthcheck Test');
+async function testHealthEndpoint() {
+  console.log('🏥 ARCANOS Health Endpoint Test');
   console.log('='.repeat(45));
 
   let serverProcess;
@@ -53,91 +53,74 @@ async function testPingPongHealthcheck() {
       throw new Error('Server failed to start after 10 attempts');
     }
 
-    // Test 1: Basic ping functionality
-    console.log('\n2. Testing basic ping functionality...');
-    const { stdout: pingResponse } = await execAsync(`curl -s -X POST ${baseUrl}/api/arcanos/ask -H "Content-Type: application/json" -d '{"prompt":"ping"}'`);
-    const pingData = JSON.parse(pingResponse);
+    // Test 1: Health endpoint functionality
+    console.log('\n2. Testing health endpoint...');
+    const { stdout: healthResponse } = await execAsync(`curl -s ${baseUrl}/health`);
+    const healthData = JSON.parse(healthResponse);
     
-    if (pingData.success === true && pingData.result === 'pong') {
-      console.log('✅ Basic ping test: PASSED');
-      console.log(`   Response: ${JSON.stringify(pingData)}`);
+    if (healthData.status === 'OK' && healthData.service === 'ARCANOS') {
+      console.log('✅ Health endpoint test: PASSED');
+      console.log(`   Response: ${JSON.stringify(healthData)}`);
     } else {
-      throw new Error(`Basic ping test failed: ${JSON.stringify(pingData)}`);
+      throw new Error(`Health endpoint test failed: ${JSON.stringify(healthData)}`);
     }
 
-    // Test 2: Case insensitive ping
-    console.log('\n3. Testing case insensitive ping...');
-    const { stdout: upperPingResponse } = await execAsync(`curl -s -X POST ${baseUrl}/api/arcanos/ask -H "Content-Type: application/json" -d '{"prompt":"PING"}'`);
-    const upperPingData = JSON.parse(upperPingResponse);
+    // Test 2: Status endpoint functionality  
+    console.log('\n3. Testing status endpoint...');
+    const { stdout: statusResponse } = await execAsync(`curl -s ${baseUrl}/status`);
+    const statusData = JSON.parse(statusResponse);
     
-    if (upperPingData.success === true && upperPingData.result === 'pong') {
-      console.log('✅ Case insensitive ping test: PASSED');
+    if (statusData.status && statusData.version) {
+      console.log('✅ Status endpoint test: PASSED');
+      console.log(`   Status: ${statusData.status}, Version: ${statusData.version}`);
     } else {
-      throw new Error(`Case insensitive ping test failed: ${JSON.stringify(upperPingData)}`);
+      throw new Error(`Status endpoint test failed: ${JSON.stringify(statusData)}`);
     }
 
-    // Test 3: Ping with whitespace
-    console.log('\n4. Testing ping with whitespace...');
-    const { stdout: whitespacePingResponse } = await execAsync(`curl -s -X POST ${baseUrl}/api/arcanos/ask -H "Content-Type: application/json" -d '{"prompt":"  ping  "}'`);
-    const whitespacePingData = JSON.parse(whitespacePingResponse);
+    // Test 3: Test /ask endpoint for AI queries
+    console.log('\n4. Testing ask endpoint for AI functionality...');
+    const { stdout: askResponse } = await execAsync(`curl -s -X POST ${baseUrl}/ask -H "Content-Type: application/json" -d '{"prompt":"Hello World"}'`);
+    const askData = JSON.parse(askResponse);
     
-    if (whitespacePingData.success === true && whitespacePingData.result === 'pong') {
-      console.log('✅ Whitespace ping test: PASSED');
+    if (askData.result && askData.activeModel) {
+      console.log('✅ Ask endpoint test: PASSED');
+      console.log(`   Active Model: ${askData.activeModel}`);
     } else {
-      throw new Error(`Whitespace ping test failed: ${JSON.stringify(whitespacePingData)}`);
+      throw new Error(`Ask endpoint test failed: ${JSON.stringify(askData)}`);
     }
 
-    // Test 4: Verify normal functionality still works
-    console.log('\n5. Testing normal functionality preservation...');
-    const { stdout: normalResponse } = await execAsync(`curl -s -X POST ${baseUrl}/api/arcanos/ask -H "Content-Type: application/json" -d '{"prompt":"Hello World"}'`);
-    const normalData = JSON.parse(normalResponse);
+    // Test 4: Verify endpoint separation
+    console.log('\n5. Testing endpoint separation...');
+    // Health endpoint should be simple and fast
+    const healthStart = Date.now();
+    const { stdout: quickHealthResponse } = await execAsync(`curl -s ${baseUrl}/health`);
+    const healthTime = Date.now() - healthStart;
+    const quickHealthData = JSON.parse(quickHealthResponse);
     
-    if (normalData.success === true && normalData.result && normalData.result.meta) {
-      console.log('✅ Normal functionality test: PASSED');
-      console.log(`   Active Model: ${normalData.result.activeModel}`);
+    if (quickHealthData.status === 'OK' && healthTime < 1000) {
+      console.log('✅ Health endpoint performance test: PASSED (fast response)');
+      console.log(`   Response time: ${healthTime}ms`);
     } else {
-      throw new Error(`Normal functionality test failed: ${JSON.stringify(normalData)}`);
+      throw new Error('Health endpoint performance test failed: response too slow or invalid');
     }
 
-    // Test 5: Verify ping doesn't bypass to AI processing
-    console.log('\n6. Testing ping bypasses AI processing...');
-    // The ping response should be immediate and simple, not the complex AI response
-    if (typeof pingData.result === 'string' && pingData.result === 'pong') {
-      console.log('✅ Ping bypass test: PASSED (simple string response, no AI processing)');
-    } else {
-      throw new Error('Ping bypass test failed: response appears to have gone through AI processing');
-    }
-
-    // Test 6: Verify near-ping prompts don't trigger ping response
-    console.log('\n7. Testing non-ping prompts...');
-    const { stdout: nonPingResponse } = await execAsync(`curl -s -X POST ${baseUrl}/api/arcanos/ask -H "Content-Type: application/json" -d '{"prompt":"pingpong"}'`);
-    const nonPingData = JSON.parse(nonPingResponse);
-    
-    if (nonPingData.success === true && nonPingData.result !== 'pong' && nonPingData.result.meta) {
-      console.log('✅ Non-ping prompt test: PASSED (goes through AI processing)');
-    } else {
-      throw new Error(`Non-ping prompt test failed: ${JSON.stringify(nonPingData)}`);
-    }
-
-    console.log('\n🎉 All ping/pong healthcheck tests passed!');
+    console.log('\n🎉 All health and endpoint tests passed!');
     console.log('\n📋 Test Summary:');
-    console.log('- Basic ping → pong functionality works');
-    console.log('- Case insensitive ping detection');
-    console.log('- Whitespace tolerant ping detection');
-    console.log('- Normal AI functionality preserved');
-    console.log('- Ping bypasses AI processing for efficiency');
-    console.log('- Non-ping prompts still go through AI processing');
-    console.log('- Response format maintained');
+    console.log('- Health endpoint (/health) provides system health information');
+    console.log('- Status endpoint (/status) provides backend status');
+    console.log('- Ask endpoint (/ask) provides AI functionality');
+    console.log('- Proper endpoint separation maintained');
+    console.log('- Health checks are fast and efficient');
     
     return true;
 
   } catch (error) {
-    console.error('❌ Ping/pong test failed:', error);
+    console.error('❌ Health endpoint test failed:', error);
     return false;
   } finally {
     // Clean up - kill the server process
     if (serverProcess) {
-      console.log('\n8. Cleaning up server process...');
+      console.log('\n6. Cleaning up server process...');
       serverProcess.kill('SIGTERM');
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -145,7 +128,7 @@ async function testPingPongHealthcheck() {
 }
 
 // Run the test
-testPingPongHealthcheck()
+testHealthEndpoint()
   .then(success => {
     if (success) {
       console.log('\n✅ Ping/pong healthcheck test completed successfully');
