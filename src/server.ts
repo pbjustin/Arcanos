@@ -21,6 +21,7 @@ import orchestrationRouter from './routes/orchestration.js';
 import statusRouter from './routes/status.js';
 import siriRouter from './routes/siri.js';
 import backstageRouter from './routes/backstage.js';
+import apiArcanosRouter from './routes/api-arcanos.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -91,6 +92,7 @@ app.use('/', statusRouter);
 app.use('/', siriRouter);
 app.use('/backstage', backstageRouter);
 app.use('/sdk', sdkRouter);
+app.use('/api/arcanos', apiArcanosRouter);
 
 /**
  * Bootstraps the Express application and all worker services.
