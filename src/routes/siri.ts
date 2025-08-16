@@ -8,6 +8,7 @@ import {
   StandardAIResponse,
   ErrorResponse
 } from '../utils/requestHandler.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -42,6 +43,6 @@ const handleSiriRequest = async (
   }
 };
 
-router.post('/siri', (req, res) => handleSiriRequest(req, res));
+router.post('/siri', confirmGate, (req, res) => handleSiriRequest(req, res));
 
 export default router;
