@@ -1,20 +1,7 @@
 import express from 'express';
-import crypto from 'crypto';
 
 const app = express();
 app.use(express.json());
-
-// ✅ Secure token (store in environment variable)
-const AUTH_TOKEN = process.env.ARCANOS_AUTH_TOKEN;
-
-// ✅ Simple authentication middleware
-function authenticate(req, res, next) {
-  const token = req.headers['x-arcanos-token'];
-  if (!token || token !== AUTH_TOKEN) {
-    return res.status(403).json({ error: 'Unauthorized' });
-  }
-  next();
-}
 
 // ✅ Fallback handler with retry logic
 async function runWithRetry(taskFn, retries = 3) {
@@ -29,8 +16,8 @@ async function runWithRetry(taskFn, retries = 3) {
   }
 }
 
-// ✅ Diagnostic endpoint
-app.post('/api/arcanos/diagnostics', authenticate, async (req, res) => {
+// ✅ Diagnostic endpoint (open mode - no authentication)
+app.post('/api/arcanos/diagnostics', async (req, res) => {
   const { command, params } = req.body;
   try {
     const result = await runWithRetry(async () => {
