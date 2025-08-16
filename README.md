@@ -199,7 +199,6 @@ node utils/pin_memory_resource.js --label MY_LABEL --type task --file ./workflow
 
 ### Diagnostics & Monitoring
 - `POST /api/diagnostics` - Natural language diagnostic commands
-- `POST /api/arcanos/diagnostics` - Backend bridge diagnostics (open access)
 - `GET /system/diagnostics` - System diagnostics information
 - `GET /system/workers` - Worker status information
 - `GET /sync/diagnostics` - GPT-accessible system metrics
@@ -251,14 +250,6 @@ or
 ```json
 {
   "command": "Check available memory"
-}
-```
-
-#### Backend Bridge Diagnostics (`/api/arcanos/diagnostics`)
-```json
-{
-  "command": "Run health check",
-  "params": {}
 }
 ```
 
@@ -503,7 +494,6 @@ curl http://localhost:8080/health
 
 ### Diagnostic & Management
 - `POST /api/diagnostics` - Natural language system commands
-- `POST /api/arcanos/diagnostics` - Backend diagnostics bridge (no auth)
 - `GET /system/workers` - Background process monitoring (verify workers after setting `RUN_WORKERS=true`)
 - `GET /system/diagnostics` - Comprehensive system diagnostics
 - `GET /sync/diagnostics` - GPT-accessible system metrics
