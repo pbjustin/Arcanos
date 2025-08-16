@@ -25,20 +25,14 @@ function classifyRisk(request) {
 function handler(request) {
   // Owner override bypass
   if (isOwnerOverride(request)) {
-    logger.info(`Owner override detected — executing without hard block`);
+    logger.info(`Owner override detected — executing request without hard block`);
     return { allowed: true, mode: 'OVERRIDE', logOnly: true };
   }
 
   // Relaxed session mode
   if (request.sessionFlags && request.sessionFlags.includes('audit_relaxed_session')) {
-    logger.info(`Audit Relaxed Mode active — lighter restrictions applied`);
+    logger.info(`Audit Relaxed Mode active for this session`);
     return { allowed: true, mode: 'RELAXED', logOnly: true };
-  }
-
-  // Read-only bypass fix
-  if (request.type === 'read-only' || request.outputOnly) {
-    logger.info(`Read-only request detected — bypassing strict mode`);
-    return { allowed: true, mode: 'READ_ONLY_BYPASS', logOnly: true };
   }
 
   // Two-layer audit filtering
@@ -55,5 +49,5 @@ function handler(request) {
 // Attach handler to config
 auditConfig.handler = handler;
 
-logger.info(`✅ Audit Safe Mode patch v1.043 applied — read-only bypass fixed`);
+logger.info(`✅ Audit Safe Mode patch applied: Owner override, layered filtering, relaxed session, adaptive thresholds`);
 module.exports = auditConfig;
