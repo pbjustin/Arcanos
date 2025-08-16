@@ -94,9 +94,10 @@ The CRON worker system runs when `RUN_WORKERS=true` and implements **AI-controll
 
 #### Core Endpoints
 - `GET /health` - Health check endpoint
+- `GET /status` - Backend status and runtime information
 - `GET /` - API status message  
 - `POST /` - Main chat endpoint with intent-based routing
-- `POST /ask` - Simple query processing endpoint
+- `POST /ask` - Simple query processing endpoint (primary AI interface)
 - `POST /webhook` - GitHub webhook integration
 
 #### AI Chat Endpoints
