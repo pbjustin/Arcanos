@@ -5,6 +5,7 @@
 
 import express, { Request, Response } from 'express';
 import { loadState, updateState, SystemState } from '../services/stateManager.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -27,7 +28,7 @@ router.get('/status', (_: Request, res: Response) => {
 /**
  * POST /status - Update system state
  */
-router.post('/status', (req: Request, res: Response) => {
+router.post('/status', confirmGate, (req: Request, res: Response) => {
   try {
     const updates: Partial<SystemState> = req.body;
     

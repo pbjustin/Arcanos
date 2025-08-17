@@ -4,6 +4,7 @@ import { getSessionLogPath } from '../utils/logPath.js';
 import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { requireField } from '../utils/validation.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ router.get("/memory/health", (_: Request, res: Response) => {
 });
 
 // Save memory endpoint
-router.post("/memory/save", asyncHandler(async (req: Request, res: Response) => {
+router.post("/memory/save", confirmGate, asyncHandler(async (req: Request, res: Response) => {
   const { key, value } = req.body;
 
   if (!requireField(res, key, 'key') || !requireField(res, value, 'value')) {
@@ -58,7 +59,7 @@ router.get("/memory/load", asyncHandler(async (req: Request, res: Response) => {
 }));
 
 // Delete memory endpoint
-router.delete("/memory/delete", asyncHandler(async (req: Request, res: Response) => {
+router.delete("/memory/delete", confirmGate, asyncHandler(async (req: Request, res: Response) => {
   const { key } = req.body;
   if (!requireField(res, key, 'key')) {
     return;

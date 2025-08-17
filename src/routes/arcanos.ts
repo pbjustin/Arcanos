@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 import { handleAIError } from '../utils/requestHandler.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -59,7 +60,7 @@ interface ErrorResponse {
 /**
  * ARCANOS system diagnosis endpoint with standardized request handling
  */
-router.post('/arcanos', async (req: Request<{}, ArcanosResponse | ErrorResponse, ArcanosRequest>, res: Response<ArcanosResponse | ErrorResponse>) => {
+router.post('/arcanos', confirmGate, async (req: Request<{}, ArcanosResponse | ErrorResponse, ArcanosRequest>, res: Response<ArcanosResponse | ErrorResponse>) => {
   console.log('🔬 /arcanos received');
   const { userInput, sessionId, overrideAuditSafe } = req.body;
 

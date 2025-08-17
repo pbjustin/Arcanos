@@ -4,11 +4,113 @@ A comprehensive TypeScript + Express backend for the Arcanos AI project, featuri
 
 Arcanos is designed as an **AI-managed backend**. A fine-tuned GPT model controls background workers, decides when to run maintenance tasks, and processes incoming requests through an intent router. Persistent memory is stored in PostgreSQL with an in-memory fallback so the system can maintain context even if the database is unavailable. In short, Arcanos provides a conventional HTTP API that is orchestrated by an AI model.
 
-# Arcanos Backend
+## 🛡️ OpenAI Terms of Service Compliance
 
-A modern TypeScript + Express backend for the Arcanos AI project, featuring OpenAI integration, clean API routing, and comprehensive error handling.
+**Important:** All sensitive API endpoints now require explicit user confirmation to ensure compliance with OpenAI's Terms of Service. This prevents GPT applications from executing actions automatically without user consent.
 
-Arcanos provides a clean HTTP API for AI-powered interactions with robust error handling, graceful degradation, and modern Node.js best practices.
+### Required Confirmation Header
+
+For all sensitive operations (AI queries, data modifications, worker executions), you **must** include the confirmation header:
+
+```bash
+x-confirmed: yes
+```
+
+### Example Requests
+
+#### ✅ Correct Usage (With Confirmation)
+```bash
+# AI chat endpoint
+curl -X POST http://localhost:8080/ask \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"prompt": "Hello, how are you?"}'
+
+# Memory save operation
+curl -X POST http://localhost:8080/memory/save \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"key": "user_preference", "value": "dark_mode"}'
+
+# Worker execution
+curl -X POST http://localhost:8080/workers/run/analyzer \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"input": "data to analyze"}'
+```
+
+#### ❌ Incorrect Usage (Without Confirmation)
+```bash
+# This will return 403 Forbidden
+curl -X POST http://localhost:8080/ask \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hello, how are you?"}'
+
+# Response:
+{
+  "error": "Confirmation required",
+  "message": "This endpoint requires explicit user confirmation. Please include the header: x-confirmed: yes",
+  "code": "CONFIRMATION_REQUIRED",
+  "endpoint": "/ask",
+  "method": "POST"
+}
+```
+
+### Protected Endpoints
+
+The following endpoints require the `x-confirmed: yes` header:
+
+**AI Processing Endpoints:**
+- `POST /ask` - AI query endpoint
+- `POST /brain` - AI brain endpoint  
+- `POST /arcanos` - Main AI interface
+- `POST /api/arcanos/ask` - Simple query processing
+- `POST /write`, `/guide`, `/audit`, `/sim` - AI processing endpoints
+- `POST /siri` - Siri endpoint
+
+**System Control Endpoints:**
+- `POST /orchestration/reset` - GPT-5 orchestration reset
+- `POST /orchestration/purge` - GPT-5 orchestration purge
+- `POST /workers/run/:workerId` - Worker execution
+- `POST /heartbeat` - Heartbeat
+- `POST /status` - Status update
+
+**Data Modification Endpoints:**
+- `POST /memory/save` - Memory save
+- `DELETE /memory/delete` - Memory delete
+- `POST /backstage/*` - Backstage operations
+- `POST /sdk/*` - SDK operations
+
+### Safe Endpoints (No Confirmation Required)
+
+These diagnostic and read-only endpoints remain accessible without confirmation:
+
+- `GET /health` - Health check
+- `GET /` - Root endpoint
+- `GET /memory/health`, `/memory/load`, `/memory/list`, `/memory/view` - Memory diagnostics
+- `GET /workers/status` - Worker status
+- `GET /status` - Status read
+- `GET /orchestration/status` - Orchestration status
+- `GET /sdk/diagnostics`, `/sdk/workers/status` - SDK diagnostics
+- `GET /backstage/` - Backstage home
+
+### For GPT Builders
+
+When creating Custom GPTs or integrating with the Arcanos backend:
+
+1. **Always prompt the user for confirmation** before making API calls to sensitive endpoints
+2. **Include the confirmation header** in your API calls: `x-confirmed: yes`
+3. **Handle 403 responses gracefully** and inform users about the confirmation requirement
+4. **Use safe endpoints** for health checks and diagnostics without confirmation
+
+Example GPT prompt flow:
+```
+User: "Can you analyze this data for me?"
+GPT: "I can help analyze your data. To proceed with this operation, I need your explicit confirmation. 
+     Should I proceed with the analysis? (This will call the backend API with your data)"
+User: "Yes, proceed"
+GPT: [Makes API call with x-confirmed: yes header]
+```
 
 ## ✅ Recent Refactoring (v1.0.0)
 
