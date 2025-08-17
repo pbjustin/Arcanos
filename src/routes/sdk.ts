@@ -7,6 +7,7 @@
 import express from 'express';
 import { runSystemDiagnostics } from '../utils/systemDiagnostics.js';
 import { logExecution } from '../db.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -64,7 +65,7 @@ async function importWorkerFunctions(): Promise<WorkerModule> {
 /**
  * Initialize workers via SDK call
  */
-router.post('/workers/init', async (_, res) => {
+router.post('/workers/init', confirmGate, async (_, res) => {
   try {
     const { initializeWorkers } = await importWorkerFunctions();
     
@@ -93,7 +94,7 @@ router.post('/workers/init', async (_, res) => {
 /**
  * Register routes via SDK call
  */
-router.post('/routes/register', async (_, res) => {
+router.post('/routes/register', confirmGate, async (_, res) => {
   try {
     const routes = [
       {
@@ -171,7 +172,7 @@ router.post('/routes/register', async (_, res) => {
 /**
  * Activate scheduler via SDK call
  */
-router.post('/scheduler/activate', async (_, res) => {
+router.post('/scheduler/activate', confirmGate, async (_, res) => {
   try {
     const scheduledJobs = [
       {
@@ -253,7 +254,7 @@ router.get('/diagnostics', async (req, res) => {
 /**
  * Dispatch job via SDK call
  */
-router.post('/jobs/dispatch', async (req, res) => {
+router.post('/jobs/dispatch', confirmGate, async (req, res) => {
   try {
     const { workerId, jobType, jobData } = req.body;
     
@@ -297,7 +298,7 @@ router.post('/jobs/dispatch', async (req, res) => {
 /**
  * Dispatch test verification job as specified in problem statement
  */
-router.post('/test-job', async (_, res) => {
+router.post('/test-job', confirmGate, async (_, res) => {
   try {
     // Import necessary functions
     const { createJob } = await import('../db.js');
@@ -412,7 +413,7 @@ router.get('/workers/status', async (_, res) => {
 /**
  * Run full SDK initialization sequence
  */
-router.post('/init-all', async (_, res) => {
+router.post('/init-all', confirmGate, async (_, res) => {
   try {
     const results: {
       workers: any;
@@ -483,7 +484,7 @@ router.post('/init-all', async (_, res) => {
 /**
  * Full ARCANOS SDK system test according to problem statement
  */
-router.post('/system-test', async (_, res) => {
+router.post('/system-test', confirmGate, async (_, res) => {
   try {
     const results: any = {};
 

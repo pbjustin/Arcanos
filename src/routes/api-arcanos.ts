@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { handleArcanosPrompt } from '../services/arcanosPrompt.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ interface AskBody {
  * Returns a success flag and the raw result from the core handler.
  * Includes simple ping/pong healthcheck functionality.
  */
-router.post('/ask', async (
+router.post('/ask', confirmGate, async (
   req: Request<{}, { success: boolean; result?: any; error?: string }, AskBody>,
   res: Response<{ success: boolean; result?: any; error?: string }>
 ) => {

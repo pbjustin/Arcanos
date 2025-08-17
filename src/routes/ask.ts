@@ -8,6 +8,7 @@ import {
   StandardAIResponse,
   ErrorResponse
 } from '../utils/requestHandler.js';
+import { confirmGate } from '../middleware/confirmGate.js';
 
 const router = express.Router();
 
@@ -70,9 +71,9 @@ const handleAIRequest = async (
 };
 
 // Primary ask endpoint routed through the Trinity brain
-router.post('/ask', (req, res) => handleAIRequest(req, res, 'ask'));
+router.post('/ask', confirmGate, (req, res) => handleAIRequest(req, res, 'ask'));
 
 // Brain endpoint (alias for ask with same functionality)
-router.post('/brain', (req, res) => handleAIRequest(req, res, 'brain'));
+router.post('/brain', confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
 
 export default router;
