@@ -22,6 +22,8 @@ import statusRouter from './routes/status.js';
 import siriRouter from './routes/siri.js';
 import backstageRouter from './routes/backstage.js';
 import apiArcanosRouter from './routes/api-arcanos.js';
+import { activateBackstageBooker } from './modules/backstage/bootloader.js';
+import backstageKernel from './modules/backstage/kernel.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -117,7 +119,10 @@ async function initializeServer() {
     
     // Initialize workers first
     const workerResults = await initializeWorkers();
-    
+
+    // Ensure Backstage Booker module is active
+    await activateBackstageBooker(backstageKernel);
+
     console.log(`[🔌 ARCANOS DB] Database Status: ${workerResults.database.connected ? 'Connected' : 'Disconnected'}`);
     if (workerResults.database.error) {
       console.log(`[🔌 ARCANOS DB] Database Error: ${workerResults.database.error}`);
