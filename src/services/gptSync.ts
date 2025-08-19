@@ -3,23 +3,9 @@
  * Provides GPT calls with automatic backend state synchronization
  */
 
-import OpenAI from 'openai';
 import { getBackendState, SystemState } from './stateManager.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
-
-// Initialize OpenAI client only if API key is available
-let client: OpenAI | null = null;
-
-function getOpenAIClient(): OpenAI {
-  if (!client) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required for GPT sync functionality');
-    }
-    client = new OpenAI({ apiKey });
-  }
-  return client;
-}
+import { getOpenAIClient } from './openai.js';
 
 /**
  * Ask GPT with backend state synchronization
@@ -45,8 +31,13 @@ Do not rely on past memory — only trust this state for system information.
     console.log('[GPT-SYNC] Backend state:', JSON.stringify(backendState, null, 2));
     
     // Make the GPT call
+    const client = getOpenAIClient();
+    if (!client) {
+      throw new Error('OpenAI client not available - API key required for GPT sync functionality');
+    }
+    
     const tokenParams = getTokenParameter(model, 1000);
-    const response = await getOpenAIClient().chat.completions.create({
+    const response = await client.chat.completions.create({
       model: model,
       messages: [
         { role: 'system', content: systemPrompt },
@@ -97,8 +88,13 @@ Additional Context: ${JSON.stringify(additionalContext, null, 2)}
 Always use this information as your source of truth.
 `;
 
+    const client = getOpenAIClient();
+    if (!client) {
+      throw new Error('OpenAI client not available - API key required for GPT sync functionality');
+    }
+    
     const tokenParams = getTokenParameter(model, 1000);
-    const response = await getOpenAIClient().chat.completions.create({
+    const response = await client.chat.completions.create({
       model: model,
       messages: [
         { role: 'system', content: systemPrompt },
