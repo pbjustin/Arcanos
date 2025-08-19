@@ -1,3 +1,5 @@
+import { config } from '../config/index.js';
+
 interface FallbackRequest {
   prompt: string;
   max_completion_tokens?: number;
@@ -41,7 +43,7 @@ async function callModelAPI(payload: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
+        Authorization: `Bearer ${config.ai.apiKey}`
       },
       body: JSON.stringify(payload)
     });
