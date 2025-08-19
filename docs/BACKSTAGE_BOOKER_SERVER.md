@@ -23,8 +23,9 @@ BackstageBooker v2.0 exposes a minimal REST API for managing a WWE Universe simu
 4. Install dependencies and run the server:
    ```bash
    npm install
-   node backstage-booker-v2.js
+   npm run build && npm start
    ```
+   The backstage functionality is now integrated into the main ARCANOS server at `/backstage/*` endpoints.
 
 ## API Endpoints
 | Method | Path | Description |
