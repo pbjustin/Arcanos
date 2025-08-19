@@ -30,7 +30,8 @@ const SAFE_PATTERNS = [
   /GET.*\/orchestration\/status/,
   /GET.*\/sdk\/diagnostics/,
   /GET.*\/sdk\/workers\/status/,
-  /GET.*\/backstage/
+  /GET.*\/backstage/,
+  /POST\s+\/ask$/
 ];
 
 function extractRoutes(filePath) {
