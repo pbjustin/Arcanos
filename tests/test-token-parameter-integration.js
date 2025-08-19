@@ -114,7 +114,7 @@ async function runTokenParameterTests() {
       { path: 'src/services/secureReasoningEngine.ts', lines_changed: 3 },
       { path: 'workers/taskProcessor.js', lines_changed: 3 },
       { path: 'workers/auditRunner.js', lines_changed: 6 },
-      { path: 'workers/worker-gpt5-reasoning.js', lines_changed: 3 },
+      { path: 'workers/worker-gpt4-reasoning.js', lines_changed: 3 },
       { path: 'src/utils/tokenParameterHelper.ts', lines_changed: 226 }
     ];
     
