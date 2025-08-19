@@ -6,11 +6,11 @@ Arcanos is designed as an **AI-managed backend**. A fine-tuned GPT model control
 
 ## 🛡️ OpenAI Terms of Service Compliance
 
-**Important:** All sensitive API endpoints now require explicit user confirmation to ensure compliance with OpenAI's Terms of Service. This prevents GPT applications from executing actions automatically without user consent.
+**Important:** Most sensitive API endpoints now require explicit user confirmation to ensure compliance with OpenAI's Terms of Service. This prevents GPT applications from executing actions automatically without user consent. The `/ask` endpoint is exempt and can be used without confirmation.
 
 ### Required Confirmation Header
 
-For all sensitive operations (AI queries, data modifications, worker executions), you **must** include the confirmation header:
+For all sensitive operations (data modifications, worker executions), you **must** include the confirmation header. The `/ask` endpoint no longer requires this header:
 
 ```bash
 x-confirmed: yes
@@ -18,14 +18,15 @@ x-confirmed: yes
 
 ### Example Requests
 
-#### ✅ Correct Usage (With Confirmation)
+#### Ask endpoint (no confirmation required)
 ```bash
-# AI chat endpoint
 curl -X POST http://localhost:8080/ask \
   -H "Content-Type: application/json" \
-  -H "x-confirmed: yes" \
   -d '{"prompt": "Hello, how are you?"}'
+```
 
+#### Operations requiring confirmation
+```bash
 # Memory save operation
 curl -X POST http://localhost:8080/memory/save \
   -H "Content-Type: application/json" \
@@ -39,30 +40,12 @@ curl -X POST http://localhost:8080/workers/run/analyzer \
   -d '{"input": "data to analyze"}'
 ```
 
-#### ❌ Incorrect Usage (Without Confirmation)
-```bash
-# This will return 403 Forbidden
-curl -X POST http://localhost:8080/ask \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, how are you?"}'
-
-# Response:
-{
-  "error": "Confirmation required",
-  "message": "This endpoint requires explicit user confirmation. Please include the header: x-confirmed: yes",
-  "code": "CONFIRMATION_REQUIRED",
-  "endpoint": "/ask",
-  "method": "POST"
-}
-```
-
 ### Protected Endpoints
 
 The following endpoints require the `x-confirmed: yes` header:
 
 **AI Processing Endpoints:**
-- `POST /ask` - AI query endpoint
-- `POST /brain` - AI brain endpoint  
+- `POST /brain` - AI brain endpoint
 - `POST /arcanos` - Main AI interface
 - `POST /api/arcanos/ask` - Simple query processing
 - `POST /write`, `/guide`, `/audit`, `/sim` - AI processing endpoints
@@ -83,8 +66,9 @@ The following endpoints require the `x-confirmed: yes` header:
 
 ### Safe Endpoints (No Confirmation Required)
 
-These diagnostic and read-only endpoints remain accessible without confirmation:
+These endpoints remain accessible without confirmation:
 
+- `POST /ask` - AI query endpoint
 - `GET /health` - Health check
 - `GET /` - Root endpoint
 - `GET /memory/health`, `/memory/load`, `/memory/list`, `/memory/view` - Memory diagnostics
@@ -99,7 +83,7 @@ These diagnostic and read-only endpoints remain accessible without confirmation:
 When creating Custom GPTs or integrating with the Arcanos backend:
 
 1. **Always prompt the user for confirmation** before making API calls to sensitive endpoints
-2. **Include the confirmation header** in your API calls: `x-confirmed: yes`
+2. **Include the confirmation header** in your API calls when required: `x-confirmed: yes` (not needed for `/ask`)
 3. **Handle 403 responses gracefully** and inform users about the confirmation requirement
 4. **Use safe endpoints** for health checks and diagnostics without confirmation
 
@@ -109,7 +93,7 @@ User: "Can you analyze this data for me?"
 GPT: "I can help analyze your data. To proceed with this operation, I need your explicit confirmation. 
      Should I proceed with the analysis? (This will call the backend API with your data)"
 User: "Yes, proceed"
-GPT: [Makes API call with x-confirmed: yes header]
+GPT: [Makes API call with confirmation header if required]
 ```
 
 ## ✅ Recent Refactoring (v1.0.0)

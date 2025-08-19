@@ -2,14 +2,14 @@
 
 ## Summary
 
-Successfully implemented confirmGate middleware to ensure compliance with OpenAI's Terms of Service by requiring explicit user confirmation before any backend endpoint executes logic. All connected GPTs now require the `x-confirmed: yes` header for sensitive operations.
+Successfully implemented confirmGate middleware to ensure compliance with OpenAI's Terms of Service by requiring explicit user confirmation before any backend endpoint executes logic. Most connected GPTs now require the `x-confirmed: yes` header for sensitive operations, while the `/ask` endpoint is open to all requests.
 
 ## 📊 Implementation Statistics
 
 ### Routes Protected
 - **Total routes analyzed**: 37
-- **Sensitive routes protected**: 27 
-- **Safe routes (no protection needed)**: 10
+- **Sensitive routes protected**: 26
+- **Safe routes (no protection needed)**: 11
 - **Vulnerable routes found**: 0
 
 ### Files Modified
@@ -26,11 +26,10 @@ Successfully implemented confirmGate middleware to ensure compliance with OpenAI
 - Provides audit logging for all confirmation requests
 - Includes helper function to determine which endpoints need protection
 
-### 2. Protected Endpoints (27 total)
+### 2. Protected Endpoints (26 total)
 
 **AI Processing Endpoints:**
-- `POST /ask` - AI query endpoint
-- `POST /brain` - AI brain endpoint  
+- `POST /brain` - AI brain endpoint
 - `POST /arcanos` - Main AI interface
 - `POST /api/arcanos/ask` - Simple query processing
 - `POST /write`, `/guide`, `/audit`, `/sim` - AI processing endpoints
@@ -49,8 +48,9 @@ Successfully implemented confirmGate middleware to ensure compliance with OpenAI
 - `POST /backstage/*` - All backstage operations (4 endpoints)
 - `POST /sdk/*` - All SDK operations (7 endpoints)
 
-### 3. Safe Endpoints (10 total)
+### 3. Safe Endpoints (11 total)
 These remain unprotected for monitoring and diagnostics:
+- `POST /ask` - AI query endpoint
 - `GET /health` - Health check
 - `GET /` - Root endpoint
 - `GET /memory/*` - Memory diagnostics (4 endpoints)
@@ -63,7 +63,7 @@ These remain unprotected for monitoring and diagnostics:
 
 ### Core Implementation
 1. **`src/middleware/confirmGate.ts`** - ✨ NEW: Core middleware implementation
-2. **`src/routes/ask.ts`** - Added confirmGate to POST endpoints
+2. **`src/routes/ask.ts`** - Protected `/brain`; `/ask` left open
 3. **`src/routes/arcanos.ts`** - Added confirmGate to POST /arcanos
 4. **`src/routes/api-arcanos.ts`** - Added confirmGate to POST /ask
 5. **`src/routes/ai-endpoints.ts`** - Added confirmGate to all AI endpoints
@@ -86,14 +86,16 @@ These remain unprotected for monitoring and diagnostics:
 ### Manual Testing Results
 ```bash
 # Without confirmation header - ❌ BLOCKED
-curl -X POST /ask -d '{"prompt": "test"}'
+curl -X POST /brain -d '{"prompt": "test"}'
 # Response: 403 Forbidden with proper error message
 
-# With confirmation header - ✅ ALLOWED  
-curl -X POST /ask -H "x-confirmed: yes" -d '{"prompt": "test"}'
+# With confirmation header - ✅ ALLOWED
+curl -X POST /brain -H "x-confirmed: yes" -d '{"prompt": "test"}'
 # Response: Processed successfully (mock mode due to no API key)
 
 # Safe endpoints - ✅ UNPROTECTED
+curl -X POST /ask -d '{"prompt": "test"}'
+# Response: 200 OK
 curl -X GET /health
 # Response: 200 OK
 ```
@@ -103,8 +105,8 @@ curl -X GET /health
 🔍 ConfirmGate Security Scan
 ============================
 📊 Scan Results:
-✅ Protected routes: 27
-⚠️  Safe routes (no protection needed): 10  
+✅ Protected routes: 26
+⚠️  Safe routes (no protection needed): 11
 ❌ Vulnerable routes: 0
 🎉 SECURITY SCAN PASSED
 ```
@@ -124,7 +126,7 @@ curl -X GET /health
   "error": "Confirmation required",
   "message": "This endpoint requires explicit user confirmation. Please include the header: x-confirmed: yes",
   "code": "CONFIRMATION_REQUIRED",
-  "endpoint": "/ask",
+  "endpoint": "/brain",
   "method": "POST",
   "timestamp": "2025-08-16T09:26:28.479Z"
 }
@@ -135,7 +137,7 @@ curl -X GET /health
 ### For GPT Builders
 ```javascript
 // Correct usage
-fetch('/api/ask', {
+fetch('/api/arcanos/ask', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -148,7 +150,7 @@ fetch('/api/ask', {
 ### For Manual Testing
 ```bash
 # AI endpoints
-curl -X POST http://localhost:8080/ask \
+curl -X POST http://localhost:8080/brain \
   -H "Content-Type: application/json" \
   -H "x-confirmed: yes" \
   -d '{"prompt": "Hello, how are you?"}'

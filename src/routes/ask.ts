@@ -70,10 +70,10 @@ const handleAIRequest = async (
   }
 };
 
-// Primary ask endpoint routed through the Trinity brain
-router.post('/ask', confirmGate, (req, res) => handleAIRequest(req, res, 'ask'));
+// Primary ask endpoint routed through the Trinity brain (no confirmation required)
+router.post('/ask', (req, res) => handleAIRequest(req, res, 'ask'));
 
-// Brain endpoint (alias for ask with same functionality)
+// Brain endpoint (alias for ask with same functionality) still requires confirmation
 router.post('/brain', confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
 
 export default router;

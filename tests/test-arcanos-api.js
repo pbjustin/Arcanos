@@ -87,7 +87,7 @@ async function testArcanosAPI() {
           confirmation: 'HEARTBEAT_ENTRY_SUCCESS'
         }
       };
-      const { stdout } = await execAsync(`curl -s -X POST ${baseUrl}/heartbeat -H "Content-Type: application/json" -d '${JSON.stringify(hbPayload)}'`);
+      const { stdout } = await execAsync(`curl -s -X POST ${baseUrl}/heartbeat -H "Content-Type: application/json" -H "x-confirmed: yes" -d '${JSON.stringify(hbPayload)}'`);
       const hbResponse = JSON.parse(stdout);
       if (hbResponse.message && hbResponse.message.includes('HEARTBEAT_ENTRY_SUCCESS')) {
         console.log('✅ Heartbeat endpoint: PASSED');
@@ -116,7 +116,10 @@ async function testArcanosAPI() {
       console.log(`\n${4 + i}. Testing ${endpoint.name} endpoint (${endpoint.path})...`);
       
       try {
-        const curlCmd = `curl -s -X POST ${baseUrl}${endpoint.path} -H "Content-Type: application/json" -d '${JSON.stringify(endpoint.payload)}'`;
+        const headers = endpoint.path === '/ask'
+          ? '-H "Content-Type: application/json"'
+          : '-H "Content-Type: application/json" -H "x-confirmed: yes"';
+        const curlCmd = `curl -s -X POST ${baseUrl}${endpoint.path} ${headers} -d '${JSON.stringify(endpoint.payload)}'`;
         const { stdout } = await execAsync(curlCmd);
         const response = JSON.parse(stdout);
 
