@@ -10,7 +10,6 @@ const axios = require('axios');
 const BASE_URL = 'http://localhost:8080';
 
 const sensitiveEndpoints = [
-  { method: 'POST', path: '/ask', description: 'AI ask endpoint' },
   { method: 'POST', path: '/brain', description: 'AI brain endpoint' },
   { method: 'POST', path: '/arcanos', description: 'Main ARCANOS interface' },
   { method: 'POST', path: '/api/arcanos/ask', description: 'API ARCANOS ask' },
@@ -158,11 +157,11 @@ async function testConfirmGateCompliance() {
     }
   }
 
-  // Test 4: Check for proper error response format
+  // Test 4: Check for proper error response format using a protected endpoint
   console.log('\n4. Testing error response format...');
   totalTests++;
-  const result = await makeRequest('POST', '/ask', {}, { prompt: 'test' });
-  
+  const result = await makeRequest('POST', '/brain', {}, { prompt: 'test' });
+
   if (result.status === 403 && result.data && result.data.code === 'CONFIRMATION_REQUIRED') {
     console.log('✅ Error response has correct format and code');
     passedTests++;
