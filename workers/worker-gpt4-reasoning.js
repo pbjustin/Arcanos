@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * ARCANOS GPT-5 Reasoning Worker
+ * ARCANOS GPT-4 Reasoning Worker
  * 
- * Handles GPT-5 reasoning delegation with database logging
+ * Handles GPT-4 reasoning delegation with database logging
  */
 
 import dotenv from 'dotenv';
@@ -33,24 +33,24 @@ async function safeChatCompletion(client, params) {
   }
 }
 
-export const id = 'worker-gpt5-reasoning';
+export const id = 'worker-gpt4-reasoning';
 
 // Verify database connectivity before processing jobs
 await initializeDatabase(id);
 await logExecution(id, 'info', 'db_connection_verified');
 
 /**
- * Perform GPT-5 reasoning and log results
+ * Perform GPT-4 reasoning and log results
  */
 export async function performReasoning(input, context = {}) {
   const _dbStatus = getStatus();
   
   try {
-    await logExecution(id, 'info', 'Starting GPT-5 reasoning', { inputLength: input.length });
+    await logExecution(id, 'info', 'Starting GPT-4 reasoning', { inputLength: input.length });
     
     const client = getOpenAIClient();
     if (!client) {
-      const fallbackOutput = '[MOCK] GPT-5 reasoning simulation for: ' + input.substring(0, 100) + '...';
+      const fallbackOutput = '[MOCK] GPT-4 reasoning simulation for: ' + input.substring(0, 100) + '...';
       
       // Log the reasoning attempt
       await logReasoning(input, fallbackOutput, { 
@@ -62,8 +62,8 @@ export async function performReasoning(input, context = {}) {
       return fallbackOutput;
     }
 
-    // Perform actual GPT-5 reasoning
-    const systemPrompt = `You are GPT-5, a highly advanced reasoning engine. Provide deep, structured analysis and reasoning for the given input. Focus on:
+    // Perform actual GPT-4 reasoning
+    const systemPrompt = `You are GPT-4, a highly advanced reasoning engine. Provide deep, structured analysis and reasoning for the given input. Focus on:
 1. Core analysis and understanding
 2. Logical reasoning and inference
 3. Structured conclusions
@@ -71,7 +71,7 @@ export async function performReasoning(input, context = {}) {
 
 Keep responses focused and valuable.`;
 
-    const model = process.env.GPT5_MODEL || 'gpt-4o'; // Fallback to GPT-4o if GPT-5 not available
+    const model = process.env.GPT4_MODEL || 'gpt-4-turbo'; // Use GPT-4 Turbo as default
     const tokenParams = getTokenParameter(model, 2000);
     const completion = await safeChatCompletion(client, {
       model,
@@ -92,7 +92,7 @@ Keep responses focused and valuable.`;
       context 
     });
     
-    await logExecution(id, 'info', 'GPT-5 reasoning completed', { 
+    await logExecution(id, 'info', 'GPT-4 reasoning completed', { 
       outputLength: output.length,
       tokens: completion.usage?.total_tokens 
     });
@@ -100,9 +100,9 @@ Keep responses focused and valuable.`;
     return output;
     
   } catch (error) {
-    const errorOutput = `[ERROR] GPT-5 reasoning failed: ${error.message}`;
+    const errorOutput = `[ERROR] GPT-4 reasoning failed: ${error.message}`;
     
-    await logExecution(id, 'error', 'GPT-5 reasoning failed', { 
+    await logExecution(id, 'error', 'GPT-4 reasoning failed', { 
       error: error.message,
       inputLength: input.length 
     });
@@ -162,9 +162,9 @@ export async function run() {
   const dbStatus = getStatus();
   
   if (dbStatus.connected) {
-    console.log('[🧠 WORKER-GPT5] ✅ Initialized with database reasoning logging');
+    console.log('[🧠 WORKER-GPT4] ✅ Initialized with database reasoning logging');
   } else {
-    console.log('[🧠 WORKER-GPT5] ⚠️  Initialized with fallback reasoning logging');
+    console.log('[🧠 WORKER-GPT4] ⚠️  Initialized with fallback reasoning logging');
   }
   
   // Test OpenAI client availability
@@ -173,18 +173,18 @@ export async function run() {
   
   // Log initial startup
   try {
-    await logExecution(id, 'info', 'GPT-5 reasoning worker initialized', { 
+    await logExecution(id, 'info', 'GPT-4 reasoning worker initialized', { 
       database: dbStatus.connected,
       openaiClient: hasClient,
-      model: process.env.GPT5_MODEL || 'gpt-4o'
+      model: process.env.GPT4_MODEL || 'gpt-4-turbo'
     });
   } catch (_error) {
-    console.log('[🧠 WORKER-GPT5] Startup logging failed, using fallback');
+    console.log('[🧠 WORKER-GPT4] Startup logging failed, using fallback');
   }
   
   if (!hasClient) {
-    console.log('[🧠 WORKER-GPT5] ⚠️  OpenAI client not available - will use mock responses');
+    console.log('[🧠 WORKER-GPT4] ⚠️  OpenAI client not available - will use mock responses');
   }
 }
 
-console.log(`[🧠 WORKER-GPT5] Module loaded: ${id}`);
+console.log(`[🧠 WORKER-GPT4] Module loaded: ${id}`);
