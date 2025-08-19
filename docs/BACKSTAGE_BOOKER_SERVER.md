@@ -1,10 +1,10 @@
-# BackstageBooker Server
+# BackstageBooker Server v2.0
 
-The BackstageBooker server exposes a minimal REST API for managing a WWE Universe simulation. It persists data in a PostgreSQL database and uses the OpenAI SDK to generate booking decisions.
+BackstageBooker v2.0 exposes a minimal REST API for managing a WWE Universe simulation. It persists data in PostgreSQL, uses the OpenAI SDK to generate booking decisions, **and automatically reflects on each saved storyline**.
 
 ## Features
-- **Save/Load** arbitrary JSON data (roster, storylines, rivalries, matches).
 - **ARCANOS Powered** booking via OpenAI's fine‑tuned model.
+- **Automatic Reflection** on every generated storyline, validating consistency and suggesting improvements.
 - **PostgreSQL** persistence with automatic upsert behaviour.
 
 ## Setup
@@ -15,25 +15,25 @@ The BackstageBooker server exposes a minimal REST API for managing a WWE Univers
        id SERIAL PRIMARY KEY,
        timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
        key TEXT UNIQUE,
-       value JSONB
+       storyline JSONB,
+       reflection TEXT
    );
    ```
 3. Ensure `OPENAI_API_KEY` is set for access to the ARCANOS model.
 4. Install dependencies and run the server:
    ```bash
    npm install
-   node server.js
+   node backstage-booker-v2.js
    ```
 
 ## API Endpoints
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/save` | Save JSON payload under a key. |
-| `GET`  | `/load/:key` | Load data by key. |
-| `POST` | `/book` | Generate booking via OpenAI and persist result under `latest_booking`. |
+| `POST` | `/book` | Generate a storyline via OpenAI, reflect on it, and persist the result under `latest_storyline`. |
+| `GET`  | `/load/:key` | Load stored storyline and reflection by key. |
 | `GET`  | `/health` | Health check. |
 
-The `/book` endpoint accepts a JSON body with a `prompt` field. The generated content is stored under `latest_booking` in the database.
+The `/book` endpoint accepts a JSON body with a `prompt` field. The generated storyline and its reflection are stored in the database and returned in the response.
 
 ## Example
 ```bash
@@ -42,4 +42,4 @@ curl -X POST http://localhost:3000/book \
   -d '{"prompt":"Book a main event"}'
 ```
 
-The response includes the model's booking decision and saves it in the database for later retrieval.
+The response includes the model's booking decision and a reflective analysis, both saved for later retrieval.
