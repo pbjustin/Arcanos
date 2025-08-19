@@ -1,12 +1,14 @@
 /**
- * BackstageBooker v2.0
+ * BackstageBooker v2.1
  * --------------------
- * Adds automatic reflection to storylines when saving.
+ * Storyline saves now use both a timestamp and a UUID for guaranteed uniqueness.
+ * Works with reflection workflow and prevents overwrite issues on rapid saves.
  */
 
 import express from "express";
 import { Pool } from "pg";
 import OpenAI from "openai";
+import { v4 as uuidv4 } from "uuid";
 
 // -------------------
 // Database Connection
@@ -16,12 +18,12 @@ const pool = new Pool({
 });
 
 /**
- * SQL Schema Extension:
- * 
+ * SQL Schema Update:
+ *
  * CREATE TABLE backstage_booker (
- *   id SERIAL PRIMARY KEY,
+ *   id UUID PRIMARY KEY,
  *   timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
- *   key TEXT UNIQUE,
+ *   key TEXT,
  *   storyline JSONB,
  *   reflection TEXT
  * );
@@ -31,24 +33,37 @@ const pool = new Pool({
 // Save / Load Functions
 // -------------------
 async function saveBackstageBooker(key, storyline, reflection = null) {
+  const id = uuidv4();
   const query = `
-    INSERT INTO backstage_booker (key, storyline, reflection)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (key) DO UPDATE
-    SET storyline = EXCLUDED.storyline,
-        reflection = EXCLUDED.reflection,
-        timestamp = NOW()
+    INSERT INTO backstage_booker (id, key, storyline, reflection)
+    VALUES ($1, $2, $3, $4)
     RETURNING *;
   `;
-  const values = [key, JSON.stringify(storyline), reflection];
-  const result = await pool.query(query, values);
-  return result.rows[0];
+  const values = [id, key, JSON.stringify(storyline), reflection];
+  try {
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  } catch (err) {
+    console.error("Error saving BackstageBooker entry", err);
+    throw err;
+  }
 }
 
 async function loadBackstageBooker(key) {
-  const query = `SELECT storyline, reflection FROM backstage_booker WHERE key = $1;`;
-  const result = await pool.query(query, [key]);
-  return result.rows.length > 0 ? result.rows[0] : null;
+  const query = `SELECT id, timestamp, storyline, reflection FROM backstage_booker WHERE key = $1 ORDER BY timestamp DESC LIMIT 1;`;
+  try {
+    const result = await pool.query(query, [key]);
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    // Ensure storyline is returned as an object
+    if (row.storyline && typeof row.storyline === "string") {
+      row.storyline = JSON.parse(row.storyline);
+    }
+    return row;
+  } catch (err) {
+    console.error("Error loading BackstageBooker entry", err);
+    throw err;
+  }
 }
 
 // -------------------
@@ -56,34 +71,39 @@ async function loadBackstageBooker(key) {
 // -------------------
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Core booking flow: Ask ARCANOS + auto-reflect
 async function backstageBookerFlow(prompt) {
-  // Step 1: ARCANOS generates storyline
-  const response = await client.chat.completions.create({
-    model: "REDACTED_FINE_TUNED_MODEL_ID",
-    messages: [
-      { role: "system", content: "ARCANOS OS: BackstageBooker integration active." },
-      { role: "user", content: prompt },
-    ],
-    max_tokens: 800,
-  });
-  const storyline = response.choices[0].message.content;
+  try {
+    // Step 1: Generate storyline
+    const response = await client.chat.completions.create({
+      model: "REDACTED_FINE_TUNED_MODEL_ID",
+      messages: [
+        { role: "system", content: "ARCANOS OS: BackstageBooker v2.1 with UUID+timestamp patch active." },
+        { role: "user", content: prompt },
+      ],
+      max_tokens: 800,
+    });
+    const storyline = response.choices[0]?.message?.content?.trim();
+    if (!storyline) throw new Error("Storyline generation failed");
 
-  // Step 2: Reflection — validate & improve storyline
-  const reflectionResp = await client.chat.completions.create({
-    model: "REDACTED_FINE_TUNED_MODEL_ID",
-    messages: [
-      { role: "system", content: "ARCANOS OS: Reflect on saved storyline. Validate consistency with past storylines and suggest improvements." },
-      { role: "user", content: `Storyline: ${storyline}` },
-    ],
-    max_tokens: 400,
-  });
-  const reflection = reflectionResp.choices[0].message.content;
+    // Step 2: Reflect on storyline
+    const reflectionResp = await client.chat.completions.create({
+      model: "REDACTED_FINE_TUNED_MODEL_ID",
+      messages: [
+        { role: "system", content: "ARCANOS OS: Reflect on storyline. Validate against continuity and suggest improvements." },
+        { role: "user", content: `Storyline: ${storyline}` },
+      ],
+      max_tokens: 400,
+    });
+    const reflection = reflectionResp.choices[0]?.message?.content?.trim();
 
-  // Step 3: Save both storyline + reflection into DB
-  await saveBackstageBooker("latest_storyline", { content: storyline }, reflection);
+    // Step 3: Save storyline + reflection with unique UUID + timestamp
+    const saved = await saveBackstageBooker("latest_storyline", { content: storyline }, reflection);
 
-  return { storyline, reflection };
+    return { saved };
+  } catch (err) {
+    console.error("BackstageBooker flow failed", err);
+    throw err;
+  }
 }
 
 // -------------------
@@ -92,26 +112,38 @@ async function backstageBookerFlow(prompt) {
 const app = express();
 app.use(express.json());
 
-// Save storyline with reflection
+// Save storyline w/ reflection
 app.post("/book", async (req, res) => {
   const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
-
-  const result = await backstageBookerFlow(prompt);
-  res.json({ success: true, ...result });
+  if (typeof prompt !== "string" || prompt.trim() === "") {
+    return res.status(400).json({ error: "Invalid prompt" });
+  }
+  try {
+    const result = await backstageBookerFlow(prompt);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to process request" });
+  }
 });
 
-// Load storyline + reflection
+// Load latest storyline by key
 app.get("/load/:key", async (req, res) => {
-  const key = req.params.key;
-  const data = await loadBackstageBooker(key);
-  if (!data) return res.status(404).json({ error: "Not found" });
-  res.json({ success: true, data });
+  const { key } = req.params;
+  if (typeof key !== "string" || key.trim() === "") {
+    return res.status(400).json({ error: "Invalid key" });
+  }
+  try {
+    const data = await loadBackstageBooker(key);
+    if (!data) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load data" });
+  }
 });
 
 // Healthcheck
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", module: "BackstageBooker v2.0" });
+  res.json({ status: "ok", module: "BackstageBooker v2.1" });
 });
 
 // -------------------
@@ -119,7 +151,8 @@ app.get("/health", (req, res) => {
 // -------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`BackstageBooker v2.0 running on port ${PORT} with reflection enabled`);
+  console.log(`BackstageBooker v2.1 running with UUID+timestamp patch on port ${PORT}`);
 });
 
 export default app;
+
