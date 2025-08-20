@@ -24,6 +24,7 @@ import backstageRouter from './routes/backstage.js';
 import apiArcanosRouter from './routes/api-arcanos.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { dbConnectionCheck } from './dbConnectionCheck.js';
+import { query } from './db.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
@@ -86,8 +87,14 @@ app.get('/health', async (_: Request, res: Response) => {
 });
 
 // Root endpoint
-app.get('/', (_: Request, res: Response) => {
-  res.send('ARCANOS is live');
+app.get('/', async (_: Request, res: Response) => {
+  try {
+    const result = await query('SELECT NOW()', []);
+    res.send(`ARCANOS is live. DB time: ${result.rows[0].now}`);
+  } catch (err) {
+    console.error('DB query failed:', err);
+    res.status(500).send('DB error');
+  }
 });
 
 // Core API routes
