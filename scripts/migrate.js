@@ -1,34 +1,22 @@
-import knexPkg from 'knex';
-import 'pg';
+import knex from "knex";
 
-const knex = knexPkg.default || knexPkg;
+const db = knex({
+  client: "pg",
+  connection: process.env.DATABASE_URL,
+  migrations: {
+    directory: "./migrations",
+  },
+});
 
-async function migrate() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    console.error('DATABASE_URL is not set');
-    process.exit(1);
-  }
-
-  const db = knex({
-    client: 'pg',
-    connection: connectionString,
-    migrations: {
-      directory: './migrations',
-    },
-  });
-
+(async () => {
   try {
+    console.log("🚀 Running database migrations...");
     await db.migrate.latest();
-    console.log('✅ Migrations completed successfully');
-    await db.destroy();
+    console.log("✅ Migrations complete");
     process.exit(0);
   } catch (err) {
-    console.error('❌ Migration failed:', err?.message || err);
-    await db.destroy().catch(() => {});
+    console.error("❌ Migration failed:", err);
     process.exit(1);
   }
-}
-
-migrate();
+})();
 
