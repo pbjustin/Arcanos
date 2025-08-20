@@ -6,6 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "probe": "node scripts/probe.js",
+    "db:init": "node scripts/db-init.js",
     "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",
     "dev:watch": "tsc --watch",
