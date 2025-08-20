@@ -59,7 +59,9 @@ export function updateState(newData: Partial<SystemState>): SystemState {
 /**
  * Get current system state (for GPT sync)
  */
-export async function getBackendState(port: number = 3000): Promise<SystemState> {
+import config from '../config/index.js';
+
+export async function getBackendState(port: number = config.server.port): Promise<SystemState> {
   try {
     const response = await fetch(`http://localhost:${port}/status`);
     if (!response.ok) {
