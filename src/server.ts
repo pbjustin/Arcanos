@@ -22,12 +22,15 @@ import statusRouter from './routes/status.js';
 import siriRouter from './routes/siri.js';
 import backstageRouter from './routes/backstage.js';
 import apiArcanosRouter from './routes/api-arcanos.js';
+import { verifySchema } from './persistenceManagerHierarchy.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
 console.log("[🔧 ARCANOS CONFIG] Validating configuration...");
 
 validateAPIKeyAtStartup(); // Always continue, but log warnings
+
+await verifySchema();
 
 console.log(`[🧠 ARCANOS AI] Default Model: ${getDefaultModel()}`);
 console.log(`[🔄 ARCANOS AI] Fallback Model: ${config.ai.fallbackModel}`);
