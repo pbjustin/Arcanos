@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "esModuleInterop": true,
     "strict": true,
+    "allowJs": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
