@@ -17,8 +17,15 @@ async function ensureSchema() {
         content JSONB NOT NULL,
         created_at TIMESTAMP DEFAULT NOW()
       );
+    `,
+    audit_logs: `
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id SERIAL PRIMARY KEY,
+        action TEXT NOT NULL,
+        details JSONB,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
     `
-    // add more tables here as needed
   };
 
   try {

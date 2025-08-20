@@ -4,6 +4,7 @@
 
 import knexPkg from "knex";
 const knex = knexPkg.default || knexPkg;
+import { execSync } from "child_process";
 
 // ----------------------
 // Database Config
@@ -156,24 +157,20 @@ function isValid(validator, data) {
 // ----------------------
 // Schema Verification
 // ----------------------
-export async function verifySchema() {
+export async function verifySchemaOrInit() {
   // Skip schema verification if DATABASE_URL is not configured
   if (!process.env.DATABASE_URL) {
     console.log("⚠️ No DATABASE_URL configured - skipping schema verification");
     return;
   }
-  
-  try {
-    const tables = ["saves", "audit_logs"];
-    for (const table of tables) {
-      const exists = await db.schema.hasTable(table);
-      if (!exists) {
-        throw new Error(`❌ Required table missing: ${table}`);
-      }
+
+  const tables = ["saves", "audit_logs"];
+  for (const table of tables) {
+    const exists = await db.schema.hasTable(table);
+    if (!exists) {
+      console.log(`⚠️ Missing table: ${table}. Auto-creating...`);
+      execSync("npm run db:init", { stdio: "inherit" });
     }
-    console.log("✅ Schema verified.");
-  } catch (error) {
-    console.error("❌ Schema verification failed:", error.message);
-    console.log("⚠️ Continuing with in-memory fallback");
   }
+  console.log("✅ Schema verified or initialized.");
 }
