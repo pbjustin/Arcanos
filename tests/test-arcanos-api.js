@@ -184,6 +184,27 @@ async function testArcanosAPI() {
       console.log('✅ Malformed JSON rejected as expected');
     }
 
+    // Test audit-safe log-only mode
+    console.log(`\n${7 + endpoints.length}. Testing audit-safe log-only mode...`);
+    try {
+      const { setAuditSafeMode, getAuditSafeMode, saveWithAuditCheck } = await import('../dist/services/auditSafeToggle.js');
+
+      setAuditSafeMode('log-only');
+      if (getAuditSafeMode() !== 'log-only') {
+        throw new Error('Mode not set to log-only');
+      }
+
+      const result = saveWithAuditCheck('data', () => false);
+      if (result !== 'data') {
+        throw new Error('Data was modified in log-only mode');
+      }
+
+      console.log('✅ Audit-safe log-only mode: PASSED');
+    } catch (error) {
+      console.log('❌ Audit-safe log-only mode test failed:', error.message);
+      throw error;
+    }
+
     console.log('\n🎉 All API endpoint tests passed!');
     console.log('\n📋 Test Summary:');
     console.log('- Health endpoint (/health) works correctly');
@@ -209,7 +230,7 @@ async function testArcanosAPI() {
   } finally {
     // Clean up - kill the server process
     if (serverProcess) {
-      console.log('\n14. Cleaning up server process...');
+      console.log('\n15. Cleaning up server process...');
       serverProcess.kill('SIGTERM');
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
