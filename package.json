@@ -6,19 +6,18 @@
   "main": "dist/server.js",
   "scripts": {
     "probe": "node scripts/probe.js",
-    "start": "npm run migrate && node dist/server.js",
+    "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",
     "dev:watch": "tsc --watch",
     "build": "tsc",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "test": "npm run migrate && jest",
+    "test": "jest",
     "test:git": "npm run build && node test-implementation.js",
     "git:workflow": "npm run build && node run-workflow.js",
     "type-check": "tsc --noEmit",
     "assistants-sync": "npx ts-node scripts/assistants-sync.ts",
-    "repair-migrations": "node scripts/migration-repair.js",
-    "migrate": "node scripts/migrate.js"
+    "repair-migrations": "node scripts/migration-repair.js"
   },
   "keywords": [
     "ai",
