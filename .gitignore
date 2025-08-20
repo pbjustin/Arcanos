@@ -12,9 +12,9 @@ build/
 # Compiled JS files in src directory (should only be in dist/)
 src/**/*.js
 src/**/*.js.map
+!src/persistenceManagerHierarchy.js
 
 # Environment variables
-.env
 .env.local
 .env.development.local
 .env.test.local
