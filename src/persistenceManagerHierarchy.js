@@ -2,7 +2,7 @@
 // Purpose: Unified patch for persistence, audit, and override hierarchy
 // Kernel Failsafe → Audit Layer → Root Override
 
-import knex from "knex";
+import { knex } from "knex/knex.mjs";
 
 // ----------------------
 // Database Config

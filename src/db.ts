@@ -6,13 +6,15 @@
  * Gracefully handles missing DATABASE_URL environment variable.
  */
 
-import { Pool, PoolClient, QueryResult } from 'pg';
+import pkg from 'pg';
+import type { Pool as PoolType, PoolClient, QueryResult } from 'pg';
+const { Pool } = pkg;
 import dotenv from 'dotenv';
 
 // Load environment variables for worker runtime
 dotenv.config();
 
-let pool: Pool | null = null;
+let pool: PoolType | null = null;
 let isConnected = false;
 let connectionError: Error | null = null;
 
