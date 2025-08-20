@@ -11,7 +11,7 @@ dotenv.config();
 export const config = {
   // Server configuration
   server: {
-    port: Number(process.env.PORT) || 3000,
+    port: Number(process.env.PORT) || 8080,
     host: '0.0.0.0',
     environment: process.env.NODE_ENV || 'development'
   },

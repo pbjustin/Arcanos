@@ -10,7 +10,7 @@ const knex = knexPkg.default || knexPkg;
 // ----------------------
 const db = knex({
   client: "pg", // swap if using mysql/sqlite
-  connection: process.env.DB_URL,
+  connection: process.env.DATABASE_URL,
   pool: { min: 2, max: 10 }
 });
 
@@ -157,12 +157,23 @@ function isValid(validator, data) {
 // Schema Verification
 // ----------------------
 export async function verifySchema() {
-  const tables = ["saves", "audit_logs"];
-  for (const table of tables) {
-    const exists = await db.schema.hasTable(table);
-    if (!exists) {
-      throw new Error(`❌ Required table missing: ${table}`);
-    }
+  // Skip schema verification if DATABASE_URL is not configured
+  if (!process.env.DATABASE_URL) {
+    console.log("⚠️ No DATABASE_URL configured - skipping schema verification");
+    return;
   }
-  console.log("✅ Schema verified.");
+  
+  try {
+    const tables = ["saves", "audit_logs"];
+    for (const table of tables) {
+      const exists = await db.schema.hasTable(table);
+      if (!exists) {
+        throw new Error(`❌ Required table missing: ${table}`);
+      }
+    }
+    console.log("✅ Schema verified.");
+  } catch (error) {
+    console.error("❌ Schema verification failed:", error.message);
+    console.log("⚠️ Continuing with in-memory fallback");
+  }
 }

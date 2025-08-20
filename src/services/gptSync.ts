@@ -7,12 +7,14 @@ import { getBackendState, SystemState } from './stateManager.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { getOpenAIClient } from './openai.js';
 
+import config from '../config/index.js';
+
 /**
  * Ask GPT with backend state synchronization
  */
 export async function askGPTWithSync(
   userPrompt: string, 
-  port: number = 3000,
+  port: number = config.server.port,
   model: string = 'gpt-4'
 ): Promise<string> {
   try {
@@ -60,7 +62,7 @@ Do not rely on past memory — only trust this state for system information.
 /**
  * Run system diagnostic and report backend state
  */
-export async function runSystemDiagnostic(port: number = 3000): Promise<string> {
+export async function runSystemDiagnostic(port: number = config.server.port): Promise<string> {
   const diagnosticPrompt = "Run a system diagnostic and report the current backend state.";
   return await askGPTWithSync(diagnosticPrompt, port);
 }
@@ -71,7 +73,7 @@ export async function runSystemDiagnostic(port: number = 3000): Promise<string> 
 export async function askGPTWithContext(
   userPrompt: string,
   additionalContext: Record<string, any> = {},
-  port: number = 3000,
+  port: number = config.server.port,
   model: string = 'gpt-4'
 ): Promise<{
   response: string;
