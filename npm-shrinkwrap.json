@@ -13,10 +13,10 @@
         "cors": "^2.8.5",
         "dotenv": "^17.2.1",
         "express": "4.18.2",
-        "knex": "^3.1.0",
+        "knex": "^2.5.1",
         "node-cron": "^4.2.1",
         "openai": "^5.12.2",
-        "pg": "^8.11.3"
+        "pg": "^8.11.1"
       },
       "devDependencies": {
         "@types/cors": "^2.8.19",
@@ -719,9 +719,9 @@
       }
     },
     "node_modules/knex": {
-      "version": "3.1.0",
-      "resolved": "https://registry.npmjs.org/knex/-/knex-3.1.0.tgz",
-      "integrity": "sha512-GLoII6hR0c4ti243gMs5/1Rb3B+AjwMOfjYm97pu0FOQa7JH56hgBxYf5WK2525ceSbBY1cjeZ9yk99GPMB6Kw==",
+      "version": "2.5.1",
+      "resolved": "https://registry.npmjs.org/knex/-/knex-2.5.1.tgz",
+      "integrity": "sha512-z78DgGKUr4SE/6cm7ku+jHvFT0X97aERh/f0MUKAKgFnwCYBEW4TFBqtHWFYiJFid7fMrtpZ/gxJthvz5mEByA==",
       "license": "MIT",
       "dependencies": {
         "colorette": "2.0.19",
@@ -733,7 +733,7 @@
         "getopts": "2.3.0",
         "interpret": "^2.2.0",
         "lodash": "^4.17.21",
-        "pg-connection-string": "2.6.2",
+        "pg-connection-string": "2.6.1",
         "rechoir": "^0.8.0",
         "resolve-from": "^5.0.0",
         "tarn": "^3.0.2",
@@ -743,7 +743,7 @@
         "knex": "bin/cli.js"
       },
       "engines": {
-        "node": ">=16"
+        "node": ">=12"
       },
       "peerDependenciesMeta": {
         "better-sqlite3": {
@@ -793,9 +793,9 @@
       "license": "MIT"
     },
     "node_modules/knex/node_modules/pg-connection-string": {
-      "version": "2.6.2",
-      "resolved": "https://registry.npmjs.org/pg-connection-string/-/pg-connection-string-2.6.2.tgz",
-      "integrity": "sha512-ch6OwaeaPYcova4kKZ15sbJ2hKb/VP48ZD2gE7i1J+L4MspCtBMAx8nMgz7bksc7IojCIIWuEhHibSMFH8m8oA==",
+      "version": "2.6.1",
+      "resolved": "https://registry.npmjs.org/pg-connection-string/-/pg-connection-string-2.6.1.tgz",
+      "integrity": "sha512-w6ZzNu6oMmIzEAYVw+RLK0+nqHPt8K3ZnknKi+g48Ak2pr3dtljJW3o+D/n2zzCG07Zoe9VOX3aiKpj+BN0pjg==",
       "license": "MIT"
     },
     "node_modules/lodash": {
@@ -976,14 +976,14 @@
       "license": "MIT"
     },
     "node_modules/pg": {
-      "version": "8.11.3",
-      "resolved": "https://registry.npmjs.org/pg/-/pg-8.11.3.tgz",
-      "integrity": "sha512-+9iuvG8QfaaUrrph+kpF24cXkH1YOOUeArRNYIxq1viYHZagBxrTno7cecY1Fa44tJeZvaoG+Djpkc3JwehN5g==",
+      "version": "8.11.1",
+      "resolved": "https://registry.npmjs.org/pg/-/pg-8.11.1.tgz",
+      "integrity": "sha512-utdq2obft07MxaDg0zBJI+l/M3mBRfIpEN3iSemsz0G5F2/VXx+XzqF4oxrbIZXQxt2AZzIUzyVg/YM6xOP/WQ==",
       "license": "MIT",
       "dependencies": {
         "buffer-writer": "2.0.0",
         "packet-reader": "1.0.0",
-        "pg-connection-string": "^2.6.2",
+        "pg-connection-string": "^2.6.1",
         "pg-pool": "^3.6.1",
         "pg-protocol": "^1.6.0",
         "pg-types": "^2.1.0",

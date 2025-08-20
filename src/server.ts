@@ -23,11 +23,13 @@ import siriRouter from './routes/siri.js';
 import backstageRouter from './routes/backstage.js';
 import apiArcanosRouter from './routes/api-arcanos.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
+import { dbConnectionCheck } from './dbConnectionCheck.js';
 
 // Validate required environment variables at startup
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
 console.log("[🔧 ARCANOS CONFIG] Validating configuration...");
 
+await dbConnectionCheck();
 validateAPIKeyAtStartup(); // Always continue, but log warnings
 
 await verifySchema();
