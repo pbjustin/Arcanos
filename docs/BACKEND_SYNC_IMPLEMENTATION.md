@@ -121,7 +121,7 @@ const newState = updateState({
 ### Environment Variables
 ```bash
 OPENAI_API_KEY=your_openai_api_key  # Required for GPT functionality
-PORT=3000                           # Server port (optional, defaults to 3000)
+PORT=8080                           # Server port (optional, defaults to 8080)
 ```
 
 ### Default State Structure
