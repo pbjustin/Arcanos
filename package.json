@@ -18,7 +18,7 @@
     "type-check": "tsc --noEmit",
     "assistants-sync": "npx ts-node scripts/assistants-sync.ts",
     "repair-migrations": "node scripts/migration-repair.js",
-    "migrate": "psql $DB_URL -f migrations/init_db.sql"
+    "migrate": "node scripts/migrate.js"
   },
   "keywords": [
     "ai",
