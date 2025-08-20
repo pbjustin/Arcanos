@@ -29,7 +29,12 @@ import { dbConnectionCheck } from './dbConnectionCheck.js';
 console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
 console.log("[🔧 ARCANOS CONFIG] Validating configuration...");
 
-await dbConnectionCheck();
+try {
+  await dbConnectionCheck();
+} catch (err: any) {
+  console.error('[❌ DB CHECK] Database connection failed:', err?.message || err);
+  process.exit(1);
+}
 validateAPIKeyAtStartup(); // Always continue, but log warnings
 
 await verifySchema();
