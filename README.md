@@ -7,6 +7,7 @@ An AI-controlled TypeScript backend featuring fine-tuned OpenAI model integratio
 - **AI-Managed Operations**: Fine-tuned GPT model controls all system operations
 - **Intelligent Memory**: PostgreSQL backend with in-memory fallback for persistence
 - **OpenAI SDK v5**: Modern integration with streaming, function calling, and assistants
+- **Notion Database Sync**: Fetch Universe Mode data via the official Notion SDK
 - **Worker System**: AI-controlled CRON scheduling for maintenance and background tasks
 - **TypeScript Architecture**: Modern, type-safe Express.js backend
 
@@ -41,6 +42,7 @@ curl -X POST http://localhost:8080/ask \
 ### Required Environment Variables
 ```bash
 OPENAI_API_KEY=your-openai-api-key-here
+NOTION_API_KEY=your-notion-api-key-here
 AI_MODEL=REDACTED_FINE_TUNED_MODEL_ID  # Default fine-tuned model
 DATABASE_URL=postgresql://user:pass@localhost:5432/arcanos  # Optional - uses in-memory if not set
 ```
