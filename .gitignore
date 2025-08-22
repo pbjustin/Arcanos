@@ -13,6 +13,7 @@ build/
 src/**/*.js
 src/**/*.js.map
 !src/persistenceManagerHierarchy.js
+!src/commands/arcanos/audit_override.js
 
 # Environment variables
 .env.local
