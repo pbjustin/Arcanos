@@ -1,4 +1,5 @@
-import OpenAI from 'openai';
+import { getOpenAIClient } from '../services/openai.js';
+import type OpenAI from 'openai';
 
 export interface DualModeAuditOptions {
   /** run in simulation mode instead of hitting backend */
@@ -86,9 +87,21 @@ export async function dualModeAudit(
 
   // Simulation mode
   try {
-    const openai = client || new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = client || getOpenAIClient();
+    if (!openai) {
+      return {
+        timestamp,
+        mode: 'simulation',
+        module: moduleName,
+        exists: false,
+        fallback_used: true,
+        interference: false,
+        error: 'OpenAI client not available'
+      };
+    }
+
     const response = await openai.chat.completions.create({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4o-mini', // Fixed invalid model name
       messages: [
         {
           role: 'system',
