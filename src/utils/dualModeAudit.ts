@@ -101,7 +101,7 @@ export async function dualModeAudit(
     }
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // Fixed invalid model name
+      model: 'REDACTED_FINE_TUNED_MODEL_ID',
       messages: [
         {
           role: 'system',

@@ -60,7 +60,7 @@ async function main() {
     }
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'REDACTED_FINE_TUNED_MODEL_ID',
       temperature: 0,
       messages: [
         {
