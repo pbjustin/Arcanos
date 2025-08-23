@@ -3,7 +3,8 @@ module.exports = (state) => {
     return process.env.AUDIT_OVERRIDE;  // Uses host-verified specs
   }
   return {
-    audit: "Fallback audit value when override is inactive",
-    timestamp: new Date().toISOString()
+    audit: "Fallback audit value when override is inactive", 
+    timestamp: new Date().toISOString(),
+    state: state ? "provided" : "not_provided" // Use the state parameter
   };
 };

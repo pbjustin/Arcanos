@@ -1,4 +1,4 @@
-import { config } from '../config/index.js';
+import { getOpenAIClient, getGPT5Model } from './openai.js';
 
 interface FallbackRequest {
   prompt: string;
@@ -11,19 +11,19 @@ interface FallbackRequest {
  * Handle fallback request by ensuring token parameter defaults.
  * Adds default max_completion_tokens when missing.
  */
-export function handleFallbackRequest(request: FallbackRequest) {
+export async function handleFallbackRequest(request: FallbackRequest) {
   const {
     prompt,
     max_completion_tokens = 1024,
     temperature = 0.7,
-    model = 'gpt-5'
+    model = getGPT5Model()
   } = request;
 
   // Log diagnostic for transparency
   console.log(`[FallbackHandler] Model: ${model}, Tokens: ${max_completion_tokens}`);
 
-  // Pass safe, guaranteed parameters to GPT-5
-  return callModelAPI({
+  // Use centralized OpenAI service instead of direct API call
+  return await callModelAPI({
     model,
     prompt,
     max_completion_tokens,
@@ -31,7 +31,7 @@ export function handleFallbackRequest(request: FallbackRequest) {
   });
 }
 
-// Example API caller (replace with your actual ARCANOS→GPT-5 call)
+// Use centralized OpenAI client instead of direct fetch
 async function callModelAPI(payload: {
   model: string;
   prompt: string;
@@ -39,15 +39,21 @@ async function callModelAPI(payload: {
   temperature: number;
 }) {
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.ai.apiKey}`
-      },
-      body: JSON.stringify(payload)
+    const client = getOpenAIClient();
+    if (!client) {
+      throw new Error('OpenAI client not available');
+    }
+
+    const response = await client.chat.completions.create({
+      model: payload.model,
+      messages: [
+        { role: 'user', content: payload.prompt }
+      ],
+      max_completion_tokens: payload.max_completion_tokens,
+      temperature: payload.temperature
     });
-    return await res.json();
+
+    return response;
   } catch (error) {
     console.error('[FallbackHandler] Error:', error);
     throw error;
