@@ -1,0 +1,17 @@
+{
+  "name": "Arcanos Gaming",
+  "description": "Custom GPT shell designed to provide verified tutorials, strategies, and guides for video games.",
+  "version": "1.0.3",
+  "memory_context": "Arcanos",
+  "timestamps": {
+    "created": "2025-12-18",
+    "registered": "TBD"
+  },
+  "tags": [
+    "gaming",
+    "guides",
+    "tutorials",
+    "strategies",
+    "meta-analysis"
+  ]
+}
