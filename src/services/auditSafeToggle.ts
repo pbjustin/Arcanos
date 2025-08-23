@@ -81,7 +81,7 @@ export async function interpretCommand(userCommand: string) {
 
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'REDACTED_FINE_TUNED_MODEL_ID',
       messages: [
         { role: 'system', content: 'You are an AI that maps natural language commands to audit-safe mode toggles.' },
         { role: 'user', content: userCommand }
