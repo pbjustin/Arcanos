@@ -10,7 +10,7 @@
  * Compatible with OpenAI SDK (chat/completions).
  */
 
-import OpenAI from 'openai';
+import { getOpenAIClient, generateMockResponse } from './openai.js';
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
 
@@ -60,22 +60,45 @@ export function saveWithAuditCheck<T>(data: T, validator: (data: T) => boolean):
 }
 
 export async function interpretCommand(userCommand: string) {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const response = await client.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: 'You are an AI that maps natural language commands to audit-safe mode toggles.' },
-      { role: 'user', content: userCommand }
-    ]
-  });
+  const client = getOpenAIClient();
+  if (!client) {
+    console.warn('⚠️ OpenAI client not available - using mock response for command interpretation');
+    // Provide simple command mapping when API is not available
+    const normalized = userCommand.toLowerCase();
+    if (normalized.includes('strict') || normalized.includes('true') || normalized.includes('enable')) {
+      setAuditSafeMode('true');
+    } else if (normalized.includes('false') || normalized.includes('disable')) {
+      setAuditSafeMode('false');
+    } else if (normalized.includes('passive')) {
+      setAuditSafeMode('passive');
+    } else if (normalized.includes('log')) {
+      setAuditSafeMode('log-only');
+    } else {
+      console.warn('⚠️ Unrecognized command. Mode unchanged.');
+    }
+    return;
+  }
 
-  const raw = response.choices[0].message?.content?.trim().toLowerCase();
-  const mode = raw as 'true' | 'false' | 'passive' | 'log-only' | undefined;
+  try {
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are an AI that maps natural language commands to audit-safe mode toggles.' },
+        { role: 'user', content: userCommand }
+      ]
+    });
 
-  if (mode && ['true', 'false', 'passive', 'log-only'].includes(mode)) {
-    setAuditSafeMode(mode);
-  } else {
-    console.warn('⚠️ Unrecognized command. Mode unchanged.');
+    const raw = response.choices[0].message?.content?.trim().toLowerCase();
+    const mode = raw as 'true' | 'false' | 'passive' | 'log-only' | undefined;
+
+    if (mode && ['true', 'false', 'passive', 'log-only'].includes(mode)) {
+      setAuditSafeMode(mode);
+    } else {
+      console.warn('⚠️ Unrecognized command. Mode unchanged.');
+    }
+  } catch (error) {
+    console.error('❌ Error interpreting command:', error instanceof Error ? error.message : 'Unknown error');
+    console.warn('⚠️ Command interpretation failed. Mode unchanged.');
   }
 }
 
