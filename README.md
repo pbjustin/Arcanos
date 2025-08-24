@@ -141,6 +141,7 @@ npm run build        # Build TypeScript to dist/
 npm start           # Run production server
 npm run type-check  # TypeScript type checking
 npm test            # Run test suite
+npm run guide:generate -- <entry_key>  # Generate a tagged build guide
 ```
 
 ### Project Structure
