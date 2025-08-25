@@ -10,6 +10,8 @@ import { initializeWorkers } from './utils/workerBoot.js';
 import { getAvailablePort } from './utils/portUtils.js';
 import { runSystemDiagnostic } from './services/gptSync.js';
 import { updateState } from './services/stateManager.js';
+import { validateEnvironment, printValidationResults, createStartupReport } from './utils/environmentValidation.js';
+import { logger, requestLoggingMiddleware } from './utils/structuredLogging.js';
 import askRouter from './routes/ask.js';
 import arcanosRouter from './routes/arcanos.js';
 import aiEndpointsRouter from './routes/ai-endpoints.js';
@@ -25,44 +27,52 @@ import apiArcanosRouter from './routes/api-arcanos.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { initializeDatabase } from './db.js';
 
+// Enhanced startup validation and reporting
+console.log(createStartupReport());
+
+const envValidation = validateEnvironment();
+printValidationResults(envValidation);
+
+if (!envValidation.isValid) {
+  logger.error('Environment validation failed - exiting');
+  process.exit(1);
+}
+
 // Validate required environment variables at startup
-console.log("[🔥 ARCANOS STARTUP] Server boot sequence triggered.");
-console.log("[🔧 ARCANOS CONFIG] Validating configuration...");
+logger.info("🔥 ARCANOS STARTUP - Server boot sequence triggered");
+logger.info("🔧 ARCANOS CONFIG - Validating configuration...");
 
 try {
   const dbConnected = await initializeDatabase('server');
   if (!dbConnected) {
-    console.warn('[⚠️ DB CHECK] Database not available - continuing with in-memory fallback');
+    logger.warn('⚠️ DB CHECK - Database not available - continuing with in-memory fallback');
   }
 } catch (err: any) {
-  console.error('[❌ DB CHECK] Database initialization failed:', err?.message || err);
-  console.warn('[⚠️ DB CHECK] Continuing with in-memory fallback');
+  logger.error('❌ DB CHECK - Database initialization failed', { error: err?.message || err });
+  logger.warn('⚠️ DB CHECK - Continuing with in-memory fallback');
 }
 validateAPIKeyAtStartup(); // Always continue, but log warnings
 
 await verifySchema();
 
-console.log(`[🧠 ARCANOS AI] Default Model: ${getDefaultModel()}`);
-console.log(`[🔄 ARCANOS AI] Fallback Model: ${config.ai.fallbackModel}`);
-console.log("[✅ ARCANOS CONFIG] Configuration validation complete");
+logger.info(`🧠 ARCANOS AI - Default Model: ${getDefaultModel()}`);
+logger.info(`🔄 ARCANOS AI - Fallback Model: ${config.ai.fallbackModel}`);
+logger.info("✅ ARCANOS CONFIG - Configuration validation complete");
 
 const app = express();
 
-// Middleware
+// Enhanced middleware with structured logging and security
 app.use(cors(config.cors));
 app.use(express.json({ limit: config.limits.jsonLimit }));
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging middleware
-app.use((req: Request, _: Response, next: NextFunction) => {
-  console.log(`${new Date().toISOString()} - ${req.ip} - ${req.method} ${req.path}`);
-  next();
-});
+// Request logging with structured logging
+app.use(requestLoggingMiddleware);
 
-// Setup health monitoring cron job
+// Setup health monitoring cron job with structured logging
 cron.schedule("*/5 * * * *", async () => {
   const report = await runHealthCheck();
-  console.log(`[📡 ARCANOS:HEALTH] ${report.summary}`);
+  logger.info("📡 ARCANOS:HEALTH", { summary: report.summary });
 });
 
 // Health check endpoint
