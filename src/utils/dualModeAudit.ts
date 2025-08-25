@@ -63,7 +63,12 @@ export async function dualModeAudit(
         };
       }
 
-      const data = await res.json().catch(() => ({}));
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (jsonError) {
+        console.warn('Failed to parse JSON response, using empty object');
+      }
       return {
         timestamp,
         mode: 'backend',
