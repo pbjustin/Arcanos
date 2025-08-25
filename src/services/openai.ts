@@ -179,7 +179,7 @@ export const getOpenAIClient = (): OpenAI | null => {
  * @returns Model identifier string
  */
 export const getDefaultModel = (): string => {
-  return defaultModel || process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID';
+  return defaultModel || process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
 };
 
 /**
