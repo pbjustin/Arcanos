@@ -1,9 +1,27 @@
 import OpenAI from 'openai';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import { CircuitBreaker, ExponentialBackoff } from '../utils/circuitBreaker.js';
+import { responseCache } from '../utils/cache.js';
+import crypto from 'crypto';
 
 let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
-const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '30000', 10);
+const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
+
+// Initialize circuit breaker for OpenAI API calls
+const openaiCircuitBreaker = new CircuitBreaker({
+  failureThreshold: 5,
+  resetTimeoutMs: 30000, // 30 seconds
+  monitoringPeriodMs: 60000 // 1 minute
+});
+
+// Initialize exponential backoff for retries
+const backoffStrategy = new ExponentialBackoff(
+  1000, // base delay 1s
+  30000, // max delay 30s
+  2, // multiplier
+  500 // jitter max 500ms
+);
 
 /**
  * Generates mock AI responses when OpenAI API key is not available
@@ -200,12 +218,21 @@ function prepareGPT5Request(payload: any): any {
 }
 
 /**
- * Unified OpenAI call helper with token parameter fallback
+ * Creates a cache key for OpenAI requests
+ */
+const createCacheKey = (model: string, prompt: string, tokenLimit: number): string => {
+  const content = `${model}:${prompt}:${tokenLimit}`;
+  return crypto.createHash('md5').update(content).digest('hex');
+};
+
+/**
+ * Enhanced OpenAI call helper with circuit breaker, exponential backoff, and caching
  */
 export async function callOpenAI(
   model: string,
   prompt: string,
-  tokenLimit: number
+  tokenLimit: number,
+  useCache: boolean = true
 ): Promise<{ response: any; output: string }> {
   const client = getOpenAIClient();
   if (!client) {
@@ -213,15 +240,57 @@ export async function callOpenAI(
     return { response: mock, output: mock.result };
   }
 
+  // Check cache first
+  if (useCache) {
+    const cacheKey = createCacheKey(model, prompt, tokenLimit);
+    const cachedResult = responseCache.get(cacheKey);
+    if (cachedResult) {
+      console.log('💾 Cache hit for OpenAI request');
+      return cachedResult;
+    }
+  }
+
   const messages = [
     { role: 'system' as const, content: 'You are a helpful AI assistant.' },
     { role: 'user' as const, content: prompt }
   ];
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  // Use circuit breaker for resilient API calls
+  const result = await openaiCircuitBreaker.execute(async () => {
+    return await makeOpenAIRequest(client, model, messages, tokenLimit);
+  });
+
+  // Cache successful results
+  if (useCache && result) {
+    const cacheKey = createCacheKey(model, prompt, tokenLimit);
+    responseCache.set(cacheKey, result, 5 * 60 * 1000); // 5 minutes
+  }
+
+  return result;
+}
+
+/**
+ * Internal OpenAI request handler with exponential backoff retry logic
+ */
+async function makeOpenAIRequest(
+  client: OpenAI,
+  model: string, 
+  messages: any[],
+  tokenLimit: number,
+  maxRetries: number = 3
+): Promise<{ response: any; output: string }> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+    
     try {
+      // Apply exponential backoff on retries
+      if (attempt > 1) {
+        await backoffStrategy.delay(attempt - 1);
+      }
+
       const tokenParams = getTokenParameter(model, tokenLimit);
       const requestPayload = prepareGPT5Request({
         model,
@@ -229,32 +298,64 @@ export async function callOpenAI(
         ...tokenParams
       });
 
+      console.log(`🤖 OpenAI request (attempt ${attempt}/${maxRetries}) - Model: ${model}`);
+      
       const response: any = await client.chat.completions.create(
         requestPayload,
-        { signal: controller.signal }
+        { 
+          signal: controller.signal,
+          // Add request ID for tracing
+          headers: {
+            'X-Request-ID': crypto.randomUUID()
+          }
+        }
       );
+      
       clearTimeout(timeout);
       const output = response.choices?.[0]?.message?.content || '';
+      
+      // Log success metrics
+      console.log(`✅ OpenAI request succeeded (attempt ${attempt}) - Tokens: ${response.usage?.total_tokens || 'unknown'}`);
+      
       return { response, output };
+      
     } catch (err: any) {
       clearTimeout(timeout);
-      if (err.name === 'AbortError') {
-        if (attempt < 3) {
-          console.warn(`OpenAI call timed out (attempt ${attempt})`);
-          continue;
-        }
-        throw new Error('OpenAI request timed out');
+      lastError = err;
+      
+      const isRetryable = isRetryableError(err);
+      const shouldRetry = attempt < maxRetries && isRetryable;
+      
+      console.warn(`⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}): ${err.message}`);
+      
+      if (!shouldRetry) {
+        console.error(`❌ OpenAI request failed permanently after ${attempt} attempts`);
+        break;
       }
-      if (attempt < 3) {
-        console.warn(`OpenAI call failed (attempt ${attempt}): ${err.message}`);
-        continue;
-      }
-      throw err;
+      
+      console.log(`🔄 Retrying OpenAI request (${maxRetries - attempt} attempts remaining)`);
     }
   }
 
-  // Should never reach here
-  throw new Error('OpenAI call failed');
+  throw lastError || new Error('OpenAI request failed after all retry attempts');
+}
+
+/**
+ * Determines if an error is retryable
+ */
+function isRetryableError(error: any): boolean {
+  // Network errors and timeouts are retryable
+  if (error.name === 'AbortError' || error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+    return true;
+  }
+  
+  // OpenAI API rate limits and server errors are retryable
+  if (error.status) {
+    return error.status === 429 || error.status >= 500;
+  }
+  
+  // Default to non-retryable for unknown errors
+  return false;
 }
 
 /**
@@ -392,4 +493,33 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
   }
 }
 
-export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict };
+/**
+ * Gets comprehensive OpenAI service health metrics including circuit breaker status
+ */
+export const getOpenAIServiceHealth = () => {
+  const circuitBreakerMetrics = openaiCircuitBreaker.getMetrics();
+  const cacheStats = responseCache.getStats();
+  
+  return {
+    apiKey: {
+      configured: hasValidAPIKey(),
+      status: hasValidAPIKey() ? 'valid' : 'missing_or_invalid'
+    },
+    client: {
+      initialized: openai !== null,
+      model: defaultModel,
+      timeout: API_TIMEOUT_MS
+    },
+    circuitBreaker: {
+      ...circuitBreakerMetrics,
+      healthy: circuitBreakerMetrics.state !== 'OPEN'
+    },
+    cache: {
+      ...cacheStats,
+      enabled: true
+    },
+    lastHealthCheck: new Date().toISOString()
+  };
+};
+
+export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict, getOpenAIServiceHealth };
