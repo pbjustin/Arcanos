@@ -101,7 +101,7 @@ export async function dualModeAudit(
     }
 
     const response = await openai.chat.completions.create({
-      model: 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH',
+      model: 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
       messages: [
         {
           role: 'system',
