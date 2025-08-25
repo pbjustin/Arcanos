@@ -55,7 +55,7 @@ const environmentChecks: EnvironmentCheck[] = [
     name: 'AI_MODEL',
     required: false,
     description: 'Default AI model to use',
-    defaultValue: 'ft:gpt-3.5-turbo-0125:arcanos-v1-1106',
+    defaultValue: 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
     validator: (value) => value.includes('gpt') || value.includes('ft:')
   },
   {
