@@ -6,6 +6,9 @@
 import express, { Request, Response } from 'express';
 import { loadState, updateState, SystemState } from '../services/stateManager.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import { getOpenAIServiceHealth } from '../services/openai.js';
+import { queryCache, configCache } from '../utils/cache.js';
+import { getStatus as getDbStatus } from '../db.js';
 
 const router = express.Router();
 
@@ -21,6 +24,53 @@ router.get('/status', (_: Request, res: Response) => {
     res.status(500).json({
       error: 'Failed to retrieve system state',
       message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * GET /health - Comprehensive health check including services, caches, and circuit breakers
+ */
+router.get('/health', async (_: Request, res: Response) => {
+  try {
+    const openaiHealth = getOpenAIServiceHealth();
+    const dbStatus = await getDbStatus();
+    
+    const health = {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      services: {
+        openai: openaiHealth,
+        database: dbStatus,
+        cache: {
+          query: queryCache.getStats(),
+          config: configCache.getStats()
+        }
+      },
+      system: {
+        uptime: process.uptime(),
+        memoryUsage: process.memoryUsage(),
+        nodeVersion: process.version,
+        environment: process.env.NODE_ENV || 'development'
+      }
+    };
+
+    // Determine overall health status
+    const isHealthy = openaiHealth.circuitBreaker.healthy && 
+                     (dbStatus.connected || !process.env.DATABASE_URL);
+    
+    health.status = isHealthy ? 'healthy' : 'degraded';
+    
+    const statusCode = isHealthy ? 200 : 503;
+    res.status(statusCode).json(health);
+    
+  } catch (error) {
+    console.error('[HEALTH] Error retrieving health status:', error);
+    res.status(500).json({
+      status: 'unhealthy',
+      error: 'Failed to retrieve health status',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
     });
   }
 });
