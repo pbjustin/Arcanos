@@ -1,13 +1,15 @@
 /**
- * ARCANOS Query endpoint - demonstrates the two-step process
+ * ARCANOS Query Router - demonstrates the two-step process
  * Route: POST /arcanos-query
  */
 
-import { Request, Response } from 'express';
+import express, { Request, Response } from 'express';
 import { arcanosQuery } from '../services/arcanosQuery.js';
 import { requireField } from '../utils/validation.js';
 
-export const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> => {
+const router = express.Router();
+
+const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> => {
   try {
     // Validate request
     if (!requireField(res, req.body?.prompt, 'prompt')) {
@@ -45,3 +47,8 @@ export const arcanosQueryEndpoint = async (req: Request, res: Response): Promise
     });
   }
 };
+
+// Register the route
+router.post('/arcanos-query', arcanosQueryEndpoint);
+
+export default router;
