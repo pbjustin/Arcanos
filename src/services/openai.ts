@@ -151,7 +151,7 @@ const initializeOpenAI = (): OpenAI | null => {
     }
 
     openai = new OpenAI({ apiKey, timeout: API_TIMEOUT_MS });
-    defaultModel = process.env.AI_MODEL || 'ft:gpt-3.5-turbo-0125:arcanos-v1-1106';
+    defaultModel = process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
     
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
@@ -359,48 +359,98 @@ function isRetryableError(error: any): boolean {
 }
 
 /**
- * Make a chat completion with automatic fallback to GPT-4 if fine-tuned model fails
+ * Enhanced chat completion with graceful fallback handling
+ * Sequence: fine-tuned GPT-4.1 → retry → GPT-5 → GPT-4
  */
 export const createChatCompletionWithFallback = async (
   client: OpenAI,
   params: any
 ): Promise<any> => {
-  const primaryModel = getDefaultModel();
-  const fallbackModel = getFallbackModel();
+  const primaryModel = getDefaultModel(); // fine-tuned GPT-4.1
+  const gpt5Model = getGPT5Model();
+  const finalFallbackModel = getFallbackModel(); // GPT-4
   
+  // First attempt with the fine-tuned model
   try {
-    // First attempt with the fine-tuned model
-    console.log(`🧠 Attempting with primary model: ${primaryModel}`);
+    console.log(`🧠 [PRIMARY] Attempting with fine-tuned model: ${primaryModel}`);
     const response = await client.chat.completions.create({
       ...params,
       model: primaryModel
     });
     
+    console.log(`✅ [PRIMARY] Success with ${primaryModel}`);
     return {
       ...response,
       activeModel: primaryModel,
       fallbackFlag: false
     };
-  } catch (error) {
-    console.warn(`⚠️ Primary model ${primaryModel} failed, falling back to ${fallbackModel}`);
-    console.warn(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  } catch (primaryError) {
+    console.warn(`⚠️ [PRIMARY] Failed: ${primaryError instanceof Error ? primaryError.message : 'Unknown error'}`);
     
+    // Retry with the fine-tuned model once more
     try {
-      // Fallback to GPT-4
-      const fallbackResponse = await client.chat.completions.create({
+      console.log(`🔄 [RETRY] Retrying fine-tuned model: ${primaryModel}`);
+      const retryResponse = await client.chat.completions.create({
         ...params,
-        model: fallbackModel
+        model: primaryModel
       });
       
+      console.log(`✅ [RETRY] Success with ${primaryModel} on retry`);
       return {
-        ...fallbackResponse,
-        activeModel: fallbackModel,
-        fallbackFlag: true,
-        fallbackReason: `Primary model ${primaryModel} failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        ...retryResponse,
+        activeModel: primaryModel,
+        fallbackFlag: false,
+        retryUsed: true
       };
-    } catch (fallbackError) {
-      console.error(`❌ Fallback model ${fallbackModel} also failed:`, fallbackError);
-      throw fallbackError;
+    } catch (retryError) {
+      console.warn(`⚠️ [RETRY] Also failed: ${retryError instanceof Error ? retryError.message : 'Unknown error'}`);
+      
+      // Fall back to GPT-5
+      try {
+        console.log(`🚀 [GPT-5 FALLBACK] Attempting with GPT-5: ${gpt5Model}`);
+        
+        // Use the token parameter helper for GPT-5
+        const tokenParams = getTokenParameter(gpt5Model, params.max_tokens || params.max_completion_tokens || 1024);
+        
+        const gpt5Payload = prepareGPT5Request({
+          ...params,
+          model: gpt5Model,
+          ...tokenParams
+        });
+        
+        const gpt5Response = await client.chat.completions.create(gpt5Payload);
+        
+        console.log(`✅ [GPT-5 FALLBACK] Success with ${gpt5Model}`);
+        return {
+          ...gpt5Response,
+          activeModel: gpt5Model,
+          fallbackFlag: true,
+          fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5`,
+          gpt5Used: true
+        };
+      } catch (gpt5Error) {
+        console.warn(`⚠️ [GPT-5 FALLBACK] Failed: ${gpt5Error instanceof Error ? gpt5Error.message : 'Unknown error'}`);
+        
+        // Final fallback to GPT-4
+        try {
+          console.log(`🛟 [FINAL FALLBACK] Last resort with GPT-4: ${finalFallbackModel}`);
+          const finalResponse = await client.chat.completions.create({
+            ...params,
+            model: finalFallbackModel
+          });
+          
+          console.log(`✅ [FINAL FALLBACK] Success with ${finalFallbackModel}`);
+          return {
+            ...finalResponse,
+            activeModel: finalFallbackModel,
+            fallbackFlag: true,
+            fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5 fallback), using final fallback`
+          };
+        } catch (finalError) {
+          console.error(`❌ [COMPLETE FAILURE] All fallback attempts failed`);
+          throw new Error(`All models failed: Primary (${primaryModel}), GPT-5 (${gpt5Model}), Final (${finalFallbackModel})`);
+        }
+      }
     }
   }
 };
@@ -454,6 +504,93 @@ export const createGPT5Reasoning = async (
     const errorMsg = err?.message || 'Unknown error';
     console.error(`❌ [GPT-5 REASONING] Error: ${errorMsg}`);
     return { content: `[Fallback: GPT-5 unavailable - ${errorMsg}]`, error: errorMsg };
+  }
+};
+
+/**
+ * Enhanced GPT-5 reasoning layer that refines ARCANOS responses
+ * Implements the layered approach: ARCANOS -> GPT-5 reasoning -> refined output
+ */
+export const createGPT5ReasoningLayer = async (
+  client: OpenAI,
+  arcanosResult: string,
+  originalPrompt: string,
+  context?: string
+): Promise<{ 
+  refinedResult: string; 
+  reasoningUsed: boolean; 
+  reasoningContent?: string; 
+  error?: string 
+}> => {
+  if (!client) {
+    return { 
+      refinedResult: arcanosResult, 
+      reasoningUsed: false, 
+      error: 'No OpenAI client available for GPT-5 reasoning' 
+    };
+  }
+
+  try {
+    const gpt5Model = getGPT5Model();
+    console.log(`🔄 [GPT-5 LAYER] Refining ARCANOS response with ${gpt5Model}`);
+
+    // Construct reasoning prompt that asks GPT-5 to analyze and refine ARCANOS output
+    const reasoningPrompt = `As an advanced reasoning engine, analyze and refine the following ARCANOS response:
+
+ORIGINAL USER REQUEST:
+${originalPrompt}
+
+ARCANOS RESPONSE:
+${arcanosResult}
+
+${context ? `ADDITIONAL CONTEXT:\n${context}\n` : ''}
+
+Your task:
+1. Evaluate the logical consistency and completeness of the ARCANOS response
+2. Identify any gaps in reasoning or potential improvements
+3. Provide a refined, enhanced version that maintains ARCANOS's core analysis while adding deeper insights
+4. Ensure the response is well-structured and comprehensive
+
+Return only the refined response without meta-commentary about your analysis process.`;
+
+    const systemPrompt = `You are an advanced reasoning layer for ARCANOS AI. Your role is to refine and enhance ARCANOS responses through deeper analysis while preserving the original intent and structure. Focus on logical consistency, completeness, and clarity.`;
+
+    const tokenParams = getTokenParameter(gpt5Model, 1500);
+
+    const requestPayload = prepareGPT5Request({
+      model: gpt5Model,
+      messages: [
+        { role: 'system' as const, content: systemPrompt },
+        { role: 'user' as const, content: reasoningPrompt }
+      ],
+      ...tokenParams,
+      temperature: 0.7 // Balanced creativity for reasoning
+    });
+
+    const response = await client.chat.completions.create(requestPayload);
+    
+    const reasoningContent = response.choices[0]?.message?.content ?? '[No reasoning provided]';
+    
+    // The GPT-5 response IS the refined result
+    const refinedResult = reasoningContent;
+    
+    console.log(`✅ [GPT-5 LAYER] Successfully refined response (${refinedResult.length} chars)`);
+    
+    return { 
+      refinedResult, 
+      reasoningUsed: true, 
+      reasoningContent: reasoningContent.substring(0, 200) + '...' // Summary for logging
+    };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Unknown error';
+    console.error(`❌ [GPT-5 LAYER] Reasoning layer failed: ${errorMsg}`);
+    
+    // Return original ARCANOS result on failure
+    return { 
+      refinedResult: arcanosResult, 
+      reasoningUsed: false, 
+      error: errorMsg 
+    };
   }
 };
 

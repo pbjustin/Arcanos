@@ -5,13 +5,13 @@ import { runARCANOS } from '../logic/arcanos.js';
 // ✅ Environment setup
 process.env.RUN_WORKERS = "true"; // Enable workers
 process.env.WORKER_COUNT = process.env.WORKER_COUNT || "4";
-process.env.WORKER_MODEL = "REDACTED_FINE_TUNED_MODEL_ID"; // ARCANOS core
+process.env.WORKER_MODEL = "ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote"; // ARCANOS core
 
 // Environment configuration
 export const workerSettings = {
   runWorkers: process.env.RUN_WORKERS === 'true' || process.env.RUN_WORKERS === '1',
   count: parseInt(process.env.WORKER_COUNT || '4', 10),
-  model: process.env.WORKER_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID'
+  model: process.env.WORKER_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote'
 };
 
 // Simple task queue based on EventEmitter
