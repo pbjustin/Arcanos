@@ -10,6 +10,8 @@ import pkg from 'pg';
 import type { Pool as PoolType, PoolClient, QueryResult } from 'pg';
 const { Pool } = pkg;
 import dotenv from 'dotenv';
+import { queryCache } from './utils/cache.js';
+import crypto from 'crypto';
 
 // Load environment variables for worker runtime
 dotenv.config();
@@ -221,11 +223,29 @@ async function initializeTables(): Promise<void> {
 }
 
 /**
- * Generic query helper function
+ * Creates a cache key for database queries
  */
-async function query(text: string, params: any[] = [], attempt = 1): Promise<QueryResult> {
+function createQueryCacheKey(text: string, params: any[]): string {
+  const content = `${text}:${JSON.stringify(params)}`;
+  return crypto.createHash('md5').update(content).digest('hex');
+}
+
+/**
+ * Enhanced query helper with caching and optimization
+ */
+async function query(text: string, params: any[] = [], attempt = 1, useCache = false): Promise<QueryResult> {
   if (!isConnected || !pool) {
     throw new Error('Database not configured or not connected');
+  }
+
+  // Check cache for SELECT queries
+  if (useCache && text.trim().toLowerCase().startsWith('select')) {
+    const cacheKey = createQueryCacheKey(text, params);
+    const cachedResult = queryCache.get(cacheKey);
+    if (cachedResult) {
+      console.log('💾 Database cache hit for query');
+      return cachedResult;
+    }
   }
 
   const client = await pool.connect();
@@ -235,14 +255,22 @@ async function query(text: string, params: any[] = [], attempt = 1): Promise<Que
     const result = await client.query(text, params);
     const duration = Date.now() - start;
 
-    console.log(`[🔌 DB] Query executed in ${duration}ms`);
+    console.log(`[🔌 DB] Query executed in ${duration}ms (rows: ${result.rowCount || 0})`);
+    
+    // Cache SELECT queries that return data
+    if (useCache && text.trim().toLowerCase().startsWith('select') && result.rows.length > 0) {
+      const cacheKey = createQueryCacheKey(text, params);
+      const cacheTtl = result.rows.length < 100 ? 10 * 60 * 1000 : 5 * 60 * 1000; // Smaller results cached longer
+      queryCache.set(cacheKey, result, cacheTtl);
+    }
+
     return result;
   } catch (error) {
     console.error('[🔌 DB] Query error:', (error as Error).message);
 
     if (attempt < 3) {
       console.log(`[🔌 DB] Retry attempt ${attempt} for query`);
-      return query(text, params, attempt + 1);
+      return query(text, params, attempt + 1, useCache);
     }
 
     throw error;
@@ -300,7 +328,12 @@ async function loadMemory(key: string): Promise<any | null> {
     throw new Error('Database not configured');
   }
 
-  const result = await query('SELECT value FROM memory WHERE key = $1', [key]);
+  const result = await query(
+    'SELECT value FROM memory WHERE key = $1',
+    [key],
+    1,
+    true // Use cache for read operations
+  );
   
   if (result.rows.length === 0) {
     return null;

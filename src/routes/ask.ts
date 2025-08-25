@@ -9,8 +9,22 @@ import {
   ErrorResponse
 } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders, commonSchemas } from '../utils/security.js';
 
 const router = express.Router();
+
+// Apply security middleware
+router.use(securityHeaders);
+router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
+
+// Enhanced validation schema for ask requests
+const askValidationSchema = {
+  ...commonSchemas.aiRequest,
+  sessionId: { type: 'string' as const, maxLength: 100, sanitize: true },
+  overrideAuditSafe: { type: 'string' as const, maxLength: 50, sanitize: true }
+};
+
+const askValidationMiddleware = createValidationMiddleware(askValidationSchema);
 
 interface AskRequest extends StandardAIRequest {
   prompt: string;
@@ -71,9 +85,9 @@ const handleAIRequest = async (
 };
 
 // Primary ask endpoint routed through the Trinity brain (no confirmation required)
-router.post('/ask', (req, res) => handleAIRequest(req, res, 'ask'));
+router.post('/ask', askValidationMiddleware, (req, res) => handleAIRequest(req, res, 'ask'));
 
 // Brain endpoint (alias for ask with same functionality) still requires confirmation
-router.post('/brain', confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
+router.post('/brain', askValidationMiddleware, confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
 
 export default router;
