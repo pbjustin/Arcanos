@@ -120,7 +120,7 @@ const runTests = async () => {
       query: 'Test model ID'
     });
     console.log('   Model from response:', modelValidation.body?.model);
-    console.log('   ✅ Uses arcanos-v1-1106:', modelValidation.body?.model === 'arcanos-v1-1106' ? 'YES' : 'NO');
+    console.log('   ✅ Uses arcanos-v2:', modelValidation.body?.model === 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH' ? 'YES' : 'NO');
     console.log('');
 
     console.log('🎉 All fine-tune routing tests completed!');
