@@ -1,7 +1,7 @@
 # ARCANOS Fine-Tune Routing & Mirror Mode
 
 ## Overview
-This implementation provides direct routing to the ARCANOS fine-tuned model (`arcanos-v1-1106`) with "Mirror Mode" behavior that returns raw, unformatted model responses.
+This implementation provides direct routing to the ARCANOS fine-tuned model (`REDACTED_FINE_TUNED_MODEL_ID`) with "Mirror Mode" behavior that returns raw, unformatted model responses.
 
 ## Features
 
@@ -20,7 +20,7 @@ This implementation provides direct routing to the ARCANOS fine-tuned model (`ar
 ```json
 {
   "response": "Raw model response...",
-  "model": "arcanos-v1-1106",
+  "model": "REDACTED_FINE_TUNED_MODEL_ID",
   "success": true,
   "timestamp": "2025-07-21T06:50:04.715Z",
   "metadata": {}
@@ -99,7 +99,7 @@ Perfect for:
 - **Error handling:** Returns 400 for empty queries after prefix
 
 ### Model Configuration
-- **Model ID:** `arcanos-v1-1106`
+- **Model ID:** `REDACTED_FINE_TUNED_MODEL_ID`
 - **Service:** OpenAI Fine-Tune API
 - **Fallback:** Graceful error handling when service unavailable
 
@@ -130,7 +130,7 @@ This validates:
 Required environment variables:
 ```
 OPENAI_API_KEY=your-openai-api-key
-FINE_TUNED_MODEL=arcanos-v1-1106
+FINE_TUNED_MODEL=REDACTED_FINE_TUNED_MODEL_ID
 ```
 
 ## Error Handling
