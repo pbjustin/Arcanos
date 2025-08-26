@@ -2,12 +2,12 @@
 
 ## Overview
 
-The ARCANOS system now implements a sophisticated routing architecture that ensures ALL tasks are processed through the fine-tuned ARCANOS model (`ft:gpt-3.5-turbo-0125:arcanos-v1-1106`) while conditionally leveraging GPT-5 for complex reasoning.
+The ARCANOS system now implements a sophisticated routing architecture that ensures ALL tasks are processed through the fine-tuned ARCANOS model (`ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH`) while conditionally leveraging GPT-5 for complex reasoning.
 
 ## Key Implementation Features
 
 ### 🎯 Primary Model
-- **Model**: `ft:gpt-3.5-turbo-0125:arcanos-v1-1106`
+- **Model**: `ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH`
 - **Role**: Primary routing shell for ALL requests
 - **Fallback**: `gpt-4` (if fine-tuned model unavailable)
 
@@ -53,10 +53,10 @@ The fine-tuned model analyzes each request and decides:
 The system provides comprehensive logging of routing stages:
 
 ```
-🔀 [ARCANOS ROUTING] STARTING | Model: ft:gpt-3.5-turbo-0125:arcanos-v1-1106
+🔀 [ARCANOS ROUTING] STARTING | Model: ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH
 🚀 [GPT-5 INVOCATION] Reason: Complex analysis required
 🔀 [ARCANOS ROUTING] FINAL_FILTERING | Processing GPT-5 output through ARCANOS
-📊 [ROUTING SUMMARY] ARCANOS: ft:gpt-3.5-turbo-0125:arcanos-v1-1106 | GPT-5 Used: true
+📊 [ROUTING SUMMARY] ARCANOS: ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH | GPT-5 Used: true
 ```
 
 ### 🛡️ Security Guarantees
@@ -73,11 +73,11 @@ Enhanced response format includes routing information:
 ```json
 {
   "result": "Final ARCANOS response",
-  "module": "ft:gpt-3.5-turbo-0125:arcanos-v1-1106",
-  "activeModel": "ft:gpt-3.5-turbo-0125:arcanos-v1-1106",
+  "module": "ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH",
+  "activeModel": "ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH",
   "fallbackFlag": false,
   "routingStages": [
-    "ARCANOS-START:ft:gpt-3.5-turbo-0125:arcanos-v1-1106",
+    "ARCANOS-START:ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH",
     "GPT5-INVOCATION:complex-analysis",
     "GPT5-COMPLETED",
     "ARCANOS-FINAL"
@@ -95,12 +95,12 @@ Enhanced response format includes routing information:
 
 ### Environment Variables
 ```bash
-AI_MODEL=ft:gpt-3.5-turbo-0125:arcanos-v1-1106
+AI_MODEL=ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH
 OPENAI_API_KEY=your-api-key-here
 ```
 
 ### Model Priority
-1. `ft:gpt-3.5-turbo-0125:arcanos-v1-1106` (Primary ARCANOS model)
+1. `ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH` (Primary ARCANOS model)
 2. `gpt-4` (Fallback if fine-tuned model unavailable)
 3. Mock responses (Development mode without API key)
 
