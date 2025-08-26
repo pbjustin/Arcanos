@@ -120,7 +120,7 @@ const runTests = async () => {
       query: 'Test model ID'
     });
     console.log('   Model from response:', modelValidation.body?.model);
-    console.log('   ✅ Uses arcanos-v1-1106:', modelValidation.body?.model === 'arcanos-v1-1106' ? 'YES' : 'NO');
+    console.log('   ✅ Uses arcanos-v2:', modelValidation.body?.model === 'REDACTED_FINE_TUNED_MODEL_ID' ? 'YES' : 'NO');
     console.log('');
 
     console.log('🎉 All fine-tune routing tests completed!');

@@ -20,7 +20,7 @@ const testModels = [
   'gpt-4',
   'gpt-3.5-turbo',
   'gpt-5',
-  'ft:gpt-3.5-turbo-0125:arcanos-v1-1106',
+  'REDACTED_FINE_TUNED_MODEL_ID',
   'gpt-4o',
   'gpt-4-turbo'
 ];

@@ -24,8 +24,6 @@ models_tested:
     parameter_used: max_tokens
   - name: "gpt-5"
     parameter_used: max_tokens
-  - name: "ft:gpt-3.5-turbo-0125:arcanos-v1-1106"
-    parameter_used: max_tokens
   - name: "REDACTED_FINE_TUNED_MODEL_ID"
     parameter_used: max_tokens
   - name: "gpt-4o"
