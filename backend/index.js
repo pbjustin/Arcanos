@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import dotenv from "dotenv";
 import queryFinetuneRouter from "./routes/query-finetune.js";
 import memoryRoutes from "./routes/memory.js";
+import gptRoutes from "./routes/gpt.js";
 
 // Load API key from .env
 dotenv.config();
@@ -10,9 +11,10 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Register query-finetune router
+// Register routers
 app.use("/query-finetune", queryFinetuneRouter);
 app.use("/memory", memoryRoutes);
+app.use("/api", gptRoutes);
 
 // Initialize OpenAI client
 const openai = new OpenAI({
