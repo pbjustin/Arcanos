@@ -14,7 +14,7 @@ app.use(express.json());
 // Register routers
 app.use("/query-finetune", queryFinetuneRouter);
 app.use("/memory", memoryRoutes);
-app.use("/api", gptRoutes);
+app.use("/", gptRoutes);
 
 // Initialize OpenAI client
 const openai = new OpenAI({
