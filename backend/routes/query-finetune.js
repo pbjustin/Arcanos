@@ -6,9 +6,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// 🔄 Swap v1 → v2 here
-// Old: "ft:gpt-3.5-turbo-0125:personal:arcanos-v1-1106"
-// New:
+// Updated to arcanos-v2 model
 const FINETUNE_MODEL = "REDACTED_FINE_TUNED_MODEL_ID";
 
 router.post("/", async (req, res) => {
