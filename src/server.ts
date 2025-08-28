@@ -24,6 +24,7 @@ import statusRouter from './routes/status.js';
 import siriRouter from './routes/siri.js';
 import backstageRouter from './routes/backstage.js';
 import apiArcanosRouter from './routes/api-arcanos.js';
+import arcanosPipelineRouter from './routes/openai-arcanos-pipeline.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { initializeDatabase } from './db.js';
 
@@ -106,6 +107,7 @@ app.get('/', (_: Request, res: Response) => {
 // Core API routes
 app.use('/', askRouter);
 app.use('/', arcanosRouter);
+app.use('/', arcanosPipelineRouter);
 app.use('/', aiEndpointsRouter);
 app.use('/', memoryRouter);
 app.use('/', workersRouter);
