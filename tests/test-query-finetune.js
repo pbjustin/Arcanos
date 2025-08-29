@@ -45,7 +45,7 @@ const runTests = async () => {
     // Test 1: Direct /query-finetune endpoint
     console.log('1. Testing POST /query-finetune endpoint');
     const directResponse = await makeRequest('POST', '/query-finetune', {
-      query: 'What is ARCANOS?'
+      prompt: 'What is ARCANOS?'
     });
     console.log('   Status:', directResponse.statusCode);
     console.log('   Response:', JSON.stringify(directResponse.body, null, 2));
@@ -117,7 +117,7 @@ const runTests = async () => {
     // Test 9: Validate model configuration
     console.log('9. Validating model configuration');
     const modelValidation = await makeRequest('POST', '/query-finetune', {
-      query: 'Test model ID'
+      prompt: 'Test model ID'
     });
     console.log('   Model from response:', modelValidation.body?.model);
     console.log('   ✅ Uses arcanos-v2:', modelValidation.body?.model === 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH' ? 'YES' : 'NO');
