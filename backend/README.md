@@ -3,6 +3,28 @@
 This directory contains backend implementations for ARCANOS.
 
 ## Implementations
+### ARCANOS Backend v4.0 (arcanos-v4.js)
+**Generalized router with improved cache and health checks:**
+
+- **Generalized router** accepts module aliases and GPT-IDs
+- **Hybrid identityMap** (DB + chokidar auto-discovery)
+- **Checksum-validated cache** with auto-invalidation
+- **Health endpoint** and graceful shutdown
+- **Seamless fallback** with GPT-ID-aware audit logs
+- **Input validation & sanitization**
+- **Security**: rate limiting + API key auth
+
+**Quick Start:**
+```bash
+npm run v4:start    # Start v4.0 backend
+```
+
+**API Endpoints:**
+- `GET /health` - Basic health information
+- `GET /gpt-routing-meta` - List registered modules
+- `POST /query` - Route queries to module or GPT-ID
+- `POST /register-module` - Register new modules (requires API key)
+
 
 ### ARCANOS Backend v3.0 (arcanos-v3.js)
 **Production-ready unified backend with advanced features:**
@@ -41,17 +63,18 @@ npm run v3:test     # Run v3.0 tests
 
 ## Features Comparison
 
-| Feature | v3.0 | Original |
-|---------|------|----------|
-| Module System | ✅ | ❌ |
-| Database Support | ✅ (PostgreSQL/SQLite) | ❌ |
-| Rate Limiting | ✅ | ❌ |
-| Audit Logging | ✅ | ❌ |
-| File Watching | ✅ | ❌ |
-| Input Validation | ✅ | ❌ |
-| Health Monitoring | ✅ | ✅ |
-| Security | ✅ (API Keys) | ❌ |
-| Fallback Routing | ✅ | ✅ |
+| Feature | v4.0 | v3.0 | Original |
+|---------|------|------|----------|
+| Module System | ✅ | ✅ | ❌ |
+| Database Support | ✅ (PostgreSQL/SQLite) | ✅ (PostgreSQL/SQLite) | ❌ |
+| Rate Limiting | ✅ | ✅ | ❌ |
+| Audit Logging | ✅ | ✅ | ❌ |
+| File Watching | ✅ | ✅ | ❌ |
+| Input Validation | ✅ | ✅ | ❌ |
+| Health Monitoring | ✅ | ✅ | ✅ |
+| Security | ✅ (API Keys) | ✅ (API Keys) | ❌ |
+| Fallback Routing | ✅ | ✅ | ✅ |
+
 
 ## Environment Variables
 

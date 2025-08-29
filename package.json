@@ -21,7 +21,9 @@
     "repair-migrations": "node scripts/migration-repair.js",
     "guide:generate": "node scripts/generate-tagged-guide.js",
     "v3:start": "cd backend && node arcanos-v3.js",
-    "v3:test": "cd backend && node test-arcanos-v3-full.js"
+    "v3:test": "cd backend && node test-arcanos-v3-full.js",
+    "v4:start": "cd backend && node arcanos-v4.js",
+    "v4:test": "cd backend && node test-arcanos-v4.js"
   },
   "keywords": [
     "ai",
