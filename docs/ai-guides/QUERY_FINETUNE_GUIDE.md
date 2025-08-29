@@ -11,7 +11,7 @@ This implementation provides direct routing to the ARCANOS fine-tuned model (`RE
 **Body:**
 ```json
 {
-  "query": "[User Prompt Here]",
+  "prompt": "[User Prompt Here]",
   "metadata": {} // optional
 }
 ```
@@ -51,12 +51,12 @@ Raw model response without JSON wrapper...
 # Basic query
 curl -X POST http://localhost:8080/query-finetune \
   -H "Content-Type: application/json" \
-  -d '{"query": "What is ARCANOS?"}'
+  -d '{"prompt": "What is ARCANOS?"}'
 
 # With metadata
 curl -X POST http://localhost:8080/query-finetune \
   -H "Content-Type: application/json" \
-  -d '{"query": "Explain the memory architecture", "metadata": {"session": "test"}}'
+  -d '{"prompt": "Explain the memory architecture", "metadata": {"session": "test"}}'
 ```
 
 ### Prefix-Based Examples
@@ -136,7 +136,7 @@ FINE_TUNED_MODEL=REDACTED_FINE_TUNED_MODEL_ID
 ## Error Handling
 
 The implementation includes robust error handling for:
-- Missing queries
+- Missing prompts
 - Empty queries after prefix
 - OpenAI API failures
 - Invalid JSON requests
