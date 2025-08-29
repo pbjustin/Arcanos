@@ -13,6 +13,11 @@ router.post("/", async (req, res) => {
   try {
     const { prompt } = req.body;
 
+    // Basic input validation
+    if (typeof prompt !== "string" || prompt.trim().length === 0) {
+      return res.status(400).json({ error: "Prompt is required" });
+    }
+
     const completion = await openai.chat.completions.create({
       model: FINETUNE_MODEL,
       messages: [
@@ -26,7 +31,7 @@ router.post("/", async (req, res) => {
       response: completion.choices[0].message,
     });
   } catch (error) {
-    console.error("Finetune sub-agent failed:", error);
+    console.error("Finetune sub-agent failed for prompt:", req.body?.prompt, error);
     res.status(500).json({ error: error.message });
   }
 });
