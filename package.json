@@ -19,7 +19,9 @@
     "type-check": "tsc --noEmit",
     "assistants-sync": "npx ts-node scripts/assistants-sync.ts",
     "repair-migrations": "node scripts/migration-repair.js",
-    "guide:generate": "node scripts/generate-tagged-guide.js"
+    "guide:generate": "node scripts/generate-tagged-guide.js",
+    "v3:start": "cd backend && node arcanos-v3.js",
+    "v3:test": "cd backend && node test-arcanos-v3-full.js"
   },
   "keywords": [
     "ai",
@@ -33,13 +35,17 @@
   "dependencies": {
     "@notionhq/client": "^2.3.0",
     "@types/pg": "^8.15.5",
+    "chokidar": "^4.0.3",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "dotenv": "^17.2.1",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.0.1",
     "knex": "^2.5.1",
     "node-cron": "^4.2.1",
     "openai": "^5.15.0",
-    "pg": "^8.11.1"
+    "pg": "^8.11.1",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
