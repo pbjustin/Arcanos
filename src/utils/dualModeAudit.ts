@@ -1,15 +1,12 @@
-import { getOpenAIClient } from '../services/openai.js';
-import type OpenAI from 'openai';
-
 export interface DualModeAuditOptions {
   /** run in simulation mode instead of hitting backend */
   simulate?: boolean;
   /** override backend registry base url */
   backendRegistry?: string;
-  /** pre-configured OpenAI client for simulation mode */
-  client?: OpenAI;
   /** custom fetch implementation for backend mode */
   fetcher?: typeof fetch;
+  /** optional list of modules considered present in simulation mode */
+  simulatedRegistry?: string[];
 }
 
 export interface DualModeAuditBaseResult {
@@ -24,12 +21,13 @@ export interface DualModeAuditBaseResult {
 }
 
 /**
- * Performs a dual-mode audit against a backend registry or via simulated AI.
+ * Performs a dual-mode audit against a backend registry or via local simulation.
  *
  * Backend mode will call a real HTTP endpoint to verify the module, while
- * simulation mode leverages the OpenAI SDK to emulate the result. The function
- * is designed to be easily reusable and testable by allowing dependency
- * injection of the OpenAI client and fetch implementation.
+ * simulation mode uses a deterministic in-memory registry to emulate the result
+ * without invoking any AI models. The function is designed to be easily
+ * reusable and testable by allowing dependency injection of the fetch
+ * implementation and simulated registry.
  *
  * @param moduleName Name of the module to audit
  * @param options Optional configuration for the audit
@@ -42,8 +40,8 @@ export async function dualModeAudit(
     simulate = false,
     backendRegistry = process.env.BACKEND_REGISTRY_URL ||
       'https://your-real-service.com/registry',
-    client,
-    fetcher = fetch
+    fetcher = fetch,
+    simulatedRegistry = []
   } = options;
 
   const timestamp = new Date().toISOString();
@@ -90,61 +88,16 @@ export async function dualModeAudit(
     }
   }
 
-  // Simulation mode
-  try {
-    const openai = client || getOpenAIClient();
-    if (!openai) {
-      return {
-        timestamp,
-        mode: 'simulation',
-        module: moduleName,
-        exists: false,
-        fallback_used: true,
-        interference: false,
-        error: 'OpenAI client not available'
-      };
-    }
-
-    const response = await openai.chat.completions.create({
-      model: 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are ARCANOS in shadow audit mode. Simulate module presence.'
-        },
-        {
-          role: 'user',
-          content: `Simulate audit for module "${moduleName}". Respond with structured JSON.`
-        }
-      ],
-      response_format: { type: 'json_object' }
-    });
-
-    let payload: Record<string, any> = {};
-    try {
-      const content = response.choices?.[0]?.message?.content || '{}';
-      payload = JSON.parse(content);
-    } catch (parseErr) {
-      payload = { parseError: (parseErr as Error).message };
-    }
-
-    return {
-      timestamp,
-      mode: 'simulation',
-      module: moduleName,
-      ...payload
-    } as DualModeAuditBaseResult;
-  } catch (error: any) {
-    return {
-      timestamp,
-      mode: 'simulation',
-      module: moduleName,
-      exists: false,
-      fallback_used: false,
-      interference: false,
-      error: error?.message || String(error)
-    };
-  }
+  // Simulation mode: deterministic local registry check to avoid hallucinations
+  const registry = new Set(simulatedRegistry);
+  return {
+    timestamp,
+    mode: 'simulation',
+    module: moduleName,
+    exists: registry.has(moduleName),
+    fallback_used: true,
+    interference: false
+  };
 }
 
 export default dualModeAudit;
