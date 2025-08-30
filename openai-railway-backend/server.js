@@ -4,7 +4,9 @@ const path = require('path');
 const { dispatch, registry } = require('./architect');
 
 const app = express();
+// Built-in parsers handle both JSON and raw text payloads
 app.use(express.json());
+app.use(express.text());
 
 const MODULES_DIR = path.join(__dirname, 'modules');
 const REGISTRY_PATH = path.join(__dirname, 'moduleRegistry.json');
@@ -60,7 +62,16 @@ Object.entries(moduleRegistry).forEach(([route, modMeta]) => {
 // --- Dispatch Endpoint ---
 app.post('/ask', async (req, res) => {
   try {
-    const { module, payload } = req.body;
+    let module;
+    let payload;
+
+    if (typeof req.body === 'string') {
+      module = 'shell';
+      payload = { command: req.body.trim() };
+    } else {
+      ({ module, payload } = req.body);
+    }
+
     const result = await dispatch(module, payload);
     res.json({ status: 'success', module, data: result });
   } catch (err) {
