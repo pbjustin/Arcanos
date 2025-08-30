@@ -1,15 +1,15 @@
-// File: persistenceManagerHierarchy.js
+// File: persistenceManagerHierarchy.ts
 // Purpose: Unified patch for persistence, audit, and override hierarchy
 // Kernel Failsafe → Audit Layer → Root Override
 
-import knexPkg from "knex";
-const knex = knexPkg.default || knexPkg;
+import knexPkg from 'knex';
+const knex = (knexPkg as any).default || knexPkg;
 
 // ----------------------
 // Database Config
 // ----------------------
 const db = knex({
-  client: "pg", // swap if using mysql/sqlite
+  client: 'pg', // swap if using mysql/sqlite
   connection: process.env.DATABASE_URL,
   pool: { min: 2, max: 10 }
 });
@@ -17,7 +17,7 @@ const db = knex({
 // ----------------------
 // State
 // ----------------------
-let auditSafeMode = "true";
+let auditSafeMode: 'true' | 'false' | 'passive' = 'true';
 let rootOverrideActive = false;
 let failedRootOverrideAttempts = 0;
 const MAX_FAILED_ATTEMPTS = 5;
@@ -25,63 +25,66 @@ const MAX_FAILED_ATTEMPTS = 5;
 // ----------------------
 // Kernel Failsafe (Always Active)
 // ----------------------
-async function kernelSafeWrite(trx, moduleName, payload) {
+async function kernelSafeWrite(trx: any, moduleName: string, payload: string) {
   if (payload.length > 50000) {
-    throw new Error("Payload too large for save.");
+    throw new Error('Payload too large for save.');
   }
-  await trx("saves").insert({
+  await trx('saves').insert({
     module: moduleName,
     data: payload,
-    timestamp: Date.now(),
+    timestamp: Date.now()
   });
 }
 
 // ----------------------
 // Audit Layer (Async, Non-Blocking)
 // ----------------------
-export async function logAuditEvent(event, payload) {
+export async function logAuditEvent(event: string, payload: any) {
   try {
-    await db("audit_logs").insert({
+    await db('audit_logs').insert({
       event,
       payload: JSON.stringify(payload),
-      timestamp: Date.now(),
+      timestamp: Date.now()
     });
-  } catch (err) {
-    console.error("⚠️ Audit log failed:", err.message);
-    throw new Error("Critical audit logging failure.");
+  } catch (err: any) {
+    console.error('⚠️ Audit log failed:', err.message);
+    throw new Error('Critical audit logging failure.');
   }
 }
 
 // ----------------------
 // Root Override Manager
 // ----------------------
-function canEnableRootOverride(userRole, token) {
+function canEnableRootOverride(userRole: string, token: string) {
   return (
-    process.env.ALLOW_ROOT_OVERRIDE === "true" &&
-    userRole === "admin" &&
+    process.env.ALLOW_ROOT_OVERRIDE === 'true' &&
+    userRole === 'admin' &&
     token === process.env.ROOT_OVERRIDE_TOKEN
   );
 }
 
-export async function setAuditSafeMode(mode, { rootOverride = false, userRole = "guest", token = "" } = {}) {
-  if (!["true", "false", "passive"].includes(mode)) {
+export async function setAuditSafeMode(
+  mode: 'true' | 'false' | 'passive',
+  { rootOverride = false, userRole = 'guest', token = '' }: { rootOverride?: boolean; userRole?: string; token?: string } = {}
+) {
+  if (!['true', 'false', 'passive'].includes(mode)) {
     throw new Error("Invalid mode. Use 'true', 'false', or 'passive'.");
   }
 
   if (rootOverride && !canEnableRootOverride(userRole, token)) {
     failedRootOverrideAttempts++;
-    await logAuditEvent("ROOT_OVERRIDE_DENIED", { userRole, failedRootOverrideAttempts });
+    await logAuditEvent('ROOT_OVERRIDE_DENIED', { userRole, failedRootOverrideAttempts });
     if (failedRootOverrideAttempts > MAX_FAILED_ATTEMPTS) {
-      throw new Error("🚫 Too many failed override attempts.");
+      throw new Error('🚫 Too many failed override attempts.');
     }
-    throw new Error("🚫 Unauthorized attempt to enable root override.");
+    throw new Error('🚫 Unauthorized attempt to enable root override.');
   }
 
   auditSafeMode = mode;
   rootOverrideActive = rootOverride;
   failedRootOverrideAttempts = 0;
 
-  await logAuditEvent("MODE_CHANGE", { auditSafeMode, rootOverrideActive });
+  await logAuditEvent('MODE_CHANGE', { auditSafeMode, rootOverrideActive });
 }
 
 export function getAuditSafeMode() {
@@ -91,19 +94,19 @@ export function getAuditSafeMode() {
 // ----------------------
 // Persistence Layer (DB Writes + Rollbacks)
 // ----------------------
-export async function saveWithAuditCheck(moduleName, data, validator) {
+export async function saveWithAuditCheck(moduleName: string, data: any, validator: (d: any) => boolean) {
   const { auditSafeMode, rootOverrideActive } = getAuditSafeMode();
   const payload = JSON.stringify(data);
 
   try {
-    return await db.transaction(async (trx) => {
+    return await db.transaction(async (trx: any) => {
       if (rootOverrideActive) {
         await kernelSafeWrite(trx, moduleName, payload);
-        await logAuditEvent("ROOT_OVERRIDE_SAVE", { moduleName, data });
+        await logAuditEvent('ROOT_OVERRIDE_SAVE', { moduleName, data });
         return true;
       }
 
-      if (auditSafeMode === "true") {
+      if (auditSafeMode === 'true') {
         if (!isValid(validator, data)) {
           throw new Error(`❌ Audit-Safe rejected invalid data for ${moduleName}`);
         }
@@ -111,20 +114,20 @@ export async function saveWithAuditCheck(moduleName, data, validator) {
         return true;
       }
 
-      if (auditSafeMode === "passive") {
+      if (auditSafeMode === 'passive') {
         if (!isValid(validator, data)) {
-          await logAuditEvent("VALIDATOR_WARNING", { moduleName, data });
+          await logAuditEvent('VALIDATOR_WARNING', { moduleName, data });
         }
         await kernelSafeWrite(trx, moduleName, payload);
         return true;
       }
 
-      if (auditSafeMode === "false") {
+      if (auditSafeMode === 'false') {
         await kernelSafeWrite(trx, moduleName, payload);
         return true;
       }
     });
-  } catch (err) {
+  } catch (err: any) {
     await runRollback(moduleName, data, err.message);
     throw err;
   }
@@ -133,22 +136,22 @@ export async function saveWithAuditCheck(moduleName, data, validator) {
 // ----------------------
 // Rollback (Kernel Controlled)
 // ----------------------
-async function runRollback(moduleName, failedData, errorMsg) {
-  await logAuditEvent("ROLLBACK_TRIGGERED", {
+async function runRollback(moduleName: string, failedData: any, errorMsg: string) {
+  await logAuditEvent('ROLLBACK_TRIGGERED', {
     module: moduleName,
     failedData,
-    error: errorMsg,
+    error: errorMsg
   });
 }
 
 // ----------------------
 // Validator Wrapper
 // ----------------------
-function isValid(validator, data) {
+function isValid(validator: (d: any) => boolean, data: any) {
   try {
     return validator(data);
-  } catch (err) {
-    logAuditEvent("VALIDATOR_EXCEPTION", { error: err.message, data });
+  } catch (err: any) {
+    logAuditEvent('VALIDATOR_EXCEPTION', { error: err.message, data });
     return false;
   }
 }
@@ -157,23 +160,22 @@ function isValid(validator, data) {
 // Schema Verification
 // ----------------------
 export async function verifySchema() {
-  // Skip schema verification if DATABASE_URL is not configured
   if (!process.env.DATABASE_URL) {
-    console.log("⚠️ No DATABASE_URL configured - skipping schema verification");
+    console.log('⚠️ No DATABASE_URL configured - skipping schema verification');
     return;
   }
-  
+
   try {
-    const tables = ["saves", "audit_logs"];
+    const tables = ['saves', 'audit_logs'];
     for (const table of tables) {
       const exists = await db.schema.hasTable(table);
       if (!exists) {
         throw new Error(`❌ Required table missing: ${table}`);
       }
     }
-    console.log("✅ Schema verified.");
-  } catch (error) {
-    console.error("❌ Schema verification failed:", error.message);
-    console.log("⚠️ Continuing with in-memory fallback");
+    console.log('✅ Schema verified.');
+  } catch (error: any) {
+    console.error('❌ Schema verification failed:', error.message);
+    console.log('⚠️ Continuing with in-memory fallback');
   }
 }

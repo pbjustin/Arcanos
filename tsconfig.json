@@ -5,10 +5,11 @@
     "moduleResolution": "NodeNext",
     "esModuleInterop": true,
     "strict": true,
-    "allowJs": true,
+    "allowJs": false,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
     "outDir": "dist",
     "rootDir": "src"
   },
