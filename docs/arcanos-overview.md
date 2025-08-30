@@ -11,3 +11,5 @@ Key capabilities include:
 - **AI-Controlled Workers** – Background tasks such as health checks and memory sync run only with AI approval.
 
 In short, Arcanos acts as a comprehensive AI backend where the model plays an active role in system management while exposing a conventional API for clients.
+
+For strict GPT-5 reasoning from Python, the project includes a companion module described in [ARCANOS_PYTHON_README.md](../ARCANOS_PYTHON_README.md). It enforces the fine-tuned model and automatically alerts a maintenance assistant on any failure.

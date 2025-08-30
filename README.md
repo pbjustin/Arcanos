@@ -215,6 +215,11 @@ docker run -p 8080:8080 -e OPENAI_API_KEY=your-key arcanos
 - **[Database Guide](./docs/ai-guides/DATABASE_IMPLEMENTATION.md)** - Database setup and usage
 - **[Deployment Guide](./docs/deployment/DEPLOYMENT.md)** - Production deployment
 
+## 🐍 Python Module
+
+A companion Python package provides strict GPT-5 reasoning with enforced model usage and automatic maintenance alerts.
+See [ARCANOS_PYTHON_README.md](./ARCANOS_PYTHON_README.md) for installation, configuration, and testing instructions.
+
 ## 🔄 Changelog
 
 See [CHANGELOG.md](./docs/CHANGELOG.md) for detailed version history and recent updates.
