@@ -1,1 +1,23 @@
-{}
+{
+  "/memory": {
+    "file": "memory.js",
+    "description": "Database-backed key-value store",
+    "methods": [
+      "POST"
+    ]
+  },
+  "/ping": {
+    "file": "ping.js",
+    "description": "Simple ping response",
+    "methods": [
+      "POST"
+    ]
+  },
+  "/shell": {
+    "file": "shell.js",
+    "description": "Sandboxed shell executor",
+    "methods": [
+      "POST"
+    ]
+  }
+}

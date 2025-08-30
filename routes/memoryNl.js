@@ -13,7 +13,7 @@ router.post('/nl', async (req, res) => {
 
   try {
     const aiResponse = await openai.chat.completions.create({
-      model: 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH',
+      model: process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
       messages: [
         {
           role: 'system',
