@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const { dispatch, registry } = require('./architect');
 
 const app = express();
 app.use(express.json());
@@ -50,8 +51,19 @@ Object.entries(moduleRegistry).forEach(([route, modMeta]) => {
   });
 });
 
+// --- Dispatch Endpoint ---
+app.post('/ask', async (req, res) => {
+  try {
+    const { module, payload } = req.body;
+    const result = await dispatch(module, payload);
+    res.json({ status: 'success', module, data: result });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // --- Health & Registry Routes ---
-app.get('/registry', (req, res) => res.json(moduleRegistry));
+app.get('/registry', (req, res) => res.json({ routes: moduleRegistry, modules: registry() }));
 app.get('/health', (req, res) => res.send('OK'));
 
 // --- Railway Port Binding ---
