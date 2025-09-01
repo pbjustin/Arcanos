@@ -631,6 +631,62 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
 }
 
 /**
+ * Generates an image using the OpenAI Images API (DALL·E)
+ *
+ * @param prompt - Text prompt describing the desired image
+ * @param size - Image size (e.g., '256x256', '512x512', '1024x1024')
+ * @returns Object containing base64 image data and metadata
+ */
+type ImageSize =
+  | '256x256'
+  | '512x512'
+  | '1024x1024'
+  | '1536x1024'
+  | '1024x1536'
+  | '1792x1024'
+  | '1024x1792'
+  | 'auto';
+
+export async function generateImage(
+  input: string,
+  size: ImageSize = '1024x1024'
+): Promise<{ image: string; prompt: string; meta: { id: string; created: number }; error?: string }> {
+  const client = getOpenAIClient();
+  if (!client) {
+    const mock = generateMockResponse(input, 'image');
+    return { image: '', prompt: input, meta: mock.meta, error: mock.error };
+  }
+
+  // Use the fine-tuned default model to craft a detailed image prompt
+  let prompt = input;
+  try {
+    const { output } = await callOpenAI(getDefaultModel(), input, 256, false);
+    if (output && output.trim().length > 0) {
+      prompt = output.trim();
+    }
+  } catch (err) {
+    console.error('❌ Failed to generate prompt via fine-tuned model:', err);
+  }
+
+  const response = await client.images.generate({
+    model: 'gpt-image-1',
+    prompt,
+    size
+  });
+
+  const image = response.data?.[0]?.b64_json || '';
+
+  return {
+    image,
+    prompt,
+    meta: {
+      id: crypto.randomUUID(),
+      created: response.created
+    }
+  };
+}
+
+/**
  * Gets comprehensive OpenAI service health metrics including circuit breaker status
  */
 export const getOpenAIServiceHealth = () => {
@@ -659,4 +715,4 @@ export const getOpenAIServiceHealth = () => {
   };
 };
 
-export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict, getOpenAIServiceHealth };
+export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict, generateImage, getOpenAIServiceHealth };
