@@ -95,8 +95,15 @@ GET  /memory/list      # List all memory entries
 ### System Control
 ```bash
 GET  /workers/status   # Worker system status
-GET  /status          # Backend state information  
+GET  /status          # Backend state information
 POST /heartbeat       # System heartbeat (requires confirmation)
+```
+
+### Module Router
+```bash
+POST /query           # Dispatch to a module by name (e.g. tutor, gaming)
+POST /tutor           # Tutor module (requires identifier ARCANOS:TUTOR)
+POST /gaming          # Gaming module (requires identifier ARCANOS:GAMING)
 ```
 
 ### Example Usage
