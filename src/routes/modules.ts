@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
-import ArcanosTutor from '../modules/arcanos-tutor.js';
-import ArcanosGaming from '../modules/arcanos-gaming.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 interface ModuleDef {
   name: string;
@@ -27,10 +28,48 @@ function createHandler(mod: ModuleDef) {
 
 export function registerModule(route: string, mod: ModuleDef) {
   registry[route] = mod;
-  router.post(`/${route}`, createHandler(mod));
+  router.post(`/modules/${route}`, createHandler(mod));
 }
 
-registerModule('tutor', ArcanosTutor);
-registerModule('gaming', ArcanosGaming);
+async function loadModules() {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const modulesDir = path.resolve(__dirname, '../modules');
+  const files = await fs.readdir(modulesDir, { withFileTypes: true });
+
+  for (const file of files) {
+    if (!file.isFile()) continue;
+    if (!file.name.endsWith('.js') && !file.name.endsWith('.ts')) continue;
+
+    const route = file.name
+      .replace(/\.(ts|js)$/i, '')
+      .replace(/^arcanos-/, '');
+
+    const moduleUrl = pathToFileURL(path.join(modulesDir, file.name)).href;
+    try {
+      const mod: ModuleDef = (await import(moduleUrl)).default;
+      if (mod && mod.actions) {
+        registerModule(route, mod);
+      }
+    } catch (err) {
+      console.error(`Failed to load module ${file.name}:`, err);
+    }
+  }
+}
+
+await loadModules();
+
+router.post('/queryroute', async (req: Request, res: Response) => {
+  const { module: moduleName, action, payload } = req.body;
+  const mod = registry[moduleName];
+  if (!mod) {
+    return res.status(404).json({ error: 'Module not found' });
+  }
+  try {
+    const result = await mod.actions[action](payload);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 export default router;
