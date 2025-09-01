@@ -1,33 +1,29 @@
-# Development files
-src/
-*.ts
-tsconfig*.json
-.env.example
+# Build artifacts
+node_modules/
+dist/
+build/
 
-# Documentation
-*.md
-CUSTOM_GPT_INTEGRATION.md
-DEPLOYMENT.md
-QUICK_REFERENCE.md
+# Environment files
+.env
+.env.local
+.env.*.local
 
-# Development dependencies
-.github/
-
-# Temporary files
+# Logs and temp files
+logs/
+npm_logs/
 tmp/
 temp/
 *.log
 *.tmp
 
-# Version control
+# Version control and CI files
 .git/
+.github/
 
-# IDE files
+# IDE and OS files
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS files
 .DS_Store
 Thumbs.db
