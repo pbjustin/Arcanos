@@ -95,8 +95,14 @@ GET  /memory/list      # List all memory entries
 ### System Control
 ```bash
 GET  /workers/status   # Worker system status
-GET  /status          # Backend state information  
+GET  /status          # Backend state information
 POST /heartbeat       # System heartbeat (requires confirmation)
+```
+
+### Module Router
+```bash
+POST /modules/<module>  # Call a specific module (e.g., tutor, gaming)
+POST /queryroute        # Dispatch by module name and action
 ```
 
 ### Example Usage
