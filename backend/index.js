@@ -5,6 +5,7 @@ import queryFinetuneRouter from "./routes/query-finetune.js";
 import memoryRoutes from "./routes/memory.js";
 import gptRoutes from "./routes/gpt.js";
 import bookerRoutes from "./routes/booker.js";
+import chatRoutes from "./routes/chat.js";
 
 // Load API key from .env
 dotenv.config();
@@ -16,6 +17,7 @@ app.use(express.json());
 app.use("/query-finetune", queryFinetuneRouter);
 app.use("/memory", memoryRoutes);
 app.use("/api/arcanos-booker", bookerRoutes);
+app.use("/chat", chatRoutes);
 app.use("/", gptRoutes);
 
 // Initialize OpenAI client
