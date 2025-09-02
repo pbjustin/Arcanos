@@ -170,7 +170,23 @@ async function initializeTables(): Promise<void> {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
-    
+
+    // Saves table for kernel failsafe writes
+    `CREATE TABLE IF NOT EXISTS saves (
+      id SERIAL PRIMARY KEY,
+      module TEXT NOT NULL,
+      data TEXT NOT NULL,
+      timestamp BIGINT NOT NULL
+    )`,
+
+    // Audit logs table for event tracking
+    `CREATE TABLE IF NOT EXISTS audit_logs (
+      id SERIAL PRIMARY KEY,
+      event TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      timestamp BIGINT NOT NULL
+    )`,
+
     // Execution logs table for worker logs
     `CREATE TABLE IF NOT EXISTS execution_logs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -206,6 +222,8 @@ async function initializeTables(): Promise<void> {
     
     // Indexes for performance
     `CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key)`,
+    `CREATE INDEX IF NOT EXISTS idx_saves_module ON saves(module)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_logs_event ON audit_logs(event)`,
     `CREATE INDEX IF NOT EXISTS idx_execution_logs_worker_timestamp ON execution_logs(worker_id, timestamp DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_job_data_worker_status ON job_data(worker_id, status)`,
     `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`
