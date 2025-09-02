@@ -162,6 +162,22 @@ async function initializeTables(): Promise<void> {
   if (!pool) return;
 
   const queries = [
+    // Saves table for persistence operations
+    `CREATE TABLE IF NOT EXISTS saves (
+      id SERIAL PRIMARY KEY,
+      module TEXT NOT NULL,
+      data JSONB NOT NULL,
+      timestamp BIGINT NOT NULL
+    )`,
+
+    // Audit logs table for persistence and rollback tracking
+    `CREATE TABLE IF NOT EXISTS audit_logs (
+      id SERIAL PRIMARY KEY,
+      event TEXT NOT NULL,
+      payload JSONB,
+      timestamp BIGINT NOT NULL
+    )`,
+
     // Memory table for persistent worker memory
     `CREATE TABLE IF NOT EXISTS memory (
       id SERIAL PRIMARY KEY,
@@ -208,7 +224,9 @@ async function initializeTables(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key)`,
     `CREATE INDEX IF NOT EXISTS idx_execution_logs_worker_timestamp ON execution_logs(worker_id, timestamp DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_job_data_worker_status ON job_data(worker_id, status)`,
-    `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`
+    `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_saves_module_timestamp ON saves(module, timestamp)`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_logs_event_timestamp ON audit_logs(event, timestamp DESC)`
   ];
 
   try {
