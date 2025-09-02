@@ -62,6 +62,23 @@ npm run v3:test     # Run v3.0 tests
 - **Environment Support**: Reads OPENAI_API_KEY from environment variables
 - **Chat Log Persistence**: Stores chat conversations in PostgreSQL (Railway-compatible)
 
+#### Assistant API Integration
+
+The original backend now includes a minimal route for calling an OpenAI Assistant.
+
+- **Endpoint**: `POST /assistant/run`
+- **Body**:
+  ```json
+  { "prompt": "Hello", "assistantId": "asst_123" }
+  ```
+  If `assistantId` is omitted, the server uses the `OPENAI_ASSISTANT_ID` environment variable.
+- **Response**:
+  ```json
+  { "reply": "...", "threadId": "...", "runId": "..." }
+  ```
+
+This provides a starting point for integrating the Assistants API into your backend logic.
+
 ## Features Comparison
 
 | Feature | v4.0 | v3.0 | Original |
