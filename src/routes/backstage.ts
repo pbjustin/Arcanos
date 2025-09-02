@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import BackstageBooker, { MatchInput, Wrestler } from '../modules/backstage/booker.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 
@@ -19,6 +20,21 @@ router.post('/book-event', confirmGate, async (req: Request, res: Response) => {
   try {
     const eventID = await BackstageBooker.bookEvent(req.body);
     res.status(200).json({ success: true, eventID });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Generate and save storyline via custom GPT
+router.post('/book-gpt', confirmGate, async (req: Request, res: Response) => {
+  try {
+    const { prompt, key } = req.body as { prompt: string; key?: string };
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ success: false, error: 'prompt is required' });
+    }
+    const storyline = await BackstageBooker.generateBooking(prompt);
+    await BackstageBooker.saveStoryline(key || randomUUID(), storyline);
+    res.status(200).json({ success: true, storyline });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
