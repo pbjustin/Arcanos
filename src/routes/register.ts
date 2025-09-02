@@ -14,6 +14,7 @@ import backstageRouter from './backstage.js';
 import apiArcanosRouter from './api-arcanos.js';
 import sdkRouter from './sdk.js';
 import imageRouter from './image.js';
+import prAnalysisRouter from './pr-analysis.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -37,5 +38,6 @@ export function registerRoutes(app: Express): void {
   app.use('/backstage', backstageRouter);
   app.use('/sdk', sdkRouter);
   app.use('/api/arcanos', apiArcanosRouter);
+  app.use('/api/pr-analysis', prAnalysisRouter);
   app.use('/', imageRouter);
 }
