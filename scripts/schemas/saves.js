@@ -1,8 +1,8 @@
 export default {
   tableName: 'saves',
   definition: {
-    user_id: 'TEXT NOT NULL',
-    content: 'JSONB NOT NULL',
-    created_at: 'TIMESTAMP DEFAULT NOW()'
+    module: 'TEXT NOT NULL',
+    data: 'JSONB NOT NULL',
+    timestamp: 'BIGINT NOT NULL'
   }
 };
