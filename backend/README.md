@@ -60,13 +60,14 @@ npm run v3:test     # Run v3.0 tests
 - **Express Server**: Simple HTTP server with JSON middleware
 - **OpenAI Integration**: Direct integration with OpenAI Chat Completions API
 - **Environment Support**: Reads OPENAI_API_KEY from environment variables
+- **Chat Log Persistence**: Stores chat conversations in PostgreSQL (Railway-compatible)
 
 ## Features Comparison
 
 | Feature | v4.0 | v3.0 | Original |
 |---------|------|------|----------|
 | Module System | ✅ | ✅ | ❌ |
-| Database Support | ✅ (PostgreSQL/SQLite) | ✅ (PostgreSQL/SQLite) | ❌ |
+| Database Support | ✅ (PostgreSQL/SQLite) | ✅ (PostgreSQL/SQLite) | ✅ (PostgreSQL) |
 | Rate Limiting | ✅ | ✅ | ❌ |
 | Audit Logging | ✅ | ✅ | ❌ |
 | File Watching | ✅ | ✅ | ❌ |
@@ -163,6 +164,17 @@ The server will start on port 5000 (or the PORT environment variable).
 curl -X POST http://localhost:5000/arcanos \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Analyze this logic problem: If all cats are animals, and some animals are pets, what can we conclude about cats?"}'
+```
+
+**Chat Log Endpoints:**
+```bash
+# Store a message
+curl -X POST http://localhost:5000/chat/log \
+  -H "Content-Type: application/json" \
+  -d '{"conversation_id":"<uuid>","sender_id":"<uuid>","message_text":"Hello"}'
+
+# Retrieve conversation history
+curl http://localhost:5000/chat/log/<conversation_id>
 ```
 
 **Response Format:**
