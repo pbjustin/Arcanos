@@ -7,6 +7,7 @@
   "scripts": {
     "probe": "node scripts/probe.js",
     "db:init": "node scripts/db-init.js",
+    "db:patch": "node scripts/schema-sync.js",
     "start": "node dist/server.js",
     "dev": "tsc && node dist/server.js",
     "dev:watch": "tsc --watch",
