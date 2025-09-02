@@ -2,12 +2,15 @@ import express from "express";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 import fs from "fs";
+import { Client as NotionClient } from "@notionhq/client";
 
 dotenv.config();
 
 const router = express.Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const FINETUNE_MODEL = process.env.FINETUNE_MODEL;
+const notion = new NotionClient({ auth: process.env.NOTION_API_KEY });
+const WWE_DATABASE_ID = process.env.WWE_DATABASE_ID;
 
 // ---- Memory State ----
 let currentState = {
@@ -36,13 +39,25 @@ function rollback() {
   return { rolled_back: false, state: currentState };
 }
 
+// ---- Notion Roster Fetch ----
+async function fetchRoster() {
+  if (!WWE_DATABASE_ID) {
+    throw new Error("WWE_DATABASE_ID is not configured");
+  }
+  const response = await notion.databases.query({ database_id: WWE_DATABASE_ID });
+  return response.results.map(page => {
+    const title = page.properties?.Name?.title;
+    return title?.length > 0 ? title[0].plain_text : "Unnamed Entry";
+  });
+}
+
 // ---- Storyline Engine ----
-async function storylineEngine(query) {
+async function storylineEngine(query, roster) {
   const response = await openai.chat.completions.create({
     model: FINETUNE_MODEL,
     messages: [
       { role: "system", content: "ARCANOS:BOOKER storyline engine. Build WWE Universe feuds, arcs, and promos." },
-      { role: "user", content: query.prompt }
+      { role: "user", content: `${query.prompt}\nRoster: ${roster.join(', ')}` }
     ],
     temperature: 0.65
   });
@@ -92,7 +107,9 @@ async function handleBooking(query) {
   };
 
   try {
-    const storyline = await storylineEngine(query);
+    const roster = await fetchRoster();
+    auditLog.roster_size = roster.length;
+    const storyline = await storylineEngine(query, roster);
     auditLog.storyline_branch = storyline.branchId;
 
     const feudUpdate = feudTracker(query.superstars || [], storyline.outcome);
@@ -126,6 +143,15 @@ router.post("/", async (req, res) => {
     res.json(response);
   } catch (err) {
     res.status(500).json({ error: "Internal failure", details: err.message });
+  }
+});
+
+router.get("/roster", async (_req, res) => {
+  try {
+    const roster = await fetchRoster();
+    res.json({ count: roster.length, roster });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch roster", details: err.message });
   }
 });
 

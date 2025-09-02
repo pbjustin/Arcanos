@@ -41,6 +41,9 @@ curl -X POST http://localhost:8080/ask \
 curl -X POST http://localhost:8080/image \
   -H "Content-Type: application/json" \
   -d '{"prompt": "A sunset over the mountains"}'
+
+# Fetch WWE Universe roster from Notion
+curl http://localhost:8080/booker/roster
 ```
 
 ## ⚙️ Configuration
@@ -49,6 +52,7 @@ curl -X POST http://localhost:8080/image \
 ```bash
 OPENAI_API_KEY=your-openai-api-key-here
 NOTION_API_KEY=your-notion-api-key-here
+WWE_DATABASE_ID=your-notion-wwe-database-id
 AI_MODEL=ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH  # Default fine-tuned model
 DATABASE_URL=postgresql://user:pass@localhost:5432/arcanos  # Optional - uses in-memory if not set
 ```
