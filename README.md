@@ -98,6 +98,12 @@ GET  /memory/health    # Memory system status
 GET  /memory/list      # List all memory entries
 ```
 
+### Chat Logs
+```bash
+POST /chat/log                 # Persist a chat message
+GET  /chat/log/:conversationId # Retrieve messages for a conversation
+```
+
 ### System Control
 ```bash
 GET  /workers/status   # Worker system status
