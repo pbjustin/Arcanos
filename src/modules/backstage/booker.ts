@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { callOpenAI } from '../../services/openai.js';
+import { saveWithAuditCheck } from '../../services/persistenceManager.js';
 
 export interface Wrestler {
   name: string;
@@ -64,6 +66,33 @@ export async function updateRoster(wrestlers: Wrestler[]): Promise<Wrestler[]> {
 export async function trackStoryline(data: any): Promise<any[]> {
   storylines.push(data);
   return storylines;
+}
+
+/**
+ * Generates a booking storyline using a custom GPT model.
+ * Ensures the response contains no meta-data or self reflections.
+ */
+export async function generateBooking(prompt: string): Promise<string> {
+  const model = process.env.USER_GPT_ID;
+  if (!model) {
+    throw new Error('USER_GPT_ID not configured');
+  }
+  const instructions = `${prompt}\n\nRespond with the booking storyline only. Do not include meta commentary or self reflections.`;
+  const { output } = await callOpenAI(model, instructions, 512, false);
+  const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
+  return clean;
+}
+
+/**
+ * Saves a storyline to persistent storage without additional metadata.
+ */
+export async function saveStoryline(key: string, storyline: string): Promise<boolean> {
+  const data = { key, storyline };
+  return await saveWithAuditCheck(
+    'backstage_booker',
+    data,
+    d => typeof d.storyline === 'string' && d.storyline.trim().length > 0
+  );
 }
 
 /**
@@ -133,7 +162,9 @@ export const BackstageBooker = {
   bookEvent,
   updateRoster,
   trackStoryline,
-  simulateMatch
+  simulateMatch,
+  generateBooking,
+  saveStoryline
 };
 
 export default BackstageBooker;
