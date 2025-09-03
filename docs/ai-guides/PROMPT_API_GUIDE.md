@@ -301,6 +301,24 @@ curl -X POST http://localhost:8080/api/memory \
 curl -X GET http://localhost:8080/api/memory
 ```
 
+### `/api/openai/prompt` - Direct Model Access
+
+**Purpose**: Send a prompt directly to a specific model.
+**Parameters**:
+- `prompt` (string) - required user prompt
+- `model` (string, optional) - fine-tuned model ID. Defaults to `AI_MODEL` when omitted
+
+```bash
+curl -X POST http://localhost:8080/api/openai/prompt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Hello there",
+    "model": "ft:gpt-4.1-my-custom-model"
+  }'
+```
+
+If `model` is not provided, the server uses the `AI_MODEL` environment variable.
+
 ## Configuration & Setup
 
 ### Environment Variables
