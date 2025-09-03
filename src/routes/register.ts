@@ -15,6 +15,7 @@ import apiArcanosRouter from './api-arcanos.js';
 import sdkRouter from './sdk.js';
 import imageRouter from './image.js';
 import prAnalysisRouter from './pr-analysis.js';
+import openaiRouter from './openai.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -39,5 +40,6 @@ export function registerRoutes(app: Express): void {
   app.use('/sdk', sdkRouter);
   app.use('/api/arcanos', apiArcanosRouter);
   app.use('/api/pr-analysis', prAnalysisRouter);
+  app.use('/api/openai', openaiRouter);
   app.use('/', imageRouter);
 }
