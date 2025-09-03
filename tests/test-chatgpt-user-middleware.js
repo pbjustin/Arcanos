@@ -1,7 +1,30 @@
 #!/usr/bin/env node
 
 // Test for ChatGPT-User middleware functionality
-const { makeAxiosRequest, logTestResult } = require('./test-utils/common');
+const axios = require('axios');
+const BASE_URL = process.env.SERVER_URL || 'http://localhost:8080';
+
+// Simple test utilities since test-utils/common doesn't exist
+const makeAxiosRequest = async (method, path, options = {}) => {
+  try {
+    const response = await axios({
+      method,
+      url: `${BASE_URL}${path}`,
+      ...options
+    });
+    return { success: true, status: response.status, data: response.data, headers: response.headers };
+  } catch (error) {
+    return { success: false, status: error.response?.status, error: error.message };
+  }
+};
+
+const logTestResult = (name, result, expectSuccess = false) => {
+  if (result.success) {
+    console.log(`✅ ${name}: ${result.status}`);
+  } else {
+    console.log(`❌ ${name}: ${result.status} - ${result.error}`);
+  }
+};
 
 const CHATGPT_USER_AGENT = 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot';
 
@@ -46,8 +69,7 @@ async function testChatGPTUserMiddleware() {
     } else if (chatgptPostResult.status === 405) {
       console.log('✅ ChatGPT-User POST request properly denied with 405');
     } else {
-        console.log('❓ ChatGPT-User POST request failed with status:', error.response?.status || 'Network error');
-      }
+      console.log('❓ ChatGPT-User POST request failed with status:', chatgptPostResult.status || 'Network error');
     }
 
     console.log('\n5. Testing diagnostics endpoint...');
