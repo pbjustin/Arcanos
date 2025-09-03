@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { getOpenAIClient, createGPT5Reasoning } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
+import { logger } from '../utils/structuredLogging.js';
 
 // ✅ Environment setup
 process.env.RUN_WORKERS = "true"; // Enable workers
@@ -14,16 +15,42 @@ export const workerSettings = {
   model: process.env.WORKER_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote'
 };
 
-// Simple task queue based on EventEmitter
-class WorkerTaskQueue extends EventEmitter {
+// Simple task queue based on EventEmitter with retry & backoff
+export class WorkerTaskQueue extends EventEmitter {
   register(task: (input: string) => Promise<WorkerResult>): void {
     this.on('task', task);
   }
 
-  async dispatch(input: string): Promise<void> {
+  async dispatch(input: string, options: { attempts?: number; backoffMs?: number } = {}): Promise<void> {
     const listeners = this.listeners('task');
+    const { attempts = 3, backoffMs = 1000 } = options;
+
     for (const listener of listeners) {
-      await (listener as (input: string) => Promise<WorkerResult>)(input);
+      let attempt = 0;
+      let delay = backoffMs;
+      while (attempt < attempts) {
+        try {
+          await (listener as (input: string) => Promise<WorkerResult>)(input);
+          logger.info('[WORKER] Task completed', { input });
+          break;
+        } catch (err) {
+          attempt++;
+          if (attempt >= attempts) {
+            logger.error('[WORKER] Task failed after max retries', {
+              input,
+              error: err instanceof Error ? err.message : err
+            });
+          } else {
+            logger.warn(`[WORKER] Task failed - retrying in ${delay}ms`, {
+              attempt,
+              input,
+              error: err instanceof Error ? err.message : err
+            });
+            await new Promise(res => setTimeout(res, delay));
+            delay *= 2;
+          }
+        }
+      }
     }
   }
 }
