@@ -154,6 +154,63 @@ Most sensitive operations require explicit user confirmation via the `x-confirme
 - Primary AI endpoint (`/ask`)
 - Diagnostic endpoints (`/memory/health`, `/workers/status`)
 
+## 🚄 Railway Deployment
+
+Arcanos is optimized for deployment on Railway with automatic builds and health monitoring.
+
+### Quick Deploy to Railway
+
+1. **Fork this repository** to your GitHub account
+
+2. **Connect to Railway**:
+   - Go to [Railway.app](https://railway.app)
+   - Click "Deploy from GitHub repo"
+   - Select your forked repository
+
+3. **Configure Environment Variables**:
+   ```bash
+   OPENAI_API_KEY=your-openai-api-key-here
+   NODE_ENV=production
+   PORT=8080
+   AI_MODEL=ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH
+   ```
+
+4. **Optional Environment Variables**:
+   ```bash
+   DATABASE_URL=postgresql://user:pass@host:port/db  # Railway PostgreSQL
+   RUN_WORKERS=true
+   NOTION_API_KEY=your-notion-key                    # For WWE roster sync
+   WWE_DATABASE_ID=your-notion-database-id
+   ```
+
+### Railway Configuration Features
+
+- ✅ **Automatic Port Binding**: Uses Railway's `PORT` environment variable
+- ✅ **Health Monitoring**: `/health` endpoint for Railway health checks  
+- ✅ **Graceful Shutdown**: Proper SIGTERM/SIGINT handling
+- ✅ **Environment Detection**: Automatically detects Railway platform
+- ✅ **Build Optimization**: TypeScript compilation with dependency caching
+- ✅ **Log Aggregation**: Structured logging compatible with Railway logs
+
+### Monitoring & Debugging
+
+Railway health checks use the `/health` endpoint:
+```bash
+curl https://your-app.railway.app/health
+```
+
+Monitor logs through Railway dashboard or CLI:
+```bash
+railway logs --tail
+```
+
+### Production Considerations
+
+- Set `NODE_ENV=production` for optimal performance
+- Configure `DATABASE_URL` for persistent storage (Railway PostgreSQL recommended)
+- OpenAI API key is required - mock responses are used in development only
+- Workers are disabled by default on Railway - enable with `RUN_WORKERS=true`
+
 ## 🔧 Development
 
 ### Available Scripts
