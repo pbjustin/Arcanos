@@ -3,13 +3,30 @@
  * Focused on codebase integrity and platform alignment
  */
 
-import { spawn, exec } from 'child_process';
-import { promisify } from 'util';
+import { spawn, type SpawnOptions } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
-import { getOpenAIClient, callOpenAI } from './openai.js';
 
-const execAsync = promisify(exec);
+function sanitizeArgs(args: string[]): string[] {
+  return args.map(a => a.replace(/[^\w:/.-]/g, ''));
+}
+
+function runCommand(command: string, args: string[], options: SpawnOptions = {}): Promise<{ stdout: string; stderr: string; }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, sanitizeArgs(args), { ...options, shell: false });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout?.on('data', d => { stdout += d; });
+    proc.stderr?.on('data', d => { stderr += d; });
+    proc.on('close', code => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(stderr || `Command failed: ${command} ${args.join(' ')}`));
+      }
+    });
+  });
+}
 
 export interface PRAnalysisResult {
   status: '✅' | '❌' | '⚠️';
@@ -156,13 +173,13 @@ export class PRAssistant {
     try {
       // Check for overly complex function additions
       const functionPattern = /^\+.*(?:function|=>|\bconst\s+\w+\s*=)/gim;
-      const functions = diff.match(functionPattern) || [];
-      
+      const hasComplexFunctions = functionPattern.test(diff);
+
       // Look for very long functions (>50 lines in diff)
       const longFunctionPattern = /^\+.*(?:function|=>)[\s\S]*?(?=^[+-]|\n\n|$)/gim;
       const longFunctions = diff.match(longFunctionPattern) || [];
       
-      if (longFunctions.some(fn => fn.split('\n').length > 50)) {
+      if (hasComplexFunctions && longFunctions.some(fn => fn.split('\n').length > 50)) {
         issues.push('Large function additions detected');
         details.push('Consider breaking down complex functions into smaller utilities');
       }
@@ -359,21 +376,8 @@ export class PRAssistant {
         }
       }
 
-      // Check for Railway-specific configurations
-      const railwayConfigs = [
-        'PORT',
-        'NODE_ENV',
-        'RAILWAY_',
-        'OPENAI_API_KEY'
-      ];
-
-      let hasRailwayConfig = false;
-      for (const config of railwayConfigs) {
-        if (diff.includes(config)) {
-          hasRailwayConfig = true;
-          break;
-        }
-      }
+      // Check for Railway-specific configurations (informational only)
+      ['PORT', 'NODE_ENV', 'RAILWAY_', 'OPENAI_API_KEY'].some(config => diff.includes(config));
 
       // Check for proper port handling
       const portPattern = /port.*process\.env\.PORT/gi;
@@ -421,7 +425,7 @@ export class PRAssistant {
     try {
       // Run npm test
       console.log('Running npm test...');
-      const testResult = await execAsync('npm test', { 
+      const testResult = await runCommand('npm', ['test'], {
         cwd: this.workingDir,
         timeout: 120000 // 2 minutes timeout
       });
@@ -432,7 +436,7 @@ export class PRAssistant {
 
       // Run build to ensure TypeScript compilation
       console.log('Running npm run build...');
-      const buildResult = await execAsync('npm run build', {
+      const buildResult = await runCommand('npm', ['run', 'build'], {
         cwd: this.workingDir,
         timeout: 120000
       });
@@ -445,7 +449,7 @@ export class PRAssistant {
 
       // Check for linting if available
       try {
-        await execAsync('npm run lint', {
+        await runCommand('npm', ['run', 'lint'], {
           cwd: this.workingDir,
           timeout: 60000
         });
@@ -538,17 +542,25 @@ export class PRAssistant {
 
       // Final compilation check
       try {
-        const compileResult = await execAsync('npm run type-check || tsc --noEmit', {
+        await runCommand('npm', ['run', 'type-check'], {
           cwd: this.workingDir,
           timeout: 60000
         });
         details.push('✓ TypeScript type checking passed');
       } catch (error) {
-        return {
-          status: '❌',
-          message: 'TypeScript type errors detected',
-          details: ['Fix type errors before deployment']
-        };
+        try {
+          await runCommand('tsc', ['--noEmit'], {
+            cwd: this.workingDir,
+            timeout: 60000
+          });
+          details.push('✓ TypeScript type checking passed');
+        } catch {
+          return {
+            status: '❌',
+            message: 'TypeScript type errors detected',
+            details: ['Fix type errors before deployment']
+          };
+        }
       }
 
       return {

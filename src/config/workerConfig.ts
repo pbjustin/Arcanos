@@ -2,15 +2,15 @@ import { EventEmitter } from 'events';
 import { getOpenAIClient, createGPT5Reasoning } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 import { logger } from '../utils/structuredLogging.js';
+import { env } from '../utils/env.js';
 
 // ✅ Environment setup
-process.env.RUN_WORKERS = "true"; // Enable workers
 process.env.WORKER_COUNT = process.env.WORKER_COUNT || "4";
 process.env.WORKER_MODEL = "ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote"; // ARCANOS core
 
 // Environment configuration
 export const workerSettings = {
-  runWorkers: process.env.RUN_WORKERS === 'true' || process.env.RUN_WORKERS === '1',
+  runWorkers: env.RUN_WORKERS,
   count: parseInt(process.env.WORKER_COUNT || '4', 10),
   model: process.env.WORKER_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote'
 };
@@ -46,7 +46,11 @@ export class WorkerTaskQueue extends EventEmitter {
               input,
               error: err instanceof Error ? err.message : err
             });
-            await new Promise(res => setTimeout(res, delay));
+            await new Promise(res => {
+              const timeout = setTimeout(res, delay);
+              // Allow process to exit if this is the only pending timer
+              if (typeof timeout.unref === 'function') timeout.unref();
+            });
             delay *= 2;
           }
         }
@@ -111,7 +115,7 @@ export function startWorkers(): void {
   }
 }
 
-if (process.env.RUN_WORKERS === "true") {
+if (workerSettings.runWorkers) {
   startWorkers();
 }
 

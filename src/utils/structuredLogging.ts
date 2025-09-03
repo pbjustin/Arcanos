@@ -150,6 +150,16 @@ export const dbLogger = new StructuredLogger({ module: 'database' });
 export const aiLogger = new StructuredLogger({ module: 'openai' });
 export const workerLogger = new StructuredLogger({ module: 'worker' });
 
+// Helper to sanitize potentially sensitive fields before logging
+function sanitize(obj: Record<string, any>): Record<string, any> {
+  const SENSITIVE_KEYS = ['authorization', 'cookie', 'token', 'password'];
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    sanitized[key] = SENSITIVE_KEYS.includes(key.toLowerCase()) ? '[REDACTED]' : value;
+  }
+  return sanitized;
+}
+
 /**
  * Express middleware for request logging
  */
@@ -161,7 +171,7 @@ export function requestLoggingMiddleware(req: any, res: any, next: any) {
   req.requestId = requestId;
   
   // Create request-scoped logger
-  req.logger = apiLogger.child({ 
+  req.logger = apiLogger.child({
     requestId,
     method: req.method,
     path: req.path,
@@ -171,7 +181,11 @@ export function requestLoggingMiddleware(req: any, res: any, next: any) {
   // Log request start
   req.logger.info('Request started', {
     ip: req.ip,
-    query: Object.keys(req.query).length > 0 ? req.query : undefined
+    query: Object.keys(req.query).length > 0 ? sanitize(req.query) : undefined,
+    headers: sanitize({
+      authorization: req.headers['authorization'],
+      cookie: req.headers['cookie']
+    })
   });
 
   // Override res.json to log response
