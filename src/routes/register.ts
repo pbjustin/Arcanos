@@ -12,11 +12,14 @@ import statusRouter from './status.js';
 import siriRouter from './siri.js';
 import backstageRouter from './backstage.js';
 import apiArcanosRouter from './api-arcanos.js';
+import apiSimRouter from './api-sim.js';
+import apiMemoryRouter from './api-memory.js';
 import sdkRouter from './sdk.js';
 import imageRouter from './image.js';
 import prAnalysisRouter from './pr-analysis.js';
 import openaiRouter from './openai.js';
 import ragRouter from './rag.js';
+import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -40,8 +43,13 @@ export function registerRoutes(app: Express): void {
   app.use('/backstage', backstageRouter);
   app.use('/sdk', sdkRouter);
   app.use('/api/arcanos', apiArcanosRouter);
+  app.use('/api/sim', apiSimRouter);
+  app.use('/api/memory', apiMemoryRouter);
   app.use('/api/pr-analysis', prAnalysisRouter);
   app.use('/api/openai', openaiRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);
+  
+  // Add fallback test endpoint
+  app.get('/api/fallback/test', createFallbackTestRoute());
 }
