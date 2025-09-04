@@ -1,30 +1,64 @@
 import { callOpenAI, getDefaultModel } from '../services/openai.js';
+import { fetchAndClean } from '../services/webFetcher.js';
 
 const DEFAULT_TOKEN_LIMIT = parseInt(process.env.TUTOR_DEFAULT_TOKEN_LIMIT ?? '200', 10);
+
+const credibleHosts = new Set([
+  'nature.com',
+  'science.org',
+  'sciencedirect.com',
+  'jstor.org',
+  'ieeexplore.ieee.org',
+  'ncbi.nlm.nih.gov',
+]);
+
+function isCredibleSource(url: string) {
+  try {
+    const { hostname } = new URL(url);
+    const tldCredible =
+      hostname.endsWith('.edu') ||
+      hostname.endsWith('.ac.uk') ||
+      hostname.endsWith('.gov');
+    return tldCredible || credibleHosts.has(hostname);
+  } catch {
+    return false;
+  }
+}
 
 export interface TutorQuery {
   intent?: string;
   domain?: string;
   module?: string;
   payload?: any;
+  sourceUrl?: string;
 }
 
 // ---- Pattern Registry (Domains + Modular Instruction) ----
+function appendReference(prompt: string, ref?: string) {
+  return ref ? `${prompt}\n\nReference:\n${ref}` : prompt;
+}
+
 const patterns: Record<string, { id: string; modules: Record<string, (payload: any) => Promise<any> > }> = {
   memory: {
     id: 'pattern_1756454042132',
     modules: {
       explain: async (payload) =>
-        await chatWithOpenAI(`Explain memory logic for: ${payload.topic}`),
+        await chatWithOpenAI(
+          appendReference(`Explain memory logic for: ${payload.topic}`, payload.referenceText)
+        ),
       audit: async (payload) =>
-        await chatWithOpenAI(`Audit memory entry: ${payload.entry}`),
+        await chatWithOpenAI(
+          appendReference(`Audit memory entry: ${payload.entry}`, payload.referenceText)
+        ),
     },
   },
   logic: {
     id: 'pattern_1756453493854',
     modules: {
       clarify: async (payload) =>
-        await chatWithOpenAI(`Clarify logic flow: ${payload.flow}`),
+        await chatWithOpenAI(
+          appendReference(`Clarify logic flow: ${payload.flow}`, payload.referenceText)
+        ),
     },
   },
   default: {
@@ -32,7 +66,10 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
     modules: {
       generic: async (payload) =>
         await chatWithOpenAI(
-          `Process generic request as a professional tutor: ${JSON.stringify(payload)}`
+          appendReference(
+            `Process generic request as a professional tutor: ${JSON.stringify(payload)}`,
+            payload.referenceText
+          )
         ),
     },
   },
@@ -61,6 +98,19 @@ export async function handleTutorQuery(query: TutorQuery) {
     pattern_ref: null as string | null,
     fallback_invoked: false,
   };
+
+  if (query.sourceUrl) {
+    if (isCredibleSource(query.sourceUrl)) {
+      try {
+        const referenceText = await fetchAndClean(query.sourceUrl);
+        query.payload = { ...query.payload, referenceText };
+      } catch (err) {
+        console.error(`Failed to fetch reference from ${query.sourceUrl}:`, err);
+      }
+    } else {
+      console.warn(`Skipping non-credible source: ${query.sourceUrl}`);
+    }
+  }
 
   // 1. Dynamic Schema Binding
   const domain = patterns[query.domain ?? ''] ? (query.domain as string) : 'default';
