@@ -1,12 +1,10 @@
 // arcanosQueryGuard.ts
 // Unified domain guard + OpenAI SDK dispatcher with TypeScript support
 
-import OpenAI from "openai";
+import { getOpenAIClient } from "./openai.js";
 
-// ✅ Initialize OpenAI client (uses ARCANOS fine-tuned model)
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// ✅ Use centralized OpenAI client for consistency
+const openai = getOpenAIClient();
 
 // ----------------------
 // Domain / Category Types
@@ -56,6 +54,10 @@ export function guardQuery(query: QueryInput): GuardedQuery {
 // ----------------------
 export async function dispatchQuery(rawQuery: QueryInput): Promise<string> {
   const safeQuery = guardQuery(rawQuery);
+
+  if (!openai) {
+    throw new Error('OpenAI client not available');
+  }
 
   const response = await openai.chat.completions.create({
     model: "ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote", // ✅ Your fine-tuned ARCANOS model

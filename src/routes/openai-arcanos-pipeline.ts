@@ -1,11 +1,11 @@
 import express, { Request, Response } from 'express';
+import { getOpenAIClient } from '../services/openai.js';
 import OpenAI from 'openai';
 
 const router = express.Router();
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// Use centralized OpenAI client
+const client = getOpenAIClient();
 
 // Models
 const ARC_V2 = 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
@@ -15,6 +15,10 @@ const GPT35_SUBAGENT = 'gpt-3.5-turbo-0125';
 
 router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
   const { messages } = req.body as { messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] };
+
+  if (!client) {
+    return res.status(503).json({ error: 'OpenAI client not available' });
+  }
 
   try {
     // Step 1: First pass through ARCANOS fine-tuned model
