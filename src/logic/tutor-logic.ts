@@ -1,4 +1,9 @@
-import { callOpenAI, getDefaultModel } from '../services/openai.js';
+import {
+  callOpenAI,
+  getDefaultModel,
+  createCentralizedCompletion,
+} from '../services/openai.js';
+import { searchScholarly } from '../services/scholarlyFetcher.js';
 
 const DEFAULT_TOKEN_LIMIT = parseInt(process.env.TUTOR_DEFAULT_TOKEN_LIMIT ?? '200', 10);
 
@@ -18,6 +23,32 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
         await chatWithOpenAI(`Explain memory logic for: ${payload.topic}`),
       audit: async (payload) =>
         await chatWithOpenAI(`Audit memory entry: ${payload.entry}`),
+    },
+  },
+  research: {
+    id: 'pattern_1756454042135',
+    modules: {
+      findSources: async (payload) => {
+        const topic = payload.topic as string;
+        const sources = await searchScholarly(topic);
+        let summary = '';
+        if (sources.length > 0) {
+          const list = sources
+            .map(
+              (s, i) =>
+                `${i + 1}. ${s.title} (${s.year}) - ${s.journal}`,
+            )
+            .join('\n');
+          const completion: any = await createCentralizedCompletion([
+            {
+              role: 'user',
+              content: `Provide a concise summary of these academic sources about ${topic} and reference them:\n${list}`,
+            },
+          ]);
+          summary = completion?.choices?.[0]?.message?.content || '';
+        }
+        return { sources, summary };
+      },
     },
   },
   logic: {
