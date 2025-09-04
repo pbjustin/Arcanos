@@ -23,6 +23,27 @@ interface RouteResponse {
     content: string;
 }
 
+const ALLOWED_SOURCES = new Set(['audit', 'logic', 'validation', 'schema']);
+
+function validatePayload(payload: RouteRequestParams['payload']): void {
+    if (!payload || !Array.isArray(payload.messages)) {
+        throw new Error('Invalid payload: messages array required');
+    }
+    for (const msg of payload.messages) {
+        if (!['system', 'user', 'assistant'].includes(msg.role) || typeof msg.content !== 'string') {
+            throw new Error('Invalid message format');
+        }
+    }
+}
+
+async function safeCreate(params: any) {
+    try {
+        return await openai.chat.completions.create(params);
+    } catch (err) {
+        throw new Error(`OpenAI request failed: ${err instanceof Error ? err.message : err}`);
+    }
+}
+
 export async function routeRequest({ source, payload }: RouteRequestParams): Promise<RouteResponse> {
     let intermediate: any, finalOutput: any;
 
@@ -31,17 +52,23 @@ export async function routeRequest({ source, payload }: RouteRequestParams): Pro
         throw new Error('OpenAI client not initialized. Please check API key configuration.');
     }
 
+    if (!ALLOWED_SOURCES.has(source)) {
+        throw new Error(`Unsupported source: ${source}`);
+    }
+
+    validatePayload(payload);
+
     switch (source) {
         case "audit":
         case "logic":
             // Step 1: GPT-5 handles reasoning
-            intermediate = await openai.chat.completions.create({
+            intermediate = await safeCreate({
                 model: MODELS.GPT_5,
                 messages: payload.messages,
             });
 
             // Step 2: Always reroute through GPT-4.1
-            finalOutput = await openai.chat.completions.create({
+            finalOutput = await safeCreate({
                 model: MODELS.LIVE_GPT_4_1,
                 messages: [
                     { role: "system", content: "Format and validate GPT-5 output for end user." },
@@ -53,13 +80,13 @@ export async function routeRequest({ source, payload }: RouteRequestParams): Pro
         case "validation":
         case "schema":
             // Step 1: GPT-3.5 fine-tune handles structure
-            intermediate = await openai.chat.completions.create({
+            intermediate = await safeCreate({
                 model: MODELS.ARCANOS_V2,
                 messages: payload.messages,
             });
 
             // Step 2: Always loop back through GPT-4.1
-            finalOutput = await openai.chat.completions.create({
+            finalOutput = await safeCreate({
                 model: MODELS.LIVE_GPT_4_1,
                 messages: [
                     { role: "system", content: "Refine validation output for user delivery." },
@@ -69,8 +96,8 @@ export async function routeRequest({ source, payload }: RouteRequestParams): Pro
             break;
 
         default:
-            // Default = process through 4.1 directly
-            finalOutput = await openai.chat.completions.create({
+            // This should never occur due to ALLOWED_SOURCES check
+            finalOutput = await safeCreate({
                 model: MODELS.LIVE_GPT_4_1,
                 messages: payload.messages,
             });
