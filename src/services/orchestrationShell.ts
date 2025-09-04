@@ -5,6 +5,12 @@
  */
 
 import { getOpenAIClient, getGPT5Model, call_gpt5_strict } from './openai.js';
+import {
+  ISOLATE_MODULE_PROMPT,
+  PURGE_MEMORY_PROMPT,
+  REDEPLOY_SAFEGUARDS_PROMPT,
+  VERIFY_DEPLOYMENT_PROMPT
+} from '../config/orchestrationPrompts.js';
 import { logArcanosRouting } from '../utils/aiLogger.js';
 import { initializeGPT5Orchestration, type GPT5OrchestrationConfig } from './orchestrationInit.js';
 import { 
@@ -79,7 +85,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     logs.push("📦 Isolating orchestration shell...");
     console.log("📦 Isolating orchestration shell...");
     
-    await call_gpt5_strict("Isolate orchestration shell module to prevent interference with other services. Mark this session as ORCHESTRATION_ISOLATION mode.", {
+    await call_gpt5_strict(ISOLATE_MODULE_PROMPT, {
       max_completion_tokens: 100
     });
 
@@ -95,7 +101,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
       logs.push(`✅ Cleared ${memoryContext.relevantEntries.length} memory entries`);
     }
     
-    await call_gpt5_strict("Clear all cached context, persistent variables, and stored configs in orchestration shell. Reset internal state to factory defaults.", {
+    await call_gpt5_strict(PURGE_MEMORY_PROMPT, {
       max_completion_tokens: 100
     });
 
@@ -104,7 +110,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     logs.push("🚀 Redeploying with safeguards...");
     console.log("🚀 Redeploying with safeguards...");
     
-    await call_gpt5_strict("Redeploy orchestration shell module with fallback safeguards enabled. Apply 'rebirth-osiris' v1.04 configuration. Enable audit-safe mode and memory context restoration.", {
+    await call_gpt5_strict(REDEPLOY_SAFEGUARDS_PROMPT, {
       max_completion_tokens: 150
     });
 
@@ -113,7 +119,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     logs.push("✅ Verifying deployment and ARCANOS integration...");
     console.log("✅ Verifying deployment and ARCANOS integration...");
     
-    await call_gpt5_strict("Verify orchestration shell deployment. Check integration with ARCANOS Trinity pipeline, audit-safe constraints, and memory awareness systems. Report operational status.", {
+    await call_gpt5_strict(VERIFY_DEPLOYMENT_PROMPT, {
       max_completion_tokens: 200
     });
 
