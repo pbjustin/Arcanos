@@ -62,6 +62,8 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/arcanos  # Optional - uses in
 PORT=8080                    # Server port
 RUN_WORKERS=true            # Enable AI-controlled background workers
 NODE_ENV=development        # Environment mode
+BOOKER_TOKEN_LIMIT=512      # Token limit for backstage booking prompts
+TUTOR_DEFAULT_TOKEN_LIMIT=200  # Default token limit for tutor queries
 ```
 
 ## 🔧 Current Architecture
