@@ -5,7 +5,7 @@ import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db.js
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { requireField } from '../utils/validation.js';
 import { confirmGate } from '../middleware/confirmGate.js';
-import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
+import { createRateLimitMiddleware } from '../utils/security.js';
 
 const router = express.Router();
 
