@@ -10,6 +10,7 @@
 | `PORT` | `8080` | Server port (Railway auto-assigns) |
 | `OPENAI_API_KEY` | `[REQUIRED]` | OpenAI API authentication key |
 | `FINE_TUNED_MODEL` | `ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH` | Primary fine-tuned model ID (supports multiple variable names) |
+| `HRC_MODEL` | `[OPTIONAL]` | Override model ID for Hallucination-Resistant Core evaluation |
 | `RUN_WORKERS` | `true` | Enable AI-controlled CRON worker processes |
 | `WORKER_LOGIC` | `arcanos` | Default logic mode for background workers |
 | `SERVER_URL` | `https://arcanos-v2-production.up.railway.app` | Production server URL for health checks |
@@ -111,7 +112,7 @@ The CRON worker system runs when `RUN_WORKERS=true` and implements **AI-controll
 - `GET /api/model/info` - Detailed model metadata
 
 #### Validation & Processing
-- `POST /api/ask-hrc` - Message validation using HRCCore overlay system with resilience and fidelity scoring
+- `POST /api/ask-hrc` - Message validation using HRCCore overlay system with resilience and fidelity scoring powered by your fine-tuned OpenAI model (configurable via `HRC_MODEL`)
 
 ### Admin Router
 - Enabled when `ADMIN_KEY` is set in the environment

@@ -2,6 +2,17 @@
 
 All notable changes to the Arcanos Backend project will be documented in this file.
 
+## [1.4.2] - 2025-03-14
+
+### Changed
+- HRCCore now uses your fine-tuned model by default and allows override via `HRC_MODEL` environment variable
+
+## [1.4.1] - 2025-03-14
+
+### Added
+- Implemented Hallucination-Resistant Core with OpenAI SDK integration
+- Exposed `/api/ask-hrc` endpoint for resilience and fidelity scoring
+
 ## [1.4.0] - 2025-01-26
 
 ### Major Documentation Overhaul
