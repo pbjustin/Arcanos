@@ -38,7 +38,7 @@ function validatePayload(payload: RouteRequestParams['payload']): void {
 
 async function safeCreate(params: any) {
     try {
-        return await openai.chat.completions.create(params);
+        return await openai!.chat.completions.create(params);
     } catch (err) {
         throw new Error(`OpenAI request failed: ${err instanceof Error ? err.message : err}`);
     }
