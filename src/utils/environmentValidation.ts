@@ -73,7 +73,13 @@ const environmentChecks: EnvironmentCheck[] = [
     required: false,
     description: 'Railway deployment environment identifier',
     defaultValue: 'production',
-    validator: (value) => ['development', 'staging', 'production', 'preview'].includes(value.toLowerCase())
+    validator: (value) => {
+      const lower = value.toLowerCase();
+      return (
+        ['development', 'staging', 'production', 'preview'].includes(lower) ||
+        lower.startsWith('pr')
+      );
+    }
   },
   {
     name: 'DATABASE_URL',
