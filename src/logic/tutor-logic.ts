@@ -1,5 +1,7 @@
 import { callOpenAI, getDefaultModel } from '../services/openai.js';
 
+const DEFAULT_TOKEN_LIMIT = parseInt(process.env.TUTOR_DEFAULT_TOKEN_LIMIT ?? '200', 10);
+
 export interface TutorQuery {
   intent?: string;
   domain?: string;
@@ -39,9 +41,14 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
 // ---- Helper: OpenAI Chat Wrapper ----
 async function chatWithOpenAI(prompt: string, schema: { tokenLimit?: number } = {}) {
   const model = getDefaultModel();
-  const limit = schema.tokenLimit ?? 200;
-  const { output } = await callOpenAI(model, prompt, limit);
-  return output;
+  const limit = schema.tokenLimit ?? DEFAULT_TOKEN_LIMIT;
+  try {
+    const { output } = await callOpenAI(model, prompt, limit);
+    return output;
+  } catch (error) {
+    console.error('chatWithOpenAI error:', error);
+    throw new Error('Tutor query failed');
+  }
 }
 
 // ---- Core Tutor Handler ----

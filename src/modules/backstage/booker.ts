@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { callOpenAI } from '../../services/openai.js';
 import { saveWithAuditCheck } from '../../services/persistenceManager.js';
+import { BOOKING_INSTRUCTIONS_SUFFIX } from '../../config/prompts.js';
 
 export interface Wrestler {
   name: string;
@@ -77,10 +78,16 @@ export async function generateBooking(prompt: string): Promise<string> {
   if (!model) {
     throw new Error('USER_GPT_ID not configured');
   }
-  const instructions = `${prompt}\n\nRespond with the booking storyline only. Do not include meta commentary or self reflections.`;
-  const { output } = await callOpenAI(model, instructions, 512, false);
-  const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
-  return clean;
+  const tokenLimit = parseInt(process.env.BOOKER_TOKEN_LIMIT ?? '512', 10);
+  const instructions = `${prompt}${BOOKING_INSTRUCTIONS_SUFFIX}`;
+  try {
+    const { output } = await callOpenAI(model, instructions, tokenLimit, false);
+    const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
+    return clean;
+  } catch (error) {
+    console.error('Failed to generate booking storyline:', error);
+    throw new Error('Booking generation failed');
+  }
 }
 
 /**
