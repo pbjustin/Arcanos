@@ -4,6 +4,7 @@ import config from './config/index.js';
 import { requestLoggingMiddleware } from './utils/structuredLogging.js';
 import { setupDiagnostics } from './diagnostics.js';
 import { registerRoutes } from './routes/register.js';
+import { initOpenAI } from './init-openai.js';
 
 /**
  * Creates and configures the Express application.
@@ -16,6 +17,11 @@ export function createApp(): Express {
   app.use(express.urlencoded({ extended: true }));
 
   app.use(requestLoggingMiddleware);
+  initOpenAI(app);
+  Object.defineProperty(app.locals, 'openai', {
+    writable: false,
+    configurable: false,
+  });
 
   setupDiagnostics(app);
   registerRoutes(app);
