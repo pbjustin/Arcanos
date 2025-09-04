@@ -282,7 +282,7 @@ export function validateRailwayEnvironment(): ValidationResult {
  */
 export function createStartupReport(): string {
   const envResult = validateEnvironment();
-  const railwayResult = validateRailwayEnvironment();
+  const _railwayResult = validateRailwayEnvironment();
   const envInfo = getEnvironmentInfo();
 
   const report = [
