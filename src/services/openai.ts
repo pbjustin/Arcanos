@@ -151,11 +151,13 @@ const initializeOpenAI = (): OpenAI | null => {
     }
 
     openai = new OpenAI({ apiKey, timeout: API_TIMEOUT_MS });
-    defaultModel = process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
+    // Support FINETUNED_MODEL_ID for Railway compatibility, fallback to AI_MODEL
+    defaultModel = process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
     
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
     console.log(`🔄 Fallback Model: gpt-4`);
+    console.log('🎯 ARCANOS routing active - all calls will use fine-tuned model by default');
     
     return openai;
   } catch (error) {
@@ -175,11 +177,12 @@ export const getOpenAIClient = (): OpenAI | null => {
 
 /**
  * Gets the configured default AI model (typically fine-tuned)
+ * Supports both FINETUNED_MODEL_ID and AI_MODEL for Railway compatibility
  * 
  * @returns Model identifier string
  */
 export const getDefaultModel = (): string => {
-  return defaultModel || process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
+  return defaultModel || process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
 };
 
 /**
@@ -715,4 +718,71 @@ export const getOpenAIServiceHealth = () => {
   };
 };
 
-export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict, generateImage, getOpenAIServiceHealth };
+/**
+ * Centralized OpenAI completion wrapper that ensures all calls go through 
+ * the fine-tuned model by default with ARCANOS routing system message.
+ * This is the main function that should be used for all AI completions.
+ * 
+ * @param messages - Array of chat completion messages
+ * @param options - Optional configuration overrides
+ * @returns Promise resolving to OpenAI chat completion response or stream
+ */
+export async function createCentralizedCompletion(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  options: {
+    model?: string;
+    max_tokens?: number;
+    temperature?: number;
+    stream?: boolean;
+    top_p?: number;
+    frequency_penalty?: number;
+    presence_penalty?: number;
+  } = {}
+): Promise<OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
+  const client = getOpenAIClient();
+  if (!client) {
+    throw new Error('OpenAI client not initialized - API key required');
+  }
+
+  // Use fine-tuned model by default, allow override via options.model
+  const model = options.model || getDefaultModel();
+  
+  // Prepend ARCANOS routing system message to ensure proper handling
+  const arcanosMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: 'system', content: 'ARCANOS routing active' },
+    ...messages
+  ];
+
+  console.log(`🎯 ARCANOS centralized routing - Model: ${model}`);
+
+  // Prepare request with token parameters for the specific model
+  const tokenParams = getTokenParameter(model, options.max_tokens || 4096);
+  
+  const requestPayload = {
+    model,
+    messages: arcanosMessages,
+    temperature: options.temperature ?? 0.7,
+    top_p: options.top_p ?? 1,
+    frequency_penalty: options.frequency_penalty ?? 0,
+    presence_penalty: options.presence_penalty ?? 0,
+    stream: options.stream ?? false,
+    ...tokenParams
+  };
+
+  try {
+    const response = await client.chat.completions.create(requestPayload);
+    
+    if (!options.stream && 'usage' in response) {
+      console.log(`✅ ARCANOS completion successful - Model: ${model}, Tokens: ${response.usage?.total_tokens || 'unknown'}`);
+    } else {
+      console.log(`✅ ARCANOS streaming completion started - Model: ${model}`);
+    }
+    
+    return response;
+  } catch (error) {
+    console.error(`❌ ARCANOS completion failed - Model: ${model}:`, error);
+    throw error;
+  }
+}
+
+export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict, generateImage, getOpenAIServiceHealth, createCentralizedCompletion };
