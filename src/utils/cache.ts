@@ -137,6 +137,9 @@ export class MemoryCache<T = any> {
     this.cleanupTimer = setInterval(() => {
       this.cleanup();
     }, this.options.cleanupIntervalMs);
+    if (typeof this.cleanupTimer.unref === 'function') {
+      this.cleanupTimer.unref();
+    }
   }
 
   destroy(): void {

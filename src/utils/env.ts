@@ -98,7 +98,7 @@ export const env = {
   DATABASE_URL: Environment.get('DATABASE_URL'),
   
   // Worker Configuration
-  RUN_WORKERS: Environment.getBoolean('RUN_WORKERS', true),
+  RUN_WORKERS: Environment.isTest() ? false : Environment.getBoolean('RUN_WORKERS', true),
   WORKER_API_TIMEOUT_MS: Environment.getNumber('WORKER_API_TIMEOUT_MS', 60000),
   
   // Logging Configuration
