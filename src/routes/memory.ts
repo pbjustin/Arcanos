@@ -5,6 +5,7 @@ import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db.js
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { requireField } from '../utils/validation.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import { sessionMemoryController } from '../controllers/sessionMemoryController.js';
 
 const router = express.Router();
 
@@ -109,5 +110,21 @@ router.get("/memory/view", asyncHandler(async (_: Request, res: Response) => {
     res.status(500).send("❌ Cannot read memory: " + errorMessage);
   }
 }));
+
+// Session-based conversation memory
+router.post(
+  "/memory/dual/save",
+  asyncHandler(sessionMemoryController.saveDual)
+);
+
+router.get(
+  "/memory/dual/:sessionId/core",
+  asyncHandler(sessionMemoryController.getCore)
+);
+
+router.get(
+  "/memory/dual/:sessionId/meta",
+  asyncHandler(sessionMemoryController.getMeta)
+);
 
 export default router;
