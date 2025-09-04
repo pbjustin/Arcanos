@@ -59,6 +59,23 @@ const environmentChecks: EnvironmentCheck[] = [
     validator: (value) => value.includes('gpt') || value.includes('ft:')
   },
   {
+    name: 'FINETUNED_MODEL_ID',
+    required: false,
+    description: 'Alias for AI_MODEL - OpenAI fine-tuned model identifier for Railway compatibility',
+    suggestions: [
+      'This is an alias for AI_MODEL for Railway deployment compatibility',
+      'Use your fine-tuned model ID: ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
+      'If both AI_MODEL and FINETUNED_MODEL_ID are set, FINETUNED_MODEL_ID takes precedence'
+    ]
+  },
+  {
+    name: 'RAILWAY_ENVIRONMENT',
+    required: false,
+    description: 'Railway deployment environment identifier',
+    defaultValue: 'production',
+    validator: (value) => ['development', 'staging', 'production', 'preview'].includes(value.toLowerCase())
+  },
+  {
     name: 'DATABASE_URL',
     required: false, // Optional for in-memory fallback
     description: 'PostgreSQL connection string',

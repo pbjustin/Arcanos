@@ -12,7 +12,35 @@
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "env": {
-      "RUN_WORKERS": "false"
+      "RUN_WORKERS": "false",
+      "RAILWAY_ENVIRONMENT": "production",
+      "PORT": "${PORT}"
+    }
+  },
+  "environments": {
+    "production": {
+      "variables": {
+        "NODE_ENV": "production",
+        "RAILWAY_ENVIRONMENT": "production",
+        "RUN_WORKERS": "false"
+      }
+    },
+    "staging": {
+      "variables": {
+        "NODE_ENV": "staging",
+        "RAILWAY_ENVIRONMENT": "staging",
+        "RUN_WORKERS": "false"
+      }
+    }
+  },
+  "services": {
+    "arcanos-api": {
+      "build": {
+        "buildCommand": "npm run build"
+      },
+      "deploy": {
+        "startCommand": "npm run start"
+      }
     }
   },
   "root": "."
