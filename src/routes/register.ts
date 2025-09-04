@@ -20,6 +20,7 @@ import imageRouter from './image.js';
 import prAnalysisRouter from './pr-analysis.js';
 import openaiRouter from './openai.js';
 import ragRouter from './rag.js';
+import hrcRouter from './hrc.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 
 /**
@@ -49,6 +50,7 @@ export function registerRoutes(app: Express): void {
   app.use('/api/memory', apiMemoryRouter);
   app.use('/api/pr-analysis', prAnalysisRouter);
   app.use('/api/openai', openaiRouter);
+  app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);
   
