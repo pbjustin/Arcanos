@@ -105,6 +105,34 @@ describe('OpenAI SDK Integration Tests', () => {
         });
       }
     });
+
+    it('should support FINE_TUNED_MODEL_ID alias for model selection', async () => {
+      const originalModels = {
+        FINETUNED_MODEL_ID: process.env.FINETUNED_MODEL_ID,
+        FINE_TUNED_MODEL_ID: process.env.FINE_TUNED_MODEL_ID,
+        AI_MODEL: process.env.AI_MODEL
+      };
+
+      delete process.env.FINETUNED_MODEL_ID;
+      process.env.FINE_TUNED_MODEL_ID = 'ft:alias-model';
+      process.env.AI_MODEL = 'gpt-3.5-turbo';
+
+      try {
+        jest.resetModules();
+        const { getDefaultModel } = await import('../src/services/openai.js');
+
+        const defaultModel = getDefaultModel();
+        expect(defaultModel).toBe('ft:alias-model');
+      } finally {
+        Object.entries(originalModels).forEach(([key, value]) => {
+          if (value) {
+            process.env[key] = value;
+          } else {
+            delete process.env[key];
+          }
+        });
+      }
+    });
   });
 
   describe('Mock Response Generation', () => {

@@ -33,10 +33,17 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
     let bestScore = -Infinity;
 
     for (const sess of sessions) {
-      const metaText = `${sess.metadata?.summary || ''} ${sess.metadata?.topic || ''} ${(sess.metadata?.tags || []).join(' ')}`;
+      const metaPieces = [
+        sess.metadata?.summary,
+        sess.metadata?.topic,
+        ...(sess.metadata?.tags || []),
+        ...(Array.isArray(sess.conversations_core)
+          ? sess.conversations_core.map((m: any) => m.content || '')
+          : [])
+      ].filter(Boolean);
       const metaEmbedding = await openai.embeddings.create({
         model: 'text-embedding-3-small',
-        input: metaText,
+        input: metaPieces.join(' '),
       });
 
       const score = cosineSimilarity(queryVector, metaEmbedding.data[0].embedding);

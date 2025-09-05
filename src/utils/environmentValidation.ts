@@ -21,6 +21,12 @@ export interface ValidationResult {
   suggestions: string[];
 }
 
+// Support legacy environment variable naming
+// Map FINE_TUNED_MODEL_ID -> FINETUNED_MODEL_ID for backward compatibility
+if (process.env.FINE_TUNED_MODEL_ID && !process.env.FINETUNED_MODEL_ID) {
+  process.env.FINETUNED_MODEL_ID = process.env.FINE_TUNED_MODEL_ID;
+}
+
 // Environment variable definitions
 const environmentChecks: EnvironmentCheck[] = [
   {

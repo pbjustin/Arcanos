@@ -151,8 +151,12 @@ const initializeOpenAI = (): OpenAI | null => {
     }
 
     openai = new OpenAI({ apiKey, timeout: API_TIMEOUT_MS });
-    // Support FINETUNED_MODEL_ID for Railway compatibility, fallback to AI_MODEL
-    defaultModel = process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
+    // Support FINETUNED_MODEL_ID (and legacy FINE_TUNED_MODEL_ID) for Railway compatibility, fallback to AI_MODEL
+    defaultModel =
+      process.env.FINETUNED_MODEL_ID ||
+      process.env.FINE_TUNED_MODEL_ID ||
+      process.env.AI_MODEL ||
+      'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
     
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
@@ -182,7 +186,13 @@ export const getOpenAIClient = (): OpenAI | null => {
  * @returns Model identifier string
  */
 export const getDefaultModel = (): string => {
-  return defaultModel || process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
+  return (
+    defaultModel ||
+    process.env.FINETUNED_MODEL_ID ||
+    process.env.FINE_TUNED_MODEL_ID ||
+    process.env.AI_MODEL ||
+    'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote'
+  );
 };
 
 /**
