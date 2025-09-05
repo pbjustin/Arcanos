@@ -10,7 +10,7 @@
  * Compatible with OpenAI SDK (chat/completions).
  */
 
-import { getOpenAIClient, generateMockResponse } from './openai.js';
+import { getOpenAIClient } from './openai.js';
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
 

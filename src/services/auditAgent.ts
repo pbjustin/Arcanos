@@ -51,7 +51,7 @@ const auditAgent = {
 };
 
 // Replace with your real registry check
-function checkRegistry(name: string): boolean {
+function checkRegistry(_name: string): boolean {
   // This would integrate with the actual module registry system
   return false;
 }
