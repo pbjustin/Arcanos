@@ -350,21 +350,22 @@ export async function runARCANOS(
   let processedInput = userInput;
   
   if (delegationCheck.shouldDelegate) {
-    console.log(`[🧠 ARCANOS] Secure reasoning delegation required: ${delegationCheck.reason}`);
-    
+    const reason = delegationCheck.reason ?? 'unspecified reason';
+    console.log(`[🧠 ARCANOS] Secure reasoning delegation required: ${reason}`);
+
     try {
       // Delegate to secure reasoning engine and get processed prompt
-      processedInput = await delegateToSecureReasoning(client, userInput, delegationCheck.reason!, sessionId);
+      processedInput = await delegateToSecureReasoning(client, userInput, reason, sessionId);
       reasoningDelegation = {
         used: true,
-        reason: delegationCheck.reason,
+        reason,
         delegatedQuery: userInput
       };
-      
+
       // Store the delegation decision for future learning
       storeDecision(
         'Secure Reasoning Delegation',
-        delegationCheck.reason!,
+        reason,
         `Input: ${userInput.substring(0, 100)}...`,
         sessionId
       );
