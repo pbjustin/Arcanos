@@ -261,8 +261,8 @@ export async function generatePR(options: PROptions): Promise<PRResult> {
     forcePush = false,
     verifyLock = true,
     branchName,
-    commitMessage,
-    patch
+    commitMessage: _commitMessage,
+    patch: _patch
   } = options;
 
   // If verifyLock is false, bypass any memory locking (stateless operation)
