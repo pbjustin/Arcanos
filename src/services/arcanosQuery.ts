@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import { getOpenAIClient } from './openai.js';
 
 // Correct fine-tuned model ID
