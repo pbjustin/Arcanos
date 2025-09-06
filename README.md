@@ -102,6 +102,17 @@ POST /memory/save      # Store memory entries (requires confirmation)
 GET  /memory/load      # Retrieve memory by key
 GET  /memory/health    # Memory system status
 GET  /memory/list      # List all memory entries
+POST /memory/dual/save # Store conversation + metadata
+GET  /memory/dual/:sessionId      # Retrieve conversation messages
+GET  /memory/dual/:sessionId/meta # Retrieve session metadata
+```
+
+Messages can be saved by passing either a `{ role, content }` object or a plain string (defaults to role `user`):
+
+```bash
+curl -X POST http://localhost:8080/memory/dual/save \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"123","message":"Hello there"}'
 ```
 
 ### Chat Logs
