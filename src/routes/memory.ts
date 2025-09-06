@@ -127,4 +127,10 @@ router.get(
   asyncHandler(sessionMemoryController.getMeta)
 );
 
+// Default to core conversation when no channel specified
+router.get(
+  "/memory/dual/:sessionId",
+  asyncHandler(sessionMemoryController.getCore)
+);
+
 export default router;
