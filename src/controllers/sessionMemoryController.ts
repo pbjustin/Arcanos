@@ -10,14 +10,22 @@ export const sessionMemoryController = {
       return;
     }
 
-    const clean = {
-      role: message.role,
-      content: (message.content || '').trim(),
-    };
+    const clean =
+      typeof message === 'string'
+        ? { role: 'user', content: message.trim() }
+        : {
+            role: message.role || 'user',
+            content: (message.content || '').trim(),
+          };
+
+    if (!clean.content) {
+      res.status(400).json({ error: 'message content is required' });
+      return;
+    }
 
     const meta = {
-      tokens: message.tokens || 0,
-      audit_tag: message.tag || 'unspecified',
+      tokens: typeof message === 'object' && message.tokens ? message.tokens : 0,
+      audit_tag: typeof message === 'object' && message.tag ? message.tag : 'unspecified',
       timestamp: Date.now(),
     };
 
