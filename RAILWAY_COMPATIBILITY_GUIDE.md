@@ -13,21 +13,27 @@ All AI requests now route through `createCentralizedCompletion()` which:
 - **Supports overrides**: Allow custom model via `options.model`
 - **Environment flexibility**: Supports both `FINETUNED_MODEL_ID` and `AI_MODEL`
 
-### 2. RESTful API Structure
+### 2. Lightweight Runtime Memory Isolation
+To prevent metadata from leaking into conversation context, a simple in-process
+runtime (`openaiRuntime.ts`) now stores messages and metadata in separate
+scopes. This mimics the OpenAI Runtime’s memory behaviour while remaining
+compatible with Railway deployments.
+
+### 3. RESTful API Structure
 ```
-/api/arcanos     - Core ARCANOS functionality  
+/api/arcanos     - Core ARCANOS functionality
 /api/memory      - Memory management with JSON responses
 /api/sim         - Simulation scenarios
 /api/fallback    - Fallback system testing
 ```
 
-### 3. Railway Deployment Ready
+### 4. Railway Deployment Ready
 - **Port binding**: Configured for Railway's PORT environment variable
 - **Environment support**: Added RAILWAY_ENVIRONMENT variable
 - **Structured config**: Updated railway.json with environments and services
 - **Health checks**: Built-in health monitoring for Railway observability
 
-### 4. Enhanced Security & Resilience
+### 5. Enhanced Security & Resilience
 - **Rate limiting**: 50-100 requests per 15 minutes per endpoint
 - **Input validation**: Comprehensive sanitization and validation
 - **Circuit breaker**: Exponential backoff for API calls
