@@ -3,6 +3,7 @@ import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { CircuitBreaker, ExponentialBackoff } from '../utils/circuitBreaker.js';
 import { responseCache } from '../utils/cache.js';
 import crypto from 'crypto';
+import { runtime } from './openaiRuntime.js';
 
 let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
@@ -762,6 +763,11 @@ export async function createCentralizedCompletion(
     { role: 'system', content: 'ARCANOS routing active' },
     ...messages
   ];
+
+  // Record the conversation and model metadata in the lightweight runtime
+  const sessionId = runtime.createSession();
+  runtime.addMessages(sessionId, arcanosMessages);
+  runtime.setMetadata(sessionId, { model });
 
   console.log(`🎯 ARCANOS centralized routing - Model: ${model}`);
 
