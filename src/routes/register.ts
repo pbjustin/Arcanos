@@ -54,6 +54,14 @@ export function registerRoutes(app: Express): void {
   app.use('/', imageRouter);
   app.use('/', ragRouter);
   
-  // Add fallback test endpoint
+  // Add test endpoints for Railway health checks
+  app.get('/api/test', (_: Request, res: Response) => {
+    res.json({ 
+      status: 'ok', 
+      timestamp: new Date().toISOString(),
+      service: 'ARCANOS',
+      version: '1.0.0'
+    });
+  });
   app.get('/api/fallback/test', createFallbackTestRoute());
 }
