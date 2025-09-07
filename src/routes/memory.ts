@@ -21,24 +21,30 @@ router.get("/memory/health", (_: Request, res: Response) => {
 
 // Save memory endpoint
 router.post("/memory/save", confirmGate, asyncHandler(async (req: Request, res: Response) => {
-  const { key, value } = req.body;
+  const { key, value, includeMeta } = req.body;
 
   if (!requireField(res, key, 'key') || !requireField(res, value, 'value')) {
     return;
   }
-  
+
   const result = await saveMemory(key, value);
-  res.json({
+
+  const response: any = {
     success: true,
-    key,
-    timestamp: result.updated_at,
     message: 'Memory saved successfully'
-  });
+  };
+
+  if (includeMeta === true) {
+    response.key = key;
+    response.timestamp = result.updated_at;
+  }
+
+  res.json(response);
 }));
 
 // Load memory endpoint
 router.get("/memory/load", asyncHandler(async (req: Request, res: Response) => {
-  const { key } = req.query;
+  const { key, includeMeta } = req.query;
   if (!requireField(res, key, 'key') || typeof key !== 'string') {
     return;
   }
@@ -51,21 +57,27 @@ router.get("/memory/load", asyncHandler(async (req: Request, res: Response) => {
     });
   }
 
-  res.json({
+  const response: any = {
     success: true,
-    key,
     value,
     message: 'Memory loaded successfully'
-  });
+  };
+
+  // Only include metadata when explicitly requested
+  if (includeMeta === 'true') {
+    response.key = key;
+  }
+
+  res.json(response);
 }));
 
 // Delete memory endpoint
 router.delete("/memory/delete", confirmGate, asyncHandler(async (req: Request, res: Response) => {
-  const { key } = req.body;
+  const { key, includeMeta } = req.body;
   if (!requireField(res, key, 'key')) {
     return;
   }
-  
+
   const deleted = await deleteMemory(key);
 
   if (!deleted) {
@@ -75,26 +87,36 @@ router.delete("/memory/delete", confirmGate, asyncHandler(async (req: Request, r
     });
   }
 
-  res.json({
+  const response: any = {
     success: true,
-    key,
     message: 'Memory deleted successfully'
-  });
+  };
+
+  if (includeMeta === true) {
+    response.key = key;
+  }
+
+  res.json(response);
 }));
 
 // List recent memory entries
 router.get("/memory/list", asyncHandler(async (req: Request, res: Response) => {
   const limit = parseInt(req.query.limit as string) || 50;
-  
+  const includeMeta = req.query.includeMeta === 'true';
+
   const result = await query(
     'SELECT key, value, created_at, updated_at FROM memory ORDER BY updated_at DESC LIMIT $1',
     [limit]
   );
 
+  const entries = includeMeta
+    ? result.rows
+    : result.rows.map((row: any) => row.value);
+
   res.json({
     success: true,
-    count: result.rows.length,
-    entries: result.rows,
+    count: entries.length,
+    entries,
     message: 'Memory entries retrieved successfully'
   });
 }));
