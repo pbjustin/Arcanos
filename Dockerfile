@@ -12,7 +12,8 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copy package files for dependency installation
-COPY package*.json ./
+# Include npm-shrinkwrap.json so `npm ci` has a complete lockfile
+COPY package*.json npm-shrinkwrap.json ./
 
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --only=production --no-audit --no-fund
@@ -21,8 +22,8 @@ RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --only=production --no-audit --
 COPY src/ ./src/
 COPY tsconfig.json ./
 
-# Install dev dependencies and build
-RUN npm install --no-audit --no-fund && npm run build
+# Install dev dependencies (override NODE_ENV) and build
+RUN npm install --include=dev --no-audit --no-fund && npm run build
 
 # Clean up dev dependencies after build
 RUN npm prune --production
