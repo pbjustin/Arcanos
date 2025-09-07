@@ -14,15 +14,15 @@ WORKDIR /app
 # Copy package files for dependency installation
 COPY package*.json ./
 
-# Install dependencies with memory optimization
-RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --only=production --no-audit --no-fund
+# Install all dependencies then build
+RUN npm ci --no-audit --no-fund
 
 # Copy source code and build configuration
 COPY src/ ./src/
 COPY tsconfig.json ./
 
-# Install dev dependencies and build
-RUN npm install --no-audit --no-fund && npm run build
+# Build with increased memory limit
+RUN NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
 # Clean up dev dependencies after build
 RUN npm prune --production
