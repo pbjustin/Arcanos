@@ -53,9 +53,11 @@ console.log(`Redactions: ${result.redactionsApplied.join(', ')}`);
 ### Secure Reasoning Analysis
 
 ```javascript
+import { getOpenAIClient } from './services/openai.js';
 import { executeSecureReasoning } from './services/secureReasoningEngine.js';
 
-const analysis = await executeSecureReasoning(openaiClient, {
+const openai = getOpenAIClient();
+const analysis = await executeSecureReasoning(openai, {
   userInput: 'How do I implement secure API authentication?',
   sessionId: 'user-session-123'
 });
