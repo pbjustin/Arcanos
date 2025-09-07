@@ -25,6 +25,7 @@ compatible with Railway deployments.
 /api/memory      - Memory management with JSON responses
 /api/sim         - Simulation scenarios
 /api/fallback    - Fallback system testing
+/api/openai/prompt - Frontend proxy for centralized AI calls
 ```
 
 ### 4. Railway Deployment Ready
@@ -66,6 +67,11 @@ curl -X POST http://localhost:8080/api/sim \
 curl -X POST http://localhost:8080/api/memory/save \
   -H "Content-Type: application/json" \
   -d '{"key": "test", "value": "data"}'
+
+# Frontend proxy
+curl -X POST http://localhost:8080/api/openai/prompt \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hello from frontend"}'
 
 # Fallback testing
 curl http://localhost:8080/api/fallback/test
