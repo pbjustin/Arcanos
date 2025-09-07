@@ -99,13 +99,16 @@ POST /arcanos          # Main AI interface with intent routing
 ### Memory Management
 ```bash
 POST /memory/save      # Store memory entries (requires confirmation)
-GET  /memory/load      # Retrieve memory by key
+GET  /memory/load      # Retrieve memory value by key (add `?includeMeta=true` for key)
 GET  /memory/health    # Memory system status
-GET  /memory/list      # List all memory entries
+GET  /memory/list      # List memory values (add `?includeMeta=true` for full entries)
 POST /memory/dual/save # Store conversation + metadata
 GET  /memory/dual/:sessionId      # Retrieve conversation messages
 GET  /memory/dual/:sessionId/meta # Retrieve session metadata
 ```
+
+All memory endpoints omit metadata by default. Provide `includeMeta=true` (query param for GET requests, JSON field for POST/DELETE)
+to receive keys and timestamps alongside user data.
 
 Messages can be saved by passing either a `{ role, content }` object or a plain string (defaults to role `user`):
 
@@ -145,7 +148,7 @@ curl -X POST http://localhost:8080/ask \
 curl -X POST http://localhost:8080/memory/save \
   -H "Content-Type: application/json" \
   -H "x-confirmed: yes" \
-  -d '{"key": "preference", "value": "dark_mode"}'
+  -d '{"key": "preference", "value": "dark_mode", "includeMeta": true}'
 
 # Health check
 curl http://localhost:8080/health
