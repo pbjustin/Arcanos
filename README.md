@@ -96,6 +96,11 @@ POST /ask              # Primary AI chat endpoint (no confirmation required)
 POST /arcanos          # Main AI interface with intent routing
 ```
 
+### Frontend Proxy
+```bash
+POST /api/openai/prompt # Backend proxy for frontend chat requests
+```
+
 ### Memory Management
 ```bash
 POST /memory/save      # Store memory entries (requires confirmation)

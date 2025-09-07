@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { callOpenAI, getDefaultModel } from '../services/openai.js';
+import { createCentralizedCompletion, getDefaultModel } from '../services/openai.js';
 import {
   validateAIRequest,
   handleAIError,
@@ -31,8 +31,12 @@ export async function handlePrompt(
       : getDefaultModel();
 
   try {
-    const { output } = await callOpenAI(model, prompt, 256);
-    res.json({ result: output, model });
+    const completion = await createCentralizedCompletion([
+      { role: 'user', content: prompt }
+    ], { model, max_tokens: 256 });
+
+    const result = (completion as any).choices?.[0]?.message?.content || '';
+    res.json({ result, model });
   } catch (err) {
     handleAIError(err, prompt, 'prompt', res);
   }
