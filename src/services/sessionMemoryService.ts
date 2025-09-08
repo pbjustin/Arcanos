@@ -31,3 +31,15 @@ export async function getChannel(sessionId: string, channel: string): Promise<an
     return memoryStore[key] || [];
   }
 }
+
+export async function getConversation(sessionId: string): Promise<any[]> {
+  const [core, meta] = await Promise.all([
+    getChannel(sessionId, 'conversations_core'),
+    getChannel(sessionId, 'system_meta')
+  ]);
+
+  return core.map((msg, idx) => ({
+    ...msg,
+    meta: meta[idx] || {}
+  }));
+}
