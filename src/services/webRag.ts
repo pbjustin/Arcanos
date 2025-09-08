@@ -1,6 +1,7 @@
 import { getOpenAIClient, getDefaultModel } from './openai.js';
 import { fetchAndClean } from './webFetcher.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
+import { saveRagDoc, loadAllRagDocs } from '../db.js';
 
 interface Doc {
   id: string;
@@ -9,9 +10,16 @@ interface Doc {
   embedding: number[];
 }
 
-const vectorStore: Doc[] = [];
+let vectorStore: Doc[] | null = null;
+
+async function ensureStore(): Promise<void> {
+  if (vectorStore === null) {
+    vectorStore = await loadAllRagDocs();
+  }
+}
 
 export async function ingestUrl(url: string): Promise<Doc> {
+  await ensureStore();
   const content = await fetchAndClean(url);
   const client = getOpenAIClient();
   if (!client) {
@@ -27,11 +35,16 @@ export async function ingestUrl(url: string): Promise<Doc> {
     content,
     embedding: embeddingRes.data[0].embedding,
   };
+  await saveRagDoc(doc);
+  if (!vectorStore) {
+    vectorStore = [];
+  }
   vectorStore.push(doc);
   return doc;
 }
 
 export async function answerQuestion(question: string): Promise<{ answer: string; sources: string[]; verification: string }> {
+  await ensureStore();
   const client = getOpenAIClient();
   if (!client) {
     throw new Error('OpenAI client not initialized');
@@ -40,7 +53,8 @@ export async function answerQuestion(question: string): Promise<{ answer: string
     model: 'text-embedding-3-small',
     input: question,
   });
-  const scored = vectorStore.map((doc) => ({
+  const docs = vectorStore || [];
+  const scored = docs.map((doc) => ({
     doc,
     score: cosineSimilarity(qEmbed.data[0].embedding, doc.embedding),
   }));
