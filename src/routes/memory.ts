@@ -149,6 +149,11 @@ router.get(
   asyncHandler(sessionMemoryController.getMeta)
 );
 
+router.get(
+  "/memory/dual/:sessionId/full",
+  asyncHandler(sessionMemoryController.getFull)
+);
+
 // Default to core conversation when no channel specified
 router.get(
   "/memory/dual/:sessionId",

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { saveMessage, getChannel } from '../services/sessionMemoryService.js';
+import { saveMessage, getChannel, getConversation } from '../services/sessionMemoryService.js';
 import { requireField } from '../utils/validation.js';
 import memoryStore from '../memory/store.js';
 
@@ -23,13 +23,14 @@ export const sessionMemoryController = {
       return;
     }
 
+    const timestamp = Date.now();
     const meta = {
       tokens: typeof message === 'object' && message.tokens ? message.tokens : 0,
       audit_tag: typeof message === 'object' && message.tag ? message.tag : 'unspecified',
-      timestamp: Date.now(),
+      timestamp,
     };
 
-    await saveMessage(sessionId, 'conversations_core', clean);
+    await saveMessage(sessionId, 'conversations_core', { ...clean, timestamp });
     await saveMessage(sessionId, 'system_meta', meta);
 
     // Keep in-memory session store in sync for semantic resolution
@@ -48,6 +49,12 @@ export const sessionMemoryController = {
   getMeta: async (req: Request, res: Response) => {
     const { sessionId } = req.params;
     const data = await getChannel(sessionId, 'system_meta');
+    res.json(data);
+  },
+
+  getFull: async (req: Request, res: Response) => {
+    const { sessionId } = req.params;
+    const data = await getConversation(sessionId);
     res.json(data);
   }
 };
