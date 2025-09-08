@@ -3,6 +3,17 @@ import { saveMessage, getChannel } from '../services/sessionMemoryService.js';
 import { requireField } from '../utils/validation.js';
 import memoryStore from '../memory/store.js';
 
+interface ChatMessage {
+  role: string;
+  content: string;
+}
+
+function sanitize(messages: any[]): ChatMessage[] {
+  return messages
+    .filter(m => m && typeof m.role === 'string' && typeof m.content === 'string')
+    .map(m => ({ role: m.role, content: m.content }));
+}
+
 export const sessionMemoryController = {
   saveDual: async (req: Request, res: Response) => {
     const { sessionId, message } = req.body;
@@ -42,7 +53,7 @@ export const sessionMemoryController = {
   getCore: async (req: Request, res: Response) => {
     const { sessionId } = req.params;
     const data = await getChannel(sessionId, 'conversations_core');
-    res.json(data);
+    res.json(sanitize(data));
   },
 
   getMeta: async (req: Request, res: Response) => {
