@@ -83,7 +83,7 @@ const environmentChecks: EnvironmentCheck[] = [
       const lower = value.toLowerCase();
       return (
         ['development', 'staging', 'production', 'preview'].includes(lower) ||
-        lower.startsWith('pr')
+        lower.includes('pr-')
       );
     }
   },

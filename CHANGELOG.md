@@ -2,6 +2,11 @@
 
 All notable changes to the Arcanos Backend project will be documented in this file.
 
+## [1.4.4] - 2025-09-04
+
+### Fixed
+- Accept `RAILWAY_ENVIRONMENT` values containing `-pr-` to support project-prefixed preview deployments
+
 ## [1.4.3] - 2025-09-04
 
 ### Fixed
