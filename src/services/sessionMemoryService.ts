@@ -31,3 +31,34 @@ export async function getChannel(sessionId: string, channel: string): Promise<an
     return memoryStore[key] || [];
   }
 }
+
+export async function getConversation(sessionId: string): Promise<any[]> {
+  const [core, meta] = await Promise.all([
+    getChannel(sessionId, 'conversations_core'),
+    getChannel(sessionId, 'system_meta')
+  ]);
+
+  const metaMap = new Map((meta as any[]).map((m: any) => [m.id, m]));
+
+  return (core as any[])
+    .map((msg: any) => ({
+      ...msg,
+      meta: metaMap.get(msg.id) || {}
+    }))
+    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+}
+
+export async function getMessage(
+  sessionId: string,
+  messageId: string
+): Promise<any | undefined> {
+  const [core, meta] = await Promise.all([
+    getChannel(sessionId, 'conversations_core'),
+    getChannel(sessionId, 'system_meta')
+  ]);
+
+  const msg = (core as any[]).find((m: any) => m.id === messageId);
+  if (!msg) return undefined;
+  const metaEntry = (meta as any[]).find((m: any) => m.id === messageId) || {};
+  return { ...msg, meta: metaEntry };
+}
