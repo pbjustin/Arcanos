@@ -70,6 +70,37 @@ export const schemas = {
     },
     required: ['action'],
     additionalProperties: false
+  },
+
+  purificationRequest: {
+    type: 'object',
+    properties: {
+      targetPath: { type: 'string', minLength: 1, maxLength: 500 },
+      config: { type: 'object' }
+    },
+    additionalProperties: false
+  },
+
+  purificationApply: {
+    type: 'object',
+    properties: {
+      recommendations: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['remove', 'refactor', 'consolidate'] },
+            target: { type: 'string', minLength: 1 },
+            reason: { type: 'string', minLength: 1 },
+            confidence: { type: 'number', minimum: 0, maximum: 1 }
+          },
+          required: ['action', 'target', 'reason', 'confidence']
+        }
+      },
+      dryRun: { type: 'boolean' }
+    },
+    required: ['recommendations'],
+    additionalProperties: false
   }
 };
 
