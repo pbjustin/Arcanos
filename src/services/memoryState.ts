@@ -4,7 +4,7 @@
  */
 
 import { query } from '../db.js';
-import { getOpenAIClient } from './openai.js';
+import { getOpenAIClient, getDefaultModel } from './openai.js';
 
 /**
  * Register or update memory state in PostgreSQL
@@ -60,7 +60,7 @@ export async function validateMemory(
   }
 
   const response = await client.chat.completions.create({
-    model: 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
+    model: getDefaultModel(),
     messages: [
       { role: 'system', content: 'You are ARCANOS Memory Validator. Ensure consistent state across GPT chats.' },
       { role: 'user', content: `Entry Key: ${entryKey}\nVersion: ${stateVersion}\nData: ${JSON.stringify(entryData)}` }
