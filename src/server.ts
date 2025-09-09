@@ -59,6 +59,7 @@ async function initializeServer() {
       console.log('   🔌 /sdk/* - OpenAI SDK interface');
       console.log('   🔌 /status - System state (Backend Sync)');
       console.log('   🔌 /siri - Siri query endpoint');
+      console.log('   🔌 /purify/* - Codebase purification tools');
       console.log('   🔌 /health - System health');
       console.log('===============================\n');
 
