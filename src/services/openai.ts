@@ -157,7 +157,7 @@ const initializeOpenAI = (): OpenAI | null => {
       process.env.FINETUNED_MODEL_ID ||
       process.env.FINE_TUNED_MODEL_ID ||
       process.env.AI_MODEL ||
-      'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
+      'gpt-4-turbo';
     
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
@@ -192,7 +192,7 @@ export const getDefaultModel = (): string => {
     process.env.FINETUNED_MODEL_ID ||
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
-    'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote'
+    'gpt-4-turbo'
   );
 };
 
