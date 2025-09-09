@@ -30,11 +30,11 @@ const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> 
         endpoint: 'arcanos-query',
         timestamp: new Date().toISOString(),
         processSteps: [
-          'Fine-tuned ARCANOS model (ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote)',
+          'Fine-tuned ARCANOS model (configured in AI_MODEL)',
           'GPT-5 reasoning and refinement'
         ]
       },
-      activeModel: 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
+      activeModel: process.env.AI_MODEL || 'gpt-4-turbo',
       module: 'ArcanosQuery'
     });
 

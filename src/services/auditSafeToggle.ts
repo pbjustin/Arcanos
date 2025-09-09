@@ -10,7 +10,7 @@
  * Compatible with OpenAI SDK (chat/completions).
  */
 
-import { getOpenAIClient } from './openai.js';
+import { getOpenAIClient, getDefaultModel } from './openai.js';
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
 
@@ -81,7 +81,7 @@ export async function interpretCommand(userCommand: string) {
 
   try {
     const response = await client.chat.completions.create({
-      model: 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
+      model: getDefaultModel(),
       messages: [
         { role: 'system', content: 'You are an AI that maps natural language commands to audit-safe mode toggles.' },
         { role: 'user', content: userCommand }
