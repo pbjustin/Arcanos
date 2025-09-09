@@ -21,6 +21,7 @@ import prAnalysisRouter from './pr-analysis.js';
 import openaiRouter from './openai.js';
 import ragRouter from './rag.js';
 import hrcRouter from './hrc.js';
+import purificationRouter from './purification.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 
 /**
@@ -53,6 +54,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);
+  app.use('/purify', purificationRouter);
   
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
