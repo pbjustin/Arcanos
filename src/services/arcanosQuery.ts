@@ -1,7 +1,7 @@
-import { getOpenAIClient } from './openai.js';
+import { getOpenAIClient, getDefaultModel } from './openai.js';
 
-// Correct fine-tuned model ID
-const FT_MODEL = "ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote";
+// Use centralized model configuration
+const FT_MODEL = getDefaultModel();
 const REASONING_MODEL = "gpt-5";
 
 export async function arcanosQuery(prompt: string): Promise<string> {

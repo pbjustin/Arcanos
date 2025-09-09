@@ -1,7 +1,7 @@
 // arcanosQueryGuard.ts
 // Unified domain guard + OpenAI SDK dispatcher with TypeScript support
 
-import { getOpenAIClient } from "./openai.js";
+import { getOpenAIClient, getDefaultModel } from "./openai.js";
 
 // ✅ Use centralized OpenAI client for consistency
 const openai = getOpenAIClient();
@@ -60,7 +60,7 @@ export async function dispatchQuery(rawQuery: QueryInput): Promise<string> {
   }
 
   const response = await openai.chat.completions.create({
-    model: "ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote", // ✅ Your fine-tuned ARCANOS model
+    model: getDefaultModel(),
     messages: [
       { role: "system", content: `Domain: ${safeQuery.domain}` },
       { role: "user", content: safeQuery.prompt },

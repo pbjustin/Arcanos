@@ -91,7 +91,7 @@ export const env = {
   // OpenAI Configuration
   OPENAI_API_KEY: Environment.get('OPENAI_API_KEY'),
   OPENAI_BASE_URL: Environment.get('OPENAI_BASE_URL'),
-  AI_MODEL: Environment.get('AI_MODEL', 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote'),
+  AI_MODEL: Environment.get('AI_MODEL', 'gpt-4-turbo'),
   GPT5_MODEL: Environment.get('GPT5_MODEL', 'gpt-5'),
   
   // Database Configuration
