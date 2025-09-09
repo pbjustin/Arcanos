@@ -64,6 +64,15 @@ interface ReasoningLog {
   metadata: any;
 }
 
+interface RagDoc {
+  id: string;
+  url: string;
+  content: string;
+  embedding: number[];
+  created_at?: Date;
+  updated_at?: Date;
+}
+
 /**
  * Initialize database connection pool
  */
@@ -186,6 +195,16 @@ async function initializeTables(): Promise<void> {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+
+    // RAG documents table for persistent embeddings
+    `CREATE TABLE IF NOT EXISTS rag_docs (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      content TEXT NOT NULL,
+      embedding JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     
     // Execution logs table for worker logs
     `CREATE TABLE IF NOT EXISTS execution_logs (
@@ -226,7 +245,8 @@ async function initializeTables(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_job_data_worker_status ON job_data(worker_id, status)`,
     `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_saves_module_timestamp ON saves(module, timestamp)`,
-    `CREATE INDEX IF NOT EXISTS idx_audit_logs_event_timestamp ON audit_logs(event, timestamp DESC)`
+    `CREATE INDEX IF NOT EXISTS idx_audit_logs_event_timestamp ON audit_logs(event, timestamp DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_rag_docs_url ON rag_docs(url)`
   ];
 
   try {
@@ -367,6 +387,56 @@ async function deleteMemory(key: string): Promise<boolean> {
 
   const result = await query('DELETE FROM memory WHERE key = $1 RETURNING *', [key]);
   return (result.rowCount || 0) > 0;
+}
+
+/**
+ * RAG document storage functions
+ */
+async function saveRagDoc(doc: RagDoc): Promise<RagDoc> {
+  if (!isConnected) {
+    throw new Error('Database not configured');
+  }
+
+  const result = await query(
+    `INSERT INTO rag_docs (id, url, content, embedding, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, NOW(), NOW())
+     ON CONFLICT (id)
+     DO UPDATE SET url = EXCLUDED.url, content = EXCLUDED.content, embedding = EXCLUDED.embedding, updated_at = NOW()
+     RETURNING *`,
+    [doc.id, doc.url, doc.content, JSON.stringify(doc.embedding)]
+  );
+
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    url: row.url,
+    content: row.content,
+    embedding: row.embedding,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+async function loadAllRagDocs(): Promise<RagDoc[]> {
+  if (!isConnected) {
+    throw new Error('Database not configured');
+  }
+
+  const result = await query(
+    'SELECT id, url, content, embedding, created_at, updated_at FROM rag_docs',
+    [],
+    1000,
+    true
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    url: row.url,
+    content: row.content,
+    embedding: row.embedding,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }));
 }
 
 /**
@@ -530,6 +600,8 @@ export {
   saveMemory,
   loadMemory,
   deleteMemory,
+  saveRagDoc,
+  loadAllRagDocs,
   logExecution,
   logExecutionBatch,
   createJob,
@@ -542,5 +614,6 @@ export {
   type MemoryEntry,
   type ExecutionLog,
   type JobData,
-  type ReasoningLog
+  type ReasoningLog,
+  type RagDoc
 };
