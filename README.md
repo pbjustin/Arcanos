@@ -53,7 +53,7 @@ curl http://localhost:8080/booker/roster
 OPENAI_API_KEY=your-openai-api-key-here
 NOTION_API_KEY=your-notion-api-key-here
 WWE_DATABASE_ID=your-notion-wwe-database-id
-AI_MODEL=REDACTED_FINE_TUNED_MODEL_ID  # Default fine-tuned model
+AI_MODEL=your-fine-tuned-model-id-here  # Configure your model
 DATABASE_URL=postgresql://user:pass@localhost:5432/arcanos  # Optional - uses in-memory if not set
 ```
 
@@ -69,7 +69,7 @@ TUTOR_DEFAULT_TOKEN_LIMIT=200  # Default token limit for tutor queries
 ## 🔧 Current Architecture
 
 ### AI Control System
-- **Fine-tuned Model**: `REDACTED_FINE_TUNED_MODEL_ID`
+- **Fine-tuned Model**: Configured via `AI_MODEL` environment variable
 - **AI-Controlled CRON**: Health checks every 15min, maintenance every 6hrs, memory sync every 4hrs
 - **Intelligent Routing**: AI determines request processing strategy
 - **Permission System**: AI approval required for sensitive operations
@@ -78,6 +78,34 @@ TUTOR_DEFAULT_TOKEN_LIMIT=200  # Default token limit for tutor queries
 - **Primary Storage**: PostgreSQL with automatic schema management
 - **Fallback Mode**: In-memory storage when database unavailable  
 - **Memory Types**: Context, facts, preferences, decisions, patterns
+
+## 🧹 Recent Optimizations
+
+This repository has been optimized for **OpenAI SDK + Railway deployment**:
+
+### Removed Bloat
+- Deleted unused validation/purification scripts (`dead_code_scanner.py`, `demo-purification.cjs`)
+- Removed redundant documentation files (`PURIFICATION_README.md`, `REFactorING.md`)
+- Eliminated duplicate OpenAI client implementations
+- Cleaned up broken purification routes and services
+
+### Updated Dependencies
+- OpenAI SDK v5.16.0 (latest stable)
+- ESLint v9 (from deprecated v8)
+- Updated TypeScript ESLint plugins for compatibility
+- Removed deprecated dependencies
+
+### Environment Variables
+- Removed hardcoded fine-tuned model IDs from all source files
+- Consolidated duplicate environment variables
+- Updated `.env.example` with generic placeholders
+- Centralized model configuration through `getDefaultModel()`
+
+### Code Quality
+- Simplified complex routing logic
+- Fixed TypeScript null safety issues
+- Removed unnecessary complexity in fallback handlers
+- Standardized error handling patterns
 - **Session Isolation**: User and session-based context preservation
 
 ### Worker System

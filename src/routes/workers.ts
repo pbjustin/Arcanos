@@ -52,7 +52,7 @@ router.get('/workers/status', async (_: Request, res: Response) => {
     const arcanosWorkers = {
       runWorkers: process.env.RUN_WORKERS === 'true' || process.env.RUN_WORKERS === '1',
       count: parseInt(process.env.WORKER_COUNT || '4', 10),
-      model: process.env.WORKER_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote'
+      model: process.env.WORKER_MODEL || process.env.AI_MODEL || 'gpt-4-turbo'
     };
     
     res.json({
@@ -68,7 +68,7 @@ router.get('/workers/status', async (_: Request, res: Response) => {
         status: arcanosWorkers.runWorkers ? 'Active' : 'Disabled'
       },
       system: {
-        model: process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
+        model: process.env.AI_MODEL || 'gpt-4-turbo',
         environment: process.env.NODE_ENV || 'development'
       }
     });
