@@ -124,8 +124,8 @@ For production use:
 
 ## OpenAI SDK Compatibility
 
-All OpenAI API calls follow OpenAI SDK v4+ standards:
-- Uses official `openai` package (v5.12.2+)
+All OpenAI API calls follow OpenAI SDK v5+ standards:
+- Uses official `openai` package (v5.16.0+)
 - Proper error handling and response parsing
 - Compatible with GPT-5 model when available
 - Fallback to GPT-4o for reasoning tasks
