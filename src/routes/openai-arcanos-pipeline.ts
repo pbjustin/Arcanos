@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { getOpenAIClient } from '../services/openai.js';
+import { getOpenAIClient, getDefaultModel, getGPT5Model } from '../services/openai.js';
 import OpenAI from 'openai';
 
 const router = express.Router();
@@ -7,11 +7,11 @@ const router = express.Router();
 // Use centralized OpenAI client
 const client = getOpenAIClient();
 
-// Models
-const ARC_V2 = 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
-const ARC_V2_FALLBACK = 'ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH';
-const GPT5 = 'gpt-5';
-const GPT35_SUBAGENT = 'gpt-3.5-turbo-0125';
+// Models - use centralized configuration
+const ARC_V2 = getDefaultModel();
+const ARC_V2_FALLBACK = 'gpt-3.5-turbo';
+const GPT5 = getGPT5Model();
+const GPT35_SUBAGENT = 'gpt-3.5-turbo';
 
 router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
   const { messages } = req.body as { messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] };

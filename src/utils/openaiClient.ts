@@ -1,7 +1,6 @@
-import OpenAI from 'openai';
+// DEPRECATED: Use ../services/openai.ts instead for centralized OpenAI management
+// This file is kept for backward compatibility only
+import { getOpenAIClient } from '../services/openai.js';
 
-export const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || '',
-});
-
+export const openai = getOpenAIClient();
 export default openai;

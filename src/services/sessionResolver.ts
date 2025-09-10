@@ -21,7 +21,7 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   });
 
   // 2. If none found, use embeddings for semantic match
-  if (candidates.length === 0 && process.env.OPENAI_API_KEY) {
+  if (candidates.length === 0 && openai && process.env.OPENAI_API_KEY) {
     const queryEmbedding = await openai.embeddings.create({
       model: 'text-embedding-3-small',
       input: nlQuery,

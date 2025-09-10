@@ -19,7 +19,7 @@ export const config = {
   // AI configuration
   ai: {
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.AI_MODEL || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote',
+    model: process.env.AI_MODEL || 'gpt-4-turbo',
     fallbackModel: 'gpt-4',
     defaultMaxTokens: 200,
     defaultTemperature: 0.2
