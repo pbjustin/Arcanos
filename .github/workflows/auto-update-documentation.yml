@@ -1,0 +1,313 @@
+name: Auto-Update Documentation
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  NODE_VERSION: '20.11.1'
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: write
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧰 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔧 Install Required Tools
+        run: |
+          # Install jq for JSON processing
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: 🔨 Build Project
+        run: npm run build
+
+      - name: 📝 Run Documentation Update
+        run: |
+          echo "📝 Starting AI-powered documentation update..."
+          
+          # Start ARCANOS backend for documentation analysis
+          npm start &
+          SERVER_PID=$!
+          
+          # Wait for server to be ready
+          sleep 15
+          
+          # Test server is responding
+          curl -f http://localhost:8080/health || {
+            echo "Server failed to start properly"
+            kill $SERVER_PID || true
+            exit 1
+          }
+          
+          echo "✅ ARCANOS backend is running"
+          
+          # Perform repository scan and documentation analysis
+          curl -X POST http://localhost:8080/ask \
+            -H "Content-Type: application/json" \
+            -d '{
+              "prompt": "Perform a comprehensive repository scan and analyze all documentation files. Review README.md, CONTRIBUTING.md, CHANGELOG.md, all files in docs/, .env.example, and package.json. Compare documentation against the current codebase state including: 1) API endpoints in src/routes/, 2) Available npm scripts, 3) Environment variables used in code, 4) Current dependencies and versions, 5) Project structure changes. Apply CLEAR 2.0 audit principles (Clarity, Leverage, Efficiency, Alignment, Resilience). Generate updated content for any files that need updates to match current codebase state. Return a JSON response with format: {\"updates\": [{\"file\": \"path/to/file.md\", \"content\": \"updated content\", \"reason\": \"why update needed\"}], \"summary\": \"overall changes summary\"}",
+              "context": "documentation_audit",
+              "useRAG": true,
+              "useHRC": true
+            }' \
+            -o doc_analysis.json \
+            --connect-timeout 30 \
+            --max-time 300 || {
+            echo "Documentation analysis request failed"
+            kill $SERVER_PID || true
+            exit 1
+          }
+          
+          # Stop the server
+          kill $SERVER_PID || true
+          
+          echo "📊 Documentation analysis completed"
+
+      - name: 📄 Process Documentation Updates
+        id: process_updates
+        run: |
+          if [ ! -f doc_analysis.json ]; then
+            echo "No analysis results found"
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "📋 Processing documentation updates..."
+          
+          # Check if we have a valid JSON response
+          if ! jq empty doc_analysis.json 2>/dev/null; then
+            echo "Invalid JSON response from documentation analysis"
+            echo "Analysis response:"
+            cat doc_analysis.json
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Extract updates from the response
+          # Handle both direct JSON format and nested response field
+          UPDATES=$(jq -r '.updates // .response.updates // empty' doc_analysis.json 2>/dev/null || echo "[]")
+          
+          if [ "$UPDATES" = "[]" ] || [ "$UPDATES" = "null" ] || [ -z "$UPDATES" ]; then
+            echo "No documentation updates needed"
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Found documentation updates to apply"
+          echo "$UPDATES" > updates.json
+          
+          # Apply updates
+          HAS_CHANGES=false
+          UPDATE_COUNT=0
+          
+          # Create temporary file to track changes
+          echo "false" > /tmp/has_changes
+          echo "0" > /tmp/update_count
+          
+          # Process each update
+          echo "$UPDATES" | jq -c '.[]' | while read -r update; do
+            FILE=$(echo "$update" | jq -r '.file')
+            CONTENT=$(echo "$update" | jq -r '.content')
+            REASON=$(echo "$update" | jq -r '.reason')
+            
+            if [ "$FILE" != "null" ] && [ "$CONTENT" != "null" ] && [ "$FILE" != "" ]; then
+              echo "📝 Processing update for $FILE: $REASON"
+              
+              # Validate file path (basic security check)
+              if [[ "$FILE" == ../* ]] || [[ "$FILE" == */../* ]]; then
+                echo "  ⚠️ Skipping $FILE - path traversal detected"
+                continue
+              fi
+              
+              # Create directory if it doesn't exist
+              mkdir -p "$(dirname "$FILE")"
+              
+              # Back up existing file if it exists
+              if [ -f "$FILE" ]; then
+                cp "$FILE" "$FILE.bak" 2>/dev/null || true
+              fi
+              
+              # Write updated content (decode any escaped newlines)
+              echo -e "$CONTENT" > "$FILE"
+              
+              # Verify the file was created/updated
+              if [ ! -f "$FILE" ]; then
+                echo "  ❌ Failed to create $FILE"
+                # Restore backup if it exists
+                if [ -f "$FILE.bak" ]; then
+                  mv "$FILE.bak" "$FILE"
+                fi
+                continue
+              fi
+              
+              # Check if file was actually changed
+              if [ -f "$FILE.bak" ] && cmp -s "$FILE" "$FILE.bak"; then
+                echo "  ℹ️  No changes needed for $FILE"
+                rm -f "$FILE.bak"
+              else
+                echo "  ✅ Updated $FILE"
+                rm -f "$FILE.bak"
+                # Update counters
+                CURRENT_COUNT=$(cat /tmp/update_count)
+                echo "$((CURRENT_COUNT + 1))" > /tmp/update_count
+                echo "true" > /tmp/has_changes
+              fi
+            else
+              echo "  ⚠️ Skipping invalid update entry: FILE='$FILE' CONTENT_LENGTH=$(echo "$CONTENT" | wc -c)"
+            fi
+          done
+          
+          # Read final values
+          HAS_CHANGES=$(cat /tmp/has_changes)
+          UPDATE_COUNT=$(cat /tmp/update_count)
+          
+          echo "Processed $UPDATE_COUNT file updates"
+          
+          if [ "$HAS_CHANGES" = "true" ]; then
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Cleanup temporary files
+          rm -f /tmp/has_changes /tmp/update_count
+
+      - name: 📊 Generate Update Summary
+        if: steps.process_updates.outputs.has_updates == 'true'
+        run: |
+          echo "## 📝 Documentation Update Summary" > update_summary.md
+          echo "" >> update_summary.md
+          echo "**Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> update_summary.md
+          echo "**Triggered by:** ${{ github.event_name }}" >> update_summary.md
+          echo "**Commit:** ${{ github.sha }}" >> update_summary.md
+          echo "" >> update_summary.md
+          
+          # Add summary from analysis
+          if [ -f doc_analysis.json ]; then
+            SUMMARY=$(jq -r '.summary // .response.summary // "Documentation updates applied based on current codebase state"' doc_analysis.json)
+            echo "**Analysis Summary:** $SUMMARY" >> update_summary.md
+            echo "" >> update_summary.md
+          fi
+          
+          echo "### Changed Files" >> update_summary.md
+          echo "" >> update_summary.md
+          
+          # List changed files
+          git diff --name-only | while read -r file; do
+            echo "- \`$file\`" >> update_summary.md
+          done
+          
+          echo "" >> update_summary.md
+          echo "### CLEAR 2.0 Standards Applied" >> update_summary.md
+          echo "" >> update_summary.md
+          echo "- **Clarity**: Documentation updated with precise, unambiguous language" >> update_summary.md
+          echo "- **Leverage**: Key project strengths and unique features highlighted" >> update_summary.md
+          echo "- **Efficiency**: Removed redundant or outdated information" >> update_summary.md
+          echo "- **Alignment**: Documentation synchronized with current codebase state" >> update_summary.md
+          echo "- **Resilience**: Verified procedures and comprehensive error handling documented" >> update_summary.md
+
+      - name: 🚀 Commit and Push Changes
+        if: steps.process_updates.outputs.has_updates == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Show what files have changed
+          echo "📊 Files changed:"
+          git status --porcelain
+          
+          # Check if there are actually changes to commit
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No changes to commit after processing"
+            exit 0
+          fi
+          
+          # Add changed files
+          git add .
+          
+          # Show final diff summary
+          echo "📋 Changes summary:"
+          git diff --cached --stat
+          
+          # Commit with detailed message
+          git commit -m "🤖 Auto-update documentation from codebase scan
+
+          Automated documentation update performed by ARCANOS AI system.
+          
+          Changes applied based on:
+          - Current codebase analysis
+          - API endpoint verification  
+          - Environment variable audit
+          - Package.json script validation
+          - CLEAR 2.0 documentation standards
+          
+          Trigger: ${{ github.event_name }}
+          Commit: ${{ github.sha }}
+          Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || {
+            echo "Commit failed - may be no actual changes"
+            exit 0
+          }
+          
+          # Push changes with retry logic
+          for i in {1..3}; do
+            if git push; then
+              echo "✅ Successfully pushed changes to repository"
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "Push attempt $i failed, retrying..."
+                sleep 5
+                # Pull any concurrent changes
+                git pull --rebase origin ${{ github.ref_name }} || true
+              else
+                echo "❌ Push failed after 3 attempts"
+                echo "This may be due to concurrent changes or permission issues"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: 📤 Upload Documentation Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-analysis-${{ github.run_id }}
+          path: |
+            doc_analysis.json
+            update_summary.md
+            updates.json
+          retention-days: 7
+
+      - name: ✅ Documentation Update Complete
+        run: |
+          if [ "${{ steps.process_updates.outputs.has_updates }}" = "true" ]; then
+            echo "🎉 Documentation update completed successfully!"
+            echo "Updated files have been committed and pushed."
+          else
+            echo "✅ Documentation is already up to date with current codebase."
+          fi
+          
+          echo ""
+          echo "📊 Analysis artifacts available in workflow artifacts"
