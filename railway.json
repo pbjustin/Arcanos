@@ -14,7 +14,11 @@
     "env": {
       "RUN_WORKERS": "false",
       "RAILWAY_ENVIRONMENT": "production",
-      "PORT": "${PORT}"
+      "PORT": "${PORT}",
+      "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+      "OPENAI_BASE_URL": "${OPENAI_BASE_URL}",
+      "AI_MODEL": "${AI_MODEL}",
+      "GPT5_MODEL": "${GPT5_MODEL}"
     }
   },
   "environments": {
@@ -22,14 +26,22 @@
       "variables": {
         "NODE_ENV": "production",
         "RAILWAY_ENVIRONMENT": "production",
-        "RUN_WORKERS": "false"
+        "RUN_WORKERS": "false",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "OPENAI_BASE_URL": "${OPENAI_BASE_URL}",
+        "AI_MODEL": "${AI_MODEL}",
+        "GPT5_MODEL": "${GPT5_MODEL}"
       }
     },
     "staging": {
       "variables": {
         "NODE_ENV": "staging",
         "RAILWAY_ENVIRONMENT": "staging",
-        "RUN_WORKERS": "false"
+        "RUN_WORKERS": "false",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "OPENAI_BASE_URL": "${OPENAI_BASE_URL}",
+        "AI_MODEL": "${AI_MODEL}",
+        "GPT5_MODEL": "${GPT5_MODEL}"
       }
     }
   },
