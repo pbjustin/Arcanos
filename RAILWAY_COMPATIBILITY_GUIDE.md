@@ -135,7 +135,7 @@ All requests include:
 
 Run the comprehensive validation test:
 ```bash
-node validate-railway-compatibility.js
+npm run validate:railway
 ```
 
 This validates all requirements:
