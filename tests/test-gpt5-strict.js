@@ -14,20 +14,24 @@ async function testStrictGPT5Call() {
   try {
     // Test basic strict call
     const response = await call_gpt5_strict("Test prompt for GPT-5 strict validation", {
-      max_completion_tokens: 50
+      max_output_tokens: 50
     });
-    
+
     console.log('✅ [TEST] Strict GPT-5 call successful');
     console.log('Response model:', response.model);
-    console.log('Response content preview:', response.choices[0]?.message?.content?.substring(0, 100));
-    
+    const preview =
+      response.output_text ||
+      response.output?.[0]?.content?.[0]?.text ||
+      '';
+    console.log('Response content preview:', preview.substring(0, 100));
+
     // Validate response structure
     if (!response.model) {
       throw new Error('Response missing model field');
     }
-    
-    if (!response.choices || response.choices.length === 0) {
-      throw new Error('Response missing choices');
+
+    if (!response.output && !response.output_text) {
+      throw new Error('Response missing output');
     }
     
     return true;
