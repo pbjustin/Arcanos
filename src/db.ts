@@ -137,6 +137,20 @@ async function initializeDatabase(workerId = ''): Promise<boolean> {
       connectionTimeoutMillis: 10000,
     });
 
+    // Handle unexpected errors to prevent crashes and enable automatic reconnection
+    pool.on('error', (err: Error) => {
+      console.error('[🔌 DB] Unexpected error on idle client', err);
+      isConnected = false;
+      // Clean up broken pool and attempt reinitialization after short delay
+      pool?.end().catch(() => {});
+      pool = null;
+      setTimeout(() => {
+        initializeDatabase(workerId).catch(reconnectErr =>
+          console.error('[🔌 DB] Reconnection attempt failed:', reconnectErr)
+        );
+      }, 5000);
+    });
+
     await pool.query('SELECT 1');
     isConnected = true;
     console.log('DB connection successful');
