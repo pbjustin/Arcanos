@@ -220,12 +220,17 @@ export const getFallbackModel = (): string => {
  */
 function prepareGPT5Request(payload: any): any {
   if (payload.model && typeof payload.model === 'string' && payload.model.includes('gpt-5')) {
+    // GPT-5 uses max_output_tokens in the new Responses API
     if (payload.max_tokens) {
-      payload.max_completion_tokens = payload.max_tokens;
+      payload.max_output_tokens = payload.max_tokens;
       delete payload.max_tokens;
     }
-    if (!payload.max_completion_tokens) {
-      payload.max_completion_tokens = 1024;
+    if (payload.max_completion_tokens) {
+      payload.max_output_tokens = payload.max_completion_tokens;
+      delete payload.max_completion_tokens;
+    }
+    if (!payload.max_output_tokens) {
+      payload.max_output_tokens = 1024;
     }
   }
   return payload;
@@ -495,23 +500,28 @@ export const createGPT5Reasoning = async (
   try {
     const gpt5Model = getGPT5Model();
     console.log(`🚀 [GPT-5 REASONING] Using model: ${gpt5Model}`);
-    
+
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, 1024);
 
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
-      messages: [
+      input: [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'user' as const, content: prompt }
       ],
+      text: { verbosity: 'medium' as const },
+      reasoning: { effort: 'minimal' as const },
       ...tokenParams,
       // Temperature omitted to use default (1) for GPT-5
     });
 
-    const response = await client.chat.completions.create(requestPayload);
-    
-    const content = response.choices[0]?.message?.content ?? '[No reasoning provided]';
+    const response: any = await client.responses.create(requestPayload);
+
+    const content =
+      response.output_text ||
+      response.output?.[0]?.content?.[0]?.text ||
+      '[No reasoning provided]';
     console.log(`✅ [GPT-5 REASONING] Success: ${content.substring(0, 100)}...`);
     return { content };
   } catch (err: any) {
@@ -573,18 +583,23 @@ Return only the refined response without meta-commentary about your analysis pro
 
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
-      messages: [
+      input: [
         { role: 'system' as const, content: systemPrompt },
         { role: 'user' as const, content: reasoningPrompt }
       ],
+      text: { verbosity: 'medium' as const },
+      reasoning: { effort: 'minimal' as const },
       ...tokenParams,
       temperature: 0.7 // Balanced creativity for reasoning
     });
 
-    const response = await client.chat.completions.create(requestPayload);
-    
-    const reasoningContent = response.choices[0]?.message?.content ?? '[No reasoning provided]';
-    
+    const response: any = await client.responses.create(requestPayload);
+
+    const reasoningContent =
+      response.output_text ||
+      response.output?.[0]?.content?.[0]?.text ||
+      '[No reasoning provided]';
+
     // The GPT-5 response IS the refined result
     const refinedResult = reasoningContent;
     
@@ -619,21 +634,28 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
   }
 
   const gpt5Model = getGPT5Model();
-  
+
   try {
     console.log(`🎯 [GPT-5 STRICT] Making strict call with model: ${gpt5Model}`);
 
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
-      messages: [{ role: "user", content: prompt }],
+      input: [
+        { role: 'system', content: 'You are a precise and safe code assistant.' },
+        { role: 'user', content: prompt }
+      ],
+      text: { verbosity: 'medium' },
+      reasoning: { effort: 'minimal' },
       ...kwargs
     });
 
-    const response = await client.chat.completions.create(requestPayload);
+    const response: any = await client.responses.create(requestPayload);
 
     // Validate that the response actually came from GPT-5
     if (!response.model || response.model !== gpt5Model) {
-      throw new Error(`GPT-5 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`);
+      throw new Error(
+        `GPT-5 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`
+      );
     }
 
     console.log(`✅ [GPT-5 STRICT] Success with model: ${response.model}`);

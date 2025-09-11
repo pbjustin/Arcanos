@@ -391,7 +391,7 @@ export async function runARCANOS(
   // Use strict GPT-5 calls only - no fallback allowed
   const gpt5Model = getGPT5Model();
   let finalResult: string;
-  let response: OpenAI.Chat.Completions.ChatCompletion;
+  let response: any;
   
   try {
     // Use strict GPT-5 call with no fallback
@@ -408,7 +408,10 @@ export async function runARCANOS(
       ...tokenParams,
     });
 
-    finalResult = response.choices[0]?.message?.content || '';
+    finalResult =
+      response.output_text ||
+      response.output?.[0]?.content?.[0]?.text ||
+      '';
     console.log(`[🔬 ARCANOS] Diagnosis complete using strict GPT-5: ${gpt5Model}`);
     
   } catch (err) {
