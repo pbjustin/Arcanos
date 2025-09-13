@@ -1,4 +1,4 @@
-import { openai } from '../utils/openaiClient.js';
+import { getOpenAIClient } from './openai.js';
 import memoryStore from '../memory/store.js';
 
 interface ResolveResult {
@@ -21,6 +21,7 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   });
 
   // 2. If none found, use embeddings for semantic match
+  const openai = getOpenAIClient();
   if (candidates.length === 0 && openai && process.env.OPENAI_API_KEY) {
     const queryEmbedding = await openai.embeddings.create({
       model: 'text-embedding-3-small',
