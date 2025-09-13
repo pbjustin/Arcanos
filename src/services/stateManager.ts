@@ -60,14 +60,11 @@ export function updateState(newData: Partial<SystemState>): SystemState {
  * Get current system state (for GPT sync)
  */
 import config from '../config/index.js';
+import { webFetcher } from '../utils/webFetcher.js';
 
 export async function getBackendState(port: number = config.server.port): Promise<SystemState> {
   try {
-    const response = await fetch(`http://localhost:${port}/status`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return await response.json();
+    return await webFetcher<SystemState>(`http://localhost:${port}/status`);
   } catch (error) {
     console.error('[STATE] Error fetching backend state:', error);
     // Fallback to file-based state

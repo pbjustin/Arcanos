@@ -27,7 +27,7 @@ export function createWorkerContext(workerId: string): WorkerContext {
       console.log(`[${workerId}] ${message}`);
       try {
         await logExecution(workerId, 'info', message);
-      } catch (error) {
+      } catch {
         // Fallback logging already handled in logExecution
       }
     },
@@ -37,7 +37,7 @@ export function createWorkerContext(workerId: string): WorkerContext {
       console.error(`[${workerId}] ERROR: ${fullMessage}`);
       try {
         await logExecution(workerId, 'error', fullMessage);
-      } catch (error) {
+      } catch {
         // Fallback logging already handled in logExecution
       }
     },

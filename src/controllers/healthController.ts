@@ -63,7 +63,7 @@ export class HealthController {
       const httpStatus = status === 'healthy' ? 200 : status === 'degraded' ? 200 : 503;
       
       res.status(httpStatus).json(healthResponse);
-    } catch (error) {
+    } catch {
       res.status(503).json({
         status: 'unhealthy',
         timestamp: new Date().toISOString(),

@@ -172,7 +172,7 @@ export async function testModelTokenParameter(
         console.log(`[✅ TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
         return 'max_completion_tokens';
         
-      } catch (fallbackError: any) {
+      } catch {
         console.warn(`[⚠️ TOKEN-TEST] Model ${modelName} failed both token parameters, defaulting to max_tokens`);
         modelCapabilityCache.set(modelName, 'max_tokens');
         return 'max_tokens';
