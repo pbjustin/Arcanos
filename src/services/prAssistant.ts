@@ -106,7 +106,7 @@ export class PRAssistant {
             issues.push(`Large file detected: ${file} (${lineCount} lines)`);
             details.push(`Consider breaking down ${file} into smaller, focused modules`);
           }
-        } catch (error) {
+        } catch {
           // File might be deleted or renamed, skip
         }
       }
@@ -294,7 +294,7 @@ export class PRAssistant {
             details.push('Update to OpenAI SDK v5.15.0 or later');
           }
         }
-      } catch (error) {
+      } catch {
         // Package.json might not be accessible, skip this check
       }
 
@@ -370,7 +370,7 @@ export class PRAssistant {
             issues.push('New environment variables not documented');
             details.push('Update .env.example with new environment variables');
           }
-        } catch (error) {
+        } catch {
           // .env.example might not exist, add it as a suggestion
           details.push('Consider creating .env.example for environment documentation');
         }
@@ -454,7 +454,7 @@ export class PRAssistant {
           timeout: 60000
         });
         details.push('Linting passed');
-      } catch (error) {
+      } catch {
         // Linting might not be available, skip
       }
 
@@ -508,7 +508,7 @@ export class PRAssistant {
           const filePath = path.join(this.workingDir, file);
           await fs.access(filePath);
           details.push(`✓ ${file} exists and accessible`);
-        } catch (error) {
+        } catch {
           return {
             status: '❌',
             message: `Critical file missing: ${file}`,
@@ -527,7 +527,7 @@ export class PRAssistant {
           hasEnvConfig = true;
           details.push(`✓ Environment configuration found: ${envFile}`);
           break;
-        } catch (error) {
+        } catch {
           // Try next file
         }
       }
@@ -547,7 +547,7 @@ export class PRAssistant {
           timeout: 60000
         });
         details.push('✓ TypeScript type checking passed');
-      } catch (error) {
+      } catch {
         try {
           await runCommand('tsc', ['--noEmit'], {
             cwd: this.workingDir,
