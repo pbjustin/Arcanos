@@ -1,4 +1,4 @@
-import { openai } from '../clients/openai.js';
+import { getOpenAIClient } from '../services/openai.js';
 import { getDefaultModel } from '../services/openai.js';
 
 export interface HRCResult {
@@ -15,6 +15,9 @@ export interface HRCResult {
  */
 export class HRCCore {
   async evaluate(input: string): Promise<HRCResult> {
+    // Get OpenAI client from the centralized service
+    const openai = getOpenAIClient();
+    
     // If OpenAI client isn't configured, return minimal default result
     if (!openai) {
       return {
