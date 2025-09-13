@@ -88,7 +88,7 @@ export async function getAvailablePort(
       isPreferred: false,
       message: `Port ${preferredPort} was in use, automatically selected port ${availablePort}`
     };
-  } catch (error) {
+  } catch {
     throw new Error(
       `Port ${preferredPort} is in use and no alternative ports are available. ` +
       `Searched ${preferredPort + 1}-${preferredPort + 50} but all were in use. ` +

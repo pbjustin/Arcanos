@@ -312,7 +312,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
     let jobRecord: any = null;
     try {
       jobRecord = await createJob('worker-1', 'test_job', jobData);
-    } catch (dbError) {
+    } catch {
       // If database not available, create mock job record
       jobRecord = {
         id: `test-job-${Date.now()}`,
@@ -355,7 +355,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
     try {
       const { updateJob } = await import('../db.js');
       jobRecord = await updateJob(jobRecord.id, 'completed', result);
-    } catch (dbError) {
+    } catch {
       // Update mock record
       jobRecord.status = 'completed';
       (jobRecord as any).output = JSON.stringify(result);
@@ -530,7 +530,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     try {
       const { createJob } = await import('../db.js');
       jobRecord = await createJob('worker-1', 'test_job', testJobData);
-    } catch (dbError) {
+    } catch {
       jobRecord = {
         id: `test-job-${Date.now()}`,
         worker_id: 'worker-1',
@@ -572,7 +572,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     try {
       const { updateJob } = await import('../db.js');
       jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
-    } catch (dbError) {
+    } catch {
       jobRecord.status = 'completed';
       (jobRecord as any).output = JSON.stringify(taskResult);
       (jobRecord as any).completed_at = new Date().toISOString();

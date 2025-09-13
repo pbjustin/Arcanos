@@ -64,7 +64,7 @@ export async function dualModeAudit(
       let data: any = {};
       try {
         data = await res.json();
-      } catch (jsonError) {
+      } catch {
         console.warn('Failed to parse JSON response, using empty object');
       }
       return {

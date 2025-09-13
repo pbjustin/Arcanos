@@ -465,7 +465,7 @@ export const createChatCompletionWithFallback = async (
             fallbackFlag: true,
             fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5 fallback), using final fallback`
           };
-        } catch (finalError) {
+        } catch {
           console.error(`❌ [COMPLETE FAILURE] All fallback attempts failed`);
           throw new Error(`All models failed: Primary (${primaryModel}), GPT-5 (${gpt5Model}), Final (${finalFallbackModel})`);
         }
