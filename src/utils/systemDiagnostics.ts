@@ -266,7 +266,7 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
     try {
       const { getLatestJob } = await import('../db.js');
       latestJob = await getLatestJob();
-    } catch (error) {
+    } catch {
       // Database not connected or function not available
     }
 
