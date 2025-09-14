@@ -21,6 +21,7 @@ import prAnalysisRouter from './pr-analysis.js';
 import openaiRouter from './openai.js';
 import ragRouter from './rag.js';
 import hrcRouter from './hrc.js';
+import gptRouter from './gptRouter.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 
 /**
@@ -43,6 +44,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', orchestrationRouter);
   app.use('/', statusRouter);
   app.use('/', siriRouter);
+  app.use('/gpt', gptRouter);
   app.use('/backstage', backstageRouter);
   app.use('/sdk', sdkRouter);
   app.use('/api/arcanos', apiArcanosRouter);
