@@ -443,6 +443,16 @@ docker build -t arcanos .
 docker run -p 8080:8080 -e OPENAI_API_KEY=your-key arcanos
 ```
 
+### GPT Module Routing
+
+Map custom GPT IDs to backend modules via the `GPT_MODULE_MAP` environment variable. Set it to a JSON object where each key is a GPT ID and the value provides the module route and name:
+
+```bash
+GPT_MODULE_MAP='{"gpt-backstage":{"route":"backstage-booker","module":"BACKSTAGE:BOOKER"}}'
+```
+
+This enables adding new GPT-to-module connections without requiring code changes.
+
 ## 📚 Documentation
 
 ### Core Guides
