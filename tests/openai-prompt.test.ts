@@ -1,9 +1,9 @@
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
 
-const callOpenAI = jest.fn();
-const getDefaultModel = jest.fn();
-const validateAIRequest = jest.fn();
-const handleAIError = jest.fn();
+const callOpenAI = jest.fn() as jest.MockedFunction<any>;
+const getDefaultModel = jest.fn() as jest.MockedFunction<any>;
+const validateAIRequest = jest.fn() as jest.MockedFunction<any>;
+const handleAIError = jest.fn() as jest.MockedFunction<any>;
 
 jest.unstable_mockModule('../src/services/openai.js', () => ({
   callOpenAI,
