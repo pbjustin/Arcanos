@@ -43,8 +43,8 @@ router.post('/book-gpt', confirmGate, async (req: Request, res: Response) => {
 // Simulate Match
 router.post('/simulate-match', confirmGate, async (req: Request, res: Response) => {
   try {
-    const { match, rosters, winProbModifier }: { match: MatchInput; rosters: Wrestler[]; winProbModifier?: number } = req.body;
-    const result = await BackstageBooker.simulateMatch(match, rosters, winProbModifier || 0);
+    const { match, rosters, winProbModifier }: { match: MatchInput; rosters?: Wrestler[]; winProbModifier?: number } = req.body;
+    const result = await BackstageBooker.simulateMatch(match, rosters ?? [], winProbModifier || 0);
     res.status(200).json({ success: true, result });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

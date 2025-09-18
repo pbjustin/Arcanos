@@ -25,6 +25,38 @@ async function ensureSchema() {
         payload JSONB,
         timestamp BIGINT NOT NULL
       );
+    `,
+    backstage_events: `
+      CREATE TABLE IF NOT EXISTS backstage_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        data JSONB NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `,
+    backstage_wrestlers: `
+      CREATE TABLE IF NOT EXISTS backstage_wrestlers (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        overall INTEGER NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `,
+    backstage_storylines: `
+      CREATE TABLE IF NOT EXISTS backstage_storylines (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        story_key TEXT UNIQUE NOT NULL,
+        storyline TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `,
+    backstage_story_beats: `
+      CREATE TABLE IF NOT EXISTS backstage_story_beats (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        data JSONB NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
     `
     // add more tables here as needed
   };
