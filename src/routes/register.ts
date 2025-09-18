@@ -3,7 +3,6 @@ import askRouter from './ask.js';
 import arcanosRouter from './arcanos.js';
 import arcanosPipelineRouter from './openai-arcanos-pipeline.js';
 import aiEndpointsRouter from './ai-endpoints.js';
-import memoryRouter from './memory.js';
 import sessionRoutes from './sessionRoutes.js';
 import modulesRouter from './modules.js';
 import workersRouter from './workers.js';
@@ -36,7 +35,6 @@ export function registerRoutes(app: Express): void {
   app.use('/', arcanosRouter);
   app.use('/', arcanosPipelineRouter);
   app.use('/', aiEndpointsRouter);
-  app.use('/', memoryRouter);
   app.use('/', sessionRoutes);
   app.use('/', modulesRouter);
   app.use('/', workersRouter);
