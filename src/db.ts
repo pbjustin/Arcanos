@@ -219,6 +219,35 @@ async function initializeTables(): Promise<void> {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+
+    // Backstage Booker tables for persistent wrestling data
+    `CREATE TABLE IF NOT EXISTS backstage_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS backstage_wrestlers (
+      id SERIAL PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      overall INTEGER NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS backstage_storylines (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      story_key TEXT UNIQUE NOT NULL,
+      storyline TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS backstage_story_beats (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     
     // Execution logs table for worker logs
     `CREATE TABLE IF NOT EXISTS execution_logs (
@@ -260,7 +289,10 @@ async function initializeTables(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_saves_module_timestamp ON saves(module, timestamp)`,
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_event_timestamp ON audit_logs(event, timestamp DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_rag_docs_url ON rag_docs(url)`
+    `CREATE INDEX IF NOT EXISTS idx_rag_docs_url ON rag_docs(url)`,
+    `CREATE INDEX IF NOT EXISTS idx_backstage_wrestlers_name ON backstage_wrestlers(name)`,
+    `CREATE INDEX IF NOT EXISTS idx_backstage_events_created_at ON backstage_events(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_backstage_story_beats_created_at ON backstage_story_beats(created_at DESC)`
   ];
 
   try {
