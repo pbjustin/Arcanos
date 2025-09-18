@@ -156,6 +156,7 @@ async function initializeDatabase(workerId = ''): Promise<boolean> {
     console.log('DB connection successful');
 
     // Initialize required tables for ARCANOS operations
+    await refreshDatabaseCollation();
     await initializeTables();
 
     if (workerId) {
@@ -175,6 +176,61 @@ async function initializeDatabase(workerId = ''): Promise<boolean> {
     isConnected = false;
     console.error('[🔌 DB] Connection failed:', (error as Error).message);
     return false;
+  }
+}
+
+async function refreshDatabaseCollation(): Promise<void> {
+  if (!pool) return;
+
+  try {
+    const { rows: dbRows } = await pool.query<{
+      name: string;
+      datcollate: string;
+      datcollversion: string | null;
+    }>(
+      `SELECT datname AS name, datcollate, datcollversion
+       FROM pg_database
+       WHERE datname = current_database()`
+    );
+
+    if (!dbRows.length) {
+      return;
+    }
+
+    const { name, datcollate, datcollversion } = dbRows[0];
+
+    if (!datcollversion) {
+      return;
+    }
+
+    const { rows: collationRows } = await pool.query<{ collversion: string | null }>(
+      `SELECT collversion
+       FROM pg_collation
+       WHERE collname = $1 AND collversion IS NOT NULL
+       ORDER BY collversion DESC
+       LIMIT 1`,
+      [datcollate]
+    );
+
+    if (!collationRows.length) {
+      return;
+    }
+
+    const latestCollationVersion = collationRows[0].collversion;
+
+    if (!latestCollationVersion || latestCollationVersion === datcollversion) {
+      return;
+    }
+
+    console.warn(
+      `[🔌 DB] Collation version mismatch detected (database=${datcollversion}, system=${latestCollationVersion}) - refreshing...`
+    );
+
+    const safeName = name.replace(/"/g, '""');
+    await pool.query(`ALTER DATABASE "${safeName}" REFRESH COLLATION VERSION`);
+    console.log('[🔌 DB] Collation version refreshed successfully');
+  } catch (error) {
+    console.warn('[🔌 DB] Collation refresh skipped:', (error as Error).message);
   }
 }
 
