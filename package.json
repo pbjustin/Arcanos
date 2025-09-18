@@ -25,7 +25,9 @@
     "repair-migrations": "node scripts/migration-repair.js",
     "guide:generate": "node scripts/generate-tagged-guide.js",
     "test:doc-workflow": "node scripts/test-doc-workflow.js",
-    "validate:railway": "node validate-railway-compatibility.js"
+    "validate:railway": "node validate-railway-compatibility.js",
+    "audit:continuous": "node scripts/continuous-audit.js",
+    "audit:full": "npm run lint && npm run type-check && npm run test && npm run audit:continuous"
   },
   "keywords": [
     "ai",
