@@ -3,6 +3,7 @@ import BackstageBooker, { MatchInput, Wrestler } from './backstage/booker.js';
 export const BackstageBookerModule = {
   name: 'BACKSTAGE:BOOKER',
   description: 'Behind-the-scenes pro wrestling booker for WWE/AEW with strict canon and logic.',
+  gptIds: ['backstage-booker', 'backstage'],
   actions: {
     async bookEvent(payload: any) {
       return BackstageBooker.bookEvent(payload);

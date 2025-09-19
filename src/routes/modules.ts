@@ -1,12 +1,5 @@
 import express, { Request, Response } from 'express';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
-
-interface ModuleDef {
-  name: string;
-  actions: Record<string, (payload: any) => Promise<any>>;
-}
+import { loadModuleDefinitions, ModuleDef } from '../modules/moduleLoader.js';
 
 const registry: Record<string, ModuleDef> = {};
 const router = express.Router();
@@ -28,35 +21,14 @@ function createHandler(mod: ModuleDef) {
 
 export function registerModule(route: string, mod: ModuleDef) {
   registry[route] = mod;
+  registry[mod.name] = mod;
   router.post(`/modules/${route}`, createHandler(mod));
 }
 
-async function loadModules() {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const modulesDir = path.resolve(__dirname, '../modules');
-  const files = await fs.readdir(modulesDir, { withFileTypes: true });
-
-  for (const file of files) {
-    if (!file.isFile()) continue;
-    if (!file.name.endsWith('.js') && !file.name.endsWith('.ts')) continue;
-
-    const route = file.name
-      .replace(/\.(ts|js)$/i, '')
-      .replace(/^arcanos-/, '');
-
-    const moduleUrl = pathToFileURL(path.join(modulesDir, file.name)).href;
-    try {
-      const mod: ModuleDef = (await import(moduleUrl)).default;
-      if (mod && mod.actions) {
-        registerModule(route, mod);
-      }
-    } catch (err) {
-      console.error(`Failed to load module ${file.name}:`, err);
-    }
-  }
+const loadedModules = await loadModuleDefinitions();
+for (const { route, definition } of loadedModules) {
+  registerModule(route, definition);
 }
-
-await loadModules();
 
 router.post('/queryroute', async (req: Request, res: Response) => {
   const { module: moduleName, action, payload } = req.body;
