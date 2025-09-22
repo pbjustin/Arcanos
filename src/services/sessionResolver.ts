@@ -1,5 +1,6 @@
 import { getOpenAIClient } from './openai.js';
 import memoryStore from '../memory/store.js';
+import { cosineSimilarity } from '../utils/vectorUtils.js';
 
 interface ResolveResult {
   sessionId: string;
@@ -71,15 +72,3 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   };
 }
 
-// Simple cosine similarity
-function cosineSimilarity(vecA: number[], vecB: number[]): number {
-  let dot = 0.0;
-  let normA = 0.0;
-  let normB = 0.0;
-  for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
