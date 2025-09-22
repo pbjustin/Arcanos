@@ -223,10 +223,18 @@ async function refreshDatabaseCollation(): Promise<void> {
     }
 
     console.warn(
-      `[🔌 DB] Collation version mismatch detected (database=${datcollversion}, system=${latestCollationVersion}) - refreshing...`
+      `[🔌 DB] Collation version mismatch detected (database=${datcollversion}, system=${latestCollationVersion}) - rebuilding indexes & refreshing...`
     );
 
     const safeName = name.replace(/"/g, '""');
+
+    try {
+      await pool.query(`REINDEX DATABASE "${safeName}"`);
+      console.log('[🔌 DB] Database reindexed successfully prior to collation refresh');
+    } catch (reindexError) {
+      console.warn('[🔌 DB] Database reindex skipped:', (reindexError as Error).message);
+    }
+
     await pool.query(`ALTER DATABASE "${safeName}" REFRESH COLLATION VERSION`);
     console.log('[🔌 DB] Collation version refreshed successfully');
   } catch (error) {
