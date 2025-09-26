@@ -21,6 +21,13 @@ An AI-controlled TypeScript backend featuring fine-tuned OpenAI model integratio
 - npm 8+
 - PostgreSQL (optional - uses in-memory fallback)
 
+## 🛡️ What “Environment Safety” Means for You
+
+If you're just trying to get ARCANOS running, the new environment safety layer keeps an eye on the surroundings for you. On
+startup we double-check that ARCANOS is on a machine we recognize, run a tiny rehearsal in a sandbox, and switch into a cautious
+"safe mode" if anything looks off. The startup log and `/health` check now spell out whether everything is trusted or whether we're
+being extra careful. Want the full plain-language breakdown? [Read the overview](docs/environment-security-overview.md).
+
 ### Installation
 ```bash
 git clone <repository-url>
