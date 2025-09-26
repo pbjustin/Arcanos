@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import fs from 'fs/promises';
 import path from 'path';
+import { logger } from '../utils/structuredLogging.js';
 
 /**
  * Sets up recurring AI maintenance tasks.
@@ -14,18 +15,36 @@ async function writeHeartbeat(): Promise<void> {
     await fs.mkdir(path.dirname(HB_FILE), { recursive: true });
     await fs.writeFile(HB_FILE, JSON.stringify(hb));
   } catch (err) {
-    console.error('[🤖 AI Cron] failed to write heartbeat', err);
+    logger.error('Failed to write heartbeat file', {
+      module: 'aiCron',
+      operation: 'heartbeat-write',
+      error: err instanceof Error ? err.message : 'Unknown error',
+      file: HB_FILE
+    });
   }
-  console.log('[🤖 AI Cron] heartbeat', new Date(hb.ts).toISOString());
+  logger.info('Heartbeat written', {
+    module: 'aiCron', 
+    operation: 'heartbeat',
+    timestamp: new Date(hb.ts).toISOString(),
+    pid: process.pid
+  });
 }
 
 async function recoverHeartbeat(): Promise<void> {
   try {
     const content = await fs.readFile(HB_FILE, 'utf8');
     const last = JSON.parse(content);
-    console.log('[🤖 AI Cron] recovered heartbeat', new Date(last.ts).toISOString());
+    logger.info('Previous heartbeat recovered', {
+      module: 'aiCron',
+      operation: 'heartbeat-recovery', 
+      lastHeartbeat: new Date(last.ts).toISOString(),
+      lastPid: last.pid
+    });
   } catch {
-    console.log('[🤖 AI Cron] no previous heartbeat found');
+    logger.info('No previous heartbeat found, starting fresh', {
+      module: 'aiCron',
+      operation: 'heartbeat-recovery'
+    });
   }
 }
 
