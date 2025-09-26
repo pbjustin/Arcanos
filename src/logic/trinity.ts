@@ -12,6 +12,7 @@ import {
   type AuditLogEntry
 } from '../services/auditSafe.js';
 import { getMemoryContext, storePattern } from '../services/memoryAware.js';
+import { logger } from '../utils/structuredLogging.js';
 
 interface TrinityResult {
   result: string;
@@ -60,11 +61,21 @@ const validateModel = async (client: OpenAI): Promise<string> => {
   try {
     const modelToCheck = defaultModel.startsWith('ft:') ? defaultModel : defaultModel;
     await client.models.retrieve(modelToCheck);
-    console.log(`✅ Fine-tuned model ${defaultModel} is available`);
+    logger.info('Fine-tuned model validation successful', { 
+      module: 'trinity',
+      operation: 'model-validation',
+      model: defaultModel,
+      status: 'available'
+    });
     return defaultModel;
   } catch (err) {
-    console.warn(`⚠️  Model ${defaultModel} unavailable. Falling back to GPT-4.`);
-    console.warn(`🔄 Fallback reason: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    logger.warn('Model unavailable, falling back to GPT-4', {
+      module: 'trinity',
+      operation: 'model-fallback',
+      requestedModel: defaultModel,
+      fallbackModel: 'gpt-4',
+      reason: err instanceof Error ? err.message : 'Unknown error'
+    });
     return 'gpt-4';
   }
 };
