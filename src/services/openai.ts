@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { CircuitBreaker, ExponentialBackoff } from '../utils/circuitBreaker.js';
 import { responseCache } from '../utils/cache.js';
+import { aiLogger } from '../utils/structuredLogging.js';
 import crypto from 'crypto';
 import { runtime } from './openaiRuntime.js';
 
@@ -147,7 +148,9 @@ const initializeOpenAI = (): OpenAI | null => {
   try {
     const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
     if (!hasValidAPIKey()) {
-      console.warn('⚠️ OPENAI_API_KEY not configured - AI endpoints will return mock responses');
+      aiLogger.warn('OpenAI API key not configured - AI endpoints will return mock responses', { 
+        operation: 'initialization' 
+      });
       return null; // Return null to indicate mock mode
     }
 
