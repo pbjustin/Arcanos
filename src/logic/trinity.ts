@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
 import { getDefaultModel, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import {
   getAuditSafeConfig,
   applyAuditSafeConstraints,
@@ -114,7 +115,7 @@ export async function runThroughBrain(
   const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
 
   // ARCANOS intake prepares framed request for GPT-5
-  const intakeSystemPrompt = `You are ARCANOS, the primary AI logic core. Integrate memory context and prepare the user's request for GPT-5 reasoning. Return only the framed request.\n\nMEMORY CONTEXT:\n${memoryContext.contextSummary}`;
+  const intakeSystemPrompt = ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContext.contextSummary);
   const intakeTokenParams = getTokenParameter(arcanosModel, 500);
   const intakeResponse = await createChatCompletionWithFallback(client, {
     messages: [
@@ -131,7 +132,7 @@ export async function runThroughBrain(
   // GPT-5 reasoning stage (always invoked)
   logGPT5Invocation('Primary reasoning stage', framedRequest);
   routingStages.push('GPT5-REASONING');
-  const gpt5Result = await createGPT5Reasoning(client, framedRequest, 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.');
+  const gpt5Result = await createGPT5Reasoning(client, framedRequest, ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING);
   const gpt5Output = gpt5Result.content;
 
   // Final ARCANOS execution and filtering
