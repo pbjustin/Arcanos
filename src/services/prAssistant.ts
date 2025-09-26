@@ -7,6 +7,7 @@ import { spawn, type SpawnOptions } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../utils/structuredLogging.js';
+import { getNumericConfig } from '../utils/constants.js';
 
 // Configuration Constants
 const VALIDATION_CONSTANTS = {
@@ -15,7 +16,7 @@ const VALIDATION_CONSTANTS = {
   TEST_TIMEOUT: 120000, // 2 minutes timeout for test execution
   BUILD_TIMEOUT: 120000, // 2 minutes timeout for build execution  
   LINT_TIMEOUT: 60000, // 1 minute timeout for linting
-  DEFAULT_PORT: 8080 // Default port for Railway deployment
+  DEFAULT_PORT: getNumericConfig('DEFAULT_PORT', 'DEFAULT_PORT') // Default port from environment or Railway default
 } as const;
 
 // Railway deployment validation patterns

@@ -1,7 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import config from './config/index.js';
-import { requestLoggingMiddleware } from './utils/structuredLogging.js';
+import { requestLoggingMiddleware, logger } from './utils/structuredLogging.js';
 import { setupDiagnostics } from './diagnostics.js';
 import { registerRoutes } from './routes/register.js';
 import { initOpenAI } from './init-openai.js';
@@ -33,7 +33,13 @@ export function createApp(): Express {
 
   // Global error handler
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    console.error('Unhandled error:', err);
+    logger.error('Unhandled application error', {
+      module: 'app',
+      operation: 'error-handler',
+      error: err.message || 'Unknown error',
+      status: err.status || 500,
+      stack: config.server.environment === 'development' ? err.stack : undefined
+    });
     const status = typeof err.status === 'number' ? err.status : 500;
     res.status(status).json({
       error: 'Internal server error',

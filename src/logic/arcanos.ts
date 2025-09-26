@@ -22,6 +22,7 @@ import {
   executeSecureReasoning, 
   validateSecureReasoningRequest 
 } from '../services/secureReasoningEngine.js';
+import { logger } from '../utils/structuredLogging.js';
 import { 
   applySecurityCompliance
 } from '../services/securityCompliance.js';
@@ -154,14 +155,24 @@ function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: b
  * Secure reasoning serves as the reasoning engine while ARCANOS governs the entire process
  */
 async function delegateToSecureReasoning(client: OpenAI, userInput: string, reason: string, sessionId?: string): Promise<string> {
-  console.log(`[🔀 ARCANOS->SECURE_REASONING] Delegating for structured analysis: ${reason}`);
+  logger.info('Delegating to secure reasoning engine', {
+    module: 'arcanos',
+    operation: 'secure-reasoning-delegation',
+    reason,
+    sessionId
+  });
   
   try {
     // Validate input for security compliance first
     const validation = validateSecureReasoningRequest(userInput);
     
     if (!validation.valid) {
-      console.warn(`[⚠️ SECURITY] Input validation issues: ${validation.issues.join(', ')}`);
+      logger.warn('Input validation issues detected', {
+        module: 'arcanos',
+        operation: 'security-validation', 
+        issues: validation.issues,
+        sessionId
+      });
       // Use the sanitized input
       userInput = validation.safeInput;
     }
@@ -174,7 +185,12 @@ async function delegateToSecureReasoning(client: OpenAI, userInput: string, reas
       requireDeepAnalysis: true
     });
     
-    console.log(`[🔀 SECURE_REASONING->ARCANOS] Analysis complete, compliance status: ${reasoningResult.complianceStatus}`);
+    logger.info('Secure reasoning analysis complete', {
+      module: 'arcanos',
+      operation: 'secure-reasoning-complete',
+      complianceStatus: reasoningResult.complianceStatus,
+      sessionId
+    });
     
     // Process secure reasoning response through ARCANOS (never send reasoning output directly to user)
     const arcanosProcessingPrompt = `
