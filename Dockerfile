@@ -12,8 +12,8 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copy package files for dependency installation
-# Include npm-shrinkwrap.json so `npm ci` has a complete lockfile
-COPY package*.json npm-shrinkwrap.json ./
+# Include package-lock.json so `npm ci` has a complete lockfile
+COPY package*.json package-lock.json ./
 
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --only=production --no-audit --no-fund
