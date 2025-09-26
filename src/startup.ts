@@ -4,13 +4,21 @@ import { logger } from './utils/structuredLogging.js';
 import { initializeDatabase } from './db.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
+import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from './utils/environmentSecurity.js';
 
 /**
  * Runs startup checks including environment validation, database init,
  * OpenAI key validation, and schema verification.
  */
 export async function performStartup(): Promise<void> {
-  console.log(createStartupReport());
+  const securityState = await initializeEnvironmentSecurity();
+  logger.info('ARCANOS environment security', {
+    trusted: securityState.isTrusted,
+    safeMode: securityState.safeMode,
+    issues: securityState.issues,
+    policy: securityState.policyApplied
+  });
+  console.log(createStartupReport(getEnvironmentSecuritySummary()));
 
   const envValidation = validateEnvironment();
   printValidationResults(envValidation);
