@@ -6,6 +6,26 @@
 import { spawn, type SpawnOptions } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
+import { logger } from '../utils/structuredLogging.js';
+
+// Configuration Constants
+const VALIDATION_CONSTANTS = {
+  LARGE_FILE_THRESHOLD: 500,  // Lines threshold for large file detection
+  LARGE_STRING_THRESHOLD: 100, // Character threshold for large inline strings
+  TEST_TIMEOUT: 120000, // 2 minutes timeout for test execution
+  BUILD_TIMEOUT: 120000, // 2 minutes timeout for build execution  
+  LINT_TIMEOUT: 60000, // 1 minute timeout for linting
+  DEFAULT_PORT: 8080 // Default port for Railway deployment
+} as const;
+
+// Railway deployment validation patterns
+const RAILWAY_VALIDATION_PATTERNS = [
+  { pattern: /(?:http:\/\/|https:\/\/)(?!localhost|127\.0\.0\.1|example\.com)/gi, message: 'Hardcoded URLs detected' },
+  { pattern: /['"`]\w+\.\w+\.\w+['"`]/gi, message: 'Potential hardcoded domains' },
+  { pattern: /:\s*\d{4,5}(?!\s*[,}\]])/gi, message: 'Hardcoded port numbers' },
+  { pattern: /password\s*[=:]\s*['"`][^'"`]{3,}['"`]/gi, message: 'Hardcoded password detected' },
+  { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }
+] as const;
 
 function sanitizeArgs(args: string[]): string[] {
   return args.map(a => a.replace(/[^\w:/.-]/g, ''));
@@ -26,6 +46,38 @@ function runCommand(command: string, args: string[], options: SpawnOptions = {})
       }
     });
   });
+}
+
+/**
+ * Validates environment variables documentation in .env.example
+ */
+async function validateEnvDocumentation(workingDir: string, envVars: string[]): Promise<{ issues: string[]; details: string[]; }> {
+  const issues: string[] = [];
+  const details: string[] = [];
+  
+  if (envVars.length === 0) {
+    return { issues, details };
+  }
+  
+  try {
+    const envExamplePath = path.join(workingDir, '.env.example');
+    const envExampleContent = await fs.readFile(envExamplePath, 'utf-8');
+    
+    const missingVars = envVars.filter(envVar => {
+      const varName = envVar.replace('process.env.', '');
+      return !envExampleContent.includes(varName);
+    });
+
+    if (missingVars.length > 0) {
+      issues.push('New environment variables not documented');
+      details.push('Update .env.example with new environment variables');
+    }
+  } catch {
+    // .env.example might not exist, add it as a suggestion
+    details.push('Consider creating .env.example for environment documentation');
+  }
+  
+  return { issues, details };
 }
 
 export interface PRAnalysisResult {
@@ -60,7 +112,10 @@ export class PRAssistant {
    * Main entry point for PR analysis
    */
   async analyzePR(prDiff: string, prFiles: string[]): Promise<PRAnalysisResult> {
-    console.log('🤖 ARCANOS PR Assistant - Starting comprehensive analysis...');
+    logger.info('ARCANOS PR Assistant - Starting comprehensive analysis', {
+      operation: 'analyzePR',
+      filesCount: prFiles.length
+    });
 
     const checks = {
       deadCodeRemoval: await this.checkDeadCodeRemoval(prFiles, prDiff),
@@ -102,7 +157,7 @@ export class PRAssistant {
           const content = await fs.readFile(path.join(this.workingDir, file), 'utf-8');
           const lineCount = content.split('\n').length;
           
-          if (lineCount > 500) {
+          if (lineCount > VALIDATION_CONSTANTS.LARGE_FILE_THRESHOLD) {
             issues.push(`Large file detected: ${file} (${lineCount} lines)`);
             details.push(`Consider breaking down ${file} into smaller, focused modules`);
           }
@@ -194,7 +249,7 @@ export class PRAssistant {
       }
 
       // Check for inline SQL or large string literals
-      const largeStringPattern = /^\+.*['"`][^'"`]{100,}['"`]/gim;
+      const largeStringPattern = new RegExp(`^\\+.*['"\`][^'"\`]{${VALIDATION_CONSTANTS.LARGE_STRING_THRESHOLD},}['"\`]`, 'gim');
       const largeStrings = diff.match(largeStringPattern) || [];
       
       if (largeStrings.length > 0) {
@@ -335,15 +390,7 @@ export class PRAssistant {
 
     try {
       // Check for hardcoded values that should be environment variables
-      const hardcodedPatterns = [
-        { pattern: /(?:http:\/\/|https:\/\/)(?!localhost|127\.0\.0\.1|example\.com)/gi, message: 'Hardcoded URLs detected' },
-        { pattern: /['"`]\w+\.\w+\.\w+['"`]/gi, message: 'Potential hardcoded domains' },
-        { pattern: /:\s*\d{4,5}(?!\s*[,}\]])/gi, message: 'Hardcoded port numbers' },
-        { pattern: /password\s*[=:]\s*['"`][^'"`]{3,}['"`]/gi, message: 'Hardcoded password detected' },
-        { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }
-      ];
-
-      for (const { pattern, message } of hardcodedPatterns) {
+      for (const { pattern, message } of RAILWAY_VALIDATION_PATTERNS) {
         if (pattern.test(diff)) {
           issues.push(message);
           details.push('Move hardcoded values to environment variables');
@@ -355,26 +402,10 @@ export class PRAssistant {
       const envVars = diff.match(envPattern) || [];
       const uniqueEnvVars = [...new Set(envVars)];
 
-      // Check if .env.example is updated when new env vars are added
-      if (uniqueEnvVars.length > 0) {
-        try {
-          const envExamplePath = path.join(this.workingDir, '.env.example');
-          const envExampleContent = await fs.readFile(envExamplePath, 'utf-8');
-          
-          const missingVars = uniqueEnvVars.filter(envVar => {
-            const varName = envVar.replace('process.env.', '');
-            return !envExampleContent.includes(varName);
-          });
-
-          if (missingVars.length > 0) {
-            issues.push('New environment variables not documented');
-            details.push('Update .env.example with new environment variables');
-          }
-        } catch {
-          // .env.example might not exist, add it as a suggestion
-          details.push('Consider creating .env.example for environment documentation');
-        }
-      }
+      // Validate environment variables documentation
+      const envValidation = await validateEnvDocumentation(this.workingDir, uniqueEnvVars);
+      issues.push(...envValidation.issues);
+      details.push(...envValidation.details);
 
       // Check for Railway-specific configurations (informational only)
       ['PORT', 'NODE_ENV', 'RAILWAY_', 'OPENAI_API_KEY'].some(config => diff.includes(config));
@@ -385,7 +416,7 @@ export class PRAssistant {
 
       if (hasPortHandling && !diff.includes('process.env.PORT')) {
         issues.push('Server files changed without proper PORT environment handling');
-        details.push('Ensure dynamic port assignment with process.env.PORT || 8080');
+        details.push(`Ensure dynamic port assignment with process.env.PORT || ${VALIDATION_CONSTANTS.DEFAULT_PORT}`);
       }
 
       if (issues.length === 0) {
@@ -424,10 +455,10 @@ export class PRAssistant {
 
     try {
       // Run npm test
-      console.log('Running npm test...');
+      logger.info('Running test validation', { operation: 'automatedValidation' });
       const testResult = await runCommand('npm', ['test'], {
         cwd: this.workingDir,
-        timeout: 120000 // 2 minutes timeout
+        timeout: VALIDATION_CONSTANTS.TEST_TIMEOUT // 2 minutes timeout
       });
 
       if (testResult.stdout.includes('PASS') || testResult.stdout.includes('✓')) {
@@ -435,10 +466,10 @@ export class PRAssistant {
       }
 
       // Run build to ensure TypeScript compilation
-      console.log('Running npm run build...');
+      logger.info('Running build validation', { operation: 'automatedValidation' });
       const buildResult = await runCommand('npm', ['run', 'build'], {
         cwd: this.workingDir,
-        timeout: 120000
+        timeout: VALIDATION_CONSTANTS.BUILD_TIMEOUT
       });
 
       if (!buildResult.stderr || buildResult.stderr.trim() === '') {
@@ -451,7 +482,7 @@ export class PRAssistant {
       try {
         await runCommand('npm', ['run', 'lint'], {
           cwd: this.workingDir,
-          timeout: 60000
+          timeout: VALIDATION_CONSTANTS.LINT_TIMEOUT
         });
         details.push('Linting passed');
       } catch {
@@ -544,14 +575,14 @@ export class PRAssistant {
       try {
         await runCommand('npm', ['run', 'type-check'], {
           cwd: this.workingDir,
-          timeout: 60000
+          timeout: VALIDATION_CONSTANTS.LINT_TIMEOUT
         });
         details.push('✓ TypeScript type checking passed');
       } catch {
         try {
           await runCommand('tsc', ['--noEmit'], {
             cwd: this.workingDir,
-            timeout: 60000
+            timeout: VALIDATION_CONSTANTS.LINT_TIMEOUT
           });
           details.push('✓ TypeScript type checking passed');
         } catch {

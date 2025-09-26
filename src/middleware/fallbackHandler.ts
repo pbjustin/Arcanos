@@ -6,6 +6,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getOpenAIClient, getGPT5Model } from '../services/openai.js';
 import { responseCache } from '../utils/cache.js';
+import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 
 interface FallbackRequest {
   prompt: string;
@@ -47,7 +48,7 @@ export function generateDegradedResponse(
 
   // Generate appropriate mock responses based on endpoint
   const mockResponses = {
-    ask: `I understand you're asking: "${prompt.slice(0, 200)}". However, I'm currently operating in degraded mode due to temporary service limitations. Please try again in a few moments.`,
+    ask: ARCANOS_SYSTEM_PROMPTS.FALLBACK_MODE(prompt),
     arcanos: `ARCANOS system temporarily operating in fallback mode. Your request has been noted but cannot be fully processed at this time.`,
     sim: `Simulation request received but cannot be processed in degraded mode. Please retry when services are restored.`,
     memory: `Memory operation temporarily unavailable. System is operating in read-only fallback mode.`,
