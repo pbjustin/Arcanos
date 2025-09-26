@@ -21,6 +21,7 @@ import openaiRouter from './openai.js';
 import ragRouter from './rag.js';
 import hrcRouter from './hrc.js';
 import gptRouter from './gptRouter.js';
+import researchRouter from './research.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 
 /**
@@ -53,6 +54,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);
+  app.use('/', researchRouter);
   
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
