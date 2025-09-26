@@ -4,6 +4,7 @@
  */
 
 import { logger } from './structuredLogging.js';
+import type { EnvironmentSecuritySummary } from './environmentSecurity.js';
 
 export interface EnvironmentCheck {
   name: string;
@@ -286,10 +287,27 @@ export function validateRailwayEnvironment(): ValidationResult {
 /**
  * Creates a startup report with all environment information
  */
-export function createStartupReport(): string {
+export function createStartupReport(securitySummary?: EnvironmentSecuritySummary | null): string {
   const envResult = validateEnvironment();
   const _railwayResult = validateRailwayEnvironment();
   const envInfo = getEnvironmentInfo();
+
+  const securityLines = securitySummary
+    ? [
+        '🛡️ Environment Security:',
+        `├─ Trusted: ${securitySummary.trusted ? '✅' : '❌'}`,
+        `├─ Safe Mode: ${securitySummary.safeMode ? 'ENABLED' : 'DISABLED'}`,
+        `├─ Fingerprint: ${securitySummary.fingerprint}`,
+        securitySummary.matchedFingerprint
+          ? `└─ Matched: ${securitySummary.matchedFingerprint}`
+          : securitySummary.issues.length > 0
+            ? `└─ Issues: ${securitySummary.issues.join('; ')}`
+            : '└─ Issues: none'
+      ]
+    : [
+        '🛡️ Environment Security:',
+        '└─ Probe pending'
+      ];
 
   const report = [
     '🚀 ARCANOS Startup Report',
@@ -314,6 +332,8 @@ export function createStartupReport(): string {
     process.env.DATABASE_URL?.includes('railway.app') ? 
       '└─ Database: Railway PostgreSQL ✅' : 
       '└─ Database: External/Local',
+    '',
+    ...securityLines,
     '',
     '========================'
   ].join('\n');
