@@ -15,7 +15,7 @@ const VALIDATION_CONSTANTS = {
   TEST_TIMEOUT: 120000, // 2 minutes timeout for test execution
   BUILD_TIMEOUT: 120000, // 2 minutes timeout for build execution  
   LINT_TIMEOUT: 60000, // 1 minute timeout for linting
-  DEFAULT_PORT: 8080 // Default port for Railway deployment
+  DEFAULT_PORT: Number(process.env.DEFAULT_PORT) || 8080 // Default port from environment or Railway default
 } as const;
 
 // Railway deployment validation patterns
