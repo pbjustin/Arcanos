@@ -18,6 +18,15 @@ const VALIDATION_CONSTANTS = {
   DEFAULT_PORT: 8080 // Default port for Railway deployment
 } as const;
 
+// Railway deployment validation patterns
+const RAILWAY_VALIDATION_PATTERNS = [
+  { pattern: /(?:http:\/\/|https:\/\/)(?!localhost|127\.0\.0\.1|example\.com)/gi, message: 'Hardcoded URLs detected' },
+  { pattern: /['"`]\w+\.\w+\.\w+['"`]/gi, message: 'Potential hardcoded domains' },
+  { pattern: /:\s*\d{4,5}(?!\s*[,}\]])/gi, message: 'Hardcoded port numbers' },
+  { pattern: /password\s*[=:]\s*['"`][^'"`]{3,}['"`]/gi, message: 'Hardcoded password detected' },
+  { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }
+] as const;
+
 function sanitizeArgs(args: string[]): string[] {
   return args.map(a => a.replace(/[^\w:/.-]/g, ''));
 }
@@ -37,6 +46,38 @@ function runCommand(command: string, args: string[], options: SpawnOptions = {})
       }
     });
   });
+}
+
+/**
+ * Validates environment variables documentation in .env.example
+ */
+async function validateEnvDocumentation(workingDir: string, envVars: string[]): Promise<{ issues: string[]; details: string[]; }> {
+  const issues: string[] = [];
+  const details: string[] = [];
+  
+  if (envVars.length === 0) {
+    return { issues, details };
+  }
+  
+  try {
+    const envExamplePath = path.join(workingDir, '.env.example');
+    const envExampleContent = await fs.readFile(envExamplePath, 'utf-8');
+    
+    const missingVars = envVars.filter(envVar => {
+      const varName = envVar.replace('process.env.', '');
+      return !envExampleContent.includes(varName);
+    });
+
+    if (missingVars.length > 0) {
+      issues.push('New environment variables not documented');
+      details.push('Update .env.example with new environment variables');
+    }
+  } catch {
+    // .env.example might not exist, add it as a suggestion
+    details.push('Consider creating .env.example for environment documentation');
+  }
+  
+  return { issues, details };
 }
 
 export interface PRAnalysisResult {
@@ -349,15 +390,7 @@ export class PRAssistant {
 
     try {
       // Check for hardcoded values that should be environment variables
-      const hardcodedPatterns = [
-        { pattern: /(?:http:\/\/|https:\/\/)(?!localhost|127\.0\.0\.1|example\.com)/gi, message: 'Hardcoded URLs detected' },
-        { pattern: /['"`]\w+\.\w+\.\w+['"`]/gi, message: 'Potential hardcoded domains' },
-        { pattern: /:\s*\d{4,5}(?!\s*[,}\]])/gi, message: 'Hardcoded port numbers' },
-        { pattern: /password\s*[=:]\s*['"`][^'"`]{3,}['"`]/gi, message: 'Hardcoded password detected' },
-        { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }
-      ];
-
-      for (const { pattern, message } of hardcodedPatterns) {
+      for (const { pattern, message } of RAILWAY_VALIDATION_PATTERNS) {
         if (pattern.test(diff)) {
           issues.push(message);
           details.push('Move hardcoded values to environment variables');
@@ -369,26 +402,10 @@ export class PRAssistant {
       const envVars = diff.match(envPattern) || [];
       const uniqueEnvVars = [...new Set(envVars)];
 
-      // Check if .env.example is updated when new env vars are added
-      if (uniqueEnvVars.length > 0) {
-        try {
-          const envExamplePath = path.join(this.workingDir, '.env.example');
-          const envExampleContent = await fs.readFile(envExamplePath, 'utf-8');
-          
-          const missingVars = uniqueEnvVars.filter(envVar => {
-            const varName = envVar.replace('process.env.', '');
-            return !envExampleContent.includes(varName);
-          });
-
-          if (missingVars.length > 0) {
-            issues.push('New environment variables not documented');
-            details.push('Update .env.example with new environment variables');
-          }
-        } catch {
-          // .env.example might not exist, add it as a suggestion
-          details.push('Consider creating .env.example for environment documentation');
-        }
-      }
+      // Validate environment variables documentation
+      const envValidation = await validateEnvDocumentation(this.workingDir, uniqueEnvVars);
+      issues.push(...envValidation.issues);
+      details.push(...envValidation.details);
 
       // Check for Railway-specific configurations (informational only)
       ['PORT', 'NODE_ENV', 'RAILWAY_', 'OPENAI_API_KEY'].some(config => diff.includes(config));
