@@ -1,5 +1,5 @@
 import { getOpenAIClient } from './openai.js';
-import memoryStore from '../memory/store.js';
+import { getCachedSessions } from './sessionMemoryService.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
 
 interface ResolveResult {
@@ -8,7 +8,7 @@ interface ResolveResult {
 }
 
 export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
-  const sessions = memoryStore.getAllSessions();
+  const sessions = getCachedSessions();
   if (sessions.length === 0) {
     throw new Error('No sessions available');
   }
