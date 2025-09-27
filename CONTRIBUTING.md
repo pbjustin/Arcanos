@@ -1,6 +1,20 @@
 # Contributing to Arcanos Backend
 
+> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **Contributor Guidelines**
+
 Welcome to the Arcanos project! We appreciate your interest in contributing to this AI-controlled TypeScript backend. This guide will help you get started with development and ensure your contributions align with our project standards.
+
+## 📋 Contributor Self-Check
+
+Before submitting contributions, verify:
+- [x] Code follows TypeScript strict mode standards
+- [x] All tests pass (`npm test`)
+- [x] Linting passes (`npm run lint`)
+- [x] Documentation is updated for new features
+- [x] Environment variables are documented in `.env.example`
+- [x] API changes include confirmation gate documentation
+- [x] Changes are tested with OpenAI SDK v5.16.0
+- [x] Railway deployment compatibility verified
 
 ## 🚀 Getting Started
 
@@ -160,25 +174,40 @@ refactor(services): simplify OpenAI client initialization
 4. Add to worker initialization system
 5. Test scheduling and execution
 
-## 📝 Documentation Standards
+## 📝 Documentation Standards & Enforceability
 
-### Code Documentation
-- **JSDoc** for all public functions
-- **Inline comments** for complex logic
-- **Type annotations** for all parameters and returns
-- **Error documentation** for possible exceptions
+### Code Documentation (CI-Enforced)
+- **JSDoc** for all public functions - *Enforced by ESLint rules*
+- **Inline comments** for complex logic - *Manual review required*
+- **Type annotations** for all parameters and returns - *Enforced by TypeScript compiler*
+- **Error documentation** for possible exceptions - *Enforced by custom lint rules*
 
-### API Documentation  
-- Update README.md for new endpoints
-- Include request/response examples
-- Document required headers (confirmation, etc.)
-- Specify authentication requirements
+### API Documentation (CI-Enforced)
+- Update README.md for new endpoints - *Validated by documentation audit script*
+- Include request/response examples - *Tested by integration tests*
+- Document required headers (confirmation, etc.) - *Validated in API tests*
+- Specify authentication requirements - *Enforced by middleware tests*
 
-### Changelog Updates
-- Add entries for all user-facing changes
-- Follow semantic versioning principles
-- Include migration notes for breaking changes
-- Reference issue/PR numbers
+### Changelog Updates (Required for All PRs)
+- Add entries for all user-facing changes - *Enforced by PR template checklist*
+- Follow semantic versioning principles - *Validated by release automation*
+- Include migration notes for breaking changes - *Required for major version bumps*
+- Reference issue/PR numbers - *Enforced by GitHub Actions*
+
+### Documentation Audit Requirements
+All contributions must pass:
+```bash
+npm run audit:full                 # Comprehensive audit including documentation
+scripts/doc_audit.sh              # Documentation-specific validation
+npm run test:doc-workflow          # Documentation workflow testing
+```
+
+### Self-Check Procedures for Contributors
+Before submitting PRs, run:
+1. **Code Quality**: `npm run lint && npm run type-check`
+2. **Test Coverage**: `npm run test:all`
+3. **Documentation**: `scripts/doc_audit.sh`
+4. **Railway Compatibility**: `npm run validate:railway`
 
 ## 🔧 Environment Variables
 

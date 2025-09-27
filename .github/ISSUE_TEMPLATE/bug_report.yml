@@ -1,0 +1,115 @@
+name: Bug Report
+description: Report a bug or issue with Arcanos Backend
+title: "[BUG] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📋 Bug Report Self-Check
+        Before submitting, verify:
+        - [ ] Issue is reproducible with latest `main` branch
+        - [ ] Not a duplicate of existing issues
+        - [ ] Environment details are complete
+        - [ ] Logs and error messages are included
+        - [ ] OpenAI SDK v5.16.0 compatibility verified
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: Clear and concise description of what the bug is
+      placeholder: Describe the issue you're experiencing...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the behavior
+      placeholder: |
+        1. Set environment variables...
+        2. Run command '...'
+        3. Send request to '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: Describe what should have happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened
+      placeholder: Describe what actually happened...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which component is affected?
+      options:
+        - AI/OpenAI Integration
+        - API Endpoints
+        - Memory System
+        - Worker System
+        - Railway Deployment
+        - Database/PostgreSQL
+        - Documentation
+        - Build/CI System
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Details
+      description: Please complete the following information
+      value: |
+        - Node.js version: 
+        - npm version: 
+        - OpenAI SDK version: 
+        - Operating System: 
+        - Railway Environment: 
+        - Database Type: 
+        - Branch/Commit: 
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Include relevant log output, error messages, or screenshots
+      render: shell
+      placeholder: Paste logs here...
+
+  - type: dropdown
+    id: confirmation
+    attributes:
+      label: Confirmation Gate Related?
+      description: Is this issue related to endpoints requiring X-Confirmation header?
+      options:
+        - "No"
+        - "Yes - Missing confirmation header"
+        - "Yes - Confirmation not working"
+        - "Yes - Documentation unclear"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here
+      placeholder: Any additional information that might be helpful...

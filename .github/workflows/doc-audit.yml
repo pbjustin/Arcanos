@@ -1,0 +1,166 @@
+name: Documentation Audit
+on:
+  pull_request:
+    paths:
+      - '**.md'
+      - '.github/**'
+      - 'docs/**'
+      - 'scripts/doc_audit.sh'
+  push:
+    branches: [main]
+    paths:
+      - '**.md'
+      - '.github/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  documentation-audit:
+    name: 📋 Documentation Integrity Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          
+      - name: 📦 Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc
+          npm ci
+          
+      - name: 🔍 Run Documentation Audit
+        id: audit
+        run: |
+          echo "audit-output<<EOF" >> $GITHUB_OUTPUT
+          ./scripts/doc_audit.sh | tee audit_results.txt
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+      - name: 📊 Parse Audit Results
+        id: results
+        run: |
+          # Extract key metrics from audit results
+          TOTAL_CHECKS=$(grep "Total Checks:" audit_results.txt | grep -o '[0-9]\+' || echo "0")
+          PASSED_CHECKS=$(grep "Passed:" audit_results.txt | grep -o '[0-9]\+' || echo "0") 
+          FAILED_CHECKS=$(grep "Failed:" audit_results.txt | grep -o '[0-9]\+' || echo "0")
+          WARNINGS=$(grep "Warnings:" audit_results.txt | grep -o '[0-9]\+' || echo "0")
+          
+          echo "total-checks=$TOTAL_CHECKS" >> $GITHUB_OUTPUT
+          echo "passed-checks=$PASSED_CHECKS" >> $GITHUB_OUTPUT
+          echo "failed-checks=$FAILED_CHECKS" >> $GITHUB_OUTPUT
+          echo "warnings=$WARNINGS" >> $GITHUB_OUTPUT
+          
+          # Calculate success rate
+          if [ "$TOTAL_CHECKS" -gt 0 ]; then
+            SUCCESS_RATE=$(echo "scale=1; $PASSED_CHECKS * 100 / $TOTAL_CHECKS" | bc -l)
+          else
+            SUCCESS_RATE="0"
+          fi
+          echo "success-rate=$SUCCESS_RATE" >> $GITHUB_OUTPUT
+          
+      - name: 📈 Create Audit Summary
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const totalChecks = '${{ steps.results.outputs.total-checks }}';
+            const passedChecks = '${{ steps.results.outputs.passed-checks }}';
+            const failedChecks = '${{ steps.results.outputs.failed-checks }}';
+            const warnings = '${{ steps.results.outputs.warnings }}';
+            const successRate = '${{ steps.results.outputs.success-rate }}';
+            
+            const summary = `## 📋 Documentation Audit Summary
+            
+            **Audit Results:**
+            - ✅ **Passed:** ${passedChecks}/${totalChecks} checks
+            - ❌ **Failed:** ${failedChecks} checks  
+            - ⚠️ **Warnings:** ${warnings}
+            - 📊 **Success Rate:** ${successRate}%
+            
+            ### Status: ${failedChecks == '0' ? '🎉 **PASSED**' : '⚠️ **NEEDS ATTENTION**'}
+            
+            ${failedChecks == '0' 
+              ? 'All documentation integrity checks passed! 🚀' 
+              : 'Some documentation checks failed. Please review the audit output below and address the issues.'
+            }
+            
+            <details>
+            <summary>📝 Detailed Audit Output</summary>
+            
+            \`\`\`
+            ${{ steps.audit.outputs.audit-output }}
+            \`\`\`
+            
+            </details>
+            `;
+            
+            await core.summary.addRaw(summary).write();
+            
+      - name: 💬 Comment on PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const failedChecks = '${{ steps.results.outputs.failed-checks }}';
+            const passedChecks = '${{ steps.results.outputs.passed-checks }}';
+            const totalChecks = '${{ steps.results.outputs.total-checks }}';
+            const successRate = '${{ steps.results.outputs.success-rate }}';
+            
+            const status = failedChecks == '0' ? '✅ **PASSED**' : '❌ **FAILED**';
+            const emoji = failedChecks == '0' ? '🎉' : '⚠️';
+            
+            const comment = `## ${emoji} Documentation Audit Results
+            
+            **Status:** ${status}  
+            **Score:** ${passedChecks}/${totalChecks} checks passed (${successRate}%)
+            
+            ${failedChecks == '0' 
+              ? '🚀 All documentation integrity checks passed! Your changes maintain high documentation standards.'
+              : `🔍 **${failedChecks} checks failed.** Please review the [workflow summary](${context.payload.pull_request.html_url}/checks) for details and fix the issues.`
+            }
+            
+            ### 📋 What was checked:
+            - Required documentation files
+            - GitHub templates structure  
+            - Content standards (last-updated tags, versions, self-checks)
+            - Terminology consistency
+            - Internal link validation
+            - CI integration compatibility
+            
+            ${failedChecks != '0' ? `
+            ### 🛠️ How to fix:
+            1. Run \`./scripts/doc_audit.sh\` locally to see detailed failure reasons
+            2. Address each failed check individually
+            3. Update last-updated dates in modified files
+            4. Ensure all required sections are present
+            5. Push your fixes to re-trigger this check
+            ` : ''}
+            
+            ---
+            *This comment was automatically generated by the Documentation Audit workflow.*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+            
+      - name: ❌ Fail on Audit Issues  
+        if: steps.results.outputs.failed-checks != '0'
+        run: |
+          echo "::error::Documentation audit failed with ${{ steps.results.outputs.failed-checks }} failed checks"
+          echo "Please review the audit output above and fix the issues"
+          exit 1
+          
+      - name: 🎉 Success Message
+        if: steps.results.outputs.failed-checks == '0'
+        run: |
+          echo "::notice::Documentation audit passed! All ${{ steps.results.outputs.total-checks }} checks successful"
+          echo "Success rate: ${{ steps.results.outputs.success-rate }}%"
