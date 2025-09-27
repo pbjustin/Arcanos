@@ -1,45 +1,17 @@
-import { saveMemory, loadMemory } from '../db.js';
-
-// Fallback in-memory store
-const memoryStore: Record<string, any[]> = {};
-
-function makeKey(sessionId: string, channel: string): string {
-  return `session:${sessionId}:${channel}`;
-}
+import sessionMemoryRepository from './sessionMemoryRepository.js';
 
 export async function saveMessage(sessionId: string, channel: string, message: any): Promise<void> {
-  const key = makeKey(sessionId, channel);
-  let messages: any[] = [];
-  try {
-    messages = (await loadMemory(key)) || [];
-  } catch {
-    messages = memoryStore[key] || [];
-  }
-  messages.push(message);
-  try {
-    await saveMemory(key, messages);
-  } catch {
-    memoryStore[key] = messages;
-  }
+  await sessionMemoryRepository.appendMessage(sessionId, channel, message);
 }
 
 export async function getChannel(sessionId: string, channel: string): Promise<any[]> {
-  const key = makeKey(sessionId, channel);
-  try {
-    return (await loadMemory(key)) || [];
-  } catch {
-    return memoryStore[key] || [];
-  }
+  return sessionMemoryRepository.getChannel(sessionId, channel);
 }
 
 export async function getConversation(sessionId: string): Promise<any[]> {
-  const [core, meta] = await Promise.all([
-    getChannel(sessionId, 'conversations_core'),
-    getChannel(sessionId, 'system_meta')
-  ]);
+  return sessionMemoryRepository.getConversation(sessionId);
+}
 
-  return core.map((msg, idx) => ({
-    ...msg,
-    meta: meta[idx] || {}
-  }));
+export function getCachedSessions() {
+  return sessionMemoryRepository.getCachedSessions();
 }
