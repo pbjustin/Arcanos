@@ -8,6 +8,8 @@
  * - Provides deep analysis and problem-solving without exposing sensitive data
  */
 
+import { logger } from '../utils/structuredLogging.js';
+
 interface SecurityConfig {
   redactCredentials: boolean;
   redactFilePaths: boolean;
@@ -311,15 +313,16 @@ function createSafeInputSummary(userInput: string): string {
  * Log security compliance audit trail
  */
 export function logSecurityAudit(auditData: RedactionResult, requestId: string): void {
-  const auditEntry = {
-    timestamp: new Date().toISOString(),
+  logger.info('Security compliance audit', {
+    module: 'securityCompliance',
+    operation: 'logSecurityAudit',
     requestId,
     complianceStatus: auditData.complianceStatus,
+    redactionsCount: auditData.redactionsApplied.length,
+    auditLogEntries: auditData.auditLog.length,
     redactionsApplied: auditData.redactionsApplied,
     auditLog: auditData.auditLog
-  };
-  
-  console.log(`[🔒 SECURITY AUDIT] ${JSON.stringify(auditEntry)}`);
+  });
 }
 
 export default {

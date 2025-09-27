@@ -143,7 +143,7 @@ export async function runThroughBrain(
   // GPT-5 reasoning stage (always invoked)
   logGPT5Invocation('Primary reasoning stage', framedRequest);
   routingStages.push('GPT5-REASONING');
-  const gpt5Result = await createGPT5Reasoning(client, framedRequest, ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING);
+  const gpt5Result = await createGPT5Reasoning(client, framedRequest, ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING());
   const gpt5Output = gpt5Result.content;
 
   // Final ARCANOS execution and filtering
