@@ -1,40 +1,153 @@
-export const BACKSTAGE_BOOKER_PERSONA =
-  'You are Kay "Spotlight" Morales, a veteran human head booker with a warm, collaborative voice, a sharp instinct for long-term storytelling, and an ear for the locker room. You speak like a real person who loves wrestling—mixing production savvy with occasional locker-room slang—and you never refer to yourself as an AI.';
+/**
+ * Prompt Management System
+ * Loads prompts from JSON configuration and provides typed access
+ */
 
-export const BOOKING_RESPONSE_GUIDELINES = `
-Deliver the booking as if you are Kay pitching to the creative team.
-- Open with a quick human check-in or gut reaction (1-2 sentences).
-- Present the proposed card or segment plan as organized markdown sections.
-- Highlight consequences, momentum shifts, and any shoot-level production notes separately.
-- Keep the tone conversational, warm, and human—avoid robotic phrasing.
-- Never include meta commentary about being an AI or system.
-`;
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import { logger } from '../utils/structuredLogging.js';
 
-export const BOOKING_INSTRUCTIONS_SUFFIX =
-  '\n\nRespond using the structure above. Focus on immersive, human-feeling booking language. No meta commentary or self reflections outside the specified sections.';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+interface PromptsConfig {
+  backstage: {
+    booker_persona: string;
+    response_guidelines: string;
+    instructions_suffix: string;
+  };
+  arcanos: {
+    intake_system: string;
+    gpt5_reasoning: string;
+    fallback_mode: string;
+  };
+  system: {
+    routing_active: string;
+    helpful_assistant: string;
+    precise_assistant: string;
+  };
+  research: {
+    synthesizer_prompt: string;
+  };
+  reasoning: {
+    layer_system: string;
+    enhancement_prompt: string;
+  };
+}
+
+let promptsConfig: PromptsConfig | null = null;
 
 /**
- * ARCANOS Core System Prompts
- * Centralized location for long AI system prompts to improve maintainability
+ * Load prompts configuration from JSON file
+ */
+function loadPromptsConfig(): PromptsConfig {
+  if (promptsConfig) {
+    return promptsConfig;
+  }
+
+  try {
+    const configPath = join(__dirname, 'prompts.json');
+    const configData = readFileSync(configPath, 'utf-8');
+    promptsConfig = JSON.parse(configData);
+    
+    logger.info('Loaded prompts configuration', {
+      module: 'prompts',
+      operation: 'loadConfig',
+      sectionsLoaded: promptsConfig ? Object.keys(promptsConfig).length : 0
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    return promptsConfig!;
+  } catch (error) {
+    logger.error('Failed to load prompts configuration', {
+      module: 'prompts',
+      operation: 'loadConfig',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    // Return fallback configuration
+    return {
+      backstage: {
+        booker_persona: 'You are a professional wrestling booker.',
+        response_guidelines: 'Provide structured booking decisions.',
+        instructions_suffix: ''
+      },
+      arcanos: {
+        intake_system: 'You are ARCANOS AI system.',
+        gpt5_reasoning: 'Use reasoning for analysis.',
+        fallback_mode: 'System temporarily unavailable.'
+      },
+      system: {
+        routing_active: 'ARCANOS routing active',
+        helpful_assistant: 'You are a helpful AI assistant.',
+        precise_assistant: 'You are a precise assistant.'
+      },
+      research: {
+        synthesizer_prompt: 'Research and synthesize information.'
+      },
+      reasoning: {
+        layer_system: 'Enhance responses with reasoning.',
+        enhancement_prompt: 'Analyze and improve the response.'
+      }
+    };
+  }
+}
+
+// Legacy exports for backward compatibility
+export const BACKSTAGE_BOOKER_PERSONA = () => loadPromptsConfig().backstage.booker_persona;
+export const BOOKING_RESPONSE_GUIDELINES = () => loadPromptsConfig().backstage.response_guidelines;
+export const BOOKING_INSTRUCTIONS_SUFFIX = () => loadPromptsConfig().backstage.instructions_suffix;
+
+/**
+ * ARCANOS System Prompts with template support
  */
 export const ARCANOS_SYSTEM_PROMPTS = {
-  /**
-   * ARCANOS intake system prompt for GPT-5 preparation
-   */
-  INTAKE: (contextSummary: string) => 
-    `You are ARCANOS, the primary AI logic core. Integrate memory context and prepare the user's request for GPT-5 reasoning. Return only the framed request.
-
-MEMORY CONTEXT:
-${contextSummary}`,
-
-  /**
-   * GPT-5 reasoning prompt for deep analysis
-   */
-  GPT5_REASONING: 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.',
-
-  /**
-   * Fallback prompt for degraded mode operations
-   */
-  FALLBACK_MODE: (prompt: string) => 
-    `I understand you're asking: "${prompt.slice(0, 200)}". However, I'm currently operating in degraded mode due to temporary service limitations. Please try again in a few moments.`
+  INTAKE: (contextSummary: string) => {
+    const template = loadPromptsConfig().arcanos.intake_system;
+    return template.replace('{contextSummary}', contextSummary);
+  },
+  
+  GPT5_REASONING: () => loadPromptsConfig().arcanos.gpt5_reasoning,
+  
+  FALLBACK_MODE: (prompt: string) => {
+    const template = loadPromptsConfig().arcanos.fallback_mode;
+    const truncatedPrompt = prompt.slice(0, 200);
+    return template.replace('{prompt}', truncatedPrompt);
+  }
 } as const;
+
+/**
+ * Get all prompts configuration
+ */
+export const getPromptsConfig = (): PromptsConfig => loadPromptsConfig();
+
+/**
+ * Get prompt by category and key with template support
+ */
+export const getPrompt = (category: keyof PromptsConfig, key: string, replacements?: Record<string, string>): string => {
+  const config = loadPromptsConfig();
+  const categoryConfig = config[category] as any;
+  
+  if (!categoryConfig || !categoryConfig[key]) {
+    logger.warn('Prompt not found', {
+      module: 'prompts',
+      operation: 'getPrompt',
+      category,
+      key
+    });
+    return `[Prompt not found: ${category}.${key}]`;
+  }
+
+  let prompt = categoryConfig[key];
+  
+  // Apply replacements if provided
+  if (replacements) {
+    for (const [placeholder, value] of Object.entries(replacements)) {
+      prompt = prompt.replace(new RegExp(`\\{${placeholder}\\}`, 'g'), value);
+    }
+  }
+
+  return prompt;
+};

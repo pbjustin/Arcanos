@@ -131,16 +131,16 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
       : 'No saved storylines yet.';
 
     const sections = [
-      `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA}`,
+      `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
       `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
       `<<CURRENT_ROSTER>>\n${rosterBlock}`,
       `<<RECENT_EVENTS>>\n${eventsBlock}`,
       `<<RECENT_STORY_BEATS>>\n${beatsBlock}`,
       `<<SAVED_STORYLINES>>\n${savedStoriesBlock}`,
-      `<<RESPONSE_STYLE>>\n${BOOKING_RESPONSE_GUIDELINES.trim()}`
+      `<<RESPONSE_STYLE>>\n${BOOKING_RESPONSE_GUIDELINES().trim()}`
     ];
 
-    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX}`;
+    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
   } catch (error) {
     console.warn('Backstage Booker: falling back to in-memory context', (error as Error).message);
     const fallbackRoster = roster.length
@@ -151,14 +151,14 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
       : 'No story beats recorded yet.';
 
     const sections = [
-      `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA}`,
+      `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
       `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
       `<<CURRENT_ROSTER>>\n${fallbackRoster}`,
       `<<RECENT_STORY_BEATS>>\n${fallbackStories}`,
-      `<<RESPONSE_STYLE>>\n${BOOKING_RESPONSE_GUIDELINES.trim()}`
+      `<<RESPONSE_STYLE>>\n${BOOKING_RESPONSE_GUIDELINES().trim()}`
     ];
 
-    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX}`;
+    return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
   }
 }
 
