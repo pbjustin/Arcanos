@@ -4,6 +4,7 @@ export interface SessionMetadata {
   topic?: string;
   tags?: string[];
   summary?: string;
+  [key: string]: unknown;
 }
 
 export interface SessionEntry {
@@ -12,24 +13,76 @@ export interface SessionEntry {
   metadata?: SessionMetadata;
 }
 
-class MemoryStore {
-  private sessions: SessionEntry[] = [];
+export interface SessionUpsert {
+  sessionId?: string;
+  conversations_core?: any;
+  metadata?: SessionMetadata;
+}
 
-  getAllSessions(): SessionEntry[] {
-    return this.sessions;
+interface MemoryStoreOptions {
+  capacity?: number;
+}
+
+const DEFAULT_CAPACITY = parseInt(process.env.SESSION_CACHE_CAPACITY || '200', 10);
+
+class MemoryStore {
+  private sessions = new Map<string, SessionEntry>();
+  private readonly capacity: number;
+
+  constructor(options: MemoryStoreOptions = {}) {
+    this.capacity = options.capacity || DEFAULT_CAPACITY;
   }
 
-  saveSession(entry: SessionEntry): SessionEntry {
-    const existingIndex = this.sessions.findIndex(s => s.sessionId === entry.sessionId);
-    if (existingIndex >= 0) {
-      this.sessions[existingIndex] = entry;
-      return entry;
+  getAllSessions(): SessionEntry[] {
+    return Array.from(this.sessions.values());
+  }
+
+  getSession(sessionId: string): SessionEntry | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  saveSession(entry: SessionUpsert): SessionEntry {
+    const sessionId = entry.sessionId || randomUUID();
+    const existing = this.sessions.get(sessionId);
+    const merged: SessionEntry = {
+      sessionId,
+      conversations_core: entry.conversations_core ?? existing?.conversations_core ?? [],
+      metadata: this.mergeMetadata(existing?.metadata, entry.metadata)
+    };
+
+    this.sessions.set(sessionId, merged);
+    this.enforceCapacity();
+    return merged;
+  }
+
+  private mergeMetadata(current?: SessionMetadata, incoming?: SessionMetadata): SessionMetadata | undefined {
+    if (!current && !incoming) {
+      return undefined;
     }
-    const session = entry.sessionId ? entry : { ...entry, sessionId: randomUUID() };
-    this.sessions.push(session);
-    return session;
+
+    return {
+      ...(current || {}),
+      ...(incoming || {})
+    };
+  }
+
+  private enforceCapacity(): void {
+    if (this.sessions.size <= this.capacity) {
+      return;
+    }
+
+    const overflow = this.sessions.size - this.capacity;
+    const keys = Array.from(this.sessions.keys());
+
+    for (let i = 0; i < overflow; i += 1) {
+      const key = keys[i];
+      if (key) {
+        this.sessions.delete(key);
+      }
+    }
   }
 }
 
 const memoryStore = new MemoryStore();
 export default memoryStore;
+export { MemoryStore };
