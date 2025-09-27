@@ -126,9 +126,13 @@ echo -e "\n🔤 Terminology Standardization:"
 echo "=============================="
 
 # Check for consistent terminology across files
-check "Consistent 'Arcanos' spelling" "! find . -name '*.md' -exec grep -l -i 'arkanos\|arcanous' {} \;" "Project name consistency"
+MISSPELLED_FILES=$(find . -name '*.md' -exec grep -l -i 'arkanos\|arcanous' {} \; 2>/dev/null | wc -l)
+check "Consistent 'Arcanos' spelling" "[[ $MISSPELLED_FILES -eq 0 ]]" "Project name consistency"
 check "Consistent 'AI-controlled' terminology" "grep -r -l 'AI-controlled' README.md CONTRIBUTING.md >/dev/null 2>&1" "Architecture terminology"
-check "OpenAI SDK version consistency" "! find . -name '*.md' -exec grep -l 'OpenAI.*v[45]\.[0-9]' {} \; | grep -v 'v5\.16\.0'" "Dependency version alignment"
+
+# Check OpenAI SDK version consistency
+OUTDATED_SDK_FILES=$(find . -name '*.md' -exec grep -l 'OpenAI.*v[45]\.[0-9]' {} \; 2>/dev/null | grep -v 'v5\.16\.0' | wc -l)
+check "OpenAI SDK version consistency" "[[ $OUTDATED_SDK_FILES -eq 0 ]]" "Dependency version alignment"
 
 # 5. Link Validation
 echo -e "\n🔗 Internal Link Validation:"
