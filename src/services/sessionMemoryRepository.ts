@@ -1,6 +1,7 @@
 import type { SessionEntry, SessionMetadata } from '../memory/store.js';
 import memoryStore from '../memory/store.js';
 import { loadMemory, saveMemory } from '../db.js';
+import { logger } from '../utils/structuredLogging.js';
 
 type ChannelName = string;
 
@@ -77,7 +78,9 @@ class SessionMemoryRepository {
       this.fallback.delete(key);
     } catch (error) {
       this.setFallback(key, nextHistory);
-      console.warn('[memory] Falling back to in-process cache for session channel', {
+      logger.warn('Falling back to in-process cache for session channel', {
+        module: 'sessionMemoryRepository',
+        operation: 'appendMessage',
         sessionId,
         channel,
         error: (error as Error).message
@@ -108,7 +111,9 @@ class SessionMemoryRepository {
     } catch (error) {
       const cached = this.getFallback(key);
       if (cached) {
-        console.warn('[memory] Using fallback cache for session channel', {
+        logger.warn('Using fallback cache for session channel', {
+          module: 'sessionMemoryRepository',
+          operation: 'getChannel',
           sessionId,
           channel,
           error: (error as Error).message
