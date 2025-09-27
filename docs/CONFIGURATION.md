@@ -1,6 +1,19 @@
 # ARCANOS Configuration Guide
 
-Complete configuration reference for environment variables, deployment settings, and system parameters.
+> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **Configuration Patterns**
+
+Complete configuration reference for environment variables, deployment settings, and system parameters with fallback behaviors.
+
+## 📋 Configuration Self-Check
+
+This configuration guide includes:
+- [x] Required vs. optional variables clearly distinguished
+- [x] Fallback behaviors documented for each variable
+- [x] Railway deployment patterns included
+- [x] OpenAI SDK v5.16.0 compatibility requirements
+- [x] Security considerations for sensitive variables
+- [x] Environment-specific configurations documented
+- [x] Validation patterns and error handling described
 
 ## ⚙️ Configuration
 

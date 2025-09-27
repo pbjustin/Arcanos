@@ -1,0 +1,130 @@
+name: Code of Conduct Violation
+description: Report a violation of our community standards
+title: "[COC] "
+labels: ["code-of-conduct", "urgent"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## ⚠️ Code of Conduct Violation Report
+        
+        This form is for reporting violations of our [Code of Conduct](../CODE_OF_CONDUCT.md).
+        All reports will be handled confidentially and investigated promptly.
+        
+        **Response Commitment**: Reports will be acknowledged within 48 hours and resolved within 7 days.
+
+  - type: dropdown
+    id: violation_type
+    attributes:
+      label: Type of Violation
+      description: What type of behavior are you reporting?
+      options:
+        - Harassment or bullying
+        - Discriminatory language or behavior
+        - Inappropriate sexual content
+        - Personal attacks or trolling
+        - Sharing private information without permission
+        - AI-specific misconduct (harmful AI practices)
+        - Technical misconduct (malicious code, security issues)
+        - Other unprofessional behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: location
+    attributes:
+      label: Where did this occur?
+      description: In what context did this violation happen?
+      options:
+        - GitHub Issues
+        - GitHub Pull Requests
+        - GitHub Discussions
+        - Code comments/commits
+        - Community forums
+        - Public representation of project
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: textarea
+    id: incident_description
+    attributes:
+      label: Incident Description
+      description: Please describe what happened
+      placeholder: Provide a clear description of the incident, including what was said or done...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Links, screenshots, or other evidence (if available)
+      placeholder: |
+        - Link to issue/PR: 
+        - Screenshots: (you can drag and drop images)
+        - Other evidence:
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: How has this affected you or the community?
+      placeholder: Describe the impact this has had on you or others in the community...
+
+  - type: dropdown
+    id: previous_contact
+    attributes:
+      label: Previous Contact
+      description: Have you attempted to address this directly with the person involved?
+      options:
+        - "No, I haven't contacted them directly"
+        - "Yes, but it didn't resolve the issue"
+        - "Yes, and it made the situation worse"
+        - "Not applicable (public violation)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reporter_relationship
+    attributes:
+      label: Your Relationship to the Project
+      description: What is your relationship to this project?
+      options:
+        - Community member
+        - Regular contributor
+        - Project maintainer
+        - First-time visitor
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confidentiality
+    attributes:
+      label: Confidentiality Preferences
+      description: How would you like this report to be handled?
+      options:
+        - label: Keep my identity confidential from the reported person
+        - label: I'm comfortable with my identity being shared if necessary
+        - label: This can be handled publicly (if appropriate)
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: Additional Information
+      description: Is there anything else we should know?
+      placeholder: Any other context, concerns, or information that might be relevant...
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        
+        **What happens next?**
+        1. Your report will be acknowledged within 48 hours
+        2. The incident will be investigated promptly and fairly  
+        3. Appropriate action will be taken based on our enforcement guidelines
+        4. You'll be updated on the resolution
+        
+        **Emergency?** If this is an urgent safety issue, please also reach out directly to project maintainers.

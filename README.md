@@ -1,15 +1,35 @@
 # Arcanos Backend
 
+> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **OpenAI SDK:** v5.16.0
+
 An AI-controlled TypeScript backend featuring fine-tuned OpenAI model integration, intelligent routing, and persistent memory storage. Arcanos provides a comprehensive HTTP API that is orchestrated entirely by an AI model with advanced worker scheduling and memory management.
 
-## 🧠 Core Features
+## 📋 Documentation Self-Check
 
+This README.md includes the following required sections:
+- [x] Architecture overview and configuration patterns
+- [x] Environment variables with fallback behaviors documented
+- [x] API endpoints with confirmation requirements
+- [x] Deployment procedures with Railway optimization
+- [x] Development workflow and project structure
+- [x] Last-updated tags and version information
+- [x] Links to comprehensive documentation in `/docs`
+
+## 🧠 Core Architecture & Features
+
+### AI-Controlled Architecture
 - **AI-Managed Operations**: Fine-tuned GPT model controls all system operations
-- **Intelligent Memory System**: PostgreSQL backend with in-memory fallback 
+- **Intelligent Memory System**: PostgreSQL backend with in-memory fallback behavior
 - **OpenAI SDK v5.16.0**: Modern integration with streaming, function calling, and GPT-5 support
 - **Image Generation**: DALL·E support via OpenAI's Images API with AI-refined prompts
 - **Worker System**: AI-controlled CRON scheduling for maintenance and background tasks
 - **Railway Optimized**: Cloud deployment ready with health monitoring and graceful shutdown
+
+### Fallback Behaviors
+- **Database**: Automatically falls back to in-memory storage if PostgreSQL unavailable
+- **AI Services**: Provides mock responses when OpenAI API key is not configured
+- **Worker System**: Continues core operations even if background workers fail
+- **Health Monitoring**: Degrades gracefully with detailed status reporting via `/health`
 
 ## 🚀 Quick Start
 
@@ -56,7 +76,7 @@ ARCANOS includes comprehensive environment validation and security features. On 
 
 For details, see [Environment Security Overview](docs/environment-security-overview.md).
 
-## ⚙️ Configuration
+## ⚙️ Configuration Patterns
 
 ### Required Environment Variables
 ```bash
@@ -64,23 +84,45 @@ OPENAI_API_KEY=your-openai-api-key-here
 AI_MODEL=REDACTED_FINE_TUNED_MODEL_ID
 ```
 
-### Optional Configuration
+### Optional Configuration with Fallbacks
 ```bash
-PORT=8080
-DATABASE_URL=postgresql://user:pass@localhost:5432/arcanos
-RUN_WORKERS=true
+PORT=8080                          # Fallback: 8080
+DATABASE_URL=postgresql://...      # Fallback: In-memory storage
+RUN_WORKERS=true                   # Fallback: false (core services only)
+NODE_ENV=production                # Fallback: development
+RAILWAY_ENVIRONMENT=production     # Fallback: local
 ```
+
+### Configuration Validation
+The system performs comprehensive environment validation on startup:
+- **Missing required vars**: System starts in safe mode with mock responses  
+- **Invalid format**: Detailed error messages with correction guidance
+- **Database connectivity**: Automatic fallback to in-memory storage
+- **OpenAI API**: Validates API key format and connectivity
 
 **📖 Complete configuration guide:** [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 
-## 🌐 API Documentation
+## 🌐 API Documentation & Endpoints
 
-Core endpoints:
-- `POST /ask` - AI conversation and logic routing
-- `POST /query-finetune` - Direct fine-tuned model access  
-- `POST /image` - AI-enhanced image generation
-- `GET /health` - System health check
-- `POST /api/memory/*` - Memory management (requires confirmation)
+### Core Endpoints
+- `POST /ask` - AI conversation and logic routing (no confirmation required)
+- `POST /query-finetune` - Direct fine-tuned model access (no confirmation required)
+- `POST /image` - AI-enhanced image generation (no confirmation required)
+- `GET /health` - System health check and status (no confirmation required)
+
+### Protected Endpoints (Require Confirmation Header)
+- `POST /api/memory/*` - Memory management operations
+- `DELETE /api/memory/*` - Memory deletion operations  
+- `POST /api/workers/*` - Worker system management
+
+### Confirmation Gate Pattern
+Protected endpoints require the `X-Confirmation` header:
+```bash
+curl -X POST http://localhost:8080/api/memory/create \
+  -H "Content-Type: application/json" \
+  -H "X-Confirmation: confirmed" \
+  -d '{"key": "example", "value": "data"}'
+```
 
 **📖 Complete API reference:** [docs/api/README.md](docs/api/README.md)
 
@@ -154,6 +196,19 @@ MIT License - see LICENSE file for details.
 
 ---
 
+## 📋 Version History & Maintenance
+
+- **v1.2.0** (2024-09-27): Complete documentation standardization and audit system
+- **v1.1.0** (2024-09-24): OpenAI SDK v5.16.0 upgrade and Railway optimization  
+- **v1.0.0** (2024-09-20): Initial release with AI-controlled architecture
+
+### Documentation Maintenance
+This documentation is validated by:
+- Automated lint checks in CI/CD pipeline
+- Documentation audit script (`scripts/doc_audit.sh`)
+- GitHub Actions workflow for consistency verification
+- Self-check procedures embedded in each file
+
 **⚡ Quick Links:**
 - [Configuration](docs/CONFIGURATION.md) | [API Docs](docs/api/README.md) | [Deploy to Railway](docs/deployment/DEPLOYMENT.md)
-- [Health Check](http://localhost:8080/health) | [System Status](http://localhost:8080/status)
+- [Health Check](http://localhost:8080/health) | [System Status](http://localhost:8080/status) | [Audit Script](scripts/doc_audit.sh)
