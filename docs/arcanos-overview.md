@@ -1,6 +1,18 @@
-# 🌟 What is Arcanos?
+# 🌟 Arcanos Architecture Overview
 
-Arcanos is an AI-focused backend system that pairs a fine-tuned GPT model with traditional web services. It is built with TypeScript and Express and relies on a PostgreSQL database for memory persistence. The design goal is to give the model operational control over common tasks while still providing standard HTTP endpoints for interaction.
+> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **Architecture Guide**
+
+Arcanos is an AI-controlled backend system that pairs a fine-tuned GPT model with traditional web services. Built with TypeScript and Express, it relies on a PostgreSQL database for memory persistence with comprehensive fallback behaviors. The design goal is to give the model operational control over common tasks while providing standard HTTP endpoints for interaction.
+
+## 📋 Architecture Documentation Self-Check
+
+This overview includes:
+- [x] Core AI-controlled architecture principles documented
+- [x] Integration patterns with OpenAI SDK v5.16.0 specified
+- [x] Database fallback behaviors clearly described
+- [x] Worker system architecture explained
+- [x] Configuration patterns and environment dependencies
+- [x] Railway deployment compatibility considerations
 
 Key capabilities include:
 
