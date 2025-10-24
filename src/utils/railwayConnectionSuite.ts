@@ -3,7 +3,9 @@ import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
 import Redis from 'ioredis';
 import type { Redis as RedisClient, RedisOptions } from 'ioredis';
+import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
+import type { ConnectionOptions as TLSOptions } from 'tls';
 
 type Nullable<T> = T | null;
 
@@ -65,17 +67,51 @@ function parsePoolMax(): number {
   return parsed;
 }
 
-function shouldUsePostgresSSL(connectionString: string | null): boolean {
-  if (process.env.PGSSLMODE === 'require') {
-    return true;
+type SSLMode =
+  | 'disable'
+  | 'allow'
+  | 'prefer'
+  | 'require'
+  | 'verify-ca'
+  | 'verify-full'
+  | 'no-verify';
+
+function normalizeSslMode(value: string | null | undefined): SSLMode | null {
+  if (!value) {
+    return null;
   }
 
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case 'disable':
+    case 'allow':
+    case 'prefer':
+    case 'require':
+    case 'verify-ca':
+    case 'verify-full':
+    case 'no-verify':
+      return normalized;
+    default:
+      return null;
+  }
+}
+
+function extractSslModeFromConnectionString(connectionString: string | null): SSLMode | null {
+  if (!connectionString) {
+    return null;
+  }
+
+  try {
+    const url = new URL(connectionString);
+    return normalizeSslMode(url.searchParams.get('sslmode'));
+  } catch {
+    return null;
+  }
+}
+
+function heuristicallyShouldUseSSL(connectionString: string | null): boolean {
   if (!connectionString) {
     return Boolean(process.env.RAILWAY_ENVIRONMENT);
-  }
-
-  if (/sslmode=require/.test(connectionString)) {
-    return true;
   }
 
   try {
@@ -84,6 +120,82 @@ function shouldUsePostgresSSL(connectionString: string | null): boolean {
   } catch {
     return false;
   }
+}
+
+function readOptionalFile(path: string | undefined, label: string): string | undefined {
+  if (!path) {
+    return undefined;
+  }
+
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log(`[POSTGRES] Failed to read ${label} at ${path}: ${message}`);
+    return undefined;
+  }
+}
+
+function resolvePostgresSSLConfig(connectionString: string | null): TLSOptions | undefined {
+  const envMode = normalizeSslMode(process.env.PGSSLMODE);
+  const connectionMode = extractSslModeFromConnectionString(connectionString);
+  const explicitMode = envMode ?? connectionMode;
+
+  if (explicitMode === 'disable') {
+    return undefined;
+  }
+
+  let useSSL = false;
+  let rejectUnauthorized = false;
+
+  if (explicitMode === 'verify-ca' || explicitMode === 'verify-full') {
+    useSSL = true;
+    rejectUnauthorized = true;
+  } else if (explicitMode === 'require') {
+    useSSL = true;
+  } else if (explicitMode === 'no-verify') {
+    useSSL = true;
+    rejectUnauthorized = false;
+  } else if (explicitMode === 'allow' || explicitMode === 'prefer') {
+    useSSL = heuristicallyShouldUseSSL(connectionString);
+  } else if (!explicitMode) {
+    useSSL = heuristicallyShouldUseSSL(connectionString);
+    if (!useSSL) {
+      return undefined;
+    }
+  }
+
+  if (!useSSL) {
+    return undefined;
+  }
+
+  const sslRejectEnv = process.env.PGSSL_REJECT_UNAUTHORIZED;
+  if (sslRejectEnv === '0') {
+    rejectUnauthorized = false;
+  } else if (sslRejectEnv === '1') {
+    rejectUnauthorized = true;
+  }
+
+  const sslConfig: TLSOptions = {
+    rejectUnauthorized,
+  };
+
+  const rootCert = readOptionalFile(process.env.PGSSLROOTCERT, 'PGSSLROOTCERT');
+  if (rootCert) {
+    sslConfig.ca = rootCert;
+  }
+
+  const clientCert = readOptionalFile(process.env.PGSSLCERT, 'PGSSLCERT');
+  if (clientCert) {
+    sslConfig.cert = clientCert;
+  }
+
+  const clientKey = readOptionalFile(process.env.PGSSLKEY, 'PGSSLKEY');
+  if (clientKey) {
+    sslConfig.key = clientKey;
+  }
+
+  return sslConfig;
 }
 
 function createPostgresPool(): Nullable<Pool> {
@@ -115,8 +227,9 @@ function createPostgresPool(): Nullable<Pool> {
     ...(connectionString ? { connectionString } : {}),
   };
 
-  if (shouldUsePostgresSSL(connectionString)) {
-    config.ssl = { rejectUnauthorized: false };
+  const sslConfig = resolvePostgresSSLConfig(connectionString);
+  if (sslConfig) {
+    config.ssl = sslConfig;
   }
 
   const pool = new Pool(config);
