@@ -76,6 +76,12 @@ type SSLMode =
   | 'verify-full'
   | 'no-verify';
 
+type PostgresSSLResolution = {
+  enabled: boolean;
+  optional: boolean;
+  config?: TLSOptions;
+};
+
 function normalizeSslMode(value: string | null | undefined): SSLMode | null {
   if (!value) {
     return null;
@@ -169,17 +175,25 @@ function resolveTlsMaterial(value: string | undefined, label: string): string | 
   }
 }
 
-function resolvePostgresSSLConfig(connectionString: string | null): TLSOptions | undefined {
+function resolvePostgresSSLConfig(
+  connectionString: string | null,
+  forceDisable = false,
+): PostgresSSLResolution {
+  if (forceDisable) {
+    return { enabled: false, optional: false };
+  }
+
   const envMode = normalizeSslMode(process.env.PGSSLMODE);
   const connectionMode = extractSslModeFromConnectionString(connectionString);
   const explicitMode = envMode ?? connectionMode;
 
   if (explicitMode === 'disable') {
-    return undefined;
+    return { enabled: false, optional: false };
   }
 
   let useSSL = false;
   let rejectUnauthorized = false;
+  let optional = false;
 
   if (explicitMode === 'verify-ca' || explicitMode === 'verify-full') {
     useSSL = true;
@@ -190,16 +204,18 @@ function resolvePostgresSSLConfig(connectionString: string | null): TLSOptions |
     useSSL = true;
     rejectUnauthorized = false;
   } else if (explicitMode === 'allow' || explicitMode === 'prefer') {
+    optional = true;
     useSSL = heuristicallyShouldUseSSL(connectionString);
   } else if (!explicitMode) {
+    optional = true;
     useSSL = heuristicallyShouldUseSSL(connectionString);
     if (!useSSL) {
-      return undefined;
+      return { enabled: false, optional };
     }
   }
 
   if (!useSSL) {
-    return undefined;
+    return { enabled: false, optional };
   }
 
   const sslRejectEnv = process.env.PGSSL_REJECT_UNAUTHORIZED;
@@ -228,14 +244,22 @@ function resolvePostgresSSLConfig(connectionString: string | null): TLSOptions |
     sslConfig.key = clientKey;
   }
 
-  return sslConfig;
+  return { enabled: true, optional, config: sslConfig };
 }
 
-function createPostgresPool(): Nullable<Pool> {
+let postgresSslOptional = false;
+let postgresSslEnabled = false;
+let postgresSslFallbackAttempted = false;
+
+function createPostgresPool(forceDisableSSL = false): Nullable<Pool> {
   const connectionString = resolvePostgresConnectionString();
   const hasDiscreteConfig = requiredPostgresEnv.every((key) => Boolean(process.env[key]));
   const hasAnyPostgresConfig = Boolean(connectionString) || hasDiscreteConfig;
   const missing = requiredPostgresEnv.filter((key) => !process.env[key]);
+
+  postgresSslOptional = false;
+  postgresSslEnabled = false;
+  postgresSslFallbackAttempted = false;
 
   postgresConfigured = hasAnyPostgresConfig;
 
@@ -260,9 +284,12 @@ function createPostgresPool(): Nullable<Pool> {
     ...(connectionString ? { connectionString } : {}),
   };
 
-  const sslConfig = resolvePostgresSSLConfig(connectionString);
-  if (sslConfig) {
-    config.ssl = sslConfig;
+  const sslResolution = resolvePostgresSSLConfig(connectionString, forceDisableSSL);
+  postgresSslOptional = sslResolution.optional;
+  postgresSslEnabled = sslResolution.enabled;
+
+  if (sslResolution.enabled && sslResolution.config) {
+    config.ssl = sslResolution.config;
   }
 
   const pool = new Pool(config);
@@ -298,7 +325,7 @@ async function verifyPostgres(): Promise<void> {
   }
 
   try {
-    await postgres.query('SELECT 1');
+    await runPostgresProbe();
     log('[POSTGRES] Connection test successful');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -436,7 +463,7 @@ export async function railwayHealthCheck(req: Request, res: Response): Promise<v
 
   try {
     if (postgres) {
-      await postgres.query('SELECT 1');
+      await runPostgresProbe(true);
       postgresHealth.healthy = true;
     } else if (!postgresConfigured) {
       postgresHealth.error = 'PostgreSQL not configured';
@@ -485,3 +512,79 @@ export async function railwayHealthCheck(req: Request, res: Response): Promise<v
 }
 
 export { postgres, redis, log, enforceStrictConnectivity };
+
+async function runPostgresProbe(silentSuccess = true): Promise<void> {
+  if (!postgres) {
+    throw new Error('[POSTGRES] Pool unavailable');
+  }
+
+  try {
+    await postgres.query('SELECT 1');
+  } catch (error) {
+    const fallbackHandled = await attemptPostgresSslFallback(error);
+    if (fallbackHandled) {
+      return;
+    }
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  if (!silentSuccess) {
+    log('[POSTGRES] Connection test successful');
+  }
+}
+
+function shouldRetryPostgresWithoutSSL(error: unknown): boolean {
+  if (!postgresSslEnabled || !postgresSslOptional || postgresSslFallbackAttempted) {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes('connection terminated unexpectedly') ||
+    normalized.includes('tls handshake') ||
+    normalized.includes('ssl handshake') ||
+    normalized.includes('self signed certificate')
+  );
+}
+
+async function attemptPostgresSslFallback(error: unknown): Promise<boolean> {
+  if (!shouldRetryPostgresWithoutSSL(error)) {
+    return false;
+  }
+
+  postgresSslFallbackAttempted = true;
+
+  const message = error instanceof Error ? error.message : String(error);
+  log(`[POSTGRES] Optional TLS failed (${message}) — retrying without SSL`);
+
+  const existingPool = postgres;
+  postgres = null;
+
+  if (existingPool) {
+    try {
+      await existingPool.end();
+    } catch (endError) {
+      const endMessage = endError instanceof Error ? endError.message : String(endError);
+      log(`[POSTGRES] Failed to close SSL pool cleanly: ${endMessage}`);
+    }
+  }
+
+  postgres = createPostgresPool(true);
+
+  if (!postgres) {
+    log('[POSTGRES] Unable to recreate pool without SSL');
+    return false;
+  }
+
+  try {
+    await postgres.query('SELECT 1');
+    log('[POSTGRES] Connection test successful without SSL');
+    return true;
+  } catch (retryError) {
+    const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+    log(`[POSTGRES] Retry without SSL failed: ${retryMessage}`);
+    throw retryError instanceof Error ? retryError : new Error(retryMessage);
+  }
+}
