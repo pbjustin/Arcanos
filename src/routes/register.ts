@@ -10,6 +10,7 @@ import heartbeatRouter from './heartbeat.js';
 import orchestrationRouter from './orchestration.js';
 import statusRouter from './status.js';
 import siriRouter from './siri.js';
+import railwayHealthRouter from './railway-health.js';
 import backstageRouter from './backstage.js';
 import apiArcanosRouter from './api-arcanos.js';
 import apiSimRouter from './api-sim.js';
@@ -40,6 +41,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', modulesRouter);
   app.use('/', workersRouter);
   app.use('/', heartbeatRouter);
+  app.use('/', railwayHealthRouter);
   app.use('/', orchestrationRouter);
   app.use('/', statusRouter);
   app.use('/', siriRouter);
