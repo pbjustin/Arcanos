@@ -122,16 +122,49 @@ function heuristicallyShouldUseSSL(connectionString: string | null): boolean {
   }
 }
 
-function readOptionalFile(path: string | undefined, label: string): string | undefined {
-  if (!path) {
+function looksLikePem(value: string): boolean {
+  return value.includes('-----BEGIN');
+}
+
+function decodeBase64(value: string): string | null {
+  try {
+    const normalized = value.replace(/\s+/g, '');
+    if (!normalized || normalized.length % 4 !== 0) {
+      return null;
+    }
+
+    // Basic base64 guard — reject characters outside the alphabet to avoid
+    // unintentionally decoding a legitimate filesystem path.
+    if (!/^[-+/=A-Za-z0-9]+$/.test(normalized)) {
+      return null;
+    }
+
+    const decoded = Buffer.from(normalized, 'base64').toString('utf8');
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveTlsMaterial(value: string | undefined, label: string): string | undefined {
+  if (!value) {
     return undefined;
   }
 
+  if (looksLikePem(value)) {
+    return value;
+  }
+
+  const decoded = decodeBase64(value);
+  if (decoded && looksLikePem(decoded)) {
+    return decoded;
+  }
+
   try {
-    return readFileSync(path, 'utf8');
+    return readFileSync(value, 'utf8');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    log(`[POSTGRES] Failed to read ${label} at ${path}: ${message}`);
+    log(`[POSTGRES] Failed to read ${label} at ${value}: ${message}`);
     return undefined;
   }
 }
@@ -180,17 +213,17 @@ function resolvePostgresSSLConfig(connectionString: string | null): TLSOptions |
     rejectUnauthorized,
   };
 
-  const rootCert = readOptionalFile(process.env.PGSSLROOTCERT, 'PGSSLROOTCERT');
+  const rootCert = resolveTlsMaterial(process.env.PGSSLROOTCERT, 'PGSSLROOTCERT');
   if (rootCert) {
     sslConfig.ca = rootCert;
   }
 
-  const clientCert = readOptionalFile(process.env.PGSSLCERT, 'PGSSLCERT');
+  const clientCert = resolveTlsMaterial(process.env.PGSSLCERT, 'PGSSLCERT');
   if (clientCert) {
     sslConfig.cert = clientCert;
   }
 
-  const clientKey = readOptionalFile(process.env.PGSSLKEY, 'PGSSLKEY');
+  const clientKey = resolveTlsMaterial(process.env.PGSSLKEY, 'PGSSLKEY');
   if (clientKey) {
     sslConfig.key = clientKey;
   }
