@@ -88,7 +88,8 @@ function shouldUsePostgresSSL(connectionString: string | null): boolean {
 
 function createPostgresPool(): Nullable<Pool> {
   const connectionString = resolvePostgresConnectionString();
-  const hasAnyPostgresConfig = Boolean(connectionString) || requiredPostgresEnv.some((key) => Boolean(process.env[key]));
+  const hasDiscreteConfig = requiredPostgresEnv.every((key) => Boolean(process.env[key]));
+  const hasAnyPostgresConfig = Boolean(connectionString) || hasDiscreteConfig;
   const missing = requiredPostgresEnv.filter((key) => !process.env[key]);
 
   postgresConfigured = hasAnyPostgresConfig;
@@ -98,7 +99,7 @@ function createPostgresPool(): Nullable<Pool> {
     return null;
   }
 
-  if (!connectionString && missing.length > 0) {
+  if (!connectionString && !hasDiscreteConfig && missing.length > 0) {
     const message = `[POSTGRES] Missing environment variables: ${missing.join(', ')}`;
     if (enforceStrictConnectivity) {
       throw new Error(message);
