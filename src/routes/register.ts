@@ -32,6 +32,10 @@ export function registerRoutes(app: Express): void {
     res.send('ARCANOS is live');
   });
 
+  app.get('/railway/healthcheck', (_: Request, res: Response) => {
+    res.status(200).send('OK');
+  });
+
   app.use('/', askRouter);
   app.use('/', arcanosRouter);
   app.use('/', arcanosPipelineRouter);
