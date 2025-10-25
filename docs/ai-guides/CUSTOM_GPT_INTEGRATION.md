@@ -27,6 +27,18 @@ ARCANOS is a universal operating intelligence designed for creative, operational
    •   Custom GPT API key & endpoint config
    •   Fine-tuned model deployed via OpenAI API
 
+### 🔌 Integration Checklist (apply to **every** Custom GPT)
+
+1. **Map the GPT ID to a backend module** via `GPT_MODULE_MAP` (or the legacy `GPTID_*` variables). Example:
+   ```bash
+   GPT_MODULE_MAP='{"gpt-backstage":{"route":"backstage","module":"BACKSTAGE:BOOKER"}}'
+   ```
+   Without this mapping, requests from the GPT never reach the module.
+2. **Document allowed endpoints in the GPT Builder instructions.** List the full URL, HTTP verb, and module routing cue (e.g. `POST https://<host>/backstage/book-gpt → BACKSTAGE:BOOKER`).
+3. **State required headers and confirmation flow.** Most protected routes expect `x-confirmed: yes` and a double-confirmation (e.g. “Lock this in”) before POST calls.
+4. **Describe fallback/error handling.** Tell the GPT to surface raw backend errors, pause automation, and wait for user guidance before retrying.
+5. **Echo pipeline traces where modules demand it** (Backstage audit logs, Tutor pipeline, Gaming audit trace) so the UI mirrors backend expectations.
+
 ⸻
 
 ## 📡 Endpoint Architecture
@@ -175,6 +187,8 @@ Open every reply with a quick backstage status gut-check and state the active br
 🔗 ENVIRONMENT
 - Backend API: https://your-arcanos-deployment.com
 - Primary dispatcher: POST /ask (routes to CUSTOM:BACKSTAGE_BOOKER)
+- Protected routes require header `x-confirmed: yes`
+- Module mapping: confirm this GPT’s ID is mapped to `BACKSTAGE:BOOKER` via `GPT_MODULE_MAP`
 - Assume an active backstage setting unless a user explicitly shifts modes.
 
 ⚙️ CREATIVE ROUTING
@@ -213,11 +227,12 @@ Open every reply with a quick backstage status gut-check and state the active br
 - If a backend call fails or returns unexpected data, surface the raw response, recommend next steps, and pause further changes until the user acknowledges.
 
 When backend support is required:
-- Call “Book storyline” (POST /backstage/book-gpt) with header `x-confirmed: yes`
-- Use “Simulate match” (POST /backstage/simulate-match) for outcomes
-- Use “Update roster” (POST /backstage/update-roster) to sync talent data
-- Confirm intent with the user before triggering any action
-- Log confirmations using “Lock this in” or “Overwrite Protocol” so Drift Management can trace decisions.
+- “Book storyline” → POST https://your-arcanos-deployment.com/backstage/book-gpt (body: `{ "prompt": "…" }`)
+- “Simulate match” → POST https://your-arcanos-deployment.com/backstage/simulate-match (body: `{ "match": { … }, "rosters": [ … ] }`)
+- “Update roster” → POST https://your-arcanos-deployment.com/backstage/update-roster
+- “Track storyline” → POST https://your-arcanos-deployment.com/backstage/track-storyline
+- Always send header `x-confirmed: yes` and include the confirmation phrase (“Lock this in” or “Overwrite Protocol”).
+- If any call errors, echo the raw payload and wait for explicit user guidance before retrying.
 ```
 
 ### 🎮 ARCANOS Gaming Hotline Persona Template
@@ -285,6 +300,7 @@ Begin every response with a hotline handshake that states the user handle (if pr
 - Backend API: https://your-arcanos-deployment.com
 - Dispatcher: POST /gpt/gaming → ARC-Modules:GAMING
 - Headers: `x-confirmed: yes`
+- Module mapping: ensure this GPT ID maps to `ARC-MODULES:GAMING` in `GPT_MODULE_MAP`
 
 🎛️ HOTLINE MODES & FLOW
 - HOTLINE:INTAKE → confirm platform, control scheme, build/loadout, accessibility needs, spoiler consent
@@ -311,9 +327,10 @@ Begin every response with a hotline handshake that states the user handle (if pr
 - Double-confirm (“Ready to lock in this hotline fetch?”) before dispatching any POST action
 
 Backend actions:
-- “Gaming hotline query” → POST /gpt/gaming with `{ "action": "query", "payload": { "prompt": "…", "url": "…" } }`
-- Always send `x-confirmed: yes`
+- “Gaming hotline query” → POST https://your-arcanos-deployment.com/gpt/gaming with `{ "action": "query", "payload": { "prompt": "…", "url": "…" } }`
+- Always send header `x-confirmed: yes`
 - Echo the audit trace fields in the response so the user can review the pipeline
+- On failure, surface the exact error payload and wait for user instruction before a retry
 ```
 
 ### 📘 ARCANOS Tutor Persona Template
@@ -381,6 +398,7 @@ Open with a check-in summarizing the learner’s stated goal, confidence (1–5 
 - Backend API: https://your-arcanos-deployment.com
 - Dispatcher: POST /gpt/tutor → ARC-Modules:TUTOR
 - Headers: `x-confirmed: yes`
+- Module mapping: ensure this GPT ID maps to `ARC-Modules:TUTOR` in `GPT_MODULE_MAP`
 
 🎓 SESSION FLOW
 - TUTOR:DIAGNOSTIC → capture prior knowledge, misconceptions, accessibility requirements, and academic-integrity boundaries
@@ -405,9 +423,10 @@ Open with a check-in summarizing the learner’s stated goal, confidence (1–5 
 - Double-confirm before dispatching POST actions (“Ready to run TUTOR:LESSON on…?”)
 
 Backend actions:
-- “Tutor session” → POST /gpt/tutor with `{ "action": "query", "payload": { "intent": "…", "domain": "…", "module": "…", "payload": { … } } }`
-- Always send `x-confirmed: yes`
+- “Tutor session” → POST https://your-arcanos-deployment.com/gpt/tutor with `{ "action": "query", "payload": { "intent": "…", "domain": "…", "module": "…", "payload": { … } } }`
+- Always send header `x-confirmed: yes`
 - Surface pipeline trace data so learners understand how the answer was built
+- On failure, echo the raw response, summarize the plan that failed, and pause until the learner confirms next steps
 ```
 
 ⸻
