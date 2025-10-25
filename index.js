@@ -1,48 +1,53 @@
-#!/usr/bin/env node
-/**
- * ARCANOS Main Entry Point
- * Wrapper for backward compatibility - forwards to compiled dist/server.js
- */
+import express from 'express';
+import dotenv from 'dotenv';
+import { OpenAI } from 'openai';
 
-import { existsSync } from 'fs';
-import { spawn } from 'child_process';
+dotenv.config();
 
-console.log('🚀 ARCANOS Entry Point - Forwarding to dist/server.js');
+const app = express();
+app.use(express.json());
 
-// Check if dist/server.js exists
-if (!existsSync('./dist/server.js')) {
-  console.error('❌ Error: dist/server.js not found. Run "npm run build" first.');
-  process.exit(1);
-}
-
-// Forward to the actual server
-const serverProcess = spawn('node', ['dist/server.js'], {
-  stdio: 'inherit',
-  cwd: process.cwd()
+// ✅ OpenAI Client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
 });
 
-// Handle process events
-serverProcess.on('error', (err) => {
-  console.error('❌ Server process error:', err);
-  process.exit(1);
+// ✅ Healthcheck for Railway
+app.get('/railway/healthcheck', (_req, res) => {
+  res.status(200).send('OK');
 });
 
-serverProcess.on('exit', (code, signal) => {
-  if (signal) {
-    console.log(`🛑 Server terminated by signal: ${signal}`);
-  } else {
-    console.log(`🔚 Server exited with code: ${code}`);
+// ✅ Example OpenAI route
+app.post('/ask', async (req, res) => {
+  const { prompt } = req.body || {};
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
   }
-  process.exit(code || 0);
+
+  try {
+    const chat = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    res.json({ response: chat.choices[0]?.message?.content ?? '' });
+  } catch (err) {
+    console.error('[OpenAI Error]', err);
+    res.status(500).send('Failed to query OpenAI');
+  }
 });
 
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Received SIGINT - Shutting down gracefully...');
-  serverProcess.kill('SIGINT');
+// ✅ Background worker simulation (heartbeat)
+setInterval(() => {
+  console.log(`[⏱] Heartbeat at ${new Date().toISOString()}`);
+  // Optional: add logic here for AI-based background workers
+}, 60_000); // every minute
+
+// ✅ Railway-compatible port
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`[🚂] Server running on port ${PORT}`);
 });
 
-process.on('SIGTERM', () => {
-  console.log('\n🛑 Received SIGTERM - Shutting down gracefully...');
-  serverProcess.kill('SIGTERM');
-});
+export default app;
