@@ -1,6 +1,6 @@
 # Arcanos Backend
 
-> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **OpenAI SDK:** v5.16.0
+> **Last Updated:** 2025-09-27 | **Version:** 1.2.0 | **OpenAI SDK:** v5.16.0
 
 An AI-controlled TypeScript backend featuring fine-tuned OpenAI model integration, intelligent routing, and persistent memory storage. Arcanos provides a comprehensive HTTP API that is orchestrated entirely by an AI model with advanced worker scheduling and memory management.
 
