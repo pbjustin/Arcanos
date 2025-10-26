@@ -27,7 +27,9 @@
     "test:doc-workflow": "node scripts/test-doc-workflow.js",
     "validate:railway": "node validate-railway-compatibility.js",
     "audit:continuous": "node scripts/continuous-audit.js",
-    "audit:full": "npm run lint && npm run type-check && npm run test && npm run audit:continuous"
+    "audit:sdk-compliance": "node scripts/sdk-compliance-audit.js",
+    "audit:full": "npm run lint && npm run type-check && npm run test && npm run audit:continuous",
+    "optimize": "npm run audit:sdk-compliance"
   },
   "keywords": [
     "ai",

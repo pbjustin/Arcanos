@@ -27,6 +27,8 @@ systemState.json
 # Logs
 logs/*.log
 logs/*.txt
+logs/audit-*.json
+!logs/compliance_report.json
 !logs/.gitkeep
 *.log
 !memory/state/audit.log
