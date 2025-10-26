@@ -192,10 +192,42 @@ jobs:
       - name: 🔒 Run security audit
         run: npm audit --audit-level=moderate
 
+  sdk-compliance-audit:
+    name: SDK Compliance Audit
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🧰 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔨 Build project
+        run: npm run build
+
+      - name: 🤖 Run SDK compliance audit
+        run: npm run audit:sdk-compliance
+
+      - name: 📊 Upload compliance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-report
+          path: logs/compliance_report.json
+          retention-days: 30
+
   all-checks-complete:
     name: All Checks Complete
     runs-on: ubuntu-latest
-    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit]
+    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit]
     
     steps:
       - name: ✅ All checks passed
@@ -207,5 +239,6 @@ jobs:
           echo "✅ Railway compatibility"
           echo "✅ Deployment readiness"
           echo "✅ Security audit"
+          echo "✅ SDK compliance audit"
           echo ""
           echo "🚀 Repository is ready for production deployment!"
