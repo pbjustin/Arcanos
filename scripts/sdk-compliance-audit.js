@@ -413,19 +413,31 @@ async function main() {
     console.log('🧠 ARCANOS: Recursive Codebase Streamlining & SDK Compliance Audit');
     console.log('='.repeat(60));
     let result = null;
-    while (auditIteration <= MAX_ITERATIONS) {
-        result = await runCompleteAudit();
-        if (result.summary.convergenceReached) {
-            console.log(`\n✅ Optimization complete after ${auditIteration} iteration(s)`);
-            break;
+    try {
+        while (auditIteration <= MAX_ITERATIONS) {
+            result = await runCompleteAudit();
+            if (result.summary.convergenceReached) {
+                console.log(`\n✅ Optimization complete after ${auditIteration} iteration(s)`);
+                break;
+            }
+            if (auditIteration < MAX_ITERATIONS) {
+                console.log(`\n🔄 Starting iteration ${auditIteration + 1}...`);
+            }
+            else {
+                console.log(`\n⚠️  Max iterations (${MAX_ITERATIONS}) reached`);
+            }
+            auditIteration++;
         }
-        if (auditIteration < MAX_ITERATIONS) {
-            console.log(`\n🔄 Starting iteration ${auditIteration + 1}...`);
+    }
+    catch (error) {
+        console.error('❌ Audit error:', error);
+        // Still try to save whatever results we have
+        if (result) {
+            await saveComplianceReport(result).catch(() => {
+                console.error('❌ Failed to save compliance report');
+            });
         }
-        else {
-            console.log(`\n⚠️  Max iterations (${MAX_ITERATIONS}) reached`);
-        }
-        auditIteration++;
+        process.exit(1);
     }
     console.log('\n' + '='.repeat(60));
     console.log('🎯 ARCANOS Audit Complete\n');
