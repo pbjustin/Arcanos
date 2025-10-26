@@ -1,0 +1,87 @@
+{
+  "timestamp": "2025-10-26T23:39:31.208Z",
+  "iteration": 1,
+  "modules": {
+    "services": {
+      "status": "needs_work",
+      "riskLevel": "medium",
+      "issues": [
+        "openai.ts has 829 lines (consider splitting)",
+        "prAssistant.ts has 720 lines (consider splitting)",
+        "prAssistant.ts contains TODO/FIXME markers"
+      ],
+      "fixes": [],
+      "sdkCompliance": true,
+      "railwayReady": true
+    },
+    "controllers": {
+      "status": "compliant",
+      "riskLevel": "low",
+      "issues": [],
+      "fixes": [],
+      "sdkCompliance": true,
+      "railwayReady": true
+    },
+    "routes": {
+      "status": "needs_work",
+      "riskLevel": "medium",
+      "issues": [
+        "sdk.ts has 638 lines (consider splitting)"
+      ],
+      "fixes": [],
+      "sdkCompliance": true,
+      "railwayReady": true
+    },
+    "logic": {
+      "status": "needs_work",
+      "riskLevel": "medium",
+      "issues": [
+        "arcanos.ts has 566 lines (consider splitting)"
+      ],
+      "fixes": [],
+      "sdkCompliance": true,
+      "railwayReady": true
+    },
+    "utils": {
+      "status": "compliant",
+      "riskLevel": "low",
+      "issues": [],
+      "fixes": [],
+      "sdkCompliance": true,
+      "railwayReady": true
+    },
+    "middleware": {
+      "status": "compliant",
+      "riskLevel": "low",
+      "issues": [],
+      "fixes": [],
+      "sdkCompliance": true,
+      "railwayReady": true
+    }
+  },
+  "summary": {
+    "totalModules": 6,
+    "compliantModules": 3,
+    "convergenceReached": true,
+    "overallRisk": "low",
+    "recommendedActions": []
+  },
+  "deploymentChecks": {
+    "procfileValid": true,
+    "railwayConfigValid": true,
+    "healthEndpointExists": true,
+    "envVariablesDocumented": true
+  },
+  "sdkValidation": {
+    "version": "^5.16.0",
+    "deprecatedPatternsFound": 0,
+    "manualFetchCalls": 0,
+    "errorHandlingStandardized": true
+  },
+  "codeQuality": {
+    "lintPassed": true,
+    "typeCheckPassed": true,
+    "buildPassed": true,
+    "testsPassed": true
+  }
+}
