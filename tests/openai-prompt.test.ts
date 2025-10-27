@@ -32,7 +32,21 @@ describe('handlePrompt', () => {
     await handlePrompt(req, res);
 
     expect(callOpenAI).toHaveBeenCalledWith('ft:custom-model', 'hi', 256);
-    expect(res.json).toHaveBeenCalledWith({ result: 'ok', model: 'ft:custom-model' });
+    const payload = res.json.mock.calls[0][0];
+    expect(payload).toEqual(
+      expect.objectContaining({
+        result: 'ok',
+        model: 'ft:custom-model',
+        activeModel: 'ft:custom-model',
+        fallbackFlag: false
+      })
+    );
+    expect(payload.meta).toEqual(
+      expect.objectContaining({
+        id: expect.stringMatching(/^prompt_/),
+        created: expect.any(Number)
+      })
+    );
   });
 
   it('falls back to default model when none provided', async () => {
@@ -47,6 +61,20 @@ describe('handlePrompt', () => {
 
     expect(getDefaultModel).toHaveBeenCalled();
     expect(callOpenAI).toHaveBeenCalledWith('ft:default-model', 'hello', 256);
-    expect(res.json).toHaveBeenCalledWith({ result: 'ok', model: 'ft:default-model' });
+    const payload = res.json.mock.calls[0][0];
+    expect(payload).toEqual(
+      expect.objectContaining({
+        result: 'ok',
+        model: 'ft:default-model',
+        activeModel: 'ft:default-model',
+        fallbackFlag: false
+      })
+    );
+    expect(payload.meta).toEqual(
+      expect.objectContaining({
+        id: expect.stringMatching(/^prompt_/),
+        created: expect.any(Number)
+      })
+    );
   });
 });

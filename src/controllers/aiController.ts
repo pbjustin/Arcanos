@@ -5,24 +5,19 @@
 
 import { Request, Response } from 'express';
 import { runThroughBrain } from '../logic/trinity.js';
-import { 
-  validateAIRequest, 
-  handleAIError,
-  StandardAIRequest,
-  StandardAIResponse,
-  ErrorResponse
-} from '../utils/requestHandler.js';
+import { validateAIRequest, handleAIError } from '../utils/requestHandler.js';
+import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 
-interface AIRequest extends StandardAIRequest {
+type AIRequest = AIRequestDTO & {
   prompt?: string;
   userInput?: string;
   content?: string;
   text?: string;
-}
+};
 
-interface AIResponse extends StandardAIResponse {
-  endpoint: string;
-  module: string;
+interface AIResponse extends AIResponseDTO {
+  endpoint?: string;
+  module?: string;
   routingStages?: string[];
   gpt5Used?: boolean;
 }
@@ -35,8 +30,8 @@ export class AIController {
    * Handle AI processing requests for core endpoints
    */
   static async processAIRequest(
-    req: Request<{}, AIResponse | ErrorResponse, AIRequest>, 
-    res: Response<AIResponse | ErrorResponse>, 
+    req: Request<{}, AIResponse | ErrorResponseDTO, AIRequest>,
+    res: Response<AIResponse | ErrorResponseDTO>,
     endpointName: string
   ): Promise<void> {
     // Use shared validation logic
@@ -52,7 +47,7 @@ export class AIController {
       res.json({
         ...output,
         endpoint: endpointName
-      });
+      } as AIResponse);
     } catch (err) {
       handleAIError(err, input, endpointName, res);
     }
@@ -62,8 +57,8 @@ export class AIController {
    * Write endpoint controller - Content generation
    */
   static async write(
-    req: Request<{}, AIResponse | ErrorResponse, AIRequest>, 
-    res: Response<AIResponse | ErrorResponse>
+    req: Request<{}, AIResponse | ErrorResponseDTO, AIRequest>,
+    res: Response<AIResponse | ErrorResponseDTO>
   ): Promise<void> {
     await AIController.processAIRequest(req, res, 'write');
   }
@@ -72,8 +67,8 @@ export class AIController {
    * Guide endpoint controller - Step-by-step guidance
    */
   static async guide(
-    req: Request<{}, AIResponse | ErrorResponse, AIRequest>, 
-    res: Response<AIResponse | ErrorResponse>
+    req: Request<{}, AIResponse | ErrorResponseDTO, AIRequest>,
+    res: Response<AIResponse | ErrorResponseDTO>
   ): Promise<void> {
     await AIController.processAIRequest(req, res, 'guide');
   }
@@ -82,8 +77,8 @@ export class AIController {
    * Audit endpoint controller - Analysis and evaluation
    */
   static async audit(
-    req: Request<{}, AIResponse | ErrorResponse, AIRequest>, 
-    res: Response<AIResponse | ErrorResponse>
+    req: Request<{}, AIResponse | ErrorResponseDTO, AIRequest>,
+    res: Response<AIResponse | ErrorResponseDTO>
   ): Promise<void> {
     await AIController.processAIRequest(req, res, 'audit');
   }
@@ -92,8 +87,8 @@ export class AIController {
    * Sim endpoint controller - Simulations and modeling
    */
   static async sim(
-    req: Request<{}, AIResponse | ErrorResponse, AIRequest>, 
-    res: Response<AIResponse | ErrorResponse>
+    req: Request<{}, AIResponse | ErrorResponseDTO, AIRequest>,
+    res: Response<AIResponse | ErrorResponseDTO>
   ): Promise<void> {
     await AIController.processAIRequest(req, res, 'sim');
   }

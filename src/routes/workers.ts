@@ -8,6 +8,11 @@ import fs from 'fs';
 import path from 'path';
 import { createWorkerContext } from '../utils/workerContext.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import type {
+  WorkerInfoDTO,
+  WorkerRunResponseDTO,
+  WorkerStatusResponseDTO
+} from '../types/dto.js';
 
 const router = Router();
 
@@ -17,9 +22,11 @@ const workersDir = path.resolve(process.cwd(), 'workers');
 /**
  * GET /workers/status - Get available workers
  */
-router.get('/workers/status', async (_: Request, res: Response) => {
+router.get(
+  '/workers/status',
+  async (_: Request, res: Response<WorkerStatusResponseDTO | { error: string; message: string }>) => {
   try {
-    const workers = [];
+    const workers: WorkerInfoDTO[] = [];
     
     if (fs.existsSync(workersDir)) {
       const files = fs.readdirSync(workersDir);
@@ -29,7 +36,7 @@ router.get('/workers/status', async (_: Request, res: Response) => {
         try {
           const workerPath = path.join(workersDir, file);
           const worker = await import(workerPath);
-          
+
           workers.push({
             id: worker.id || file.replace('.js', ''),
             description: worker.description || 'No description available',
@@ -55,7 +62,7 @@ router.get('/workers/status', async (_: Request, res: Response) => {
       model: process.env.WORKER_MODEL || process.env.AI_MODEL || 'gpt-4-turbo'
     };
     
-    res.json({
+    const payload: WorkerStatusResponseDTO = {
       timestamp: new Date().toISOString(),
       workersDirectory: workersDir,
       totalWorkers: workers.length,
@@ -71,7 +78,9 @@ router.get('/workers/status', async (_: Request, res: Response) => {
         model: process.env.AI_MODEL || 'gpt-4-turbo',
         environment: process.env.NODE_ENV || 'development'
       }
-    });
+    };
+
+    res.json(payload);
   } catch (error) {
     console.error('Error getting worker status:', error);
     res.status(500).json({
@@ -79,37 +88,52 @@ router.get('/workers/status', async (_: Request, res: Response) => {
       message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
-});
+  }
+);
 
 /**
  * POST /workers/run/:workerId - Run a specific worker
  */
-router.post('/workers/run/:workerId', confirmGate, async (req: Request, res: Response) => {
+router.post('/workers/run/:workerId', confirmGate, async (
+  req: Request,
+  res: Response<WorkerRunResponseDTO>
+) => {
   const { workerId } = req.params;
   const input = req.body;
-  
+
   try {
     const workerPath = path.join(workersDir, `${workerId}.js`);
-    
+
     if (!fs.existsSync(workerPath)) {
       return res.status(404).json({
         success: false,
+        workerId,
+        executionTime: '0ms',
+        timestamp: new Date().toISOString(),
         error: `Worker ${workerId} not found`
       });
     }
-    
+
     const worker = await import(workerPath);
     const startTime = Date.now();
-    let result: any;
-    let workerInfo: any = {};
-    
+    let result: unknown;
+    let workerInfo: {
+      id: string;
+      name?: string;
+      description?: string;
+      pattern?: 'context-based' | 'legacy';
+    } = { id: workerId };
+
     // Check for new worker pattern (context-based)
-    if (worker.default && typeof worker.default === 'object' && 
-        worker.default.name && worker.default.run) {
-      
+    if (
+      worker.default &&
+      typeof worker.default === 'object' &&
+      worker.default.name &&
+      worker.default.run
+    ) {
       const workerModule = worker.default;
       const context = createWorkerContext(workerId);
-      
+
       result = await workerModule.run(context);
       workerInfo = {
         id: workerId,
@@ -117,7 +141,7 @@ router.post('/workers/run/:workerId', confirmGate, async (req: Request, res: Res
         description: workerModule.name,
         pattern: 'context-based'
       };
-      
+
     }
     // Check for old worker pattern (legacy)
     else if (typeof worker.run === 'function') {
@@ -127,17 +151,20 @@ router.post('/workers/run/:workerId', confirmGate, async (req: Request, res: Res
         description: worker.description || 'Legacy worker',
         pattern: 'legacy'
       };
-    } 
+    }
     else {
       return res.status(400).json({
         success: false,
+        workerId,
+        executionTime: '0ms',
+        timestamp: new Date().toISOString(),
         error: `Worker ${workerId} does not export a valid run function`
       });
     }
-    
+
     const duration = Date.now() - startTime;
-    
-    res.json({
+
+    const response: WorkerRunResponseDTO = {
       success: true,
       workerId: workerInfo.id,
       name: workerInfo.name,
@@ -146,13 +173,17 @@ router.post('/workers/run/:workerId', confirmGate, async (req: Request, res: Res
       result,
       executionTime: `${duration}ms`,
       timestamp: new Date().toISOString()
-    });
-    
+    };
+
+    res.json(response);
+
   } catch (error) {
     console.error(`Error running worker ${workerId}:`, error);
     res.status(500).json({
       success: false,
       workerId,
+      executionTime: '0ms',
+      timestamp: new Date().toISOString(),
       error: 'Worker execution failed',
       message: error instanceof Error ? error.message : 'Unknown error'
     });
