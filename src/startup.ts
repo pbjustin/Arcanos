@@ -5,6 +5,7 @@ import { initializeDatabase } from './db.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from './utils/environmentSecurity.js';
+import memoryStore from './memory/store.js';
 
 /**
  * Runs startup checks including environment validation, database init,
@@ -40,6 +41,8 @@ export async function performStartup(): Promise<void> {
     logger.error('❌ DB CHECK - Database initialization failed', { error: err?.message || err });
     logger.warn('⚠️ DB CHECK - Continuing with in-memory fallback');
   }
+
+  await memoryStore.initialize();
 
   validateAPIKeyAtStartup(); // Always continue, but log warnings
   await verifySchema();
