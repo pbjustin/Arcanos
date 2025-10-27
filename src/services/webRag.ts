@@ -1,7 +1,7 @@
 import { getOpenAIClient, getDefaultModel } from './openai.js';
 import { fetchAndClean } from './webFetcher.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
-import { saveRagDoc, loadAllRagDocs } from '../db.js';
+import { saveRagDoc, loadAllRagDocs, initializeDatabase, getStatus } from '../db.js';
 
 interface Doc {
   id: string;
@@ -13,8 +13,31 @@ interface Doc {
 let vectorStore: Doc[] | null = null;
 
 async function ensureStore(): Promise<void> {
-  if (vectorStore === null) {
+  if (vectorStore !== null) {
+    return;
+  }
+
+  const status = getStatus();
+  if (!status.connected) {
+    try {
+      const connected = await initializeDatabase('web-rag');
+      if (!connected) {
+        console.warn('[🧠 RAG] Database unavailable - using in-memory vector store');
+        vectorStore = [];
+        return;
+      }
+    } catch (error) {
+      console.warn('[🧠 RAG] Database initialization failed - using in-memory vector store', error);
+      vectorStore = [];
+      return;
+    }
+  }
+
+  try {
     vectorStore = await loadAllRagDocs();
+  } catch (error) {
+    console.warn('[🧠 RAG] Failed to load documents from database - using in-memory vector store', error);
+    vectorStore = [];
   }
 }
 
@@ -35,7 +58,11 @@ export async function ingestUrl(url: string): Promise<Doc> {
     content,
     embedding: embeddingRes.data[0].embedding,
   };
-  await saveRagDoc(doc);
+  try {
+    await saveRagDoc(doc);
+  } catch (error) {
+    console.warn('[🧠 RAG] Failed to persist document to database - retaining in-memory copy', error);
+  }
   if (!vectorStore) {
     vectorStore = [];
   }
