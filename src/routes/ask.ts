@@ -1,15 +1,9 @@
 import express, { Request, Response } from 'express';
 import { runThroughBrain } from '../logic/trinity.js';
-import { 
-  validateAIRequest, 
-  handleAIError, 
-  logRequestFeedback,
-  StandardAIRequest,
-  StandardAIResponse,
-  ErrorResponse
-} from '../utils/requestHandler.js';
+import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders, commonSchemas } from '../utils/security.js';
+import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
 
@@ -26,13 +20,13 @@ const askValidationSchema = {
 
 const askValidationMiddleware = createValidationMiddleware(askValidationSchema);
 
-interface AskRequest extends StandardAIRequest {
+type AskRequest = AIRequestDTO & {
   prompt: string;
   sessionId?: string;
   overrideAuditSafe?: string;
-}
+};
 
-interface AskResponse extends StandardAIResponse {
+interface AskResponse extends AIResponseDTO {
   routingStages?: string[];
   gpt5Used?: boolean;
   auditSafe?: {
@@ -58,8 +52,8 @@ interface AskResponse extends StandardAIResponse {
  * Handles AI request processing with standardized error handling and validation
  */
 const handleAIRequest = async (
-  req: Request<{}, AskResponse | ErrorResponse, AskRequest>,
-  res: Response<AskResponse | ErrorResponse>,
+  req: Request<{}, AskResponse | ErrorResponseDTO, AskRequest>,
+  res: Response<AskResponse | ErrorResponseDTO>,
   endpointName: string
 ) => {
   const { sessionId, overrideAuditSafe } = req.body;
@@ -78,7 +72,7 @@ const handleAIRequest = async (
   try {
     // runThroughBrain now unconditionally routes through GPT-5 before final ARCANOS processing
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe);
-    return res.json(output);
+    return res.json(output as AskResponse);
   } catch (err) {
     handleAIError(err, prompt, endpointName, res);
   }

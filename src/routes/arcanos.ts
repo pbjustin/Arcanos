@@ -3,6 +3,7 @@ import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../servic
 import { runARCANOS } from '../logic/arcanos.js';
 import { handleAIError } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import type { AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
 
@@ -12,11 +13,11 @@ interface ArcanosRequest {
   overrideAuditSafe?: string;
 }
 
-interface ArcanosResponse {
+interface ArcanosResponse extends AIResponseDTO {
   result: string;
-  componentStatus: string;
-  suggestedFixes: string;
-  coreLogicTrace: string;
+  componentStatus?: string;
+  suggestedFixes?: string;
+  coreLogicTrace?: string;
   meta: {
     tokens?: {
       prompt_tokens: number;
@@ -52,15 +53,13 @@ interface ArcanosResponse {
   error?: string;
 }
 
-interface ErrorResponse {
-  error: string;
-  details?: string;
-}
-
 /**
  * ARCANOS system diagnosis endpoint with standardized request handling
  */
-router.post('/arcanos', confirmGate, async (req: Request<{}, ArcanosResponse | ErrorResponse, ArcanosRequest>, res: Response<ArcanosResponse | ErrorResponse>) => {
+router.post('/arcanos', confirmGate, async (
+  req: Request<{}, ArcanosResponse | ErrorResponseDTO, ArcanosRequest>,
+  res: Response<ArcanosResponse | ErrorResponseDTO>
+) => {
   console.log('🔬 /arcanos received');
   const { userInput, sessionId, overrideAuditSafe } = req.body;
 
@@ -74,19 +73,19 @@ router.post('/arcanos', confirmGate, async (req: Request<{}, ArcanosResponse | E
   if (!hasValidAPIKey()) {
     console.log('🤖 Returning mock response for /arcanos (no API key)');
     const mockResponse = generateMockResponse(userInput, 'arcanos');
-    return res.json(mockResponse);
+    return res.json(mockResponse as ArcanosResponse);
   }
 
   const openai = getOpenAIClient();
   if (!openai) {
     console.log('🤖 Returning mock response for /arcanos (client init failed)');
     const mockResponse = generateMockResponse(userInput, 'arcanos');
-    return res.json(mockResponse);
+    return res.json(mockResponse as ArcanosResponse);
   }
 
   try {
     const output = await runARCANOS(openai, userInput, sessionId, overrideAuditSafe);
-    return res.json(output);
+    return res.json(output as ArcanosResponse);
   } catch (err) {
     handleAIError(err, userInput, 'arcanos', res);
   }

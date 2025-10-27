@@ -16,7 +16,7 @@ if (!existsSync('./dist/server.js')) {
 }
 
 // Forward to the actual server
-const serverProcess = spawn('node', ['dist/server.js'], {
+const serverProcess = spawn('node', ['dist/start-server.js'], {
   stdio: 'inherit',
   cwd: process.cwd()
 });
