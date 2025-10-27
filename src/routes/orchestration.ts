@@ -5,23 +5,19 @@
 
 import express, { Request, Response } from 'express';
 import { resetOrchestrationShell, getOrchestrationShellStatus } from '../services/orchestrationShell.js';
-import { 
-  handleAIError,
-  StandardAIRequest,
-  StandardAIResponse,
-  ErrorResponse
-} from '../utils/requestHandler.js';
+import { handleAIError } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
 
-interface OrchestrationRequest extends StandardAIRequest {
+type OrchestrationRequest = AIRequestDTO & {
   action?: 'reset' | 'status';
   agentId?: string;
   contextSnapshotTag?: string;
-}
+};
 
-interface OrchestrationResponse extends StandardAIResponse {
+interface OrchestrationResponse extends AIResponseDTO {
   routingStages?: string[];
   gpt5Used?: boolean;
   auditSafe?: {
@@ -39,7 +35,7 @@ interface OrchestrationResponse extends StandardAIResponse {
     requestId: string;
     logged: boolean;
   };
-  orchestration: {
+  orchestration?: {
     success: boolean;
     message: string;
     meta?: {
@@ -63,8 +59,8 @@ interface OrchestrationResponse extends StandardAIResponse {
  * Performs purge and redeploy sequence with safeguards
  */
 router.post('/orchestration/reset', confirmGate, async (
-  req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>,
-  res: Response<OrchestrationResponse | ErrorResponse>
+  req: Request<{}, OrchestrationResponse | ErrorResponseDTO, OrchestrationRequest>,
+  res: Response<OrchestrationResponse | ErrorResponseDTO>
 ) => {
   try {
     console.log('🔄 [ORCHESTRATION] Reset request received');
@@ -137,8 +133,8 @@ router.post('/orchestration/reset', confirmGate, async (
  * Returns current status and configuration
  */
 router.get('/orchestration/status', async (
-  _: Request, 
-  res: Response<OrchestrationResponse | ErrorResponse>
+  _: Request,
+  res: Response<OrchestrationResponse | ErrorResponseDTO>
 ) => {
   try {
     console.log('📊 [ORCHESTRATION] Status request received');
@@ -193,8 +189,8 @@ router.get('/orchestration/status', async (
  * Executes the exact orchestration reset functionality as specified
  */
 router.post('/orchestration/purge', confirmGate, async (
-  req: Request<{}, OrchestrationResponse | ErrorResponse, OrchestrationRequest>,
-  res: Response<OrchestrationResponse | ErrorResponse>
+  req: Request<{}, OrchestrationResponse | ErrorResponseDTO, OrchestrationRequest>,
+  res: Response<OrchestrationResponse | ErrorResponseDTO>
 ) => {
   // This endpoint provides the exact same functionality as /reset
   // but with the specific naming from the problem statement

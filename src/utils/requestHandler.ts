@@ -6,44 +6,17 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
-
-export interface StandardAIRequest {
-  prompt?: string;
-  userInput?: string;
-  content?: string;
-  text?: string;
-  query?: string;
-  sessionId?: string;
-  overrideAuditSafe?: string;
-}
-
-export interface StandardAIResponse {
-  result: string;
-  module?: string;
-  endpoint?: string;
-  meta: {
-    tokens?: {
-      prompt_tokens: number;
-      completion_tokens: number;
-      total_tokens: number;
-    } | undefined;
-    id: string;
-    created: number;
-  };
-  activeModel?: string;
-  fallbackFlag?: boolean;
-  error?: string;
-}
-
-export interface ErrorResponse {
-  error: string;
-  details?: string;
-}
+import {
+  aiRequestSchema,
+  type AIRequestDTO,
+  type AIResponseDTO,
+  type ErrorResponseDTO
+} from '../types/dto.js';
 
 /**
  * Extract input text from various possible field names in request body
  */
-export function extractInput(body: StandardAIRequest): string | null {
+export function extractInput(body: AIRequestDTO): string | null {
   return body.prompt || body.userInput || body.content || body.text || body.query || null;
 }
 
@@ -52,16 +25,26 @@ export function extractInput(body: StandardAIRequest): string | null {
  * Returns the OpenAI client if validation passes, null if mock response should be used
  */
 export function validateAIRequest(
-  req: Request<{}, any, StandardAIRequest>,
-  res: Response<any>,
+  req: Request<{}, AIResponseDTO | ErrorResponseDTO, AIRequestDTO>,
+  res: Response<AIResponseDTO | ErrorResponseDTO>,
   endpointName: string
-): { client: any; input: string } | null {
+): { client: any; input: string; body: AIRequestDTO } | null {
   console.log(`📨 /${endpointName} received`);
-  
-  const input = extractInput(req.body);
-  
+
+  const parsed = aiRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const details = parsed.error.errors.map(err => `${err.path.join('.') || 'body'}: ${err.message}`);
+    res.status(400).json({
+      error: `Invalid request payload for ${endpointName}`,
+      details
+    });
+    return null;
+  }
+
+  const input = extractInput(parsed.data);
+
   if (!input || typeof input !== 'string') {
-    res.status(400).json({ 
+    res.status(400).json({
       error: `Missing or invalid input in request body. Use 'prompt', 'userInput', 'content', 'text', or 'query' field.`
     });
     return null;
@@ -71,7 +54,7 @@ export function validateAIRequest(
   if (!hasValidAPIKey()) {
     console.log(`🤖 Returning mock response for /${endpointName} (no API key)`);
     const mockResponse = generateMockResponse(input, endpointName);
-    res.json(mockResponse);
+    res.json(mockResponse as AIResponseDTO);
     return null;
   }
 
@@ -79,11 +62,13 @@ export function validateAIRequest(
   if (!openai) {
     console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);
     const mockResponse = generateMockResponse(input, endpointName);
-    res.json(mockResponse);
+    res.json(mockResponse as AIResponseDTO);
     return null;
   }
 
-  return { client: openai, input };
+  req.body = parsed.data;
+
+  return { client: openai, input, body: parsed.data };
 }
 
 /**
@@ -93,7 +78,7 @@ export function handleAIError(
   err: unknown,
   input: string,
   endpointName: string,
-  res: Response<any>
+  res: Response<AIResponseDTO | ErrorResponseDTO>
 ): void {
   const errorMessage = err instanceof Error ? err.message : String(err);
   console.error(`❌ ${endpointName} processing error:`, errorMessage);
@@ -104,7 +89,7 @@ export function handleAIError(
   res.json({
     ...mockResponse,
     error: `AI service failure: ${errorMessage}`
-  });
+  } as AIResponseDTO & { error: string });
 }
 
 /**

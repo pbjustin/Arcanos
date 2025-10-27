@@ -1,30 +1,24 @@
 import express, { Request, Response } from 'express';
 import { runThroughBrain } from '../logic/trinity.js';
-import {
-  validateAIRequest,
-  handleAIError,
-  logRequestFeedback,
-  StandardAIRequest,
-  StandardAIResponse,
-  ErrorResponse
-} from '../utils/requestHandler.js';
+import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
 
-interface SiriRequest extends StandardAIRequest {
+type SiriRequest = AIRequestDTO & {
   query: string;
   sessionId?: string;
   overrideAuditSafe?: string;
-}
+};
 
-interface SiriResponse extends StandardAIResponse {
-  content: string;
+interface SiriResponse extends AIResponseDTO {
+  content?: string;
 }
 
 const handleSiriRequest = async (
-  req: Request<{}, SiriResponse | ErrorResponse, SiriRequest>,
-  res: Response<SiriResponse | ErrorResponse>
+  req: Request<{}, SiriResponse | ErrorResponseDTO, SiriRequest>,
+  res: Response<SiriResponse | ErrorResponseDTO>
 ) => {
   const { sessionId, overrideAuditSafe } = req.body;
 
@@ -37,7 +31,7 @@ const handleSiriRequest = async (
 
   try {
     const output = await runThroughBrain(openai, input, sessionId, overrideAuditSafe);
-    return res.json({ ...output, content: output.result });
+    return res.json({ ...output, content: output.result } as SiriResponse);
   } catch (err) {
     handleAIError(err, input, 'siri', res);
   }
