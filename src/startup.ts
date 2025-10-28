@@ -1,5 +1,6 @@
 import config from './config/index.js';
 import { validateEnvironment, printValidationResults, createStartupReport } from './utils/environmentValidation.js';
+import { validateEnvironment as validateRailwayEnv, logEnvironmentValidation, checkEphemeralFS } from './utils/envValidation.js';
 import { logger } from './utils/structuredLogging.js';
 import { initializeDatabase } from './db.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
@@ -12,6 +13,11 @@ import memoryStore from './memory/store.js';
  * OpenAI key validation, and schema verification.
  */
 export async function performStartup(): Promise<void> {
+  // Railway-specific environment validation
+  const railwayValidation = validateRailwayEnv();
+  logEnvironmentValidation(railwayValidation);
+  checkEphemeralFS();
+
   const securityState = await initializeEnvironmentSecurity();
   logger.info('ARCANOS environment security', {
     trusted: securityState.isTrusted,
