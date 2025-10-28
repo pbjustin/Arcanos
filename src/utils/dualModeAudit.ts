@@ -1,3 +1,5 @@
+import config from '../config/index.js';
+
 export interface DualModeAuditOptions {
   /** run in simulation mode instead of hitting backend */
   simulate?: boolean;
@@ -38,8 +40,9 @@ export async function dualModeAudit(
 ): Promise<DualModeAuditBaseResult> {
   const {
     simulate = false,
-    backendRegistry = process.env.BACKEND_REGISTRY_URL ||
-      'https://your-real-service.com/registry',
+    backendRegistry = config.external.backendRegistryUrl ||
+      process.env.BACKEND_REGISTRY_URL ||
+      `http://127.0.0.1:${config.server.port}/registry`,
     fetcher = fetch,
     simulatedRegistry = []
   } = options;
