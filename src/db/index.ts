@@ -88,13 +88,15 @@ export async function initializeDatabaseWithSchema(workerId = ''): Promise<boole
 
     if (workerId) {
       const pool = getPool();
-      try {
-        await pool!.query(
-          'INSERT INTO execution_logs (worker_id, timestamp, level, message, metadata) VALUES ($1, NOW(), $2, $3, $4)',
-          [workerId, 'status', 'online', {}]
-        );
-      } catch (hbErr) {
-        console.error('[🔌 DB] Heartbeat insert failed:', (hbErr as Error).message);
+      if (pool) {
+        try {
+          await pool.query(
+            'INSERT INTO execution_logs (worker_id, timestamp, level, message, metadata) VALUES ($1, NOW(), $2, $3, $4)',
+            [workerId, 'status', 'online', {}]
+          );
+        } catch (hbErr) {
+          console.error('[🔌 DB] Heartbeat insert failed:', (hbErr as Error).message);
+        }
       }
     }
   }
