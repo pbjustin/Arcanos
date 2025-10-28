@@ -8,12 +8,19 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
+const serverPort = Number(process.env.PORT) || 8080;
+const serverHost = process.env.HOST || '0.0.0.0';
+const serverBaseUrl = process.env.SERVER_URL || `http://127.0.0.1:${serverPort}`;
+const statusEndpoint = process.env.BACKEND_STATUS_ENDPOINT || '/status';
+
 export const config = {
   // Server configuration
   server: {
-    port: Number(process.env.PORT) || 8080,
-    host: '0.0.0.0',
-    environment: process.env.NODE_ENV || 'development'
+    port: serverPort,
+    host: serverHost,
+    environment: process.env.NODE_ENV || 'development',
+    baseUrl: serverBaseUrl,
+    statusEndpoint
   },
 
   // AI configuration
@@ -41,6 +48,11 @@ export const config = {
   logging: {
     level: process.env.LOG_LEVEL || 'info',
     sessionLogPath: process.env.ARC_LOG_PATH || './memory/session.log'
+  },
+
+  // External integrations
+  external: {
+    backendRegistryUrl: process.env.BACKEND_REGISTRY_URL
   }
 };
 

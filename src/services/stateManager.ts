@@ -62,9 +62,25 @@ export function updateState(newData: Partial<SystemState>): SystemState {
 import config from '../config/index.js';
 import { webFetcher } from '../utils/webFetcher.js';
 
+function buildStatusUrl(portOverride?: number): string {
+  const statusEndpoint = config.server.statusEndpoint || '/status';
+
+  if (statusEndpoint.startsWith('http')) {
+    return statusEndpoint;
+  }
+
+  if (portOverride && portOverride !== config.server.port && !process.env.SERVER_URL) {
+    return new URL(statusEndpoint, `http://127.0.0.1:${portOverride}`).toString();
+  }
+
+  const baseUrl = config.server.baseUrl || `http://127.0.0.1:${config.server.port}`;
+  return new URL(statusEndpoint, baseUrl).toString();
+}
+
 export async function getBackendState(port: number = config.server.port): Promise<SystemState> {
   try {
-    return await webFetcher<SystemState>(`http://localhost:${port}/status`);
+    const statusUrl = buildStatusUrl(port);
+    return await webFetcher<SystemState>(statusUrl);
   } catch (error) {
     console.error('[STATE] Error fetching backend state:', error);
     // Fallback to file-based state
