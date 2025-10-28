@@ -14,7 +14,7 @@ import crypto from 'crypto';
  */
 function createQueryCacheKey(text: string, params: any[]): string {
   const content = `${text}:${JSON.stringify(params)}`;
-  return crypto.createHash('md5').update(content).digest('hex');
+  return crypto.createHash('sha256').update(content).digest('hex');
 }
 
 /**
