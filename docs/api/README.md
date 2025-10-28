@@ -68,7 +68,7 @@ curl -X POST http://localhost:8080/ask \
 ```bash
 curl -X POST http://localhost:8080/api/memory/store \
   -H "Content-Type: application/json" \
-  -H "X-Confirm-Action: yes" \
+  -H "x-confirmed: yes" \
   -d '{"session": "user123", "data": {"context": "conversation state"}}'
 ```
 
@@ -80,16 +80,18 @@ curl http://localhost:8080/health
 ## 🛡️ Security & Compliance
 
 ### Confirmation Requirements
-Certain operations require explicit confirmation via the `X-Confirm-Action: yes` header:
+Certain operations require explicit confirmation via the `x-confirmed: yes` header (or a trusted GPT ID):
 - Memory storage operations (`/api/memory/store`, `/api/memory/clear`)
 - Administrative functions (`/admin/*`)
 - Worker control operations (`/workers/*`)
+
+To pre-authorize requests coming from Custom GPTs that you personally supervise, set the `TRUSTED_GPT_IDS` environment variable to a comma-separated list of GPT IDs. When a request includes a matching `x-gpt-id` header (or `gptId` in the body), the confirmation gate treats it as already reviewed and does not require the manual header.
 
 ### Example Usage with Confirmation
 ```bash
 # Protected operation - requires confirmation header
 curl -X POST http://localhost:8080/api/memory/clear \
-  -H "X-Confirm-Action: yes" \
+  -H "x-confirmed: yes" \
   -H "Content-Type: application/json"
 
 # Safe operation - no confirmation needed  
@@ -101,7 +103,7 @@ curl -X POST http://localhost:8080/ask \
 ## Authentication
 
 - **Admin endpoints**: Require `ADMIN_KEY` environment variable
-- **Protected operations**: Require `X-Confirm-Action: yes` header
+- **Protected operations**: Require `x-confirmed: yes` header (unless the request supplies a trusted GPT ID)
 - **OpenAI integration**: Requires valid `OPENAI_API_KEY`
 
 ## Rate Limiting
