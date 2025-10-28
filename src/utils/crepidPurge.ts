@@ -33,12 +33,22 @@ export function getPurgeMode(): 'off' | 'soft' | 'hard' {
 }
 
 /**
+ * Escape shell arguments to prevent injection
+ */
+function escapeShellArg(arg: string): string {
+  // Replace single quotes with '\'' (end quote, escaped quote, start quote)
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+/**
  * Get last commit info for a file
  */
 function getLastCommit(filePath: string): { hash: string; date: string } {
   try {
-    const hash = execSync(`git log -1 --format="%H" -- ${filePath}`, { encoding: 'utf-8' }).trim();
-    const date = execSync(`git log -1 --format="%ai" -- ${filePath}`, { encoding: 'utf-8' }).trim();
+    // Escape file path to prevent shell injection
+    const escapedPath = escapeShellArg(filePath);
+    const hash = execSync(`git log -1 --format="%H" -- ${escapedPath}`, { encoding: 'utf-8' }).trim();
+    const date = execSync(`git log -1 --format="%ai" -- ${escapedPath}`, { encoding: 'utf-8' }).trim();
     return { hash, date };
   } catch {
     return { hash: 'unknown', date: new Date().toISOString() };
@@ -52,9 +62,20 @@ function findImporters(modulePath: string, searchPath: string = 'src'): string[]
   const importers: string[] = [];
   const moduleName = path.basename(modulePath, path.extname(modulePath));
   
+  // Validate searchPath to prevent directory traversal
+  const normalizedSearchPath = path.normalize(searchPath);
+  if (normalizedSearchPath.includes('..')) {
+    console.warn('[CREPID] Invalid search path - directory traversal detected');
+    return importers;
+  }
+  
   try {
+    // Escape arguments to prevent shell injection
+    const escapedModuleName = escapeShellArg(moduleName);
+    const escapedSearchPath = escapeShellArg(normalizedSearchPath);
+    
     // Use grep to find files that import this module
-    const grepCommand = `grep -rl "from.*${moduleName}" ${searchPath} || true`;
+    const grepCommand = `grep -rl "from.*${escapedModuleName}" ${escapedSearchPath} || true`;
     const result = execSync(grepCommand, { encoding: 'utf-8' });
     
     if (result) {
@@ -128,9 +149,37 @@ export function saveAuditTrail(audit: DeprecationAudit): void {
 }
 
 /**
+ * Validate file path to prevent directory traversal and injection
+ */
+function validateFilePath(filePath: string): boolean {
+  const normalized = path.normalize(filePath);
+  
+  // Prevent directory traversal
+  if (normalized.includes('..')) {
+    console.error('[CREPID] Invalid file path - directory traversal detected');
+    return false;
+  }
+  
+  // Ensure path is within project directory
+  const projectRoot = process.cwd();
+  const absolutePath = path.resolve(normalized);
+  if (!absolutePath.startsWith(projectRoot)) {
+    console.error('[CREPID] Invalid file path - outside project directory');
+    return false;
+  }
+  
+  return true;
+}
+
+/**
  * Move file to deprecated directory (soft purge)
  */
 export function softPurge(filePath: string, reason: string): void {
+  // Validate file path
+  if (!validateFilePath(filePath)) {
+    return;
+  }
+  
   const mode = getPurgeMode();
   
   if (mode === 'off') {
@@ -174,6 +223,11 @@ export function softPurge(filePath: string, reason: string): void {
  * Permanently delete file (hard purge)
  */
 export function hardPurge(filePath: string, reason: string): void {
+  // Validate file path
+  if (!validateFilePath(filePath)) {
+    return;
+  }
+  
   const mode = getPurgeMode();
   
   if (mode !== 'hard') {
