@@ -263,6 +263,8 @@ curl http://localhost:8080/health
 ### Confirmation Requirements
 Most sensitive operations require explicit user confirmation via the `x-confirmed: yes` header to ensure compliance with OpenAI's Terms of Service and prevent unauthorized actions.
 
+If you're routing traffic through Custom GPTs that you personally supervise, populate the `TRUSTED_GPT_IDS` environment variable with a comma-separated list of approved GPT IDs. When a request supplies a matching `x-gpt-id` header (or `gptId` in the payload), the confirmation gate recognizes the human review already performed in the GPT interface and allows the request without the manual confirmation header.
+
 **Protected Endpoints** (require confirmation):
 - Data modification operations (`/memory/save`, `/memory/delete`)
 - AI processing with side effects (`/arcanos`, `/brain`, `/write`, `/guide`, `/audit`, `/sim`)
