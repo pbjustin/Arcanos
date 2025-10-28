@@ -9,27 +9,53 @@ import { Request, Response, NextFunction } from 'express';
  * 
  * Requires 'x-confirmed: yes' header for request to proceed.
  */
+const trustedGptIds = new Set(
+  (process.env.TRUSTED_GPT_IDS || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+);
+
+function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (!value) return undefined;
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export function confirmGate(req: Request, res: Response, next: NextFunction): void {
-  const confirmationHeader = req.headers['x-confirmed'];
-  
+  const confirmationHeader = normalizeHeaderValue(req.headers['x-confirmed']);
+  const gptIdHeader = normalizeHeaderValue(req.headers['x-gpt-id'] as string | string[] | undefined);
+  const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId : undefined;
+  const gptId = gptIdHeader || gptIdFromBody;
+  const isTrustedGpt = gptId ? trustedGptIds.has(gptId) : false;
+
   // Log the request for audit purposes
-  console.log(`[🛡️ CONFIRM-GATE] ${req.method} ${req.path} - Confirmation: ${confirmationHeader || 'none'}`);
-  
+  console.log(
+    `[🛡️ CONFIRM-GATE] ${req.method} ${req.path} - Confirmation: ${confirmationHeader || 'none'} - GPTID: ${
+      gptId || 'none'
+    }`
+  );
+
   // Check if user has explicitly confirmed the action
-  if (confirmationHeader !== 'yes') {
-    console.log(`[❌ CONFIRM-GATE] Request blocked - missing or invalid confirmation header`);
-    
+  if (confirmationHeader !== 'yes' && !isTrustedGpt) {
+    console.log(
+      `[❌ CONFIRM-GATE] Request blocked - missing or invalid confirmation header${
+        gptId ? ` (GPTID ${gptId} not trusted)` : ''
+      }`
+    );
+
     res.status(403).json({
       error: 'Confirmation required',
-      message: 'This endpoint requires explicit user confirmation. Please include the header: x-confirmed: yes',
+      message:
+        'This endpoint requires explicit user confirmation. Please include the header: x-confirmed: yes or use a trusted GPTID.',
       code: 'CONFIRMATION_REQUIRED',
       endpoint: req.path,
       method: req.method,
+      gptId: gptId || null,
       timestamp: new Date().toISOString()
     });
     return;
   }
-  
+
   console.log(`[✅ CONFIRM-GATE] Request confirmed - proceeding with execution`);
   next();
 }
