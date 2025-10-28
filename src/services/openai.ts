@@ -155,17 +155,18 @@ const initializeOpenAI = (): OpenAI | null => {
     }
 
     openai = new OpenAI({ apiKey, timeout: API_TIMEOUT_MS });
-    // Support FINETUNED_MODEL_ID (and legacy FINE_TUNED_MODEL_ID) for Railway compatibility, fallback to AI_MODEL
+    // Support OPENAI_MODEL (primary), FINETUNED_MODEL_ID, and AI_MODEL for Railway compatibility
     defaultModel =
+      process.env.OPENAI_MODEL ||
       process.env.FINETUNED_MODEL_ID ||
       process.env.FINE_TUNED_MODEL_ID ||
       process.env.AI_MODEL ||
-      'gpt-4-turbo';
+      'gpt-4o';
     
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
     console.log(`🔄 Fallback Model: gpt-4`);
-    console.log('🎯 ARCANOS routing active - all calls will use fine-tuned model by default');
+    console.log('🎯 ARCANOS routing active - all calls will use configured model by default');
     
     return openai;
   } catch (error) {
@@ -185,17 +186,18 @@ export const getOpenAIClient = (): OpenAI | null => {
 
 /**
  * Gets the configured default AI model (typically fine-tuned)
- * Supports both FINETUNED_MODEL_ID and AI_MODEL for Railway compatibility
+ * Supports OPENAI_MODEL (primary), FINETUNED_MODEL_ID and AI_MODEL for Railway compatibility
  * 
- * @returns Model identifier string
+ * @returns Model identifier string (defaults to gpt-4o)
  */
 export const getDefaultModel = (): string => {
   return (
     defaultModel ||
+    process.env.OPENAI_MODEL ||
     process.env.FINETUNED_MODEL_ID ||
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
-    'gpt-4-turbo'
+    'gpt-4o'
   );
 };
 
@@ -244,7 +246,7 @@ function prepareGPT5Request(payload: any): any {
  */
 const createCacheKey = (model: string, prompt: string, tokenLimit: number): string => {
   const content = `${model}:${prompt}:${tokenLimit}`;
-  return crypto.createHash('md5').update(content).digest('hex');
+  return crypto.createHash('sha256').update(content).digest('hex');
 };
 
 /**
@@ -293,6 +295,7 @@ export async function callOpenAI(
 
 /**
  * Internal OpenAI request handler with exponential backoff retry logic
+ * Implements error taxonomy with specialized handling for different error types
  */
 async function makeOpenAIRequest(
   client: OpenAI,
@@ -308,9 +311,10 @@ async function makeOpenAIRequest(
     const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     
     try {
-      // Apply exponential backoff on retries
+      // Apply exponential backoff with jitter on retries
       if (attempt > 1) {
-        await backoffStrategy.delay(attempt - 1);
+        const delay = getRetryDelay(attempt - 1, lastError);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
 
       const tokenParams = getTokenParameter(model, tokenLimit);
@@ -348,7 +352,14 @@ async function makeOpenAIRequest(
       const isRetryable = isRetryableError(err);
       const shouldRetry = attempt < maxRetries && isRetryable;
       
-      console.warn(`⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}): ${err.message}`);
+      // Enhanced error logging with error taxonomy
+      const errorType = err.status === 429 ? 'RATE_LIMIT' : 
+                       err.status >= 500 ? 'SERVER_ERROR' :
+                       err.code === 'ETIMEDOUT' ? 'TIMEOUT' :
+                       err.code === 'ECONNRESET' ? 'NETWORK_ERROR' : 
+                       'UNKNOWN';
+      
+      console.warn(`⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}, type: ${errorType}): ${err.message}`);
       
       if (!shouldRetry) {
         console.error(`❌ OpenAI request failed permanently after ${attempt} attempts`);
@@ -363,7 +374,13 @@ async function makeOpenAIRequest(
 }
 
 /**
- * Determines if an error is retryable
+ * Determines if an error is retryable based on error taxonomy
+ * 
+ * Error Taxonomy:
+ * - 429 (Rate Limit): Retryable with exponential backoff + jitter
+ * - 5xx (Server Error): Retryable with capped retries (max 3)
+ * - Network errors (ECONNRESET, ETIMEDOUT): Retryable with backoff
+ * - 4xx (Client Error, except 429): Not retryable
  */
 function isRetryableError(error: any): boolean {
   // Network errors and timeouts are retryable
@@ -371,13 +388,30 @@ function isRetryableError(error: any): boolean {
     return true;
   }
   
-  // OpenAI API rate limits and server errors are retryable
+  // OpenAI API rate limits (429) and server errors (5xx) are retryable
   if (error.status) {
     return error.status === 429 || error.status >= 500;
   }
   
   // Default to non-retryable for unknown errors
   return false;
+}
+
+/**
+ * Calculate retry delay with jitter for 429 errors
+ * Uses exponential backoff with random jitter to prevent thundering herd
+ */
+function getRetryDelay(attempt: number, error: any): number {
+  const baseDelay = backoffStrategy.calculateDelay(attempt);
+  
+  // Add extra jitter for rate limit errors (429)
+  if (error?.status === 429) {
+    const jitterMs = Math.random() * 2000; // 0-2 seconds additional jitter
+    console.log(`⏱️ Rate limit detected - adding jitter (${jitterMs.toFixed(0)}ms)`);
+    return baseDelay + jitterMs;
+  }
+  
+  return baseDelay;
 }
 
 /**
