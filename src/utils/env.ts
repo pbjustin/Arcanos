@@ -87,6 +87,7 @@ export const env = {
   // Server Configuration
   NODE_ENV: Environment.get('NODE_ENV', 'development'),
   PORT: Environment.getNumber('PORT', 8080),
+  BACKEND_STATUS_ENDPOINT: Environment.get('BACKEND_STATUS_ENDPOINT', '/status'),
   
   // OpenAI Configuration
   OPENAI_API_KEY: Environment.get('OPENAI_API_KEY'),
@@ -96,6 +97,7 @@ export const env = {
   
   // Database Configuration
   DATABASE_URL: Environment.get('DATABASE_URL'),
+  BACKEND_REGISTRY_URL: Environment.get('BACKEND_REGISTRY_URL'),
   
   // Worker Configuration
   RUN_WORKERS: Environment.isTest() ? false : Environment.getBoolean('RUN_WORKERS', true),
