@@ -2,6 +2,8 @@
 
 This guide has been refactored into focused modules. Jump to the section that fits your workflow:
 
+- [`arcanos-gaming.md`](custom-gpt/arcanos-gaming.md) – hotline playbook for the Gaming persona and audit trace outputs.
+- [`arcanos-tutor.md`](custom-gpt/arcanos-tutor.md) – tutoring kernel patterns, payload schema, and pipeline reference.
 - [`overview.md`](custom-gpt/overview.md) – requirements and the integration checklist.
 - [`endpoint-architecture.md`](custom-gpt/endpoint-architecture.md) – documenting routes and confirmation headers.
 - [`builder-instructions.md`](custom-gpt/builder-instructions.md) – copy-ready GPT Builder instruction block.
