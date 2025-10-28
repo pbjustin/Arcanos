@@ -246,7 +246,7 @@ function prepareGPT5Request(payload: any): any {
  */
 const createCacheKey = (model: string, prompt: string, tokenLimit: number): string => {
   const content = `${model}:${prompt}:${tokenLimit}`;
-  return crypto.createHash('md5').update(content).digest('hex');
+  return crypto.createHash('sha256').update(content).digest('hex');
 };
 
 /**
