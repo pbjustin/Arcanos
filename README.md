@@ -116,13 +116,15 @@ The system performs comprehensive environment validation on startup:
 - `POST /api/workers/*` - Worker system management
 
 ### Confirmation Gate Pattern
-Protected endpoints require the `X-Confirmation` header:
+Protected endpoints require the `x-confirmed: yes` header unless the request comes from a trusted GPT ID:
 ```bash
 curl -X POST http://localhost:8080/api/memory/create \
   -H "Content-Type: application/json" \
-  -H "X-Confirmation: confirmed" \
+  -H "x-confirmed: yes" \
   -d '{"key": "example", "value": "data"}'
 ```
+
+To allow pre-approved GPT integrations to bypass the manual confirmation header, configure the `TRUSTED_GPT_IDS` environment variable with a comma-separated list of GPT IDs. Requests that provide a matching `x-gpt-id` header (or `gptId` field in the body) are treated as already reviewed and pass through the confirmation gate automatically.
 
 **📖 Complete API reference:** [docs/api/README.md](docs/api/README.md)
 
