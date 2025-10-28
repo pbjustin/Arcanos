@@ -22,6 +22,7 @@ import ragRouter from './rag.js';
 import hrcRouter from './hrc.js';
 import gptRouter from './gptRouter.js';
 import researchRouter from './research.js';
+import healthRouter from './health.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 
 /**
@@ -36,6 +37,7 @@ export function registerRoutes(app: Express): void {
     res.status(200).send('OK');
   });
 
+  app.use('/', healthRouter);
   app.use('/', askRouter);
   app.use('/', arcanosRouter);
   app.use('/', arcanosPipelineRouter);
