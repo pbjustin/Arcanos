@@ -69,8 +69,23 @@ interface RagDoc {
   url: string;
   content: string;
   embedding: number[];
+  metadata?: Record<string, unknown>;
   created_at?: Date;
   updated_at?: Date;
+}
+
+function parseJsonField<T>(value: any, fallback: T): T {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value as T;
 }
 
 /**
@@ -280,9 +295,11 @@ async function initializeTables(): Promise<void> {
       url TEXT NOT NULL,
       content TEXT NOT NULL,
       embedding JSONB NOT NULL,
+      metadata JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `ALTER TABLE rag_docs ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb`,
 
     // Backstage Booker tables for persistent wrestling data
     `CREATE TABLE IF NOT EXISTS backstage_events (
@@ -508,12 +525,18 @@ async function saveRagDoc(doc: RagDoc): Promise<RagDoc> {
   }
 
   const result = await query(
-    `INSERT INTO rag_docs (id, url, content, embedding, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, NOW(), NOW())
+    `INSERT INTO rag_docs (id, url, content, embedding, metadata, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
      ON CONFLICT (id)
-     DO UPDATE SET url = EXCLUDED.url, content = EXCLUDED.content, embedding = EXCLUDED.embedding, updated_at = NOW()
+     DO UPDATE SET url = EXCLUDED.url, content = EXCLUDED.content, embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata, updated_at = NOW()
      RETURNING *`,
-    [doc.id, doc.url, doc.content, JSON.stringify(doc.embedding)]
+    [
+      doc.id,
+      doc.url,
+      doc.content,
+      JSON.stringify(doc.embedding),
+      JSON.stringify(doc.metadata ?? {})
+    ]
   );
 
   const row = result.rows[0];
@@ -521,7 +544,8 @@ async function saveRagDoc(doc: RagDoc): Promise<RagDoc> {
     id: row.id,
     url: row.url,
     content: row.content,
-    embedding: row.embedding,
+    embedding: parseJsonField(row.embedding, [] as number[]),
+    metadata: parseJsonField(row.metadata, {} as Record<string, unknown>),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -533,7 +557,7 @@ async function loadAllRagDocs(): Promise<RagDoc[]> {
   }
 
   const result = await query(
-    'SELECT id, url, content, embedding, created_at, updated_at FROM rag_docs',
+    'SELECT id, url, content, embedding, metadata, created_at, updated_at FROM rag_docs',
     [],
     1000,
     true
@@ -543,7 +567,8 @@ async function loadAllRagDocs(): Promise<RagDoc[]> {
     id: row.id,
     url: row.url,
     content: row.content,
-    embedding: row.embedding,
+    embedding: parseJsonField(row.embedding, [] as number[]),
+    metadata: parseJsonField(row.metadata, {} as Record<string, unknown>),
     created_at: row.created_at,
     updated_at: row.updated_at,
   }));
