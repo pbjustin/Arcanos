@@ -53,7 +53,8 @@
   "technicalDebtAssessment": {
     "criticalIssues": 0,
     "mediumIssues": 0,
-    "lowIssues": 1,
+    "lowIssues": 0,
+    "totalIssuesFound": 1,
     "resolved": ["Legacy PR#541 functions removed"],
     "noActionNeeded": [
       "Console.log statements are intentional for diagnostics",
