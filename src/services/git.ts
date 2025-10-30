@@ -138,45 +138,6 @@ export async function getCurrentBranch(workingDir?: string): Promise<string> {
 }
 
 /**
- * Reset repository to the state from PR #541 using its merge commit hash
- * PR #541: "fix: handle read-only bypass in audit safe mode"
- * Merge commit: fb731df444b32de47ddbea8d5347b24502ad2797
- */
-export async function resetToPR541State(workingDir?: string): Promise<GitOperationResult> {
-  const pr541MergeCommitHash = 'fb731df444b32de47ddbea8d5347b24502ad2797';
-  return hardResetToCommit(pr541MergeCommitHash, workingDir);
-}
-
-/**
- * Reset repository to the state from PR #541 with automatic fetch from remote
- * This function first attempts to fetch the commit from remote if it's not available locally
- */
-export async function resetToPR541StateWithFetch(remote: string = 'origin', workingDir?: string): Promise<GitOperationResult> {
-  const pr541MergeCommitHash = 'fb731df444b32de47ddbea8d5347b24502ad2797';
-  
-  // First try to reset directly
-  const directResetResult = await hardResetToCommit(pr541MergeCommitHash, workingDir);
-  if (directResetResult.success) {
-    return directResetResult;
-  }
-  
-  // If direct reset fails, try to fetch from remote and then reset
-  console.log('Commit not found locally, attempting to fetch from remote...');
-  const fetchResult = await executeGitCommand(`git fetch ${remote}`, workingDir);
-  
-  if (!fetchResult.success) {
-    return {
-      success: false,
-      output: '',
-      error: `Failed to fetch from remote: ${fetchResult.error}. Original reset error: ${directResetResult.error}`
-    };
-  }
-  
-  // Try reset again after fetch
-  return hardResetToCommit(pr541MergeCommitHash, workingDir);
-}
-
-/**
  * Execute the specific workflow from the problem statement:
  * 1. gh pr checkout 541
  * 2. git checkout main
