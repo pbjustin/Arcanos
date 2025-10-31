@@ -6,6 +6,7 @@ import { setupDiagnostics } from './diagnostics.js';
 import { registerRoutes } from './routes/register.js';
 import { initOpenAI } from './init-openai.js';
 import { createFallbackMiddleware, createHealthCheckMiddleware } from './middleware/fallbackHandler.js';
+import { chatGPTUserMiddleware } from './middleware/chatgptUser.js';
 
 /**
  * Creates and configures the Express application.
@@ -13,11 +14,14 @@ import { createFallbackMiddleware, createHealthCheckMiddleware } from './middlew
 export function createApp(): Express {
   const app = express();
 
+  app.set('trust proxy', true);
+
   app.use(cors(config.cors));
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
 
   app.use(requestLoggingMiddleware);
+  app.use(chatGPTUserMiddleware());
   app.use(createHealthCheckMiddleware()); // Add health check middleware for AI endpoints
   initOpenAI(app);
   Object.defineProperty(app.locals, 'openai', {
