@@ -1,538 +1,399 @@
 # Arcanos Backend API Reference
 
-Complete API documentation for the Arcanos AI-controlled backend system.
+This document expands on the endpoint catalogue with request/response examples.
+Refer to [`docs/api/README.md`](README.md) for a high-level overview.
 
 ## Base URL
-- **Development**: `http://localhost:8080`
-- **Production**: `https://your-app.railway.app`
+- **Development:** `http://localhost:8080`
+- **Production:** e.g. `https://your-app.railway.app`
 
-## Authentication & Headers
+All examples assume JSON requests unless noted.
 
-### Required Headers for Protected Endpoints
-```http
-Content-Type: application/json
-x-confirmed: yes
-```
+---
 
-### Optional Headers
-```http
-X-Container-Id: optional-container-name  # For memory operations
-```
+## Core Conversational APIs
 
-## Core AI Endpoints
+### `POST /ask`
+Primary chat endpoint. No confirmation header required.
 
-### GET /health
-System health check endpoint.
-
-**Response:**
+**Request**
 ```json
 {
-  "status": "ok",
-  "timestamp": "2024-09-10T03:55:32.983Z",
-  "uptime": 1234567,
-  "memory": {
-    "heapUsed": 45.2,
-    "rss": 78.5
+  "prompt": "Summarise the current system status.",
+  "sessionId": "demo-session"
+}
+```
+
+**Response (abridged)**
+```json
+{
+  "result": "System is healthy and running on port 8080.",
+  "meta": {
+    "id": "ask_1729988700",
+    "created": 1729988700,
+    "tokens": {
+      "prompt_tokens": 45,
+      "completion_tokens": 128,
+      "total_tokens": 173
+    }
+  },
+  "activeModel": "gpt-4o"
+}
+```
+
+### `POST /brain`
+Alias for `/ask` that requires confirmation.
+
+```bash
+curl -X POST http://localhost:8080/brain \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"prompt":"Run diagnostics"}'
+```
+
+### `POST /arcanos`
+Diagnostic orchestration endpoint. Requires confirmation.
+
+**Request**
+```json
+{
+  "userInput": "Audit system health and report degraded services.",
+  "sessionId": "ops-001"
+}
+```
+
+**Response highlights**
+- `result` – Rich diagnostic summary.
+- `componentStatus` – Service-level status message.
+- `taskLineage` – Request ID and logging flag.
+- `gpt5Delegation` – Indicates whether GPT‑5 reasoning was used.
+
+### `POST /api/arcanos/ask`
+Programmatic JSON API (confirmation required).
+Supports optional streaming via `options.stream`.
+
+```bash
+curl -X POST http://localhost:8080/api/arcanos/ask \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"prompt":"Ping"}'
+```
+
+Response:
+```json
+{
+  "success": true,
+  "result": "pong",
+  "metadata": {
+    "service": "ARCANOS API",
+    "version": "1.0.0",
+    "timestamp": "2024-10-30T12:00:00.000Z"
   }
 }
 ```
 
-### GET /
-API status and information endpoint.
+### `POST /arcanos-pipeline`
+Executes the four-stage pipeline (ARCANOS → GPT‑3.5 sub-agent → GPT‑5 →
+ARCANOS). Requires confirmation.
 
-**Response:**
+**Request**
 ```json
 {
-  "message": "ARCANOS is live",
-  "version": "1.0.0",
-  "status": "operational"
-}
-```
-
-### POST /ask
-Primary AI chat endpoint - no confirmation required.
-
-**Request:**
-```json
-{
-  "prompt": "Your question or request here",
-  "tokenLimit": 200
-}
-```
-
-**Response:**
-```json
-{
-  "result": "AI response content",
-  "meta": {
-    "id": "req_123456789",
-    "created": 1694321123,
-    "tokens": {
-      "prompt_tokens": 15,
-      "completion_tokens": 45,
-      "total_tokens": 60
-    }
-  },
-  "activeModel": "ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH",
-  "fallbackFlag": false
-}
-```
-
-### POST /brain
-Advanced AI processing endpoint - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-**Request:**
-```json
-{
-  "prompt": "Complex reasoning request",
-  "tokenLimit": 500
-}
-```
-
-### POST /arcanos
-Main AI interface with intent routing - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-**Request:**
-```json
-{
-  "query": "Your request",
-  "context": "Optional context",
-  "tokenLimit": 300
-}
-```
-
-**Response:**
-```json
-{
-  "result": "Response content",
-  "componentStatus": "operational",
-  "suggestedFixes": "",
-  "coreLogicTrace": "trace information",
-  "meta": { ... },
-  "activeModel": "model-id",
-  "fallbackFlag": false,
-  "gpt5Used": true
-}
-```
-
-### POST /arcanos-query
-Direct query to Arcanos AI model.
-
-**Request:**
-```json
-{
-  "prompt": "Direct model query",
-  "model": "ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH"
-}
-```
-
-## AI Processing Tools
-
-### POST /write
-AI writing assistance - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-**Request:**
-```json
-{
-  "prompt": "Writing task description",
-  "tokenLimit": 400
-}
-```
-
-### POST /guide
-AI-generated guides - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-### POST /audit
-Code audit functionality - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-### POST /sim
-Simulation endpoints - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-### POST /image
-DALL·E image generation.
-
-**Request:**
-```json
-{
-  "prompt": "Image description",
-  "size": "1024x1024",
-  "n": 1
-}
-```
-
-**Response:**
-```json
-{
-  "data": [
-    {
-      "url": "https://oaidalleapiprodscus.blob.core.windows.net/...",
-      "revised_prompt": "Enhanced prompt used for generation"
-    }
+  "messages": [
+    { "role": "user", "content": "Provide a remediation plan for a failed deployment." }
   ]
 }
 ```
 
-### POST /api/ask-hrc
-Hallucination-Resistant Core queries with reliability scoring.
-
-**Request:**
+**Response**
 ```json
 {
-  "prompt": "Query for HRC analysis",
-  "tokenLimit": 300
-}
-```
-
-**Response:**
-```json
-{
-  "result": "HRC processed response",
-  "hrcScore": {
-    "reliability": 0.95,
-    "confidence": 0.88,
-    "coherence": 0.92
+  "result": {
+    "role": "assistant",
+    "content": "Step-by-step remediation plan..."
   },
-  "meta": { ... }
-}
-```
-
-## Memory Management
-
-### GET /memory/health
-Memory system status check.
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "memoryType": "postgresql",
-  "connectionStatus": "connected",
-  "entryCount": 42
-}
-```
-
-### POST /memory/save
-Store memory entries - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-**Request:**
-```json
-{
-  "key": "user_preference",
-  "value": {
-    "theme": "dark",
-    "language": "en"
-  },
-  "includeMeta": true
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "key": "user_preference",
-  "timestamp": "2024-09-10T03:55:32.983Z"
-}
-```
-
-### GET /memory/load
-Retrieve memory value by key.
-
-**Query Parameters:**
-- `key`: Memory key to retrieve
-- `includeMeta`: Include metadata (true/false)
-
-**Response:**
-```json
-{
-  "value": {
-    "theme": "dark",
-    "language": "en"
-  },
-  "key": "user_preference",
-  "timestamp": "2024-09-10T03:55:32.983Z"
-}
-```
-
-### DELETE /memory/delete
-Remove memory entries - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-### GET /memory/list
-List all memory keys and values.
-
-**Query Parameters:**
-- `includeMeta`: Include metadata (true/false)
-
-### GET /memory/view
-View memory system overview.
-
-### Dual-Mode Conversation Storage
-
-### POST /memory/dual/save
-Store conversation + metadata.
-
-**Request:**
-```json
-{
-  "sessionId": "session_123",
-  "message": {
-    "role": "user",
-    "content": "Hello there"
+  "stages": {
+    "arcFirst": { "content": "Initial ARCANOS output" },
+    "subAgent": { "content": "GPT-3.5 refinement" },
+    "gpt5Reasoning": { "content": "GPT-5 oversight summary" }
   }
 }
-```
-
-### GET /memory/dual/:sessionId
-Retrieve conversation messages for session.
-
-### GET /memory/dual/:sessionId/meta
-Retrieve session metadata.
-
-### POST /memory/resolve
-Session memory resolution.
-
-## System Control & Monitoring
-
-### GET /status
-Backend state information.
-
-**Response:**
-```json
-{
-  "status": "running",
-  "version": "1.0.0",
-  "startTime": "2024-09-10T03:55:32.983Z",
-  "port": 8080,
-  "environment": "development",
-  "workers": {
-    "running": 4,
-    "scheduled": 3
-  }
-}
-```
-
-### POST /status
-Update system status - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-### POST /heartbeat
-System heartbeat - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-**Request:**
-```json
-{
-  "timestamp": "2024-09-10T03:55:32.983Z",
-  "source": "client"
-}
-```
-
-### GET /workers/status
-Worker system status and health.
-
-**Response:**
-```json
-{
-  "status": "operational",
-  "workers": {
-    "total": 4,
-    "active": 3,
-    "idle": 1,
-    "failed": 0
-  },
-  "nextScheduled": "2024-09-10T04:00:00.000Z"
-}
-```
-
-### POST /workers/run/*
-Execute specific workers - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-## RAG & Research
-
-### POST /rag/fetch
-Fetch content for RAG processing.
-
-**Request:**
-```json
-{
-  "url": "https://example.com/content",
-  "maxLength": 5000
-}
-```
-
-### POST /rag/query
-Query against fetched content.
-
-**Request:**
-```json
-{
-  "query": "What is the main topic?",
-  "context": "previously fetched content"
-}
-```
-
-## Orchestration & Admin
-
-### GET /orchestration/status
-GPT-5 orchestration shell status.
-
-**Response:**
-```json
-{
-  "status": "active",
-  "gpt5Available": true,
-  "queueLength": 2,
-  "processingRate": "15 req/min"
-}
-```
-
-### POST /orchestration/reset
-Reset orchestration state - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-### POST /orchestration/purge
-Purge orchestration data - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-## Development & Testing
-
-### GET /api/test
-Basic health test endpoint.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "timestamp": "2024-09-10T03:55:32.983Z",
-  "service": "ARCANOS",
-  "version": "1.0.0"
-}
-```
-
-### GET /api/fallback/test
-Fallback system test endpoint.
-
-### POST /siri
-Siri integration endpoint - requires confirmation.
-
-**Headers:** `x-confirmed: yes`
-
-### POST /modules/<module>
-Module dispatcher for specialized functionality.
-
-**Available Modules:**
-- `tutor` - Educational assistance
-- `gaming` - Game-related processing
-- `research` - Research assistance
-
-**Request:**
-```json
-{
-  "action": "process",
-  "input": "module-specific input",
-  "config": {}
-}
-```
-
-### POST /queryroute
-Dynamic module routing.
-
-**Request:**
-```json
-{
-  "module": "tutor",
-  "action": "explain",
-  "query": "Explain quantum computing"
-}
-```
-
-## Error Responses
-
-### Standard Error Format
-```json
-{
-  "error": "Error type",
-  "message": "Detailed error message",
-  "code": 400,
-  "timestamp": "2024-09-10T03:55:32.983Z"
-}
-```
-
-### Common HTTP Status Codes
-- `200` - Success
-- `400` - Bad Request (invalid parameters)
-- `401` - Unauthorized (missing confirmation header)
-- `404` - Endpoint not found
-- `429` - Rate limit exceeded
-- `500` - Internal server error
-- `503` - Service unavailable (AI service down)
-
-## Rate Limiting
-
-Default rate limits apply to all endpoints:
-- **AI Endpoints**: 100 requests per minute per IP
-- **Memory Operations**: 200 requests per minute per IP
-- **System Endpoints**: 50 requests per minute per IP
-
-## SDK Integration
-
-### JavaScript/TypeScript
-```typescript
-// Example using fetch
-const response = await fetch('http://localhost:8080/ask', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    prompt: 'Hello, AI!',
-    tokenLimit: 100
-  })
-});
-
-const result = await response.json();
-console.log(result.result);
-```
-
-### cURL Examples
-```bash
-# Simple AI query
-curl -X POST http://localhost:8080/ask \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Explain quantum computing", "tokenLimit": 200}'
-
-# Memory storage (requires confirmation)
-curl -X POST http://localhost:8080/memory/save \
-  -H "Content-Type: application/json" \
-  -H "x-confirmed: yes" \
-  -d '{"key": "test", "value": "data"}'
-
-# Health check
-curl http://localhost:8080/health
 ```
 
 ---
 
-For more information, see the main [README.md](../../README.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md).
+## AI Utility Routes
+
+### `POST /write`
+Generates long-form content. Requires confirmation.
+
+```bash
+curl -X POST http://localhost:8080/write \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"prompt":"Create a release announcement"}'
+```
+
+Other utility endpoints (`/guide`, `/audit`, `/sim`) follow the same request
+shape and require the confirmation header.
+
+### `POST /image`
+Creates images using the OpenAI Images API.
+
+```bash
+curl -X POST http://localhost:8080/image \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"A futuristic AI assistant","size":"1024x1024"}'
+```
+
+**Response** – JSON payload containing the generated image URL or base64
+encoded data depending on OpenAI SDK configuration.
+
+### `POST /api/sim`
+Simulation API (confirmation not required by default).
+
+**Request**
+```json
+{
+  "scenario": "Model the impact of increased memory latency.",
+  "context": "Assume 20% higher latency across cache levels.",
+  "parameters": {
+    "temperature": 0.6,
+    "stream": false
+  }
+}
+```
+
+**Response**
+```json
+{
+  "status": "success",
+  "message": "Simulation completed successfully",
+  "data": {
+    "scenario": "Model the impact of increased memory latency.",
+    "result": "Detailed narrative...",
+    "metadata": {
+      "model": "gpt-4o",
+      "tokensUsed": 742,
+      "timestamp": "2024-10-30T12:05:00.000Z",
+      "simulationId": "sim_1729988700123"
+    }
+  }
+}
+```
+
+---
+
+## Memory & State APIs
+
+### `POST /api/memory/save`
+Confirmation required.
+
+```bash
+curl -X POST http://localhost:8080/api/memory/save \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"key":"incident:1234","value":{"summary":"Database failover executed"}}'
+```
+
+### `GET /api/memory/load`
+```bash
+curl "http://localhost:8080/api/memory/load?key=incident:1234"
+```
+
+**Response**
+```json
+{
+  "status": "success",
+  "message": "Memory loaded successfully",
+  "data": {
+    "key": "incident:1234",
+    "value": {
+      "summary": "Database failover executed"
+    }
+  }
+}
+```
+
+### `POST /api/memory/bulk`
+Execute multiple operations in a single call.
+
+```json
+{
+  "operations": [
+    { "type": "save", "key": "deployment:latest", "value": { "status": "ok" } },
+    { "type": "delete", "key": "incident:old" }
+  ]
+}
+```
+
+### `/status`
+- `GET /status` – Returns the entire state document.
+- `POST /status` – Updates the state (confirmation required). Example payload:
+  ```json
+  { "status": "running", "environment": "production" }
+  ```
+
+---
+
+## Workers & Automation
+
+### `GET /workers/status`
+Lists worker files and the runtime configuration.
+
+```json
+{
+  "timestamp": "2024-10-30T12:15:00.000Z",
+  "workersDirectory": "/app/workers",
+  "totalWorkers": 0,
+  "availableWorkers": 0,
+  "workers": [],
+  "arcanosWorkers": {
+    "enabled": true,
+    "count": 4,
+    "model": "gpt-4o",
+    "status": "Active"
+  },
+  "system": {
+    "model": "gpt-4o",
+    "environment": "development"
+  }
+}
+```
+
+### `POST /workers/run/:workerId`
+Confirmation required. Example for `demoWorker.js`:
+
+```bash
+curl -X POST http://localhost:8080/workers/run/demoWorker \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"payload":"value"}'
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "workerId": "demoWorker",
+  "result": { "output": "Worker result" },
+  "executionTime": "185ms",
+  "timestamp": "2024-10-30T12:16:05.000Z"
+}
+```
+
+### `POST /heartbeat`
+Confirmation required. Writes to `logs/heartbeat.log`.
+
+```bash
+curl -X POST http://localhost:8080/heartbeat \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{
+        "timestamp":"2024-10-30T12:20:00.000Z",
+        "mode":"normal",
+        "payload":{
+          "write_override":false,
+          "db_write_enable":true,
+          "suppression_level":"low",
+          "confirmation":"manual"
+        }
+      }'
+```
+
+---
+
+## Research, RAG, and HRC
+
+### `POST /commands/research`
+Requires confirmation.
+
+```json
+{
+  "topic": "Hallucination resistant prompting",
+  "urls": ["https://example.com/article"]
+}
+```
+
+**Response** includes `summary`, `sources`, and `timestamp` fields from the
+research module.
+
+### RAG Endpoints
+- `POST /rag/fetch` – Fetch a document by URL.
+- `POST /rag/save` – Save raw content.
+- `POST /rag/query` – Query stored documents.
+
+All RAG requests return metadata including document IDs, character counts, and
+normalized source information.
+
+### `POST /api/ask-hrc`
+Hallucination Resistant Core evaluation. Requires confirmation.
+
+```json
+{
+  "message": "Explain the safeguards used by the API."
+}
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "result": {
+    "score": 0.92,
+    "explanation": "Detailed safety assessment..."
+  }
+}
+```
+
+---
+
+## Command Execution API
+
+Endpoints under `/api/commands` are documented in
+[`docs/api/COMMAND_EXECUTION.md`](COMMAND_EXECUTION.md). Key routes:
+
+- `GET /api/commands/` – List registered commands.
+- `GET /api/commands/health` – Lightweight health payload.
+- `POST /api/commands/execute` – Execute a command (requires confirmation).
+
+---
+
+## Health & Readiness
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /` | Plain-text heartbeat (`ARCANOS is live`). |
+| `GET /railway/healthcheck` | Railway-compatible health check. |
+| `GET /health` | Aggregated service status including OpenAI, database, and caches. |
+| `GET /healthz` | Liveness probe. |
+| `GET /readyz` | Readiness probe (returns 503 when dependencies are unavailable). |
+| `GET /api/test` | JSON smoke test payload used for platform diagnostics. |
+
+---
+
+## Error Handling Patterns
+
+- Validation errors respond with a `status: "error"` payload and descriptive
+  `message` / `details` fields.
+- Confirmation failures return HTTP 403 with
+  `{ "error": "Confirmation required" }`.
+- Upstream OpenAI issues surface as HTTP 503 with user-friendly messages while
+  logging the original error.
+- Worker execution failures include the worker ID and a timestamp for auditing.
+
+---
+
+## Troubleshooting Checklist
+
+1. **401/403 responses** – Ensure `x-confirmed: yes` is present or the caller is
+   listed in `TRUSTED_GPT_IDS`.
+2. **503 readiness failures** – Verify PostgreSQL (`DATABASE_URL`) and the
+   OpenAI API key are configured.
+3. **Streaming APIs** – Ensure the client consumes `text/event-stream` responses
+   when `stream: true` is used.
+4. **Mock mode** – When `OPENAI_API_KEY` is absent, expect deterministic mock
+   payloads for AI endpoints.
+
+For further assistance see [`docs/backend.md`](../backend.md) and
+[`docs/CONFIGURATION.md`](../CONFIGURATION.md).

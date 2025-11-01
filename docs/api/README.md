@@ -1,133 +1,141 @@
 # ARCANOS API Reference
 
-> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **OpenAI SDK:** v5.16.0
+> **Last Updated:** 2024-10-30 | **Version:** 1.0.0 | **OpenAI SDK:** v5.16.0
 
-Complete API documentation for the ARCANOS AI-controlled backend service.
+This guide summarises the HTTP API exposed by the Arcanos backend. All routes
+are registered in [`src/routes/register.ts`](../../src/routes/register.ts).
+Mutating endpoints require the `x-confirmed: yes` header unless the caller is a
+trusted GPT (`TRUSTED_GPT_IDS` + `x-gpt-id`).
 
-## 📋 API Documentation Self-Check
+---
 
-This API documentation includes:
-- [x] All endpoints organized by category
-- [x] Confirmation gate requirements clearly marked
-- [x] Request/response examples for each endpoint
-- [x] Error handling and fallback behaviors documented
-- [x] Environment variable dependencies listed
-- [x] OpenAI SDK v5.16.0 compatibility verified
-- [x] Railway deployment considerations included
+## 📡 Core AI Endpoints
 
-## 🌐 API Endpoints
+| Endpoint | Confirmation | Description |
+| --- | --- | --- |
+| `POST /ask` | No | Primary chat endpoint routed through the Trinity brain. |
+| `POST /brain` | Yes | Confirmation-gated alias for `/ask`. |
+| `POST /arcanos` | Yes | Diagnostic orchestration entry point backed by `runARCANOS`. |
+| `POST /siri` | Yes | Siri-style interface that reuses the Trinity pipeline. |
+| `POST /arcanos-pipeline` | Yes | Multi-stage pipeline that combines ARCANOS, GPT‑3.5, and GPT‑5 reasoning. |
+| `POST /api/arcanos/ask` | Yes | Minimal JSON API that returns or streams ARCANOS completions. |
 
-### Core AI Endpoints
-- `POST /ask` - General AI conversation and logic routing
-- `POST /query-finetune` - Direct fine-tuned model access
-- `POST /image` - AI-enhanced image generation via DALL·E
-- `POST /hrc` - Hallucination-Resistant Core analysis with reliability scoring
+### AI Utilities
+- `POST /write`, `POST /guide`, `POST /audit`, `POST /sim`
+  – Content generation, guidance, auditing, and simulation helpers (all require
+  confirmation).
+- `POST /image`
+  – Image generation via OpenAI Images API (honours optional `size`).
+- `POST /api/sim`
+  – Simulation API with supporting routes `GET /api/sim/health` and
+  `GET /api/sim/examples`.
+- `POST /gpt/:gptId/*`
+  – Dynamic router that forwards GPT-specific traffic to modules defined in
+  `config/gptRouterConfig.ts`.
 
-### AI Processing & Tools  
-- `POST /arcanos` - AI-controlled system operations and diagnostics
-- `POST /gpt5/reasoning` - Advanced reasoning with GPT-5
-- `POST /orchestration` - AI workflow orchestration
-- `POST /api/sim` - Simulation and modeling endpoints
+---
 
-### Memory Management
+## 🗂️ Memory & State APIs
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /api/memory/health` | Confirms database connectivity and reports recent errors. |
+| `POST /api/memory/save` | Persist a key/value pair (requires confirmation). |
+| `GET /api/memory/load?key=...` | Retrieve stored memory by key. |
+| `DELETE /api/memory/delete` | Remove a memory entry (requires confirmation). |
+| `GET /api/memory/list` | List recent memory entries ordered by update time. |
+| `GET /api/memory/view` | Return the legacy filesystem log snapshot. |
+| `POST /api/memory/bulk` | Execute a sequence of memory operations (requires confirmation). |
+| `POST /heartbeat` | Append heartbeat telemetry to `logs/heartbeat.log` (requires confirmation). |
+| `GET /status` | Return the contents of `systemState.json`. |
+| `POST /status` | Update the backend state document (requires confirmation). |
+
+---
+
+## 🛠️ Workers & Automation
+
+| Endpoint | Confirmation | Description |
+| --- | --- | --- |
+| `GET /workers/status` | No | Lists worker files in the `workers/` directory and reports runtime configuration. |
+| `POST /workers/run/:workerId` | Yes | Executes a worker module by filename using the worker context helper. |
+
+---
+
+## 🔍 Research, RAG, and Specialized Modules
+
+| Endpoint | Confirmation | Description |
+| --- | --- | --- |
+| `POST /commands/research` | Yes | Invokes the research module to aggregate external sources. |
+| `POST /rag/fetch` | No | Fetch and ingest a document by URL. |
+| `POST /rag/save` | No | Persist custom text content for later retrieval. |
+| `POST /rag/query` | No | Run a retrieval-augmented query across stored documents. |
+| `POST /api/ask-hrc` | Yes | Hallucination Resistant Core evaluation. |
+| `POST /api/pr-analysis/*` | Yes | Pull-request analysis helpers (see module documentation). |
+| `POST /api/commands/execute` | Yes | Execute a registered command via `services/commandCenter.ts`. |
+| `GET /api/commands/` | No | Enumerate available commands. |
+| `GET /api/commands/health` | No | Command service health probe. |
+| `POST /api/openai/*` | Mixed | OpenAI compatibility shims (see route for details). |
+| `POST /api/sim` | No | Run a simulation scenario with optional streaming. |
+
+---
+
+## 🩺 Health & Diagnostics
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /` | Plain-text "ARCANOS is live" banner. |
+| `GET /railway/healthcheck` | Railway-friendly health check. |
+| `GET /health` | Aggregated health report including OpenAI and database status. |
+| `GET /healthz` | Liveness probe. |
+| `GET /readyz` | Readiness probe (ensures required dependencies are available). |
+| `GET /api/test` | Lightweight JSON probe used for smoke tests. |
+
+---
+
+## 🔐 Confirmation Gate Examples
+
+Protected operations require either `x-confirmed: yes` or a trusted GPT ID.
+
 ```bash
-# Dual-mode conversation storage
-POST /api/memory/store    # Store conversation context (protected)
-POST /api/memory/retrieve # Retrieve conversation history
-POST /api/memory/clear    # Clear stored context (protected)
-```
-
-### System Control & Monitoring
-- `GET /health` - System health and status
-- `GET /status` - Detailed system status with environment info  
-- `POST /workers/status` - Worker process status and control
-- `GET /diagnostics` - System diagnostics and performance metrics
-
-### RAG & Research  
-- `POST /research` - Scholarly research and document fetching
-- `POST /rag` - Retrieval-Augmented Generation queries
-
-### Orchestration & Admin
-- `POST /orchestration/init` - Initialize AI orchestration workflows
-- `GET /admin/*` - Administrative endpoints (requires ADMIN_KEY)
-
-### Development & Testing
-- `POST /pr-analysis` - Pull request analysis and validation
-- `GET /test/*` - Testing utilities and endpoints
-
-## Example Usage
-
-### Simple AI query
-```bash
-curl -X POST http://localhost:8080/ask \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, how are you?"}'
-```
-
-### Memory storage (requires confirmation)
-```bash
-curl -X POST http://localhost:8080/api/memory/store \
+curl -X POST http://localhost:8080/api/memory/save \
   -H "Content-Type: application/json" \
   -H "x-confirmed: yes" \
-  -d '{"session": "user123", "data": {"context": "conversation state"}}'
+  -d '{"key":"example","value":{"note":"stored by API"}}'
 ```
 
-### Health check
+Requests from a trusted GPT can omit the confirmation header when both
+`TRUSTED_GPT_IDS` and `x-gpt-id` are configured:
+
 ```bash
-curl http://localhost:8080/health
-```
-
-## 🛡️ Security & Compliance
-
-### Confirmation Requirements
-Certain operations require explicit confirmation via the `x-confirmed: yes` header (or a trusted GPT ID):
-- Memory storage operations (`/api/memory/store`, `/api/memory/clear`)
-- Administrative functions (`/admin/*`)
-- Worker control operations (`/workers/*`)
-
-To pre-authorize requests coming from Custom GPTs that you personally supervise, set the `TRUSTED_GPT_IDS` environment variable to a comma-separated list of GPT IDs. When a request includes a matching `x-gpt-id` header (or `gptId` in the body), the confirmation gate treats it as already reviewed and does not require the manual header.
-
-### Example Usage with Confirmation
-```bash
-# Protected operation - requires confirmation header
-curl -X POST http://localhost:8080/api/memory/clear \
-  -H "x-confirmed: yes" \
-  -H "Content-Type: application/json"
-
-# Safe operation - no confirmation needed  
-curl -X POST http://localhost:8080/ask \
+curl -X DELETE http://localhost:8080/api/memory/delete \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "What is the weather like?"}'
+  -H "x-gpt-id: my-approved-gpt" \
+  -d '{"key":"example"}'
 ```
 
-## Authentication
-
-- **Admin endpoints**: Require `ADMIN_KEY` environment variable
-- **Protected operations**: Require `x-confirmed: yes` header (unless the request supplies a trusted GPT ID)
-- **OpenAI integration**: Requires valid `OPENAI_API_KEY`
-
-## Rate Limiting
-
-Default rate limits apply to prevent abuse:
-- General endpoints: 100 requests/minute per IP
-- AI endpoints: 30 requests/minute per IP
-- Admin endpoints: 10 requests/minute per IP
+---
 
 ## Error Handling
 
-All API endpoints return consistent error responses:
+All endpoints return JSON payloads with `status`, `message`, and `timestamp`
+fields (where applicable). Common failure modes include:
 
-```json
-{
-  "error": "Error type",
-  "message": "Human-readable error description",
-  "details": "Additional error context (development only)"
-}
-```
+- `400 Bad Request` – Validation errors, missing fields, or malformed JSON.
+- `403 Forbidden` – Missing confirmation header or untrusted GPT ID.
+- `404 Not Found` – Unknown worker/module identifiers.
+- `429 Too Many Requests` – Rate limits defined in `utils/security.ts` have been
+  exceeded.
+- `500 Internal Server Error` / `503 Service Unavailable` – Upstream failures or
+  external dependency outages.
 
-Common HTTP status codes:
-- `200` - Success
-- `400` - Bad Request (invalid parameters)
-- `401` - Unauthorized (missing or invalid authentication)
-- `403` - Forbidden (missing confirmation header)
-- `500` - Internal Server Error
+---
+
+## Related Documentation
+
+- [`docs/api/API_REFERENCE.md`](API_REFERENCE.md) – Expanded request/response
+  examples.
+- [`docs/backend.md`](../backend.md) – Runtime architecture and boot process.
+- [`docs/CONFIGURATION.md`](../CONFIGURATION.md) – Environment variable matrix.
+
+Use these references together to keep client integrations aligned with the
+current backend implementation.
