@@ -1,216 +1,181 @@
 # Arcanos Backend
 
-> **Last Updated:** 2025-09-27 | **Version:** 1.2.0 | **OpenAI SDK:** v5.16.0
+> **Last Updated:** 2024-10-30 | **Version:** 1.0.0 | **OpenAI SDK:** v5.16.0
 
-An AI-controlled TypeScript backend featuring fine-tuned OpenAI model integration, intelligent routing, and persistent memory storage. Arcanos provides a comprehensive HTTP API that is orchestrated entirely by an AI model with advanced worker scheduling and memory management.
+Arcanos is an AI-assisted TypeScript backend built on Express. The service routes
+requests through a centralized OpenAI integration, persists state to disk, and
+exposes a collection of HTTP APIs for AI orchestration, diagnostics, memory
+management, and background worker coordination.
 
-## 📋 Documentation Self-Check
-
-This README.md includes the following required sections:
-- [x] Architecture overview and configuration patterns
-- [x] Environment variables with fallback behaviors documented
-- [x] API endpoints with confirmation requirements
-- [x] Deployment procedures with Railway optimization
-- [x] Development workflow and project structure
-- [x] Last-updated tags and version information
-- [x] Links to comprehensive documentation in `/docs`
+---
 
 ## 🧠 Core Architecture & Features
 
-### AI-Controlled Architecture
-- **AI-Managed Operations**: Fine-tuned GPT model controls all system operations
-- **Intelligent Memory System**: PostgreSQL backend with in-memory fallback behavior
-- **OpenAI SDK v5.16.0**: Modern integration with streaming, function calling, and GPT-5 support
-- **Image Generation**: DALL·E support via OpenAI's Images API with AI-refined prompts
-- **Worker System**: AI-controlled CRON scheduling for maintenance and background tasks
-- **Railway Optimized**: Cloud deployment ready with health monitoring and graceful shutdown
+- **Express + TypeScript runtime** – `src/start-server.ts` boots the application,
+  performs environment validation, and mounts routes from `src/routes`.
+- **Centralized OpenAI client** – `src/services/openai.ts` lazily initializes the
+  SDK, chooses a default model (`OPENAI_MODEL` → `FINETUNED_MODEL_ID`
+  → `FINE_TUNED_MODEL_ID` → `AI_MODEL` → `gpt-4o`), and exposes helpers for chat,
+  image generation, and GPT‑5 delegation.
+- **State synchronization** – `src/services/stateManager.ts` maintains
+  `systemState.json`, while `/status` endpoints provide read/write access for
+  external automation.
+- **Graceful fallbacks** – Missing `OPENAI_API_KEY` triggers mock responses,
+  database failures degrade to in-memory persistence, and worker boot tolerates a
+  missing `workers/` directory.
+- **Heartbeat & diagnostics** – `src/logic/aiCron.ts` writes
+  `memory/heartbeat.json` every minute and `/health`, `/healthz`, and `/readyz`
+  report OpenAI and database status.
 
-### Fallback Behaviors
-- **Database**: Automatically falls back to in-memory storage if PostgreSQL unavailable
-- **AI Services**: Provides mock responses when OpenAI API key is not configured
-- **Worker System**: Continues core operations even if background workers fail
-- **Health Monitoring**: Degrades gracefully with detailed status reporting via `/health`
+---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- Node.js 18+
-- npm 8+
-- PostgreSQL (optional - uses in-memory fallback)
-- OpenAI API key
-
-### Installation
 ```bash
-git clone <repository-url>
-cd Arcanos
 npm install
-cp .env.example .env
-# Edit .env with your OpenAI API key
+cp .env.example .env   # populate OPENAI_API_KEY and any optional variables
 npm run build
 npm start
 ```
 
-### Test the Installation
+### Common Scripts
+
 ```bash
-# Health check
-curl http://localhost:8080/health
-
-# AI chat
-curl -X POST http://localhost:8080/ask \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, how are you?"}'
-
-# Generate an image
-curl -X POST http://localhost:8080/image \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "A futuristic AI assistant"}'
+npm run dev      # Start the server with ts-node-dev
+npm test         # Run Jest test suites
+npm run lint     # Lint TypeScript sources
 ```
 
-## 🛡️ Environment Safety
+### Health Checks
 
-ARCANOS includes comprehensive environment validation and security features. On startup, the system:
-- Validates environment configuration
-- Runs security checks in sandbox mode  
-- Provides detailed health status via `/health` endpoint
-- Switches to safe mode if any issues are detected
-
-For details, see [Environment Security Overview](docs/environment-security-overview.md).
-
-## ⚙️ Configuration Patterns
-
-### Required Environment Variables
 ```bash
-OPENAI_API_KEY=your-openai-api-key-here
-AI_MODEL=REDACTED_FINE_TUNED_MODEL_ID
+curl http://localhost:8080/health     # aggregated service health
+curl http://localhost:8080/healthz    # liveness probe
+curl http://localhost:8080/readyz     # readiness probe
 ```
-
-### Optional Configuration with Fallbacks
-```bash
-PORT=8080                          # Fallback: 8080
-DATABASE_URL=postgresql://...      # Fallback: In-memory storage
-RUN_WORKERS=true                   # Fallback: false (core services only)
-NODE_ENV=production                # Fallback: development
-RAILWAY_ENVIRONMENT=production     # Fallback: local
-```
-
-### Configuration Validation
-The system performs comprehensive environment validation on startup:
-- **Missing required vars**: System starts in safe mode with mock responses  
-- **Invalid format**: Detailed error messages with correction guidance
-- **Database connectivity**: Automatic fallback to in-memory storage
-- **OpenAI API**: Validates API key format and connectivity
-
-**📖 Complete configuration guide:** [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-
-## 🌐 API Documentation & Endpoints
-
-### Core Endpoints
-- `POST /ask` - AI conversation and logic routing (no confirmation required)
-- `POST /query-finetune` - Direct fine-tuned model access (no confirmation required)
-- `POST /image` - AI-enhanced image generation (no confirmation required)
-- `GET /health` - System health check and status (no confirmation required)
-
-### Protected Endpoints (Require Confirmation Header)
-- `POST /api/memory/*` - Memory management operations
-- `DELETE /api/memory/*` - Memory deletion operations  
-- `POST /api/workers/*` - Worker system management
-
-### Confirmation Gate Pattern
-Protected endpoints require the `x-confirmed: yes` header unless the request comes from a trusted GPT ID:
-```bash
-curl -X POST http://localhost:8080/api/memory/create \
-  -H "Content-Type: application/json" \
-  -H "x-confirmed: yes" \
-  -d '{"key": "example", "value": "data"}'
-```
-
-To allow pre-approved GPT integrations to bypass the manual confirmation header, configure the `TRUSTED_GPT_IDS` environment variable with a comma-separated list of GPT IDs. Requests that provide a matching `x-gpt-id` header (or `gptId` field in the body) are treated as already reviewed and pass through the confirmation gate automatically.
-
-**📖 Complete API reference:** [docs/api/README.md](docs/api/README.md)
-
-## 🚄 Railway Deployment
-
-### Quick Deploy
-1. **Fork this repository** to your GitHub account
-2. **Connect to Railway**: Go to [Railway.app](https://railway.app) → "Deploy from GitHub repo"
-3. **Set environment variables**:
-   ```bash
-   OPENAI_API_KEY=your-openai-api-key-here
-   NODE_ENV=production
-   AI_MODEL=REDACTED_FINE_TUNED_MODEL_ID
-   ```
-
-**📖 Complete deployment guide:** [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md)
-
-## 🔧 Development
-
-### Available Scripts
-```bash
-npm run build       # Build TypeScript
-npm run dev         # Development server
-npm run test        # Run tests
-npm run lint        # Lint code
-npm start          # Start production server
-```
-
-### Project Structure
-```
-src/
-├── config/         # Configuration and environment
-├── services/       # Core services (OpenAI, memory, etc.)
-├── routes/         # API route handlers
-├── utils/          # Utilities and helpers
-├── logic/          # AI logic implementations
-└── middleware/     # Express middleware
-```
-
-**📖 Development guides:** [docs/](docs/)
-
-## 🧹 Recent Optimizations
-
-This repository has been optimized for **OpenAI SDK + Railway deployment**:
-
-✅ **Updated Dependencies** - OpenAI SDK v5.16.0, ESLint v9, modern TypeScript  
-✅ **Environment Variables** - Centralized configuration, removed hardcoded values  
-✅ **Code Quality** - Simplified routing, improved TypeScript safety, structured logging  
-✅ **Worker System** - AI-controlled background processes with health monitoring
-
-## 📚 Documentation
-
-### Core Guides
-- [Configuration Guide](docs/CONFIGURATION.md) - Environment variables and settings
-- [API Reference](docs/api/README.md) - Complete endpoint documentation  
-- [Deployment Guide](docs/deployment/DEPLOYMENT.md) - Railway, Docker, and production setup
-- [Backend Architecture](docs/backend.md) - Technical architecture details
-
-### AI Features  
-- [OpenAI Integration](docs/GPT5_INTEGRATION_SUMMARY.md) - GPT-5 and fine-tuned model usage
-- [Memory System](docs/pinned-memory-guide.md) - Persistent memory and context management
-- [Worker System](docs/ai-guides/) - AI-controlled background processes
-
-### Development
-- [Environment Security](docs/environment-security-overview.md) - Security and validation features
-- [PR Assistant](docs/PR_ASSISTANT_README.md) - Automated code review and validation
-
-## 📝 License
-
-MIT License - see LICENSE file for details.
 
 ---
 
-## 📋 Version History & Maintenance
+## ⚙️ Configuration Overview
 
-- **v1.2.0** (2024-09-27): Complete documentation standardization and audit system
-- **v1.1.0** (2024-09-24): OpenAI SDK v5.16.0 upgrade and Railway optimization  
-- **v1.0.0** (2024-09-20): Initial release with AI-controlled architecture
+Key environment variables used by the backend:
 
-### Documentation Maintenance
-This documentation is validated by:
-- Automated lint checks in CI/CD pipeline
-- Documentation audit script (`scripts/doc_audit.sh`)
-- GitHub Actions workflow for consistency verification
-- Self-check procedures embedded in each file
+| Variable | Description |
+| --- | --- |
+| `OPENAI_API_KEY` | API key for the OpenAI SDK. Missing keys enable mock responses. |
+| `OPENAI_MODEL` / `FINETUNED_MODEL_ID` / `FINE_TUNED_MODEL_ID` / `AI_MODEL` | Preferred model identifiers (first non-empty wins). |
+| `GPT5_MODEL` | Override identifier used for GPT‑5 reasoning fallbacks (default `gpt-5`). |
+| `PORT` / `HOST` / `SERVER_URL` | Server binding details. `PORT` defaults to `8080`. |
+| `DATABASE_URL` (+ `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`) | PostgreSQL connection string with automatic assembly from discrete settings. |
+| `ARC_LOG_PATH` / `ARC_MEMORY_PATH` | Filesystem paths for log storage and memory snapshots. |
+| `RUN_WORKERS` | Enables worker bootstrap (defaults to `true` outside of tests). |
+| `WORKER_COUNT` / `WORKER_MODEL` / `WORKER_API_TIMEOUT_MS` | Worker concurrency, default model, and request timeout controls. |
+| `TRUSTED_GPT_IDS` | Comma-separated GPT identifiers allowed to bypass confirmation headers. |
+| `SESSION_CACHE_TTL_MS` / `SESSION_CACHE_CAPACITY` / `SESSION_RETENTION_MINUTES` | Memory cache retention and capacity tuning. |
+| `NOTION_API_KEY` / `RESEARCH_MAX_CONTENT_CHARS` / `HRC_MODEL` | Feature-specific integrations for Notion sync, research ingestion, and HRC analysis. |
 
-**⚡ Quick Links:**
-- [Configuration](docs/CONFIGURATION.md) | [API Docs](docs/api/README.md) | [Deploy to Railway](docs/deployment/DEPLOYMENT.md)
-- [Health Check](http://localhost:8080/health) | [System Status](http://localhost:8080/status) | [Audit Script](scripts/doc_audit.sh)
+A full configuration matrix is maintained in
+[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
+
+---
+
+## 🌐 API Highlights
+
+All routes are registered in [`src/routes/register.ts`](src/routes/register.ts).
+Confirmation-sensitive endpoints require the `x-confirmed: yes` header unless the
+caller supplies a trusted GPT ID via `x-gpt-id` or request payload.
+
+### Conversational & Reasoning Endpoints
+
+| Endpoint | Confirmation | Description |
+| --- | --- | --- |
+| `POST /ask` | No | Primary chat endpoint routed through the Trinity brain. |
+| `POST /brain` | Yes | Confirmation-gated alias for `/ask`. |
+| `POST /arcanos` | Yes | Diagnostic orchestration entry point powered by `runARCANOS`. |
+| `POST /siri` | Yes | Siri-style prompt handler with Trinity routing. |
+| `POST /arcanos-pipeline` | Yes | Multi-stage pipeline combining ARCANOS, GPT‑3.5, and GPT‑5. |
+| `POST /api/arcanos/ask` | Yes | Minimal JSON API that streams or returns ARCANOS completions. |
+
+### AI Utilities
+
+- `POST /write`, `POST /guide`, `POST /audit`, `POST /sim`
+  – Content generation, guidance, auditing, and simulations (all require
+  confirmation).
+- `POST /image` – DALL·E-style image generation with optional `size` parameter.
+- `POST /api/sim` – Simulation API with `/api/sim/health` and `/api/sim/examples`
+  helper routes.
+- `POST /gpt/:gptId/*` – Dynamic routing to modules defined in
+  `config/gptRouterConfig.ts`.
+
+### Memory & State
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /api/memory/health` | Memory service diagnostics. |
+| `POST /api/memory/save` | Persist a key/value pair (requires confirmation). |
+| `GET /api/memory/load?key=...` | Retrieve stored memory. |
+| `DELETE /api/memory/delete` | Remove a memory entry (requires confirmation). |
+| `GET /api/memory/list` | List recent memory entries. |
+| `GET /api/memory/view` | View the legacy filesystem snapshot. |
+| `POST /api/memory/bulk` | Execute bulk memory operations (requires confirmation). |
+| `GET /status` / `POST /status` | Read/write `systemState.json` (POST requires confirmation). |
+
+### Workers & Automation
+
+- `GET /workers/status` – Enumerates available worker modules and runtime
+  configuration.
+- `POST /workers/run/:workerId` – Executes a worker by filename (requires
+  confirmation).
+- `POST /heartbeat` – Records operator heartbeats to `logs/heartbeat.log`
+  (requires confirmation).
+
+### Research, RAG, and Integrations
+
+- `POST /rag/fetch`, `/rag/save`, `/rag/query` – Retrieval-augmented generation
+  ingestion and querying.
+- `POST /commands/research` – Curated research pipeline (requires confirmation).
+- `POST /api/ask-hrc` – Hallucination Resistant Core evaluation.
+- `POST /api/pr-analysis/*`, `/api/openai/*`, `/api/commands/*` – Specialized
+  automation surfaces documented in the `docs/api` directory.
+
+---
+
+## 🛡️ Security & Confirmation Gate
+
+The middleware in [`src/middleware/confirmGate.ts`](src/middleware/confirmGate.ts)
+blocks mutating operations unless either:
+
+1. The request includes `x-confirmed: yes`, or
+2. The caller identifies as a trusted GPT (`TRUSTED_GPT_IDS` + `x-gpt-id`).
+
+Audit logs include confirmation status, trusted GPT usage, and timestamped
+context for downstream analysis.
+
+---
+
+## 🧪 Testing & Quality Checks
+
+```bash
+npm test                     # Jest test suites
+npm run lint                 # ESLint (via @typescript-eslint)
+npm run build && npm start   # Ensure the compiled server boots
+```
+
+For additional diagnostics, `src/services/gptSync.ts` executes a post-boot system
+diagnostic and `/api/test` returns a lightweight readiness payload for Railway.
+
+---
+
+## 📚 Additional Documentation
+
+- [`docs/backend.md`](docs/backend.md) – Detailed runtime walkthrough.
+- [`docs/api/README.md`](docs/api/README.md) – Endpoint catalog and examples.
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) – Expanded environment
+  reference.
+- [`docs/environment-security-overview.md`](docs/environment-security-overview.md)
+  – Startup safety checks and sandbox rules.
+
+---
+
+Need a deeper dive? Start with [`docs/README.md`](docs/README.md) for the full
+documentation index and cross-links to specialized guides.
