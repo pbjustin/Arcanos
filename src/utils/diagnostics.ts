@@ -43,11 +43,11 @@ function evaluateWorkerHealth(): WorkerHealth {
 
   if (!directoryExists) {
     return {
-      expected: true,
+      expected: false,
       directoryExists: false,
-      healthy: false,
+      healthy: true,
       files: [],
-      reason: 'Workers directory not found'
+      reason: 'Workers directory not found (worker modules optional)'
     };
   }
 
@@ -70,9 +70,9 @@ function evaluateWorkerHealth(): WorkerHealth {
     return {
       expected: true,
       directoryExists: true,
-      healthy: false,
+      healthy: true,
       files: workerFiles,
-      reason: 'No worker modules found'
+      reason: 'No worker modules registered'
     };
   }
 
