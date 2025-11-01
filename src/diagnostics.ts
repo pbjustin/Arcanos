@@ -17,21 +17,25 @@ export function setupDiagnostics(app: Express): void {
   app.get('/health', async (_: Request, res: Response) => {
     const healthReport = await runHealthCheck();
     const defaultModel = getDefaultModel();
+    const statusCode = healthReport.status === 'ok' ? 200 : 503;
 
-    res.status(200).json({
-      status: 'OK',
+    res.status(statusCode).json({
+      status: healthReport.status,
       timestamp: new Date().toISOString(),
       service: 'ARCANOS',
       version: process.env.npm_package_version || '1.0.0',
+      summary: healthReport.summary,
+      components: healthReport.components,
       ai: {
         defaultModel: defaultModel,
         fallbackModel: config.ai.fallbackModel
       },
       system: {
-        memory: healthReport.summary,
+        memory: healthReport.components.memory,
         uptime: `${process.uptime().toFixed(1)}s`,
         nodeVersion: process.version,
-        environment: config.server.environment
+        environment: config.server.environment,
+        security: healthReport.security
       }
     });
   });
