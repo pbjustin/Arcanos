@@ -1,178 +1,169 @@
 # ARCANOS Configuration Guide
 
-> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **Configuration Patterns**
+> **Last Updated:** 2024-10-30 | **Version:** 1.0.0
 
-Complete configuration reference for environment variables, deployment settings, and system parameters with fallback behaviors.
+This guide documents environment variables and configuration patterns used by
+the Arcanos backend. Defaults are taken from `src/config/index.ts` and
+`src/utils/env.ts`.
+
+---
 
 ## 📋 Configuration Self-Check
 
-This configuration guide includes:
-- [x] Required vs. optional variables clearly distinguished
-- [x] Fallback behaviors documented for each variable
-- [x] Railway deployment patterns included
-- [x] OpenAI SDK v5.16.0 compatibility requirements
-- [x] Security considerations for sensitive variables
-- [x] Environment-specific configurations documented
-- [x] Validation patterns and error handling described
+- [x] Required vs optional variables highlighted
+- [x] Default values documented with source references
+- [x] Confirmation and security flags explained
+- [x] Railway deployment notes included
+- [x] Consistent with package version `1.0.0`
 
-## ⚙️ Configuration
+---
 
-### Required Environment Variables
-```bash
-OPENAI_API_KEY=your-openai-api-key-here
-AI_MODEL=your-fine-tuned-model-id-here  # Default: ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH
-```
+## ⚙️ Core Environment Variables
 
-### Optional Database Configuration
-```bash
-DATABASE_URL=postgresql://user:pass@localhost:5432/arcanos  # Optional - uses in-memory if not set
-```
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | ✅ | – | OpenAI API key. When omitted the service returns deterministic mock responses. |
+| `PORT` | ❌ | `8080` | Preferred HTTP port. `src/utils/portUtils.ts` falls back to the next free port. |
+| `HOST` | ❌ | `0.0.0.0` | Bind address for the HTTP server. |
+| `SERVER_URL` | ❌ | `http://127.0.0.1:<port>` | Used when constructing absolute URLs for backend sync. |
+| `NODE_ENV` | ❌ | `development` | Controls logging verbosity and certain feature defaults. |
+| `LOG_LEVEL` | ❌ | `info` | Logging level for `utils/structuredLogging.ts`. |
+| `ARC_LOG_PATH` | ❌ | `/tmp/arc/log` | Directory for session logs and heartbeat output. |
+| `ARC_MEMORY_PATH` | ❌ | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
 
-### Server Configuration
-```bash
-NODE_ENV=development           # Environment mode (development/production)
-PORT=8080                      # Server port
-DEFAULT_PORT=8080             # Default port for Railway deployment validation
-ARC_LOG_PATH=/tmp/arc/log      # Directory for ARCANOS log files
-ARC_MEMORY_PATH=/tmp/arc/memory # Directory for ARCANOS memory files
-```
+---
 
-### Worker System
-```bash
-RUN_WORKERS=true              # Enable AI-controlled CRON jobs
-WORKER_COUNT=4                # Number of worker processes
-WORKER_MODEL=ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH  # Worker-specific model
-WORKER_API_TIMEOUT_MS=60000   # API timeout for workers
-WORKER_LOGIC=arcanos          # Worker logic implementation
-SERVER_URL=http://localhost:8080  # Server URL for worker communication
-```
+## 🧠 Model Selection
 
-### OpenAI Advanced Features
-```bash
-GPT5_MODEL=gpt-5              # GPT-5 model for advanced reasoning
-BOOKER_TOKEN_LIMIT=512        # Token limit for booking prompts
-TUTOR_DEFAULT_TOKEN_LIMIT=200 # Default token limit for tutor queries
-```
+`src/services/openai.ts` chooses the first non-empty value in the chain below:
 
-### Notion Integration (Optional)
-```bash
-NOTION_API_KEY=your-notion-api-key-here        # Notion API key
-WWE_DATABASE_ID=your-notion-wwe-database-id    # WWE database ID for roster sync
-```
+1. `OPENAI_MODEL`
+2. `FINETUNED_MODEL_ID`
+3. `FINE_TUNED_MODEL_ID`
+4. `AI_MODEL`
+5. `gpt-4o` (fallback)
 
-### Railway Deployment
-```bash
-RAILWAY_PROJECT=arcanos-core                   # Railway project name
-RAILWAY_ENVIRONMENT=production                 # Railway environment
-API_URL=https://your-app.railway.app          # Public API URL
-MODEL_ROUTE=/query-finetune                    # Model API route
-LOGIC_ROUTE=/ask                              # Logic API route
-```
+Additional model-related variables:
 
-### GitHub Integration (Optional)
-```bash
-GITHUB_TOKEN=your-github-token-here           # GitHub API token
-GITHUB_WEBHOOK_SECRET=your-webhook-secret     # Webhook secret
-ENABLE_GITHUB_ACTIONS=true                    # Enable GitHub Actions
-GITHUB_INTEGRATION=true                       # Enable GitHub features
-ALLOW_WEBHOOKS=true                          # Allow webhook handling
+| Variable | Default | Description |
+| --- | --- | --- |
+| `GPT5_MODEL` | `gpt-5` | Identifier used for GPT‑5 reasoning fallbacks. |
+| `API_KEY` | – | Legacy alias checked before `OPENAI_API_KEY`. |
 
-# GitHub App Configuration (for Probot)
-APP_ID=your-github-app-id-here               # GitHub App ID
-PRIVATE_KEY_PATH=./private-key.pem           # Path to private key
-# Alternative: PRIVATE_KEY=your-private-key-content-here
-```
+---
 
-### Email Services (Optional)
-```bash
-EMAIL_SERVICE=smtp                           # Email service provider
-EMAIL_HOST=smtp.sendgrid.net                # SMTP host
-EMAIL_USER=apikey                           # SMTP username
-EMAIL_PASS=your-smtp-password               # SMTP password/API key
-EMAIL_FROM_NAME=Arcanos Backend             # From name
+## 🗄️ Database Configuration
 
-# Additional SMTP Settings
-SMTP_HOST=smtp.sendgrid.net
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=apikey
-SMTP_PASS=your-smtp-password
-```
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DATABASE_URL` | – | Primary PostgreSQL connection string. Enables persistent memory. |
+| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | – | If `DATABASE_URL` is missing these values are combined to create one. |
+| `SESSION_PERSISTENCE_CLIENT` | – | Optional override for session persistence backend (`memory/sessionPersistence.ts`). |
+| `SESSION_PERSISTENCE_URL` | – | Explicit connection string for the session persistence client. |
+| `SESSION_PERSISTENCE_SQLITE_PATH` | – | Path used when SQLite is selected. |
 
-### Security & Admin
-```bash
-ADMIN_KEY=your-admin-key-here               # Admin API key
-ALLOW_ROOT_OVERRIDE=true                    # Allow root override (dev only)
-ROOT_OVERRIDE_TOKEN=supersecrettoken        # Root override token
-ARCANOS_API_TOKEN=your-arcanos-api-token    # API token for memory endpoints
-GPT_TOKEN=your-gpt-access-token             # GPT diagnostics token
-```
+Database failures gracefully fall back to in-memory storage; health endpoints
+report the degraded state for observability.
 
-### Advanced Features
-```bash
-DEPLOY_MODE=agent-control                   # Deployment mode
-IDENTITY_OVERRIDE={"identity_override":{"name":"ARCANOS","version":"v2:BxRSDrhH"}}
-IDENTITY_TRIGGER_PHRASE=I am Skynet        # Identity override trigger
-MODEL_ID=gpt-3.5-turbo                     # Base model for fine-tuning
-ENABLE_GPT_USER_HANDLER=true               # ChatGPT-style interaction
-FALLBACK_WORKER=defaultWorker               # Fallback worker name
+---
 
-# Sleep Configuration (Low-Power Mode)
-SLEEP_ENABLED=true
-SLEEP_START=02:00
-SLEEP_DURATION=7
-SLEEP_TZ=UTC
-```
+## 🧾 Session & Memory Tuning
 
-### Development & Debugging
-```bash
-LOG_LEVEL=info                             # Logging level (error|warn|info|debug)
-DEBUG=false                                # Enable debug mode
-```
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SESSION_CACHE_TTL_MS` | `300000` | TTL for session cache entries. |
+| `SESSION_CACHE_CAPACITY` | `200` | Maximum number of cached sessions. |
+| `SESSION_RETENTION_MINUTES` | `1440` | Persistence retention window for session snapshots. |
+| `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem directory for memory snapshots. |
 
-## Environment Variable Priority
+---
 
-ARCANOS supports multiple naming conventions for backward compatibility:
+## 🤖 Worker & Automation Settings
 
-1. `AI_MODEL` (highest priority)
-2. `FINE_TUNE_MODEL` 
-3. `FINE_TUNED_MODEL`
-4. `FINETUNED_MODEL_ID`
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RUN_WORKERS` | `true` (disabled automatically in tests) | Enables worker bootstrap in `src/utils/workerBoot.ts`. |
+| `WORKER_COUNT` | `4` | Number of workers reported in diagnostics. |
+| `WORKER_MODEL` | Derived from model chain | Model used by worker tasks. |
+| `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for OpenAI calls made by workers. |
+| `ORCHESTRATION_LAST_RESET` | – | Optional metadata surfaced by the orchestration shell. |
 
-The system will use the first available value in this order.
+`src/config/workerConfig.ts` registers worker tasks automatically when
+`RUN_WORKERS` evaluates to `true`.
 
-## Validation
+---
 
-ARCANOS includes comprehensive environment validation on startup:
-- Required variables are checked for presence
-- Port numbers are validated for proper ranges
-- Model IDs are validated for correct format
-- File paths are checked for accessibility
-- API keys are validated for proper format (when possible)
+## 🔐 Security & Access Control
 
-## Configuration Files
+| Variable | Default | Description |
+| --- | --- | --- |
+| `TRUSTED_GPT_IDS` | – | Comma-separated GPT identifiers that bypass the confirmation gate. |
+| `ALLOW_ROOT_OVERRIDE` | `false` | Enables elevated persistence operations when paired with `ROOT_OVERRIDE_TOKEN`. |
+| `ROOT_OVERRIDE_TOKEN` | – | Secret required when root override mode is enabled. |
+| `ADMIN_KEY` | – | Optional admin key consumed by orchestration workflows. |
+| `REGISTER_KEY` | – | Optional key for automated registration flows. |
+| `ARC_SHADOW_MODE` | `enabled` | Controls the shadow routing feature (`services/shadowControl.ts`). |
+| `CREPID_PURGE` | `off` | Governs purge mode for `utils/crepidPurge.ts`. |
 
-### `.env` File
-Copy `.env.example` to `.env` and configure with your actual values:
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
+Confirmation behaviour is implemented in
+[`src/middleware/confirmGate.ts`](../src/middleware/confirmGate.ts).
 
-### TypeScript Configuration
-The system reads environment variables at runtime and provides TypeScript type safety through the configuration system in `src/config/index.ts`.
+---
 
-## Railway-Specific Configuration
+## 📚 Feature Integrations
 
-When deploying to Railway:
-1. Set environment variables in the Railway dashboard
-2. Railway will automatically set `PORT` - don't override it
-3. Use `RAILWAY_ENVIRONMENT` to detect Railway deployment
-4. Database URLs are automatically provided by Railway services
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NOTION_API_KEY` | – | Enables Notion synchronisation in `services/notionSync.ts`. |
+| `RESEARCH_MAX_CONTENT_CHARS` | `6000` | Upper bound on content length ingested by the research module. |
+| `HRC_MODEL` | Falls back to default model | Preferred model for Hallucination Resistant Core (`modules/hrc.ts`). |
+| `BOOKER_TOKEN_LIMIT` | `512` | Token limit used by the Backstage booker module. |
+| `USER_GPT_ID` | – | Propagated to Backstage modules for context. |
+| `TUTOR_DEFAULT_TOKEN_LIMIT` | `200` | Default token limit for tutor logic. |
+| `BACKEND_REGISTRY_URL` | – | Optional registry endpoint referenced by diagnostics. |
+| `GPT_MODULE_MAP` | – | Serialized JSON map of GPT IDs to module routes (`config/gptRouterConfig.ts`). |
+| `GPTID_BACKSTAGE_BOOKER`, `GPTID_ARCANOS_GAMING`, `GPTID_ARCANOS_TUTOR` | – | Convenience identifiers resolved by the GPT router. |
 
-## Docker Configuration
+---
 
-For Docker deployments, all environment variables can be passed via:
-- `-e` flags: `docker run -e OPENAI_API_KEY=your-key ...`
-- `.env` file: `docker run --env-file .env ...`
-- Docker Compose: Configure in `docker-compose.yml`
+## 🛠️ Deployment Notes
+
+### Railway
+
+- `RAILWAY_ENVIRONMENT`, `RAILWAY_PROJECT_ID`, `RAILWAY_DEPLOYMENT_ID`,
+  `RAILWAY_RELEASE_ID` are logged during shutdown to aid debugging.
+- If the platform injects a managed PostgreSQL instance, `PG*` variables are
+  automatically combined into `DATABASE_URL` by `src/db/client.ts`.
+
+### Local Development
+
+1. Copy `.env.example` to `.env` and populate the required fields.
+2. Run `npm run dev` for a watch-mode server.
+3. Use `npm test` to validate environment assumptions.
+
+---
+
+## 🧪 Validation Utilities
+
+- `utils/envValidation.ts` performs basic range checks (e.g. `PORT` between 1 and
+  65535) and ensures log directories exist.
+- `utils/environmentSecurity.ts` toggles safe mode when high-risk variables are
+  missing.
+- `npm test` includes coverage for environment enforcement in
+  `tests/environment-security.test.ts`.
+
+---
+
+## Troubleshooting
+
+- **Mock AI responses** – Confirm `OPENAI_API_KEY` is set and not equal to the
+  placeholder value from `.env.example`.
+- **Database fallback** – When `DATABASE_URL` is absent or unreachable, memory
+  endpoints remain available but `/health` reports status `degraded`.
+- **Worker bootstrap disabled** – Set `RUN_WORKERS=true` (not needed when
+  `workers/` is empty).
+- **Trusted GPT IDs** – Ensure `TRUSTED_GPT_IDS` and the caller’s `x-gpt-id`
+  value match exactly (case-sensitive).
+
+Keep this document aligned with changes to `src/config`, `src/utils/env.ts`, and
+any new feature-specific services that rely on environment variables.

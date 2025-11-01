@@ -1,179 +1,128 @@
-# Backend Sync + GPT Integration Implementation
+# Backend Sync & GPT Integration Implementation
 
-This implementation adds backend synchronization and GPT integration capabilities to the Arcanos system, as specified in the problem statement.
+This document explains how backend synchronization and GPT integration are
+implemented in the current Arcanos service. The implementation centres around a
+file-backed state store, `/status` endpoints, and helper utilities that fetch the
+latest backend state before invoking OpenAI.
 
 ## Overview
 
 The implementation provides:
-- **System State Management**: Persistent state storage using JSON files
-- **Status API Endpoints**: GET/POST `/status` routes for state read/write operations
-- **GPT Integration with Backend Sync**: Automatic backend state synchronization for GPT calls
-- **Seamless Integration**: Minimal changes to existing codebase structure
+- **System State Management** – Persistent state storage using
+  `systemState.json`.
+- **Status API Endpoints** – `GET /status` and `POST /status` for state
+  read/write operations.
+- **GPT Integration with Backend Sync** – `services/gptSync.ts` fetches backend
+  state before issuing diagnostics against the API.
+- **Seamless Integration** – Additive changes that do not require additional
+  scripts or binaries.
 
-## Components Added
+## Key Components
 
-### 1. State Management Service (`src/services/stateManager.ts`)
+### `src/services/stateManager.ts`
 ```typescript
-// Functions:
-- loadState(): SystemState          // Load state from systemState.json
-- updateState(data): SystemState    // Update and persist state 
-- getBackendState(port): Promise<SystemState> // Fetch state via HTTP
+loadState(): SystemState
+updateState(data: Partial<SystemState>): SystemState
+getBackendState(port?: number): Promise<SystemState>
+```
+- Stores state in `systemState.json` at the repository root.
+- Automatically timestamps updates via the `lastSync` field.
+- Falls back to the file snapshot when HTTP retrieval fails.
+
+### `src/routes/status.ts`
+```http
+GET  /status  # Retrieve current system state
+POST /status  # Update system state (requires x-confirmed: yes)
+```
+- Uses `confirmGate` to protect write operations.
+- Returns validation errors for empty payloads or malformed data.
+
+### `src/services/gptSync.ts`
+```typescript
+askGPTWithSync(prompt: string, port?: number): Promise<string>
+runSystemDiagnostic(port?: number): Promise<string>
+askGPTWithContext(prompt: string, context: string, port?: number): Promise<{
+  response: string;
+  backendState: SystemState;
+  context: string;
+}>;
+```
+- Ensures the latest state is fetched via `getBackendState()` before issuing an
+  OpenAI request.
+- Powers the post-boot diagnostic triggered in `src/server.ts`.
+
+### Server integration (`src/server.ts`)
+- Mounts the status router on the Express app.
+- Calls `updateState()` after a successful boot to write the active port,
+  environment, and start timestamp.
+- Schedules `runSystemDiagnostic()` shortly after start-up.
+
+## Usage Examples
+
+### Read and update state
+```bash
+curl http://localhost:8080/status
+curl -X POST http://localhost:8080/status \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"status":"running","customField":"value"}'
 ```
 
-### 2. Status Routes (`src/routes/status.ts`)
+### Programmatic access
 ```typescript
-// Endpoints:
-GET  /status  // Retrieve current system state
-POST /status  // Update system state with request body
+import { loadState, updateState } from './dist/services/stateManager.js';
+
+const currentState = loadState();
+const newState = updateState({
+  status: 'processing',
+  lastChecked: new Date().toISOString()
+});
 ```
 
-### 3. GPT Sync Service (`src/services/gptSync.ts`)
+### GPT sync diagnostic
 ```typescript
-// Functions:
-- askGPTWithSync(prompt, port, model): Promise<string>
-- runSystemDiagnostic(port): Promise<string>
-- askGPTWithContext(prompt, context, port, model): Promise<{response, backendState, context}>
+import { runSystemDiagnostic } from './dist/services/gptSync.js';
+
+await runSystemDiagnostic(8080);
 ```
 
-### 4. Server Integration (`src/server.ts`)
-- Added status router to Express app
-- Automatic state initialization on startup
-- Optional GPT diagnostic call after server start
+## Configuration
+
+The implementation relies on the following environment variables:
+
+| Variable | Description |
+| --- | --- |
+| `OPENAI_API_KEY` | Required for GPT-backed diagnostics. |
+| `PORT` / `SERVER_URL` | Used to resolve the correct `/status` endpoint when the runtime port differs from the preferred port. |
+| `BACKEND_STATUS_ENDPOINT` | Optional override for the status URL (defaults to `/status`). |
+
+## Testing & Validation
+
+- The Jest suite includes state management coverage in
+  `tests/session-memory-roundtrip.test.ts` and related specs.
+- `npm test` is sufficient to validate the backend sync pipeline in CI.
+- `npm run build && npm start` confirms that `systemState.json` is seeded and the
+  diagnostic executes without crashing.
+
+## Error Handling
+
+- Missing or malformed payloads on `POST /status` return HTTP 400 with guidance.
+- HTTP fetch failures in `getBackendState()` log the error and fall back to the
+  file snapshot.
+- `runSystemDiagnostic()` catches diagnostic failures so startup continues while
+  surfacing errors in the log.
 
 ## File Structure
 
 ```
 src/
-├── services/
-│   ├── stateManager.ts       # NEW: State persistence & management
-│   └── gptSync.ts           # NEW: GPT integration with backend sync
 ├── routes/
-│   └── status.ts            # NEW: /status GET/POST endpoints
-└── server.ts                # MODIFIED: Added status routes & startup logic
+│   └── status.ts                # /status endpoints
+├── services/
+│   ├── stateManager.ts          # State persistence & synchronization
+│   └── gptSync.ts               # GPT integration with backend sync
+└── server.ts                    # Startup integration and diagnostics
 ```
 
-## Usage Examples
-
-### 1. Basic State Management
-```javascript
-// Read current state
-const response = await fetch('http://localhost:8080/status');
-const state = await response.json();
-
-// Update state
-await fetch('http://localhost:8080/status', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ status: 'updated', customField: 'value' })
-});
-```
-
-### 2. GPT Integration with Backend Sync
-```javascript
-import { askGPTWithSync } from './dist/services/gptSync.js';
-
-// GPT call with automatic backend state sync
-const response = await askGPTWithSync(
-  "Run a system diagnostic and report the current backend state.",
-  8080,  // server port
-  "gpt-4" // model (optional)
-);
-```
-
-### 3. Programmatic State Management
-```javascript
-import { loadState, updateState } from './dist/services/stateManager.js';
-
-// Load current state
-const currentState = loadState();
-
-// Update state
-const newState = updateState({
-  status: 'processing',
-  lastUpdate: new Date().toISOString()
-});
-```
-
-## Key Features
-
-### ✅ **State Persistence**
-- Uses `systemState.json` file for persistent storage
-- Automatic `lastSync` timestamp on all updates
-- Graceful fallback for file read/write errors
-
-### ✅ **Backend Synchronization**
-- GPT calls automatically fetch latest backend state
-- State injected as system prompt context
-- HTTP-based state retrieval with fallback to file
-
-### ✅ **Express Integration**
-- Standard REST API endpoints for state management
-- JSON request/response format
-- Proper error handling and HTTP status codes
-
-### ✅ **Minimal Changes**
-- Zero breaking changes to existing codebase
-- Additive implementation approach
-- Optional features that fail gracefully
-
-## Configuration
-
-### Environment Variables
-```bash
-OPENAI_API_KEY=your_openai_api_key  # Required for GPT functionality
-PORT=8080                           # Server port (optional, defaults to 8080)
-```
-
-### Default State Structure
-```json
-{
-  "status": "unknown",
-  "version": "0.0.0", 
-  "lastSync": null
-}
-```
-
-## Testing
-
-Run the test suite:
-```bash
-npm run build
-node test-backend-sync.js
-```
-
-Run the demo server:
-```bash
-node demo-backend-sync.js
-```
-
-## API Reference
-
-### GET /status
-**Description**: Retrieve current system state  
-**Response**: JSON object with current state  
-**Example**:
-```bash
-curl http://localhost:8080/status
-```
-
-### POST /status  
-**Description**: Update system state  
-**Body**: JSON object with state updates  
-**Response**: Updated complete state  
-**Example**:
-```bash
-curl -X POST -H "Content-Type: application/json" \
-     -d '{"status":"updated","customField":"value"}' \
-     http://localhost:8080/status
-```
-
-## Implementation Notes
-
-- **TypeScript Compatibility**: All new code written in TypeScript
-- **ES6 Modules**: Uses ES6 import/export syntax
-- **Error Handling**: Comprehensive error handling with fallbacks
-- **Logging**: Consistent logging format with existing codebase
-- **Non-blocking**: GPT calls don't block server startup
-- **Graceful Degradation**: Works without OpenAI API key (logs warnings)
-
-This implementation fulfills all requirements from the problem statement while maintaining compatibility with the existing Arcanos codebase architecture.
+These components keep the backend state synchronized for both manual and GPT
+clients without relying on external scripts or one-off runners.
