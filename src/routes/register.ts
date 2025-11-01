@@ -25,6 +25,7 @@ import gptRouter from './gptRouter.js';
 import researchRouter from './research.js';
 import healthRouter from './health.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
+import { runHealthCheck } from '../utils/diagnostics.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -35,7 +36,24 @@ export function registerRoutes(app: Express): void {
   });
 
   app.get('/railway/healthcheck', (_: Request, res: Response) => {
-    res.status(200).send('OK');
+    try {
+      const report = runHealthCheck();
+      const statusCode = report.status === 'ok' ? 200 : 503;
+
+      res.status(statusCode).json({
+        status: report.status,
+        timestamp: new Date().toISOString(),
+        components: report.components,
+        summary: report.summary
+      });
+    } catch (error) {
+      console.error('[Railway Healthcheck] Error generating health report', error);
+      res.status(503).json({
+        status: 'error',
+        timestamp: new Date().toISOString(),
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   });
 
   app.use('/', healthRouter);
