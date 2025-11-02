@@ -6,6 +6,10 @@ import { aiLogger } from '../utils/structuredLogging.js';
 import crypto from 'crypto';
 import { runtime } from './openaiRuntime.js';
 
+type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+type ChatCompletionResponseFormat =
+  OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format'];
+
 let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
@@ -25,9 +29,31 @@ const backoffStrategy = new ExponentialBackoff(
   500 // jitter max 500ms
 );
 
+export interface CallOpenAIOptions {
+  systemPrompt?: string;
+  messages?: ChatCompletionMessageParam[];
+  temperature?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  responseFormat?: ChatCompletionResponseFormat;
+  user?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface CallOpenAICacheEntry {
+  response: any;
+  output: string;
+  model: string;
+}
+
+export interface CallOpenAIResult extends CallOpenAICacheEntry {
+  cached?: boolean;
+}
+
 /**
  * Generates mock AI responses when OpenAI API key is not available
- * 
+ *
  * @param input - User input text to generate a mock response for
  * @param endpoint - API endpoint name (ask, write, guide, audit, sim, etc.)
  * @returns Mock response object with realistic structure matching real AI responses
@@ -244,8 +270,9 @@ function prepareGPT5Request(payload: any): any {
 /**
  * Creates a cache key for OpenAI requests
  */
-const createCacheKey = (model: string, prompt: string, tokenLimit: number): string => {
-  const content = `${model}:${prompt}:${tokenLimit}`;
+const createCacheKey = (model: string, payload: unknown): string => {
+  const serialized = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const content = `${model}:${serialized}`;
   return crypto.createHash('sha256').update(content).digest('hex');
 };
 
@@ -256,38 +283,77 @@ export async function callOpenAI(
   model: string,
   prompt: string,
   tokenLimit: number,
-  useCache: boolean = true
-): Promise<{ response: any; output: string }> {
+  useCache: boolean = true,
+  options: CallOpenAIOptions = {}
+): Promise<CallOpenAIResult> {
   const client = getOpenAIClient();
   if (!client) {
     const mock = generateMockResponse(prompt, 'ask');
-    return { response: mock, output: mock.result };
+    return { response: mock, output: mock.result, model: 'mock', cached: false };
   }
 
-  // Check cache first
+  const systemPrompt = options.systemPrompt ?? 'You are a helpful AI assistant.';
+  let preparedMessages: ChatCompletionMessageParam[];
+
+  if (options.messages && options.messages.length > 0) {
+    preparedMessages = [...options.messages];
+
+    if (options.systemPrompt) {
+      const hasSystemMessage = preparedMessages.some(message => message.role === 'system');
+      if (!hasSystemMessage) {
+        preparedMessages = [{ role: 'system', content: systemPrompt }, ...preparedMessages];
+      }
+    }
+  } else {
+    preparedMessages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt }
+    ];
+  }
+
+  if (options.metadata) {
+    aiLogger.debug('OpenAI call metadata', {
+      operation: 'callOpenAI',
+      model,
+      ...options.metadata
+    });
+  }
+
+  const cacheDescriptor = {
+    messages: preparedMessages,
+    tokenLimit,
+    temperature: options.temperature,
+    top_p: options.top_p,
+    frequency_penalty: options.frequency_penalty,
+    presence_penalty: options.presence_penalty,
+    response_format: options.responseFormat,
+    user: options.user
+  };
+
+  let cacheKey: string | null = null;
+
   if (useCache) {
-    const cacheKey = createCacheKey(model, prompt, tokenLimit);
-    const cachedResult = responseCache.get(cacheKey);
+    cacheKey = createCacheKey(model, cacheDescriptor);
+    const cachedResult = responseCache.get(cacheKey) as CallOpenAICacheEntry | undefined;
     if (cachedResult) {
       console.log('💾 Cache hit for OpenAI request');
-      return cachedResult;
+      return { ...cachedResult, cached: true };
     }
   }
 
-  const messages = [
-    { role: 'system' as const, content: 'You are a helpful AI assistant.' },
-    { role: 'user' as const, content: prompt }
-  ];
-
   // Use circuit breaker for resilient API calls
   const result = await openaiCircuitBreaker.execute(async () => {
-    return await makeOpenAIRequest(client, model, messages, tokenLimit);
+    return await makeOpenAIRequest(client, model, preparedMessages, tokenLimit, options);
   });
 
   // Cache successful results
-  if (useCache && result) {
-    const cacheKey = createCacheKey(model, prompt, tokenLimit);
-    responseCache.set(cacheKey, result, 5 * 60 * 1000); // 5 minutes
+  if (useCache && result && cacheKey) {
+    const cachePayload: CallOpenAICacheEntry = {
+      response: result.response,
+      output: result.output,
+      model: result.model
+    };
+    responseCache.set(cacheKey, cachePayload, 5 * 60 * 1000); // 5 minutes
   }
 
   return result;
@@ -299,11 +365,12 @@ export async function callOpenAI(
  */
 async function makeOpenAIRequest(
   client: OpenAI,
-  model: string, 
-  messages: any[],
+  model: string,
+  messages: ChatCompletionMessageParam[],
   tokenLimit: number,
+  options: CallOpenAIOptions,
   maxRetries: number = 3
-): Promise<{ response: any; output: string }> {
+): Promise<CallOpenAIResult> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -321,11 +388,21 @@ async function makeOpenAIRequest(
       const requestPayload = prepareGPT5Request({
         model,
         messages,
-        ...tokenParams
+        ...tokenParams,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(options.top_p !== undefined ? { top_p: options.top_p } : {}),
+        ...(options.frequency_penalty !== undefined
+          ? { frequency_penalty: options.frequency_penalty }
+          : {}),
+        ...(options.presence_penalty !== undefined
+          ? { presence_penalty: options.presence_penalty }
+          : {}),
+        ...(options.responseFormat !== undefined ? { response_format: options.responseFormat } : {}),
+        ...(options.user !== undefined ? { user: options.user } : {})
       });
 
       console.log(`🤖 OpenAI request (attempt ${attempt}/${maxRetries}) - Model: ${model}`);
-      
+
       const response: any = await client.chat.completions.create(
         requestPayload,
         { 
@@ -339,11 +416,16 @@ async function makeOpenAIRequest(
       
       clearTimeout(timeout);
       const output = response.choices?.[0]?.message?.content || '';
-      
+      const activeModel = response.model || model;
+
       // Log success metrics
-      console.log(`✅ OpenAI request succeeded (attempt ${attempt}) - Tokens: ${response.usage?.total_tokens || 'unknown'}`);
-      
-      return { response, output };
+      console.log(
+        `✅ OpenAI request succeeded (attempt ${attempt}) - Model: ${activeModel}, Tokens: ${
+          response.usage?.total_tokens || 'unknown'
+        }`
+      );
+
+      return { response, output, model: activeModel, cached: false };
       
     } catch (err: any) {
       clearTimeout(timeout);
