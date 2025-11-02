@@ -231,11 +231,13 @@ describe('OpenAI SDK Integration Tests', () => {
       
       try {
         const result = await callOpenAI('gpt-4', 'Test prompt', 100, false);
-        
+
         // Should return a result even without API key (fallback)
         expect(result).toHaveProperty('response');
         expect(result).toHaveProperty('output');
         expect(typeof result.output).toBe('string');
+        expect(result).toHaveProperty('model');
+        expect(result).toHaveProperty('cached');
       } finally {
         if (originalApiKey) {
           process.env.OPENAI_API_KEY = originalApiKey;
