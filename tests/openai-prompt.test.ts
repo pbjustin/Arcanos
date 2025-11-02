@@ -24,7 +24,7 @@ afterEach(() => {
 describe('handlePrompt', () => {
   it('uses provided model when specified', async () => {
     validateAIRequest.mockReturnValue({ input: 'hi', client: {} });
-    callOpenAI.mockResolvedValue({ response: {}, output: 'ok' });
+    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:custom-model', cached: false });
 
     const req: any = { body: { prompt: 'hi', model: 'ft:custom-model' } };
     const res: any = { json: jest.fn() };
@@ -52,7 +52,7 @@ describe('handlePrompt', () => {
   it('falls back to default model when none provided', async () => {
     validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
     getDefaultModel.mockReturnValue('ft:default-model');
-    callOpenAI.mockResolvedValue({ response: {}, output: 'ok' });
+    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:default-model', cached: false });
 
     const req: any = { body: { prompt: 'hello' } };
     const res: any = { json: jest.fn() };
