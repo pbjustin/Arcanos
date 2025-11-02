@@ -2,7 +2,9 @@ import express, { Request, Response } from 'express';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { researchTopic } from '../modules/research.js';
+import { connectResearchBridge } from '../services/researchHub.js';
+
+const routeBridge = connectResearchBridge('ROUTE:RESEARCH');
 
 const router = express.Router();
 
@@ -35,7 +37,7 @@ router.post(
       });
     }
 
-    const result = await researchTopic(topic, urls);
+    const result = await routeBridge.requestResearch({ topic, urls });
 
     res.json({
       success: true,
