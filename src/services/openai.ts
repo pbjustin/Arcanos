@@ -191,7 +191,7 @@ const initializeOpenAI = (): OpenAI | null => {
     
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
-    console.log(`🔄 Fallback Model: gpt-4`);
+    console.log(`🔄 Fallback Model: ${getFallbackModel()}`);
     console.log('🎯 ARCANOS routing active - all calls will use configured model by default');
     
     return openai;
@@ -238,12 +238,20 @@ export const getGPT5Model = (): string => {
 
 /**
  * Gets the fallback model when primary model fails
- * 
- * @returns Fallback model identifier (always 'gpt-4')
+ * Prioritizes explicit fallback configuration, then fine-tuned selections
+ *
+ * @returns Fallback model identifier (defaults to 'gpt-4')
  */
-export const getFallbackModel = (): string => {
-  return 'gpt-4';
-};
+export function getFallbackModel(): string {
+  return (
+    process.env.FALLBACK_MODEL ||
+    process.env.AI_FALLBACK_MODEL ||
+    process.env.FINETUNED_MODEL_ID ||
+    process.env.FINE_TUNED_MODEL_ID ||
+    process.env.AI_MODEL ||
+    'gpt-4'
+  );
+}
 
 /**
  * Prepare payloads for GPT-5 by migrating deprecated max_tokens
@@ -498,7 +506,7 @@ function getRetryDelay(attempt: number, error: any): number {
 
 /**
  * Enhanced chat completion with graceful fallback handling
- * Sequence: fine-tuned GPT-4.1 → retry → GPT-5 → GPT-4
+ * Sequence: fine-tuned GPT-4.1 → retry → GPT-5 → configured fallback
  */
 export const createChatCompletionWithFallback = async (
   client: OpenAI,
@@ -506,7 +514,7 @@ export const createChatCompletionWithFallback = async (
 ): Promise<any> => {
   const primaryModel = getDefaultModel(); // fine-tuned GPT-4.1
   const gpt5Model = getGPT5Model();
-  const finalFallbackModel = getFallbackModel(); // GPT-4
+  const finalFallbackModel = getFallbackModel(); // Configurable fallback
   
   // First attempt with the fine-tuned model
   try {
@@ -569,9 +577,9 @@ export const createChatCompletionWithFallback = async (
       } catch (gpt5Error) {
         console.warn(`⚠️ [GPT-5 FALLBACK] Failed: ${gpt5Error instanceof Error ? gpt5Error.message : 'Unknown error'}`);
         
-        // Final fallback to GPT-4
+        // Final fallback to configured backup model
         try {
-          console.log(`🛟 [FINAL FALLBACK] Last resort with GPT-4: ${finalFallbackModel}`);
+          console.log(`🛟 [FINAL FALLBACK] Last resort with fallback model: ${finalFallbackModel}`);
           const finalResponse = await client.chat.completions.create({
             ...params,
             model: finalFallbackModel
