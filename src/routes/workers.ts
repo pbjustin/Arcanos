@@ -3,9 +3,9 @@
  * Provides endpoints for running and monitoring workers
  */
 
-import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { Router, Request, Response } from 'express';
 import { createWorkerContext } from '../utils/workerContext.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { dispatchArcanosTask, getWorkerRuntimeStatus } from '../config/workerConfig.js';
@@ -14,11 +14,12 @@ import type {
   WorkerRunResponseDTO,
   WorkerStatusResponseDTO
 } from '../types/dto.js';
+import { resolveWorkersDirectory } from '../utils/workerPaths.js';
 
 const router = Router();
 
 // Get path to workers directory (from dist, it's one level up from the root)
-const workersDir = path.resolve(process.cwd(), 'workers');
+const { path: workersDir } = resolveWorkersDirectory();
 
 /**
  * GET /workers/status - Get available workers
