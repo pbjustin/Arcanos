@@ -9,10 +9,21 @@ import { getDefaultModel } from './services/openai.js';
  * Registers health check endpoint and monitoring cron job.
  */
 export function setupDiagnostics(app: Express): void {
-  cron.schedule('*/5 * * * *', async () => {
-    const report = await runHealthCheck();
-    logger.info('📡 ARCANOS:HEALTH', { summary: report.summary });
-  });
+  const diagnosticsEnabled =
+    config.server.environment !== 'test' &&
+    process.env.DISABLE_DIAGNOSTICS_CRON !== 'true';
+
+  if (diagnosticsEnabled) {
+    cron.schedule('*/5 * * * *', async () => {
+      const report = await runHealthCheck();
+      logger.info('📡 ARCANOS:HEALTH', { summary: report.summary });
+    });
+  } else {
+    logger.debug('Skipping diagnostics cron registration', {
+      environment: config.server.environment,
+      diagnosticsEnabled,
+    });
+  }
 
   app.get('/health', async (_: Request, res: Response) => {
     const healthReport = await runHealthCheck();
