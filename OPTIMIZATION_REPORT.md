@@ -104,7 +104,7 @@ Created an automated audit-refactor system that recursively scans and validates 
 
 | Component | Status | Details |
 |-----------|--------|---------|
-| Procfile | ✅ VALID | Correctly configured with `node dist/server.js` |
+| Procfile | ✅ VALID | Correctly configured with `node dist/start-server.js` |
 | railway.json | ✅ VALID | Complete configuration with build and deploy commands |
 | Health Endpoint | ✅ EXISTS | `/health` endpoint implemented |
 | Environment Variables | ✅ DOCUMENTED | All required vars in `.env.example` |
