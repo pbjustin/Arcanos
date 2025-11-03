@@ -16,7 +16,19 @@ export function setupDiagnostics(app: Express): void {
   if (diagnosticsEnabled) {
     cron.schedule('*/5 * * * *', async () => {
       const report = await runHealthCheck();
-      logger.info('📡 ARCANOS:HEALTH', { summary: report.summary });
+      logger.info(
+        '📡 ARCANOS:HEALTH',
+        {
+          summary: report.summary,
+          status: report.status
+        },
+        {
+          memory: report.components.memory,
+          workers: report.components.workers,
+          security: report.security,
+          metrics: report.metrics
+        }
+      );
     });
   } else {
     logger.debug('Skipping diagnostics cron registration', {
@@ -29,6 +41,7 @@ export function setupDiagnostics(app: Express): void {
     const healthReport = await runHealthCheck();
     const defaultModel = getDefaultModel();
     const statusCode = healthReport.status === 'ok' ? 200 : 503;
+    const uptimeSeconds = healthReport.metrics.uptimeSeconds;
 
     res.status(statusCode).json({
       status: healthReport.status,
@@ -43,10 +56,12 @@ export function setupDiagnostics(app: Express): void {
       },
       system: {
         memory: healthReport.components.memory,
-        uptime: `${process.uptime().toFixed(1)}s`,
+        uptime: `${uptimeSeconds.toFixed(1)}s`,
+        loadAverage: healthReport.metrics.loadAverage,
         nodeVersion: process.version,
         environment: config.server.environment,
-        security: healthReport.security
+        security: healthReport.security,
+        workers: healthReport.components.workers
       }
     });
   });
