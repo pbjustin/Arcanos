@@ -252,7 +252,28 @@ Lists worker files and the runtime configuration.
     "enabled": true,
     "count": 4,
     "model": "gpt-4o",
-    "status": "Active"
+    "status": "Active",
+    "runtime": {
+      "enabled": true,
+      "model": "gpt-4o",
+      "configuredCount": 4,
+      "started": true,
+      "startedAt": "2024-10-30T11:59:00.000Z",
+      "activeListeners": 4,
+      "workerIds": [
+        "arcanos-worker-1",
+        "arcanos-worker-2",
+        "arcanos-worker-3",
+        "arcanos-worker-4"
+      ],
+      "totalDispatched": 12,
+      "lastDispatchAt": "2024-10-30T12:14:55.000Z",
+      "lastInputPreview": "Run diagnostics for subsystem alpha",
+      "lastResult": {
+        "result": "Diagnostics completed.",
+        "workerId": "arcanos-worker-3"
+      }
+    }
   },
   "system": {
     "model": "gpt-4o",
@@ -271,16 +292,25 @@ curl -X POST http://localhost:8080/workers/run/demoWorker \
   -d '{"payload":"value"}'
 ```
 
-**Response**
+**ARCANOS Worker Response**
 ```json
 {
   "success": true,
-  "workerId": "demoWorker",
-  "result": { "output": "Worker result" },
-  "executionTime": "185ms",
+  "workerId": "arcanos-worker-1",
+  "name": "ARCANOS Core Worker",
+  "description": "ARCANOS core logic with GPT-5 reasoning",
+  "pattern": "arcanos-core",
+  "result": {
+    "result": "Diagnostics complete.",
+    "requiresReasoning": false,
+    "workerId": "arcanos-worker-1"
+  },
+  "executionTime": "312ms",
   "timestamp": "2024-10-30T12:16:05.000Z"
 }
 ```
+
+> Tip: Send `POST /workers/run/arcanos` with a JSON payload containing `input`, `prompt`, or `text` to let the ARCANOS AI brain process work without requiring a physical worker file.
 
 ### `POST /heartbeat`
 Confirmation required. Writes to `logs/heartbeat.log`.

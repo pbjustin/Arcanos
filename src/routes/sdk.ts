@@ -8,71 +8,24 @@ import express from 'express';
 import { runSystemDiagnostics } from '../utils/systemDiagnostics.js';
 import { logExecution } from '../db.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import {
+  dispatchArcanosTask,
+  getWorkerRuntimeStatus,
+  startWorkers,
+  type WorkerBootstrapSummary
+} from '../config/workerConfig.js';
 
 const router = express.Router();
-
-// Type definitions for dynamic imports
-interface WorkerModule {
-  initializeWorkers: () => Promise<any>;
-  dispatchJob: (workerId: string, jobType: string, jobData: any) => Promise<any>;
-  getWorkerStatus: () => any;
-}
-
-/**
- * Dynamic import worker functions with error handling
- */
-async function importWorkerFunctions(): Promise<WorkerModule> {
-  try {
-    // Create fallback functions in case worker module is not available
-    const fallbackModule: WorkerModule = {
-      initializeWorkers: async () => ({
-        initialized: ['worker-1', 'worker-2', 'worker-3', 'worker-4'],
-        failed: [],
-        retryCount: 1
-      }),
-      dispatchJob: async (workerId: string, jobType: string, jobData: any) => {
-        if (workerId === 'worker.queue' || workerId === 'task-processor') {
-          // @ts-ignore Dynamic worker import without types
-          const worker = await import('../../workers/taskProcessor.js');
-          return worker.processTask(jobData);
-        }
-        return {
-          success: true,
-          workerId,
-          jobType,
-          processedAt: new Date().toISOString(),
-          result: `Mock job ${jobType} processed by ${workerId}`
-        };
-      },
-      getWorkerStatus: () => ({
-        count: 4,
-        healthy: 4,
-        workers: [
-          { id: 'worker-1', status: 'running', lastHeartbeat: new Date(), failedHeartbeats: 0 },
-          { id: 'worker-2', status: 'running', lastHeartbeat: new Date(), failedHeartbeats: 0 },
-          { id: 'worker-3', status: 'running', lastHeartbeat: new Date(), failedHeartbeats: 0 },
-          { id: 'worker-4', status: 'running', lastHeartbeat: new Date(), failedHeartbeats: 0 }
-        ]
-      })
-    };
-
-    return fallbackModule;
-  } catch (error) {
-    throw new Error(`Failed to load worker module: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
 
 /**
  * Initialize workers via SDK call
  */
 router.post('/workers/init', confirmGate, async (_, res) => {
   try {
-    const { initializeWorkers } = await importWorkerFunctions();
-    
-    const results = await initializeWorkers();
-    
+    const results: WorkerBootstrapSummary = startWorkers();
+
     await logExecution('sdk-interface', 'info', 'Workers initialized via SDK', results);
-    
+
     res.json({
       success: true,
       message: 'Workers initialized successfully',
@@ -257,7 +210,7 @@ router.get('/diagnostics', async (req, res) => {
 router.post('/jobs/dispatch', confirmGate, async (req, res) => {
   try {
     const { workerId, jobType, jobData } = req.body;
-    
+
     if (!workerId || !jobType) {
       return res.status(400).json({
         success: false,
@@ -266,13 +219,28 @@ router.post('/jobs/dispatch', confirmGate, async (req, res) => {
       });
     }
 
-    // Import dispatch function
-    const { dispatchJob } = await importWorkerFunctions();
-    
-    const result = await dispatchJob(workerId, jobType, jobData);
-    
+    const normalizedInput =
+      typeof jobData === 'string'
+        ? jobData
+        : jobData?.input || jobData?.prompt || jobData?.text || JSON.stringify(jobData);
+
+    const dispatchResults = await dispatchArcanosTask(normalizedInput);
+    const primaryResult = dispatchResults[0];
+
+    if (!primaryResult) {
+      throw new Error('ARCANOS worker did not return a result');
+    }
+
+    const result = {
+      success: !primaryResult?.error,
+      workerId: primaryResult?.workerId || 'arcanos-core',
+      jobType,
+      processedAt: new Date().toISOString(),
+      result: primaryResult
+    };
+
     await logExecution('sdk-interface', 'info', 'Job dispatched via SDK', { workerId, jobType, result });
-    
+
     res.json({
       success: true,
       message: 'Job dispatched successfully',
@@ -302,7 +270,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
   try {
     // Import necessary functions
     const { createJob } = await import('../db.js');
-    
+
     const jobData = {
       type: 'test_job',
       input: 'Diagnostics verification task'
@@ -324,32 +292,21 @@ router.post('/test-job', confirmGate, async (_, res) => {
       };
     }
 
-    // Process the job using taskProcessor
-    let result: any;
-    try {
-      // For now, simulate the task processing result
-      if (jobData.type === 'test_job' && jobData.input === 'Diagnostics verification task') {
-        result = {
-          success: true,
-          processed: true,
-          taskId: `task-${Date.now()}`,
-          aiResponse: 'Test completed successfully',
-          processedAt: new Date().toISOString(),
-          model: 'TEST'
-        };
-      } else {
-        result = {
-          success: true,
-          processed: true,
-          taskId: `task-${Date.now()}`,
-          aiResponse: 'Mock task processed',
-          processedAt: new Date().toISOString(),
-          model: 'MOCK'
-        };
-      }
-    } catch (error) {
-      throw new Error(`Failed to process task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // Process the job using ARCANOS worker control
+    const [workerResult] = await dispatchArcanosTask(jobData.input);
+
+    if (!workerResult) {
+      throw new Error('ARCANOS worker did not return a result');
     }
+
+    const result = {
+      success: !workerResult?.error,
+      processed: true,
+      taskId: `task-${Date.now()}`,
+      aiResponse: workerResult?.result || workerResult?.error || 'No response generated',
+      processedAt: new Date().toISOString(),
+      model: workerResult?.activeModel || 'ARCANOS'
+    };
 
     // Update job status if database is available
     try {
@@ -388,11 +345,8 @@ router.post('/test-job', confirmGate, async (_, res) => {
  */
 router.get('/workers/status', async (_, res) => {
   try {
-    // Import status function
-    const { getWorkerStatus } = await importWorkerFunctions();
-    
-    const status = getWorkerStatus();
-    
+    const status = getWorkerRuntimeStatus();
+
     res.json({
       success: true,
       status,
@@ -416,25 +370,16 @@ router.get('/workers/status', async (_, res) => {
 router.post('/init-all', confirmGate, async (_, res) => {
   try {
     const results: {
-      workers: any;
+      workers: WorkerBootstrapSummary;
       routes: any;
       scheduler: any;
       diagnostics: any;
     } = {
-      workers: null,
+      workers: startWorkers(),
       routes: null,
       scheduler: null,
       diagnostics: null
     };
-
-    // 1. Initialize workers
-    try {
-      const { initializeWorkers } = await importWorkerFunctions();
-      results.workers = await initializeWorkers();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      results.workers = { error: errorMessage };
-    }
 
     // 2. Register routes (verification only)
     results.routes = {
@@ -489,19 +434,8 @@ router.post('/system-test', confirmGate, async (_, res) => {
     const results: any = {};
 
     // 1. Initialize 4 workers with specified environment
-    const workerResults = {
-      initialized: ['worker-1', 'worker-2', 'worker-3', 'worker-4'],
-      failed: [],
-      environment: {
-        WORKER_MEMORY: 512,
-        heartbeat_interval: 60,
-        restart_threshold: 3
-      }
-    };
-    results.workers = {
-      count: workerResults.initialized.length,
-      healthy: true
-    };
+    const workerBootstrap = startWorkers();
+    results.workers = workerBootstrap;
 
     // 2. Register SDK routes
     const routes = [
@@ -542,31 +476,21 @@ router.post('/system-test', confirmGate, async (_, res) => {
     }
 
     // Process the test job
-    let taskResult: any;
-    try {
-      // For test_job type with expected input, return expected output
-      if (testJobData.type === 'test_job' && testJobData.input === 'Diagnostics verification task') {
-        taskResult = {
-          success: true,
-          processed: true,
-          taskId: `task-${Date.now()}`,
-          aiResponse: 'Test completed successfully',
-          processedAt: new Date().toISOString(),
-          model: 'TEST'
-        };
-      } else {
-        taskResult = {
-          success: true,
-          processed: true,
-          taskId: `task-${Date.now()}`,
-          aiResponse: 'Mock task processed',
-          processedAt: new Date().toISOString(),
-          model: 'MOCK'
-        };
-      }
-    } catch (error) {
-      throw new Error(`Failed to process test job: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    const [workerResult] = await dispatchArcanosTask(testJobData.input);
+
+    if (!workerResult) {
+      throw new Error('ARCANOS worker did not return a result');
     }
+
+    const taskResult = {
+      success: !workerResult?.error,
+      processed: true,
+      taskId: `task-${Date.now()}`,
+      aiResponse: workerResult?.result || workerResult?.error || 'No response generated',
+      processedAt: new Date().toISOString(),
+      model: workerResult?.activeModel || workerBootstrap.model,
+      workerId: workerResult?.workerId || 'arcanos-core'
+    };
 
     // Update job status
     try {
@@ -579,18 +503,21 @@ router.post('/system-test', confirmGate, async (_, res) => {
     }
 
     // Verify expected result
-    if (taskResult.aiResponse !== 'Test completed successfully') {
+    if (!taskResult.success) {
       return res.status(500).json({
         success: false,
-        error: `Test job did not return expected result. Got: ${taskResult.aiResponse}`,
+        error: `Test job did not complete successfully. Error: ${workerResult?.error || 'Unknown'}`,
         timestamp: new Date().toISOString()
       });
     }
 
     // 5. Return results in YAML format
     const yamlOutput = `workers:
-  count: ${results.workers.count}
-  healthy: ${results.workers.healthy}
+  enabled: ${workerBootstrap.runWorkers}
+  started: ${workerBootstrap.started || workerBootstrap.alreadyRunning}
+  worker_count: ${workerBootstrap.workerCount}
+  model: "${workerBootstrap.model}"
+  worker_ids: ${JSON.stringify(workerBootstrap.workerIds)}
 scheduler:
   jobs:
     - name: "${scheduledJobs[0].name}"
@@ -617,7 +544,8 @@ job_data_entry:
   input: "${typeof jobRecord.input === 'string' ? jobRecord.input : JSON.stringify(jobRecord.input)}"
   output: "${typeof jobRecord.output === 'string' ? jobRecord.output : JSON.stringify(jobRecord.output)}"
   created_at: "${jobRecord.created_at}"
-  completed_at: "${jobRecord.completed_at || ''}"`;
+  completed_at: "${jobRecord.completed_at || ''}"
+  worker_result: "${JSON.stringify(taskResult)}"`;
 
     await logExecution('sdk-interface', 'info', 'System test completed successfully', results);
 
