@@ -9,6 +9,7 @@ import path from 'path';
 import cron from 'node-cron';
 import { initializeDatabase, getStatus } from '../db.js';
 import { createWorkerContext } from './workerContext.js';
+import { resolveWorkersDirectory } from './workerPaths.js';
 
 interface WorkerInitResult {
   initialized: string[];
@@ -59,7 +60,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
 
   console.log('[🔧 WORKER-BOOT] Starting worker initialization...');
   
-  const workersDir = path.resolve(process.cwd(), 'workers');
+  const { path: workersDir, exists: workersDirExists } = resolveWorkersDirectory();
   const results: WorkerInitResult = {
     initialized: [],
     failed: [],
@@ -71,7 +72,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
   };
 
   try {
-    if (!fs.existsSync(workersDir)) {
+    if (!workersDirExists || !fs.existsSync(workersDir)) {
       console.log(`[🔧 WORKER-BOOT] Workers directory not found: ${workersDir}`);
       console.log('[🔧 WORKER-BOOT] Skipping worker initialization');
       return results;

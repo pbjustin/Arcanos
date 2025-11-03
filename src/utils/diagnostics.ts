@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
-import path from 'path';
 import { getEnvironmentSecuritySummary } from './environmentSecurity.js';
+import { resolveWorkersDirectory } from './workerPaths.js';
 
 interface WorkerHealth {
   expected: boolean;
@@ -36,10 +36,9 @@ export interface HealthCheckReport {
 }
 
 function evaluateWorkerHealth(): WorkerHealth {
-  const workersDir = path.resolve(process.cwd(), 'workers');
+  const { path: workersDir, exists: directoryExists, checked } = resolveWorkersDirectory();
   const runWorkersEnv = process.env.RUN_WORKERS;
   const workersEnabled = runWorkersEnv === 'true' || runWorkersEnv === '1';
-  const directoryExists = fs.existsSync(workersDir);
 
   if (!workersEnabled) {
     return {
@@ -51,13 +50,16 @@ function evaluateWorkerHealth(): WorkerHealth {
     };
   }
 
-  if (!directoryExists) {
+  if (!directoryExists || !fs.existsSync(workersDir)) {
     return {
-      expected: false,
+      expected: true,
       directoryExists: false,
-      healthy: true,
+      healthy: false,
       files: [],
-      reason: 'Workers directory not found (worker modules optional)'
+      reason:
+        checked.length > 0
+          ? `Workers directory not found (checked: ${checked.join(' | ')})`
+          : 'Workers directory not found (worker modules optional)'
     };
   }
 
