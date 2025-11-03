@@ -110,7 +110,22 @@ export async function gpt5Reasoning(prompt: string): Promise<string> {
   const client = getOpenAIClient();
   if (!client) return '[Fallback: GPT-5 unavailable]';
 
-  const result = await createGPT5Reasoning(client, prompt, 'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.');
+  const result = await createGPT5Reasoning(
+    client,
+    prompt,
+    'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.'
+  );
+
+  if (result.error) {
+    logger.warn('[WORKER] GPT-5 reasoning fallback triggered', {
+      error: result.error
+    });
+  } else if (result.model) {
+    logger.info('[WORKER] GPT-5 reasoning confirmed', {
+      model: result.model
+    });
+  }
+
   return result.content;
 }
 
