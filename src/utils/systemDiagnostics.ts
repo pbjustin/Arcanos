@@ -5,6 +5,7 @@
  */
 
 import { getStatus, query } from '../db.js';
+import { getWorkerRuntimeStatus, type WorkerRuntimeStatus } from '../config/workerConfig.js';
 
 interface WorkerDiagnostics {
   count: number;
@@ -13,6 +14,7 @@ interface WorkerDiagnostics {
   details?: any[];
   expected?: number;
   error?: string;
+  runtime?: WorkerRuntimeStatus;
 }
 
 interface ScheduledJob {
@@ -61,7 +63,8 @@ async function getWorkerDiagnostics(): Promise<WorkerDiagnostics> {
     return {
       count: 0,
       healthy: false,
-      reason: 'Database not connected - cannot check worker status'
+      reason: 'Database not connected - cannot check worker status',
+      runtime: getWorkerRuntimeStatus()
     };
   }
 
@@ -83,13 +86,15 @@ async function getWorkerDiagnostics(): Promise<WorkerDiagnostics> {
       count: activeWorkers,
       healthy: activeWorkers >= expectedWorkers,
       details: workerActivity.rows,
-      expected: expectedWorkers
+      expected: expectedWorkers,
+      runtime: getWorkerRuntimeStatus()
     };
   } catch (error) {
     return {
       count: 0,
       healthy: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
+      runtime: getWorkerRuntimeStatus()
     };
   }
 }

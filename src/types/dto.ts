@@ -80,6 +80,21 @@ export const workerInfoSchema = z.object({
 
 export type WorkerInfoDTO = z.infer<typeof workerInfoSchema>;
 
+const arcanosRuntimeSchema = z.object({
+  enabled: z.boolean(),
+  model: z.string(),
+  configuredCount: z.number(),
+  started: z.boolean(),
+  startedAt: z.string().optional(),
+  activeListeners: z.number(),
+  workerIds: z.array(z.string()),
+  totalDispatched: z.number(),
+  lastDispatchAt: z.string().optional(),
+  lastInputPreview: z.string().optional(),
+  lastResult: z.unknown().optional(),
+  lastError: z.string().optional()
+});
+
 export const workerStatusResponseSchema = z.object({
   timestamp: z.string(),
   workersDirectory: z.string(),
@@ -90,7 +105,8 @@ export const workerStatusResponseSchema = z.object({
     enabled: z.boolean(),
     count: z.number(),
     model: z.string(),
-    status: z.string()
+    status: z.string(),
+    runtime: arcanosRuntimeSchema
   }),
   system: z.object({
     model: z.string(),
@@ -105,7 +121,7 @@ export const workerRunResponseSchema = z.object({
   workerId: z.string(),
   name: z.string().optional(),
   description: z.string().optional(),
-  pattern: z.enum(['context-based', 'legacy']).optional(),
+  pattern: z.enum(['context-based', 'legacy', 'arcanos-core']).optional(),
   result: z.unknown().optional(),
   executionTime: z.string(),
   timestamp: z.string(),

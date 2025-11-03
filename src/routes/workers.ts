@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { createWorkerContext } from '../utils/workerContext.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import { dispatchArcanosTask, getWorkerRuntimeStatus } from '../config/workerConfig.js';
 import type {
   WorkerInfoDTO,
   WorkerRunResponseDTO,
@@ -56,24 +57,22 @@ router.get(
     }
     
     // Include ARCANOS worker configuration status
+    const runtimeStatus = getWorkerRuntimeStatus();
     const arcanosWorkers = {
-      runWorkers: process.env.RUN_WORKERS === 'true' || process.env.RUN_WORKERS === '1',
-      count: parseInt(process.env.WORKER_COUNT || '4', 10),
-      model: process.env.WORKER_MODEL || process.env.AI_MODEL || 'gpt-4-turbo'
+      enabled: runtimeStatus.enabled,
+      count: runtimeStatus.configuredCount,
+      model: runtimeStatus.model,
+      status: runtimeStatus.started ? 'Active' : runtimeStatus.enabled ? 'Pending' : 'Disabled',
+      runtime: runtimeStatus
     };
-    
+
     const payload: WorkerStatusResponseDTO = {
       timestamp: new Date().toISOString(),
       workersDirectory: workersDir,
       totalWorkers: workers.length,
       availableWorkers: workers.filter(w => w.available).length,
       workers,
-      arcanosWorkers: {
-        enabled: arcanosWorkers.runWorkers,
-        count: arcanosWorkers.count,
-        model: arcanosWorkers.model,
-        status: arcanosWorkers.runWorkers ? 'Active' : 'Disabled'
-      },
+      arcanosWorkers,
       system: {
         model: process.env.AI_MODEL || 'gpt-4-turbo',
         environment: process.env.NODE_ENV || 'development'
@@ -102,6 +101,42 @@ router.post('/workers/run/:workerId', confirmGate, async (
   const input = req.body;
 
   try {
+    if (['arcanos', 'arcanos-core', 'worker.queue'].includes(workerId)) {
+      const normalizedInput =
+        typeof input === 'string'
+          ? input
+          : input?.input || input?.prompt || input?.text || JSON.stringify(input);
+
+      const startTime = Date.now();
+      const dispatchResults = await dispatchArcanosTask(normalizedInput);
+      const primaryResult = dispatchResults[0];
+      const duration = Date.now() - startTime;
+
+      if (!primaryResult) {
+        return res.status(500).json({
+          success: false,
+          workerId,
+          executionTime: `${duration}ms`,
+          timestamp: new Date().toISOString(),
+          error: 'No result returned from ARCANOS worker'
+        });
+      }
+
+      const response: WorkerRunResponseDTO = {
+        success: !primaryResult.error,
+        workerId: primaryResult.workerId || workerId,
+        name: 'ARCANOS Core Worker',
+        description: 'ARCANOS core logic with GPT-5 reasoning',
+        pattern: 'arcanos-core',
+        result: primaryResult,
+        executionTime: `${duration}ms`,
+        timestamp: new Date().toISOString(),
+        error: primaryResult.error
+      };
+
+      return res.json(response);
+    }
+
     const workerPath = path.join(workersDir, `${workerId}.js`);
 
     if (!fs.existsSync(workerPath)) {
