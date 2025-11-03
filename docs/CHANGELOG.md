@@ -76,7 +76,7 @@ Comprehensive codebase audit and refactor completed on 2025-08-09. This major re
 ### Architecture Consolidation:
 1. **Unified Start Script**
    - **BEFORE**: `npm start` → `railway/workers.js` (process manager)
-   - **AFTER**: `npm start` → `dist/server.js` (TypeScript server)
+   - **AFTER**: `npm start` → `dist/start-server.js` (TypeScript server)
 
 2. **Worker Management Modernization**  
    - **REMOVED**: Separate process-based worker system

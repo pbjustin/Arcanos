@@ -9,7 +9,7 @@
     }
   },
   "deploy": {
-    "startCommand": "node --max-old-space-size=7168 dist/server.js",
+    "startCommand": "node --max-old-space-size=7168 dist/start-server.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
