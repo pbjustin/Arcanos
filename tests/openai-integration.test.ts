@@ -133,6 +133,35 @@ describe('OpenAI SDK Integration Tests', () => {
         });
       }
     });
+
+    it('should allow overriding fallback model with fine-tuned configuration', async () => {
+      const originalModels = {
+        FALLBACK_MODEL: process.env.FALLBACK_MODEL,
+        FINETUNED_MODEL_ID: process.env.FINETUNED_MODEL_ID,
+        FINE_TUNED_MODEL_ID: process.env.FINE_TUNED_MODEL_ID,
+        AI_MODEL: process.env.AI_MODEL
+      };
+
+      delete process.env.FALLBACK_MODEL;
+      process.env.FINETUNED_MODEL_ID = 'ft:custom-fallback-model';
+      delete process.env.FINE_TUNED_MODEL_ID;
+      delete process.env.AI_MODEL;
+
+      try {
+        jest.resetModules();
+        const { getFallbackModel } = await import('../src/services/openai.js');
+
+        expect(getFallbackModel()).toBe('ft:custom-fallback-model');
+      } finally {
+        Object.entries(originalModels).forEach(([key, value]) => {
+          if (value) {
+            process.env[key] = value;
+          } else {
+            delete process.env[key];
+          }
+        });
+      }
+    });
   });
 
   describe('Mock Response Generation', () => {
