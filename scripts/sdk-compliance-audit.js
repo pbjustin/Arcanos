@@ -240,7 +240,7 @@ async function auditDeploymentReadiness(result) {
     // Check Procfile
     try {
         const procfile = await fs.readFile(path.join(projectRoot, 'Procfile'), 'utf8');
-        if (procfile.includes('dist/server.js')) {
+        if (procfile.includes('dist/start-server.js')) {
             result.deploymentChecks.procfileValid = true;
             console.log('   ✅ Procfile is valid');
         }

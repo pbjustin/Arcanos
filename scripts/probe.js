@@ -70,7 +70,7 @@ function runProbe() {
   const requiredFiles = [
     { path: 'index.js', description: 'Main entry point' },
     { path: 'tests/test-arcanos-api.js', description: 'API test file' },
-    { path: 'dist/server.js', description: 'Compiled server file' },
+    { path: 'dist/start-server.js', description: 'Runtime entry point' },
     { path: 'package.json', description: 'Package configuration' }
   ];
 
