@@ -611,6 +611,32 @@ export const validateAPIKeyAtStartup = (): boolean => {
   return true;
 };
 
+const normalizeModelId = (model: string): string => model.trim().toLowerCase();
+
+const ensureModelMatchesExpectation = (response: any, expectedModel: string): string => {
+  const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
+
+  if (!actualModel) {
+    throw new Error(`GPT-5 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
+  }
+
+  const normalizedActual = normalizeModelId(actualModel);
+  const normalizedExpected = normalizeModelId(expectedModel);
+
+  const matchesExpected =
+    normalizedActual === normalizedExpected ||
+    normalizedActual.startsWith(`${normalizedExpected}-`) ||
+    normalizedActual.startsWith(`${normalizedExpected}.`);
+
+  if (!matchesExpected) {
+    throw new Error(
+      `GPT-5 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`
+    );
+  }
+
+  return actualModel;
+};
+
 /**
  * Centralized GPT-5 helper function for reasoning tasks
  * Used by both core logic and workers
@@ -619,7 +645,7 @@ export const createGPT5Reasoning = async (
   client: OpenAI,
   prompt: string,
   systemPrompt?: string
-): Promise<{ content: string; error?: string }> => {
+): Promise<{ content: string; model?: string; error?: string }> => {
   if (!client) {
     return { content: '[Fallback: GPT-5 unavailable - no OpenAI client]', error: 'No OpenAI client' };
   }
@@ -644,13 +670,14 @@ export const createGPT5Reasoning = async (
     });
 
     const response: any = await client.responses.create(requestPayload);
+    const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const content =
       response.output_text ||
       response.output?.[0]?.content?.[0]?.text ||
       '[No reasoning provided]';
     console.log(`✅ [GPT-5 REASONING] Success: ${content.substring(0, 100)}...`);
-    return { content };
+    return { content, model: resolvedModel };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
     console.error(`❌ [GPT-5 REASONING] Error: ${errorMsg}`);
@@ -667,11 +694,12 @@ export const createGPT5ReasoningLayer = async (
   arcanosResult: string,
   originalPrompt: string,
   context?: string
-): Promise<{ 
-  refinedResult: string; 
-  reasoningUsed: boolean; 
-  reasoningContent?: string; 
-  error?: string 
+): Promise<{
+  refinedResult: string;
+  reasoningUsed: boolean;
+  reasoningContent?: string;
+  model?: string;
+  error?: string
 }> => {
   if (!client) {
     return { 
@@ -721,6 +749,7 @@ Return only the refined response without meta-commentary about your analysis pro
     });
 
     const response: any = await client.responses.create(requestPayload);
+    const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const reasoningContent =
       response.output_text ||
@@ -732,10 +761,11 @@ Return only the refined response without meta-commentary about your analysis pro
     
     console.log(`✅ [GPT-5 LAYER] Successfully refined response (${refinedResult.length} chars)`);
     
-    return { 
-      refinedResult, 
-      reasoningUsed: true, 
-      reasoningContent: reasoningContent.substring(0, 200) + '...' // Summary for logging
+    return {
+      refinedResult,
+      reasoningUsed: true,
+      reasoningContent: reasoningContent.substring(0, 200) + '...', // Summary for logging
+      model: resolvedModel
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
