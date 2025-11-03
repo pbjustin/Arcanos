@@ -51,7 +51,7 @@ check('Modern ES modules', packageJson.type === 'module');
 
 // 4. Railway Compatibility Checks
 console.log('\n🚄 Railway Compatibility Validation:');
-check('Start script defined', packageJson.scripts?.start === 'node dist/server.js');
+check('Start script defined', packageJson.scripts?.start === 'node dist/start-server.js');
 check('Main entry point correct', packageJson.main === 'dist/server.js');
 check('PostgreSQL client present', packageJson.dependencies?.pg !== undefined);
 check('Port 8080 configuration', openaiService.includes('8080') || readFileSync('./src/config/index.ts', 'utf8').includes('8080'));
