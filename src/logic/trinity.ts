@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
-import { getDefaultModel, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
+import { getDefaultModel, getGPT5Model, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import {
@@ -30,6 +30,8 @@ interface TrinityResult {
   fallbackFlag: boolean;
   routingStages?: string[];
   gpt5Used?: boolean;
+  gpt5Model?: string;
+  gpt5Error?: string;
   auditSafe: {
     mode: boolean;
     overrideUsed: boolean;
@@ -145,6 +147,20 @@ export async function runThroughBrain(
   routingStages.push('GPT5-REASONING');
   const gpt5Result = await createGPT5Reasoning(client, framedRequest, ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING());
   const gpt5Output = gpt5Result.content;
+  const gpt5ModelUsed = gpt5Result.model || getGPT5Model();
+  if (gpt5Result.error) {
+    logger.warn('GPT-5 reasoning fallback in Trinity pipeline', {
+      module: 'trinity',
+      operation: 'gpt5-reasoning',
+      error: gpt5Result.error
+    });
+  } else {
+    logger.info('GPT-5 reasoning confirmed', {
+      module: 'trinity',
+      operation: 'gpt5-reasoning',
+      model: gpt5ModelUsed
+    });
+  }
 
   // Final ARCANOS execution and filtering
   logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 output through ARCANOS');
@@ -193,7 +209,7 @@ export async function runThroughBrain(
     overrideReason: auditConfig.overrideReason,
     inputSummary: createAuditSummary(prompt),
     outputSummary: createAuditSummary(finalText),
-    modelUsed: `${actualModel}+gpt-5`,
+    modelUsed: `${actualModel}+${gpt5ModelUsed}`,
     gpt5Delegated: true,
     memoryAccessed: memoryContext.accessLog,
     processedSafely: finalProcessedSafely,
@@ -208,6 +224,8 @@ export async function runThroughBrain(
     fallbackFlag: isFallback,
     routingStages,
     gpt5Used,
+    gpt5Model: gpt5ModelUsed,
+    gpt5Error: gpt5Result.error,
     auditSafe: {
       mode: auditConfig.auditSafeMode,
       overrideUsed: !!auditConfig.explicitOverride,
