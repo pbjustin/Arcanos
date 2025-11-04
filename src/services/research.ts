@@ -25,6 +25,11 @@ export interface ResearchResult {
 
 const MAX_CONTENT_CHARS = parseInt(process.env.RESEARCH_MAX_CONTENT_CHARS ?? '6000', 10);
 
+function resolveResearchModel(): string {
+  const configuredModel = process.env.RESEARCH_MODEL_ID?.trim();
+  return configuredModel && configuredModel.length > 0 ? configuredModel : getDefaultModel();
+}
+
 function sanitizeSegment(segment: string): string {
   return segment
     .replace(/\.\.+/g, '')
@@ -68,6 +73,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   const generatedAt = new Date().toISOString();
   const client = getOpenAIClient();
   const useMock = !client || process.env.OPENAI_API_KEY === 'test_key_for_mocking';
+  const researchModel = resolveResearchModel();
 
   if (useMock) {
     const mockResult = createMockResult(topic, urls);
@@ -95,7 +101,8 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
       ];
       const response = await createCentralizedCompletion(messages, {
         temperature: 0.2,
-        max_tokens: 600
+        max_tokens: 600,
+        model: researchModel
       });
       const summary = (response as any)?.choices?.[0]?.message?.content?.trim();
       if (summary) {
@@ -127,7 +134,8 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
 
   const synthesis = await createCentralizedCompletion(synthesisMessages, {
     temperature: 0.25,
-    max_tokens: 900
+    max_tokens: 900,
+    model: researchModel
   });
   const insight = (synthesis as any)?.choices?.[0]?.message?.content?.trim() || '';
 
@@ -138,7 +146,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
     sources: summaries,
     failedUrls,
     generatedAt,
-    model: getDefaultModel()
+    model: researchModel
   };
 
   await persistResearch(topic, result);

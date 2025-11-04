@@ -2,12 +2,12 @@
 
 ## Overview
 
-The Research Module provides deep multi-source research capabilities by fetching content from multiple URLs, summarizing each source using GPT-4, and synthesizing an overall research insight. This module extends ARCANOS's AI capabilities to perform comprehensive research analysis.
+The Research Module provides deep multi-source research capabilities by fetching content from multiple URLs, summarizing each source with the configured research model, and synthesizing an overall research insight. This module extends ARCANOS's AI capabilities to perform comprehensive research analysis.
 
 ## Features
 
 - **Multi-Source Research**: Fetch and analyze content from multiple URLs
-- **AI-Powered Summarization**: Uses GPT-4 to summarize each source
+- **AI-Powered Summarization**: Uses the configured research model (fine-tuned by default) to summarize each source
 - **Intelligent Synthesis**: Combines all sources into a cohesive research brief
 - **Memory Storage**: Stores research data in structured memory format
 - **REST API**: Accessible via HTTP endpoint
@@ -123,6 +123,7 @@ npx ts-node examples/research-example.ts
 
 The module requires:
 - `OPENAI_API_KEY` environment variable
+- `RESEARCH_MODEL_ID` (optional) to target a dedicated fine-tuned model; falls back to the global AI model when unset
 - Access to the ARCANOS memory service
 - Network connectivity for URL fetching
 

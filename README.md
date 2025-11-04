@@ -67,6 +67,7 @@ Key environment variables used by the backend:
 | --- | --- |
 | `OPENAI_API_KEY` | API key for the OpenAI SDK. Missing keys enable mock responses. |
 | `OPENAI_MODEL` / `FINETUNED_MODEL_ID` / `FINE_TUNED_MODEL_ID` / `AI_MODEL` | Preferred model identifiers (first non-empty wins). |
+| `RESEARCH_MODEL_ID` | Optional override for the research pipeline; defaults to the selected AI model. |
 | `GPT5_MODEL` | Override identifier used for GPT‑5 reasoning fallbacks (default `gpt-5`). |
 | `PORT` / `HOST` / `SERVER_URL` | Server binding details. `PORT` defaults to `8080`. |
 | `DATABASE_URL` (+ `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`) | PostgreSQL connection string with automatic assembly from discrete settings. |
