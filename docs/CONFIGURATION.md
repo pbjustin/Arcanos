@@ -116,6 +116,7 @@ Confirmation behaviour is implemented in
 | --- | --- | --- |
 | `NOTION_API_KEY` | – | Enables Notion synchronisation in `services/notionSync.ts`. |
 | `RESEARCH_MAX_CONTENT_CHARS` | `6000` | Upper bound on content length ingested by the research module. |
+| `RESEARCH_MODEL_ID` | – | Overrides the research module's default model (falls back to the global AI model). |
 | `HRC_MODEL` | Falls back to default model | Preferred model for Hallucination Resistant Core (`modules/hrc.ts`). |
 | `BOOKER_TOKEN_LIMIT` | `512` | Token limit used by the Backstage booker module. |
 | `USER_GPT_ID` | – | Propagated to Backstage modules for context. |
