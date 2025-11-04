@@ -17,6 +17,9 @@ management, and background worker coordination.
   SDK, chooses a default model (`OPENAI_MODEL` → `FINETUNED_MODEL_ID`
   → `FINE_TUNED_MODEL_ID` → `AI_MODEL` → `gpt-4o`), and exposes helpers for chat,
   image generation, and GPT‑5 delegation.
+- **Adaptive Failover Orchestration Layer (AFOL)** – `src/afol/` monitors service
+  health, applies routing policies, and logs every failover decision. See
+  [`docs/AFOL_OVERVIEW.md`](docs/AFOL_OVERVIEW.md) for guidance.
 - **State synchronization** – `src/services/stateManager.ts` maintains
   `systemState.json`, while `/status` endpoints provide read/write access for
   external automation.
