@@ -30,6 +30,7 @@ environment, and exploring advanced modules.
 - **[Routing Architecture](ARCANOS_ROUTING_ARCHITECTURE.md)** – Request routing
   and module dispatch.
 - **[Secure Reasoning Engine](secure-reasoning-engine.md)** – Safety guardrails.
+- **[AFOL Overview](AFOL_OVERVIEW.md)** – Failover orchestration and routing safeguards.
 
 ---
 
