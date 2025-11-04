@@ -24,6 +24,7 @@ import hrcRouter from './hrc.js';
 import gptRouter from './gptRouter.js';
 import researchRouter from './research.js';
 import healthRouter from './health.js';
+import afolRouter from './afol.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 
@@ -77,6 +78,7 @@ export function registerRoutes(app: Express): void {
   app.use('/api/commands', apiCommandsRouter);
   app.use('/api/pr-analysis', prAnalysisRouter);
   app.use('/api/openai', openaiRouter);
+  app.use('/api/afol', afolRouter);
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);
