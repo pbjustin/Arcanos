@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import { logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
 import { getDefaultModel, getGPT5Model, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import { generateRequestId } from '../utils/idGenerator.js';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import {
   getAuditSafeConfig,
@@ -109,7 +111,7 @@ export async function runThroughBrain(
   sessionId?: string,
   overrideFlag?: string
 ): Promise<TrinityResult> {
-  const requestId = `trinity_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const requestId = generateRequestId('trinity');
 
   const routingStages: string[] = [];
   const gpt5Used = true; // GPT-5 is now unconditional
@@ -165,7 +167,7 @@ export async function runThroughBrain(
   // Final ARCANOS execution and filtering
   logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
-  const finalTokenParams = getTokenParameter(actualModel, 1000);
+  const finalTokenParams = getTokenParameter(actualModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalResponse = await createChatCompletionWithFallback(client, {
     messages: [
       {
