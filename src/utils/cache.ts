@@ -3,6 +3,8 @@
  * Provides high-performance caching for frequently accessed data
  */
 
+import { APPLICATION_CONSTANTS } from './constants.js';
+
 export interface CacheOptions {
   defaultTtlMs: number;
   maxEntries: number;
@@ -153,19 +155,19 @@ export class MemoryCache<T = any> {
 
 // Global cache instances for different types of data
 export const responseCache = new MemoryCache({
-  defaultTtlMs: 5 * 60 * 1000, // 5 minutes
-  maxEntries: 1000,
-  cleanupIntervalMs: 60 * 1000 // 1 minute
+  defaultTtlMs: APPLICATION_CONSTANTS.CACHE_TTL_SHORT,
+  maxEntries: APPLICATION_CONSTANTS.CACHE_MAX_ENTRIES_LARGE,
+  cleanupIntervalMs: APPLICATION_CONSTANTS.CACHE_CLEANUP_INTERVAL_SHORT
 });
 
 export const queryCache = new MemoryCache({
-  defaultTtlMs: 10 * 60 * 1000, // 10 minutes  
-  maxEntries: 500,
-  cleanupIntervalMs: 2 * 60 * 1000 // 2 minutes
+  defaultTtlMs: APPLICATION_CONSTANTS.CACHE_TTL_MEDIUM,
+  maxEntries: APPLICATION_CONSTANTS.CACHE_MAX_ENTRIES_MEDIUM,
+  cleanupIntervalMs: APPLICATION_CONSTANTS.CACHE_CLEANUP_INTERVAL_MEDIUM
 });
 
 export const configCache = new MemoryCache({
-  defaultTtlMs: 30 * 60 * 1000, // 30 minutes
-  maxEntries: 100,
-  cleanupIntervalMs: 5 * 60 * 1000 // 5 minutes
+  defaultTtlMs: APPLICATION_CONSTANTS.CACHE_TTL_LONG,
+  maxEntries: APPLICATION_CONSTANTS.CACHE_MAX_ENTRIES_SMALL,
+  cleanupIntervalMs: APPLICATION_CONSTANTS.CACHE_CLEANUP_INTERVAL_LONG
 });

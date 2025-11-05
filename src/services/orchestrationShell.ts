@@ -5,6 +5,7 @@
  */
 
 import { getOpenAIClient, getGPT5Model, call_gpt5_strict } from './openai.js';
+import { generateRequestId } from '../utils/idGenerator.js';
 import {
   ISOLATE_MODULE_PROMPT,
   PURGE_MEMORY_PROMPT,
@@ -36,7 +37,7 @@ interface OrchestrationResult {
  * Integrates with existing ARCANOS infrastructure for audit safety and logging
  */
 export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfig): Promise<OrchestrationResult> {
-  const requestId = `orchestration_reset_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const requestId = generateRequestId('orchestration_reset');
   const stages: string[] = [];
   const logs: string[] = [];
 

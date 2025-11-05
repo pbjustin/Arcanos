@@ -22,6 +22,9 @@ interface PromptsConfig {
     intake_system: string;
     gpt5_reasoning: string;
     fallback_mode: string;
+    system_prompt: string;
+    secure_reasoning_integration: string;
+    user_prompt: string;
   };
   system: {
     routing_active: string;
@@ -34,6 +37,10 @@ interface PromptsConfig {
   reasoning: {
     layer_system: string;
     enhancement_prompt: string;
+  };
+  security: {
+    reasoning_engine_prompt: string;
+    structured_response_template: string;
   };
 }
 
@@ -77,7 +84,10 @@ function loadPromptsConfig(): PromptsConfig {
       arcanos: {
         intake_system: 'You are ARCANOS AI system.',
         gpt5_reasoning: 'Use reasoning for analysis.',
-        fallback_mode: 'System temporarily unavailable.'
+        fallback_mode: 'System temporarily unavailable.',
+        system_prompt: 'You are ARCANOS AI system.',
+        secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
+        user_prompt: 'You are ARCANOS.'
       },
       system: {
         routing_active: 'ARCANOS routing active',
@@ -90,6 +100,10 @@ function loadPromptsConfig(): PromptsConfig {
       reasoning: {
         layer_system: 'Enhance responses with reasoning.',
         enhancement_prompt: 'Analyze and improve the response.'
+      },
+      security: {
+        reasoning_engine_prompt: 'You are the reasoning engine for ARCANOS.',
+        structured_response_template: 'ARCANOS REASONING ENGINE ANALYSIS'
       }
     };
   }
@@ -150,4 +164,59 @@ export const getPrompt = (category: keyof PromptsConfig, key: string, replacemen
   }
 
   return prompt;
+};
+
+/**
+ * Helper functions for ARCANOS prompts
+ */
+export const getArcanosSystemPrompt = (): string => {
+  return loadPromptsConfig().arcanos.system_prompt;
+};
+
+export const getArcanosUserPrompt = (userInput: string, memoryContext?: string): string => {
+  const template = loadPromptsConfig().arcanos.user_prompt;
+  const memorySection = memoryContext 
+    ? `\n[MEMORY CONTEXT INTEGRATION]\n${memoryContext}\nApply relevant memory context to maintain continuity in your response.`
+    : '';
+  
+  return template
+    .replace('{memoryContext}', memorySection)
+    .replace('{userInput}', userInput);
+};
+
+export const getSecureReasoningIntegrationPrompt = (
+  userInput: string,
+  reason: string,
+  complianceStatus: string,
+  structuredAnalysis: string,
+  problemSolvingSteps: string,
+  recommendations: string
+): string => {
+  const template = loadPromptsConfig().arcanos.secure_reasoning_integration;
+  return template
+    .replace('{userInput}', userInput)
+    .replace('{reason}', reason)
+    .replace('{complianceStatus}', complianceStatus)
+    .replace('{structuredAnalysis}', structuredAnalysis)
+    .replace('{problemSolvingSteps}', problemSolvingSteps)
+    .replace('{recommendations}', recommendations);
+};
+
+export const getSecurityReasoningEnginePrompt = (userInput: string): string => {
+  const template = loadPromptsConfig().security.reasoning_engine_prompt;
+  return template.replace('{userInput}', userInput);
+};
+
+export const getStructuredSecurityResponseTemplate = (
+  inputSummary: string,
+  content: string,
+  complianceStatus: string,
+  redactionsApplied: string
+): string => {
+  const template = loadPromptsConfig().security.structured_response_template;
+  return template
+    .replace('{inputSummary}', inputSummary)
+    .replace('{content}', content)
+    .replace('{complianceStatus}', complianceStatus)
+    .replace('{redactionsApplied}', redactionsApplied);
 };
