@@ -41,8 +41,8 @@ export const config = {
 
   // Request limits
   limits: {
-    jsonLimit: '10mb',
-    requestTimeout: 30000
+    jsonLimit: process.env.JSON_LIMIT || '10mb',
+    requestTimeout: Number(process.env.REQUEST_TIMEOUT) || 30000
   },
 
   // Logging configuration

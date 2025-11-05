@@ -28,6 +28,36 @@ const RAILWAY_VALIDATION_PATTERNS = [
   { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }
 ] as const;
 
+// Check titles and report template configuration
+const CHECK_TITLES = {
+  deadCodeRemoval: '1. **Dead/Bloated Code Removal**',
+  simplification: '2. **Simplification & Streamlining**',
+  openaiCompatibility: '3. **OpenAI SDK Compatibility**',
+  railwayReadiness: '4. **Railway Deployment Readiness**',
+  automatedValidation: '5. **Automated Validation**',
+  finalDoubleCheck: '6. **Final Double-Check**'
+} as const;
+
+const REPORT_TEMPLATE = {
+  header: '# 🤖 ARCANOS PR Analysis Report',
+  summarySection: '## {status} Summary',
+  detailsSection: '## 📋 Detailed Checks',
+  reasoningSection: '## 🔍 Analysis Reasoning',
+  recommendationsSection: '## 💡 Recommendations',
+  footer: {
+    divider: '---',
+    completedBy: '*Analysis completed by ARCANOS PR Assistant*',
+    sdkVersion: '*OpenAI SDK Version: 5.15.0+ ✅*',
+    railwayStatus: '*Railway Deployment: {status} {icon}*',
+    productionStatus: '*Status: {statusMessage}*'
+  },
+  statusMessages: {
+    approved: '🎉 **PRODUCTION READY**',
+    conditional: '⚠️ **REVIEW RECOMMENDED**',
+    rejected: '❌ **FIXES REQUIRED**'
+  }
+} as const;
+
 function sanitizeArgs(args: string[]): string[] {
   return args.map(a => a.replace(/[^\w:/.-]/g, ''));
 }
@@ -47,6 +77,38 @@ function runCommand(command: string, args: string[], options: SpawnOptions = {})
       }
     });
   });
+}
+
+/**
+ * Helper to create standardized check results
+ */
+function createCheckResult(
+  issuesCount: number,
+  successMessage: string,
+  warningMessage: string,
+  errorMessage: string,
+  warningThreshold: number,
+  details: string[]
+): CheckResult {
+  if (issuesCount === 0) {
+    return {
+      status: '✅',
+      message: successMessage,
+      details: details.length > 0 ? details : ['No issues detected']
+    };
+  } else if (issuesCount < warningThreshold) {
+    return {
+      status: '⚠️',
+      message: warningMessage,
+      details
+    };
+  } else {
+    return {
+      status: '❌',
+      message: errorMessage,
+      details
+    };
+  }
 }
 
 /**
@@ -191,25 +253,14 @@ export class PRAssistant {
         details.push('Look for opportunities to extract reusable utilities');
       }
 
-      if (issues.length === 0) {
-        return {
-          status: '✅',
-          message: 'No bloated or dead code detected',
-          details: ['PR maintains clean codebase standards']
-        };
-      } else if (issues.length < 3) {
-        return {
-          status: '⚠️',
-          message: `Minor code quality concerns found: ${issues.length} issues`,
-          details
-        };
-      } else {
-        return {
-          status: '❌',
-          message: `Significant code quality issues found: ${issues.length} problems`,
-          details
-        };
-      }
+      return createCheckResult(
+        issues.length,
+        'No bloated or dead code detected',
+        `Minor code quality concerns found: ${issues.length} issues`,
+        `Significant code quality issues found: ${issues.length} problems`,
+        3,
+        issues.length === 0 ? ['PR maintains clean codebase standards'] : details
+      );
     } catch (error) {
       return {
         status: '❌',
@@ -267,25 +318,14 @@ export class PRAssistant {
         details.push('Define constants for numeric literals');
       }
 
-      if (issues.length === 0) {
-        return {
-          status: '✅',
-          message: 'Code follows simplification best practices',
-          details: ['Good separation of concerns and readable code structure']
-        };
-      } else if (issues.length < 3) {
-        return {
-          status: '⚠️',
-          message: `Minor complexity concerns: ${issues.length} areas for improvement`,
-          details
-        };
-      } else {
-        return {
-          status: '❌',
-          message: `Significant complexity issues: ${issues.length} problems`,
-          details
-        };
-      }
+      return createCheckResult(
+        issues.length,
+        'Code follows simplification best practices',
+        `Minor complexity concerns: ${issues.length} areas for improvement`,
+        `Significant complexity issues: ${issues.length} problems`,
+        3,
+        issues.length === 0 ? ['Good separation of concerns and readable code structure'] : details
+      );
     } catch (error) {
       return {
         status: '❌',
@@ -354,25 +394,14 @@ export class PRAssistant {
         // Package.json might not be accessible, skip this check
       }
 
-      if (issues.length === 0) {
-        return {
-          status: '✅',
-          message: 'OpenAI SDK compatibility verified',
-          details: ['Uses latest OpenAI SDK patterns and best practices']
-        };
-      } else if (issues.length < 3) {
-        return {
-          status: '⚠️',
-          message: `Minor OpenAI compatibility issues: ${issues.length} items`,
-          details
-        };
-      } else {
-        return {
-          status: '❌',
-          message: `Significant OpenAI compatibility problems: ${issues.length} issues`,
-          details
-        };
-      }
+      return createCheckResult(
+        issues.length,
+        'OpenAI SDK compatibility verified',
+        `Minor OpenAI compatibility issues: ${issues.length} items`,
+        `Significant OpenAI compatibility problems: ${issues.length} issues`,
+        3,
+        issues.length === 0 ? ['Uses latest OpenAI SDK patterns and best practices'] : details
+      );
     } catch (error) {
       return {
         status: '❌',
@@ -420,25 +449,14 @@ export class PRAssistant {
         details.push(`Ensure dynamic port assignment with process.env.PORT || ${VALIDATION_CONSTANTS.DEFAULT_PORT}`);
       }
 
-      if (issues.length === 0) {
-        return {
-          status: '✅',
-          message: 'Railway deployment ready',
-          details: ['Proper environment variable usage and Railway compatibility']
-        };
-      } else if (issues.length < 3) {
-        return {
-          status: '⚠️',
-          message: `Minor Railway readiness concerns: ${issues.length} items`,
-          details
-        };
-      } else {
-        return {
-          status: '❌',
-          message: `Railway deployment issues: ${issues.length} problems`,
-          details
-        };
-      }
+      return createCheckResult(
+        issues.length,
+        'Railway deployment ready',
+        `Minor Railway readiness concerns: ${issues.length} items`,
+        `Railway deployment issues: ${issues.length} problems`,
+        3,
+        issues.length === 0 ? ['Proper environment variable usage and Railway compatibility'] : details
+      );
     } catch (error) {
       return {
         status: '❌',
@@ -667,23 +685,14 @@ export class PRAssistant {
    * Format the analysis result as markdown
    */
   formatAsMarkdown(result: PRAnalysisResult): string {
-    let markdown = `# 🤖 ARCANOS PR Analysis Report\n\n`;
+    let markdown = `${REPORT_TEMPLATE.header}\n\n`;
     
-    markdown += `## ${result.status} Summary\n${result.summary}\n\n`;
+    markdown += `${REPORT_TEMPLATE.summarySection.replace('{status}', result.status)}\n${result.summary}\n\n`;
     
-    markdown += `## 📋 Detailed Checks\n\n`;
-    
-    const checkTitles = {
-      deadCodeRemoval: '1. **Dead/Bloated Code Removal**',
-      simplification: '2. **Simplification & Streamlining**', 
-      openaiCompatibility: '3. **OpenAI SDK Compatibility**',
-      railwayReadiness: '4. **Railway Deployment Readiness**',
-      automatedValidation: '5. **Automated Validation**',
-      finalDoubleCheck: '6. **Final Double-Check**'
-    };
+    markdown += `${REPORT_TEMPLATE.detailsSection}\n\n`;
 
     Object.entries(result.checks).forEach(([key, check]) => {
-      const title = checkTitles[key as keyof typeof checkTitles];
+      const title = CHECK_TITLES[key as keyof typeof CHECK_TITLES];
       markdown += `### ${check.status} ${title}\n`;
       markdown += `${check.message}\n\n`;
       
@@ -696,22 +705,28 @@ export class PRAssistant {
     });
 
     if (result.reasoning) {
-      markdown += `## 🔍 Analysis Reasoning\n\n${result.reasoning}\n\n`;
+      markdown += `${REPORT_TEMPLATE.reasoningSection}\n\n${result.reasoning}\n\n`;
     }
 
     if (result.recommendations.length > 0) {
-      markdown += `## 💡 Recommendations\n\n`;
+      markdown += `${REPORT_TEMPLATE.recommendationsSection}\n\n`;
       result.recommendations.forEach(rec => {
         markdown += `- ${rec}\n`;
       });
       markdown += '\n';
     }
 
-    markdown += `---\n\n`;
-    markdown += `*Analysis completed by ARCANOS PR Assistant*  \n`;
-    markdown += `*OpenAI SDK Version: 5.15.0+ ✅*  \n`;
-    markdown += `*Railway Deployment: ${result.checks.railwayReadiness.status === '✅' ? 'Ready' : 'Needs Review'} ${result.checks.railwayReadiness.status}*  \n`;
-    markdown += `*Status: ${result.status === '✅' ? '🎉 **PRODUCTION READY**' : (result.status === '⚠️' ? '⚠️ **REVIEW RECOMMENDED**' : '❌ **FIXES REQUIRED**')}*\n\n`;
+    // Footer
+    const railwayStatus = result.checks.railwayReadiness.status === '✅' ? 'Ready' : 'Needs Review';
+    const statusMessage = result.status === '✅' 
+      ? REPORT_TEMPLATE.statusMessages.approved 
+      : (result.status === '⚠️' ? REPORT_TEMPLATE.statusMessages.conditional : REPORT_TEMPLATE.statusMessages.rejected);
+
+    markdown += `${REPORT_TEMPLATE.footer.divider}\n\n`;
+    markdown += `${REPORT_TEMPLATE.footer.completedBy}  \n`;
+    markdown += `${REPORT_TEMPLATE.footer.sdkVersion}  \n`;
+    markdown += `${REPORT_TEMPLATE.footer.railwayStatus.replace('{status}', railwayStatus).replace('{icon}', result.checks.railwayReadiness.status)}  \n`;
+    markdown += `${REPORT_TEMPLATE.footer.productionStatus.replace('{statusMessage}', statusMessage)}\n\n`;
 
     return markdown;
   }
