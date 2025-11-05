@@ -246,6 +246,34 @@ describe('OpenAI SDK Integration Tests', () => {
         }
       }
     });
+
+    it('should handle empty or whitespace PORT values by defaulting to 8080', async () => {
+      const originalPort = process.env.PORT;
+
+      try {
+        // Test empty string
+        process.env.PORT = '';
+        jest.resetModules();
+        let { validateEnvironment } = await import('../src/utils/envValidation.js');
+        let result = validateEnvironment();
+        expect(result.valid).toBe(true);
+        expect(result.config.port).toBe(8080);
+
+        // Test whitespace
+        process.env.PORT = '   ';
+        jest.resetModules();
+        ({ validateEnvironment } = await import('../src/utils/envValidation.js'));
+        result = validateEnvironment();
+        expect(result.valid).toBe(true);
+        expect(result.config.port).toBe(8080);
+      } finally {
+        if (originalPort) {
+          process.env.PORT = originalPort;
+        } else {
+          delete process.env.PORT;
+        }
+      }
+    });
   });
 
   describe('Circuit Breaker and Error Handling', () => {
