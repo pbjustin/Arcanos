@@ -4,6 +4,7 @@
  */
 
 import dotenv from 'dotenv';
+import path from 'path';
 
 // Load environment variables
 dotenv.config();
@@ -53,6 +54,13 @@ export const config = {
   // External integrations
   external: {
     backendRegistryUrl: process.env.BACKEND_REGISTRY_URL
+  },
+
+  assistantSync: {
+    enabled: process.env.ASSISTANT_SYNC_ENABLED !== 'false',
+    schedule: process.env.ASSISTANT_SYNC_CRON || '15,45 * * * *',
+    registryPath:
+      process.env.ASSISTANT_REGISTRY_PATH || path.join(process.cwd(), 'config', 'assistants.json')
   }
 };
 
