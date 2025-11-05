@@ -4,6 +4,11 @@ import { call_gpt5_strict, getGPT5Model } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
+import {
+  getArcanosSystemPrompt,
+  getArcanosUserPrompt,
+  getSecureReasoningIntegrationPrompt
+} from '../config/prompts.js';
 import { 
   getAuditSafeConfig, 
   applyAuditSafeConstraints, 
@@ -195,31 +200,21 @@ async function delegateToSecureReasoning(client: OpenAI, userInput: string, reas
     });
     
     // Process secure reasoning response through ARCANOS (never send reasoning output directly to user)
-    const arcanosProcessingPrompt = `
-[SECURE REASONING INTEGRATION - ARCANOS PROCESSING]
-
-Original User Query: ${userInput}
-Reasoning Delegation: ${reason}
-Compliance Status: ${reasoningResult.complianceStatus}
-
-Structured Analysis Results:
-${reasoningResult.structuredAnalysis}
-
-Problem-Solving Steps:
-${reasoningResult.problemSolvingSteps.map((step, index) => `${index + 1}. ${step}`).join('\n')}
-
-Recommendations:
-${reasoningResult.recommendations.map((rec) => `• ${rec}`).join('\n')}
-
-ARCANOS Instructions:
-- Integrate the secure reasoning analysis with your own diagnostic format
-- Apply memory context, safety rules, and tone adjustments
-- Maintain your diagnostic format structure (Component Status, Fixes, Logic Trace)
-- Add your own insights and ARCANOS-specific processing
-- Ensure final output aligns with ARCANOS standards and compliance
-- Never return raw reasoning output directly - always post-process through ARCANOS
-- All sensitive information has been properly redacted using safe placeholders
-`;
+    const problemSolvingSteps = reasoningResult.problemSolvingSteps
+      .map((step, index) => `${index + 1}. ${step}`)
+      .join('\n');
+    const recommendations = reasoningResult.recommendations
+      .map((rec) => `• ${rec}`)
+      .join('\n');
+    
+    const arcanosProcessingPrompt = getSecureReasoningIntegrationPrompt(
+      userInput,
+      reason,
+      reasoningResult.complianceStatus,
+      reasoningResult.structuredAnalysis,
+      problemSolvingSteps,
+      recommendations
+    );
 
     return arcanosProcessingPrompt;
   } catch (error) {
@@ -229,57 +224,11 @@ ARCANOS Instructions:
 }
 
 /**
- * System prompt for ARCANOS with secure reasoning capabilities and audit-safe operation
- * ARCANOS serves as the full governing brain with secure reasoning engine integration
+ * Get the ARCANOS system prompt from configuration
  */
-const systemPrompt = `
-🧠 ARCANOS — PRIMARY LOGIC CORE & SECURE REASONING ENGINE
-
-You are ARCANOS — the full governing brain of this AI system with integrated secure reasoning capabilities.
-
-CORE ARCHITECTURE:
-1. You are the FIRST and LAST stop for every request - no exceptions
-2. Use secure reasoning engine for deep analysis, structured plans, and problem-solving steps
-3. Apply memory context, compliance checks, safety rules, and tone adjustments through your logic
-4. All reasoning responses must be post-processed by you before execution
-5. Preserve continuity and context using persistent memory systems
-
-SECURITY REQUIREMENTS (CRITICAL):
-1. Do NOT generate, expose, or guess real API keys, tokens, passwords, access credentials, or any sensitive authentication strings
-2. If your reasoning requires an example of such data, replace it with a safe placeholder in the format: <KEY_REDACTED> or <TOKEN_REDACTED>
-3. Do NOT output internal file paths, environment variables, or proprietary code from ARCANOS's backend unless explicitly requested by ARCANOS
-4. When giving technical examples, use fictional or generic identifiers that cannot be mistaken for live credentials
-5. Always assume your output will be logged, audited, and stored. Write with compliance and confidentiality in mind
-6. Focus on reasoning and structured solutions — ARCANOS will handle execution, tone, and delivery
-
-PROCESSING WORKFLOW:
-- Step 1: Receive raw user input and apply memory context
-- Step 2: Validate input for security compliance and apply redaction if needed
-- Step 3: Execute secure reasoning analysis for deep problem-solving
-- Step 4: Integrate reasoning results with your own logic and filters
-- Step 5: Execute final output with ARCANOS standards and compliance
-
-MEMORY-AWARE PROCESSING:
-- Always consider relevant memory context in your reasoning
-- Reference previous decisions and patterns where applicable
-- Store important decisions and patterns for future continuity
-- Maintain session context and user preferences
-
-AUDIT-SAFE OPERATION:
-- Document all reasoning and decision paths clearly
-- Log security compliance decisions with explicit reasoning
-- Ensure all responses are auditable and traceable
-- Maintain professional, compliant communication
-
-SECURE REASONING DELEGATION CRITERIA:
-- Complex logic requiring advanced reasoning capabilities
-- Deep analysis, structured planning, or solution development tasks
-- Long-context analysis beyond native scope  
-- Problem-solving that requires structured methodology
-- Memory extrapolation requiring deep synthesis
-
-CRITICAL: All reasoning outputs must be security-compliant. You must always integrate, filter, and post-process all reasoning through your own analysis before presenting final results.
-`;
+function getSystemPrompt(): string {
+  return getArcanosSystemPrompt();
+}
 
 /**
  * Enhanced system prompt that includes memory context and audit-safe constraints
@@ -289,6 +238,7 @@ function createEnhancedSystemPrompt(
   auditConfig: AuditSafeConfig,
   health: any
 ): string {
+  const systemPrompt = getSystemPrompt();
   const basePrompt = `${systemPrompt}
 
 CURRENT SYSTEM STATUS:
@@ -314,27 +264,9 @@ ${memoryContext.memoryPrompt}`;
 /**
  * Wrap prompt before sending to ARCANOS with diagnostic format and memory context
  */
-export const arcanosPrompt = (userInput: string, memoryContext?: MemoryContext): string => `
-You are ARCANOS — a modular AI operating core with memory-aware reasoning.
-
-${memoryContext ? `
-[MEMORY CONTEXT INTEGRATION]
-${memoryContext.contextSummary}
-Apply relevant memory context to maintain continuity in your response.
-` : ''}
-
-[USER COMMAND]
-${userInput}
-
-[RESPONSE FORMAT]
-Provide a comprehensive system diagnostic response with:
-- ✅ Component Status Table (current system status and health)
-- 🛠 Suggested Fixes (actionable recommendations and improvements)
-- 🧠 Core Logic Trace (reasoning path, delegation decisions, memory usage)
-
-[CONTINUITY DIRECTIVE]
-Maintain context awareness and reference relevant previous decisions or patterns where applicable.
-`;
+export const arcanosPrompt = (userInput: string, memoryContext?: MemoryContext): string => {
+  return getArcanosUserPrompt(userInput, memoryContext?.contextSummary);
+};
 
 /**
  * Execute ARCANOS system diagnosis with structured response, audit-safe mode, and memory-aware reasoning
