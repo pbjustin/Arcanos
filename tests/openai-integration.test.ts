@@ -254,16 +254,16 @@ describe('OpenAI SDK Integration Tests', () => {
         // Test empty string
         process.env.PORT = '';
         jest.resetModules();
-        let { validateEnvironment } = await import('../src/utils/envValidation.js');
-        let result = validateEnvironment();
+        let module = await import('../src/utils/envValidation.js');
+        let result = module.validateEnvironment();
         expect(result.valid).toBe(true);
         expect(result.config.port).toBe(8080);
 
         // Test whitespace
         process.env.PORT = '   ';
         jest.resetModules();
-        ({ validateEnvironment } = await import('../src/utils/envValidation.js'));
-        result = validateEnvironment();
+        module = await import('../src/utils/envValidation.js');
+        result = module.validateEnvironment();
         expect(result.valid).toBe(true);
         expect(result.config.port).toBe(8080);
       } finally {
