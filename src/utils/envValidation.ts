@@ -49,7 +49,8 @@ export function validateEnvironment(): EnvValidationResult {
   }
   
   // Configuration variables with defaults
-  const port = parseInt(process.env.PORT || '8080', 10);
+  const portValue = (process.env.PORT || '').trim() || '8080';
+  const port = parseInt(portValue, 10);
   if (isNaN(port) || port < 1 || port > 65535) {
     errors.push(`Invalid PORT value: ${process.env.PORT}. Must be between 1 and 65535`);
   }
