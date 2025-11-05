@@ -537,6 +537,13 @@ async function attemptModelCall(
 }
 
 /**
+ * Helper to extract token count from request parameters
+ */
+function getTokensFromParams(params: any): number {
+  return params.max_tokens || params.max_completion_tokens || OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS;
+}
+
+/**
  * Helper to attempt GPT-5 call with proper token parameter handling
  */
 async function attemptGPT5Call(
@@ -546,7 +553,7 @@ async function attemptGPT5Call(
 ): Promise<{ response: any; model: string }> {
   console.log(`🚀 [GPT-5 FALLBACK] Attempting with GPT-5: ${gpt5Model}`);
   
-  const tokenParams = getTokenParameter(gpt5Model, params.max_tokens || params.max_completion_tokens || OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS);
+  const tokenParams = getTokenParameter(gpt5Model, getTokensFromParams(params));
   const gpt5Payload = prepareGPT5Request({
     ...params,
     model: gpt5Model,
