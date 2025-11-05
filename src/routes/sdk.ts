@@ -14,8 +14,50 @@ import {
   startWorkers,
   type WorkerBootstrapSummary
 } from '../config/workerConfig.js';
+import { createValidationMiddleware } from '../utils/security.js';
+import { connectResearchBridge } from '../services/researchHub.js';
 
 const router = express.Router();
+const sdkResearchBridge = connectResearchBridge('SDK:RESEARCH');
+
+const researchSchema = {
+  topic: {
+    required: true,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 500,
+    sanitize: true
+  },
+  urls: {
+    required: false,
+    type: 'array' as const
+  }
+};
+
+router.post(
+  '/research',
+  confirmGate,
+  createValidationMiddleware(researchSchema),
+  async (req, res) => {
+    const { topic, urls = [] } = req.body as { topic: string; urls?: string[] };
+
+    if (!Array.isArray(urls) || urls.some(url => typeof url !== 'string')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: ["Field 'urls' must be an array of strings"],
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const result = await sdkResearchBridge.requestResearch({ topic, urls });
+
+    res.json({
+      success: true,
+      ...result
+    });
+  }
+);
 
 /**
  * Initialize workers via SDK call
