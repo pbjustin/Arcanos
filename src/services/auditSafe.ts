@@ -8,6 +8,7 @@
 
 import { appendFileSync } from 'fs';
 import { getAuditLogPath, getLineageLogPath, ensureLogDirectory } from '../utils/logPath.js';
+import { generateRequestId } from '../utils/idGenerator.js';
 
 export interface AuditSafeConfig {
   auditSafeMode: boolean;
@@ -118,7 +119,7 @@ AUDIT REQUIREMENT: Your response will be logged for compliance review.`;
   const auditSafeUserPrompt = `[AUDIT-SAFE REQUEST]
 Timestamp: ${new Date().toISOString()}
 Mode: AUDIT_SAFE_ENABLED
-Request ID: ${generateRequestId()}
+Request ID: ${generateRequestId('arc')}
 
 ${userPrompt}
 
@@ -152,13 +153,6 @@ export function logAITaskLineage(entry: AuditLogEntry) {
   } catch (error) {
     console.error('❌ Failed to write audit log:', error instanceof Error ? error.message : 'Unknown error');
   }
-}
-
-/**
- * Generate unique request ID for tracking
- */
-function generateRequestId(): string {
-  return `arc_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 }
 
 /**

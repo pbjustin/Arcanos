@@ -9,6 +9,10 @@
  */
 
 import { logger } from '../utils/structuredLogging.js';
+import {
+  getSecurityReasoningEnginePrompt,
+  getStructuredSecurityResponseTemplate
+} from '../config/prompts.js';
 
 interface SecurityConfig {
   redactCredentials: boolean;
@@ -239,28 +243,7 @@ function checkForRemainingSensitiveContent(content: string): string[] {
  * Create a secure reasoning prompt that ensures compliance
  */
 export function createSecureReasoningPrompt(userInput: string): string {
-  const securePrompt = `
-You are the reasoning engine for ARCANOS. Your role is to provide deep analysis, structured plans, and problem-solving steps while maintaining strict security and compliance standards.
-
-SECURITY REQUIREMENTS (CRITICAL):
-1. Do NOT generate, expose, or guess real API keys, tokens, passwords, access credentials, or any sensitive authentication strings
-2. If your reasoning requires an example of such data, replace it with a safe placeholder in the format: <KEY_REDACTED> or <TOKEN_REDACTED>
-3. Do NOT output internal file paths, environment variables, or proprietary code from ARCANOS's backend unless explicitly requested by ARCANOS
-4. When giving technical examples, use fictional or generic identifiers that cannot be mistaken for live credentials
-5. Always assume your output will be logged, audited, and stored. Write with compliance and confidentiality in mind
-6. Focus on reasoning and structured solutions — ARCANOS will handle execution, tone, and delivery
-
-RESPONSE REQUIREMENTS:
-- Provide structured, clear analysis free of any confidential or security-sensitive strings
-- Use generic examples and fictional identifiers for technical explanations
-- Focus on problem-solving methodology rather than exposing implementation details
-- Ensure all recommendations are actionable but do not reveal sensitive system information
-
-User Request: ${userInput}
-
-Provide your analysis following the security requirements above:`;
-  
-  return securePrompt;
+  return getSecurityReasoningEnginePrompt(userInput);
 }
 
 /**
@@ -274,27 +257,21 @@ export function createStructuredSecureResponse(
   // Apply security compliance to the analysis
   const complianceCheck = applySecurityCompliance(analysis);
   
-  // Create structured response format
-  const structuredResponse = `
-🧠 ARCANOS REASONING ENGINE ANALYSIS
-═══════════════════════════════════
-
-📋 REQUEST SUMMARY
-${createSafeInputSummary(userInput)}
-
-🔍 STRUCTURED ANALYSIS
-${complianceCheck.content}
-
-📊 COMPLIANCE STATUS
-Status: ${complianceCheck.complianceStatus}
-Security Measures Applied: ${complianceCheck.redactionsApplied.length > 0 ? complianceCheck.redactionsApplied.join(', ') : 'None required'}
-
-🎯 STRUCTURED RECOMMENDATIONS
-The analysis above provides problem-solving methodology while maintaining security compliance.
-All sensitive information has been redacted using safe placeholders as required.
-
-Note: This analysis is designed for audit compliance and confidentiality standards.
-`;
+  // Create input summary
+  const inputSummary = createSafeInputSummary(userInput);
+  
+  // Format redactions applied
+  const redactionsApplied = complianceCheck.redactionsApplied.length > 0 
+    ? complianceCheck.redactionsApplied.join(', ') 
+    : 'None required';
+  
+  // Create structured response using template from config
+  const structuredResponse = getStructuredSecurityResponseTemplate(
+    inputSummary,
+    complianceCheck.content,
+    complianceCheck.complianceStatus,
+    redactionsApplied
+  );
 
   return { structuredResponse, complianceCheck };
 }

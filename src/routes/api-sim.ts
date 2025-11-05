@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createCentralizedCompletion } from '../services/openai.js';
+import { generateRequestId } from '../utils/idGenerator.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
@@ -134,7 +135,7 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
           model: completion.model,
           tokensUsed: completion.usage?.total_tokens || 0,
           timestamp: new Date().toISOString(),
-          simulationId: `sim_${Date.now()}_${Math.random().toString(36).substring(7)}`
+          simulationId: generateRequestId('sim')
         }
       }
     });
