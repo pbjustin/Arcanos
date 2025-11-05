@@ -14,7 +14,7 @@ ARCANOS delivers player assistance that depends on nuanced language understandin
 
 ## Example: current production fine-tune
 
-Our active model is `ft:gpt-4.1-2025-14:personal:arca`, created on **25 Aug 2025 at 01:50 UTC** via supervised fine-tuning on `gpt-4.1-2025-04-14`. The run consumed **1,920,780** training tokens over **3 epochs** with shared data retention to keep evaluation tooling available across teams.
+Our active model is `ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote`, created on **25 Aug 2025 at 01:50 UTC** via supervised fine-tuning on `gpt-4.1-2025-04-14`. The run consumed **1,920,780** training tokens over **3 epochs** with shared data retention to keep evaluation tooling available across teams.
 
 This model powers the production routing profile named **"Arcanos"**, giving us:
 
