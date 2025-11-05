@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import { generateRequestId } from '../utils/idGenerator.js';
 import { CircuitBreaker, ExponentialBackoff } from '../utils/circuitBreaker.js';
 import { responseCache } from '../utils/cache.js';
 import { aiLogger } from '../utils/structuredLogging.js';
@@ -59,7 +60,7 @@ export interface CallOpenAIResult extends CallOpenAICacheEntry {
  * @returns Mock response object with realistic structure matching real AI responses
  */
 export const generateMockResponse = (input: string, endpoint: string = 'ask'): any => {
-  const mockId = `mock_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const mockId = generateRequestId('mock');
   const timestamp = Math.floor(Date.now() / 1000);
   
   const baseMockResponse = {

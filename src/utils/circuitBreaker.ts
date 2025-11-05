@@ -3,6 +3,8 @@
  * Provides resilient API call handling with automatic failure detection and recovery
  */
 
+import { APPLICATION_CONSTANTS } from './constants.js';
+
 export interface CircuitBreakerOptions {
   failureThreshold: number;
   resetTimeoutMs: number;
@@ -91,10 +93,10 @@ export class CircuitBreaker {
  */
 export class ExponentialBackoff {
   constructor(
-    private baseDelayMs: number = 1000,
-    private maxDelayMs: number = 30000,
-    private backoffMultiplier: number = 2,
-    private jitterMaxMs: number = 1000
+    private baseDelayMs: number = APPLICATION_CONSTANTS.CIRCUIT_BREAKER_BASE_DELAY,
+    private maxDelayMs: number = APPLICATION_CONSTANTS.CIRCUIT_BREAKER_MAX_DELAY,
+    private backoffMultiplier: number = APPLICATION_CONSTANTS.CIRCUIT_BREAKER_BACKOFF_MULTIPLIER,
+    private jitterMaxMs: number = APPLICATION_CONSTANTS.CIRCUIT_BREAKER_JITTER_MAX
   ) {}
 
   calculateDelay(attempt: number): number {

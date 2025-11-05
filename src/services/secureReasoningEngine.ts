@@ -9,6 +9,8 @@
 import OpenAI from 'openai';
 import { getDefaultModel, createChatCompletionWithFallback } from './openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import { generateRequestId } from '../utils/idGenerator.js';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { 
   applySecurityCompliance, 
   createSecureReasoningPrompt, 
@@ -49,7 +51,7 @@ export async function executeSecureReasoning(
   request: SecureReasoningRequest
 ): Promise<SecureReasoningResult> {
   
-  const requestId = request.requestId || `secure_reasoning_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const requestId = request.requestId || generateRequestId('secure_reasoning');
   const timestamp = new Date().toISOString();
   
   console.log(`[🧠 SECURE REASONING] Processing request ${requestId}`);
@@ -68,7 +70,7 @@ export async function executeSecureReasoning(
   
   try {
     // Execute reasoning with enhanced error handling
-    const tokenParams = getTokenParameter(model, 2000);
+    const tokenParams = getTokenParameter(model, APPLICATION_CONSTANTS.EXTENDED_TOKEN_LIMIT);
     const response = await createChatCompletionWithFallback(client, {
       messages: [
         {

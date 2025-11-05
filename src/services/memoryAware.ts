@@ -7,6 +7,7 @@
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
+import { generateRequestId } from '../utils/idGenerator.js';
 
 export interface MemoryEntry {
   id: string;
@@ -49,7 +50,7 @@ function sanitizeMemoryEntry(raw: any): MemoryEntry | null {
   if (!raw || typeof raw !== 'object') return null;
 
   const entry: MemoryEntry = {
-    id: typeof raw.id === 'string' ? raw.id : generateMemoryId(),
+    id: typeof raw.id === 'string' ? raw.id : generateRequestId('mem'),
     timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString(),
     key: typeof raw.key === 'string' ? raw.key : '',
     value: typeof raw.value === 'string' ? raw.value : '',
@@ -154,7 +155,7 @@ export function storeMemory(
   initializeMemory();
 
   const entry: MemoryEntry = {
-    id: generateMemoryId(),
+    id: generateRequestId('mem'),
     timestamp: new Date().toISOString(),
     key,
     value,
@@ -359,13 +360,6 @@ function logMemoryAccess(operation: string, key: string, entryId: string) {
   } catch (error) {
     console.error('❌ Failed to log memory access:', error instanceof Error ? error.message : 'Unknown error');
   }
-}
-
-/**
- * Generate unique memory ID
- */
-function generateMemoryId(): string {
-  return `mem_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 }
 
 /**

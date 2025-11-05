@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import { call_gpt5_strict, getGPT5Model } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import { generateRequestId } from '../utils/idGenerator.js';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { 
   getAuditSafeConfig, 
   applyAuditSafeConstraints, 
@@ -140,7 +142,7 @@ function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: b
   }
   
   // Check input length - very long inputs may benefit from structured reasoning
-  if (userInput.length > 1000) {
+  if (userInput.length > APPLICATION_CONSTANTS.MAX_INPUT_LENGTH) {
     return { 
       shouldDelegate: true, 
       reason: 'Long input requires structured processing capability' 
@@ -346,7 +348,7 @@ export async function runARCANOS(
   console.log('[🔬 ARCANOS] Running system diagnosis with enhanced capabilities...');
   
   // Generate unique request ID for tracking
-  const requestId = `arc_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const requestId = generateRequestId('arc');
   
   // Get audit-safe configuration
   const auditConfig = getAuditSafeConfig(userInput, overrideFlag);
@@ -411,7 +413,7 @@ export async function runARCANOS(
   
   try {
     // Use strict GPT-5 call with no fallback
-    const tokenParams = getTokenParameter(gpt5Model, 2000);
+    const tokenParams = getTokenParameter(gpt5Model, APPLICATION_CONSTANTS.EXTENDED_TOKEN_LIMIT);
     
     // Prepare messages for call_gpt5_strict
     const systemMessage = enhancedSystemPrompt;

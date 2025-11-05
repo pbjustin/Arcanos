@@ -3,6 +3,8 @@
  * Provides comprehensive logging with context and metadata for better observability
  */
 
+import { generateRequestId } from './idGenerator.js';
+
 export enum LogLevel {
   DEBUG = 'debug',
   INFO = 'info', 
@@ -164,7 +166,7 @@ function sanitize(obj: Record<string, any>): Record<string, any> {
  * Express middleware for request logging
  */
 export function requestLoggingMiddleware(req: any, res: any, next: any) {
-  const requestId = req.headers['x-request-id'] || `req_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const requestId = req.headers['x-request-id'] || generateRequestId('req');
   const startTime = Date.now();
   
   // Add request ID to request object
