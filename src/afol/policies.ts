@@ -4,7 +4,7 @@ function isServiceHealthy(service?: { ok?: boolean }): boolean {
   return service?.ok === true;
 }
 
-export function evaluate(health: HealthSnapshot, intent: string = 'default'): PolicyEvaluation {
+export function evaluate(health: HealthSnapshot, _intent: string = 'default'): PolicyEvaluation {
   const redisOk = isServiceHealthy(health.redis);
   const apiOk = isServiceHealthy(health.api);
   const primaryAvailable = redisOk && apiOk;
