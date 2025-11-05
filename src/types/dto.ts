@@ -58,7 +58,22 @@ export const aiResponseSchema = z.object({
   }),
   activeModel: z.string().optional(),
   fallbackFlag: z.boolean().optional(),
-  error: z.string().optional()
+  error: z.string().optional(),
+  datasetHarvest: z
+    .array(
+      z.object({
+        name: z.string(),
+        summary: z.string(),
+        confidence: z.enum(['high', 'medium', 'low']),
+        tags: z.array(z.string()),
+        memoryKey: z.string(),
+        stored: z.boolean(),
+        persistedAt: z.string(),
+        requestId: z.string().optional(),
+        sessionId: z.string().optional()
+      })
+    )
+    .optional()
 });
 
 export type AIResponseDTO = z.infer<typeof aiResponseSchema>;
