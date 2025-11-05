@@ -3,6 +3,7 @@ import type { Express } from 'express';
 import config from './config/index.js';
 import './config/workerConfig.js';
 import './logic/aiCron.js';
+import './logic/assistantSyncCron.js';
 import { initializeWorkers } from './utils/workerBoot.js';
 import { getAvailablePort } from './utils/portUtils.js';
 import { runSystemDiagnostic } from './services/gptSync.js';

@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
 
-// Endpoint for ARCANOS plugin to receive assistant data
-const SYNC_ENDPOINT = process.env.ASSISTANTS_SYNC_ENDPOINT || 'http://localhost:3000/assistants-sync';
+// Endpoint for ARCANOS backend assistant registry
+const REGISTRY_ENDPOINT = process.env.ASSISTANTS_REGISTRY_ENDPOINT || 'http://localhost:3000/api/assistants';
+const SYNC_ENDPOINT = process.env.ASSISTANTS_SYNC_ENDPOINT || 'http://localhost:3000/api/assistants/sync';
 
 // Interval in milliseconds for polling OpenAI Assistants API
 const POLL_INTERVAL = 60_000; // 60 seconds
@@ -11,6 +12,7 @@ interface AssistantPayload {
   name: string | null;
   instructions: string | null;
   tools: any[] | null;
+  model?: string | null;
 }
 
 async function listOpenAIAssistants(openai: OpenAI) {
@@ -19,26 +21,44 @@ async function listOpenAIAssistants(openai: OpenAI) {
     id: a.id,
     name: a.name ?? null,
     instructions: a.instructions ?? null,
-    tools: a.tools ?? null
+    tools: a.tools ?? null,
+    model: (a as any).model ?? null
   }) as AssistantPayload);
 }
 
 async function getLocalAssistants(): Promise<AssistantPayload[]> {
   try {
-    const res = await fetch(SYNC_ENDPOINT);
+    const res = await fetch(REGISTRY_ENDPOINT);
     if (!res.ok) return [];
     const json = await res.json();
-    return Array.isArray(json.assistants) ? json.assistants : [];
+    if (!json || typeof json.assistants !== 'object') return [];
+    return Object.values(json.assistants).map((assistant: any) => ({
+      id: assistant.id,
+      name: assistant.name ?? null,
+      instructions: assistant.instructions ?? null,
+      tools: assistant.tools ?? null,
+      model: assistant.model ?? null
+    }));
   } catch {
     // If the endpoint is unreachable, treat as no local assistants
     return [];
   }
 }
 
+function serializeAssistant(assistant: AssistantPayload) {
+  return JSON.stringify({
+    id: assistant.id,
+    name: assistant.name,
+    instructions: assistant.instructions,
+    tools: assistant.tools,
+    model: assistant.model ?? null
+  });
+}
+
 function assistantsDiffer(local: AssistantPayload[], remote: AssistantPayload[]) {
   if (local.length !== remote.length) return true;
-  const map = new Map(local.map(a => [a.id, JSON.stringify(a)]));
-  return remote.some(a => map.get(a.id) !== JSON.stringify(a));
+  const map = new Map(local.map(a => [a.id, serializeAssistant(a)]));
+  return remote.some(a => map.get(a.id) !== serializeAssistant(a));
 }
 
 async function syncAssistants() {
@@ -59,11 +79,7 @@ async function syncAssistants() {
       return;
     }
 
-    const res = await fetch(SYNC_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assistants: remoteAssistants })
-    });
+    const res = await fetch(SYNC_ENDPOINT, { method: 'POST' });
 
     if (res.ok) {
       console.log(`Synced ${remoteAssistants.length} assistants`);
