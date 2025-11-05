@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import { runThroughBrain } from '../logic/trinity.js';
 import { validateAIRequest, handleAIError } from '../utils/requestHandler.js';
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
+import { harvestDatasetsFromAudit } from '../services/datasetHarvester.js';
 
 type AIRequest = AIRequestDTO & {
   prompt?: string;
@@ -20,6 +21,7 @@ interface AIResponse extends AIResponseDTO {
   module?: string;
   routingStages?: string[];
   gpt5Used?: boolean;
+  datasetHarvest?: ReturnType<typeof harvestDatasetsFromAudit>;
 }
 
 /**
@@ -38,16 +40,30 @@ export class AIController {
     const validation = validateAIRequest(req, res, endpointName);
     if (!validation) return; // Response already sent
 
-    const { client: openai, input } = validation;
+    const { client: openai, input, body } = validation;
 
     try {
       // runThroughBrain enforces GPT-5 as the primary reasoning stage
-      const output = await runThroughBrain(openai, input);
+      const output = await runThroughBrain(openai, input, body.sessionId, body.overrideAuditSafe);
 
-      res.json({
-        ...output,
+      const responsePayload: AIResponse = {
+        ...(output as AIResponse),
         endpoint: endpointName
-      } as AIResponse);
+      };
+
+      if (endpointName === 'audit' && output?.result) {
+        const datasetHarvest = harvestDatasetsFromAudit(output.result, {
+          sourcePrompt: input,
+          sessionId: body.sessionId,
+          requestId: output.taskLineage?.requestId
+        });
+
+        if (datasetHarvest.length) {
+          responsePayload.datasetHarvest = datasetHarvest;
+        }
+      }
+
+      res.json(responsePayload);
     } catch (err) {
       handleAIError(err, input, endpointName, res);
     }
