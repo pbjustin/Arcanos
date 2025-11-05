@@ -15,19 +15,32 @@ let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
 
+// OpenAI API Configuration Constants
+const OPENAI_CONSTANTS = {
+  DEFAULT_MAX_TOKENS: 1024,
+  RATE_LIMIT_JITTER_MAX_MS: 2000, // 0-2 seconds additional jitter for rate limits
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5,
+  CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000, // 30 seconds
+  CIRCUIT_BREAKER_MONITORING_PERIOD_MS: 60000, // 1 minute
+  BACKOFF_BASE_DELAY_MS: 1000, // 1 second
+  BACKOFF_MAX_DELAY_MS: 30000, // 30 seconds
+  BACKOFF_MULTIPLIER: 2,
+  BACKOFF_JITTER_MAX_MS: 500
+} as const;
+
 // Initialize circuit breaker for OpenAI API calls
 const openaiCircuitBreaker = new CircuitBreaker({
-  failureThreshold: 5,
-  resetTimeoutMs: 30000, // 30 seconds
-  monitoringPeriodMs: 60000 // 1 minute
+  failureThreshold: OPENAI_CONSTANTS.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+  resetTimeoutMs: OPENAI_CONSTANTS.CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
+  monitoringPeriodMs: OPENAI_CONSTANTS.CIRCUIT_BREAKER_MONITORING_PERIOD_MS
 });
 
 // Initialize exponential backoff for retries
 const backoffStrategy = new ExponentialBackoff(
-  1000, // base delay 1s
-  30000, // max delay 30s
-  2, // multiplier
-  500 // jitter max 500ms
+  OPENAI_CONSTANTS.BACKOFF_BASE_DELAY_MS,
+  OPENAI_CONSTANTS.BACKOFF_MAX_DELAY_MS,
+  OPENAI_CONSTANTS.BACKOFF_MULTIPLIER,
+  OPENAI_CONSTANTS.BACKOFF_JITTER_MAX_MS
 );
 
 export interface CallOpenAIOptions {
@@ -270,7 +283,7 @@ function prepareGPT5Request(payload: any): any {
       delete payload.max_completion_tokens;
     }
     if (!payload.max_output_tokens) {
-      payload.max_output_tokens = 1024;
+      payload.max_output_tokens = OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS;
     }
   }
   return payload;
@@ -497,12 +510,52 @@ function getRetryDelay(attempt: number, error: any): number {
   
   // Add extra jitter for rate limit errors (429)
   if (error?.status === 429) {
-    const jitterMs = Math.random() * 2000; // 0-2 seconds additional jitter
+    const jitterMs = Math.random() * OPENAI_CONSTANTS.RATE_LIMIT_JITTER_MAX_MS;
     console.log(`⏱️ Rate limit detected - adding jitter (${jitterMs.toFixed(0)}ms)`);
     return baseDelay + jitterMs;
   }
   
   return baseDelay;
+}
+
+/**
+ * Helper to attempt API call with a specific model
+ */
+async function attemptModelCall(
+  client: OpenAI,
+  params: any,
+  model: string,
+  logPrefix: string
+): Promise<{ response: any; model: string }> {
+  console.log(`${logPrefix} Attempting with model: ${model}`);
+  const response = await client.chat.completions.create({
+    ...params,
+    model
+  });
+  console.log(`✅ ${logPrefix} Success with ${model}`);
+  return { response, model };
+}
+
+/**
+ * Helper to attempt GPT-5 call with proper token parameter handling
+ */
+async function attemptGPT5Call(
+  client: OpenAI,
+  params: any,
+  gpt5Model: string
+): Promise<{ response: any; model: string }> {
+  console.log(`🚀 [GPT-5 FALLBACK] Attempting with GPT-5: ${gpt5Model}`);
+  
+  const tokenParams = getTokenParameter(gpt5Model, params.max_tokens || params.max_completion_tokens || OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS);
+  const gpt5Payload = prepareGPT5Request({
+    ...params,
+    model: gpt5Model,
+    ...tokenParams
+  });
+  
+  const response = await client.chat.completions.create(gpt5Payload);
+  console.log(`✅ [GPT-5 FALLBACK] Success with ${gpt5Model}`);
+  return { response, model: gpt5Model };
 }
 
 /**
@@ -519,16 +572,10 @@ export const createChatCompletionWithFallback = async (
   
   // First attempt with the fine-tuned model
   try {
-    console.log(`🧠 [PRIMARY] Attempting with fine-tuned model: ${primaryModel}`);
-    const response = await client.chat.completions.create({
-      ...params,
-      model: primaryModel
-    });
-    
-    console.log(`✅ [PRIMARY] Success with ${primaryModel}`);
+    const { response, model } = await attemptModelCall(client, params, primaryModel, '🧠 [PRIMARY]');
     return {
       ...response,
-      activeModel: primaryModel,
+      activeModel: model,
       fallbackFlag: false
     };
   } catch (primaryError) {
@@ -536,16 +583,10 @@ export const createChatCompletionWithFallback = async (
     
     // Retry with the fine-tuned model once more
     try {
-      console.log(`🔄 [RETRY] Retrying fine-tuned model: ${primaryModel}`);
-      const retryResponse = await client.chat.completions.create({
-        ...params,
-        model: primaryModel
-      });
-      
-      console.log(`✅ [RETRY] Success with ${primaryModel} on retry`);
+      const { response, model } = await attemptModelCall(client, params, primaryModel, '🔄 [RETRY]');
       return {
-        ...retryResponse,
-        activeModel: primaryModel,
+        ...response,
+        activeModel: model,
         fallbackFlag: false,
         retryUsed: true
       };
@@ -554,23 +595,10 @@ export const createChatCompletionWithFallback = async (
       
       // Fall back to GPT-5
       try {
-        console.log(`🚀 [GPT-5 FALLBACK] Attempting with GPT-5: ${gpt5Model}`);
-        
-        // Use the token parameter helper for GPT-5
-        const tokenParams = getTokenParameter(gpt5Model, params.max_tokens || params.max_completion_tokens || 1024);
-        
-        const gpt5Payload = prepareGPT5Request({
-          ...params,
-          model: gpt5Model,
-          ...tokenParams
-        });
-        
-        const gpt5Response = await client.chat.completions.create(gpt5Payload);
-        
-        console.log(`✅ [GPT-5 FALLBACK] Success with ${gpt5Model}`);
+        const { response, model } = await attemptGPT5Call(client, params, gpt5Model);
         return {
-          ...gpt5Response,
-          activeModel: gpt5Model,
+          ...response,
+          activeModel: model,
           fallbackFlag: true,
           fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5`,
           gpt5Used: true
@@ -580,16 +608,10 @@ export const createChatCompletionWithFallback = async (
         
         // Final fallback to configured backup model
         try {
-          console.log(`🛟 [FINAL FALLBACK] Last resort with fallback model: ${finalFallbackModel}`);
-          const finalResponse = await client.chat.completions.create({
-            ...params,
-            model: finalFallbackModel
-          });
-          
-          console.log(`✅ [FINAL FALLBACK] Success with ${finalFallbackModel}`);
+          const { response, model } = await attemptModelCall(client, params, finalFallbackModel, '🛟 [FINAL FALLBACK]');
           return {
-            ...finalResponse,
-            activeModel: finalFallbackModel,
+            ...response,
+            activeModel: model,
             fallbackFlag: true,
             fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5 fallback), using final fallback`
           };
@@ -656,7 +678,7 @@ export const createGPT5Reasoning = async (
     console.log(`🚀 [GPT-5 REASONING] Using model: ${gpt5Model}`);
 
     // Use token parameter utility for correct parameter selection
-    const tokenParams = getTokenParameter(gpt5Model, 1024);
+    const tokenParams = getTokenParameter(gpt5Model, OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS);
 
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
