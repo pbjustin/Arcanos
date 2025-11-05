@@ -112,6 +112,20 @@ function createCheckResult(
 }
 
 /**
+ * Helper to get the status message based on check status
+ */
+function getStatusMessage(status: '✅' | '❌' | '⚠️'): string {
+  switch (status) {
+    case '✅':
+      return REPORT_TEMPLATE.statusMessages.approved;
+    case '⚠️':
+      return REPORT_TEMPLATE.statusMessages.conditional;
+    case '❌':
+      return REPORT_TEMPLATE.statusMessages.rejected;
+  }
+}
+
+/**
  * Validates environment variables documentation in .env.example
  */
 async function validateEnvDocumentation(workingDir: string, envVars: string[]): Promise<{ issues: string[]; details: string[]; }> {
@@ -718,9 +732,7 @@ export class PRAssistant {
 
     // Footer
     const railwayStatus = result.checks.railwayReadiness.status === '✅' ? 'Ready' : 'Needs Review';
-    const statusMessage = result.status === '✅' 
-      ? REPORT_TEMPLATE.statusMessages.approved 
-      : (result.status === '⚠️' ? REPORT_TEMPLATE.statusMessages.conditional : REPORT_TEMPLATE.statusMessages.rejected);
+    const statusMessage = getStatusMessage(result.status);
 
     markdown += `${REPORT_TEMPLATE.footer.divider}\n\n`;
     markdown += `${REPORT_TEMPLATE.footer.completedBy}  \n`;
