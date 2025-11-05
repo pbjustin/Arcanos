@@ -37,6 +37,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
 
   // Check if user has explicitly confirmed the action
   if (confirmationHeader !== 'yes' && !isTrustedGpt) {
+    res.setHeader('x-confirmation-status', 'required');
     console.log(
       `[❌ CONFIRM-GATE] Request blocked - missing or invalid confirmation header${
         gptId ? ` (GPTID ${gptId} not trusted)` : ''
@@ -51,11 +52,13 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
       endpoint: req.path,
       method: req.method,
       gptId: gptId || null,
+      confirmationRequired: true,
       timestamp: new Date().toISOString()
     });
     return;
   }
 
+  res.setHeader('x-confirmation-status', 'confirmed');
   console.log(`[✅ CONFIRM-GATE] Request confirmed - proceeding with execution`);
   next();
 }
