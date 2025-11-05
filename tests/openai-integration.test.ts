@@ -231,10 +231,12 @@ describe('OpenAI SDK Integration Tests', () => {
       process.env.PORT = '3000';
 
       try {
-        const { validateEnvironment } = await import('../src/utils/environmentValidation.js');
+        jest.resetModules();
+        const { validateEnvironment } = await import('../src/utils/envValidation.js');
         
         const result = validateEnvironment();
-        expect(result.isValid).toBe(true);
+        expect(result.valid).toBe(true);
+        expect(result.config.port).toBe(3000);
         expect(process.env.PORT).toBe('3000');
       } finally {
         if (originalPort) {
