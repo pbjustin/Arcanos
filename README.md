@@ -138,9 +138,37 @@ caller supplies a trusted GPT ID via `x-gpt-id` or request payload.
 - `POST /rag/fetch`, `/rag/save`, `/rag/query` – Retrieval-augmented generation
   ingestion and querying.
 - `POST /commands/research` – Curated research pipeline (requires confirmation).
+- `POST /sdk/research` – SDK-friendly research bridge that reuses the central
+  OpenAI client (requires confirmation).
 - `POST /api/ask-hrc` – Hallucination Resistant Core evaluation.
 - `POST /api/pr-analysis/*`, `/api/openai/*`, `/api/commands/*` – Specialized
   automation surfaces documented in the `docs/api` directory.
+
+#### Research Module Primer
+
+ARCANOS Research accepts a topic and optional URLs, fetches each source, and
+uses the centralized OpenAI SDK client (`createCentralizedCompletion`) to
+summarize and synthesize a brief. Results are persisted to
+`memory/research/{topic}` for later retrieval and auditing.
+
+```bash
+curl -X POST http://localhost:8080/commands/research \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{
+        "topic": "Hallucination resistant prompting",
+        "urls": ["https://example.com/article"]
+      }'
+
+curl -X POST http://localhost:8080/sdk/research \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"topic": "Knowledge management for AI teams"}'
+```
+
+Both endpoints respect mock-mode fallbacks when `OPENAI_API_KEY` is set to the
+test sentinel and remain deployable on Railway thanks to confirmation gating,
+JSON payloads, and adherence to the shared health/diagnostic surfaces.
 
 ---
 

@@ -348,6 +348,26 @@ Requires confirmation.
 **Response** includes `summary`, `sources`, and `timestamp` fields from the
 research module.
 
+### `POST /sdk/research`
+Requires confirmation. Mirrors the research pipeline for SDK consumers while
+maintaining OpenAI SDK routing and Railway-safe validation.
+
+```bash
+curl -X POST http://localhost:8080/sdk/research \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{
+        "topic": "Evaluate retrieval alignment",
+        "urls": [
+          "https://example.com/paper",
+          "https://example.com/blog"
+        ]
+      }'
+```
+
+Returns the same payload shape as `/commands/research`, enabling downstream
+automation to persist insights and source summaries in memory.
+
 ### RAG Endpoints
 - `POST /rag/fetch` – Fetch a document by URL.
 - `POST /rag/save` – Save raw content.

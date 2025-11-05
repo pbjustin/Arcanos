@@ -39,6 +39,25 @@ The Research Module provides deep multi-source research capabilities by fetching
 }
 ```
 
+### SDK Bridge: `POST /sdk/research`
+
+Designed for OpenAI SDK-based integrations and Railway deployments, the SDK
+bridge validates the same payload shape and relays the request through the
+central `connectResearchBridge()` hub.
+
+```bash
+curl -X POST http://localhost:8080/sdk/research \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{
+        "topic": "Alignment research status report",
+        "urls": ["https://example.com/status-update"]
+      }'
+```
+
+The response mirrors `/commands/research`, ensuring consistency for SDK clients
+and background automation alike.
+
 ## Programming Interface
 
 ### Function: `researchTopic(topic, urls)`

@@ -196,6 +196,8 @@ Routes are registered in `routes/register.ts`. Highlights include:
 - `/image` – Image generation using OpenAI Images API.
 - `/rag/*` – Retrieval augmented generation ingestion and query helpers.
 - `/commands/research` – Research module for summarizing external sources.
+- `/sdk/research` – SDK entry point that reuses the same research pipeline for
+  Railway deployments and OpenAI SDK consumers.
 - `/api/ask-hrc` – Hallucination-resistant classification endpoint.
 - `/gpt/*` – GPT routing helpers defined in `routes/gptRouter.ts`.
 - `/backstage/*` – Backstage tooling endpoints for legacy integrations.
