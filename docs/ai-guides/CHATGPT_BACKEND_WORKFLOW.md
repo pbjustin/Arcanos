@@ -1,6 +1,6 @@
 # ChatGPT Native App → ARCANOS Backend Workflow
 
-This guide summarizes how to connect the ChatGPT native app (via a Custom GPT) to your ARCANOS backend and refine the model using the provided fine-tuning pipeline. It collects key steps from `CUSTOM_GPT_INTEGRATION.md` and `FINETUNE_PIPELINE.md` for quick reference.
+This guide summarizes how to connect the ChatGPT native app (via a Custom GPT) to your ARCANOS backend and keep it synchronized with the latest orchestration releases. It collects the canonical workflow from `CUSTOM_GPT_INTEGRATION.md`, `BACKEND_SYNC_IMPLEMENTATION.md`, and `FINETUNE_PIPELINE.md` for quick reference, then adds the testing and verification steps we now require before publishing a Custom GPT update.
 
 ---
 
@@ -21,6 +21,11 @@ Install the required CLI utilities if you have not already:
 ```bash
 pip3 install --user openai
 sudo apt-get install jq
+```
+
+Run the backend test harness to ensure `/ask` and `/api/ask` are healthy before continuing:
+```bash
+npm test -- src/routes/api-ask.ts
 ```
 
 ## 2. Upload Training Data
@@ -53,23 +58,30 @@ After a job finishes, update `.env` with the new model ID so your backend and Cu
 ```bash
 OPENAI_MODEL=my-new-fine-tuned-model-id
 ```
-In your backend code, reference this variable when creating chat completions.
+In your backend code, reference this variable when creating chat completions. The `/api/ask` controller (`src/routes/api-ask.ts`) reads this environment variable via the `handleAIRequest` pipeline, so a redeploy with the new configuration automatically refreshes every Custom GPT Action.
 
 ## 6. Connect ChatGPT via Custom GPT Actions
 
-In GPT Builder, add the following Action to send user queries to your backend:
+In GPT Builder, add the following Action to send user queries to your backend. This mirrors the normalization logic in `src/routes/api-ask.ts` and keeps the ChatGPT UI in parity with the REST surface area we expose elsewhere:
 ```json
 {
   "name": "Ask ARCANOS",
   "description": "Send user query to ARCANOS backend with optional RAG and HRC processing",
   "url": "https://your-deployment-url/api/ask",
   "method": "POST",
-  "headers": { "Content-Type": "application/json" },
+  "headers": {
+    "Content-Type": "application/json",
+    "x-confirmed": "yes"
+  },
   "body": {
     "message": "{{user_input}}",
     "domain": "general",
     "useRAG": true,
-    "useHRC": true
+    "useHRC": true,
+    "metadata": {
+      "source": "chatgpt-native",
+      "gpt_id": "{{gpt_id}}"
+    }
   },
   "response": { "field": "response" }
 }
@@ -82,8 +94,8 @@ Replace `https://your-deployment-url` with your actual backend URL. A second Act
 2. Trigger a fine-tune job with `continue_finetune.sh`.
 3. Monitor the job until it completes.
 4. Update `.env` with the resulting model ID.
-5. In the ChatGPT app, send a message through the "Ask ARCANOS" Action and verify that the response uses your fine‑tuned model.
+5. In the ChatGPT app, send a message through the "Ask ARCANOS" Action and verify that the response uses your fine‑tuned model. Confirm that the `routingStages` array references `ARCANOS-INTAKE` in the payload (the Jest suite exercises the same behavior in `tests/placeholder.test.ts`).
 
 ---
 
-By following these steps, you can continuously refine your model and keep the ChatGPT native app linked to the latest ARCANOS backend features.
+By following these steps, you can continuously refine your model and keep the ChatGPT native app linked to the latest ARCANOS backend features. Publishing a Custom GPT update without completing these checks risks desynchronizing the ChatGPT shell from the deployed `/api/ask` contract, so treat this document as the source of truth for release readiness.
