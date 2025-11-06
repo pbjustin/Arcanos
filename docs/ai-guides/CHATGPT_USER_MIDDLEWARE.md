@@ -56,6 +56,11 @@ chatgptRouter.use(chatGPTUserMiddleware({ allowPostMethods: true }));
 app.use('/api/chatgpt', chatgptRouter);
 ```
 
+### Custom GPT Action Handshake
+- All Custom GPT Actions that reach `/api/ask` must include either `x-confirmed: yes` (manual execution) or `x-gpt-id: <registered id>` (automated flows). The router at `src/routes/api-ask.ts` forwards these headers into the `handleAIRequest` pipeline for auditing.
+- When a request originates from the ChatGPT native app, ensure the Action definition declares the same headers. The updated templates under `docs/ai-guides/custom-gpt/` show the canonical payload.
+- Pair middleware changes with `npm test -- src/routes/api-ask.ts` so we verify the ChatGPT-User surface stays aligned with the native `/ask` endpoint exercised in `tests/placeholder.test.ts`.
+
 ## Options
 
 ```typescript
