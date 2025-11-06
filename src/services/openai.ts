@@ -13,7 +13,58 @@ type ChatCompletionResponseFormat =
 
 let openai: OpenAI | null = null;
 let defaultModel: string | null = null;
+let resolvedApiKey: string | null | undefined;
+let resolvedApiKeySource: string | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
+
+const OPENAI_KEY_ENV_PRIORITY = [
+  'OPENAI_API_KEY',
+  'RAILWAY_OPENAI_API_KEY',
+  'API_KEY',
+  'OPENAI_KEY'
+] as const;
+
+const OPENAI_KEY_PLACEHOLDERS = new Set([
+  '',
+  'your-openai-api-key-here',
+  'your-openai-key-here'
+]);
+
+const OPENAI_BASE_URL_CANDIDATES = [
+  process.env.OPENAI_BASE_URL,
+  process.env.OPENAI_API_BASE_URL,
+  process.env.OPENAI_API_BASE
+].filter((value): value is string => Boolean(value && value.trim().length > 0));
+
+const resolveOpenAIBaseURL = (): string | undefined => {
+  return OPENAI_BASE_URL_CANDIDATES[0]?.trim();
+};
+
+const resolveOpenAIKey = (): string | null => {
+  if (resolvedApiKey !== undefined) {
+    return resolvedApiKey;
+  }
+
+  for (const envName of OPENAI_KEY_ENV_PRIORITY) {
+    const rawValue = process.env[envName];
+    if (!rawValue) continue;
+
+    const trimmed = rawValue.trim();
+    if (OPENAI_KEY_PLACEHOLDERS.has(trimmed)) {
+      continue;
+    }
+
+    resolvedApiKey = trimmed;
+    resolvedApiKeySource = envName;
+    return resolvedApiKey;
+  }
+
+  resolvedApiKey = null;
+  resolvedApiKeySource = null;
+  return null;
+};
+
+export const getOpenAIKeySource = (): string | null => resolvedApiKeySource;
 
 // OpenAI API Configuration Constants
 const OPENAI_CONSTANTS = {
@@ -173,8 +224,7 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
  * @returns True if API key is set and valid, false otherwise
  */
 export const hasValidAPIKey = (): boolean => {
-  const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
-  return !!(apiKey && apiKey.trim() !== '' && apiKey !== 'your-openai-api-key-here' && apiKey !== 'your-openai-key-here');
+  return resolveOpenAIKey() !== null;
 };
 
 /**
@@ -186,23 +236,29 @@ const initializeOpenAI = (): OpenAI | null => {
   if (openai) return openai;
 
   try {
-    const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
-    if (!hasValidAPIKey()) {
-      aiLogger.warn('OpenAI API key not configured - AI endpoints will return mock responses', { 
-        operation: 'initialization' 
+    const apiKey = resolveOpenAIKey();
+    if (!apiKey) {
+      aiLogger.warn('OpenAI API key not configured - AI endpoints will return mock responses', {
+        operation: 'initialization'
       });
       return null; // Return null to indicate mock mode
     }
 
-    openai = new OpenAI({ apiKey, timeout: API_TIMEOUT_MS });
+    const baseURL = resolveOpenAIBaseURL();
+    openai = new OpenAI({
+      apiKey,
+      timeout: API_TIMEOUT_MS,
+      ...(baseURL ? { baseURL } : {})
+    });
     // Support OPENAI_MODEL (primary), FINETUNED_MODEL_ID, and AI_MODEL for Railway compatibility
     defaultModel =
       process.env.OPENAI_MODEL ||
+      process.env.RAILWAY_OPENAI_MODEL ||
       process.env.FINETUNED_MODEL_ID ||
       process.env.FINE_TUNED_MODEL_ID ||
       process.env.AI_MODEL ||
       'gpt-4o';
-    
+
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${defaultModel}`);
     console.log(`🔄 Fallback Model: ${getFallbackModel()}`);
@@ -234,6 +290,7 @@ export const getDefaultModel = (): string => {
   return (
     defaultModel ||
     process.env.OPENAI_MODEL ||
+    process.env.RAILWAY_OPENAI_MODEL ||
     process.env.FINETUNED_MODEL_ID ||
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
@@ -260,6 +317,7 @@ export function getFallbackModel(): string {
   return (
     process.env.FALLBACK_MODEL ||
     process.env.AI_FALLBACK_MODEL ||
+    process.env.RAILWAY_OPENAI_FALLBACK_MODEL ||
     process.env.FINETUNED_MODEL_ID ||
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
@@ -632,12 +690,14 @@ export const createChatCompletionWithFallback = async (
 };
 
 export const validateAPIKeyAtStartup = (): boolean => {
-  const apiKey = process.env.API_KEY || process.env.OPENAI_API_KEY;
-  if (!apiKey || apiKey.trim() === '' || apiKey === 'your-openai-api-key-here' || apiKey === 'your-openai-key-here') {
+  const apiKey = resolveOpenAIKey();
+  if (!apiKey) {
     console.warn('⚠️ OPENAI_API_KEY not set - will return mock responses');
     return true; // Allow startup but return mock responses
   }
-  console.log('✅ OPENAI_API_KEY validation passed');
+  console.log(
+    `✅ OPENAI_API_KEY validation passed${resolvedApiKeySource ? ` (source: ${resolvedApiKeySource})` : ''}`
+  );
   return true;
 };
 
@@ -915,16 +975,19 @@ export async function generateImage(
 export const getOpenAIServiceHealth = () => {
   const circuitBreakerMetrics = openaiCircuitBreaker.getMetrics();
   const cacheStats = responseCache.getStats();
-  
+  const configured = hasValidAPIKey();
+
   return {
     apiKey: {
-      configured: hasValidAPIKey(),
-      status: hasValidAPIKey() ? 'valid' : 'missing_or_invalid'
+      configured,
+      status: configured ? 'valid' : 'missing_or_invalid',
+      source: resolvedApiKeySource
     },
     client: {
       initialized: openai !== null,
       model: defaultModel,
-      timeout: API_TIMEOUT_MS
+      timeout: API_TIMEOUT_MS,
+      baseURL: resolveOpenAIBaseURL()
     },
     circuitBreaker: {
       ...circuitBreakerMetrics,
