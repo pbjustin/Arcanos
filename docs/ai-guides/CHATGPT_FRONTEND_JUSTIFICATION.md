@@ -28,6 +28,11 @@ Our orchestration layer centers on AI workers, policy enforcement, and memory su
 - Conversation state is synchronized with the Universal Memory service documented in `UNIVERSAL_MEMORY_GUIDE.md`.
 - Guardrails use the same policy hooks as the backend sync described in `BACKEND_SYNC_IMPLEMENTATION.md`.
 
+### Backend Synchronization Cues
+- `/api/ask` (see `src/routes/api-ask.ts`) is the canonical ingestion point for every Custom GPT Action. The router normalizes ChatGPT payloads into the `AskRequest` contract so downstream workers remain environment agnostic.
+- `tests/placeholder.test.ts` exercises both `/ask` and `/api/ask` to ensure native ChatGPT traffic and direct API clients behave identically.
+- The Custom GPT briefs in `docs/ai-guides/custom-gpt/` mirror these expectations—any deviation must include an accompanying test update so the Jest suite continues to enforce parity.
+
 By design, the front-end choice reinforces our focus on orchestration logic rather than interface maintenance. As our automation catalog expands, ChatGPT scales with us—providing a familiar canvas for users and a flexible API surface for engineers.
 
 ## Future Considerations
