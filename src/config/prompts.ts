@@ -3,7 +3,7 @@
  * Loads prompts from JSON configuration and provides typed access
  */
 
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -46,6 +46,22 @@ interface PromptsConfig {
 
 let promptsConfig: PromptsConfig | null = null;
 
+const CONFIG_SEARCH_PATHS = [
+  join(process.cwd(), 'config', 'prompts.json'),
+  join(__dirname, 'prompts.json'),
+  join(process.cwd(), 'src', 'config', 'prompts.json')
+];
+
+function resolvePromptsConfigPath(): string | null {
+  for (const candidatePath of CONFIG_SEARCH_PATHS) {
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Load prompts configuration from JSON file
  */
@@ -55,14 +71,20 @@ function loadPromptsConfig(): PromptsConfig {
   }
 
   try {
-    const configPath = join(__dirname, 'prompts.json');
+    const configPath = resolvePromptsConfigPath();
+
+    if (!configPath) {
+      throw new Error('Prompts configuration file not found in expected locations');
+    }
+
     const configData = readFileSync(configPath, 'utf-8');
     promptsConfig = JSON.parse(configData);
-    
+
     logger.info('Loaded prompts configuration', {
       module: 'prompts',
       operation: 'loadConfig',
-      sectionsLoaded: promptsConfig ? Object.keys(promptsConfig).length : 0
+      sectionsLoaded: promptsConfig ? Object.keys(promptsConfig).length : 0,
+      configPath
     });
 
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
