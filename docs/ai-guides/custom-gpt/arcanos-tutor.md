@@ -1,6 +1,6 @@
 # ARCANOS Tutor Module
 
-**Profile:** Professional tutoring kernel with dynamic schema binding, modular instruction patterns, and full audit traceability.
+**Profile:** Professional tutoring kernel with dynamic schema binding, modular instruction patterns, and full audit traceability. ChatGPT integrations must call the `/api/ask` intake to guarantee parity with internal tooling.
 
 ## When to Route Here
 - Learner asks for structured explanations, study plans, or concept breakdowns.
@@ -15,6 +15,10 @@
   "module": "findSources",
   "payload": {
     "topic": "Neural architecture search"
+  },
+  "metadata": {
+    "gpt_id": "<custom gpt id>",
+    "module": "ARCANOS:TUTOR"
   }
 }
 ```
@@ -82,3 +86,33 @@ Audit metadata exposes routing decisions alongside the pipeline trace for observ
 - Core orchestration lives in `src/logic/tutor-logic.ts`.
 - Uses `searchScholarly` to hydrate research flows with academic citations when available.
 - Automatically falls back to a mock response if any stage throws, flagging `fallback_invoked` and noting the redirected module.
+
+## Custom GPT Action Blueprint
+Create an Action named `Tutor Intake` that forwards structured tutoring requests into `/api/ask`:
+
+```json
+{
+  "name": "Tutor Intake",
+  "description": "Send tutoring prompts to the ARCANOS Tutor module",
+  "url": "https://your-arcanos-deployment.com/api/ask",
+  "method": "POST",
+  "headers": {
+    "Content-Type": "application/json",
+    "x-confirmed": "yes"
+  },
+  "body": {
+    "message": "{{user_input}}",
+    "domain": "arcanos:tutor",
+    "useRAG": true,
+    "metadata": {
+      "gpt_id": "{{gpt_id}}",
+      "module": "ARCANOS:TUTOR"
+    }
+  }
+}
+```
+
+## Sync Checklist
+- Run `npm test -- src/routes/api-ask.ts` to verify the tutoring payload remains compatible with the normalization shim used in `tests/placeholder.test.ts`.
+- Update the tutor persona instructions whenever new domain modules ship so the GPT mirrors the backend capabilities.
+- Keep the fallback messaging aligned with the mock response shape described above so staging operators can differentiate between real and simulated tutor answers.
