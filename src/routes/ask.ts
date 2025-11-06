@@ -18,15 +18,15 @@ const askValidationSchema = {
   overrideAuditSafe: { type: 'string' as const, maxLength: 50, sanitize: true }
 };
 
-const askValidationMiddleware = createValidationMiddleware(askValidationSchema);
+export const askValidationMiddleware = createValidationMiddleware(askValidationSchema);
 
-type AskRequest = AIRequestDTO & {
+export type AskRequest = AIRequestDTO & {
   prompt: string;
   sessionId?: string;
   overrideAuditSafe?: string;
 };
 
-interface AskResponse extends AIResponseDTO {
+export interface AskResponse extends AIResponseDTO {
   routingStages?: string[];
   gpt5Used?: boolean;
   auditSafe?: {
@@ -51,7 +51,7 @@ interface AskResponse extends AIResponseDTO {
  * Shared handler for both ask and brain endpoints
  * Handles AI request processing with standardized error handling and validation
  */
-const handleAIRequest = async (
+export const handleAIRequest = async (
   req: Request<{}, AskResponse | ErrorResponseDTO, AskRequest>,
   res: Response<AskResponse | ErrorResponseDTO>,
   endpointName: string

@@ -50,6 +50,24 @@ describe('AI endpoints in mock mode', () => {
     expect(payload.auditSafe).toBeDefined();
   });
 
+  it('normalizes ChatGPT action payload through /api/ask', async () => {
+    const response = await fetch(`${baseUrl}/api/ask`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        message: 'How does the system behave?',
+        domain: 'diagnostics',
+        useRAG: true,
+        useHRC: false
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.result).toContain('[MOCK AI RESPONSE]');
+    expect(payload.routingStages).toContain('ARCANOS-INTAKE:MOCK');
+  });
+
   it('provides deterministic mock diagnostics for /arcanos', async () => {
     const response = await fetch(`${baseUrl}/arcanos`, {
       method: 'POST',
