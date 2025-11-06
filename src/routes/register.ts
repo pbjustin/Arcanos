@@ -1,5 +1,6 @@
 import { Express, Request, Response } from 'express';
 import askRouter from './ask.js';
+import apiAskRouter from './api-ask.js';
 import arcanosRouter from './arcanos.js';
 import arcanosPipelineRouter from './openai-arcanos-pipeline.js';
 import aiEndpointsRouter from './ai-endpoints.js';
@@ -60,6 +61,7 @@ export function registerRoutes(app: Express): void {
 
   app.use('/', healthRouter);
   app.use('/', askRouter);
+  app.use('/', apiAskRouter);
   app.use('/', arcanosRouter);
   app.use('/', arcanosPipelineRouter);
   app.use('/', aiEndpointsRouter);
