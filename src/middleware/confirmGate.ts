@@ -16,6 +16,13 @@ const trustedGptIds = new Set(
     .filter(Boolean)
 );
 
+const wildcardTrusted = trustedGptIds.has('*');
+const allowAllGpts = wildcardTrusted || process.env.ALLOW_ALL_GPTS === 'true';
+
+if (allowAllGpts) {
+  console.log('[🛡️ CONFIRM-GATE] Allow-all GPT mode enabled - confirmation header optional for GPT requests');
+}
+
 function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
   if (!value) return undefined;
   return Array.isArray(value) ? value[0] : value;
@@ -27,16 +34,17 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId : undefined;
   const gptId = gptIdHeader || gptIdFromBody;
   const isTrustedGpt = gptId ? trustedGptIds.has(gptId) : false;
+  const confirmationMode = allowAllGpts ? 'allow-all' : 'header';
 
   // Log the request for audit purposes
   console.log(
     `[🛡️ CONFIRM-GATE] ${req.method} ${req.path} - Confirmation: ${confirmationHeader || 'none'} - GPTID: ${
       gptId || 'none'
-    }`
+    } - Mode: ${confirmationMode}`
   );
 
   // Check if user has explicitly confirmed the action
-  if (confirmationHeader !== 'yes' && !isTrustedGpt) {
+  if (confirmationHeader !== 'yes' && !isTrustedGpt && !allowAllGpts) {
     res.setHeader('x-confirmation-status', 'required');
     console.log(
       `[❌ CONFIRM-GATE] Request blocked - missing or invalid confirmation header${
@@ -58,10 +66,21 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
-  res.setHeader('x-confirmation-status', 'confirmed');
-  console.log(`[✅ CONFIRM-GATE] Request confirmed - proceeding with execution`);
+  const confirmationStatus = allowAllGpts ? 'auto-allowed' : 'confirmed';
+  res.setHeader('x-confirmation-status', confirmationStatus);
+  console.log(`[✅ CONFIRM-GATE] Request confirmed - proceeding with execution (${confirmationStatus})`);
   next();
 }
+
+export const isAllowAllGptsEnabled = (): boolean => allowAllGpts;
+
+export const getConfirmGateConfiguration = () => ({
+  allowAllGpts,
+  trustedGptIds: Array.from(trustedGptIds),
+  requiresHeader: !allowAllGpts,
+  confirmationHeader: 'x-confirmed',
+  gptHeader: 'x-gpt-id'
+});
 
 /**
  * Helper function to determine if an endpoint should be protected by confirmGate

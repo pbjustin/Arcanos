@@ -1,7 +1,15 @@
 import { Request, Response } from 'express';
-import { callOpenAI, getDefaultModel } from '../services/openai.js';
+import {
+  callOpenAI,
+  getDefaultModel,
+  getFallbackModel,
+  getGPT5Model,
+  getOpenAIServiceHealth,
+  getOpenAIKeySource
+} from '../services/openai.js';
 import { validateAIRequest, handleAIError } from '../utils/requestHandler.js';
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
+import { getConfirmGateConfiguration } from '../middleware/confirmGate.js';
 
 type PromptRequest = AIRequestDTO & {
   prompt: string;
@@ -42,4 +50,34 @@ export async function handlePrompt(
   } catch (err) {
     handleAIError(err, prompt, 'prompt', res);
   }
+}
+
+export function getOpenAIStatus(_: Request, res: Response): void {
+  const health = getOpenAIServiceHealth();
+  const confirmation = getConfirmGateConfiguration();
+  const keySource = getOpenAIKeySource();
+
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    openai: {
+      configured: health.apiKey.configured,
+      keyStatus: health.apiKey.status,
+      keySource,
+      defaultModel: getDefaultModel(),
+      fallbackModel: getFallbackModel(),
+      gpt5Model: getGPT5Model(),
+      clientInitialized: health.client.initialized,
+      timeout: health.client.timeout,
+      baseURL: health.client.baseURL || null,
+      circuitBreaker: health.circuitBreaker,
+      cache: health.cache,
+      lastHealthCheck: health.lastHealthCheck
+    },
+    confirmation,
+    environment: {
+      railwayEnvironment: process.env.RAILWAY_ENVIRONMENT || null,
+      nodeEnv: process.env.NODE_ENV || 'development'
+    }
+  });
 }
