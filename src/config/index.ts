@@ -5,6 +5,7 @@
 
 import dotenv from 'dotenv';
 import path from 'path';
+import type { ReinforcementMode } from '../types/reinforcement.js';
 
 // Load environment variables
 dotenv.config();
@@ -13,6 +14,19 @@ const serverPort = Number(process.env.PORT) || 8080;
 const serverHost = process.env.HOST || '0.0.0.0';
 const serverBaseUrl = process.env.SERVER_URL || `http://127.0.0.1:${serverPort}`;
 const statusEndpoint = process.env.BACKEND_STATUS_ENDPOINT || '/status';
+
+const parseNumber = (value: string | undefined, fallback: number, min: number = 0): number => {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed >= min) {
+    return parsed;
+  }
+  return fallback;
+};
+
+const reinforcementMode = (process.env.ARCANOS_CONTEXT_MODE || 'reinforcement') as ReinforcementMode;
+const reinforcementWindow = parseNumber(process.env.ARCANOS_CONTEXT_WINDOW, 50, 1);
+const reinforcementDigestSize = parseNumber(process.env.ARCANOS_MEMORY_DIGEST_SIZE, 8, 1);
+const reinforcementMinimumClearScore = parseNumber(process.env.ARCANOS_CLEAR_MIN_SCORE, 0.85);
 
 export const config = {
   // Server configuration
@@ -61,6 +75,19 @@ export const config = {
     schedule: process.env.ASSISTANT_SYNC_CRON || '15,45 * * * *',
     registryPath:
       process.env.ASSISTANT_REGISTRY_PATH || path.join(process.cwd(), 'config', 'assistants.json')
+  },
+
+  reinforcement: {
+    mode: reinforcementMode,
+    window: reinforcementWindow,
+    digestSize: reinforcementDigestSize,
+    minimumClearScore: reinforcementMinimumClearScore
+  },
+
+  tracing: {
+    audit: {
+      enabled: process.env.ARCANOS_AUDIT_TRACE !== 'false'
+    }
   }
 };
 
