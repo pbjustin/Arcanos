@@ -27,6 +27,7 @@ import researchRouter from './research.js';
 import healthRouter from './health.js';
 import afolRouter from './afol.js';
 import apiAssistantsRouter from './api-assistants.js';
+import reinforcementRouter from './reinforcement.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 
@@ -87,6 +88,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', imageRouter);
   app.use('/', ragRouter);
   app.use('/', researchRouter);
+  app.use('/', reinforcementRouter);
   
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
