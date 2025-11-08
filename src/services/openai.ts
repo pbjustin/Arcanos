@@ -6,6 +6,7 @@ import { responseCache } from '../utils/cache.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import crypto from 'crypto';
 import { runtime } from './openaiRuntime.js';
+import { buildContextualSystemPrompt, trackModelResponse, trackPromptUsage } from './contextualReinforcement.js';
 
 type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type ChatCompletionResponseFormat =
@@ -367,35 +368,56 @@ export async function callOpenAI(
   options: CallOpenAIOptions = {}
 ): Promise<CallOpenAIResult> {
   const client = getOpenAIClient();
-  if (!client) {
-    const mock = generateMockResponse(prompt, 'ask');
-    return { response: mock, output: mock.result, model: 'mock', cached: false };
-  }
 
   const systemPrompt = options.systemPrompt ?? 'You are a helpful AI assistant.';
+  const baseMetadata = options.metadata ?? {};
+  const rawRequestId = baseMetadata ? (baseMetadata as Record<string, unknown>)['requestId'] : undefined;
+  const reinforcementRequestId = typeof rawRequestId === 'string' && rawRequestId.length > 0
+    ? rawRequestId
+    : generateRequestId('ctx');
+  const reinforcementMetadata: Record<string, unknown> = {
+    ...baseMetadata,
+    requestId: reinforcementRequestId,
+    model
+  };
+
+  trackPromptUsage(prompt, reinforcementMetadata);
+
+  const contextAwarePrompt = buildContextualSystemPrompt(systemPrompt);
   let preparedMessages: ChatCompletionMessageParam[];
 
   if (options.messages && options.messages.length > 0) {
-    preparedMessages = [...options.messages];
-
-    if (options.systemPrompt) {
-      const hasSystemMessage = preparedMessages.some(message => message.role === 'system');
-      if (!hasSystemMessage) {
-        preparedMessages = [{ role: 'system', content: systemPrompt }, ...preparedMessages];
+    let systemInjected = false;
+    preparedMessages = options.messages.map((message) => {
+      if (message.role === 'system' && typeof message.content === 'string') {
+        systemInjected = true;
+        return { ...message, content: buildContextualSystemPrompt(message.content) };
       }
+      return message;
+    });
+
+    const hasSystemMessage = preparedMessages.some((message) => message.role === 'system');
+    if (!hasSystemMessage || !systemInjected) {
+      preparedMessages = [{ role: 'system', content: contextAwarePrompt }, ...preparedMessages];
     }
   } else {
     preparedMessages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: contextAwarePrompt },
       { role: 'user', content: prompt }
     ];
   }
 
-  if (options.metadata) {
+  if (!client) {
+    const mock = generateMockResponse(prompt, 'ask');
+    trackModelResponse(mock.result, reinforcementMetadata);
+    return { response: mock, output: mock.result, model: 'mock', cached: false };
+  }
+
+  if (Object.keys(reinforcementMetadata).length > 0) {
     aiLogger.debug('OpenAI call metadata', {
       operation: 'callOpenAI',
       model,
-      ...options.metadata
+      ...reinforcementMetadata
     });
   }
 
@@ -417,6 +439,7 @@ export async function callOpenAI(
     const cachedResult = responseCache.get(cacheKey) as CallOpenAICacheEntry | undefined;
     if (cachedResult) {
       console.log('💾 Cache hit for OpenAI request');
+      trackModelResponse(cachedResult.output, reinforcementMetadata);
       return { ...cachedResult, cached: true };
     }
   }
@@ -425,6 +448,8 @@ export async function callOpenAI(
   const result = await openaiCircuitBreaker.execute(async () => {
     return await makeOpenAIRequest(client, model, preparedMessages, tokenLimit, options);
   });
+
+  trackModelResponse(result.output, reinforcementMetadata);
 
   // Cache successful results
   if (useCache && result && cacheKey) {
