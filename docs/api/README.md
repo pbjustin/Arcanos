@@ -52,6 +52,20 @@ trusted GPT (`TRUSTED_GPT_IDS` + `x-gpt-id`).
 
 ---
 
+## 🔁 Contextual Reinforcement & CLEAR Loop
+
+| Endpoint | Confirmation | Description |
+| --- | --- | --- |
+| `POST /reinforce` | No | Record contextual summaries, bias, and metadata for the reinforcement window. |
+| `POST /audit` | No | Submit CLEAR feedback; applies minimum score gating and forwards payloads to the CLEAR webhook when configured. |
+| `GET /memory/digest` | No | Retrieve the latest contextual digest used by reinforcement-aware prompts. |
+| `GET /memory` | No | Alias of `/memory/digest` maintained for compatibility. |
+| `GET /health` | No | Report reinforcement mode, window size, stored entry counts, and last CLEAR timestamp. |
+
+See [`docs/api/CONTEXTUAL_REINFORCEMENT.md`](CONTEXTUAL_REINFORCEMENT.md) for complete payload definitions and lifecycle details.
+
+---
+
 ## 🛠️ Workers & Automation
 
 | Endpoint | Confirmation | Description |
