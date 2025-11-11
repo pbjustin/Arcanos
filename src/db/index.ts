@@ -71,6 +71,10 @@ export {
   logReasoning
 } from './repositories/reasoningLogRepository.js';
 
+export {
+  saveSelfReflection
+} from './repositories/selfReflectionRepository.js';
+
 /**
  * Initialize database with full schema setup
  * This is the main entry point for database initialization
