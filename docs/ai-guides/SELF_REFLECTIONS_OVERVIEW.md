@@ -12,28 +12,34 @@ Self-reflections provide short, actionable improvement notes that help engineers
 iterate on ARCANOS. Reflections can be triggered manually, scheduled on a timer,
 or produced in response to other automation. Every reflection describes the
 state of the system, proposes improvements, and records metadata about the
-conditions under which it was generated.
+conditions under which it was generated. Reflections are also written to the
+self-reflection repository so teams can review historical output or feed it into
+other analytics tooling.
 
 ## Key components
 
 ### AI Reflection Service (`src/services/ai-reflections.ts`)
 
-`buildPatchSet` is the primary entry-point for generating a reflection. It
-prepares an instruction prompt, invokes the OpenAI gateway, and normalises the
-result into a "patch set" structure containing:
+`buildPatchSet` is the primary entry point for generating a reflection. It
+prepares an instruction prompt, invokes the OpenAI gateway, persists the
+resulting record, and normalises the result into a "patch set" structure
+containing:
 
 - the raw reflection text (`content`)
 - a priority bucket (`low`, `medium`, or `high`)
 - a category label that callers can control (for example, `component-api`)
 - a list of improvement notes that describe what happened inside the service
-- metadata, including timestamps, model details, cache usage, and whether the
-  service ran with memory orchestration enabled
+- metadata, including timestamps, model details, cache usage, the
+  `systemAnalysis` snapshot (when enabled), and whether the service ran with
+  memory orchestration enabled
 
 The function is highly configurable through its `PatchSetOptions` argument:
 callers can toggle memory integration, select a specific model, tune sampling
-parameters, override the system prompt, and opt in or out of cached responses.
-If the OpenAI call fails, the service produces a deterministic fallback patch
-that captures the error so downstream systems can continue operating.
+parameters, override the system prompt, add custom AI metadata, skip system
+analysis, and opt in or out of cached responses. If the OpenAI call fails, the
+service produces a deterministic fallback patch, persists it to the
+self-reflection store, and captures the error so downstream systems can continue
+operating.
 
 Two helpers build on top of `buildPatchSet`:
 
@@ -44,13 +50,22 @@ Two helpers build on top of `buildPatchSet`:
   the requested priority order, which is useful when a workflow wants to process
   several levels of urgency in a single batch.
 
+### Persistence layer (`src/db/repositories/selfReflectionRepository.ts`)
+
+`buildPatchSet` always calls `saveSelfReflection` so that every reflection—real
+or fallback—lands in the database. The repository abstracts the storage engine
+and lets consumers query historic reflections for dashboards, audits, or manual
+reviews. Failures are logged but do not halt the reflection pipeline, ensuring
+that transient storage outages do not block automation.
+
 ### OpenAI gateway (`src/services/openai.ts`)
 
 The reflection service delegates all model interactions to `callOpenAI`. This
 wrapper handles client initialisation, circuit breaking, exponential backoff,
 caching, and mock responses. When no API key is configured, `callOpenAI` returns
 deterministic mock data so reflections can still be generated during local
-development or in restricted environments.
+development or in restricted environments. The gateway also surfaces whether a
+response was served from cache so the reflection metadata can record it.
 
 ### Git integration (`src/services/git.ts`)
 
@@ -73,15 +88,14 @@ of how to orchestrate the services without touching the production scheduler.
 1. A caller decides to produce a reflection, either manually, through the test
    harness, or via an automation trigger.
 2. The caller chooses configuration options (priority, category, memory mode,
-   sampling parameters, etc.) and invokes `buildPatchSet`.
+   sampling parameters, cache preferences, etc.) and invokes `buildPatchSet`.
 3. `buildPatchSet` composes the natural-language prompt and sends it to
    `callOpenAI` along with metadata that is useful for analytics and caching.
 4. When a response arrives, the service captures the content, system state
-   snapshot, and model metadata in a structured object. If the call fails, it
-   emits a fallback patch with diagnostic details.
-5. The resulting patch set can be persisted to disk, pushed to GitHub, or fed
-   into other automations (for example, to create a pull request via
-   `generatePR`).
+   snapshot (when enabled), and model metadata in a structured object. If the
+   call fails, it emits a fallback patch with diagnostic details.
+5. The resulting patch set is persisted, can be pushed to GitHub, or fed into
+   other automations (for example, to create a pull request via `generatePR`).
 6. Optional clean-up or pruning jobs remove stale reflections to keep storage
    tidy. See the scheduler guide for long-running orchestration patterns.
 
