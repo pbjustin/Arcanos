@@ -4,6 +4,7 @@
  */
 
 import { callOpenAI, getDefaultModel } from './openai.js';
+import { saveSelfReflection } from '../db/repositories/selfReflectionRepository.js';
 
 const DEFAULT_REFLECTION_SYSTEM_PROMPT =
   process.env.AI_REFLECTION_SYSTEM_PROMPT ||
@@ -67,6 +68,23 @@ export interface PatchSet {
       systemPrompt: string;
     };
   };
+}
+
+async function persistSelfReflection(patch: PatchSet): Promise<void> {
+  try {
+    await saveSelfReflection({
+      priority: patch.priority,
+      category: patch.category,
+      content: patch.content,
+      improvements: patch.improvements,
+      metadata: patch.metadata
+    });
+  } catch (error) {
+    console.warn(
+      '[🧠 Reflections] Failed to persist self-reflection:',
+      (error as Error).message
+    );
+  }
 }
 
 /**
@@ -160,7 +178,7 @@ Generated: ${new Date().toISOString()}
 This patch represents an automated improvement to the ARCANOS system.
 The changes are designed to enhance system performance and reliability.`;
 
-    return {
+    const patch: PatchSet = {
       content: patchContent,
       priority,
       category,
@@ -184,11 +202,15 @@ The changes are designed to enhance system performance and reliability.`;
       }
     };
 
+    await persistSelfReflection(patch);
+
+    return patch;
+
   } catch (error: any) {
     console.error('❌ Error generating patch set:', error.message);
 
     // Fallback patch set
-    return {
+    const fallbackPatch: PatchSet = {
       content: `Fallback system improvement patch
 
 Generated due to AI service unavailability.
@@ -224,6 +246,10 @@ while providing basic enhancement capabilities.`,
         }
       }
     };
+
+    await persistSelfReflection(fallbackPatch);
+
+    return fallbackPatch;
   }
 }
 

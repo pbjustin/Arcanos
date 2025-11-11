@@ -57,6 +57,17 @@ async function ensureSchema() {
         data JSONB NOT NULL,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+    `,
+    self_reflections: `
+      CREATE TABLE IF NOT EXISTS self_reflections (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        priority TEXT NOT NULL,
+        category TEXT NOT NULL,
+        content TEXT NOT NULL,
+        improvements JSONB NOT NULL DEFAULT '[]'::jsonb,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
     `
     // add more tables here as needed
   };

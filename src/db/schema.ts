@@ -204,6 +204,17 @@ export async function initializeTables(): Promise<void> {
       data JSONB NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+
+    // Self-reflection storage for AI analysis history
+    `CREATE TABLE IF NOT EXISTS self_reflections (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      priority TEXT NOT NULL,
+      category TEXT NOT NULL,
+      content TEXT NOT NULL,
+      improvements JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     
     // Execution logs table for worker logs
     `CREATE TABLE IF NOT EXISTS execution_logs (
@@ -248,7 +259,9 @@ export async function initializeTables(): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_rag_docs_url ON rag_docs(url)`,
     `CREATE INDEX IF NOT EXISTS idx_backstage_wrestlers_name ON backstage_wrestlers(name)`,
     `CREATE INDEX IF NOT EXISTS idx_backstage_events_created_at ON backstage_events(created_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_backstage_story_beats_created_at ON backstage_story_beats(created_at DESC)`
+    `CREATE INDEX IF NOT EXISTS idx_backstage_story_beats_created_at ON backstage_story_beats(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_self_reflections_created_at ON self_reflections(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_self_reflections_category_priority ON self_reflections(category, priority)`
   ];
 
   try {
