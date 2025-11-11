@@ -1,21 +1,41 @@
-import { describe, it, expect, jest, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 const callOpenAI = jest.fn() as jest.MockedFunction<any>;
 const getDefaultModel = jest.fn() as jest.MockedFunction<any>;
 const validateAIRequest = jest.fn() as jest.MockedFunction<any>;
 const handleAIError = jest.fn() as jest.MockedFunction<any>;
-
-jest.unstable_mockModule('../src/services/openai.js', () => ({
-  callOpenAI,
-  getDefaultModel
+const getFallbackModel = jest.fn(() => 'ft:fallback-model');
+const getGPT5Model = jest.fn(() => 'gpt-5');
+const getOpenAIServiceHealth = jest.fn(() => ({
+  apiKey: { configured: false, status: 'missing' },
+  client: { initialized: false, timeout: 0, baseURL: null },
+  circuitBreaker: {},
+  cache: {},
+  lastHealthCheck: null
 }));
+const getOpenAIKeySource = jest.fn(() => null);
 
-jest.unstable_mockModule('../src/utils/requestHandler.js', () => ({
-  validateAIRequest,
-  handleAIError
-}));
+let handlePrompt: (req: any, res: any) => Promise<void>;
 
-const { handlePrompt } = await import('../src/controllers/openaiController.js');
+beforeEach(async () => {
+  jest.resetModules();
+
+  jest.unstable_mockModule('../src/services/openai.js', () => ({
+    callOpenAI,
+    getDefaultModel,
+    getFallbackModel,
+    getGPT5Model,
+    getOpenAIServiceHealth,
+    getOpenAIKeySource
+  }));
+
+  jest.unstable_mockModule('../src/utils/requestHandler.js', () => ({
+    validateAIRequest,
+    handleAIError
+  }));
+
+  ({ handlePrompt } = await import('../src/controllers/openaiController.js'));
+});
 
 afterEach(() => {
   jest.clearAllMocks();
