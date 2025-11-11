@@ -65,6 +65,8 @@ environment, and exploring advanced modules.
   strategies.
 - **[Universal Memory Guide](ai-guides/UNIVERSAL_MEMORY_GUIDE.md)** – Concepts
   for cross-session memory coordination.
+- **[Standalone Memory Service](memory-service-standalone.md)** – Express
+  scaffold for commit/retrieve workflows.
 - **[RAG & Research](ai-guides/RESEARCH_MODULE.md)** – Retrieval augmented
   workflows.
 
