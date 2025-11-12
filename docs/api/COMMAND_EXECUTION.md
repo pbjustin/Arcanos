@@ -27,8 +27,9 @@ request (`POST /execute`) must include **either**:
   request body). Trusted identifiers are configured through the
   `TRUSTED_GPT_IDS` environment variable.
 
-Requests that do not satisfy one of these conditions receive a
-`403 Confirmation required` response.
+If neither is supplied, the backend returns a `403` response with a confirmation
+challenge payload. Surface the challenge to the operator and retry with
+`x-confirmed: token:<challengeId>` once they approve.
 
 The route is also rate-limited to 50 requests per 15 minutes per IP address. If
 you exceed this quota you will receive an HTTP 429 error until the window
@@ -132,8 +133,9 @@ indicate that the system returned simulated data.
 
 ## Troubleshooting
 
-- **403 Confirmation required** – Ensure you include `x-confirmed: yes` or
-  provide a trusted GPT identifier via `x-gpt-id`/`gptId`.
+- **403 Confirmation required** – Include `x-confirmed: yes`, echo the issued
+  challenge via `x-confirmed: token:<challengeId>`, or provide a trusted GPT
+  identifier via `x-gpt-id`/`gptId`.
 - **429 Too Many Requests** – Reduce request volume or wait for the rate-limit
   window to reset.
 - **400 Validation error** – Check that `command` is a string between 3 and 100
