@@ -1,3 +1,18 @@
+/**
+ * System Diagnostics and Health Checks
+ * 
+ * Provides comprehensive health monitoring for the Arcanos backend, including:
+ * - Memory usage and system metrics
+ * - Worker module availability
+ * - Security environment validation
+ * - Telemetry aggregation
+ * - Circuit breaker status
+ * 
+ * Used by health endpoints (/health, /healthz, /readyz) for liveness and readiness probes.
+ * 
+ * @module diagnostics
+ */
+
 import fs from 'fs';
 import os from 'os';
 import { getCircuitBreakerSnapshot } from '../services/openai.js';
@@ -5,6 +20,9 @@ import { getTelemetrySnapshot } from './telemetry.js';
 import { getEnvironmentSecuritySummary } from './environmentSecurity.js';
 import { resolveWorkersDirectory } from './workerPaths.js';
 
+/**
+ * Worker subsystem health status.
+ */
 interface WorkerHealth {
   expected: boolean;
   directoryExists: boolean;
@@ -13,6 +31,9 @@ interface WorkerHealth {
   reason?: string;
 }
 
+/**
+ * Complete health check report aggregating all system components.
+ */
 export interface HealthCheckReport {
   status: 'ok' | 'degraded';
   summary: string;
@@ -41,6 +62,12 @@ export interface HealthCheckReport {
   };
 }
 
+/**
+ * Evaluates the health of the worker subsystem.
+ * Checks if workers are enabled, directory exists, and worker files are available.
+ * 
+ * @returns Worker health assessment with status and reason
+ */
 function evaluateWorkerHealth(): WorkerHealth {
   const { path: workersDir, exists: directoryExists, checked } = resolveWorkersDirectory();
   const runWorkersEnv = process.env.RUN_WORKERS;
@@ -102,6 +129,13 @@ function evaluateWorkerHealth(): WorkerHealth {
   };
 }
 
+/**
+ * Executes a comprehensive health check of all system components.
+ * Aggregates memory usage, worker status, security status, telemetry,
+ * and circuit breaker state into a single report.
+ * 
+ * @returns Complete health check report with status summary
+ */
 export function runHealthCheck(): HealthCheckReport {
   console.log('[🩺 HealthCheck] Running diagnostics');
   const mem = process.memoryUsage();

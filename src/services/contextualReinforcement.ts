@@ -1,3 +1,21 @@
+/**
+ * Contextual Reinforcement Service
+ * 
+ * Implements a learning system that tracks AI interactions, prompt patterns,
+ * and model responses to build contextual awareness and improve future predictions.
+ * 
+ * Features:
+ * - Context window tracking for recent interactions
+ * - Audit history for compliance and debugging
+ * - Trace event logging for request lifecycle analysis
+ * - Pattern-based bias scoring for reinforcement learning
+ * - System prompt augmentation based on learned context
+ * 
+ * All tracking respects the configured reinforcement mode (reinforcement, audit-only, disabled).
+ * 
+ * @module contextualReinforcement
+ */
+
 import { randomUUID } from 'crypto';
 import config from '../config/index.js';
 import { aiLogger } from '../utils/structuredLogging.js';
@@ -10,22 +28,54 @@ import type {
   ReinforcementTraceEvent
 } from '../types/reinforcement.js';
 
+/**
+ * In-memory context window storing recent reinforcement entries.
+ */
 const contextWindow: ReinforcementContextEntry[] = [];
+
+/**
+ * Audit history for compliance and debugging.
+ */
 const auditHistory: AuditRecord[] = [];
+
+/**
+ * Trace history for request lifecycle analysis.
+ */
 const traceHistory: ReinforcementTraceEvent[] = [];
 
+/**
+ * Maximum number of trace events to retain in memory.
+ */
 const MAX_TRACE_HISTORY = 200;
 
+/**
+ * Checks if reinforcement tracking is enabled based on configuration.
+ * 
+ * @returns True if mode is 'reinforcement', false otherwise
+ */
 function shouldRecord(): boolean {
   return config.reinforcement.mode === 'reinforcement';
 }
 
+/**
+ * Limits a queue to a maximum size by removing oldest entries.
+ * 
+ * @param queue - Array to limit
+ * @param limit - Maximum allowed size
+ */
 function limitQueue<T>(queue: T[], limit: number): void {
   while (queue.length > limit) {
     queue.shift();
   }
 }
 
+/**
+ * Truncates text to a maximum length, appending ellipsis if truncated.
+ * 
+ * @param text - Text to limit
+ * @param maxLength - Maximum character length (default 320)
+ * @returns Truncated text with ellipsis if needed
+ */
 function limitText(text: string, maxLength: number = 320): string {
   if (text.length <= maxLength) {
     return text;
@@ -33,6 +83,13 @@ function limitText(text: string, maxLength: number = 320): string {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+/**
+ * Creates a complete context entry from partial data.
+ * Auto-generates ID and timestamp if not provided.
+ * 
+ * @param partial - Partial context entry with optional ID and timestamp
+ * @returns Complete reinforcement context entry
+ */
 function createContextEntry(partial: Omit<ReinforcementContextEntry, 'id' | 'timestamp'> & {
   id?: string;
   timestamp?: number;
@@ -50,10 +107,22 @@ function createContextEntry(partial: Omit<ReinforcementContextEntry, 'id' | 'tim
   };
 }
 
+/**
+ * Retrieves the current reinforcement configuration.
+ * 
+ * @returns Copy of the reinforcement configuration object
+ */
 export function getReinforcementConfig(): ReinforcementConfig {
   return { ...config.reinforcement };
 }
 
+/**
+ * Registers a new context entry in the reinforcement window.
+ * Only records if reinforcement mode is enabled. Automatically manages window size limits.
+ * 
+ * @param entry - Partial context entry with optional ID and timestamp
+ * @returns The complete registered entry, or null if recording is disabled
+ */
 export function registerContextEntry(entry: Omit<ReinforcementContextEntry, 'id' | 'timestamp'> & {
   id?: string;
   timestamp?: number;
@@ -78,6 +147,13 @@ export function registerContextEntry(entry: Omit<ReinforcementContextEntry, 'id'
   return record;
 }
 
+/**
+ * Tracks a user prompt for reinforcement learning.
+ * Stores truncated prompt text with neutral bias for pattern analysis.
+ * 
+ * @param prompt - User's input prompt
+ * @param metadata - Optional metadata including requestId
+ */
 export function trackPromptUsage(prompt: string, metadata: Record<string, unknown> = {}): void {
   registerContextEntry({
     source: 'prompt',
@@ -88,6 +164,13 @@ export function trackPromptUsage(prompt: string, metadata: Record<string, unknow
   });
 }
 
+/**
+ * Tracks an AI model response for reinforcement learning.
+ * Stores truncated output with positive bias to reinforce successful patterns.
+ * 
+ * @param output - Model's generated output
+ * @param metadata - Optional metadata including requestId
+ */
 export function trackModelResponse(output: string, metadata: Record<string, unknown> = {}): void {
   registerContextEntry({
     source: 'reinforce',
