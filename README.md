@@ -75,6 +75,7 @@ Key environment variables used by the backend:
 | `RUN_WORKERS` | Enables worker bootstrap (defaults to `true` outside of tests). |
 | `WORKER_COUNT` / `WORKER_MODEL` / `WORKER_API_TIMEOUT_MS` | Worker concurrency, default model, and request timeout controls. |
 | `TRUSTED_GPT_IDS` | Comma-separated GPT identifiers allowed to bypass confirmation headers. |
+| `CONFIRMATION_CHALLENGE_TTL_MS` | Lifetime of pending confirmation challenges issued by the middleware (defaults to 120000). |
 | `SESSION_CACHE_TTL_MS` / `SESSION_CACHE_CAPACITY` / `SESSION_RETENTION_MINUTES` | Memory cache retention and capacity tuning. |
 | `NOTION_API_KEY` / `RESEARCH_MAX_CONTENT_CHARS` / `HRC_MODEL` | Feature-specific integrations for Notion sync, research ingestion, and HRC analysis. |
 
@@ -86,8 +87,10 @@ A full configuration matrix is maintained in
 ## 🌐 API Highlights
 
 All routes are registered in [`src/routes/register.ts`](src/routes/register.ts).
-Confirmation-sensitive endpoints require the `x-confirmed: yes` header unless the
-caller supplies a trusted GPT ID via `x-gpt-id` or request payload.
+Confirmation-sensitive endpoints require the `x-confirmed` header unless the
+caller supplies a trusted GPT ID via `x-gpt-id` or request payload. Manual runs
+send `x-confirmed: yes`; automated flows should wait for the middleware’s
+pending challenge response and then retry with `x-confirmed: token:<challengeId>`.
 
 ### Conversational & Reasoning Endpoints
 
