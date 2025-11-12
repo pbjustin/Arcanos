@@ -12,6 +12,8 @@ import { getDefaultModel } from './services/openai.js';
 import { createApp } from './app.js';
 import { performStartup } from './startup.js';
 import type { WorkerInitResult } from './utils/workerBoot.js';
+import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage } from './utils/bootLogger.js';
+import { SERVER_MESSAGES, SERVER_CONSTANTS } from './config/serverMessages.js';
 
 export interface ServerFactoryOptions {
   port?: number;
@@ -34,38 +36,9 @@ export interface ServerStartResult {
 }
 
 function logBootSummary(actualPort: number, workerResults: WorkerInitResult): void {
-  console.log(`[🚀 ARCANOS CORE] Server running on port ${actualPort}`);
-  if (actualPort !== config.server.port) {
-    console.log(`[🔀 ARCANOS PORT] Originally configured for port ${config.server.port}, using ${actualPort} instead`);
-  }
-  console.log(`[🌍 ARCANOS ENV] Environment: ${config.server.environment}`);
-  console.log(`[⚙️  ARCANOS PID] Process ID: ${process.pid}`);
-  console.log(`[🧠 ARCANOS AI] Model: ${getDefaultModel()}`);
-  console.log(`[🔄 ARCANOS AI] Fallback: ${config.ai.fallbackModel}`);
-
-  console.log('\n=== 🧠 ARCANOS BOOT SUMMARY ===');
-  console.log(`🤖 Active Model: ${getDefaultModel()}`);
-  console.log(`🔌 Database: ${workerResults.database.connected ? 'Connected' : 'Disconnected'}`);
-  console.log('📁 Workers Directory: ./workers');
-  console.log(`🔧 Workers Initialized: ${workerResults.initialized.length}`);
-  console.log(`📅 Workers Scheduled: ${workerResults.scheduled.length}`);
-  if (workerResults.failed.length > 0) {
-    console.log(`❌ Workers Failed: ${workerResults.failed.length}`);
-  }
-  console.log('🔧 Core Routes:');
-  console.log('   🔌 /ask - AI query endpoint');
-  console.log('   🔌 /arcanos - Main AI interface');
-  console.log('   🔌 /ai-endpoints - AI processing endpoints');
-  console.log('   🔌 /memory - Memory management');
-  console.log('   🔌 /workers/* - Worker management');
-  console.log('   🔌 /orchestration/* - GPT-5 Orchestration Shell');
-  console.log('   🔌 /sdk/* - OpenAI SDK interface');
-  console.log('   🔌 /status - System state (Backend Sync)');
-  console.log('   🔌 /siri - Siri query endpoint');
-  console.log('   🔌 /health - System health');
-  console.log('===============================\n');
-
-  console.log('✅ ARCANOS backend fully operational');
+  logServerInfo(actualPort, config.server.port, config.server.environment, process.pid);
+  logAIConfig(getDefaultModel(), config.ai.fallbackModel);
+  logCompleteBootSummary(actualPort, config.server.port, config.server.environment, getDefaultModel(), workerResults);
 }
 
 function registerProcessHandlers(server: Server, actualPort: number): void {
@@ -107,27 +80,27 @@ function registerProcessHandlers(server: Server, actualPort: number): void {
 
   setTimeout(async () => {
     try {
-      console.log('[🤖 GPT-SYNC] Running system diagnostic...');
+      console.log(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_START, 'Running system diagnostic...'));
       await runSystemDiagnostic(actualPort);
     } catch (error) {
-      console.error('[❌ GPT-SYNC] System diagnostic failed:', error);
+      console.error(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_ERROR, `System diagnostic failed: ${error}`));
     }
-  }, 2000);
+  }, SERVER_CONSTANTS.DIAGNOSTIC_DELAY_MS);
 }
 
 export async function createServer(options: ServerFactoryOptions = {}): Promise<ServerLifecycle> {
   await performStartup();
   const app = createApp();
 
-  console.log(`[🔌 ARCANOS PORT] Checking port availability...`);
+  console.log(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_CHECK, 'Checking port availability...'));
   const host = options.host ?? config.server.host;
   const preferredPort = options.port ?? config.server.port;
 
   const portResult = await getAvailablePort(preferredPort, host);
 
   if (!portResult.isPreferred) {
-    console.log(`[⚠️  ARCANOS PORT] ${portResult.message}`);
-    console.log(`[🔀 ARCANOS PORT] Consider stopping other services or setting a different PORT in .env`);
+    console.log(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_WARNING, portResult.message || 'Port unavailable'));
+    console.log(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_SWITCH, 'Consider stopping other services or setting a different PORT in .env'));
   }
 
   const workerResults = await initializeWorkers();
@@ -150,9 +123,9 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
         port: actualPort,
         environment: config.server.environment
       });
-      console.log('[🔄 BACKEND-SYNC] System state initialized');
+      console.log(formatBootMessage(SERVER_MESSAGES.BOOT.BACKEND_SYNC, 'System state initialized'));
     } catch (error) {
-      console.error('[❌ BACKEND-SYNC] Failed to initialize system state:', error);
+      console.error(formatBootMessage(SERVER_MESSAGES.BOOT.BACKEND_SYNC_ERROR, `Failed to initialize system state: ${error}`));
     }
 
     registerProcessHandlers(server, actualPort);
