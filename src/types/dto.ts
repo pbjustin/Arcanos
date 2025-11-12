@@ -1,11 +1,28 @@
+/**
+ * Data Transfer Object (DTO) Schemas and Types
+ * 
+ * This module defines Zod validation schemas and TypeScript types for API requests
+ * and responses throughout the Arcanos backend. All schemas enforce runtime validation
+ * to ensure type safety and data integrity at API boundaries.
+ */
+
 import { z } from 'zod';
 
+/**
+ * Reusable string field validator for text inputs.
+ * Enforces trimming, minimum length of 1 character, and maximum of 6000 characters.
+ */
 const stringField = z
   .string()
   .trim()
   .min(1, 'Input text must include at least one character')
   .max(6000, 'Input text exceeds maximum length of 6000 characters');
 
+/**
+ * Schema for AI request payloads.
+ * Accepts multiple field names (prompt, userInput, content, text, query) to accommodate
+ * various API endpoints. At least one text field must be provided.
+ */
 export const aiRequestSchema = z
   .object({
     prompt: stringField.optional(),
@@ -39,14 +56,26 @@ export const aiRequestSchema = z
     }
   );
 
+/**
+ * AI request data transfer object type inferred from the validation schema.
+ */
 export type AIRequestDTO = z.infer<typeof aiRequestSchema>;
 
+/**
+ * Schema for OpenAI token usage metrics.
+ * Tracks prompt, completion, and total token consumption for cost analysis and monitoring.
+ */
 export const tokenUsageSchema = z.object({
   prompt_tokens: z.number().nonnegative(),
   completion_tokens: z.number().nonnegative(),
   total_tokens: z.number().nonnegative()
 });
 
+/**
+ * Schema for AI response payloads.
+ * Includes the AI-generated result, metadata about the request, and optional
+ * dataset harvest information for auditing and learning purposes.
+ */
 export const aiResponseSchema = z.object({
   result: z.string(),
   module: z.string().optional(),
@@ -76,15 +105,29 @@ export const aiResponseSchema = z.object({
     .optional()
 });
 
+/**
+ * AI response data transfer object type inferred from the validation schema.
+ */
 export type AIResponseDTO = z.infer<typeof aiResponseSchema>;
 
+/**
+ * Schema for standardized error responses.
+ * Provides consistent error messaging across all API endpoints.
+ */
 export const errorResponseSchema = z.object({
   error: z.string(),
   details: z.union([z.string(), z.array(z.string())]).optional()
 });
 
+/**
+ * Error response data transfer object type inferred from the validation schema.
+ */
 export type ErrorResponseDTO = z.infer<typeof errorResponseSchema>;
 
+/**
+ * Schema for individual worker module information.
+ * Describes a single background worker's availability, location, and error state.
+ */
 export const workerInfoSchema = z.object({
   id: z.string(),
   description: z.string(),
@@ -93,8 +136,15 @@ export const workerInfoSchema = z.object({
   error: z.string().optional()
 });
 
+/**
+ * Worker information data transfer object type inferred from the validation schema.
+ */
 export type WorkerInfoDTO = z.infer<typeof workerInfoSchema>;
 
+/**
+ * Internal schema for ARCANOS worker runtime state.
+ * Tracks worker lifecycle, dispatch history, and recent execution results.
+ */
 const arcanosRuntimeSchema = z.object({
   enabled: z.boolean(),
   model: z.string(),
@@ -110,6 +160,10 @@ const arcanosRuntimeSchema = z.object({
   lastError: z.string().optional()
 });
 
+/**
+ * Schema for comprehensive worker status responses.
+ * Aggregates information about all workers, ARCANOS-specific workers, and system configuration.
+ */
 export const workerStatusResponseSchema = z.object({
   timestamp: z.string(),
   workersDirectory: z.string(),
@@ -129,8 +183,15 @@ export const workerStatusResponseSchema = z.object({
   })
 });
 
+/**
+ * Worker status response data transfer object type inferred from the validation schema.
+ */
 export type WorkerStatusResponseDTO = z.infer<typeof workerStatusResponseSchema>;
 
+/**
+ * Schema for worker execution results.
+ * Reports success/failure, execution time, and any output or errors from the worker run.
+ */
 export const workerRunResponseSchema = z.object({
   success: z.boolean(),
   workerId: z.string(),
@@ -144,4 +205,7 @@ export const workerRunResponseSchema = z.object({
   message: z.string().optional()
 });
 
+/**
+ * Worker run response data transfer object type inferred from the validation schema.
+ */
 export type WorkerRunResponseDTO = z.infer<typeof workerRunResponseSchema>;

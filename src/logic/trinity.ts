@@ -1,3 +1,25 @@
+/**
+ * Trinity Brain - Core AI Processing Pipeline
+ * 
+ * Implements the ARCANOS Trinity architecture, a three-stage AI processing workflow:
+ * 
+ * 1. **ARCANOS Intake**: Prepares and frames user requests with memory context
+ * 2. **GPT-5 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
+ * 3. **ARCANOS Execution**: Synthesizes results and generates final responses
+ * 
+ * Key Features:
+ * - Automatic model validation with intelligent fallback
+ * - Memory-aware context integration for enhanced responses
+ * - Audit-safe constraint application for secure processing
+ * - Comprehensive routing stage tracking and logging
+ * - Task lineage tracking for debugging and analysis
+ * - Pattern storage for continuous learning
+ * 
+ * The Trinity pipeline is the primary entry point for all AI processing in ARCANOS.
+ * 
+ * @module trinity
+ */
+
 import OpenAI from 'openai';
 import { logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
 import { getDefaultModel, getGPT5Model, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
@@ -16,6 +38,10 @@ import {
 import { getMemoryContext, storePattern } from '../services/memoryAware.js';
 import { logger } from '../utils/structuredLogging.js';
 
+/**
+ * Comprehensive result from the Trinity processing pipeline.
+ * Includes the AI-generated response, metadata, audit information, and routing details.
+ */
 interface TrinityResult {
   result: string;
   module: string;
