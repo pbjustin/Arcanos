@@ -15,6 +15,7 @@ describe('railwayClient', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
     if (ORIGINAL_TOKEN) {
       process.env.RAILWAY_API_TOKEN = ORIGINAL_TOKEN;
     } else {
@@ -62,5 +63,55 @@ describe('railwayClient', () => {
     expect(requestInit.headers).toMatchObject({ Authorization: 'Bearer test-token-1234567890-railway-access' });
 
     expect(result).toEqual({ deploymentId: 'deployment-abc', status: 'DEPLOYING' });
+  });
+
+  it('wraps low-level fetch failures with RailwayApiError context', async () => {
+    process.env.RAILWAY_API_TOKEN = 'test-token-1234567890-railway-access';
+
+    const fetchSpy = jest.fn().mockRejectedValue(new Error('connect ECONNRESET'));
+    global.fetch = fetchSpy;
+
+    await expect(deployService({ serviceId: 'svc-1' })).rejects.toThrow(/Railway API request failed/i);
+  });
+
+  it('aborts requests that exceed the configured timeout', async () => {
+    process.env.RAILWAY_API_TOKEN = 'test-token-1234567890-railway-access';
+    jest.useFakeTimers();
+
+    const fetchSpy = jest.fn().mockImplementation((_url: string, init?: RequestInit) => (
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        if (!signal) {
+          return;
+        }
+
+        if (signal.aborted) {
+          const abortError = new Error('Aborted');
+          abortError.name = 'AbortError';
+          reject(abortError);
+          return;
+        }
+
+        const listener = () => {
+          const abortError = new Error('Aborted');
+          abortError.name = 'AbortError';
+          reject(abortError);
+        };
+
+        if (typeof (signal as any).addEventListener === 'function') {
+          (signal as any).addEventListener('abort', listener, { once: true });
+        } else {
+          (signal as any).onabort = listener;
+        }
+      })
+    ));
+
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const pending = deployService({ serviceId: 'svc-timeout' });
+
+    jest.runOnlyPendingTimers();
+
+    await expect(pending).rejects.toThrow(/timed out/i);
   });
 });

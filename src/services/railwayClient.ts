@@ -2,6 +2,24 @@ import { logger } from '../utils/structuredLogging.js';
 
 const DEFAULT_GRAPHQL_ENDPOINT = 'https://backboard.railway.app/graphql';
 const GRAPHQL_ENDPOINT = process.env.RAILWAY_GRAPHQL_ENDPOINT || DEFAULT_GRAPHQL_ENDPOINT;
+const DEFAULT_GRAPHQL_TIMEOUT_MS = 15_000;
+
+const GRAPHQL_TIMEOUT_MS = (() => {
+  const rawTimeout = process.env.RAILWAY_GRAPHQL_TIMEOUT_MS?.trim();
+  if (!rawTimeout) {
+    return DEFAULT_GRAPHQL_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(rawTimeout, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    logger.warn('Ignoring invalid RAILWAY_GRAPHQL_TIMEOUT_MS value', {
+      rawTimeout
+    });
+    return DEFAULT_GRAPHQL_TIMEOUT_MS;
+  }
+
+  return parsed;
+})();
 
 interface GraphQLErrorPayload {
   message: string;
@@ -58,6 +76,18 @@ class RailwayApiError extends Error {
   }
 }
 
+interface GraphQLRequestOptions {
+  timeoutMs?: number;
+}
+
+function truncate(value: string, maxLength = 300): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength)}…`;
+}
+
 function getToken(): string | null {
   const token = process.env.RAILWAY_API_TOKEN?.trim();
   return token ? token : null;
@@ -67,20 +97,47 @@ export function isRailwayApiConfigured(): boolean {
   return Boolean(getToken());
 }
 
-async function executeGraphQL<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+async function executeGraphQL<T>(
+  query: string,
+  variables?: Record<string, unknown>,
+  options: GraphQLRequestOptions = {}
+): Promise<T> {
   const token = getToken();
   if (!token) {
     throw new RailwayApiError('Railway API token is not configured. Set RAILWAY_API_TOKEN to enable management APIs.');
   }
 
-  const response = await fetch(GRAPHQL_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`
-    },
-    body: JSON.stringify({ query, variables })
-  });
+  const timeoutMs = options.timeoutMs ?? GRAPHQL_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  if (typeof timeoutHandle === 'object' && typeof (timeoutHandle as NodeJS.Timeout).unref === 'function') {
+    (timeoutHandle as NodeJS.Timeout).unref();
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(GRAPHQL_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ query, variables }),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') {
+      throw new RailwayApiError(`Railway API request timed out after ${timeoutMs}ms`);
+    }
+
+    throw new RailwayApiError(`Railway API request failed: ${(error as Error).message}`);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 
   const raw = await response.text();
   let parsed: GraphQLResponse<T>;
@@ -88,11 +145,11 @@ async function executeGraphQL<T>(query: string, variables?: Record<string, unkno
   try {
     parsed = JSON.parse(raw) as GraphQLResponse<T>;
   } catch (error) {
-    throw new RailwayApiError(`Failed to parse Railway API response: ${(error as Error).message}`);
+    throw new RailwayApiError(`Failed to parse Railway API response: ${(error as Error).message}. Received: ${truncate(raw)}`);
   }
 
   if (!response.ok) {
-    const detail = parsed.errors?.map((err) => err.message).join('; ') || raw || response.statusText;
+    const detail = parsed.errors?.map((err) => err.message).join('; ') || truncate(raw) || response.statusText;
     throw new RailwayApiError(`Railway API request failed (${response.status}): ${detail}`);
   }
 
@@ -102,7 +159,7 @@ async function executeGraphQL<T>(query: string, variables?: Record<string, unkno
   }
 
   if (!parsed.data) {
-    throw new RailwayApiError('Railway API returned no data payload');
+    throw new RailwayApiError(`Railway API returned no data payload. Received: ${truncate(raw)}`);
   }
 
   return parsed.data;

@@ -18,6 +18,7 @@ export interface EnvValidationResult {
     crepidPurge?: string;
     nodeEnv?: string;
     railwayApiToken?: string;
+    railwayGraphqlTimeoutMs?: number;
   };
 }
 
@@ -46,6 +47,17 @@ export function validateEnvironment(): EnvValidationResult {
   const railwayApiToken = process.env.RAILWAY_API_TOKEN;
   if (!railwayApiToken) {
     warnings.push('RAILWAY_API_TOKEN not configured - Railway management API features are disabled');
+  }
+
+  const rawRailwayTimeout = process.env.RAILWAY_GRAPHQL_TIMEOUT_MS?.trim();
+  let railwayGraphqlTimeoutMs: number | undefined;
+  if (rawRailwayTimeout) {
+    const parsedTimeout = Number.parseInt(rawRailwayTimeout, 10);
+    if (!Number.isFinite(parsedTimeout) || parsedTimeout <= 0) {
+      warnings.push(`Invalid RAILWAY_GRAPHQL_TIMEOUT_MS value: ${rawRailwayTimeout}. Using default 15000ms`);
+    } else {
+      railwayGraphqlTimeoutMs = parsedTimeout;
+    }
   }
 
   // Important but non-critical variables
@@ -93,7 +105,8 @@ export function validateEnvironment(): EnvValidationResult {
       logLevel,
       crepidPurge,
       nodeEnv,
-      railwayApiToken: railwayApiToken ? '***configured***' : undefined
+      railwayApiToken: railwayApiToken ? '***configured***' : undefined,
+      railwayGraphqlTimeoutMs
     }
   };
 }
@@ -127,6 +140,7 @@ export function logEnvironmentValidation(result: EnvValidationResult): void {
   console.log(`   OPENAI_API_KEY: ${result.config.openaiApiKey || 'not configured'}`);
   console.log(`   OPENAI_MODEL: ${result.config.openaiModel}`);
   console.log(`   RAILWAY_API_TOKEN: ${result.config.railwayApiToken || 'not configured'}`);
+  console.log(`   RAILWAY_GRAPHQL_TIMEOUT_MS: ${result.config.railwayGraphqlTimeoutMs ?? 'default (15000)'}`);
   console.log(`   DATABASE_URL: ${result.config.databaseUrl ? 'configured' : 'not configured'}`);
   console.log(`   CREPID_PURGE: ${result.config.crepidPurge}`);
   console.log('================================\n');
