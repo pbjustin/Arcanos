@@ -27,6 +27,10 @@ const reinforcementMode = (process.env.ARCANOS_CONTEXT_MODE || 'reinforcement') 
 const reinforcementWindow = parseNumber(process.env.ARCANOS_CONTEXT_WINDOW, 50, 1);
 const reinforcementDigestSize = parseNumber(process.env.ARCANOS_MEMORY_DIGEST_SIZE, 8, 1);
 const reinforcementMinimumClearScore = parseNumber(process.env.ARCANOS_CLEAR_MIN_SCORE, 0.85);
+const fallbackStrictEnvironments = (process.env.FALLBACK_STRICT_ENVIRONMENTS || 'production,staging')
+  .split(',')
+  .map(value => value.trim())
+  .filter(Boolean);
 
 export const config = {
   // Server configuration
@@ -59,10 +63,20 @@ export const config = {
     requestTimeout: Number(process.env.REQUEST_TIMEOUT) || 30000
   },
 
+  fallback: {
+    strictEnvironments: fallbackStrictEnvironments,
+    preemptive: process.env.ENABLE_PREEMPTIVE_FALLBACK === 'true'
+  },
+
   // Logging configuration
   logging: {
     level: process.env.LOG_LEVEL || 'info',
     sessionLogPath: process.env.ARC_LOG_PATH || './memory/session.log'
+  },
+
+  telemetry: {
+    recentLogLimit: parseNumber(process.env.TELEMETRY_RECENT_LOGS_LIMIT, 100, 10),
+    traceEventLimit: parseNumber(process.env.TELEMETRY_TRACE_EVENT_LIMIT, 200, 25)
   },
 
   // External integrations

@@ -4,6 +4,7 @@
  */
 
 import { generateRequestId } from './idGenerator.js';
+import { recordLogEvent, recordTraceEvent } from './telemetry.js';
 
 export enum LogLevel {
   DEBUG = 'debug',
@@ -86,7 +87,7 @@ class StructuredLogger {
 
   private log(entry: LogEntry): void {
     const isProduction = process.env.NODE_ENV === 'production';
-    
+
     if (isProduction) {
       // In production, output structured JSON for log aggregation
       console.log(JSON.stringify(entry));
@@ -95,13 +96,22 @@ class StructuredLogger {
       const contextStr = entry.context ? ` [${Object.entries(entry.context).map(([k, v]) => `${k}:${v}`).join(',')}]` : '';
       const durationStr = entry.duration ? ` (${entry.duration}ms)` : '';
       const metadataStr = entry.metadata ? ` ${JSON.stringify(entry.metadata)}` : '';
-      
+
       console.log(`[${entry.timestamp}] ${entry.level.toUpperCase()}${contextStr}: ${entry.message}${durationStr}${metadataStr}`);
-      
+
       if (entry.error && entry.error.stack) {
         console.log(entry.error.stack);
       }
     }
+
+    recordLogEvent({
+      timestamp: entry.timestamp,
+      level: entry.level,
+      message: entry.message,
+      context: entry.context,
+      metadata: entry.metadata,
+      duration: entry.duration
+    });
   }
 
   debug(message: string, context?: LogContext, metadata?: any): void {
@@ -138,9 +148,18 @@ class StructuredLogger {
    */
   startTimer(operation: string, context?: LogContext): () => void {
     const startTime = Date.now();
+    const startEvent = recordTraceEvent('logger.timer.start', {
+      operation,
+      context
+    });
     return () => {
       const duration = Date.now() - startTime;
       this.timed(`${operation} completed`, duration, context);
+      recordTraceEvent('logger.timer.end', {
+        operation,
+        duration,
+        traceId: startEvent.id
+      });
     };
   }
 }

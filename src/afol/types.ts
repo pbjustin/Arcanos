@@ -32,9 +32,15 @@ export interface DecideInput {
 export interface RouteExecutionResult {
   route: RouteName;
   input: string;
+  output?: string;
+  model?: string;
+  cached?: boolean;
+  error?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface DecisionRecord {
+  id: string;
   ok: boolean;
   policy: PolicyEvaluation;
   route: RouteSelection;

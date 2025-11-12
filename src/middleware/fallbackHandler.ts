@@ -4,9 +4,11 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import config from '../config/index.js';
 import { getOpenAIClient, getGPT5Model } from '../services/openai.js';
 import { responseCache } from '../utils/cache.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
+import { recordTraceEvent } from '../utils/telemetry.js';
 
 interface FallbackRequest {
   prompt: string;
@@ -92,9 +94,13 @@ export function createFallbackMiddleware() {
     console.log(`🔄 Fallback mode activated for ${endpoint} - ${err.message}`);
 
     const degradedResponse = generateDegradedResponse(prompt, endpoint);
-    
+
     // Set appropriate HTTP status for degraded mode
     res.status(503).json(degradedResponse);
+    recordTraceEvent('fallback.degraded', {
+      endpoint,
+      reason: err instanceof Error ? err.message : 'unknown'
+    });
   };
 }
 
@@ -151,15 +157,21 @@ export function createHealthCheckMiddleware() {
     }
 
     const client = getOpenAIClient();
-    
+    const strictEnvs = config.fallback.strictEnvironments;
+    const enforcePreemptive = config.fallback.preemptive || strictEnvs.includes(config.server.environment);
+
     // If OpenAI client is not available, immediately trigger degraded mode
-    if (!client && process.env.NODE_ENV === 'production') {
+    if (!client && enforcePreemptive) {
       const endpoint = req.path.split('/').pop() || 'unknown';
       const prompt = req.body?.prompt || req.body?.scenario || req.body?.query || 'Health check triggered fallback';
-      
+
       console.log(`🔄 Preemptive fallback mode activated for ${endpoint} - OpenAI client unavailable`);
-      
+
       const degradedResponse = generateDegradedResponse(prompt, endpoint);
+      recordTraceEvent('fallback.preemptive', {
+        endpoint,
+        environment: config.server.environment
+      });
       return res.status(503).json(degradedResponse);
     }
 
