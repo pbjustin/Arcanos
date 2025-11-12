@@ -1,9 +1,32 @@
+/**
+ * Dataset Harvester Service
+ * 
+ * Automatically extracts and stores dataset references from audit text output.
+ * Scans AI-generated content for mentions of datasets, data sources, and knowledge bases,
+ * then persists them to the memory system for future reference and training.
+ * 
+ * Features:
+ * - Pattern-based extraction of dataset mentions
+ * - Confidence scoring (high/medium/low)
+ * - Automatic slugification and deduplication
+ * - Memory system integration
+ * - Persistent logging to dataset-harvest.log
+ * 
+ * @module datasetHarvester
+ */
+
 import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { storeMemory } from './memoryAware.js';
 
+/**
+ * Confidence levels for harvested dataset references.
+ */
 export type DatasetConfidence = 'high' | 'medium' | 'low';
 
+/**
+ * Result of a dataset harvest operation.
+ */
 export interface DatasetHarvestResult {
   name: string;
   summary: string;
@@ -16,6 +39,9 @@ export interface DatasetHarvestResult {
   sessionId?: string;
 }
 
+/**
+ * Options for customizing harvest behavior.
+ */
 interface HarvestOptions {
   sourcePrompt?: string;
   sessionId?: string;
@@ -29,6 +55,13 @@ if (!existsSync(LOG_DIR)) {
   mkdirSync(LOG_DIR, { recursive: true });
 }
 
+/**
+ * Converts a raw dataset name to a URL-safe slug.
+ * 
+ * @param raw - Raw dataset name
+ * @param fallbackIndex - Index to use if slug is empty
+ * @returns Slugified dataset name
+ */
 function slugifyDatasetName(raw: string, fallbackIndex: number): string {
   const slug = raw
     .toLowerCase()
@@ -38,6 +71,13 @@ function slugifyDatasetName(raw: string, fallbackIndex: number): string {
   return slug || `dataset-${fallbackIndex}`;
 }
 
+/**
+ * Extracts a dataset name from a line of text using pattern matching.
+ * Tries multiple patterns: "dataset:", "data source:", "corpus:".
+ * 
+ * @param line - Line of text to parse
+ * @returns Extracted dataset name or truncated line
+ */
 function extractDatasetName(line: string): string {
   const datasetMatch = line.match(/dataset\s*(?:-|:)?\s*(.+)/i);
   if (datasetMatch && datasetMatch[1]) {
@@ -57,6 +97,12 @@ function extractDatasetName(line: string): string {
   return line.substring(0, 80).trim();
 }
 
+/**
+ * Determines confidence level based on keyword presence in the line.
+ * 
+ * @param line - Line to analyze
+ * @returns Confidence level (high, medium, or low)
+ */
 function determineConfidence(line: string): DatasetConfidence {
   if (/dataset/i.test(line)) {
     return 'high';
@@ -67,6 +113,12 @@ function determineConfidence(line: string): DatasetConfidence {
   return 'low';
 }
 
+/**
+ * Removes list markers, bullet points, and extra whitespace from a line.
+ * 
+ * @param line - Line to sanitize
+ * @returns Cleaned line
+ */
 function sanitizeLine(line: string): string {
   return line
     .replace(/^[-*•\d.)\s]+/, '')
@@ -74,6 +126,13 @@ function sanitizeLine(line: string): string {
     .trim();
 }
 
+/**
+ * Extracts all potential dataset references from audit text.
+ * Filters lines by dataset-related keywords and deduplicates results.
+ * 
+ * @param auditText - Full audit output text to scan
+ * @returns Array of candidate dataset descriptions
+ */
 function extractDatasetCandidates(auditText: string): string[] {
   const lines = auditText.split(/\r?\n/);
   const candidates: string[] = [];
@@ -94,6 +153,11 @@ function extractDatasetCandidates(auditText: string): string[] {
   return candidates;
 }
 
+/**
+ * Appends a harvest result to the persistent log file.
+ * 
+ * @param result - Harvest result to log
+ */
 function logHarvest(result: DatasetHarvestResult): void {
   try {
     const line = `${JSON.stringify(result)}\n`;
@@ -103,6 +167,23 @@ function logHarvest(result: DatasetHarvestResult): void {
   }
 }
 
+/**
+ * Harvests dataset references from audit text and stores them in memory.
+ * Scans the text for dataset-related keywords, extracts candidate references,
+ * assigns confidence scores, and persists each to the memory system.
+ * 
+ * @param auditText - Audit output text to scan for datasets
+ * @param options - Optional context including sourcePrompt, sessionId, and requestId
+ * @returns Array of harvest results with storage status
+ * 
+ * @example
+ * const results = harvestDatasetsFromAudit(auditOutput, {
+ *   sourcePrompt: userPrompt,
+ *   sessionId: 'session123',
+ *   requestId: 'req456'
+ * });
+ * console.log(`Harvested ${results.length} datasets`);
+ */
 export function harvestDatasetsFromAudit(
   auditText: string,
   options: HarvestOptions = {}
