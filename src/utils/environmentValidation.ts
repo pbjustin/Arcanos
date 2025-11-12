@@ -89,6 +89,17 @@ const environmentChecks: EnvironmentCheck[] = [
     }
   },
   {
+    name: 'RAILWAY_API_TOKEN',
+    required: false,
+    description: 'Railway management API token for GraphQL access',
+    validator: (value) => value.length >= 32,
+    suggestions: [
+      'Generate a Railway API token from https://railway.app/account/tokens',
+      'Store the token as RAILWAY_API_TOKEN to enable deployment automation',
+      'Keep this token secret – it grants management access to your Railway project'
+    ]
+  },
+  {
     name: 'DATABASE_URL',
     required: false, // Optional for in-memory fallback
     description: 'PostgreSQL connection string',
@@ -270,6 +281,12 @@ export function validateRailwayEnvironment(): ValidationResult {
     }
   }
 
+  if (!process.env.RAILWAY_API_TOKEN) {
+    result.warnings.push('⚠️  Railway API token (RAILWAY_API_TOKEN) not set - management API features disabled');
+  } else {
+    logger.info('✅ Railway management API token detected');
+  }
+
   // Check for Railway PostgreSQL
   if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway.app')) {
     logger.info('✅ Railway PostgreSQL detected');
@@ -326,11 +343,12 @@ export function createStartupReport(securitySummary?: EnvironmentSecuritySummary
     `└─ Configured Variables: ${envInfo.configuredVariables.length}`,
     '',
     '🚄 Railway Status:',
-    process.env.RAILWAY_ENVIRONMENT ? 
-      `├─ Project: ${process.env.RAILWAY_PROJECT_ID}` : 
+    process.env.RAILWAY_ENVIRONMENT ?
+      `├─ Project: ${process.env.RAILWAY_PROJECT_ID}` :
       '├─ Platform: Local/Other',
-    process.env.DATABASE_URL?.includes('railway.app') ? 
-      '└─ Database: Railway PostgreSQL ✅' : 
+    `├─ Management API: ${process.env.RAILWAY_API_TOKEN ? 'configured' : 'disabled'}`,
+    process.env.DATABASE_URL?.includes('railway.app') ?
+      '└─ Database: Railway PostgreSQL ✅' :
       '└─ Database: External/Local',
     '',
     ...securityLines,
