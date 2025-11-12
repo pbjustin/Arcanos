@@ -1,5 +1,7 @@
 import fs from 'fs';
 import os from 'os';
+import { getCircuitBreakerSnapshot } from '../services/openai.js';
+import { getTelemetrySnapshot } from './telemetry.js';
 import { getEnvironmentSecuritySummary } from './environmentSecurity.js';
 import { resolveWorkersDirectory } from './workerPaths.js';
 
@@ -32,6 +34,10 @@ export interface HealthCheckReport {
       fiveMinute: string;
       fifteenMinute: string;
     };
+  };
+  telemetry: ReturnType<typeof getTelemetrySnapshot>;
+  resilience: {
+    circuitBreaker: ReturnType<typeof getCircuitBreakerSnapshot>;
   };
 }
 
@@ -110,6 +116,8 @@ export function runHealthCheck(): HealthCheckReport {
   const security = getEnvironmentSecuritySummary();
   const workers = evaluateWorkerHealth();
   const [load1, load5, load15] = os.loadavg().map(avg => avg.toFixed(2));
+  const telemetry = getTelemetrySnapshot();
+  const circuitBreaker = getCircuitBreakerSnapshot();
 
   console.log(
     `[🩺 HealthCheck] Memory | Heap: ${heapMB}MB | RSS: ${rssMB}MB | External: ${externalMB}MB | ArrayBuffers: ${arrayBuffersMB}MB`
@@ -141,6 +149,15 @@ export function runHealthCheck(): HealthCheckReport {
       console.log(`[🧵 Workers] Detail: ${workers.reason}`);
     }
   }
+
+  console.log(
+    `[🧰 Resilience] CircuitBreaker state=${circuitBreaker.state} failures=${circuitBreaker.failureCount} lastFailure=${
+      circuitBreaker.lastFailureTime ? new Date(circuitBreaker.lastFailureTime).toISOString() : 'n/a'
+    }`
+  );
+  console.log(
+    `[📈 Telemetry] Logs=${telemetry.metrics.totalLogs} RecentEvents=${telemetry.traces.recentEvents.length}`
+  );
 
   const status: HealthCheckReport['status'] = workers.healthy ? 'ok' : 'degraded';
   const summaryParts = [
@@ -181,6 +198,10 @@ export function runHealthCheck(): HealthCheckReport {
         fiveMinute: load5,
         fifteenMinute: load15
       }
+    },
+    telemetry,
+    resilience: {
+      circuitBreaker
     }
   };
 }
