@@ -4,6 +4,7 @@
  */
 
 import dotenv from 'dotenv';
+import { APPLICATION_CONSTANTS } from './constants.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -92,8 +93,8 @@ export const env = {
   // OpenAI Configuration
   OPENAI_API_KEY: Environment.get('OPENAI_API_KEY'),
   OPENAI_BASE_URL: Environment.get('OPENAI_BASE_URL'),
-  AI_MODEL: Environment.get('AI_MODEL', 'gpt-4-turbo'),
-  GPT5_MODEL: Environment.get('GPT5_MODEL', 'gpt-5'),
+  AI_MODEL: Environment.get('AI_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_4_TURBO),
+  GPT5_MODEL: Environment.get('GPT5_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_5),
   
   // Database Configuration
   DATABASE_URL: Environment.get('DATABASE_URL'),

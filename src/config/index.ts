@@ -6,6 +6,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import type { ReinforcementMode } from '../types/reinforcement.js';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 
 // Load environment variables
 dotenv.config();
@@ -45,8 +46,8 @@ export const config = {
   // AI configuration
   ai: {
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.AI_MODEL || 'gpt-4-turbo',
-    fallbackModel: 'gpt-4',
+    model: process.env.AI_MODEL || APPLICATION_CONSTANTS.MODEL_GPT_4_TURBO,
+    fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
     defaultMaxTokens: 200,
     defaultTemperature: 0.2
   },

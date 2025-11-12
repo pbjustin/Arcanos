@@ -9,6 +9,13 @@ export const APPLICATION_CONSTANTS = {
   DEFAULT_NODE_ENV: 'development',
   DEFAULT_LOG_LEVEL: 'info',
   
+  // AI Model names
+  MODEL_GPT_4: 'gpt-4',
+  MODEL_GPT_4_TURBO: 'gpt-4-turbo',
+  MODEL_GPT_4O: 'gpt-4o',
+  MODEL_GPT_5: 'gpt-5',
+  MODEL_GPT_3_5_TURBO: 'gpt-3.5-turbo',
+  
   // Timeout values (in milliseconds)  
   DEFAULT_API_TIMEOUT: 30000,
   DEFAULT_DATABASE_TIMEOUT: 5000,
