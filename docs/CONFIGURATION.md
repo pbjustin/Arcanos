@@ -98,6 +98,7 @@ report the degraded state for observability.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `TRUSTED_GPT_IDS` | – | Comma-separated GPT identifiers that bypass the confirmation gate. |
+| `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` | Lifetime (in milliseconds) for pending confirmation challenges returned by `confirmGate`. |
 | `ALLOW_ROOT_OVERRIDE` | `false` | Enables elevated persistence operations when paired with `ROOT_OVERRIDE_TOKEN`. |
 | `ROOT_OVERRIDE_TOKEN` | – | Secret required when root override mode is enabled. |
 | `ADMIN_KEY` | – | Optional admin key consumed by orchestration workflows. |

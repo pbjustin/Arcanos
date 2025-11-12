@@ -125,7 +125,8 @@ observability.
 
 | Variable | Purpose |
 |----------|---------|
-| `TRUSTED_GPT_IDS` | Comma-separated list of GPT IDs that bypass the `x-confirmed: yes` requirement enforced by `middleware/confirmGate.ts`. |
+| `TRUSTED_GPT_IDS` | Comma-separated list of GPT IDs that bypass the confirmation challenge enforced by `middleware/confirmGate.ts`. |
+| `CONFIRMATION_CHALLENGE_TTL_MS` | Millisecond lifetime for pending confirmation challenges returned to GPT callers. |
 | `ALLOW_ROOT_OVERRIDE` & `ROOT_OVERRIDE_TOKEN` | Allow elevated persistence operations during troubleshooting (`persistenceManagerHierarchy.ts`). |
 | `ADMIN_KEY`, `REGISTER_KEY` | Optional keys used by orchestration and registration workflows. |
 
@@ -204,9 +205,11 @@ Routes are registered in `routes/register.ts`. Highlights include:
 - `/api/pr-analysis/*`, `/api/openai/*`, `/api/commands/*` – Specialized APIs for
   PR review, OpenAI compatibility, and command execution.
 
-> **Confirmation header** – Mutating routes generally require `x-confirmed: yes`
-> unless the caller identifies as a trusted GPT (`TRUSTED_GPT_IDS`). Requests are
-> logged with the outcome for audit compliance.
+> **Confirmation header** – Mutating routes generally require manual approval
+> (`x-confirmed: yes`). If no header is provided, the middleware responds with a
+> confirmation challenge containing a `challengeId`; retry with
+> `x-confirmed: token:<challengeId>` once the operator approves, or register the
+> GPT ID in `TRUSTED_GPT_IDS`. All attempts are logged for audit compliance.
 
 ---
 
