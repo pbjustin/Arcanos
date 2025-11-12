@@ -17,6 +17,7 @@ export interface EnvValidationResult {
     logLevel?: string;
     crepidPurge?: string;
     nodeEnv?: string;
+    railwayApiToken?: string;
   };
 }
 
@@ -41,7 +42,12 @@ export function validateEnvironment(): EnvValidationResult {
   if (!openaiApiKey || openaiApiKey === 'your-openai-api-key-here') {
     warnings.push('OPENAI_API_KEY not configured - AI endpoints will return mock responses');
   }
-  
+
+  const railwayApiToken = process.env.RAILWAY_API_TOKEN;
+  if (!railwayApiToken) {
+    warnings.push('RAILWAY_API_TOKEN not configured - Railway management API features are disabled');
+  }
+
   // Important but non-critical variables
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -86,7 +92,8 @@ export function validateEnvironment(): EnvValidationResult {
       port,
       logLevel,
       crepidPurge,
-      nodeEnv
+      nodeEnv,
+      railwayApiToken: railwayApiToken ? '***configured***' : undefined
     }
   };
 }
@@ -119,6 +126,7 @@ export function logEnvironmentValidation(result: EnvValidationResult): void {
   console.log(`   LOG_LEVEL: ${result.config.logLevel}`);
   console.log(`   OPENAI_API_KEY: ${result.config.openaiApiKey || 'not configured'}`);
   console.log(`   OPENAI_MODEL: ${result.config.openaiModel}`);
+  console.log(`   RAILWAY_API_TOKEN: ${result.config.railwayApiToken || 'not configured'}`);
   console.log(`   DATABASE_URL: ${result.config.databaseUrl ? 'configured' : 'not configured'}`);
   console.log(`   CREPID_PURGE: ${result.config.crepidPurge}`);
   console.log('================================\n');

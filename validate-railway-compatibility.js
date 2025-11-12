@@ -14,7 +14,7 @@ function check(desc, condition) {
 }
 
 // Environment variables sourced from configuration files
-const requiredEnv = ['OPENAI_API_KEY', 'PORT', 'RAILWAY_ENVIRONMENT'];
+const requiredEnv = ['OPENAI_API_KEY', 'PORT', 'RAILWAY_ENVIRONMENT', 'RAILWAY_API_TOKEN'];
 const documentedEnv = new Set();
 
 const envExamplePath = path.join(process.cwd(), '.env.example');

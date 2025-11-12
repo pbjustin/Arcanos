@@ -44,6 +44,11 @@ PORT=8080                    # Auto-set by Railway
 RAILWAY_ENVIRONMENT=production  # Auto-set by Railway
 ```
 
+#### Railway Management (optional but recommended):
+```bash
+RAILWAY_API_TOKEN=your-railway-api-token   # Enables deploy/rollback automation via GraphQL API
+```
+
 #### Fine-Tuned Model (Railway Compatible):
 ```bash
 FINETUNED_MODEL_ID=ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote
