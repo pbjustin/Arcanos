@@ -51,7 +51,7 @@ export interface DecisionRecord {
   };
 }
 
-export interface LogEntry {
+export interface AfolLogEntry {
   timestamp: string;
   input?: unknown;
   decision?: DecisionRecord;
