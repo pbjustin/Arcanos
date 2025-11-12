@@ -1,3 +1,12 @@
+/**
+ * OpenAI Controller
+ * 
+ * Provides HTTP endpoints for direct OpenAI API interactions including
+ * prompt execution and service health status reporting.
+ * 
+ * @module openaiController
+ */
+
 import { Request, Response } from 'express';
 import {
   callOpenAI,
@@ -11,15 +20,29 @@ import { validateAIRequest, handleAIError } from '../utils/requestHandler.js';
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 import { getConfirmGateConfiguration } from '../middleware/confirmGate.js';
 
+/**
+ * Request type for prompt execution with optional model override.
+ */
 type PromptRequest = AIRequestDTO & {
   prompt: string;
   model?: string;
 };
 
+/**
+ * Response type for prompt execution including model information.
+ */
 type PromptResponse = AIResponseDTO & {
   model?: string;
 };
 
+/**
+ * Handles direct OpenAI prompt execution requests.
+ * Accepts a prompt string and optional model override. Validates input,
+ * executes the completion, and returns the AI-generated response.
+ * 
+ * @param req - Express request with prompt and optional model
+ * @param res - Express response for completion result
+ */
 export async function handlePrompt(
   req: Request<{}, PromptResponse | ErrorResponseDTO, PromptRequest>,
   res: Response<PromptResponse | ErrorResponseDTO>
@@ -52,6 +75,14 @@ export async function handlePrompt(
   }
 }
 
+/**
+ * Returns comprehensive OpenAI service status and configuration.
+ * Includes API key status, model configuration, circuit breaker state,
+ * cache status, and environment details. Useful for diagnostics and monitoring.
+ * 
+ * @param _ - Express request (unused)
+ * @param res - Express response with service status
+ */
 export function getOpenAIStatus(_: Request, res: Response): void {
   const health = getOpenAIServiceHealth();
   const confirmation = getConfirmGateConfiguration();
