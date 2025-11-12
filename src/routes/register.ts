@@ -15,6 +15,7 @@ import backstageRouter from './backstage.js';
 import apiArcanosRouter from './api-arcanos.js';
 import apiSimRouter from './api-sim.js';
 import apiMemoryRouter from './api-memory.js';
+import apiCodebaseRouter from './api-codebase.js';
 import apiCommandsRouter from './api-commands.js';
 import sdkRouter from './sdk.js';
 import imageRouter from './image.js';
@@ -79,6 +80,7 @@ export function registerRoutes(app: Express): void {
   app.use('/api/arcanos', apiArcanosRouter);
   app.use('/api/sim', apiSimRouter);
   app.use('/api/memory', apiMemoryRouter);
+  app.use('/api/codebase', apiCodebaseRouter);
   app.use('/api/commands', apiCommandsRouter);
   app.use('/api/pr-analysis', prAnalysisRouter);
   app.use('/api/openai', openaiRouter);
