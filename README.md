@@ -1,6 +1,6 @@
 # Arcanos Backend
 
-> **Last Updated:** 2024-10-30 | **Version:** 1.0.0 | **OpenAI SDK:** v5.16.0
+> **Last Updated:** 2025-11-12 | **Version:** 1.0.0 | **OpenAI SDK:** v5.16.0
 
 Arcanos is an AI-assisted TypeScript backend built on Express. The service routes
 requests through a centralized OpenAI integration, persists state to disk, and
@@ -203,14 +203,34 @@ diagnostic and `/api/test` returns a lightweight readiness payload for Railway.
 
 ## 📚 Additional Documentation
 
-- [`docs/backend.md`](docs/backend.md) – Detailed runtime walkthrough.
-- [`docs/api/README.md`](docs/api/README.md) – Endpoint catalog and examples.
-- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) – Expanded environment
-  reference.
-- [`docs/environment-security-overview.md`](docs/environment-security-overview.md)
-  – Startup safety checks and sandbox rules.
+### Core Documentation
+- [`docs/README.md`](docs/README.md) – Documentation index and navigation hub
+- [`docs/backend.md`](docs/backend.md) – Detailed runtime walkthrough
+- [`docs/api/README.md`](docs/api/README.md) – Complete API endpoint catalog
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) – Environment configuration reference
+- [`docs/DOCUMENTATION_STATUS.md`](docs/DOCUMENTATION_STATUS.md) – Documentation coverage report
+
+### Architecture & Integration
+- [`docs/AFOL_OVERVIEW.md`](docs/AFOL_OVERVIEW.md) – Adaptive Failover Orchestration Layer
+- [`docs/DATABASE_INTEGRATION.md`](docs/DATABASE_INTEGRATION.md) – Database integration patterns
+- [`docs/BACKGROUND_WORKERS.md`](docs/BACKGROUND_WORKERS.md) – Background worker system
+- [`docs/GPT5_INTEGRATION_SUMMARY.md`](docs/GPT5_INTEGRATION_SUMMARY.md) – GPT-5 reasoning integration
+
+### API & Development Guides
+- [`docs/api/API_REFERENCE.md`](docs/api/API_REFERENCE.md) – Detailed API reference
+- [`docs/api/CONTEXTUAL_REINFORCEMENT.md`](docs/api/CONTEXTUAL_REINFORCEMENT.md) – Reinforcement learning API
+- [`docs/ORCHESTRATION_API.md`](docs/ORCHESTRATION_API.md) – Orchestration controls
+- [`docs/environment-security-overview.md`](docs/environment-security-overview.md) – Security and sandbox rules
 
 ---
 
-Need a deeper dive? Start with [`docs/README.md`](docs/README.md) for the full
-documentation index and cross-links to specialized guides.
+## 📝 Documentation Standards
+
+This project follows comprehensive documentation standards:
+- **JSDoc format** for all TypeScript source files
+- **Module-level documentation** with `@module` tags
+- **Parameter and return type descriptions** for all public APIs
+- **Usage examples** for complex features
+- **Markdown documentation** for architectural guides and API references
+
+See [`docs/DOCUMENTATION_STATUS.md`](docs/DOCUMENTATION_STATUS.md) for current coverage and standards.
