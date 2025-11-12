@@ -100,6 +100,7 @@ PORT=8080
 ### Management API (optional)
 ```bash
 RAILWAY_API_TOKEN=your-railway-api-token
+RAILWAY_GRAPHQL_TIMEOUT_MS=20000
 ```
 
 ### Railway Deployment

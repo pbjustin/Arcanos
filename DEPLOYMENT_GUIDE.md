@@ -47,6 +47,7 @@ RAILWAY_ENVIRONMENT=production  # Auto-set by Railway
 #### Railway Management (optional but recommended):
 ```bash
 RAILWAY_API_TOKEN=your-railway-api-token   # Enables deploy/rollback automation via GraphQL API
+RAILWAY_GRAPHQL_TIMEOUT_MS=20000           # Optional - override default 15s GraphQL timeout
 ```
 
 #### Fine-Tuned Model (Railway Compatible):
