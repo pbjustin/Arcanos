@@ -359,10 +359,39 @@ export function createStartupReport(securitySummary?: EnvironmentSecuritySummary
   return report;
 }
 
+/**
+ * Check for ephemeral filesystem
+ * Railway uses ephemeral filesystems - warn if writing to persistent paths
+ */
+export function checkEphemeralFS(): void {
+  const isPersistentPath = (path: string): boolean => {
+    const persistentPrefixes = ['/var/', '/opt/', '/usr/local/'];
+    return persistentPrefixes.some(prefix => path.startsWith(prefix));
+  };
+  
+  const logPath = process.env.ARC_LOG_PATH;
+  const memoryPath = process.env.ARC_MEMORY_PATH;
+  
+  if (logPath && isPersistentPath(logPath)) {
+    console.warn(`⚠️  LOG PATH WARNING: ${logPath} may not persist on Railway ephemeral FS. Consider using /tmp/`);
+  }
+  
+  if (memoryPath && isPersistentPath(memoryPath)) {
+    console.warn(`⚠️  MEMORY PATH WARNING: ${memoryPath} may not persist on Railway ephemeral FS. Consider using /tmp/`);
+  }
+  
+  // Check if running on Railway
+  if (process.env.RAILWAY_ENVIRONMENT) {
+    console.log('🚂 Running on Railway - using ephemeral filesystem');
+    console.log('   Files in /tmp/ and database are suitable for persistence');
+  }
+}
+
 export default {
   validateEnvironment,
   printValidationResults,
   validateRailwayEnvironment,
   getEnvironmentInfo,
-  createStartupReport
+  createStartupReport,
+  checkEphemeralFS
 };

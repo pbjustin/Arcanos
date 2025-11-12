@@ -55,21 +55,20 @@ describe('Health Endpoints', () => {
 
 describe('Environment Validation', () => {
   it('should validate environment and return result', async () => {
-    const { validateEnvironment } = await import('../src/utils/envValidation.js');
+    const { validateEnvironment } = await import('../src/utils/environmentValidation.js');
     
     const result = validateEnvironment();
     
     expect(result).toBeDefined();
-    expect(result.valid).toBeDefined();
+    expect(result.isValid).toBeDefined();
     expect(result.errors).toBeDefined();
     expect(result.warnings).toBeDefined();
-    expect(result.config).toBeDefined();
     expect(Array.isArray(result.errors)).toBe(true);
     expect(Array.isArray(result.warnings)).toBe(true);
   });
   
   it('should check for ephemeral filesystem', async () => {
-    const { checkEphemeralFS } = await import('../src/utils/envValidation.js');
+    const { checkEphemeralFS } = await import('../src/utils/environmentValidation.js');
     
     // Should not throw
     expect(() => checkEphemeralFS()).not.toThrow();
