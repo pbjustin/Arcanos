@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { DecisionRecord, LogEntry } from './types.js';
+import { DecisionRecord, AfolLogEntry } from './types.js';
 
 const defaultLogPath = path.resolve(process.cwd(), 'logs', 'afol-decisions.log');
 
@@ -30,7 +30,7 @@ export function getLogFilePath(): string {
 
 export function logDecision(input: unknown, decision: DecisionRecord): void {
   ensureLogDestination();
-  const entry: LogEntry = {
+  const entry: AfolLogEntry = {
     timestamp: new Date().toISOString(),
     input,
     decision
@@ -40,7 +40,7 @@ export function logDecision(input: unknown, decision: DecisionRecord): void {
 
 export function logError(context: string, error: unknown): void {
   ensureLogDestination();
-  const entry: LogEntry = {
+  const entry: AfolLogEntry = {
     timestamp: new Date().toISOString(),
     context,
     error: error instanceof Error ? error.message : String(error)
@@ -48,7 +48,7 @@ export function logError(context: string, error: unknown): void {
   fs.appendFileSync(logFilePath, `${JSON.stringify(entry)}\n`, { encoding: 'utf8' });
 }
 
-export function getRecent(limit = 10): LogEntry[] {
+export function getRecent(limit = 10): AfolLogEntry[] {
   try {
     if (!fs.existsSync(logFilePath)) {
       return [];
@@ -59,7 +59,7 @@ export function getRecent(limit = 10): LogEntry[] {
       .map((line) => line.trim())
       .filter(Boolean);
     const slice = lines.slice(-Math.max(limit, 0));
-    return slice.map((line) => JSON.parse(line) as LogEntry);
+    return slice.map((line) => JSON.parse(line) as AfolLogEntry);
   } catch {
     return [];
   }

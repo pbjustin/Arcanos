@@ -77,10 +77,10 @@ const validateModel = async (client: OpenAI): Promise<string> => {
       module: 'trinity',
       operation: 'model-fallback',
       requestedModel: defaultModel,
-      fallbackModel: 'gpt-4',
+      fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
       reason: err instanceof Error ? err.message : 'Unknown error'
     });
-    return 'gpt-4';
+    return APPLICATION_CONSTANTS.MODEL_GPT_4;
   }
 };
 

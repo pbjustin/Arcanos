@@ -232,11 +232,10 @@ describe('OpenAI SDK Integration Tests', () => {
 
       try {
         jest.resetModules();
-        const { validateEnvironment } = await import('../src/utils/envValidation.js');
+        const { validateEnvironment } = await import('../src/utils/environmentValidation.js');
         
         const result = validateEnvironment();
-        expect(result.valid).toBe(true);
-        expect(result.config.port).toBe(3000);
+        expect(result.isValid).toBe(true);
         expect(process.env.PORT).toBe('3000');
       } finally {
         if (originalPort) {
@@ -254,18 +253,18 @@ describe('OpenAI SDK Integration Tests', () => {
         // Test empty string
         process.env.PORT = '';
         jest.resetModules();
-        let module = await import('../src/utils/envValidation.js');
+        let module = await import('../src/utils/environmentValidation.js');
         let result = module.validateEnvironment();
-        expect(result.valid).toBe(true);
-        expect(result.config.port).toBe(8080);
+        expect(result.isValid).toBe(true);
+        expect(process.env.PORT).toBe('8080');
 
         // Test whitespace
         process.env.PORT = '   ';
         jest.resetModules();
-        module = await import('../src/utils/envValidation.js');
+        module = await import('../src/utils/environmentValidation.js');
         result = module.validateEnvironment();
-        expect(result.valid).toBe(true);
-        expect(result.config.port).toBe(8080);
+        expect(result.isValid).toBe(true);
+        expect(process.env.PORT).toBe('8080');
       } finally {
         if (originalPort) {
           process.env.PORT = originalPort;
