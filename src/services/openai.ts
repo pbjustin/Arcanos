@@ -7,6 +7,9 @@ import { aiLogger } from '../utils/structuredLogging.js';
 import crypto from 'crypto';
 import { runtime } from './openaiRuntime.js';
 import { buildContextualSystemPrompt, trackModelResponse, trackPromptUsage } from './contextualReinforcement.js';
+import { createCacheKey } from '../utils/hashUtils.js';
+import { isRetryableError, classifyError } from '../utils/errorClassification.js';
+import { MOCK_RESPONSE_CONSTANTS, MOCK_RESPONSE_MESSAGES, truncateInput } from '../config/mockResponseConfig.js';
 
 type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type ChatCompletionResponseFormat =
@@ -127,51 +130,52 @@ export interface CallOpenAIResult extends CallOpenAICacheEntry {
 export const generateMockResponse = (input: string, endpoint: string = 'ask'): any => {
   const mockId = generateRequestId('mock');
   const timestamp = Math.floor(Date.now() / 1000);
+  const inputPreview = truncateInput(input);
   
   const baseMockResponse = {
     meta: {
       id: mockId,
       created: timestamp,
       tokens: {
-        prompt_tokens: 50,
-        completion_tokens: 100,
-        total_tokens: 150
+        prompt_tokens: MOCK_RESPONSE_CONSTANTS.PROMPT_TOKENS,
+        completion_tokens: MOCK_RESPONSE_CONSTANTS.COMPLETION_TOKENS,
+        total_tokens: MOCK_RESPONSE_CONSTANTS.TOTAL_TOKENS
       }
     },
-    activeModel: 'MOCK',
+    activeModel: MOCK_RESPONSE_CONSTANTS.MODEL_NAME,
     fallbackFlag: false,
     gpt5Used: true,
-    routingStages: ['ARCANOS-INTAKE:MOCK', 'GPT5-REASONING', 'ARCANOS-FINAL'],
+    routingStages: MOCK_RESPONSE_CONSTANTS.ROUTING_STAGES,
     auditSafe: {
       mode: true,
       overrideUsed: input.toLowerCase().includes('override'),
-      overrideReason: input.toLowerCase().includes('override') ? 'Mock override detected in input' : undefined,
-      auditFlags: ['MOCK_MODE', 'AUDIT_SAFE_ACTIVE'],
+      overrideReason: input.toLowerCase().includes('override') ? MOCK_RESPONSE_MESSAGES.OVERRIDE_DETECTED : undefined,
+      auditFlags: MOCK_RESPONSE_CONSTANTS.AUDIT_FLAGS,
       processedSafely: true
     },
     memoryContext: {
-      entriesAccessed: Math.floor(Math.random() * 3),
-      contextSummary: 'Mock memory context - no real memory system active',
-      memoryEnhanced: Math.random() > 0.5
+      entriesAccessed: Math.floor(Math.random() * MOCK_RESPONSE_CONSTANTS.MAX_MEMORY_ENTRIES),
+      contextSummary: MOCK_RESPONSE_MESSAGES.MEMORY_CONTEXT,
+      memoryEnhanced: Math.random() > MOCK_RESPONSE_CONSTANTS.MEMORY_ENHANCEMENT_PROBABILITY
     },
     taskLineage: {
       requestId: mockId,
       logged: true
     },
-    error: 'OPENAI_API_KEY not configured - returning mock response'
+    error: MOCK_RESPONSE_MESSAGES.NO_API_KEY
   };
 
   switch (endpoint) {
     case 'arcanos':
       return {
         ...baseMockResponse,
-        result: `[MOCK ARCANOS RESPONSE] System analysis for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
-        componentStatus: 'MOCK: All systems simulated as operational',
-        suggestedFixes: 'MOCK: Configure OPENAI_API_KEY for real analysis',
-        coreLogicTrace: 'MOCK: Trinity -> ARCANOS -> Mock Response Generator',
+        result: `[MOCK ARCANOS RESPONSE] System analysis for: "${inputPreview}"`,
+        componentStatus: MOCK_RESPONSE_MESSAGES.ALL_SYSTEMS_OPERATIONAL,
+        suggestedFixes: MOCK_RESPONSE_MESSAGES.CONFIGURE_API_KEY,
+        coreLogicTrace: MOCK_RESPONSE_MESSAGES.CORE_LOGIC_TRACE,
         gpt5Delegation: {
           used: true,
-          reason: 'Unconditional GPT-5 routing (mock)',
+          reason: MOCK_RESPONSE_MESSAGES.GPT5_ROUTING,
           delegatedQuery: input
         }
       };
@@ -179,41 +183,41 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): a
     case 'brain':
       return {
         ...baseMockResponse,
-        result: `[MOCK AI RESPONSE] Processed request: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
+        result: `[MOCK AI RESPONSE] Processed request: "${inputPreview}"`,
         module: 'MockBrain'
       };
     case 'write':
       return {
         ...baseMockResponse,
-        result: `[MOCK WRITE RESPONSE] Generated content for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
+        result: `[MOCK WRITE RESPONSE] Generated content for: "${inputPreview}"`,
         module: 'MockWriter',
         endpoint: 'write'
       };
     case 'guide':
       return {
         ...baseMockResponse,
-        result: `[MOCK GUIDE RESPONSE] Step-by-step guidance for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
+        result: `[MOCK GUIDE RESPONSE] Step-by-step guidance for: "${inputPreview}"`,
         module: 'MockGuide',
         endpoint: 'guide'
       };
     case 'audit':
       return {
         ...baseMockResponse,
-        result: `[MOCK AUDIT RESPONSE] Analysis and evaluation of: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
+        result: `[MOCK AUDIT RESPONSE] Analysis and evaluation of: "${inputPreview}"`,
         module: 'MockAuditor',
         endpoint: 'audit'
       };
     case 'sim':
       return {
         ...baseMockResponse,
-        result: `[MOCK SIMULATION RESPONSE] Scenario modeling for: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
+        result: `[MOCK SIMULATION RESPONSE] Scenario modeling for: "${inputPreview}"`,
         module: 'MockSimulator',
         endpoint: 'sim'
       };
     default:
       return {
         ...baseMockResponse,
-        result: `[MOCK RESPONSE] Processed request: "${input.substring(0, 50)}${input.length > 50 ? '...' : ''}"`,
+        result: `[MOCK RESPONSE] Processed request: "${inputPreview}"`,
         module: 'MockProcessor'
       };
   }
@@ -348,14 +352,7 @@ function prepareGPT5Request(payload: any): any {
   return payload;
 }
 
-/**
- * Creates a cache key for OpenAI requests
- */
-const createCacheKey = (model: string, payload: unknown): string => {
-  const serialized = typeof payload === 'string' ? payload : JSON.stringify(payload);
-  const content = `${model}:${serialized}`;
-  return crypto.createHash('sha256').update(content).digest('hex');
-};
+// Note: createCacheKey is now imported from utils/hashUtils.js
 
 /**
  * Enhanced OpenAI call helper with circuit breaker, exponential backoff, and caching
@@ -540,11 +537,7 @@ async function makeOpenAIRequest(
       const shouldRetry = attempt < maxRetries && isRetryable;
       
       // Enhanced error logging with error taxonomy
-      const errorType = err.status === 429 ? 'RATE_LIMIT' : 
-                       err.status >= 500 ? 'SERVER_ERROR' :
-                       err.code === 'ETIMEDOUT' ? 'TIMEOUT' :
-                       err.code === 'ECONNRESET' ? 'NETWORK_ERROR' : 
-                       'UNKNOWN';
+      const errorType = classifyError(err);
       
       console.warn(`⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}, type: ${errorType}): ${err.message}`);
       
@@ -560,29 +553,7 @@ async function makeOpenAIRequest(
   throw lastError || new Error('OpenAI request failed after all retry attempts');
 }
 
-/**
- * Determines if an error is retryable based on error taxonomy
- * 
- * Error Taxonomy:
- * - 429 (Rate Limit): Retryable with exponential backoff + jitter
- * - 5xx (Server Error): Retryable with capped retries (max 3)
- * - Network errors (ECONNRESET, ETIMEDOUT): Retryable with backoff
- * - 4xx (Client Error, except 429): Not retryable
- */
-function isRetryableError(error: any): boolean {
-  // Network errors and timeouts are retryable
-  if (error.name === 'AbortError' || error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
-    return true;
-  }
-  
-  // OpenAI API rate limits (429) and server errors (5xx) are retryable
-  if (error.status) {
-    return error.status === 429 || error.status >= 500;
-  }
-  
-  // Default to non-retryable for unknown errors
-  return false;
-}
+// Note: isRetryableError is now imported from utils/errorClassification.js
 
 /**
  * Calculate retry delay with jitter for 429 errors
