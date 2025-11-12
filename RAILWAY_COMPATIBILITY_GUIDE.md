@@ -97,6 +97,11 @@ RAILWAY_ENVIRONMENT=production
 PORT=8080
 ```
 
+### Management API (optional)
+```bash
+RAILWAY_API_TOKEN=your-railway-api-token
+```
+
 ### Railway Deployment
 The application automatically:
 - Binds to Railway's provided PORT
