@@ -1,6 +1,5 @@
 import config from './config/index.js';
-import { validateEnvironment, printValidationResults, createStartupReport } from './utils/environmentValidation.js';
-import { validateEnvironment as validateRailwayEnv, logEnvironmentValidation, checkEphemeralFS } from './utils/envValidation.js';
+import { validateEnvironment, printValidationResults, createStartupReport, validateRailwayEnvironment, checkEphemeralFS } from './utils/environmentValidation.js';
 import { logger } from './utils/structuredLogging.js';
 import { initializeDatabase } from './db.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
@@ -15,8 +14,8 @@ import { isRailwayApiConfigured, probeRailwayApi } from './services/railwayClien
  */
 export async function performStartup(): Promise<void> {
   // Railway-specific environment validation
-  const railwayValidation = validateRailwayEnv();
-  logEnvironmentValidation(railwayValidation);
+  const railwayValidation = validateRailwayEnvironment();
+  printValidationResults(railwayValidation);
   checkEphemeralFS();
 
   if (isRailwayApiConfigured()) {
