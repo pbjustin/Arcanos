@@ -26,7 +26,9 @@ export function setupDiagnostics(app: Express): void {
           memory: report.components.memory,
           workers: report.components.workers,
           security: report.security,
-          metrics: report.metrics
+          metrics: report.metrics,
+          telemetry: report.telemetry.metrics,
+          resilience: report.resilience.circuitBreaker
         }
       );
     });
@@ -52,7 +54,8 @@ export function setupDiagnostics(app: Express): void {
       components: healthReport.components,
       ai: {
         defaultModel: defaultModel,
-        fallbackModel: config.ai.fallbackModel
+        fallbackModel: config.ai.fallbackModel,
+        resilience: healthReport.resilience.circuitBreaker
       },
       system: {
         memory: healthReport.components.memory,
@@ -62,7 +65,8 @@ export function setupDiagnostics(app: Express): void {
         environment: config.server.environment,
         security: healthReport.security,
         workers: healthReport.components.workers
-      }
+      },
+      observability: healthReport.telemetry
     });
   });
 }
