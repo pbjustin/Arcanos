@@ -7,6 +7,7 @@ import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from './utils/environmentSecurity.js';
 import memoryStore from './memory/store.js';
+import { isRailwayApiConfigured, probeRailwayApi } from './services/railwayClient.js';
 
 /**
  * Runs startup checks including environment validation, database init,
@@ -17,6 +18,15 @@ export async function performStartup(): Promise<void> {
   const railwayValidation = validateRailwayEnv();
   logEnvironmentValidation(railwayValidation);
   checkEphemeralFS();
+
+  if (isRailwayApiConfigured()) {
+    const probeResult = await probeRailwayApi();
+    if (!probeResult.ok) {
+      logger.warn('⚠️ Railway management API probe failed - deployment automation features may be unavailable');
+    }
+  } else {
+    logger.info('Railway management API token not detected - skipping management API connectivity probe');
+  }
 
   const securityState = await initializeEnvironmentSecurity();
   logger.info('ARCANOS environment security', {
