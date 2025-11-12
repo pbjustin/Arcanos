@@ -6,6 +6,7 @@ import { decide } from '../src/afol/engine.js';
 import { evaluate } from '../src/afol/policies.js';
 import { getStatus, resetHealth, simulateFailure } from '../src/afol/health.js';
 import { clearLogs, configureLogger, getRecent, logError, resetLogger } from '../src/afol/logger.js';
+import { configureAnalytics, resetAnalytics } from '../src/afol/analytics.js';
 
 function createTempLogPath(): string {
   const uniqueId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -14,19 +15,27 @@ function createTempLogPath(): string {
 
 describe('AFOL engine orchestration', () => {
   let tempLogPath: string;
+  let tempAnalyticsPath: string;
 
   beforeEach(() => {
     resetHealth();
     tempLogPath = createTempLogPath();
+    tempAnalyticsPath = createTempLogPath();
     configureLogger({ filePath: tempLogPath });
+    configureAnalytics({ filePath: tempAnalyticsPath });
+    resetAnalytics();
     clearLogs();
   });
 
   afterEach(() => {
     clearLogs();
     resetLogger();
+    resetAnalytics();
     if (tempLogPath && fs.existsSync(tempLogPath)) {
       fs.unlinkSync(tempLogPath);
+    }
+    if (tempAnalyticsPath && fs.existsSync(tempAnalyticsPath)) {
+      fs.unlinkSync(tempAnalyticsPath);
     }
   });
 

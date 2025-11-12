@@ -1,102 +1,38 @@
 import OpenAI from 'openai';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
-import { CircuitBreaker, ExponentialBackoff } from '../utils/circuitBreaker.js';
 import { responseCache } from '../utils/cache.js';
 import { aiLogger } from '../utils/structuredLogging.js';
+import { recordTraceEvent } from '../utils/telemetry.js';
 import crypto from 'crypto';
 import { runtime } from './openaiRuntime.js';
 import { buildContextualSystemPrompt, trackModelResponse, trackPromptUsage } from './contextualReinforcement.js';
 import { createCacheKey } from '../utils/hashUtils.js';
 import { isRetryableError, classifyError } from '../utils/errorClassification.js';
-import { MOCK_RESPONSE_CONSTANTS, MOCK_RESPONSE_MESSAGES, truncateInput } from '../config/mockResponseConfig.js';
+import { generateMockResponse } from './openai/mock.js';
+import {
+  resolveOpenAIKey,
+  resolveOpenAIBaseURL,
+  getOpenAIKeySource,
+  hasValidAPIKey,
+  getDefaultModel,
+  setDefaultModel,
+  getFallbackModel,
+  getGPT5Model
+} from './openai/credentialProvider.js';
+import {
+  RESILIENCE_CONSTANTS,
+  executeWithResilience,
+  calculateRetryDelay,
+  getCircuitBreakerSnapshot
+} from './openai/resilience.js';
 
 type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type ChatCompletionResponseFormat =
   OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format'];
 
 let openai: OpenAI | null = null;
-let defaultModel: string | null = null;
-let resolvedApiKey: string | null | undefined;
-let resolvedApiKeySource: string | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
-
-const OPENAI_KEY_ENV_PRIORITY = [
-  'OPENAI_API_KEY',
-  'RAILWAY_OPENAI_API_KEY',
-  'API_KEY',
-  'OPENAI_KEY'
-] as const;
-
-const OPENAI_KEY_PLACEHOLDERS = new Set([
-  '',
-  'your-openai-api-key-here',
-  'your-openai-key-here'
-]);
-
-const OPENAI_BASE_URL_CANDIDATES = [
-  process.env.OPENAI_BASE_URL,
-  process.env.OPENAI_API_BASE_URL,
-  process.env.OPENAI_API_BASE
-].filter((value): value is string => Boolean(value && value.trim().length > 0));
-
-const resolveOpenAIBaseURL = (): string | undefined => {
-  return OPENAI_BASE_URL_CANDIDATES[0]?.trim();
-};
-
-const resolveOpenAIKey = (): string | null => {
-  if (resolvedApiKey !== undefined) {
-    return resolvedApiKey;
-  }
-
-  for (const envName of OPENAI_KEY_ENV_PRIORITY) {
-    const rawValue = process.env[envName];
-    if (!rawValue) continue;
-
-    const trimmed = rawValue.trim();
-    if (OPENAI_KEY_PLACEHOLDERS.has(trimmed)) {
-      continue;
-    }
-
-    resolvedApiKey = trimmed;
-    resolvedApiKeySource = envName;
-    return resolvedApiKey;
-  }
-
-  resolvedApiKey = null;
-  resolvedApiKeySource = null;
-  return null;
-};
-
-export const getOpenAIKeySource = (): string | null => resolvedApiKeySource;
-
-// OpenAI API Configuration Constants
-const OPENAI_CONSTANTS = {
-  DEFAULT_MAX_TOKENS: 1024,
-  RATE_LIMIT_JITTER_MAX_MS: 2000, // 0-2 seconds additional jitter for rate limits
-  CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5,
-  CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000, // 30 seconds
-  CIRCUIT_BREAKER_MONITORING_PERIOD_MS: 60000, // 1 minute
-  BACKOFF_BASE_DELAY_MS: 1000, // 1 second
-  BACKOFF_MAX_DELAY_MS: 30000, // 30 seconds
-  BACKOFF_MULTIPLIER: 2,
-  BACKOFF_JITTER_MAX_MS: 500
-} as const;
-
-// Initialize circuit breaker for OpenAI API calls
-const openaiCircuitBreaker = new CircuitBreaker({
-  failureThreshold: OPENAI_CONSTANTS.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
-  resetTimeoutMs: OPENAI_CONSTANTS.CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
-  monitoringPeriodMs: OPENAI_CONSTANTS.CIRCUIT_BREAKER_MONITORING_PERIOD_MS
-});
-
-// Initialize exponential backoff for retries
-const backoffStrategy = new ExponentialBackoff(
-  OPENAI_CONSTANTS.BACKOFF_BASE_DELAY_MS,
-  OPENAI_CONSTANTS.BACKOFF_MAX_DELAY_MS,
-  OPENAI_CONSTANTS.BACKOFF_MULTIPLIER,
-  OPENAI_CONSTANTS.BACKOFF_JITTER_MAX_MS
-);
 
 export interface CallOpenAIOptions {
   systemPrompt?: string;
@@ -121,120 +57,8 @@ export interface CallOpenAIResult extends CallOpenAICacheEntry {
 }
 
 /**
- * Generates mock AI responses when OpenAI API key is not available
- *
- * @param input - User input text to generate a mock response for
- * @param endpoint - API endpoint name (ask, write, guide, audit, sim, etc.)
- * @returns Mock response object with realistic structure matching real AI responses
- */
-export const generateMockResponse = (input: string, endpoint: string = 'ask'): any => {
-  const mockId = generateRequestId('mock');
-  const timestamp = Math.floor(Date.now() / 1000);
-  const inputPreview = truncateInput(input);
-  
-  const baseMockResponse = {
-    meta: {
-      id: mockId,
-      created: timestamp,
-      tokens: {
-        prompt_tokens: MOCK_RESPONSE_CONSTANTS.PROMPT_TOKENS,
-        completion_tokens: MOCK_RESPONSE_CONSTANTS.COMPLETION_TOKENS,
-        total_tokens: MOCK_RESPONSE_CONSTANTS.TOTAL_TOKENS
-      }
-    },
-    activeModel: MOCK_RESPONSE_CONSTANTS.MODEL_NAME,
-    fallbackFlag: false,
-    gpt5Used: true,
-    routingStages: MOCK_RESPONSE_CONSTANTS.ROUTING_STAGES,
-    auditSafe: {
-      mode: true,
-      overrideUsed: input.toLowerCase().includes('override'),
-      overrideReason: input.toLowerCase().includes('override') ? MOCK_RESPONSE_MESSAGES.OVERRIDE_DETECTED : undefined,
-      auditFlags: MOCK_RESPONSE_CONSTANTS.AUDIT_FLAGS,
-      processedSafely: true
-    },
-    memoryContext: {
-      entriesAccessed: Math.floor(Math.random() * MOCK_RESPONSE_CONSTANTS.MAX_MEMORY_ENTRIES),
-      contextSummary: MOCK_RESPONSE_MESSAGES.MEMORY_CONTEXT,
-      memoryEnhanced: Math.random() > MOCK_RESPONSE_CONSTANTS.MEMORY_ENHANCEMENT_PROBABILITY
-    },
-    taskLineage: {
-      requestId: mockId,
-      logged: true
-    },
-    error: MOCK_RESPONSE_MESSAGES.NO_API_KEY
-  };
-
-  switch (endpoint) {
-    case 'arcanos':
-      return {
-        ...baseMockResponse,
-        result: `[MOCK ARCANOS RESPONSE] System analysis for: "${inputPreview}"`,
-        componentStatus: MOCK_RESPONSE_MESSAGES.ALL_SYSTEMS_OPERATIONAL,
-        suggestedFixes: MOCK_RESPONSE_MESSAGES.CONFIGURE_API_KEY,
-        coreLogicTrace: MOCK_RESPONSE_MESSAGES.CORE_LOGIC_TRACE,
-        gpt5Delegation: {
-          used: true,
-          reason: MOCK_RESPONSE_MESSAGES.GPT5_ROUTING,
-          delegatedQuery: input
-        }
-      };
-    case 'ask':
-    case 'brain':
-      return {
-        ...baseMockResponse,
-        result: `[MOCK AI RESPONSE] Processed request: "${inputPreview}"`,
-        module: 'MockBrain'
-      };
-    case 'write':
-      return {
-        ...baseMockResponse,
-        result: `[MOCK WRITE RESPONSE] Generated content for: "${inputPreview}"`,
-        module: 'MockWriter',
-        endpoint: 'write'
-      };
-    case 'guide':
-      return {
-        ...baseMockResponse,
-        result: `[MOCK GUIDE RESPONSE] Step-by-step guidance for: "${inputPreview}"`,
-        module: 'MockGuide',
-        endpoint: 'guide'
-      };
-    case 'audit':
-      return {
-        ...baseMockResponse,
-        result: `[MOCK AUDIT RESPONSE] Analysis and evaluation of: "${inputPreview}"`,
-        module: 'MockAuditor',
-        endpoint: 'audit'
-      };
-    case 'sim':
-      return {
-        ...baseMockResponse,
-        result: `[MOCK SIMULATION RESPONSE] Scenario modeling for: "${inputPreview}"`,
-        module: 'MockSimulator',
-        endpoint: 'sim'
-      };
-    default:
-      return {
-        ...baseMockResponse,
-        result: `[MOCK RESPONSE] Processed request: "${inputPreview}"`,
-        module: 'MockProcessor'
-      };
-  }
-};
-
-/**
- * Validates whether a proper OpenAI API key is configured
- * 
- * @returns True if API key is set and valid, false otherwise
- */
-export const hasValidAPIKey = (): boolean => {
-  return resolveOpenAIKey() !== null;
-};
-
-/**
  * Initializes OpenAI client with API key validation and default model configuration
- * 
+ *
  * @returns OpenAI client instance or null if initialization fails
  */
 const initializeOpenAI = (): OpenAI | null => {
@@ -256,19 +80,20 @@ const initializeOpenAI = (): OpenAI | null => {
       ...(baseURL ? { baseURL } : {})
     });
     // Support OPENAI_MODEL (primary), FINETUNED_MODEL_ID, and AI_MODEL for Railway compatibility
-    defaultModel =
+    const configuredDefaultModel =
       process.env.OPENAI_MODEL ||
       process.env.RAILWAY_OPENAI_MODEL ||
       process.env.FINETUNED_MODEL_ID ||
       process.env.FINE_TUNED_MODEL_ID ||
       process.env.AI_MODEL ||
       'gpt-4o';
+    setDefaultModel(configuredDefaultModel);
 
     console.log('✅ OpenAI client initialized');
-    console.log(`🧠 Default AI Model: ${defaultModel}`);
+    console.log(`🧠 Default AI Model: ${configuredDefaultModel}`);
     console.log(`🔄 Fallback Model: ${getFallbackModel()}`);
     console.log('🎯 ARCANOS routing active - all calls will use configured model by default');
-    
+
     return openai;
   } catch (error) {
     console.error('❌ Failed to initialize OpenAI client:', error);
@@ -286,51 +111,6 @@ export const getOpenAIClient = (): OpenAI | null => {
 };
 
 /**
- * Gets the configured default AI model (typically fine-tuned)
- * Supports OPENAI_MODEL (primary), FINETUNED_MODEL_ID and AI_MODEL for Railway compatibility
- * 
- * @returns Model identifier string (defaults to gpt-4o)
- */
-export const getDefaultModel = (): string => {
-  return (
-    defaultModel ||
-    process.env.OPENAI_MODEL ||
-    process.env.RAILWAY_OPENAI_MODEL ||
-    process.env.FINETUNED_MODEL_ID ||
-    process.env.FINE_TUNED_MODEL_ID ||
-    process.env.AI_MODEL ||
-    'gpt-4o'
-  );
-};
-
-/**
- * Gets the configured GPT-5 model identifier
- * 
- * @returns GPT-5 model string (defaults to 'gpt-5')
- */
-export const getGPT5Model = (): string => {
-  return process.env.GPT5_MODEL || 'gpt-5';
-};
-
-/**
- * Gets the fallback model when primary model fails
- * Prioritizes explicit fallback configuration, then fine-tuned selections
- *
- * @returns Fallback model identifier (defaults to 'gpt-4')
- */
-export function getFallbackModel(): string {
-  return (
-    process.env.FALLBACK_MODEL ||
-    process.env.AI_FALLBACK_MODEL ||
-    process.env.RAILWAY_OPENAI_FALLBACK_MODEL ||
-    process.env.FINETUNED_MODEL_ID ||
-    process.env.FINE_TUNED_MODEL_ID ||
-    process.env.AI_MODEL ||
-    'gpt-4'
-  );
-}
-
-/**
  * Prepare payloads for GPT-5 by migrating deprecated max_tokens
  * to max_completion_tokens and providing a sensible default.
  */
@@ -346,7 +126,7 @@ function prepareGPT5Request(payload: any): any {
       delete payload.max_completion_tokens;
     }
     if (!payload.max_output_tokens) {
-      payload.max_output_tokens = OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS;
+      payload.max_output_tokens = RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
     }
   }
   return payload;
@@ -406,6 +186,11 @@ export async function callOpenAI(
 
   if (!client) {
     const mock = generateMockResponse(prompt, 'ask');
+    recordTraceEvent('openai.call.mock', {
+      model,
+      route: options.metadata?.route,
+      reason: 'client_unavailable'
+    });
     trackModelResponse(mock.result, reinforcementMetadata);
     return { response: mock, output: mock.result, model: 'mock', cached: false };
   }
@@ -441,12 +226,32 @@ export async function callOpenAI(
     }
   }
 
-  // Use circuit breaker for resilient API calls
-  const result = await openaiCircuitBreaker.execute(async () => {
-    return await makeOpenAIRequest(client, model, preparedMessages, tokenLimit, options);
+  recordTraceEvent('openai.call.start', {
+    model,
+    tokenLimit,
+    cacheEnabled: useCache
   });
 
+  // Use circuit breaker for resilient API calls
+  let result: CallOpenAIResult;
+  try {
+    result = await executeWithResilience(async () => {
+      return await makeOpenAIRequest(client, model, preparedMessages, tokenLimit, options);
+    });
+  } catch (error) {
+    recordTraceEvent('openai.call.error', {
+      model,
+      error: error instanceof Error ? error.message : 'unknown'
+    });
+    throw error;
+  }
+
   trackModelResponse(result.output, reinforcementMetadata);
+  recordTraceEvent('openai.call.success', {
+    model: result.model,
+    cached: result.cached,
+    cacheHit: result.cached === true
+  });
 
   // Cache successful results
   if (useCache && result && cacheKey) {
@@ -482,7 +287,7 @@ async function makeOpenAIRequest(
     try {
       // Apply exponential backoff with jitter on retries
       if (attempt > 1) {
-        const delay = getRetryDelay(attempt - 1, lastError);
+        const delay = calculateRetryDelay(attempt - 1, lastError);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
 
@@ -540,36 +345,27 @@ async function makeOpenAIRequest(
       const errorType = classifyError(err);
       
       console.warn(`⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}, type: ${errorType}): ${err.message}`);
-      
+      recordTraceEvent('openai.call.failure', {
+        attempt,
+        maxRetries,
+        errorType,
+        message: err.message
+      });
+
       if (!shouldRetry) {
         console.error(`❌ OpenAI request failed permanently after ${attempt} attempts`);
         break;
       }
-      
+
       console.log(`🔄 Retrying OpenAI request (${maxRetries - attempt} attempts remaining)`);
     }
   }
 
+  recordTraceEvent('openai.call.exhausted', {
+    attempts: maxRetries,
+    error: lastError instanceof Error ? lastError.message : 'unknown'
+  });
   throw lastError || new Error('OpenAI request failed after all retry attempts');
-}
-
-// Note: isRetryableError is now imported from utils/errorClassification.js
-
-/**
- * Calculate retry delay with jitter for 429 errors
- * Uses exponential backoff with random jitter to prevent thundering herd
- */
-function getRetryDelay(attempt: number, error: any): number {
-  const baseDelay = backoffStrategy.calculateDelay(attempt);
-  
-  // Add extra jitter for rate limit errors (429)
-  if (error?.status === 429) {
-    const jitterMs = Math.random() * OPENAI_CONSTANTS.RATE_LIMIT_JITTER_MAX_MS;
-    console.log(`⏱️ Rate limit detected - adding jitter (${jitterMs.toFixed(0)}ms)`);
-    return baseDelay + jitterMs;
-  }
-  
-  return baseDelay;
 }
 
 /**
@@ -594,7 +390,7 @@ async function attemptModelCall(
  * Helper to extract token count from request parameters
  */
 function getTokensFromParams(params: any): number {
-  return params.max_tokens || params.max_completion_tokens || OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS;
+  return params.max_tokens || params.max_completion_tokens || RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
 }
 
 /**
@@ -692,7 +488,7 @@ export const validateAPIKeyAtStartup = (): boolean => {
     return true; // Allow startup but return mock responses
   }
   console.log(
-    `✅ OPENAI_API_KEY validation passed${resolvedApiKeySource ? ` (source: ${resolvedApiKeySource})` : ''}`
+    `✅ OPENAI_API_KEY validation passed${getOpenAIKeySource() ? ` (source: ${getOpenAIKeySource()})` : ''}`
   );
   return true;
 };
@@ -741,7 +537,7 @@ export const createGPT5Reasoning = async (
     console.log(`🚀 [GPT-5 REASONING] Using model: ${gpt5Model}`);
 
     // Use token parameter utility for correct parameter selection
-    const tokenParams = getTokenParameter(gpt5Model, OPENAI_CONSTANTS.DEFAULT_MAX_TOKENS);
+    const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
 
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
@@ -969,7 +765,7 @@ export async function generateImage(
  * Gets comprehensive OpenAI service health metrics including circuit breaker status
  */
 export const getOpenAIServiceHealth = () => {
-  const circuitBreakerMetrics = openaiCircuitBreaker.getMetrics();
+  const circuitBreakerMetrics = getCircuitBreakerSnapshot();
   const cacheStats = responseCache.getStats();
   const configured = hasValidAPIKey();
 
@@ -977,11 +773,11 @@ export const getOpenAIServiceHealth = () => {
     apiKey: {
       configured,
       status: configured ? 'valid' : 'missing_or_invalid',
-      source: resolvedApiKeySource
+      source: getOpenAIKeySource()
     },
     client: {
       initialized: openai !== null,
-      model: defaultModel,
+      model: getDefaultModel(),
       timeout: API_TIMEOUT_MS,
       baseURL: resolveOpenAIBaseURL()
     },
@@ -1069,4 +865,25 @@ export async function createCentralizedCompletion(
   }
 }
 
-export default { getOpenAIClient, getDefaultModel, getGPT5Model, createGPT5Reasoning, validateAPIKeyAtStartup, callOpenAI, call_gpt5_strict, generateImage, getOpenAIServiceHealth, createCentralizedCompletion };
+export {
+  getOpenAIKeySource,
+  hasValidAPIKey,
+  getDefaultModel,
+  getFallbackModel,
+  getGPT5Model,
+  generateMockResponse,
+  getCircuitBreakerSnapshot
+};
+
+export default {
+  getOpenAIClient,
+  getDefaultModel,
+  getGPT5Model,
+  createGPT5Reasoning,
+  validateAPIKeyAtStartup,
+  callOpenAI,
+  call_gpt5_strict,
+  generateImage,
+  getOpenAIServiceHealth,
+  createCentralizedCompletion
+};

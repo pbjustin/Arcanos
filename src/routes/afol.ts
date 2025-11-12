@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { decide } from '../afol/engine.js';
 import { getStatus } from '../afol/health.js';
 import { getRecent, logError } from '../afol/logger.js';
+import { getAnalyticsSnapshot } from '../afol/analytics.js';
 
 const router = Router();
 
@@ -21,6 +22,10 @@ router.get('/health', (_req, res) => {
 
 router.get('/logs', (_req, res) => {
   res.json(getRecent());
+});
+
+router.get('/analytics', (_req, res) => {
+  res.json(getAnalyticsSnapshot());
 });
 
 export default router;
