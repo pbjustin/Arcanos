@@ -1,523 +1,276 @@
 # Arcanos API Prompt Usage Guide
 
-This comprehensive guide explains how to use prompts to interact with all available Arcanos API endpoints effectively.
+This guide explains how to craft prompts for the major Arcanos API endpoints and
+how to layer in memory, RAG, and worker automation.
 
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
 2. [API Endpoints Overview](#api-endpoints-overview)
 3. [Basic Prompting](#basic-prompting)
-4. [Advanced Prompting Strategies](#advanced-prompting-strategies)
+4. [Session & Domain Routing](#session--domain-routing)
 5. [Endpoint-Specific Guides](#endpoint-specific-guides)
-6. [Configuration & Setup](#configuration--setup)
-7. [Error Handling](#error-handling)
-8. [Best Practices](#best-practices)
-9. [Troubleshooting](#troubleshooting)
+6. [Memory & RAG Integration](#memory--rag-integration)
+7. [Worker Automation](#worker-automation)
+8. [Error Handling & Troubleshooting](#error-handling--troubleshooting)
+
+---
 
 ## Quick Start
 
 ### Prerequisites
-1. Ensure your `.env` file is configured with:
-   ```bash
-   OPENAI_API_KEY=your-openai-api-key
-   # Fine-tuned model (in order of precedence):
-   AI_MODEL=your-fine-tuned-model-id
-   FINE_TUNE_MODEL=your-alternative-model-id
-   PORT=8080
-   NODE_ENV=production
-   RUN_WORKERS=false
-   ```
 
-2. Start the server:
+1. Configure `.env` with at minimum:
    ```bash
+   OPENAI_API_KEY=sk-...
+   OPENAI_MODEL=gpt-4o
+   PORT=8080
+   RUN_WORKERS=false   # optional, set true to auto-boot cron workers
+   ```
+2. Install dependencies and build the service:
+   ```bash
+   npm install
    npm run build
    npm start
    ```
+3. Confirm health:
+   ```bash
+   curl http://localhost:8080/health
+   curl http://localhost:8080/api/test
+   ```
 
-### Basic Test
-```bash
-curl -X POST http://localhost:8080/api/echo \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello Arcanos!"}'
-```
+---
 
 ## API Endpoints Overview
 
-| Endpoint | Purpose | Prompt Type | Fallback |
-|----------|---------|-------------|----------|
-| `/` | Main chat with intent routing | Natural language | Auto-routed |
-| `/ask` | Simple query processing | Query/response | No |
-| `/api/ask` | Fine-tuned model chat | Conversational | ❌ No fallback |
-| `/api/ask-with-fallback` | AI chat with GPT-4 fallback | Conversational | ✅ GPT-4 fallback |
-| `/api/ask-hrc` | Message validation using HRCCore overlay | Text validation | N/A |
-| `/api/ask-v1-safe` | Safe interface with RAG/HRC | Structured queries | ❌ No fallback |
-| `/api/arcanos` | Intent-based routing (WRITE/AUDIT) | Intent-driven | Depends on route |
-| `/memory/save` | Store memories | Context storage | N/A |
-| `/memory/load` | Retrieve memories | Context retrieval | N/A |
-| `/api/diagnostics` | System diagnostics | Natural language commands | N/A |
-| `/api/canon/files` | Canon file management | File operations | N/A |
-| `/api/containers/status` | Container monitoring | Status queries | N/A |
+| Endpoint | Purpose | Confirmation | Notes |
+| --- | --- | --- | --- |
+| `POST /ask` | Primary chat endpoint routed through Trinity brain | No | Accepts `prompt`, `sessionId`, `overrideAuditSafe`. |
+| `POST /api/ask` | ChatGPT-style wrapper | No | Accepts `message`, `prompt`, `text`, `query`, plus optional metadata; proxies to `/ask`. |
+| `POST /brain` | Confirmation-gated alias for `/ask` | Yes | Same payload as `/ask`. |
+| `POST /arcanos` | Diagnostic orchestration | Yes | Uses `userInput` and optional `sessionId`. |
+| `POST /api/arcanos/ask` | Minimal JSON API | Yes | Accepts `prompt` plus optional streaming options. |
+| `POST /arcanos-pipeline` | Multi-stage pipeline with GPT‑5 oversight | Yes | Accepts OpenAI-style `messages`. |
+| `POST /api/ask-hrc` | Safety + hallucination scoring | Yes | Provide a `message` to score. |
+| `POST /commands/research` / `POST /sdk/research` | Research pipeline | Yes | Provide `topic` + optional `urls`. |
+| `/api/memory/*` | Memory CRUD & bulk ops | Mixed | Writes require `x-confirmed: yes`. |
+| `/rag/*` | Retrieval-augmented workflows | No | Provide `url`, `content`, or `query`. |
+| `/workers/run/:id` | Execute workers or dispatch `arcanos` tasks | Yes | `arcanos` worker accepts `{ input | prompt | text }`. |
+| `/api/openai/prompt` | Raw OpenAI compatibility shim | Yes | Mirrors the OpenAI `text_completion` payload. |
+
+---
 
 ## Basic Prompting
 
-### Simple Conversational Prompts
+### `/ask` – Direct prompting
 
-For general AI interactions, use natural language:
+```bash
+curl -X POST http://localhost:8080/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+        "prompt": "Explain eventual consistency in distributed systems",
+        "sessionId": "eng-notes"
+      }'
+```
+
+**Tips**
+- `prompt` is required; `sessionId` keeps follow-up requests anchored to the same
+  memory window.
+- `overrideAuditSafe` accepts a string reason when you need to bypass audit-safe
+  mode (still logged by `runThroughBrain`).
+
+### `/api/ask` – Flexible payloads
+
+Use whichever text field is convenient; the router normalizes to `prompt` and
+appends context directives for `domain`, `useRAG`, `useHRC`, or arbitrary
+`metadata`.
 
 ```bash
 curl -X POST http://localhost:8080/api/ask \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "Explain quantum computing in simple terms"
-  }'
+        "message": "Summarize the open incidents",
+        "domain": "sre",
+        "useRAG": true,
+        "metadata": {"ticket": "INC-42"}
+      }'
 ```
 
-### Multi-turn Conversations
+---
 
-For continuing conversations, use the message array format:
+## Session & Domain Routing
+
+### Multi-turn context with `sessionId`
 
 ```bash
-curl -X POST http://localhost:8080/api/ask-with-fallback \
+curl -X POST http://localhost:8080/ask \
   -H "Content-Type: application/json" \
   -d '{
-    "messages": [
-      {"role": "user", "content": "What is machine learning?"},
-      {"role": "assistant", "content": "Machine learning is a subset of AI..."},
-      {"role": "user", "content": "Can you give me a practical example?"}
-    ]
-  }'
+        "prompt": "Remind me what we decided about the deployment window",
+        "sessionId": "deploy-ops"
+      }'
 ```
+Use the same `sessionId` for follow-up prompts; the Trinity brain will reuse the
+session memory and include routing metadata in the response.
 
-## Advanced Prompting Strategies
-
-### 1. Domain-Specific Prompts
-
-Use the `domain` parameter to optimize responses:
+### Diagnostic intent via `/arcanos`
 
 ```bash
-curl -X POST http://localhost:8080/api/ask-v1-safe \
+curl -X POST http://localhost:8080/arcanos \
   -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
   -d '{
-    "message": "Analyze this code for security vulnerabilities: function login(user, pass) { return user === admin && pass === 123; }",
-    "domain": "security",
-    "useRAG": true,
-    "useHRC": true
-  }'
+        "userInput": "Audit the staging cluster and list degraded services",
+        "sessionId": "ops-oncall"
+      }'
 ```
 
-### 2. Intent-Based Prompts
-
-Structure prompts to trigger specific intents:
-
-#### WRITE Intent (Content Creation)
-```bash
-curl -X POST http://localhost:8080/api/arcanos \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Write a function that calculates fibonacci numbers",
-    "domain": "programming"
-  }'
-```
-
-#### AUDIT Intent (Analysis/Review)
-```bash
-curl -X POST http://localhost:8080/api/arcanos \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Review this code for potential issues: const result = eval(userInput);",
-    "domain": "security"
-  }'
-```
-
-### 3. RAG-Enhanced Prompts
-
-Leverage stored context for better responses:
+### Streaming programmatic access via `/api/arcanos/ask`
 
 ```bash
-# First, store some context
-curl -X POST http://localhost:8080/api/memory \
+curl -N -X POST http://localhost:8080/api/arcanos/ask \
   -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
   -d '{
-    "value": "The user prefers Python over JavaScript for backend development"
-  }'
-
-# Then ask a question that can benefit from this context
-curl -X POST http://localhost:8080/api/ask-v1-safe \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "What programming language should I use for my new API project?",
-    "useRAG": true
-  }'
+        "prompt": "Ping",
+        "options": {"stream": true}
+      }'
 ```
+
+---
 
 ## Endpoint-Specific Guides
 
-### `/api/ask` - Primary AI Endpoint
+### `/arcanos-pipeline` – Deep reasoning
 
-**Purpose**: Direct interaction with your fine-tuned model only
-**Fallback**: None (fails if fine-tuned model unavailable)
-
-#### Basic Usage:
 ```bash
-curl -X POST http://localhost:8080/api/ask \
+curl -X POST http://localhost:8080/arcanos-pipeline \
   -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
   -d '{
-    "message": "Your prompt here"
-  }'
+        "messages": [
+          {"role": "user", "content": "Draft a rollback plan for the failing deploy"}
+        ]
+      }'
 ```
 
-#### Effective Prompts:
-- **Technical Questions**: "Explain the difference between REST and GraphQL APIs"
-- **Code Generation**: "Create a Python function that validates email addresses"
-- **Analysis**: "What are the pros and cons of microservices architecture?"
-
-### `/api/ask-with-fallback` - Fallback-Enabled AI
-
-**Purpose**: AI interaction with GPT-4 fallback if fine-tuned model fails
-**Fallback**: GPT-4 Turbo
-
-#### Single Message:
-```bash
-curl -X POST http://localhost:8080/api/ask-with-fallback \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Design a database schema for an e-commerce platform"
-  }'
-```
-
-#### Conversation History:
-```bash
-curl -X POST http://localhost:8080/api/ask-with-fallback \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [
-      {"role": "user", "content": "I need help with my React app"},
-      {"role": "assistant", "content": "I'd be happy to help! What specific issue are you facing?"},
-      {"role": "user", "content": "State management is getting complex"}
-    ]
-  }'
-```
-
-### `/api/ask-hrc` - Message Validation
-
-**Purpose**: Validate messages using HRCCore before processing
+### `/api/ask-hrc` – Hallucination scoring
 
 ```bash
 curl -X POST http://localhost:8080/api/ask-hrc \
   -H "Content-Type: application/json" \
-  -d '{
-    "message": "Please review this sensitive data: API_KEY=abc123"
-  }'
+  -H "x-confirmed: yes" \
+  -d '{"message": "The service is perfectly secure"}'
 ```
 
-### `/api/ask-v1-safe` - Safe Interface
-
-**Purpose**: Structured interface with RAG and HRC integration
-**Features**: Domain specification, RAG toggle, HRC validation
+### `/commands/research`
 
 ```bash
-curl -X POST http://localhost:8080/api/ask-v1-safe \
+curl -X POST http://localhost:8080/commands/research \
   -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
   -d '{
-    "message": "Help me optimize this SQL query for better performance",
-    "domain": "database",
-    "useRAG": true,
-    "useHRC": true
-  }'
+        "topic": "LLM fine-tuning risks",
+        "urls": ["https://example.com/post"]
+      }'
 ```
 
-#### Domain-Specific Examples:
-
-**Security Domain:**
-```json
-{
-  "message": "Audit this authentication function for vulnerabilities",
-  "domain": "security",
-  "useRAG": true,
-  "useHRC": true
-}
-```
-
-**General Domain:**
-```json
-{
-  "message": "Explain the benefits of cloud computing",
-  "domain": "general",
-  "useRAG": false,
-  "useHRC": false
-}
-```
-
-### `/api/arcanos` - Intent-Based Routing
-
-**Purpose**: Automatically route to WRITE or AUDIT based on intent analysis
-
-#### Content Creation (WRITE Intent):
-```bash
-curl -X POST http://localhost:8080/api/arcanos \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Create a REST API endpoint for user registration",
-    "domain": "programming"
-  }'
-```
-
-#### Analysis/Review (AUDIT Intent):
-```bash
-curl -X POST http://localhost:8080/api/arcanos \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Analyze this code for potential security issues",
-    "domain": "security"
-  }'
-```
-
-#### Response Format:
-```json
-{
-  "success": true,
-  "response": "AI generated response...",
-  "intent": "WRITE" | "AUDIT",
-  "confidence": 0.95,
-  "reasoning": "Intent classification explanation",
-  "model": "model-used",
-  "metadata": {}
-}
-```
-
-### `/api/memory` - Context Storage
-
-#### Store Memory:
-```bash
-curl -X POST http://localhost:8080/api/memory \
-  -H "Content-Type: application/json" \
-  -d '{
-    "value": "User prefers TypeScript for new projects"
-  }'
-```
-
-#### Retrieve Memories:
-```bash
-curl -X GET http://localhost:8080/api/memory
-```
-
-### `/api/openai/prompt` - Direct Model Access
-
-**Purpose**: Send a prompt directly to a specific model.
-**Parameters**:
-- `prompt` (string) - required user prompt
-- `model` (string, optional) - fine-tuned model ID. Defaults to `AI_MODEL` when omitted
+### `/api/openai/prompt`
 
 ```bash
 curl -X POST http://localhost:8080/api/openai/prompt \
   -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
   -d '{
-    "prompt": "Hello there",
-    "model": "ft:gpt-4.1-my-custom-model"
-  }'
+        "model": "gpt-4o",
+        "prompt": "List three blast-radius mitigation tactics"
+      }'
 ```
 
-If `model` is not provided, the server uses the `AI_MODEL` environment variable.
+---
 
-## Configuration & Setup
+## Memory & RAG Integration
 
-### Environment Variables
+### Save context
 
 ```bash
-# Required
-OPENAI_API_KEY=sk-proj-your-api-key-here
-FINE_TUNED_MODEL=ft:gpt-3.5-turbo:your-org:model-name:id
-
-# Optional
-PORT=8080
-NODE_ENV=production
-RUN_WORKERS=true
-```
-
-### Model Configuration
-
-1. **Fine-tuned Model**: Set `FINE_TUNED_MODEL` for primary model
-2. **Fallback Model**: GPT-4 Turbo used automatically when fallback enabled
-3. **Model Status Check**:
-   ```bash
-   curl http://localhost:8080/api/model-status
-   ```
-
-## Error Handling
-
-### Common Error Responses
-
-#### Missing Fine-tuned Model:
-```json
-{
-  "error": "Fine-tuned model is missing. Fallback not allowed without user permission."
-}
-```
-
-#### Model Invocation Failed:
-```json
-{
-  "error": "Model invocation failed. Fine-tuned model may be unavailable.",
-  "model": "ft:gpt-3.5-turbo:your-org:model-name:id"
-}
-```
-
-#### Invalid Request:
-```json
-{
-  "error": "Either \"message\" (string) or \"messages\" (array) is required"
-}
-```
-
-### Handling Errors in Your Application
-
-```javascript
-async function callArcanosAPI(message) {
-  try {
-    const response = await fetch('http://localhost:8080/api/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message })
-    });
-    
-    const data = await response.json();
-    
-    if (!response.ok) {
-      if (data.error?.includes('Fine-tuned model is missing')) {
-        // Try fallback endpoint
-        return await callWithFallback(message);
-      }
-      throw new Error(data.error);
-    }
-    
-    return data.response;
-  } catch (error) {
-    console.error('API call failed:', error);
-    throw error;
-  }
-}
-```
-
-## Best Practices
-
-### 1. Prompt Engineering
-
-#### Be Specific and Clear:
-✅ **Good**: "Create a Python function that validates email addresses using regex"
-❌ **Poor**: "Make email thing"
-
-#### Provide Context:
-✅ **Good**: "As a senior developer, review this React component for performance issues"
-❌ **Poor**: "Check this code"
-
-#### Use Domain Specification:
-```json
-{
-  "message": "Your prompt here",
-  "domain": "security|programming|database|general",
-  "useRAG": true
-}
-```
-
-### 2. Endpoint Selection
-
-- **`/api/ask`**: Use for reliable fine-tuned model responses
-- **`/api/ask-with-fallback`**: Use when availability is more important than model consistency
-- **`/api/ask-v1-safe`**: Use for structured requests with validation
-- **`/api/arcanos`**: Use when you want automatic intent-based routing
-
-### 3. Memory Management
-
-Store relevant context for better responses:
-```bash
-# Store preferences
-curl -X POST http://localhost:8080/api/memory \
+curl -X POST http://localhost:8080/api/memory/save \
   -H "Content-Type: application/json" \
-  -d '{"value": "User works primarily with Node.js and TypeScript"}'
-
-# Store project context
-curl -X POST http://localhost:8080/api/memory \
-  -H "Content-Type: application/json" \
-  -d '{"value": "Current project: E-commerce API using Express and MongoDB"}'
+  -H "x-confirmed: yes" \
+  -d '{
+        "key": "user:preferences",
+        "value": {"language": "TypeScript", "tone": "succinct"}
+      }'
 ```
 
-### 4. Error Recovery
-
-Implement graceful fallback in your applications:
-```javascript
-async function robustAPICall(message) {
-  // Try primary endpoint first
-  try {
-    return await callAPI('/api/ask', { message });
-  } catch (error) {
-    console.log('Primary endpoint failed, trying fallback...');
-    return await callAPI('/api/ask-with-fallback', { message });
-  }
-}
-```
-
-## Troubleshooting
-
-### Issue: "Fine-tuned model is missing"
-
-**Cause**: `FINE_TUNED_MODEL` not set or invalid
-**Solution**: 
-1. Check your `.env` file
-2. Verify the model ID is correct
-3. Use `/api/ask-with-fallback` for immediate access
-
-### Issue: "OpenAI service not initialized"
-
-**Cause**: Missing or invalid `OPENAI_API_KEY`
-**Solution**:
-1. Verify API key in `.env` file
-2. Check API key permissions
-3. Test with a simple curl command
-
-### Issue: Empty or Error Responses
-
-**Cause**: Various - check response for details
-**Solution**:
-1. Check model status: `GET /api/model-status`
-2. Verify request format
-3. Check server logs
-
-### Issue: Intent Routing Not Working
-
-**Cause**: Ambiguous prompts or intent analyzer issues
-**Solution**:
-1. Make prompts more explicit
-2. Use specific action words (create, analyze, review, build)
-3. Check the `intent` field in response
-
-### Testing Your Setup
+### Load context
 
 ```bash
-# Test health
-curl http://localhost:8080/health
-
-# Test model status
-curl http://localhost:8080/api/model-status
-
-# Test basic functionality
-curl -X POST http://localhost:8080/api/echo \
-  -H "Content-Type: application/json" \
-  -d '{"test": "message"}'
-
-# Test AI functionality
-curl -X POST http://localhost:8080/api/ask-with-fallback \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello, are you working?"}'
+curl "http://localhost:8080/api/memory/load?key=user:preferences"
 ```
 
-## Summary
+### Bulk operations
 
-This guide covers all available methods for using prompts with the Arcanos API. Choose the appropriate endpoint based on your needs:
+```bash
+curl -X POST http://localhost:8080/api/memory/bulk \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{
+        "operations": [
+          {"type": "save", "key": "project:current", "value": {"name": "Atlas"}},
+          {"type": "delete", "key": "project:old"}
+        ]
+      }'
+```
 
-- **Standard AI chat**: `/api/ask` or `/api/ask-with-fallback`
-- **Structured queries**: `/api/ask-v1-safe`
-- **Intent-based routing**: `/api/arcanos`
-- **Validation**: `/api/ask-hrc`
-- **Context management**: `/api/memory`
+### RAG ingestion + query
 
-Always follow best practices for prompt engineering and implement proper error handling in your applications.
+```bash
+# Ingest
+curl -X POST http://localhost:8080/rag/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/postmortem"}'
+
+# Query
+curl -X POST http://localhost:8080/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Summarize the key remediation tasks"}'
+```
+
+---
+
+## Worker Automation
+
+### Dispatch ARCANOS worker tasks
+
+```bash
+curl -X POST http://localhost:8080/workers/run/arcanos \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"input": "Summarize the active RFCs"}'
+```
+
+### Trigger a scheduled worker manually
+
+```bash
+curl -X POST http://localhost:8080/workers/run/worker-memory \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes"
+```
+
+Use `/workers/status` to confirm which workers were loaded and whether the
+planner could connect to PostgreSQL.
+
+---
+
+## Error Handling & Troubleshooting
+
+- **400 responses** typically mean the body was missing `prompt`, `userInput`, or
+  `key`. Recheck field names listed above.
+- **403 responses** indicate the confirmation header was missing or the GPT ID is
+  not in `TRUSTED_GPT_IDS`.
+- **503 responses** from `/api/memory/*` mean PostgreSQL was unavailable. The
+  response includes `database` and `error` fields.
+- Use `GET /railway/healthcheck` and `GET /api/test` for quick service probes.
+- Logs for the last AI call are stored at `/tmp/last-gpt-request` to help debug
+  prompt payloads.
