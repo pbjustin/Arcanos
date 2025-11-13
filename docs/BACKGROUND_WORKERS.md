@@ -1,74 +1,113 @@
 # ⚙️ Background Worker Architecture
 
-Arcanos ships with an optional background automation layer that loads worker modules from the `workers/` directory and schedules them with [`node-cron`](https://github.com/kelektiv/node-cron). The following guide describes how the worker boot process runs, how execution context is provided to workers, and how to add new automation tasks to the system.
+Arcanos ships with an optional background automation layer that loads worker
+modules from the `workers/` directory and schedules them with
+[`node-cron`](https://github.com/kelektiv/node-cron). This document explains how
+`initializeWorkers()` (`src/utils/workerBoot.ts`) runs, what context objects look
+like, and how to author new workers that integrate with the persistence layer and
+AI stack.
 
 ---
 
 ## 🔌 Enabling workers
 
-Worker startup is controlled by the `RUN_WORKERS` environment variable. During server boot the flag is evaluated inside `initializeWorkers()` and the process is skipped when the variable resolves to `false`/`0`. The same routine establishes and records database connectivity before attempting to load any modules, so the status response can indicate whether persistence is available even when workers are disabled. 【F:src/utils/workerBoot.ts†L25-L71】【F:docs/backend.md†L59-L118】
+Worker startup is controlled by the `RUN_WORKERS` environment variable. The boot
+code treats the flag as enabled only when the value is `"true"` or `"1"`.
+Leaving it unset keeps automation off by default, which is ideal for local
+development. The helper still initializes the database (and records the current
+connection state) before checking the flag, so `/workers/status` and
+`/api/memory/health` can report accurate persistence information even when no
+cron jobs are running.
 
-> **Tip:** Tests disable workers automatically. Set `RUN_WORKERS=true` (or `1`) in local shells and deployment environments to opt into automation runs.
+> **Tip:** Jest and other tests set `NODE_ENV=test`, which disables workers by
+> default. Set `RUN_WORKERS=true` in local shells or managed deployments to opt
+> into background automation.
 
 ---
 
 ## 🧵 Boot sequence
 
-The worker boot logic resides in `src/utils/workerBoot.ts`:
+`initializeWorkers()` performs the following steps:
 
-1. Resolve the workers directory. `resolveWorkersDirectory()` searches for the `workers/` folder near the current working directory and module root, with an optional override via `WORKERS_DIRECTORY`. 【F:src/utils/workerPaths.ts†L1-L61】
-2. Ensure the directory exists, then list the `.js` worker modules to load. Legacy "shared" files are ignored. 【F:src/utils/workerBoot.ts†L73-L100】
-3. Initialize the logging worker first. If present, `worker-logger` prints an initialization banner and registers heartbeat logging. 【F:src/utils/workerBoot.ts†L102-L119】【F:workers/worker-logger.js†L1-L31】
-4. Load the planner engine and start its scheduler if the database connection is healthy. The planner performs queue heartbeats and optional scheduling coordination. 【F:src/utils/workerBoot.ts†L121-L150】【F:workers/worker-planner-engine.js†L1-L39】
-5. Iterate through every remaining module, create a context, and either schedule or invoke it immediately depending on the exports that are provided. Scheduled workers are registered with `node-cron` and tracked for future shutdown. 【F:src/utils/workerBoot.ts†L152-L208】
-6. Print an initialization summary, including counts of initialized, scheduled, and failed workers. 【F:src/utils/workerBoot.ts†L210-L216】
-
-When the server shuts down, `stopScheduledWorkers()` stops each registered cron job and clears the registry. 【F:src/utils/workerBoot.ts†L220-L236】
+1. Resolve the workers directory. `resolveWorkersDirectory()` searches for the
+   `workers/` folder relative to `process.cwd()`, the compiled module path, and
+   the optional `WORKERS_DIRECTORY` override.
+2. Attempt to initialize PostgreSQL (via `initializeDatabase('worker-boot')`).
+   The result is stored on the returned `workerResults.database` object whether
+   or not workers are enabled.
+3. If `RUN_WORKERS` is disabled, return immediately with the captured database
+   status so API consumers can still see connectivity.
+4. Load `worker-logger.js` first so that log messages are centralized, then boot
+   the planner engine. The planner automatically schedules itself when the
+   database is connected.
+5. Iterate through every remaining `.js` file, create a worker context, and
+   either schedule the default export (when it exposes `schedule` + `run`) or run
+   the legacy export immediately.
+6. Track the resulting cron jobs in `scheduledTasks` so that
+   `stopScheduledWorkers()` can cleanly shut them down on process exit.
 
 ---
 
 ## 🧰 Worker execution context
 
-Every worker receives a helper context built by `createWorkerContext(workerId)`. The factory returns async `log`/`error` functions that write both to stdout and the structured worker execution log. It also exposes a database query helper and an AI helper that routes prompts through the Trinity reasoning pipeline while respecting mock fallbacks when no API key is configured. 【F:src/utils/workerContext.ts†L1-L61】
+Every worker receives the object produced by
+`createWorkerContext(workerId)` (`src/utils/workerContext.ts`). The factory
+provides:
 
-Workers consume the context by exporting a default object with `name`, `description`, `schedule`, and `run(context)` fields. The scheduler passes the context instance into every run so the worker can write audit trails, talk to the database, or issue AI queries without re-implementing the plumbing.
+- `log` / `error` helpers that write to stdout and call `logExecution()` so
+  `execution_logs` stays up to date even if the server restarts.
+- `db.query()` – the shared query helper with caching/retry support. Workers can
+  run arbitrary SQL without re-implementing pool management.
+- `ai.ask()` – a convenience wrapper that routes prompts through the Trinity
+  reasoning pipeline (`logic/trinity.ts`). When no API key is configured the
+  helper falls back to deterministic mock responses so jobs still complete.
+
+Workers consume the context by exporting a default object with `id`, `name`,
+`description`, optional `schedule`, and an async `run(context)` function.
+Legacy workers that export `run()` directly continue to work; they simply skip
+context injection.
 
 ---
 
 ## 🗓️ Built-in workers
 
-The repository includes several ready-to-run workers under `workers/`:
+The repository includes several ready-to-run modules under `workers/`:
 
 | Worker ID | Schedule | Responsibility |
-|-----------|----------|----------------|
-| `worker-logger` | Heartbeat only | Provides a central execution logger and keeps lightweight heartbeats even when the scheduler is disabled. 【F:workers/worker-logger.js†L1-L31】 |
-| `worker-planner-engine` | `*/5 * * * *` | Inspects the `job_data` queue, records planner heartbeats, and can coordinate further scheduling once database access is ready. 【F:workers/worker-planner-engine.js†L1-L39】 |
-| `worker-memory` | `*/10 * * * *` | Counts memory entries and logs synchronization work. 【F:workers/worker-memory.js†L1-L38】 |
-| `worker-gpt5-reasoning` | `*/15 * * * *` | Requests a status summary from the AI system and records the response for diagnostics. 【F:workers/worker-gpt5-reasoning.js†L1-L34】 |
+| --- | --- | --- |
+| `worker-logger` | Heartbeat only | Initializes the centralized worker execution logger and emits periodic heartbeats so status dashboards stay warm. |
+| `worker-planner-engine` | `*/5 * * * *` | Scans the `job_data` table, logs queue depth, and can coordinate future scheduling. Scheduling is automatically skipped when the database is offline. |
+| `worker-memory` | `*/10 * * * *` | Counts rows in the `memory` table and records synchronization telemetry. |
+| `worker-gpt5-reasoning` | `*/15 * * * *` | Requests a GPT‑5 reasoning summary about background services and stores the response via the worker context. |
 
-Each file follows the same export pattern, simplifying the process of authoring new workers.
+Each worker follows the same default-export contract, which keeps new modules
+straightforward to author.
 
 ---
 
 ## 🛠️ Authoring a new worker
 
-To add a new automated task:
-
-1. Create a new `.js` module inside `workers/` with a unique `id` and descriptive metadata.
-2. Export a default object containing `id`, `name`, `description`, an optional cron `schedule`, and an async `run(context)` function.
-3. Use the provided context helpers for logging, error reporting, database queries, and AI prompts.
-4. Handle failures gracefully and return a structured object describing the execution.
-
-Once the file is present, restart the server (or call `initializeWorkers()` manually) and the new worker will be detected, scheduled, and logged alongside the existing modules.
+1. Create a new `.js` file under `workers/` with a unique `id`.
+2. Export `name`, `description`, an optional cron `schedule`, and an async
+   `run(context)` function. Importing TypeScript helpers from `dist/` builds is
+   not required; the worker context exposes the database and AI clients.
+3. Use `context.log()`/`context.error()` for observability, `context.db.query()`
+   for persistence, and `context.ai.ask()` for AI calls.
+4. Handle errors gracefully and return a structured object so `/workers/run/:id`
+   can display a useful payload.
+5. Restart the server or call `initializeWorkers()` manually; the new module will
+   be detected automatically.
 
 ---
 
 ## 🧹 Managing workers at runtime
 
-- Call `stopScheduledWorkers()` before shutting down to stop any active cron tasks when embedding the worker boot module in custom tooling. 【F:src/utils/workerBoot.ts†L220-L236】
-- The `/workers/status` API endpoint surfaces worker boot results, including the list of scheduled workers and database health, for operations dashboards.
-- Disable automation temporarily by setting `RUN_WORKERS=false` without removing the worker files.
+- Call `stopScheduledWorkers()` before shutting down custom tooling to ensure all
+  cron jobs stop cleanly.
+- Use `/workers/status` to inspect which files were loaded, which schedules are
+  active, and whether the planner connected to PostgreSQL.
+- Toggle automation without deleting files by setting `RUN_WORKERS=false`.
 
----
-
-With these mechanics in place, Arcanos can run recurring AI diagnostics, persistence syncs, queue planners, and custom automation tasks in a structured, observable manner.
+With these mechanics in place, Arcanos can run recurring AI diagnostics,
+persistence syncs, queue planners, and custom automation tasks in a structured,
+observable manner.

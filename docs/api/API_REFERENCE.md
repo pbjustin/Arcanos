@@ -234,6 +234,58 @@ Execute multiple operations in a single call.
   { "status": "running", "environment": "production" }
   ```
 
+### `GET /api/assistants`
+Returns the cached assistant registry populated by
+`logic/assistantSyncCron.ts`.
+
+```bash
+curl http://localhost:8080/api/assistants
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "count": 3,
+  "assistants": {
+    "triage": { "id": "asst_abc", "description": "Triage incidents" },
+    "writer": { "id": "asst_def", "description": "Draft memos" }
+  },
+  "assistantNames": ["triage", "writer"],
+  "timestamp": "2024-11-24T18:30:00.000Z"
+}
+```
+
+### `POST /api/assistants/sync`
+Force a registry refresh (confirmation recommended).
+
+```bash
+curl -X POST http://localhost:8080/api/assistants/sync \
+  -H "Content-Type: application/json"
+```
+
+### `GET /api/assistants/:name`
+Fetch a specific assistant by name.
+
+```bash
+curl http://localhost:8080/api/assistants/triage
+```
+
+### `GET /api/codebase/tree`
+List repository contents relative to a provided path. Useful for
+telemetry-friendly browsing without exposing raw filesystem access.
+
+```bash
+curl "http://localhost:8080/api/codebase/tree?path=src"
+```
+
+### `GET /api/codebase/file`
+Return a file with optional line filtering.
+
+```bash
+curl "http://localhost:8080/api/codebase/file?path=src/server.ts&startLine=1&endLine=40"
+```
+
 ---
 
 ## Workers & Automation
@@ -283,30 +335,30 @@ Lists worker files and the runtime configuration.
 ```
 
 ### `POST /workers/run/:workerId`
-Confirmation required. Example for `demoWorker.js`:
+Confirmation required. Example for `worker-memory.js`:
 
 ```bash
-curl -X POST http://localhost:8080/workers/run/demoWorker \
+curl -X POST http://localhost:8080/workers/run/worker-memory \
   -H "Content-Type: application/json" \
-  -H "x-confirmed: yes" \
-  -d '{"payload":"value"}'
+  -H "x-confirmed: yes"
 ```
 
-**ARCANOS Worker Response**
+**Memory worker response**
 ```json
 {
   "success": true,
-  "workerId": "arcanos-worker-1",
-  "name": "ARCANOS Core Worker",
-  "description": "ARCANOS core logic with GPT-5 reasoning",
-  "pattern": "arcanos-core",
+  "workerId": "worker-memory",
+  "name": "Memory Synchronizer",
+  "description": "Persists AI memory snapshots into the database with graceful fallbacks.",
+  "pattern": "context-based",
   "result": {
-    "result": "Diagnostics complete.",
-    "requiresReasoning": false,
-    "workerId": "arcanos-worker-1"
+    "workerId": "worker-memory",
+    "status": "ok",
+    "syncedAt": "2024-11-24T18:45:00.000Z",
+    "entries": 42
   },
-  "executionTime": "312ms",
-  "timestamp": "2024-10-30T12:16:05.000Z"
+  "executionTime": "214ms",
+  "timestamp": "2024-11-24T18:45:00.000Z"
 }
 ```
 
@@ -393,6 +445,31 @@ Hallucination Resistant Core evaluation. Requires confirmation.
     "score": 0.92,
     "explanation": "Detailed safety assessment..."
   }
+}
+```
+
+### `POST /api/openai/prompt`
+Direct access to the configured OpenAI client. Useful for compatibility tests or
+benchmarking raw prompts.
+
+```bash
+curl -X POST http://localhost:8080/api/openai/prompt \
+  -H "Content-Type: application/json" \
+  -H "x-confirmed: yes" \
+  -d '{"model":"gpt-4o","prompt":"List three resilience tactics"}'
+```
+
+**Response** mirrors the OpenAI SDK structure:
+```json
+{
+  "id": "cmpl-123",
+  "object": "text_completion",
+  "created": 1732466400,
+  "model": "gpt-4o",
+  "choices": [
+    { "text": "1. Circuit breakers...", "finish_reason": "stop" }
+  ],
+  "usage": { "prompt_tokens": 12, "completion_tokens": 64, "total_tokens": 76 }
 }
 ```
 

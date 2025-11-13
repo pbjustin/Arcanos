@@ -35,40 +35,52 @@ The runtime entry point `src/start-server.ts` calls `startServer()` from
 When `startServer()` runs, the following lifecycle executes:
 
 1. **`performStartup()`** (`src/startup.ts`)
-   - Validates environment variables and filesystem expectations through
-     `utils/envValidation.ts` and `utils/environmentSecurity.ts`.
-   - Initializes the database connection with a fallback to in-memory storage if
-     PostgreSQL is unavailable (`db/index.ts`).
-   - Bootstraps the memory store (`memory/store.ts`) and verifies persistence
-     schemas (`persistenceManagerHierarchy.ts`).
-   - Ensures the configured OpenAI API key can initialize an SDK client
-     (`services/openai.ts`).
+   - Validates standard and Railway-specific variables through
+     `utils/environmentValidation.ts`, prints the validation report, and checks
+     that ephemeral filesystem requirements are satisfied before booting.
+   - Initializes environment security policies via
+     `utils/environmentSecurity.ts`, logs the resulting safe-mode state, and
+     probes the optional Railway management API (`services/railwayClient.ts`).
+   - Establishes the PostgreSQL connection via `db.ts`/`db/index.ts`. Failures
+     fall back to in-memory helpers while still surfacing status through
+     `db/client.ts`.
+   - Bootstraps the filesystem-backed memory store (`memory/store.ts`) and
+     verifies persistence schemas (`persistenceManagerHierarchy.ts`).
+   - Validates OpenAI credentials using `services/openai.ts` and reports the
+     configured default/fallback models.
 
 2. **`createApp()`** (`src/app.ts`)
    - Creates the Express instance with CORS, JSON body parsing, structured
-     logging, and diagnostics middleware.
-   - Installs OpenAI clients on `app.locals` via `init-openai.ts`.
-   - Registers every route bundle through `routes/register.ts` and installs
-     fallback/error middleware.
+     logging, and diagnostics middleware (`diagnostics.ts`).
+   - Installs OpenAI clients on `app.locals` via `init-openai.ts` and locks the
+     property to avoid accidental reassignment.
+   - Registers every route bundle through `routes/register.ts`, wires the health
+     router ahead of AI endpoints, and mounts fallback middleware from
+     `middleware/fallbackHandler.ts` before the global error handler.
 
 3. **Port selection & worker bootstrap** (`src/server.ts`)
    - Resolves a preferred port from `PORT`/`HOST` with automatic fallback using
-     `utils/portUtils.ts`.
+     `utils/portUtils.ts` and prints structured warnings via
+     `config/serverMessages.ts`.
    - Calls `initializeWorkers()` (`utils/workerBoot.ts`) to load optional worker
-     modules located in `workers/`. When the directory is absent the call
-     completes without error.
-   - Logs a boot summary including active models, worker settings, and health
-     endpoints.
+     modules located in `workers/`. The helper still records database
+     connectivity even when execution is disabled.
+   - Logs a boot summary using `utils/bootLogger.ts`, including active models,
+     worker settings, and exposed health endpoints.
 
 4. **Background automation**
-   - `src/logic/aiCron.ts` schedules a heartbeat every minute that writes
+   - `logic/aiCron.ts` schedules a heartbeat every minute that writes
      `memory/heartbeat.json` and logs recent activity.
+   - `logic/assistantSyncCron.ts` optionally syncs the assistant registry on
+     startup and on its configured cron interval using
+     `services/openai-assistants.ts`.
    - `runSystemDiagnostic()` (`services/gptSync.ts`) executes shortly after
      startup to verify OpenAI connectivity.
 
 5. **Lifecycle guards**
    - Signal handlers perform graceful shutdowns and print Railway diagnostics.
-     Uncaught errors are logged and keep the process alive where possible.
+     `registerProcessHandlers()` also watches for unhandled promise rejections
+     and queues the post-boot diagnostic call.
 
 ---
 
@@ -83,7 +95,8 @@ When `startServer()` runs, the following lifecycle executes:
 ### Model selection priority
 `services/openai.ts` chooses the first defined value in the list below and
 defaults to `gpt-4o` when none are provided:
-`OPENAI_MODEL` → `FINETUNED_MODEL_ID` → `FINE_TUNED_MODEL_ID` → `AI_MODEL`.
+`OPENAI_MODEL` → `RAILWAY_OPENAI_MODEL` → `FINETUNED_MODEL_ID` →
+`FINE_TUNED_MODEL_ID` → `AI_MODEL`.
 
 ### Server & logging
 
@@ -112,10 +125,11 @@ endpoints.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RUN_WORKERS` | `true` (disabled automatically in tests) | Enables loading and scheduling of worker modules from `workers/`. |
+| `RUN_WORKERS` | Disabled unless explicitly set to `true`/`1` | Enables loading and scheduling of worker modules from `workers/`. `initializeWorkers()` still records database health even when execution is skipped. |
 | `WORKER_COUNT` | `4` | Reported worker count in diagnostics and status responses. |
 | `WORKER_MODEL` | Falls back to selected AI model | Model identifier propagated to worker contexts. |
 | `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for OpenAI requests executed by workers. |
+| `WORKERS_DIRECTORY` | `workers/` relative to cwd | Overrides the worker discovery path resolved by `utils/workerPaths.ts`. |
 
 If `RUN_WORKERS` is disabled or no worker modules exist, initialization completes
 with empty worker lists while still validating the database connection for
@@ -149,6 +163,9 @@ surfaced during `performStartup()` and will abort the boot when marked critical.
 - **State management** – `services/stateManager.ts` exposes `loadState()` /
   `updateState()` for `/status` routes and records the currently running port,
   version, and uptime.
+- **Assistant registry** – `services/openai-assistants.ts` caches assistant
+  metadata and exposes sync helpers used by cron jobs and `/api/assistants`
+  routes.
 
 ---
 
@@ -171,13 +188,15 @@ Routes are registered in `routes/register.ts`. Highlights include:
   confirmation required).
 - `POST /brain` – Alias for `/ask` that retains the confirmation gate
   requirement.
+- `POST /api/ask` – ChatGPT-style JSON entry point that normalizes payloads
+  before calling the same handler as `/ask`.
 - `POST /arcanos` – Diagnostic endpoint powered by `logic/arcanos.ts` (requires
   confirmation).
 - `POST /siri` – Siri-style assistant entry point (requires confirmation).
 - `POST /arcanos-pipeline` – Multi-stage reasoning pipeline combining the default
   model, a GPT‑3.5 sub-agent, and GPT‑5 oversight.
 - `POST /api/arcanos/ask` – Minimal JSON API for programmatic access (requires
-  confirmation).
+  confirmation and optionally streams tokens).
 
 ### Memory & worker management
 - `GET /api/memory/health` – Database-backed memory health report.
@@ -194,16 +213,19 @@ Routes are registered in `routes/register.ts`. Highlights include:
   required).
 - `/api/sim/*` – Simulation API with health/examples endpoints and optional
   streaming.
-- `/image` – Image generation using OpenAI Images API.
+- `/image` – Image generation using the OpenAI Images API.
 - `/rag/*` – Retrieval augmented generation ingestion and query helpers.
-- `/commands/research` – Research module for summarizing external sources.
-- `/sdk/research` – SDK entry point that reuses the same research pipeline for
-  Railway deployments and OpenAI SDK consumers.
+- `/commands/research` and `/sdk/research` – Research module entry points for
+  operators and SDK consumers (confirmation required).
 - `/api/ask-hrc` – Hallucination-resistant classification endpoint.
 - `/gpt/*` – GPT routing helpers defined in `routes/gptRouter.ts`.
 - `/backstage/*` – Backstage tooling endpoints for legacy integrations.
-- `/api/pr-analysis/*`, `/api/openai/*`, `/api/commands/*` – Specialized APIs for
-  PR review, OpenAI compatibility, and command execution.
+- `/api/pr-analysis/*`, `/api/openai/*`, `/api/commands/*`, `/api/codebase/*`,
+  `/api/assistants/*`, `/api/afol/*` – Specialized APIs for PR review,
+  OpenAI compatibility, filesystem-safe codebase browsing, assistant registry
+  management, and AFOL tooling.
+- `/api/fallback/test` and `/api/test` – Lightweight probes from
+  `middleware/fallbackHandler.ts` for Railway smoke checks.
 
 > **Confirmation header** – Mutating routes generally require manual approval
 > (`x-confirmed: yes`). If no header is provided, the middleware responds with a
