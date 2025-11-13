@@ -103,6 +103,8 @@ pending challenge response and then retry with `x-confirmed: token:<challengeId>
 | `POST /arcanos-pipeline` | Yes | Multi-stage pipeline combining ARCANOS, GPT‑3.5, and GPT‑5. |
 | `POST /api/arcanos/ask` | Yes | Minimal JSON API that streams or returns ARCANOS completions. |
 
+See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkthrough of how these routes share the Trinity brain, how GPT-5 reasoning is invoked, and how audit-safe, memory-aware guardrails are enforced inside `runThroughBrain`.
+
 ### AI Utilities
 
 - `POST /write`, `POST /guide`, `POST /audit`, `POST /sim`
