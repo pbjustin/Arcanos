@@ -1,4 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
+import {
+  createConfirmationChallenge,
+  getChallengeTtlMs,
+  verifyConfirmationChallenge,
+} from './confirmationChallengeStore.js';
 
 /**
  * ConfirmGate Middleware - OpenAI Terms of Service Compliance
@@ -7,7 +12,9 @@ import { Request, Response, NextFunction } from 'express';
  * before executing any logic. This prevents automatic GPT actions without
  * user consent, maintaining compliance with OpenAI's Terms of Service.
  * 
- * Requires 'x-confirmed: yes' header for request to proceed.
+ * Requires explicit confirmation headers (`x-confirmed: yes` for manual approval or
+ * `x-confirmed: token:<challengeId>` when responding to a pending confirmation
+ * challenge) for the request to proceed unless a trusted GPT ID bypasses the gate.
  */
 const trustedGptIds = new Set(
   (process.env.TRUSTED_GPT_IDS || '')
@@ -19,6 +26,8 @@ const trustedGptIds = new Set(
 const wildcardTrusted = trustedGptIds.has('*');
 const allowAllGpts = wildcardTrusted || process.env.ALLOW_ALL_GPTS === 'true';
 
+const confirmationTokenPrefix = 'token:';
+
 if (allowAllGpts) {
   console.log('[🛡️ CONFIRM-GATE] Allow-all GPT mode enabled - confirmation header optional for GPT requests');
 }
@@ -28,6 +37,14 @@ function normalizeHeaderValue(value: string | string[] | undefined): string | un
   return Array.isArray(value) ? value[0] : value;
 }
 
+function maskConfirmationHeader(value: string | undefined): string {
+  if (!value) {
+    return 'none';
+  }
+
+  return value.toLowerCase().startsWith(confirmationTokenPrefix) ? `${confirmationTokenPrefix}***` : value;
+}
+
 export function confirmGate(req: Request, res: Response, next: NextFunction): void {
   const confirmationHeader = normalizeHeaderValue(req.headers['x-confirmed']);
   const gptIdHeader = normalizeHeaderValue(req.headers['x-gpt-id'] as string | string[] | undefined);
@@ -35,38 +52,74 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   const gptId = gptIdHeader || gptIdFromBody;
   const isTrustedGpt = gptId ? trustedGptIds.has(gptId) : false;
   const confirmationMode = allowAllGpts ? 'allow-all' : 'header';
+  const normalizedConfirmation = confirmationHeader?.toString().trim();
+  const confirmationHeaderLower = normalizedConfirmation?.toLowerCase();
+  const manualConfirmation = confirmationHeaderLower === 'yes';
+  const providedToken =
+    normalizedConfirmation && confirmationHeaderLower?.startsWith(confirmationTokenPrefix)
+      ? normalizedConfirmation.slice(confirmationTokenPrefix.length).trim()
+      : undefined;
+
+  let hasValidToken = false;
+  if (!allowAllGpts && providedToken) {
+    hasValidToken = verifyConfirmationChallenge(providedToken, req.method, req.path);
+  }
 
   // Log the request for audit purposes
   console.log(
-    `[🛡️ CONFIRM-GATE] ${req.method} ${req.path} - Confirmation: ${confirmationHeader || 'none'} - GPTID: ${
+    `[🛡️ CONFIRM-GATE] ${req.method} ${req.path} - Confirmation: ${maskConfirmationHeader(confirmationHeader)} - GPTID: ${
       gptId || 'none'
     } - Mode: ${confirmationMode}`
   );
 
   // Check if user has explicitly confirmed the action
-  if (confirmationHeader !== 'yes' && !isTrustedGpt && !allowAllGpts) {
-    res.setHeader('x-confirmation-status', 'required');
+  if (!manualConfirmation && !hasValidToken && !isTrustedGpt && !allowAllGpts) {
+    const challenge = createConfirmationChallenge(req.method, req.path, gptId || null);
+    const tokenStatus = providedToken ? 'invalid' : 'missing';
+
+    res.setHeader('x-confirmation-status', 'pending');
+    res.setHeader('x-confirmation-challenge', challenge.id);
+
     console.log(
-      `[❌ CONFIRM-GATE] Request blocked - missing or invalid confirmation header${
-        gptId ? ` (GPTID ${gptId} not trusted)` : ''
-      }`
+      `[❌ CONFIRM-GATE] Request blocked - confirmation ${tokenStatus}. GPTID: ${gptId || 'none'} - Challenge: ${challenge.id}`,
     );
 
     res.status(403).json({
       error: 'Confirmation required',
       message:
-        'This endpoint requires explicit user confirmation. Please include the header: x-confirmed: yes or use a trusted GPTID.',
+        'This endpoint requires explicit human approval. Ask the operator to confirm the action before retrying.',
       code: 'CONFIRMATION_REQUIRED',
       endpoint: req.path,
       method: req.method,
       gptId: gptId || null,
       confirmationRequired: true,
-      timestamp: new Date().toISOString()
+      confirmationStatus: 'pending',
+      confirmationChallenge: {
+        id: challenge.id,
+        issuedAt: new Date(challenge.issuedAt).toISOString(),
+        expiresAt: new Date(challenge.expiresAt).toISOString(),
+        ttlMs: getChallengeTtlMs(),
+        instructions: [
+          'Inform the operator that this action is blocked until they explicitly approve it.',
+          `If approved, resend the request with the header: x-confirmed: ${confirmationTokenPrefix}${challenge.id}.`,
+          'Trusted automations can bypass manual review by registering their GPT ID in the TRUSTED_GPT_IDS environment variable.',
+        ],
+        gptIdTrusted: isTrustedGpt,
+        allowedGptIds: Array.from(trustedGptIds),
+        providedTokenStatus: tokenStatus,
+      },
+      timestamp: new Date().toISOString(),
     });
     return;
   }
 
-  const confirmationStatus = allowAllGpts ? 'auto-allowed' : 'confirmed';
+  const confirmationStatus = allowAllGpts
+    ? 'auto-allowed'
+    : hasValidToken
+    ? 'challenge-token'
+    : isTrustedGpt
+    ? 'trusted-gpt'
+    : 'confirmed';
   res.setHeader('x-confirmation-status', confirmationStatus);
   console.log(`[✅ CONFIRM-GATE] Request confirmed - proceeding with execution (${confirmationStatus})`);
   next();
@@ -79,7 +132,9 @@ export const getConfirmGateConfiguration = () => ({
   trustedGptIds: Array.from(trustedGptIds),
   requiresHeader: !allowAllGpts,
   confirmationHeader: 'x-confirmed',
-  gptHeader: 'x-gpt-id'
+  gptHeader: 'x-gpt-id',
+  confirmationTokenPrefix,
+  confirmationChallengeTtlMs: getChallengeTtlMs(),
 });
 
 /**

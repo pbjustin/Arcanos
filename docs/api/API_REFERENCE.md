@@ -426,8 +426,9 @@ Endpoints under `/api/commands` are documented in
 
 - Validation errors respond with a `status: "error"` payload and descriptive
   `message` / `details` fields.
-- Confirmation failures return HTTP 403 with
-  `{ "error": "Confirmation required" }`.
+- Confirmation failures return HTTP 403 with a confirmation challenge payload.
+  Retry once the operator approves using `x-confirmed: token:<challengeId>` (the
+  middleware also accepts `x-confirmed: yes` for manual approvals).
 - Upstream OpenAI issues surface as HTTP 503 with user-friendly messages while
   logging the original error.
 - Worker execution failures include the worker ID and a timestamp for auditing.
@@ -436,8 +437,9 @@ Endpoints under `/api/commands` are documented in
 
 ## Troubleshooting Checklist
 
-1. **401/403 responses** – Ensure `x-confirmed: yes` is present or the caller is
-   listed in `TRUSTED_GPT_IDS`.
+1. **401/403 responses** – Ensure a confirmation header is present. Manual calls
+   use `x-confirmed: yes`; automations should echo the issued challenge via
+   `x-confirmed: token:<challengeId>` or register a trusted GPT ID.
 2. **503 readiness failures** – Verify PostgreSQL (`DATABASE_URL`) and the
    OpenAI API key are configured.
 3. **Streaming APIs** – Ensure the client consumes `text/event-stream` responses
