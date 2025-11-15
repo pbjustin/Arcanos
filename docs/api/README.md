@@ -5,9 +5,13 @@
 This guide summarises the HTTP API exposed by the Arcanos backend. All routes
 are registered in [`src/routes/register.ts`](../../src/routes/register.ts).
 Mutating endpoints require the `x-confirmed` header unless the caller is a
-trusted GPT (`TRUSTED_GPT_IDS` + `x-gpt-id`). Manual calls send `x-confirmed: yes`;
-automations should wait for the confirmation challenge response and retry with
-`x-confirmed: token:<challengeId>` once the operator approves.
+trusted GPT (`TRUSTED_GPT_IDS` + `x-gpt-id`), provides the `gptId` field in the
+body, or sends the automation secret header. Manual calls send `x-confirmed:
+yes`; automations should wait for the confirmation challenge response and retry
+with `x-confirmed: token:<challengeId>` once the operator approves. When GPT IDs
+aren’t available, configure `ARCANOS_AUTOMATION_SECRET` and supply the secret via
+`x-arcanos-automation` (or your custom header) to gain the same autonomous fast
+path.
 
 ---
 

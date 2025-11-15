@@ -18,6 +18,13 @@ operator repeating `x-confirmed: yes`. This change keeps human approvals in
 place for untrusted callers while allowing the same fine-tuned model that builds
 the auto-heal plan to carry it out end-to-end.【F:src/middleware/confirmGate.ts†L1-L116】
 
+If your automation does not expose a GPT identifier (for example, API-only
+fine-tunes), set `ARCANOS_AUTOMATION_SECRET` (and optionally
+`ARCANOS_AUTOMATION_HEADER`) so the backend can self-identify via a shared
+secret header like `x-arcanos-automation`. Matching requests now bypass the
+confirmation prompt just like a trusted GPT ID while still requiring explicit
+operator approval for everything else.【F:src/middleware/confirmGate.ts†L26-L190】
+
 ## How Auto-Heal Plans Are Built
 
 1. `buildStatusPayload()` captures the file-system inventory, current runtime telemetry, and embeds an `autoHeal` summary for downstream consumers.【F:src/routes/workers.ts†L18-L88】
