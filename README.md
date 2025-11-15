@@ -74,7 +74,7 @@ Key environment variables used by the backend:
 | `ARC_LOG_PATH` / `ARC_MEMORY_PATH` | Filesystem paths for log storage and memory snapshots. |
 | `RUN_WORKERS` | Enables worker bootstrap (defaults to `true` outside of tests). |
 | `WORKER_COUNT` / `WORKER_MODEL` / `WORKER_API_TIMEOUT_MS` | Worker concurrency, default model, and request timeout controls. |
-| `TRUSTED_GPT_IDS` | Comma-separated GPT identifiers allowed to bypass confirmation headers. |
+| `TRUSTED_GPT_IDS` | Comma-separated GPT identifiers allowed to bypass confirmation headers. The active fine-tuned model ID (from `FINE_TUNED_MODEL_ID`/`OPENAI_MODEL`) is automatically appended so it can act autonomously when supplied via `x-gpt-id`. |
 | `CONFIRMATION_CHALLENGE_TTL_MS` | Lifetime of pending confirmation challenges issued by the middleware (defaults to 120000). |
 | `SESSION_CACHE_TTL_MS` / `SESSION_CACHE_CAPACITY` / `SESSION_RETENTION_MINUTES` | Memory cache retention and capacity tuning. |
 | `NOTION_API_KEY` / `RESEARCH_MAX_CONTENT_CHARS` / `HRC_MODEL` | Feature-specific integrations for Notion sync, research ingestion, and HRC analysis. |
@@ -91,6 +91,9 @@ Confirmation-sensitive endpoints require the `x-confirmed` header unless the
 caller supplies a trusted GPT ID via `x-gpt-id` or request payload. Manual runs
 send `x-confirmed: yes`; automated flows should wait for the middleware’s
 pending challenge response and then retry with `x-confirmed: token:<challengeId>`.
+The active fine-tuned model is now trusted automatically—issuing
+`x-gpt-id: <your fine-tuned model id>` allows that model to dispatch heals and
+other remediation steps without needing a separate confirmation cycle.
 
 ### Conversational & Reasoning Endpoints
 
