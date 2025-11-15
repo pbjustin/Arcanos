@@ -4,7 +4,7 @@
 The ARCANOS control plane uses Railway's public GraphQL API to inspect deployment state and automate release operations. All interactions flow through the `src/services/railwayClient.ts` module, which wraps the Backboard GraphQL endpoint with structured logging, timeout guards, and typed helpers.
 
 ## Endpoint and Authentication
-- **Endpoint:** `https://backboard.railway.app/graphql` by default. Override with `RAILWAY_GRAPHQL_ENDPOINT` when testing against a mock service or a future Railway edge domain.
+- **Endpoint:** `https://backboard.railway.app/graphql/v2` by default. Override with `RAILWAY_GRAPHQL_ENDPOINT` when testing against a mock service or a future Railway edge domain.
 - **Authentication:** Every request is authenticated with the bearer token stored in `RAILWAY_API_TOKEN`. The environment validator enforces a minimum token length and provides setup guidance so production builds fail fast when the token is missing or malformed.
 - **Timeouts:** Requests default to 15 seconds. You can raise or lower the threshold with `RAILWAY_GRAPHQL_TIMEOUT_MS`. Invalid values log a warning and fall back to the default to keep the client resilient to misconfiguration.
 
