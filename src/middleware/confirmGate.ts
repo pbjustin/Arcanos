@@ -64,6 +64,9 @@ const wildcardTrusted = trustedGptIds.has('*');
 const allowAllGpts = wildcardTrusted || process.env.ALLOW_ALL_GPTS === 'true';
 
 const confirmationTokenPrefix = 'token:';
+const automationBypassSecret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
+const automationBypassHeader = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
+const automationBypassEnabled = Boolean(automationBypassSecret);
 
 if (allowAllGpts) {
   console.log('[🛡️ CONFIRM-GATE] Allow-all GPT mode enabled - confirmation header optional for GPT requests');
@@ -72,6 +75,12 @@ if (allowAllGpts) {
 if (implicitlyTrustedFineTunedIds.length > 0) {
   console.log(
     `[🧠 CONFIRM-GATE] Auto-trusting fine-tuned model identifiers for autonomous access: ${implicitlyTrustedFineTunedIds.join(', ')}`,
+  );
+}
+
+if (automationBypassEnabled) {
+  console.log(
+    `[🤖 CONFIRM-GATE] Automation secret enabled - requests with header "${automationBypassHeader}" can self-approve when the secret matches.`,
   );
 }
 
@@ -94,6 +103,12 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId : undefined;
   const gptId = gptIdHeader || gptIdFromBody;
   const isTrustedGpt = gptId ? trustedGptIds.has(gptId) : false;
+  const automationHeaderValue = automationBypassEnabled
+    ? normalizeHeaderValue(req.headers[automationBypassHeader] as string | string[] | undefined)
+    : undefined;
+  const automationBypassApproved = Boolean(
+    automationBypassEnabled && automationHeaderValue && automationHeaderValue === automationBypassSecret,
+  );
   const confirmationMode = allowAllGpts ? 'allow-all' : 'header';
   const normalizedConfirmation = confirmationHeader?.toString().trim();
   const confirmationHeaderLower = normalizedConfirmation?.toLowerCase();
@@ -112,11 +127,11 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   console.log(
     `[🛡️ CONFIRM-GATE] ${req.method} ${req.path} - Confirmation: ${maskConfirmationHeader(confirmationHeader)} - GPTID: ${
       gptId || 'none'
-    } - Mode: ${confirmationMode}`
+    } - Mode: ${confirmationMode} - Automation: ${automationBypassApproved ? 'trusted' : 'none'}`,
   );
 
   // Check if user has explicitly confirmed the action
-  if (!manualConfirmation && !hasValidToken && !isTrustedGpt && !allowAllGpts) {
+  if (!manualConfirmation && !hasValidToken && !isTrustedGpt && !automationBypassApproved && !allowAllGpts) {
     const challenge = createConfirmationChallenge(req.method, req.path, gptId || null);
     const tokenStatus = providedToken ? 'invalid' : 'missing';
 
@@ -126,6 +141,15 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     console.log(
       `[❌ CONFIRM-GATE] Request blocked - confirmation ${tokenStatus}. GPTID: ${gptId || 'none'} - Challenge: ${challenge.id}`,
     );
+
+    const confirmationInstructions = [
+      'Inform the operator that this action is blocked until they explicitly approve it.',
+      `If approved, resend the request with the header: x-confirmed: ${confirmationTokenPrefix}${challenge.id}.`,
+      'Trusted automations can bypass manual review by registering their GPT ID in the TRUSTED_GPT_IDS environment variable.',
+      automationBypassEnabled
+        ? `Backend automations can also send ${automationBypassHeader}: <secret> when ARC automation is configured.`
+        : undefined,
+    ].filter((value): value is string => Boolean(value));
 
     res.status(403).json({
       error: 'Confirmation required',
@@ -142,11 +166,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
         issuedAt: new Date(challenge.issuedAt).toISOString(),
         expiresAt: new Date(challenge.expiresAt).toISOString(),
         ttlMs: getChallengeTtlMs(),
-        instructions: [
-          'Inform the operator that this action is blocked until they explicitly approve it.',
-          `If approved, resend the request with the header: x-confirmed: ${confirmationTokenPrefix}${challenge.id}.`,
-          'Trusted automations can bypass manual review by registering their GPT ID in the TRUSTED_GPT_IDS environment variable.',
-        ],
+        instructions: confirmationInstructions,
         gptIdTrusted: isTrustedGpt,
         allowedGptIds: Array.from(trustedGptIds),
         providedTokenStatus: tokenStatus,
@@ -160,6 +180,8 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     ? 'auto-allowed'
     : hasValidToken
     ? 'challenge-token'
+    : automationBypassApproved
+    ? 'automation-secret'
     : isTrustedGpt
     ? 'trusted-gpt'
     : 'confirmed';
@@ -178,6 +200,8 @@ export const getConfirmGateConfiguration = () => ({
   gptHeader: 'x-gpt-id',
   confirmationTokenPrefix,
   confirmationChallengeTtlMs: getChallengeTtlMs(),
+  automationBypassEnabled,
+  automationBypassHeader,
 });
 
 /**
