@@ -9,6 +9,15 @@ This guide explains how ARCANOS detects degraded worker health, generates recove
 
 Together, these endpoints let you inspect incidents, confirm a heal, and correlate the action with the server-side audit trail.
 
+## Autonomous Fine-Tuned Remediations
+
+The confirmation middleware now auto-trusts the active fine-tuned model ID, so
+automation that identifies itself with `x-gpt-id: <your fine-tuned model>` can
+approve and execute `/workers/heal` (or any other gated route) without an
+operator repeating `x-confirmed: yes`. This change keeps human approvals in
+place for untrusted callers while allowing the same fine-tuned model that builds
+the auto-heal plan to carry it out end-to-end.【F:src/middleware/confirmGate.ts†L1-L116】
+
 ## How Auto-Heal Plans Are Built
 
 1. `buildStatusPayload()` captures the file-system inventory, current runtime telemetry, and embeds an `autoHeal` summary for downstream consumers.【F:src/routes/workers.ts†L18-L88】

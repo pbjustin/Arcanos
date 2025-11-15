@@ -97,7 +97,7 @@ report the degraded state for observability.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TRUSTED_GPT_IDS` | – | Comma-separated GPT identifiers that bypass the confirmation gate. |
+| `TRUSTED_GPT_IDS` | – | Comma-separated GPT identifiers that bypass the confirmation gate. The active fine-tuned model ID (from `FINE_TUNED_MODEL_ID` / `OPENAI_MODEL`) is appended automatically so it can run automation via `x-gpt-id`. |
 | `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` | Lifetime (in milliseconds) for pending confirmation challenges returned by `confirmGate`. |
 | `ALLOW_ROOT_OVERRIDE` | `false` | Enables elevated persistence operations when paired with `ROOT_OVERRIDE_TOKEN`. |
 | `ROOT_OVERRIDE_TOKEN` | – | Secret required when root override mode is enabled. |
