@@ -180,13 +180,23 @@ export const workerStatusResponseSchema = z.object({
   system: z.object({
     model: z.string(),
     environment: z.string()
-  })
+  }),
+  autoHeal: z
+    .object({
+      status: z.enum(['ok', 'warning', 'critical']),
+      failingWorkers: z.array(z.string()).optional(),
+      lastError: z.string().optional(),
+      recommendedAction: z.string().optional()
+    })
+    .optional()
 });
 
 /**
  * Worker status response data transfer object type inferred from the validation schema.
  */
 export type WorkerStatusResponseDTO = z.infer<typeof workerStatusResponseSchema>;
+
+export type AutoHealStatusDTO = NonNullable<WorkerStatusResponseDTO['autoHeal']>;
 
 /**
  * Schema for worker execution results.
