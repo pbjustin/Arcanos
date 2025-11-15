@@ -4,6 +4,7 @@ import {
   getChallengeTtlMs,
   verifyConfirmationChallenge,
 } from './confirmationChallengeStore.js';
+import { getDefaultModel } from '../services/openai/credentialProvider.js';
 
 /**
  * ConfirmGate Middleware - OpenAI Terms of Service Compliance
@@ -16,12 +17,48 @@ import {
  * `x-confirmed: token:<challengeId>` when responding to a pending confirmation
  * challenge) for the request to proceed unless a trusted GPT ID bypasses the gate.
  */
+function isFineTunedModelIdentifier(value: string | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return trimmed.startsWith('ft:');
+}
+
+function collectFineTunedAutomationIds(): string[] {
+  const candidates = [
+    process.env.FINE_TUNED_AUTOMATION_GPT_ID,
+    process.env.FINETUNED_AUTOMATION_GPT_ID,
+    process.env.FINETUNED_MODEL_ID,
+    process.env.FINE_TUNED_MODEL_ID,
+    process.env.OPENAI_MODEL,
+    process.env.RAILWAY_OPENAI_MODEL,
+    process.env.AI_MODEL,
+    getDefaultModel()
+  ];
+
+  const fineTunedIds = new Set<string>();
+  for (const candidate of candidates) {
+    if (isFineTunedModelIdentifier(candidate)) {
+      fineTunedIds.add(candidate.trim());
+    }
+  }
+
+  return Array.from(fineTunedIds);
+}
+
 const trustedGptIds = new Set(
   (process.env.TRUSTED_GPT_IDS || '')
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean)
 );
+
+const implicitlyTrustedFineTunedIds = collectFineTunedAutomationIds();
+implicitlyTrustedFineTunedIds.forEach((id) => trustedGptIds.add(id));
 
 const wildcardTrusted = trustedGptIds.has('*');
 const allowAllGpts = wildcardTrusted || process.env.ALLOW_ALL_GPTS === 'true';
@@ -30,6 +67,12 @@ const confirmationTokenPrefix = 'token:';
 
 if (allowAllGpts) {
   console.log('[🛡️ CONFIRM-GATE] Allow-all GPT mode enabled - confirmation header optional for GPT requests');
+}
+
+if (implicitlyTrustedFineTunedIds.length > 0) {
+  console.log(
+    `[🧠 CONFIRM-GATE] Auto-trusting fine-tuned model identifiers for autonomous access: ${implicitlyTrustedFineTunedIds.join(', ')}`,
+  );
 }
 
 function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
