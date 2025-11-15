@@ -135,8 +135,14 @@ See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkth
   configuration.
 - `POST /workers/run/:workerId` – Executes a worker by filename (requires
   confirmation).
+- `POST /workers/heal` – Generates a GPT-backed recovery plan and optionally
+  restarts the worker pool (requires confirmation header).
 - `POST /heartbeat` – Records operator heartbeats to `logs/heartbeat.log`
   (requires confirmation).
+- `POST /devops/self-test` – Runs the automated `/ask` self-test suite and
+  stores results in `logs/healthcheck.json`.
+- `POST /devops/daily-summary` – Forces the daily GPT-4(fine-tuned) summary log
+  to regenerate and save to `memory/summary-*.json`.
 
 ### Research, RAG, and Integrations
 
@@ -196,7 +202,13 @@ context for downstream analysis.
 npm test                     # Jest test suites
 npm run lint                 # ESLint (via @typescript-eslint)
 npm run build && npm start   # Ensure the compiled server boots
+npm run self-test            # Execute the self-test pipeline (requires dist/)
+npm run daily-summary        # Generate a daily GPT-4 summary snapshot
 ```
+
+Railway deployments pick up these jobs automatically through
+[`railway/cron.yaml`](railway/cron.yaml), which schedules the self-test every 30
+minutes and the daily summary at 23:00 UTC.
 
 For additional diagnostics, `src/services/gptSync.ts` executes a post-boot system
 diagnostic and `/api/test` returns a lightweight readiness payload for Railway.

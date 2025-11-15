@@ -25,6 +25,8 @@
     "repair-migrations": "node scripts/migration-repair.js",
     "guide:generate": "node scripts/generate-tagged-guide.js",
     "test:doc-workflow": "node scripts/test-doc-workflow.js",
+    "self-test": "node dist/commands/runSelfTest.js",
+    "daily-summary": "node dist/commands/runDailySummary.js",
     "validate:railway": "node validate-railway-compatibility.js",
     "audit:continuous": "node scripts/continuous-audit.js",
     "audit:sdk-compliance": "node scripts/sdk-compliance-audit.js",
