@@ -98,6 +98,7 @@ report the degraded state for observability.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `TRUSTED_GPT_IDS` | – | Comma-separated GPT identifiers that bypass the confirmation gate. The active fine-tuned model ID (from `FINE_TUNED_MODEL_ID` / `OPENAI_MODEL`) is appended automatically so it can run automation via `x-gpt-id`. |
+| `ARCANOS_AUTOMATION_SECRET` / `ARCANOS_AUTOMATION_HEADER` | – | Shared secret/header pair that lets backend automations self-identify when a GPT ID isn’t available. The header defaults to `x-arcanos-automation`; matching requests bypass `confirmGate` like a trusted GPT. |
 | `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` | Lifetime (in milliseconds) for pending confirmation challenges returned by `confirmGate`. |
 | `ALLOW_ROOT_OVERRIDE` | `false` | Enables elevated persistence operations when paired with `ROOT_OVERRIDE_TOKEN`. |
 | `ROOT_OVERRIDE_TOKEN` | – | Secret required when root override mode is enabled. |
@@ -166,6 +167,10 @@ Confirmation behaviour is implemented in
   `workers/` is empty).
 - **Trusted GPT IDs** – Ensure `TRUSTED_GPT_IDS` and the caller’s `x-gpt-id`
   value match exactly (case-sensitive).
+- **Automation secret header** – Configure `ARCANOS_AUTOMATION_SECRET` (and
+  optionally `ARCANOS_AUTOMATION_HEADER`) when your automation cannot send a
+  GPT ID. Requests must include the shared secret header to bypass the
+  confirmation challenge.
 
 Keep this document aligned with changes to `src/config`, `src/utils/env.ts`, and
 any new feature-specific services that rely on environment variables.
