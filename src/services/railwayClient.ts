@@ -1,6 +1,6 @@
 import { logger } from '../utils/structuredLogging.js';
 
-const DEFAULT_GRAPHQL_ENDPOINT = 'https://backboard.railway.app/graphql';
+const DEFAULT_GRAPHQL_ENDPOINT = 'https://backboard.railway.app/graphql/v2';
 const GRAPHQL_ENDPOINT = process.env.RAILWAY_GRAPHQL_ENDPOINT || DEFAULT_GRAPHQL_ENDPOINT;
 const DEFAULT_GRAPHQL_TIMEOUT_MS = 15_000;
 
