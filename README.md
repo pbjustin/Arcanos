@@ -152,6 +152,13 @@ See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkth
 - `POST /devops/daily-summary` – Forces the daily GPT-4(fine-tuned) summary log
   to regenerate and save to `memory/summary-*.json`.
 
+📘 **Need the AI to manage heals autonomously?** Follow the step-by-step
+recommendations in
+[`docs/AI_AUTONOMOUS_HEALING_RECOMMENDATIONS.md`](docs/AI_AUTONOMOUS_HEALING_RECOMMENDATIONS.md)
+to configure trusted GPT identifiers, automation headers, and post-heal
+verification loops so `/workers/heal` can run end-to-end without human
+confirmation.
+
 ### Research, RAG, and Integrations
 
 - `POST /rag/fetch`, `/rag/save`, `/rag/query` – Retrieval-augmented generation
