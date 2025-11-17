@@ -165,7 +165,7 @@ Memory: Optimized with --max-old-space-size=7168
 
 - `DATABASE_URL` - PostgreSQL connection (falls back to in-memory)
 - `RUN_WORKERS` - Enable background workers (default: false)
-- `GPT5_MODEL` - Advanced model configuration
+- `GPT51_MODEL` / `GPT5_MODEL` - Advanced model configuration for GPT-5.1 reasoning
 - `RAILWAY_ENVIRONMENT` - Railway platform detection
 
 ### Validation Features:

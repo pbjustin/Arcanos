@@ -1,8 +1,8 @@
-import { getOpenAIClient, getDefaultModel } from './openai.js';
+import { getOpenAIClient, getDefaultModel, getGPT5Model } from './openai.js';
 
 // Use centralized model configuration
 const FT_MODEL = getDefaultModel();
-const REASONING_MODEL = "gpt-5";
+const REASONING_MODEL = getGPT5Model();
 
 export async function arcanosQuery(prompt: string): Promise<string> {
   try {

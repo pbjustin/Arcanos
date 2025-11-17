@@ -122,7 +122,7 @@ Key environment variables:
   sentinel, mock responses are returned.
 - `OPENAI_MODEL`, `FINETUNED_MODEL_ID`, `FINE_TUNED_MODEL_ID`, `AI_MODEL` – Model
   preference chain.
-- `RESEARCH_MODEL_ID`, `GPT5_MODEL` – Optional overrides for specialized flows.
+- `RESEARCH_MODEL_ID`, `GPT51_MODEL` / `GPT5_MODEL` – Optional overrides for specialized flows.
 - `DATABASE_URL` or discrete PG settings – PostgreSQL connection parameters.
 - `RUN_WORKERS`, `WORKER_COUNT`, `WORKER_MODEL`, `WORKER_API_TIMEOUT_MS` – Worker
   scheduling and capacity controls.
