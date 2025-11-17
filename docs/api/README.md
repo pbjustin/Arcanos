@@ -24,7 +24,7 @@ path.
 | `POST /api/ask` | No | ChatGPT-style JSON API that normalizes payloads before forwarding to `/ask`. |
 | `POST /arcanos` | Yes | Diagnostic orchestration entry point backed by `runARCANOS`. |
 | `POST /siri` | Yes | Siri-style interface that reuses the Trinity pipeline. |
-| `POST /arcanos-pipeline` | Yes | Multi-stage pipeline that combines ARCANOS, a GPT‑3.5 sub-agent, and GPT‑5 reasoning. |
+| `POST /arcanos-pipeline` | Yes | Multi-stage pipeline that combines ARCANOS, a GPT‑3.5 sub-agent, and GPT‑5.1 reasoning. |
 | `POST /api/arcanos/ask` | Yes | Minimal JSON API that returns or streams ARCANOS completions. |
 | `POST /api/ask-hrc` | Yes | Hallucination Resistant Core validation endpoint. |
 

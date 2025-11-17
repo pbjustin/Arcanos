@@ -119,7 +119,7 @@ The orchestration shell reset follows this sequence:
 - **Audit-Safe Mode**: All operations are logged and audit-compliant
 - **Memory Awareness**: Integrates with ARCANOS memory management system
 - **Task Lineage**: Complete operation tracking for debugging
-- **GPT-5 Routing**: Automatic routing through GPT-5 reasoning stages
+- **GPT-5 Routing**: Automatic routing through GPT-5.1 reasoning stages
 - **Fallback Handling**: Graceful degradation when OpenAI API unavailable
 
 ## Standalone Script

@@ -105,7 +105,7 @@ export class WorkerTaskQueue extends EventEmitter {
 
 export const workerTaskQueue = new WorkerTaskQueue();
 
-// ✅ GPT-5 reasoning function using centralized helper
+// ✅ GPT-5.1 reasoning function using centralized helper
 export async function gpt5Reasoning(prompt: string): Promise<string> {
   const client = getOpenAIClient();
   if (!client) return '[Fallback: GPT-5 unavailable]';
@@ -117,11 +117,11 @@ export async function gpt5Reasoning(prompt: string): Promise<string> {
   );
 
   if (result.error) {
-    logger.warn('[WORKER] GPT-5 reasoning fallback triggered', {
+    logger.warn('[WORKER] GPT-5.1 reasoning fallback triggered', {
       error: result.error
     });
   } else if (result.model) {
-    logger.info('[WORKER] GPT-5 reasoning confirmed', {
+    logger.info('[WORKER] GPT-5.1 reasoning confirmed', {
       model: result.model
     });
   }
