@@ -111,12 +111,12 @@ export const getOpenAIClient = (): OpenAI | null => {
 };
 
 /**
- * Prepare payloads for GPT-5 by migrating deprecated max_tokens
+ * Prepare payloads for GPT-5.1 by migrating deprecated max_tokens
  * to max_completion_tokens and providing a sensible default.
  */
 function prepareGPT5Request(payload: any): any {
   if (payload.model && typeof payload.model === 'string' && payload.model.includes('gpt-5')) {
-    // GPT-5 uses max_output_tokens in the new Responses API
+    // GPT-5.1 uses max_output_tokens in the new Responses API
     if (payload.max_tokens) {
       payload.max_output_tokens = payload.max_tokens;
       delete payload.max_tokens;
@@ -394,14 +394,14 @@ function getTokensFromParams(params: any): number {
 }
 
 /**
- * Helper to attempt GPT-5 call with proper token parameter handling
+ * Helper to attempt GPT-5.1 call with proper token parameter handling
  */
 async function attemptGPT5Call(
   client: OpenAI,
   params: any,
   gpt5Model: string
 ): Promise<{ response: any; model: string }> {
-  console.log(`🚀 [GPT-5 FALLBACK] Attempting with GPT-5: ${gpt5Model}`);
+  console.log(`🚀 [GPT-5.1 FALLBACK] Attempting with GPT-5.1: ${gpt5Model}`);
   
   const tokenParams = getTokenParameter(gpt5Model, getTokensFromParams(params));
   const gpt5Payload = prepareGPT5Request({
@@ -411,13 +411,13 @@ async function attemptGPT5Call(
   });
   
   const response = await client.chat.completions.create(gpt5Payload);
-  console.log(`✅ [GPT-5 FALLBACK] Success with ${gpt5Model}`);
+  console.log(`✅ [GPT-5.1 FALLBACK] Success with ${gpt5Model}`);
   return { response, model: gpt5Model };
 }
 
 /**
  * Enhanced chat completion with graceful fallback handling
- * Sequence: fine-tuned GPT-4.1 → retry → GPT-5 → configured fallback
+ * Sequence: fine-tuned GPT-4.1 → retry → GPT-5.1 → configured fallback
  */
 export const createChatCompletionWithFallback = async (
   client: OpenAI,
@@ -450,18 +450,18 @@ export const createChatCompletionWithFallback = async (
     } catch (retryError) {
       console.warn(`⚠️ [RETRY] Also failed: ${retryError instanceof Error ? retryError.message : 'Unknown error'}`);
       
-      // Fall back to GPT-5
+      // Fall back to GPT-5.1
       try {
         const { response, model } = await attemptGPT5Call(client, params, gpt5Model);
         return {
           ...response,
           activeModel: model,
           fallbackFlag: true,
-          fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5`,
+          fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5.1`,
           gpt5Used: true
         };
       } catch (gpt5Error) {
-        console.warn(`⚠️ [GPT-5 FALLBACK] Failed: ${gpt5Error instanceof Error ? gpt5Error.message : 'Unknown error'}`);
+        console.warn(`⚠️ [GPT-5.1 FALLBACK] Failed: ${gpt5Error instanceof Error ? gpt5Error.message : 'Unknown error'}`);
         
         // Final fallback to configured backup model
         try {
@@ -470,11 +470,11 @@ export const createChatCompletionWithFallback = async (
             ...response,
             activeModel: model,
             fallbackFlag: true,
-            fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5 fallback), using final fallback`
+            fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5.1 fallback), using final fallback`
           };
         } catch {
           console.error(`❌ [COMPLETE FAILURE] All fallback attempts failed`);
-          throw new Error(`All models failed: Primary (${primaryModel}), GPT-5 (${gpt5Model}), Final (${finalFallbackModel})`);
+          throw new Error(`All models failed: Primary (${primaryModel}), GPT-5.1 (${gpt5Model}), Final (${finalFallbackModel})`);
         }
       }
     }
@@ -520,7 +520,7 @@ const ensureModelMatchesExpectation = (response: any, expectedModel: string): st
 };
 
 /**
- * Centralized GPT-5 helper function for reasoning tasks
+ * Centralized GPT-5.1 helper function for reasoning tasks
  * Used by both core logic and workers
  */
 export const createGPT5Reasoning = async (
@@ -529,12 +529,12 @@ export const createGPT5Reasoning = async (
   systemPrompt?: string
 ): Promise<{ content: string; model?: string; error?: string }> => {
   if (!client) {
-    return { content: '[Fallback: GPT-5 unavailable - no OpenAI client]', error: 'No OpenAI client' };
+    return { content: '[Fallback: GPT-5.1 unavailable - no OpenAI client]', error: 'No OpenAI client' };
   }
 
   try {
     const gpt5Model = getGPT5Model();
-    console.log(`🚀 [GPT-5 REASONING] Using model: ${gpt5Model}`);
+    console.log(`🚀 [GPT-5.1 REASONING] Using model: ${gpt5Model}`);
 
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
@@ -548,7 +548,7 @@ export const createGPT5Reasoning = async (
       text: { verbosity: 'medium' as const },
       reasoning: { effort: 'minimal' as const },
       ...tokenParams,
-      // Temperature omitted to use default (1) for GPT-5
+      // Temperature omitted to use default (1) for GPT-5.1
     });
 
     const response: any = await client.responses.create(requestPayload);
@@ -558,12 +558,12 @@ export const createGPT5Reasoning = async (
       response.output_text ||
       response.output?.[0]?.content?.[0]?.text ||
       '[No reasoning provided]';
-    console.log(`✅ [GPT-5 REASONING] Success: ${content.substring(0, 100)}...`);
+    console.log(`✅ [GPT-5.1 REASONING] Success: ${content.substring(0, 100)}...`);
     return { content, model: resolvedModel };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
-    console.error(`❌ [GPT-5 REASONING] Error: ${errorMsg}`);
-    return { content: `[Fallback: GPT-5 unavailable - ${errorMsg}]`, error: errorMsg };
+    console.error(`❌ [GPT-5.1 REASONING] Error: ${errorMsg}`);
+    return { content: `[Fallback: GPT-5.1 unavailable - ${errorMsg}]`, error: errorMsg };
   }
 };
 
@@ -593,9 +593,9 @@ export const createGPT5ReasoningLayer = async (
 
   try {
     const gpt5Model = getGPT5Model();
-    console.log(`🔄 [GPT-5 LAYER] Refining ARCANOS response with ${gpt5Model}`);
+    console.log(`🔄 [GPT-5.1 LAYER] Refining ARCANOS response with ${gpt5Model}`);
 
-    // Construct reasoning prompt that asks GPT-5 to analyze and refine ARCANOS output
+    // Construct reasoning prompt that asks GPT-5.1 to analyze and refine ARCANOS output
     const reasoningPrompt = `As an advanced reasoning engine, analyze and refine the following ARCANOS response:
 
 ORIGINAL USER REQUEST:
@@ -638,10 +638,10 @@ Return only the refined response without meta-commentary about your analysis pro
       response.output?.[0]?.content?.[0]?.text ||
       '[No reasoning provided]';
 
-    // The GPT-5 response IS the refined result
+    // The GPT-5.1 response IS the refined result
     const refinedResult = reasoningContent;
     
-    console.log(`✅ [GPT-5 LAYER] Successfully refined response (${refinedResult.length} chars)`);
+    console.log(`✅ [GPT-5.1 LAYER] Successfully refined response (${refinedResult.length} chars)`);
     
     return {
       refinedResult,
@@ -651,7 +651,7 @@ Return only the refined response without meta-commentary about your analysis pro
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
-    console.error(`❌ [GPT-5 LAYER] Reasoning layer failed: ${errorMsg}`);
+    console.error(`❌ [GPT-5.1 LAYER] Reasoning layer failed: ${errorMsg}`);
     
     // Return original ARCANOS result on failure
     return { 
@@ -663,19 +663,19 @@ Return only the refined response without meta-commentary about your analysis pro
 };
 
 /**
- * Strict GPT-5 call function that only uses GPT-5 with no fallback
- * Raises RuntimeError if the response doesn't come from GPT-5
+ * Strict GPT-5.1 call function that only uses GPT-5.1 with no fallback
+ * Raises RuntimeError if the response doesn't come from GPT-5.1
  */
 export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promise<any> {
   const client = getOpenAIClient();
   if (!client) {
-    throw new Error("GPT-5 call failed — no fallback allowed. OpenAI client not available.");
+    throw new Error("GPT-5.1 call failed — no fallback allowed. OpenAI client not available.");
   }
 
   const gpt5Model = getGPT5Model();
 
   try {
-    console.log(`🎯 [GPT-5 STRICT] Making strict call with model: ${gpt5Model}`);
+    console.log(`🎯 [GPT-5.1 STRICT] Making strict call with model: ${gpt5Model}`);
 
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
@@ -690,18 +690,18 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
 
     const response: any = await client.responses.create(requestPayload);
 
-    // Validate that the response actually came from GPT-5
+    // Validate that the response actually came from GPT-5.1
     if (!response.model || response.model !== gpt5Model) {
       throw new Error(
-        `GPT-5 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`
+        `GPT-5.1 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`
       );
     }
 
-    console.log(`✅ [GPT-5 STRICT] Success with model: ${response.model}`);
+    console.log(`✅ [GPT-5.1 STRICT] Success with model: ${response.model}`);
     return response;
   } catch (error: any) {
     // Re-throw with clear error message indicating no fallback
-    throw new Error(`GPT-5 call failed — no fallback allowed. ${error.message}`);
+    throw new Error(`GPT-5.1 call failed — no fallback allowed. ${error.message}`);
   }
 }
 

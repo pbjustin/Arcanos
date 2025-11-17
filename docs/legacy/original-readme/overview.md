@@ -5,7 +5,7 @@ Arcanos is an AI-controlled TypeScript backend that combines fine-tuned OpenAI m
 ## Core Features
 - **AI-Managed Operations** driven by fine-tuned GPT models (default `ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH`).
 - **Intelligent Memory System** with PostgreSQL persistence and in-memory fallback for resilience.
-- **OpenAI SDK v5.16.0** providing streaming, function calling, assistants, and GPT-5 compatibility.
+- **OpenAI SDK v5.16.0** providing streaming, function calling, assistants, and GPT-5.1 compatibility.
 - **Image Generation** through DALL·E with AI-refined prompts.
 - **Notion Database Sync** to import WWE Universe roster data using the official SDK.
 - **Worker System** for AI-controlled CRON scheduling of maintenance, health checks, and background tasks.

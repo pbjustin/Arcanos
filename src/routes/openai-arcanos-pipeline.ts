@@ -38,7 +38,7 @@ router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
     });
     const subAgentOutput = subAgentResp.choices[0].message;
 
-    // Step 3: Delegate to GPT-5 for higher-level reasoning
+    // Step 3: Delegate to GPT-5.1 for higher-level reasoning
     const gpt5Response = await client.chat.completions.create({
       model: GPT5,
       messages: [

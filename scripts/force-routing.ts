@@ -3,12 +3,12 @@ import axios from "axios";
 // Backend API endpoint (your ARCANOS backend)
 const ARC_URL = "https://arcanos-v2-production.up.railway.app/ask";
 
-// Hardcode routing: Force GPT-5 + ARCANOS only
+// Hardcode routing: Force GPT-5.1 + ARCANOS only
 async function forceArcanosRouting(prompt: string) {
   try {
     const response = await axios.post(ARC_URL, {
       prompt,
-      // Force GPT-5 analysis with no fallback allowed
+      // Force GPT-5.1 analysis with no fallback allowed
       routing: {
         allowFallback: false,
         forceModel: "gpt-5",

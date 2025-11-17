@@ -108,12 +108,12 @@ export const workerTaskQueue = new WorkerTaskQueue();
 // ✅ GPT-5.1 reasoning function using centralized helper
 export async function gpt5Reasoning(prompt: string): Promise<string> {
   const client = getOpenAIClient();
-  if (!client) return '[Fallback: GPT-5 unavailable]';
+  if (!client) return '[Fallback: GPT-5.1 unavailable]';
 
   const result = await createGPT5Reasoning(
     client,
     prompt,
-    'ARCANOS: Use GPT-5 for deep reasoning on every request. Return structured analysis only.'
+    'ARCANOS: Use GPT-5.1 for deep reasoning on every request. Return structured analysis only.'
   );
 
   if (result.error) {
@@ -163,7 +163,7 @@ export async function workerTask(input: string): Promise<WorkerResult> {
   // Step 1: Run ARCANOS core logic
   const logicOutput = await arcanosCoreLogic(input);
 
-  // Step 2: If reasoning is required, consult GPT-5
+  // Step 2: If reasoning is required, consult GPT-5.1
   if (logicOutput.requiresReasoning && logicOutput.reasoningPrompt) {
     const reasoning = await gpt5Reasoning(logicOutput.reasoningPrompt);
     return { ...logicOutput, reasoning };

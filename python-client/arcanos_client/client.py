@@ -1,4 +1,4 @@
-"""Python helper for invoking the fine-tuned GPT-5 model."""
+"""Python helper for invoking the fine-tuned GPT-5.1 model."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class ArcanosPythonClient:
         Environment variable that stores the OpenAI API key. Defaults to
         ``OPENAI_API_KEY`` for parity with the Node.js backend.
     model_env:
-        Environment variable containing the fine-tuned GPT-5 model ID. Defaults
+        Environment variable containing the fine-tuned GPT-5.1 model ID. Defaults
         to ``ARCANOS_FINE_TUNED_MODEL``.
     notifier:
         Optional :class:`MaintenanceNotifier` instance. When omitted a default
