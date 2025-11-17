@@ -152,7 +152,7 @@ npm test
 ## Environment Variables
 
 - `OPENAI_API_KEY` or `API_KEY`: OpenAI API key for GPT-5 access
-- `GPT5_MODEL`: GPT-5 model identifier (defaults to 'gpt-5')
+- `GPT51_MODEL` / `GPT5_MODEL`: GPT-5.1 reasoning model identifiers (defaults to `gpt-5.1` then `gpt-5`)
 - `ORCHESTRATION_LAST_RESET`: Timestamp of last reset (automatically set)
 
 ## Error Handling

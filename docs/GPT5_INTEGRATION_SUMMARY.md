@@ -7,7 +7,7 @@ Successfully implemented GPT-5 as the primary reasoning engine while preserving 
 
 ### Core Routing Logic (`src/logic/arcanos.ts`)
 - **Updated GPT-5 Integration**: Changed delegation from GPT-4 Turbo to GPT-5
-- **Model Configuration**: Uses `model: "gpt-5"` with `chat.completions.create` endpoint as specified
+- **Model Configuration**: Uses `model: "gpt-5.1"` by default (configurable via `GPT51_MODEL` / `GPT5_MODEL`) with `chat.completions.create` endpoint as specified
 - **Function Names**: Updated from `shouldDelegateToGPT4()` to `shouldDelegateToGPT5()`
 - **Delegation Function**: Updated from `delegateToGPT4()` to `delegateToGPT5()`
 
@@ -25,7 +25,7 @@ Successfully implemented GPT-5 as the primary reasoning engine while preserving 
 ```javascript
 // Exact API syntax as specified in requirements
 const gpt5Response = await createResponseWithLogging(client, {
-  model: 'gpt-5',  // ✅ Updated from 'gpt-4-turbo'
+  model: 'gpt-5.1',  // ✅ Updated from 'gpt-4-turbo'
   messages: [
     { 
       role: 'system', 
@@ -116,7 +116,7 @@ const gpt5Response = await createResponseWithLogging(client, {
 - [x] No direct GPT-5 output to users
 - [x] Complete audit logging with GPT-5 tracking
 - [x] Memory handling, compliance, and execution within ARCANOS
-- [x] Latest OpenAI SDK syntax with model: "gpt-5"
+- [x] Latest OpenAI SDK syntax with model: "gpt-5.1" (configurable via `GPT51_MODEL` / `GPT5_MODEL`)
 
 ## Production Readiness
 
