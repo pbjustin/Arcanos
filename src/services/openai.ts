@@ -499,7 +499,7 @@ const ensureModelMatchesExpectation = (response: any, expectedModel: string): st
   const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
 
   if (!actualModel) {
-    throw new Error(`GPT-5 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
+    throw new Error(`GPT-5.1 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
   }
 
   const normalizedActual = normalizeModelId(actualModel);
@@ -512,7 +512,7 @@ const ensureModelMatchesExpectation = (response: any, expectedModel: string): st
 
   if (!matchesExpected) {
     throw new Error(
-      `GPT-5 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`
+      `GPT-5.1 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`
     );
   }
 
@@ -568,8 +568,8 @@ export const createGPT5Reasoning = async (
 };
 
 /**
- * Enhanced GPT-5 reasoning layer that refines ARCANOS responses
- * Implements the layered approach: ARCANOS -> GPT-5 reasoning -> refined output
+ * Enhanced GPT-5.1 reasoning layer that refines ARCANOS responses
+ * Implements the layered approach: ARCANOS -> GPT-5.1 reasoning -> refined output
  */
 export const createGPT5ReasoningLayer = async (
   client: OpenAI,
@@ -587,7 +587,7 @@ export const createGPT5ReasoningLayer = async (
     return { 
       refinedResult: arcanosResult, 
       reasoningUsed: false, 
-      error: 'No OpenAI client available for GPT-5 reasoning' 
+      error: 'No OpenAI client available for GPT-5.1 reasoning' 
     };
   }
 

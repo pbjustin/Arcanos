@@ -20,7 +20,7 @@ class ConfigurationError(RuntimeError):
 
 @dataclass
 class ArcanosPythonClient:
-    """Runs GPT-5 reasoning with enforced configuration.
+    """Runs GPT-5.1 reasoning with enforced configuration.
 
     Parameters
     ----------
@@ -79,7 +79,7 @@ class ArcanosPythonClient:
             )
         except Exception as exc:  # pragma: no cover - network failure path
             self.notifier.notify(
-                f"GPT-5 reasoning failure while calling model '{model}'",
+                f"GPT-5.1 reasoning failure while calling model '{model}'",
                 incident=type(exc).__name__,
             )
             raise
