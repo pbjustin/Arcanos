@@ -14,7 +14,7 @@ The `/api/ask` route accepts flexible payloads (`message`, `prompt`, `text`, `qu
 
 1. **ARCANOS intake** validates the fine-tuned model and applies audit-safe constraints.
 2. **GPT-5.1 reasoning** is invoked unconditionally to perform deep analysis.
-3. **ARCANOS finalization** filters GPT-5 output, applies memory context, and emits the final response along with routing metadata.
+3. **ARCANOS finalization** filters GPT-5.1 output, applies memory context, and emits the final response along with routing metadata.
 
 This pipeline is the “dispatcher” that interprets the normalized prompt (including the context hints added by `/api/ask`) and decides how to process it, tracking every stage in the `routingStages` array that flows back to the caller. 【F:src/routes/ask.ts†L1-L87】【F:src/logic/trinity.ts†L1-L200】
 

@@ -70,7 +70,7 @@ export const handleAIRequest = async (
   logRequestFeedback(prompt, endpointName);
 
   try {
-    // runThroughBrain now unconditionally routes through GPT-5 before final ARCANOS processing
+    // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe);
     return res.json(output as AskResponse);
   } catch (err) {

@@ -361,7 +361,7 @@ export class PRAssistant {
       const oldPatterns = [
         { pattern: /openai\.Completion\.create/gi, message: 'Legacy Completion API usage' },
         { pattern: /engine\s*:/gi, message: 'Deprecated engine parameter' },
-        { pattern: /max_tokens(?!\s*:)/gi, message: 'Consider using max_completion_tokens for GPT-5' },
+        { pattern: /max_tokens(?!\s*:)/gi, message: 'Consider using max_completion_tokens for GPT-5.1' },
         { pattern: /text-davinci/gi, message: 'Legacy model identifier' },
         { pattern: /text-curie/gi, message: 'Legacy model identifier' },
         { pattern: /davinci/gi, message: 'Legacy model identifier' }

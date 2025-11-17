@@ -12,7 +12,7 @@ Comprehensive codebase audit and refactor completed on 2025-08-09. This major re
 ### Before:
 - **Build Status**: ❌ FAILING - TypeScript compilation errors
 - **Dependencies**: ❌ Missing critical packages (dotenv, cors, node-cron, openai)  
-- **Code References**: ❌ References to non-existent GPT-5 model throughout codebase
+- **Code References**: ❌ References to non-existent GPT-5.1 model throughout codebase
 - **API Compatibility**: ❌ Type mismatches with OpenAI SDK
 
 ### Changes Made:
@@ -20,9 +20,9 @@ Comprehensive codebase audit and refactor completed on 2025-08-09. This major re
    - Installed missing dependencies: `dotenv@17.2.1`, `cors@2.8.5`, `node-cron@4.2.1`, `openai@5.12.2`
    - Added missing type definitions: `@types/cors`, `@types/dotenv`, `@types/node-cron`
 
-2. **GPT-5 → GPT-4 Turbo Migration**
-   - **REMOVED**: All references to non-existent GPT-5 model
-   - **REPLACED**: GPT-5 calls with GPT-4 Turbo (`gpt-4-turbo`)
+2. **GPT-5.1 → GPT-4 Turbo Migration**
+   - **REMOVED**: All references to non-existent GPT-5.1 model
+   - **REPLACED**: GPT-5.1 calls with GPT-4 Turbo (`gpt-4-turbo`)
    - **FILES UPDATED**: 
      - `src/services/gpt5Shadow.ts` → `src/services/gpt4Shadow.ts`
      - `src/logic/arcanos.ts` - Updated delegation functions
@@ -123,8 +123,8 @@ Comprehensive codebase audit and refactor completed on 2025-08-09. This major re
    delegateToGPT5() → delegateToGPT4()
    
    // COMMENTS UPDATED
-   "GPT-5 delegation" → "GPT-4 delegation"
-   "GPT-5 involvement" → "GPT-4 involvement"
+   "GPT-5.1 delegation" → "GPT-4 delegation"
+   "GPT-5.1 involvement" → "GPT-4 involvement"
    ```
 
 2. **Architecture Improvements**:
