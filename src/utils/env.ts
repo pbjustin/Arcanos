@@ -94,6 +94,7 @@ export const env = {
   OPENAI_API_KEY: Environment.get('OPENAI_API_KEY'),
   OPENAI_BASE_URL: Environment.get('OPENAI_BASE_URL'),
   AI_MODEL: Environment.get('AI_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_4_TURBO),
+  GPT51_MODEL: Environment.get('GPT51_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_5_1),
   GPT5_MODEL: Environment.get('GPT5_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_5),
   
   // Database Configuration

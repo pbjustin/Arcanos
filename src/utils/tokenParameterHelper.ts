@@ -14,7 +14,8 @@ import OpenAI from 'openai';
 const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
   // Add specific model names here as they are discovered
   // This will be populated based on API testing and documentation
-  'gpt-5'
+  'gpt-5',
+  'gpt-5.1'
 ]);
 
 // Cache for model capability testing to avoid repeated API calls
