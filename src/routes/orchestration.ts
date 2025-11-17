@@ -1,6 +1,6 @@
 /**
  * Orchestration Shell API Routes
- * Provides endpoints for GPT-5 orchestration shell management
+ * Provides endpoints for GPT-5.1 orchestration shell management
  */
 
 import express, { Request, Response } from 'express';
@@ -55,7 +55,7 @@ interface OrchestrationResponse extends AIResponseDTO {
 }
 
 /**
- * POST /orchestration/reset - Reset GPT-5 orchestration shell
+ * POST /orchestration/reset - Reset GPT-5.1 orchestration shell
  * Performs purge and redeploy sequence with safeguards
  */
 router.post('/orchestration/reset', confirmGate, async (
@@ -152,7 +152,7 @@ router.get('/orchestration/status', async (
       },
       activeModel: status.model,
       fallbackFlag: false,
-      gpt5Used: false, // Status check doesn't use GPT-5
+      gpt5Used: false, // Status check doesn't use GPT-5.1
       routingStages: ['ORCHESTRATION_STATUS'],
       auditSafe: {
         mode: true,
@@ -210,7 +210,7 @@ router.post('/orchestration/purge', confirmGate, async (
     });
     
     const response: OrchestrationResponse = {
-      result: "GPT-5 orchestration shell has been purged and redeployed.",
+      result: "GPT-5.1 orchestration shell has been purged and redeployed.",
       module: 'OrchestrationShell',
       meta: {
         tokens: undefined,
@@ -238,7 +238,7 @@ router.post('/orchestration/purge', confirmGate, async (
       },
       orchestration: {
         success: result.success,
-        message: "✅ GPT-5 orchestration shell has been purged and redeployed.",
+        message: "✅ GPT-5.1 orchestration shell has been purged and redeployed.",
         meta: result.meta,
         logs: result.logs
       }

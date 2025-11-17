@@ -17,7 +17,7 @@ async function requestStatusSummary(context) {
 
 export default {
   id,
-  name: 'GPT-5 Reasoning Pulse',
+  name: 'GPT-5.1 Reasoning Pulse',
   description,
   schedule,
   async run(context) {

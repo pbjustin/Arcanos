@@ -30,7 +30,7 @@ Fields:
 
 ## Pipeline
 1. **Intake (Default fine-tuned model).** Routes to the tutor persona (`ARCANOS Intake: Route to Tutor module.`) and normalizes the prompt.
-2. **Reasoning (GPT-5).** Produces structured, learner-friendly guidance. Temperature defaults to `0.3` but can be overridden by modules.
+2. **Reasoning (GPT-5.1).** Produces structured, learner-friendly guidance. Temperature defaults to `0.3` but can be overridden by modules.
 3. **Audit (Default fine-tuned model).** Validates accuracy, tone, and clarity (`ARCANOS Audit: Validate the tutoring response...`).
 
 Mock responses are generated when the OpenAI client is unavailable or the environment is configured for testing.

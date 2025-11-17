@@ -4,7 +4,7 @@
  * Implements the ARCANOS Trinity architecture, a three-stage AI processing workflow:
  * 
  * 1. **ARCANOS Intake**: Prepares and frames user requests with memory context
- * 2. **GPT-5 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
+ * 2. **GPT-5.1 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
  * 3. **ARCANOS Execution**: Synthesizes results and generates final responses
  * 
  * Key Features:
@@ -115,7 +115,7 @@ const validateModel = async (client: OpenAI): Promise<string> => {
  * 
  * This function implements a three-stage AI processing pipeline:
  * 1. ARCANOS Intake - Initial request processing and model validation
- * 2. GPT-5 Reasoning - Advanced reasoning and analysis stage (always invoked)
+ * 2. GPT-5.1 Reasoning - Advanced reasoning and analysis stage (always invoked)
  * 3. ARCANOS Execution - Final processing and response generation
  * 
  * Features:
@@ -140,7 +140,7 @@ export async function runThroughBrain(
   const requestId = generateRequestId('trinity');
 
   const routingStages: string[] = [];
-  const gpt5Used = true; // GPT-5 is now unconditional
+  const gpt5Used = true; // GPT-5.1 is now unconditional
 
   const auditConfig = getAuditSafeConfig(prompt, overrideFlag);
   console.log(`[🔒 TRINITY AUDIT-SAFE] Mode: ${auditConfig.auditSafeMode ? 'ENABLED' : 'DISABLED'}`);
@@ -155,7 +155,7 @@ export async function runThroughBrain(
   // Apply audit-safe constraints
   const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
 
-  // ARCANOS intake prepares framed request for GPT-5
+  // ARCANOS intake prepares framed request for GPT-5.1
   const intakeSystemPrompt = ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContext.contextSummary);
   const intakeTokenParams = getTokenParameter(arcanosModel, 500);
   const intakeResponse = await createChatCompletionWithFallback(client, {
@@ -191,17 +191,17 @@ export async function runThroughBrain(
   }
 
   // Final ARCANOS execution and filtering
-  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5 output through ARCANOS');
+  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
   const finalTokenParams = getTokenParameter(actualModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalResponse = await createChatCompletionWithFallback(client, {
     messages: [
       {
         role: 'system',
-        content: `You are ARCANOS. GPT-5 has provided analysis which you must review, ensure safety, adjust tone, and deliver the final response.\n\nMEMORY CONTEXT: ${memoryContext.contextSummary}\nAUDIT REQUIREMENT: Document your final reasoning.`
+        content: `You are ARCANOS. GPT-5.1 has provided analysis which you must review, ensure safety, adjust tone, and deliver the final response.\n\nMEMORY CONTEXT: ${memoryContext.contextSummary}\nAUDIT REQUIREMENT: Document your final reasoning.`
       },
       { role: 'user', content: `Original request: ${auditSafePrompt}` },
-      { role: 'assistant', content: `GPT-5 analysis: ${gpt5Output}` },
+      { role: 'assistant', content: `GPT-5.1 analysis: ${gpt5Output}` },
       { role: 'user', content: 'Provide the final ARCANOS response.' }
     ],
     temperature: 0.2,
@@ -219,7 +219,7 @@ export async function runThroughBrain(
       'Successful Trinity pipeline',
       [
         `Input pattern: ${prompt.substring(0, 50)}...`,
-        `GPT-5 output pattern: ${gpt5Output.substring(0, 50)}...`,
+        `GPT-5.1 output pattern: ${gpt5Output.substring(0, 50)}...`,
         `Final output pattern: ${finalText.substring(0, 50)}...`
       ],
       sessionId
