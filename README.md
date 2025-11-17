@@ -68,7 +68,7 @@ Key environment variables used by the backend:
 | `OPENAI_API_KEY` | API key for the OpenAI SDK. Missing keys enable mock responses. |
 | `OPENAI_MODEL` / `FINETUNED_MODEL_ID` / `FINE_TUNED_MODEL_ID` / `AI_MODEL` | Preferred model identifiers (first non-empty wins). |
 | `RESEARCH_MODEL_ID` | Optional override for the research pipeline; defaults to the selected AI model. |
-| `GPT5_MODEL` | Override identifier used for GPT‑5 reasoning fallbacks (default `gpt-5`). |
+| `GPT5_MODEL` | Override identifier used for GPT‑5.1 reasoning fallbacks (default `gpt-5.1`). |
 | `PORT` / `HOST` / `SERVER_URL` | Server binding details. `PORT` defaults to `8080`. |
 | `DATABASE_URL` (+ `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`) | PostgreSQL connection string with automatic assembly from discrete settings. |
 | `ARC_LOG_PATH` / `ARC_MEMORY_PATH` | Filesystem paths for log storage and memory snapshots. |
@@ -111,7 +111,7 @@ autonomous approval path.
 | `POST /arcanos-pipeline` | Yes | Multi-stage pipeline combining ARCANOS, GPT‑3.5, and GPT‑5. |
 | `POST /api/arcanos/ask` | Yes | Minimal JSON API that streams or returns ARCANOS completions. |
 
-See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkthrough of how these routes share the Trinity brain, how GPT-5 reasoning is invoked, and how audit-safe, memory-aware guardrails are enforced inside `runThroughBrain`.
+See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkthrough of how these routes share the Trinity brain, how GPT-5.1 reasoning is invoked, and how audit-safe, memory-aware guardrails are enforced inside `runThroughBrain`.
 
 ### AI Utilities
 
@@ -243,7 +243,7 @@ diagnostic and `/api/test` returns a lightweight readiness payload for Railway.
 - [`docs/AFOL_OVERVIEW.md`](docs/AFOL_OVERVIEW.md) – Adaptive Failover Orchestration Layer
 - [`docs/DATABASE_INTEGRATION.md`](docs/DATABASE_INTEGRATION.md) – Database integration patterns
 - [`docs/BACKGROUND_WORKERS.md`](docs/BACKGROUND_WORKERS.md) – Background worker system
-- [`docs/GPT5_INTEGRATION_SUMMARY.md`](docs/GPT5_INTEGRATION_SUMMARY.md) – GPT-5 reasoning integration
+- [`docs/GPT5_INTEGRATION_SUMMARY.md`](docs/GPT5_INTEGRATION_SUMMARY.md) – GPT-5.1 reasoning integration
 
 ### API & Development Guides
 - [`docs/api/API_REFERENCE.md`](docs/api/API_REFERENCE.md) – Detailed API reference

@@ -14,7 +14,7 @@ import OpenAI from 'openai';
 const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
   // Add specific model names here as they are discovered
   // This will be populated based on API testing and documentation
-  'gpt-5'
+  'gpt-5.1'
 ]);
 
 // Cache for model capability testing to avoid repeated API calls
@@ -32,7 +32,7 @@ interface TokenParameterOptions {
 
 /**
  * Get the appropriate token parameter for a given model and token limit
- * @param modelName - The OpenAI model name (e.g., 'gpt-4', 'gpt-5', 'ft:gpt-3.5-turbo-*')
+ * @param modelName - The OpenAI model name (e.g., 'gpt-4', 'gpt-5.1', 'ft:gpt-3.5-turbo-*')
  * @param tokenLimit - The desired token limit (must be a positive number)
  * @param options - Additional options for parameter selection
  * @returns Object with either max_tokens or max_completion_tokens set

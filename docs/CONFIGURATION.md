@@ -47,7 +47,7 @@ Additional model-related variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `GPT5_MODEL` | `gpt-5` | Identifier used for GPT‑5 reasoning fallbacks. |
+| `GPT5_MODEL` | `gpt-5.1` | Identifier used for GPT‑5.1 reasoning fallbacks. |
 | `API_KEY` | – | Legacy alias checked before `OPENAI_API_KEY`. |
 
 ---

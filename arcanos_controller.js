@@ -34,7 +34,7 @@ function createAuditLog(decision) {
     passed: true,
     checks: ['Consistent with policy', 'Schema validated'],
     metadata: {
-      model: process.env.ARCANOS_MODEL || 'gpt-5',
+      model: process.env.ARCANOS_MODEL || 'gpt-5.1',
       decisionHash: hashDecision(decision)
     }
   };
@@ -61,7 +61,7 @@ function createCheckpoint(input, decision) {
 
 async function callModel(input) {
   const payload = {
-    model: process.env.ARCANOS_MODEL || 'gpt-5',
+    model: process.env.ARCANOS_MODEL || 'gpt-5.1',
     messages: [
       {
         role: 'system',

@@ -53,7 +53,7 @@ can validate payloads before writing to the database.
   `execution_logs` even when the automation runs outside the main server.
 - `createJob`, `updateJob`, and `getLatestJob` are used by
   `worker-planner-engine` to reason about queue depth and liveness.
-- `logReasoning` and `saveSelfReflection` persist GPT‑5 reasoning summaries and
+- `logReasoning` and `saveSelfReflection` persist GPT‑5.1 reasoning summaries and
   CLEAR/self-reflection payloads for later audit.
 
 These helpers guard against missing connections by checking

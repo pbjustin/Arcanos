@@ -11,7 +11,7 @@ async function forceArcanosRouting(prompt: string) {
       // Force GPT-5 analysis with no fallback allowed
       routing: {
         allowFallback: false,
-        forceModel: "gpt-5",
+        forceModel: "gpt-5.1",
         modules: ["ARCANOS:BOOKING", "ARCANOS:WRITE", "ARCANOS:RESEARCH"]
       }
     });
