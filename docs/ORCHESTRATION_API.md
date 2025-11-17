@@ -29,7 +29,7 @@ curl -X POST http://localhost:8080/orchestration/reset
     "id": "orchestration_reset_...",
     "created": 1754881108
   },
-  "activeModel": "gpt-5",
+  "activeModel": "gpt-5.1",
   "fallbackFlag": false,
   "gpt5Used": true,
   "routingStages": ["ORCHESTRATION_RESET", "ISOLATE_MODULE", "PURGE_MEMORY", "REDEPLOY_SAFEGUARDS", "VERIFY_DEPLOYMENT"],
@@ -54,7 +54,7 @@ curl -X POST http://localhost:8080/orchestration/reset
     "meta": {
       "timestamp": "2025-08-11T02:58:28.299Z",
       "stages": ["ISOLATE_MODULE", "PURGE_MEMORY", "REDEPLOY_SAFEGUARDS", "VERIFY_DEPLOYMENT"],
-      "gpt5Model": "gpt-5",
+      "gpt5Model": "gpt-5.1",
       "safeguardsApplied": true
     },
     "logs": [
@@ -87,7 +87,7 @@ curl -X GET http://localhost:8080/orchestration/status
     "message": "Status retrieved successfully",
     "status": {
       "active": true,
-      "model": "gpt-5",
+      "model": "gpt-5.1",
       "memoryEntries": 0,
       "lastReset": "2025-08-11T02:58:28.299Z"
     }
@@ -119,7 +119,7 @@ The orchestration shell reset follows this sequence:
 - **Audit-Safe Mode**: All operations are logged and audit-compliant
 - **Memory Awareness**: Integrates with ARCANOS memory management system
 - **Task Lineage**: Complete operation tracking for debugging
-- **GPT-5 Routing**: Automatic routing through GPT-5 reasoning stages
+- **GPT-5 Routing**: Automatic routing through GPT-5.1 reasoning stages
 - **Fallback Handling**: Graceful degradation when OpenAI API unavailable
 
 ## Standalone Script
@@ -152,7 +152,7 @@ npm test
 ## Environment Variables
 
 - `OPENAI_API_KEY` or `API_KEY`: OpenAI API key for GPT-5 access
-- `GPT5_MODEL`: GPT-5 model identifier (defaults to 'gpt-5')
+- `GPT5_MODEL`: GPT-5 model identifier (defaults to 'gpt-5.1')
 - `ORCHESTRATION_LAST_RESET`: Timestamp of last reset (automatically set)
 
 ## Error Handling

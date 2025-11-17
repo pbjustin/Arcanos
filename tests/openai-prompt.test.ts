@@ -5,7 +5,7 @@ const getDefaultModel = jest.fn() as jest.MockedFunction<any>;
 const validateAIRequest = jest.fn() as jest.MockedFunction<any>;
 const handleAIError = jest.fn() as jest.MockedFunction<any>;
 const getFallbackModel = jest.fn(() => 'ft:fallback-model');
-const getGPT5Model = jest.fn(() => 'gpt-5');
+const getGPT5Model = jest.fn(() => 'gpt-5.1');
 const getOpenAIServiceHealth = jest.fn(() => ({
   apiKey: { configured: false, status: 'missing' },
   client: { initialized: false, timeout: 0, baseURL: null },

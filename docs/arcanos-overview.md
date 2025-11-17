@@ -38,7 +38,7 @@ Key capabilities include:
 In short, Arcanos acts as a comprehensive AI backend where the model plays an
 active role in system management while exposing a conventional API for clients.
 
-For strict GPT-5 reasoning from Python, the project includes a companion module
+For strict GPT-5.1 reasoning from Python, the project includes a companion module
 outlined in [`ARCANOS_PYTHON_README.md`](../ARCANOS_PYTHON_README.md). It
 enforces the fine-tuned model and automatically alerts a maintenance assistant
 on any failure.
@@ -69,7 +69,7 @@ on any failure.
 3. **OpenAI Invocation** – `createCentralizedCompletion` selects the best
    available model following this priority:
    `OPENAI_MODEL → FINETUNED_MODEL_ID → FINE_TUNED_MODEL_ID → AI_MODEL → gpt-4o`.
-   GPT‑5 reasoning is triggered automatically for escalations or when explicit
+   GPT‑5.1 reasoning is triggered automatically for escalations or when explicit
    intent requests it.
 4. **Memory Coordination** – Responses can read from or write to
    `memory/memory.db` (PostgreSQL) while mirroring important entries to

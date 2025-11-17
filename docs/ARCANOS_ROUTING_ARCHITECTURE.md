@@ -31,7 +31,7 @@ The fine-tuned model analyzes each request and decides:
 - **Complex requests**: Route to GPT-5 via JSON hook:
   ```json
   {
-    "next_model": "gpt-5",
+    "next_model": "gpt-5.1",
     "purpose": "Advanced reasoning required",
     "input": "Specific prompt for GPT-5"
   }

@@ -64,7 +64,7 @@ Each module can override token limits, temperature, and custom prompts when invo
     },
     "model": {
       "intake": "gpt-4.1-mini",
-      "reasoning": "gpt-5.0",
+      "reasoning": "gpt-5.1",
       "audit": "gpt-4.1-mini"
     }
   },

@@ -170,20 +170,20 @@ export async function runThroughBrain(
   const actualModel = intakeResponse.activeModel || arcanosModel;
   const isFallback = intakeResponse.fallbackFlag || false;
 
-  // GPT-5 reasoning stage (always invoked)
+  // GPT-5.1 reasoning stage (always invoked)
   logGPT5Invocation('Primary reasoning stage', framedRequest);
   routingStages.push('GPT5-REASONING');
   const gpt5Result = await createGPT5Reasoning(client, framedRequest, ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING());
   const gpt5Output = gpt5Result.content;
   const gpt5ModelUsed = gpt5Result.model || getGPT5Model();
   if (gpt5Result.error) {
-    logger.warn('GPT-5 reasoning fallback in Trinity pipeline', {
+    logger.warn('GPT-5.1 reasoning fallback in Trinity pipeline', {
       module: 'trinity',
       operation: 'gpt5-reasoning',
       error: gpt5Result.error
     });
   } else {
-    logger.info('GPT-5 reasoning confirmed', {
+    logger.info('GPT-5.1 reasoning confirmed', {
       module: 'trinity',
       operation: 'gpt5-reasoning',
       model: gpt5ModelUsed

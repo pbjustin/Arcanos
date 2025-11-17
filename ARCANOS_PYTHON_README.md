@@ -61,7 +61,7 @@ print(response["content"])
 Key behaviors:
 
 - **Strict model enforcement** – The class fails fast if `ARCANOS_FINE_TUNED_MODEL`
-  is absent, ensuring GPT-5 reasoning never silently falls back.
+  is absent, ensuring GPT-5.1 reasoning never silently falls back.
 - **Maintenance notifications** – Every exception funnels through
   `MaintenanceNotifier`, which posts the failure payload to
   `ARCANOS_MAINTENANCE_WEBHOOK` (or logs locally when unset).
@@ -119,4 +119,4 @@ experiments lightweight while still surfacing the degradation signal.
 | Empty completion choices | This indicates an upstream OpenAI anomaly; retry with increased logging and capture the incident ID for AFOL. |
 
 With this document, `docs/arcanos-overview.md` now links to a fully described and
-shippable Python interface for GPT-5 reasoning.
+shippable Python interface for GPT-5.1 reasoning.
