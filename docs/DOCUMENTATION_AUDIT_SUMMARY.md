@@ -15,7 +15,7 @@ Comprehensive documentation audit and update performed following CLEAR 2.0 stand
 ### ✅ Major Files Updated
 
 #### README.md - Complete Overhaul
-- **Enhanced Core Features**: Updated with current capabilities (HRC integration, GPT-5 support, Railway optimization)
+- **Enhanced Core Features**: Updated with current capabilities (HRC integration, GPT-5.1 support, Railway optimization)
 - **Comprehensive API Documentation**: 50+ endpoints organized by category with confirmation requirements
 - **Environment Variables**: Categorized configuration with detailed descriptions
 - **Project Structure**: Updated to reflect actual codebase organization
@@ -89,7 +89,7 @@ Comprehensive documentation audit and update performed following CLEAR 2.0 stand
 
 ### Leverage
 - **Key Strengths Highlighted**: AI-controlled operations, memory system, worker scheduling
-- **Unique Features**: HRC integration, GPT-5 support, Railway deployment optimization
+- **Unique Features**: HRC integration, GPT-5.1 support, Railway deployment optimization
 - **Architecture Benefits**: TypeScript safety, modular design, comprehensive error handling
 
 ### Efficiency

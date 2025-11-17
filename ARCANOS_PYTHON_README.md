@@ -1,6 +1,6 @@
 # 🐍 Arcanos Python Companion Module
 
-The Arcanos backend exposes a fine-tuned GPT-5 workflow to Python workloads via
+The Arcanos backend exposes a fine-tuned GPT-5.1 workflow to Python workloads via
 `python-client/`. The module mirrors the confirmation + failover guarantees of
 the Node.js server while giving research notebooks and automation scripts a
 minimal API for reasoning. Every invocation enforces the fine-tuned model,
@@ -13,7 +13,7 @@ failure so the broader system stays aware of degraded states.
 python-client/
 ├── arcanos_client/
 │   ├── __init__.py         # Package exports
-│   ├── client.py           # Reasoning helper enforcing GPT-5 usage
+│   ├── client.py           # Reasoning helper enforcing GPT-5.1 usage
 │   └── notifier.py         # Maintenance assistant webhook integration
 ├── example.py              # Quick smoke-test script
 └── requirements.txt        # Python dependency pin (OpenAI SDK)
@@ -35,7 +35,7 @@ Add the `python-client/` directory to your `PYTHONPATH` (or install it with
    ```
 3. **Export required environment variables**:
    - `OPENAI_API_KEY`: API key used by `openai.OpenAI`.
-   - `ARCANOS_FINE_TUNED_MODEL`: GPT-5 fine-tuned model identifier.
+   - `ARCANOS_FINE_TUNED_MODEL`: GPT-5.1 fine-tuned model identifier.
    - Optional: `ARCANOS_MAINTENANCE_WEBHOOK` for failure notifications.
 4. **Run the sample script**:
    ```bash
@@ -75,7 +75,7 @@ Key behaviors:
 | Variable | Required | Description |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | ✅ | Secret passed to the OpenAI SDK. Mirrors the backend default. |
-| `ARCANOS_FINE_TUNED_MODEL` | ✅ | Fine-tuned GPT-5 model ID authorized for this repo. |
+| `ARCANOS_FINE_TUNED_MODEL` | ✅ | Fine-tuned GPT-5.1 model ID authorized for this repo. |
 | `ARCANOS_MAINTENANCE_WEBHOOK` | ⚪️ | Optional HTTPS endpoint that receives JSON incidents. |
 | `ARCANOS_CONFIRMATION_TOKEN` | ⚪️ | Token you can include inside `metadata` for cross-system audits. |
 

@@ -12,31 +12,31 @@ Because this pipeline is centralized, any new route can opt into Trinity simply 
 
 ## Stage 1 – ARCANOS Intake
 
-The intake phase prepares the prompt and decides which base model will chaperone GPT-5's reasoning output back into an operator-ready answer.
+The intake phase prepares the prompt and decides which base model will chaperone GPT-5.1's reasoning output back into an operator-ready answer.
 
 - **Model validation and fallback.** `validateModel` attempts to retrieve the configured fine-tuned model and falls back to GPT‑4 if the model is unavailable, logging the decision for observability. 【F:src/logic/trinity.ts†L81-L111】
 - **Audit-safe framing.** `getAuditSafeConfig` inspects the prompt (and optional `overrideAuditSafe` flag) to determine whether audit-safe mode should stay enabled. The helper can also detect explicit override language and records override metadata. `applyAuditSafeConstraints` then wraps the prompt with compliance instructions and tracks any detected sensitive keywords in `auditFlags`. 【F:src/logic/trinity.ts†L145-L157】【F:src/services/auditSafe.ts†L44-L134】
-- **Memory context retrieval.** `getMemoryContext` pulls up to five relevant past entries, prioritizing session continuity, keyword overlap, and recency. The resulting `contextSummary` is inserted into ARCANOS’ system prompt so GPT-5 receives continuity hints without every route needing to re-implement memory lookups. 【F:src/logic/trinity.ts†L148-L160】【F:src/services/memoryAware.ts†L200-L281】
-- **Intake completion.** With the audited prompt and memory summary in hand, `createChatCompletionWithFallback` runs the ARCANOS intake system prompt, which reframes the request for GPT-5. The selected model and fallback state are recorded in `routingStages` (e.g., `ARCANOS-INTAKE:ft-model`). 【F:src/logic/trinity.ts†L158-L172】
+- **Memory context retrieval.** `getMemoryContext` pulls up to five relevant past entries, prioritizing session continuity, keyword overlap, and recency. The resulting `contextSummary` is inserted into ARCANOS’ system prompt so GPT-5.1 receives continuity hints without every route needing to re-implement memory lookups. 【F:src/logic/trinity.ts†L148-L160】【F:src/services/memoryAware.ts†L200-L281】
+- **Intake completion.** With the audited prompt and memory summary in hand, `createChatCompletionWithFallback` runs the ARCANOS intake system prompt, which reframes the request for GPT-5.1. The selected model and fallback state are recorded in `routingStages` (e.g., `ARCANOS-INTAKE:ft-model`). 【F:src/logic/trinity.ts†L158-L172】
 
-## Stage 2 – GPT-5 Reasoning
+## Stage 2 – GPT-5.1 Reasoning
 
-Once the intake step produces a framed request, Trinity unconditionally calls GPT-5:
+Once the intake step produces a framed request, Trinity unconditionally calls GPT-5.1:
 
-- `logGPT5Invocation` records telemetry and `routingStages` adds `GPT5-REASONING` so clients can confirm GPT-5 handled the analysis. 【F:src/logic/trinity.ts†L173-L176】
+- `logGPT5Invocation` records telemetry and `routingStages` adds `GPT5-REASONING` so clients can confirm GPT-5.1 handled the analysis. 【F:src/logic/trinity.ts†L173-L176】
 - `createGPT5Reasoning` runs the dedicated reasoning prompt (see `ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING`) and returns structured data: the model that responded, the synthesized reasoning content, and any transport errors. Successes and failures are logged through `structuredLogging`. 【F:src/logic/trinity.ts†L176-L191】
-- The GPT-5 output is not returned directly to the user. Instead, it becomes part of the next stage’s conversation so ARCANOS can reinterpret, censor, or contextualize it as needed.
+- The GPT-5.1 output is not returned directly to the user. Instead, it becomes part of the next stage’s conversation so ARCANOS can reinterpret, censor, or contextualize it as needed.
 
 ## Stage 3 – ARCANOS Execution
 
-The final stage turns GPT-5’s analysis into a user-facing response and enforces safety guarantees:
+The final stage turns GPT-5.1’s analysis into a user-facing response and enforces safety guarantees:
 
-- `ARCANOS-FINAL` routing: Trinity logs that the response is back under ARCANOS control and injects the memory summary plus audit directives into the system prompt. The GPT-5 transcript is supplied as an assistant message so ARCANOS can critique or trim it before answering. 【F:src/logic/trinity.ts†L193-L210】
+- `ARCANOS-FINAL` routing: Trinity logs that the response is back under ARCANOS control and injects the memory summary plus audit directives into the system prompt. The GPT-5.1 transcript is supplied as an assistant message so ARCANOS can critique or trim it before answering. 【F:src/logic/trinity.ts†L193-L210】
 - **Audit validation.** After generating the final text, `validateAuditSafeOutput` scans for non-compliant patterns. Failed checks append `FINAL_OUTPUT_VALIDATION_FAILED` to `auditFlags`, signaling downstream monitoring that manual review might be required. 【F:src/logic/trinity.ts†L212-L216】【F:src/services/auditSafe.ts†L161-L181】
-- **Learning hooks.** Successful, non-fallback runs store a summarized “pattern” that captures the input snippet, GPT-5 output, and final message. This feeds the memory-aware service so recurring structures become easier to reuse. 【F:src/logic/trinity.ts†L217-L227】【F:src/services/memoryAware.ts†L337-L351】
+- **Learning hooks.** Successful, non-fallback runs store a summarized “pattern” that captures the input snippet, GPT-5.1 output, and final message. This feeds the memory-aware service so recurring structures become easier to reuse. 【F:src/logic/trinity.ts†L217-L227】【F:src/services/memoryAware.ts†L337-L351】
 - **Audit log entry.** Trinity assembles an `AuditLogEntry` with model pairings, audit-safe state, memory accesses, and routing flags, then persists it via `logAITaskLineage`. 【F:src/logic/trinity.ts†L229-L277】【F:src/services/auditSafe.ts†L137-L156】
 
-The returned payload exposes the selected model, whether any fallback occurred, GPT-5 metadata, audit-safe status, memory usage, routing stages, and the request’s lineage ID. Consumers can therefore correlate client-side telemetry with server-side logs when debugging. 【F:src/logic/trinity.ts†L41-L79】【F:src/logic/trinity.ts†L229-L278】
+The returned payload exposes the selected model, whether any fallback occurred, GPT-5.1 metadata, audit-safe status, memory usage, routing stages, and the request’s lineage ID. Consumers can therefore correlate client-side telemetry with server-side logs when debugging. 【F:src/logic/trinity.ts†L41-L79】【F:src/logic/trinity.ts†L229-L278】
 
 ## Supporting services
 

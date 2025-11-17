@@ -117,7 +117,7 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
     return 'max_tokens';
   }
 
-  // GPT-5 models require max_completion_tokens
+  // GPT-5.1 models require max_completion_tokens
   if (lowerModelName.includes('gpt-5')) {
     return 'max_completion_tokens';
   }

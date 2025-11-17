@@ -43,7 +43,7 @@ export class AIController {
     const { client: openai, input, body } = validation;
 
     try {
-      // runThroughBrain enforces GPT-5 as the primary reasoning stage
+      // runThroughBrain enforces GPT-5.1 as the primary reasoning stage
       const output = await runThroughBrain(openai, input, body.sessionId, body.overrideAuditSafe);
 
       const responsePayload: AIResponse = {
