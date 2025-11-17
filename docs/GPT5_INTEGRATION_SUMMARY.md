@@ -17,7 +17,7 @@ Successfully implemented GPT-5 as the primary reasoning engine while preserving 
 3. **ARCANOS frames the task** - Prepares structured prompts ✅
 4. **ARCANOS sends structured reasoning prompt to GPT-5** - When delegation needed ✅
 5. **GPT-5 returns reasoning output to ARCANOS** - Never directly to user ✅
-6. **ARCANOS integrates GPT-5 reasoning** - Post-processes all responses ✅
+6. **ARCANOS integrates GPT-5.1 reasoning** - Post-processes all responses ✅
 7. **ARCANOS applies filters, safety rules, tone adjustments** - Full governance ✅
 8. **ARCANOS executes final output** - Last stop ✅
 
