@@ -1,6 +1,6 @@
 # Trinity Pipeline Overview
 
-The Trinity brain is ARCANOS' universal AI execution pipeline. Every conversational entry point—including `/ask`, `/brain`, and the Custom GPT dispatcher—delegates to this three-stage workflow so that request validation, GPT-5 reasoning, memory recall, and audit logging are consistently applied before a response leaves the server. This document explains how the pipeline is wired into the Express surface area and how each stage collaborates with supporting services such as memory awareness, audit-safe enforcement, and logging.
+The Trinity brain is ARCANOS' universal AI execution pipeline. Every conversational entry point—including `/ask`, `/brain`, and the Custom GPT dispatcher—delegates to this three-stage workflow so that request validation, GPT-5.1 reasoning, memory recall, and audit logging are consistently applied before a response leaves the server. This document explains how the pipeline is wired into the Express surface area and how each stage collaborates with supporting services such as memory awareness, audit-safe enforcement, and logging.
 
 ## Request lifecycle
 
@@ -55,7 +55,7 @@ The returned payload exposes the selected model, whether any fallback occurred, 
 ## Extending the pipeline
 
 - **New HTTP routes:** Build an Express handler that validates input and then calls `runThroughBrain`. The handler automatically receives Trinity’s response structure, so adding telemetry or forwarding metadata to clients is straightforward. 【F:src/routes/ask.ts†L50-L86】
-- **Custom GPT modules:** The `/api/ask` shim and GPT router already normalize payloads and tag them with module hints before Trinity runs. By leaning on the dispatcher, custom modules can trust that GPT-5 reasoning, audit logging, and memory recall have all executed before their specialized logic fires. 【F:docs/CUSTOM_GPT_ASK_PIPELINE.md†L1-L30】
+- **Custom GPT modules:** The `/api/ask` shim and GPT router already normalize payloads and tag them with module hints before Trinity runs. By leaning on the dispatcher, custom modules can trust that GPT-5.1 reasoning, audit logging, and memory recall have all executed before their specialized logic fires. 【F:docs/CUSTOM_GPT_ASK_PIPELINE.md†L1-L30】
 - **Downstream automations:** If a worker or module needs Trinity-style guardrails but not the whole HTTP layer, import `runThroughBrain` directly. The function accepts any OpenAI client instance and prompt, making it portable across CLI tools, background jobs, and cron tasks.
 
 With this architecture, Trinity serves as the connective tissue between ARCANOS’ security layers, memory service, and AI transports. Centralizing these responsibilities in `src/logic/trinity.ts` keeps every user interaction auditable, reproducible, and enriched with contextual intelligence.

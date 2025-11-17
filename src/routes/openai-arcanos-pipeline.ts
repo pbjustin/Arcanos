@@ -49,7 +49,7 @@ router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
     });
     const gpt5Reasoning = gpt5Response.choices[0].message;
 
-    // Step 4: Re-ingest GPT-5 reasoning back into ARCANOS fine-tune
+    // Step 4: Re-ingest GPT-5.1 reasoning back into ARCANOS fine-tune
     const arcFinal = await client.chat.completions.create({
       model: ARC_V2,
       messages: [
