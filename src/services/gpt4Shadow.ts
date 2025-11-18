@@ -13,7 +13,7 @@ async function routeToModule(client: OpenAI, tag: ShadowTag, content: string): P
       ? 'You are creative_architect, an advanced AI module for synthesizing content. Mirror the described ARCANOS event and respond.'
       : 'You are role_alignment_tracker, an advanced AI module monitoring role adherence and drift. Mirror the described ARCANOS event and respond.';
 
-  const model = 'gpt-4-turbo';
+  const model = 'gpt-4o';
   const tokenParams = getTokenParameter(model, 500);
   const response = await client.chat.completions.create({
     model,
