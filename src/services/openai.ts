@@ -546,7 +546,9 @@ export const createGPT5Reasoning = async (
         { role: 'user' as const, content: prompt }
       ],
       text: { verbosity: 'medium' as const },
-      reasoning: { effort: 'minimal' as const },
+      // The OpenAI Responses API only supports 'none', 'low', 'medium', or 'high'.
+      // Using 'minimal' causes a 400 error, so we align with the supported value.
+      reasoning: { effort: 'low' as const },
       ...tokenParams,
       // Temperature omitted to use default (1) for GPT-5.1
     });
@@ -625,7 +627,8 @@ Return only the refined response without meta-commentary about your analysis pro
         { role: 'user' as const, content: reasoningPrompt }
       ],
       text: { verbosity: 'medium' as const },
-      reasoning: { effort: 'minimal' as const },
+      // Align reasoning effort with supported OpenAI values to prevent API errors.
+      reasoning: { effort: 'low' as const },
       ...tokenParams,
       temperature: 0.7 // Balanced creativity for reasoning
     });
@@ -684,7 +687,8 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
         { role: 'user', content: prompt }
       ],
       text: { verbosity: 'medium' },
-      reasoning: { effort: 'minimal' },
+      // Strict GPT-5.1 calls cannot recover from invalid parameters, so use the supported option.
+      reasoning: { effort: 'low' },
       ...kwargs
     });
 
