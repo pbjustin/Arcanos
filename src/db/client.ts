@@ -18,6 +18,43 @@ let pool: PoolType | null = null;
 let isConnected = false;
 let connectionError: Error | null = null;
 
+const trackedEnvVars = [
+  'DATABASE_URL',
+  'DATABASE_PUBLIC_URL',
+  'PGDATA',
+  'PGDATABASE',
+  'PGHOST',
+  'PGPASSWORD',
+  'PGPORT',
+  'PGUSER',
+  'POSTGRES_PASSWORD',
+  'POSTGRES_USER'
+];
+
+const normalizeEnvValue = (value?: string | null): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'undefined' || trimmed.toLowerCase() === 'null') {
+    return undefined;
+  }
+
+  return trimmed;
+};
+
+const sanitizeTrackedEnvVars = (): void => {
+  trackedEnvVars.forEach(key => {
+    const normalized = normalizeEnvValue(process.env[key]);
+    if (normalized === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = normalized;
+    }
+  });
+};
+
 export interface DatabaseStatus {
   connected: boolean;
   hasPool: boolean;
@@ -36,37 +73,36 @@ export interface DatabaseStatus {
  * @returns Promise<boolean> - True if database initialized successfully, false otherwise
  */
 export async function initializeDatabase(workerId = ''): Promise<boolean> {
-  // Ensure all expected environment variables are loaded
-  const envVars = [
-    'DATABASE_URL',
-    'DATABASE_PUBLIC_URL',
-    'PGDATA',
-    'PGDATABASE',
-    'PGHOST',
-    'PGPASSWORD',
-    'PGPORT',
-    'PGUSER',
-    'POSTGRES_PASSWORD',
-    'POSTGRES_USER'
-  ];
-  envVars.forEach(v => process.env[v] = process.env[v]);
+  // Ensure all expected environment variables are clean
+  sanitizeTrackedEnvVars();
 
-  let databaseUrl = process.env.DATABASE_URL || '';
+  let databaseUrl = normalizeEnvValue(process.env.DATABASE_URL) || '';
 
   // Construct DATABASE_URL if not provided
   if (!databaseUrl) {
-    const required = ['PGUSER', 'PGPASSWORD', 'PGHOST', 'PGPORT', 'PGDATABASE'];
-    const missing = required.filter(v => !process.env[v]);
+    const required = ['PGUSER', 'PGPASSWORD', 'PGHOST', 'PGPORT', 'PGDATABASE'] as const;
+    const resolved = required.map(key => ({ key, value: normalizeEnvValue(process.env[key]) }));
+    const missing = resolved.filter(entry => !entry.value).map(entry => entry.key);
     if (missing.length) {
       console.error('[🔌 DB] Missing environment variables:', missing.join(', '));
       return false;
     }
-    databaseUrl = `postgresql://${process.env.PGUSER}:${process.env.PGPASSWORD}@${process.env.PGHOST}:${process.env.PGPORT}/${process.env.PGDATABASE}`;
+    const credentials = Object.fromEntries(
+      resolved.map(entry => [entry.key, entry.value])
+    ) as Record<typeof required[number], string>;
+
+    const portNumber = Number(credentials.PGPORT);
+    if (!Number.isFinite(portNumber)) {
+      console.error('[🔌 DB] Invalid PGPORT value:', credentials.PGPORT);
+      return false;
+    }
+
+    databaseUrl = `postgresql://${credentials.PGUSER}:${credentials.PGPASSWORD}@${credentials.PGHOST}:${credentials.PGPORT}/${credentials.PGDATABASE}`;
     process.env.DATABASE_URL = databaseUrl;
   }
 
   // Enforce SSL when not connecting to localhost
-  const host = process.env.PGHOST || 'localhost';
+  const host = normalizeEnvValue(process.env.PGHOST) || 'localhost';
   if (host !== 'localhost' && host !== '127.0.0.1' && !databaseUrl.includes('sslmode=')) {
     databaseUrl += databaseUrl.includes('?') ? '&sslmode=require' : '?sslmode=require';
     process.env.DATABASE_URL = databaseUrl;
