@@ -1,10 +1,12 @@
 # Arcanos Documentation Index
 
-> **Last Updated:** 2024-10-30 | **Version:** 1.0.0
+> **Last Updated:** 2025-02-14 | **Version:** 1.0.0
 
-Welcome to the documentation hub for the Arcanos AI-assisted backend. This index
-highlights the most relevant guides for getting started, configuring the
-environment, and exploring advanced modules.
+Welcome to the documentation hub for the Arcanos AI-assisted backend. This
+index highlights the most relevant guides for getting started, configuring the
+environment, and exploring advanced modules. It is now paired with
+[`DOCUMENTATION_STATUS.md`](DOCUMENTATION_STATUS.md), which tracks which areas
+still need love after each audit sweep.
 
 ---
 
@@ -89,10 +91,20 @@ environment, and exploring advanced modules.
 
 ## 📊 Release Management
 
-- **[Changelog](CHANGELOG.md)** – Version history.
-- **[Documentation Audit Summary](DOCUMENTATION_AUDIT_SUMMARY.md)** – Previous
-  doc updates.
+- **[Changelog](../CHANGELOG.md)** – Canonical version history.
+- **[Documentation Status](DOCUMENTATION_STATUS.md)** – Live coverage tracker.
 - **[Refactor Report](refactor-report.md)** – Architecture improvements.
+
+## 🗃️ Archived / Retired Notes
+
+The February 2025 review removed duplicate or stale files so we only maintain
+one source of truth per topic. Pull historical context from Git history if
+needed.
+
+- `docs/changelog.md` – Duplicate of the root changelog and lagging by two
+  releases.
+- `docs/DOCUMENTATION_AUDIT_SUMMARY.md` – Snapshot from 2024 superseded by the
+  living status report referenced above.
 
 ---
 
