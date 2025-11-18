@@ -77,7 +77,7 @@ async function buildStatusPayload(): Promise<WorkerStatusResponseDTO> {
     workers,
     arcanosWorkers,
     system: {
-      model: process.env.AI_MODEL || 'gpt-4-turbo',
+      model: process.env.AI_MODEL || 'gpt-4o',
       environment: process.env.NODE_ENV || 'development'
     }
   };

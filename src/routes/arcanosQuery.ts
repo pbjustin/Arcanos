@@ -34,7 +34,7 @@ const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> 
           'GPT-5.1 reasoning and refinement'
         ]
       },
-      activeModel: process.env.AI_MODEL || 'gpt-4-turbo',
+      activeModel: process.env.AI_MODEL || 'gpt-4o',
       module: 'ArcanosQuery'
     });
 
