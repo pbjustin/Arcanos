@@ -178,7 +178,7 @@ async function executePrompt(
 export async function runSelfTestPipeline(options: SelfTestOptions = {}): Promise<SelfTestSummary> {
   const baseUrl = options.baseUrl || resolveBaseUrl();
   const prompts = options.prompts && options.prompts.length > 0 ? options.prompts : defaultPrompts;
-  const targetModel = options.targetModel || process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'gpt-4-turbo';
+  const targetModel = options.targetModel || process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'gpt-4o';
   const triggeredBy = options.triggeredBy || 'cli';
 
   const results: SelfTestResult[] = [];

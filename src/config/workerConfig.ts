@@ -6,13 +6,13 @@ import { env } from '../utils/env.js';
 
 // ✅ Environment setup
 process.env.WORKER_COUNT = process.env.WORKER_COUNT || "4";
-process.env.WORKER_MODEL = process.env.AI_MODEL || "gpt-4-turbo"; // Use configured model
+process.env.WORKER_MODEL = process.env.AI_MODEL || "gpt-4o"; // Use configured model with latest default
 
 // Environment configuration
 export const workerSettings = {
   runWorkers: env.RUN_WORKERS,
   count: parseInt(process.env.WORKER_COUNT || '4', 10),
-  model: process.env.WORKER_MODEL || process.env.AI_MODEL || 'gpt-4-turbo'
+  model: process.env.WORKER_MODEL || process.env.AI_MODEL || 'gpt-4o'
 };
 
 // Worker runtime bookkeeping
