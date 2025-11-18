@@ -1,6 +1,6 @@
 # Arcanos Backend
 
-> **Last Updated:** 2025-11-12 | **Version:** 1.0.0 | **OpenAI SDK:** v5.16.0
+> **Last Updated:** 2025-11-18 | **Version:** 1.0.0 | **OpenAI SDK:** v6.9.1
 
 Arcanos is an AI-assisted TypeScript backend built on Express. The service routes
 requests through a centralized OpenAI integration, persists state to disk, and

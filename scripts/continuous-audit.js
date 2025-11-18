@@ -121,10 +121,17 @@ async function auditPhase3() {
     const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
     const openaiVersion = packageJson.dependencies?.openai;
     
-    if (!openaiVersion || !openaiVersion.includes('5.')) {
+    // Extract version number (e.g., "^6.9.1" -> 6)
+    const versionMatch = openaiVersion?.match(/(\d+)\./);
+    const majorVersion = versionMatch ? parseInt(versionMatch[1]) : 0;
+    
+    if (!openaiVersion || majorVersion < 5) {
       auditResults.phase3.issues.push(`OpenAI SDK version may be outdated: ${openaiVersion}`);
-      auditResults.phase3.actions.push('Update to OpenAI SDK ≥5.15.0');
+      auditResults.phase3.actions.push('Update to OpenAI SDK ≥5.15.0 (latest: 6.x)');
       auditResults.phase3.status = '⚠️';
+    } else if (majorVersion >= 6) {
+      // Version 6.x is the latest - all good!
+      auditResults.phase3.actions.push('✅ OpenAI SDK is up to date (v6.x)');
     }
 
     // Check for deprecated patterns

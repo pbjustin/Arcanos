@@ -9,9 +9,9 @@ const client = getOpenAIClient();
 
 // Models - use centralized configuration
 const ARC_V2 = getDefaultModel();
-const ARC_V2_FALLBACK = 'gpt-3.5-turbo';
+const ARC_V2_FALLBACK = 'gpt-4o-mini'; // Use gpt-4o-mini as cost-effective fallback
 const GPT5 = getGPT5Model();
-const GPT35_SUBAGENT = 'gpt-3.5-turbo';
+const GPT35_SUBAGENT = 'gpt-4o-mini'; // Use gpt-4o-mini instead of deprecated gpt-3.5-turbo
 
 router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
   const { messages } = req.body as { messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] };
