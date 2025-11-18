@@ -34,7 +34,7 @@ This model powers the production routing profile named **"Arcanos"**, giving us:
 
 - **Deployment cadence.** Fine-tune artifacts are versioned by OpenAI; rotating to a new suffix is as simple as updating the model identifier in our configuration files. The runtime shim handles the rest.
 - **Monitoring.** Training telemetry, job status, and lineage data are centralized in the OpenAI dashboard, reducing the bespoke monitoring we maintain in `PROBOT_SETUP.md` and the observability integrations described in `BACKGROUND_WORKERS.md`.
-- **Compliance.** Data sharing is restricted to internal teams via the "Shared" visibility mode. Audit requests map directly to OpenAI's lineage logs, shortening the evidence cycle we need for the `DOCUMENTATION_AUDIT_SUMMARY.md` controls.
+- **Compliance.** Data sharing is restricted to internal teams via the "Shared" visibility mode. Audit requests map directly to OpenAI's lineage logs, shortening the evidence cycle we need for the `DOCUMENTATION_STATUS.md` controls.
 
 ## Future considerations
 
