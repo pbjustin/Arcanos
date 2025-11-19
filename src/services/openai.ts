@@ -6,7 +6,7 @@ import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import crypto from 'crypto';
 import { runtime } from './openaiRuntime.js';
-import { buildContextualSystemPrompt, trackModelResponse, trackPromptUsage } from './contextualReinforcement.js';
+import { trackModelResponse, trackPromptUsage } from './contextualReinforcement.js';
 import { createCacheKey } from '../utils/hashUtils.js';
 import { isRetryableError, classifyError } from '../utils/errorClassification.js';
 import { generateMockResponse } from './openai/mock.js';
@@ -18,12 +18,18 @@ import {
   REQUEST_ID_HEADER
 } from './openai/constants.js';
 import {
-  REASONING_LOG_SUMMARY_LENGTH,
-  REASONING_SYSTEM_PROMPT,
-  REASONING_TEMPERATURE,
-  REASONING_TOKEN_LIMIT,
-  buildReasoningPrompt
+  REASONING_LOG_SUMMARY_LENGTH
 } from '../config/reasoningTemplates.js';
+import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
+import { buildChatMessages } from './openai/messageBuilder.js';
+import { prepareGPT5Request, buildReasoningRequestPayload } from './openai/requestTransforms.js';
+import {
+  CallOpenAIOptions,
+  CallOpenAIResult,
+  CallOpenAICacheEntry,
+  ChatCompletionMessageParam,
+  ChatCompletionResponseFormat
+} from './openai/types.js';
 import {
   resolveOpenAIKey,
   resolveOpenAIBaseURL,
@@ -41,34 +47,16 @@ import {
   getCircuitBreakerSnapshot
 } from './openai/resilience.js';
 
-type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-type ChatCompletionResponseFormat =
-  OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format'];
+export type {
+  CallOpenAIOptions,
+  CallOpenAIResult,
+  CallOpenAICacheEntry,
+  ChatCompletionMessageParam,
+  ChatCompletionResponseFormat
+};
 
 let openai: OpenAI | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
-
-export interface CallOpenAIOptions {
-  systemPrompt?: string;
-  messages?: ChatCompletionMessageParam[];
-  temperature?: number;
-  top_p?: number;
-  frequency_penalty?: number;
-  presence_penalty?: number;
-  responseFormat?: ChatCompletionResponseFormat;
-  user?: string;
-  metadata?: Record<string, unknown>;
-}
-
-interface CallOpenAICacheEntry {
-  response: any;
-  output: string;
-  model: string;
-}
-
-export interface CallOpenAIResult extends CallOpenAICacheEntry {
-  cached?: boolean;
-}
 
 /**
  * Initializes OpenAI client with API key validation and default model configuration
@@ -124,50 +112,6 @@ export const getOpenAIClient = (): OpenAI | null => {
   return openai || initializeOpenAI();
 };
 
-/**
- * Prepare payloads for GPT-5.1 by migrating deprecated max_tokens
- * to max_completion_tokens and providing a sensible default.
- */
-function prepareGPT5Request(payload: any): any {
-  if (payload.model && typeof payload.model === 'string' && payload.model.includes('gpt-5')) {
-    // GPT-5.1 uses max_output_tokens in the new Responses API
-    if (payload.max_tokens) {
-      payload.max_output_tokens = payload.max_tokens;
-      delete payload.max_tokens;
-    }
-    if (payload.max_completion_tokens) {
-      payload.max_output_tokens = payload.max_completion_tokens;
-      delete payload.max_completion_tokens;
-    }
-    if (!payload.max_output_tokens) {
-      payload.max_output_tokens = RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
-    }
-  }
-  return payload;
-}
-
-function buildReasoningRequestPayload(
-  model: string,
-  originalPrompt: string,
-  arcanosResult: string,
-  context?: string
-) {
-  const tokenParams = getTokenParameter(model, REASONING_TOKEN_LIMIT);
-
-  return prepareGPT5Request({
-    model,
-    input: [
-      { role: 'system' as const, content: REASONING_SYSTEM_PROMPT },
-      { role: 'user' as const, content: buildReasoningPrompt(originalPrompt, arcanosResult, context) }
-    ],
-    text: { verbosity: 'medium' as const },
-    // Align reasoning effort with supported OpenAI values to prevent API errors.
-    reasoning: { effort: 'low' as const },
-    ...tokenParams,
-    temperature: REASONING_TEMPERATURE
-  });
-}
-
 // Note: createCacheKey is now imported from utils/hashUtils.js
 
 /**
@@ -196,29 +140,7 @@ export async function callOpenAI(
 
   trackPromptUsage(prompt, reinforcementMetadata);
 
-  const contextAwarePrompt = buildContextualSystemPrompt(systemPrompt);
-  let preparedMessages: ChatCompletionMessageParam[];
-
-  if (options.messages && options.messages.length > 0) {
-    let systemInjected = false;
-    preparedMessages = options.messages.map((message) => {
-      if (message.role === 'system' && typeof message.content === 'string') {
-        systemInjected = true;
-        return { ...message, content: buildContextualSystemPrompt(message.content) };
-      }
-      return message;
-    });
-
-    const hasSystemMessage = preparedMessages.some((message) => message.role === 'system');
-    if (!hasSystemMessage || !systemInjected) {
-      preparedMessages = [{ role: 'system', content: contextAwarePrompt }, ...preparedMessages];
-    }
-  } else {
-    preparedMessages = [
-      { role: 'system', content: contextAwarePrompt },
-      { role: 'user', content: prompt }
-    ];
-  }
+  const preparedMessages = buildChatMessages(prompt, systemPrompt, options);
 
   if (!client) {
     const mock = generateMockResponse(prompt, 'ask');
@@ -685,7 +607,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
       input: [
-        { role: 'system', content: 'You are a precise and safe code assistant.' },
+        { role: 'system', content: STRICT_ASSISTANT_PROMPT },
         { role: 'user', content: prompt }
       ],
       text: { verbosity: 'medium' },
