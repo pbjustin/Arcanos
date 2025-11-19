@@ -11,6 +11,13 @@ import { createCacheKey } from '../utils/hashUtils.js';
 import { isRetryableError, classifyError } from '../utils/errorClassification.js';
 import { generateMockResponse } from './openai/mock.js';
 import {
+  REASONING_LOG_SUMMARY_LENGTH,
+  REASONING_SYSTEM_PROMPT,
+  REASONING_TEMPERATURE,
+  REASONING_TOKEN_LIMIT,
+  buildReasoningPrompt
+} from '../config/reasoningTemplates.js';
+import {
   resolveOpenAIKey,
   resolveOpenAIBaseURL,
   getOpenAIKeySource,
@@ -130,6 +137,28 @@ function prepareGPT5Request(payload: any): any {
     }
   }
   return payload;
+}
+
+function buildReasoningRequestPayload(
+  model: string,
+  originalPrompt: string,
+  arcanosResult: string,
+  context?: string
+) {
+  const tokenParams = getTokenParameter(model, REASONING_TOKEN_LIMIT);
+
+  return prepareGPT5Request({
+    model,
+    input: [
+      { role: 'system' as const, content: REASONING_SYSTEM_PROMPT },
+      { role: 'user' as const, content: buildReasoningPrompt(originalPrompt, arcanosResult, context) }
+    ],
+    text: { verbosity: 'medium' as const },
+    // Align reasoning effort with supported OpenAI values to prevent API errors.
+    reasoning: { effort: 'low' as const },
+    ...tokenParams,
+    temperature: REASONING_TEMPERATURE
+  });
 }
 
 // Note: createCacheKey is now imported from utils/hashUtils.js
@@ -597,41 +626,7 @@ export const createGPT5ReasoningLayer = async (
     const gpt5Model = getGPT5Model();
     console.log(`🔄 [GPT-5.1 LAYER] Refining ARCANOS response with ${gpt5Model}`);
 
-    // Construct reasoning prompt that asks GPT-5.1 to analyze and refine ARCANOS output
-    const reasoningPrompt = `As an advanced reasoning engine, analyze and refine the following ARCANOS response:
-
-ORIGINAL USER REQUEST:
-${originalPrompt}
-
-ARCANOS RESPONSE:
-${arcanosResult}
-
-${context ? `ADDITIONAL CONTEXT:\n${context}\n` : ''}
-
-Your task:
-1. Evaluate the logical consistency and completeness of the ARCANOS response
-2. Identify any gaps in reasoning or potential improvements
-3. Provide a refined, enhanced version that maintains ARCANOS's core analysis while adding deeper insights
-4. Ensure the response is well-structured and comprehensive
-
-Return only the refined response without meta-commentary about your analysis process.`;
-
-    const systemPrompt = `You are an advanced reasoning layer for ARCANOS AI. Your role is to refine and enhance ARCANOS responses through deeper analysis while preserving the original intent and structure. Focus on logical consistency, completeness, and clarity.`;
-
-    const tokenParams = getTokenParameter(gpt5Model, 1500);
-
-    const requestPayload = prepareGPT5Request({
-      model: gpt5Model,
-      input: [
-        { role: 'system' as const, content: systemPrompt },
-        { role: 'user' as const, content: reasoningPrompt }
-      ],
-      text: { verbosity: 'medium' as const },
-      // Align reasoning effort with supported OpenAI values to prevent API errors.
-      reasoning: { effort: 'low' as const },
-      ...tokenParams,
-      temperature: 0.7 // Balanced creativity for reasoning
-    });
+    const requestPayload = buildReasoningRequestPayload(gpt5Model, originalPrompt, arcanosResult, context);
 
     const response: any = await client.responses.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
@@ -643,13 +638,13 @@ Return only the refined response without meta-commentary about your analysis pro
 
     // The GPT-5.1 response IS the refined result
     const refinedResult = reasoningContent;
-    
+
     console.log(`✅ [GPT-5.1 LAYER] Successfully refined response (${refinedResult.length} chars)`);
-    
+
     return {
       refinedResult,
       reasoningUsed: true,
-      reasoningContent: reasoningContent.substring(0, 200) + '...', // Summary for logging
+      reasoningContent: reasoningContent.substring(0, REASONING_LOG_SUMMARY_LENGTH) + '...', // Summary for logging
       model: resolvedModel
     };
   } catch (err: any) {
