@@ -6,7 +6,9 @@ export const ArcanosGaming = {
   gptIds: ['arcanos-gaming', 'gaming'],
   actions: {
     async query(payload: any) {
-      return runGaming(payload?.prompt || payload, payload?.url);
+      const prompt = payload?.prompt || payload;
+      const urls = payload?.urls || payload?.guideUrls;
+      return runGaming(prompt, payload?.url, Array.isArray(urls) ? urls : []);
     },
   },
 };

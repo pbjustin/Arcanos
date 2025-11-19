@@ -11,11 +11,15 @@
 ```json
 {
   "prompt": "How do I beat the Guardian Ape in Sekiro?",
-  "url": "https://example.com/sekiro/guardian-ape-guide"
+  "url": "https://example.com/sekiro/guardian-ape-guide",
+  "urls": [
+    "https://example.com/sekiro/phase-two-tips"
+  ]
 }
 ```
 - `prompt` (string) – Required user question or context. A raw string is also accepted when the calling workflow does not wrap the payload.
 - `url` (string, optional) – Remote guide to hydrate the prompt. The service attempts to fetch and clean this URL before intake.
+- `urls` (string[], optional) – Additional live sources that will be fetched, cleaned, and summarized into the prompt to keep answers fresh and reduce hallucinations.
 - `metadata` (object, optional) – Include `{ "gpt_id": "<custom gpt id>", "module": "ARCANOS:GAMING" }` when called from ChatGPT. The `/api/ask` shim records this information for telemetry.
 
 ## Pipeline
@@ -29,14 +33,20 @@ If OpenAI access is unavailable, the module emits deterministic mock text plus a
 ```json
 {
   "gaming_response": "Final audited answer...",
-"audit_trace": {
+  "audit_trace": {
     "intake": "Refined prompt...",
     "reasoning": "Raw GPT-5.1 output...",
     "finalized": "Audited answer"
-  }
+  },
+  "sources": [
+    {
+      "url": "https://example.com/sekiro/guardian-ape-guide",
+      "snippet": "Cleaned reference text used to ground the response"
+    }
+  ]
 }
 ```
-The `audit_trace` fields mirror the three pipeline stages, enabling downstream logging or escalation flows.
+The `audit_trace` fields mirror the three pipeline stages, enabling downstream logging or escalation flows. The optional `sources` array lists every fetched URL (and any errors) so operators can confirm the grounding material that was used to avoid hallucinations.
 
 ## Implementation Notes
 - Module name: `ARCANOS:GAMING` (`src/modules/arcanos-gaming.ts`).
