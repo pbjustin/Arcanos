@@ -12,7 +12,7 @@ This guide distills the concrete steps required to let the Arcanos AI supervise 
 ## 2. Automate the Heal Lifecycle
 
 1. **Probe worker health continuously** – Poll `GET /workers/status` on a short cadence (e.g., every minute) and inspect the embedded `autoHeal` summary to decide when to trigger `/workers/heal`.
-2. **Execute heals with `mode: "execute"`** – Post `{ "mode": "execute", "reason": "automated-detection" }` to `/workers/heal` as soon as severity escalates to `major` or `critical`. This restarts the pool through `startWorkers(true)` and tags the attempt in `systemState.json` for later correlation.
+2. **Execute heals with `mode: "execute"`** – Post `{ "mode": "execute", "reason": "automated-detection" }` to `/workers/heal` as soon as severity escalates to `major` or `critical`. Trusted GPT callers and automation-secret flows automatically inherit execute mode even without the flag, so the restart kicks off immediately unless you explicitly request `mode: "plan"` for a dry run. Every execution restarts the pool through `startWorkers(true)` and tags the attempt in `systemState.json` for later correlation.
 3. **Replay self-tests post-heal** – After each automated restart, call `/devops/self-test` (or the `runSelfTestPipeline` helper) so the AI can confirm the environment stabilized before resuming normal dispatching.
 
 ## 3. Maintain Observability
