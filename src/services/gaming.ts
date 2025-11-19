@@ -3,7 +3,39 @@ import { fetchAndClean } from './webFetcher.js';
 
 const FINETUNE_MODEL = process.env.FINETUNE_MODEL || getDefaultModel();
 
-export async function runGaming(userPrompt: string, guideUrl?: string) {
+type WebSource = {
+  url: string;
+  snippet?: string;
+  error?: string;
+};
+
+async function buildWebContext(urls: string[]): Promise<{ context: string; sources: WebSource[] }> {
+  if (urls.length === 0) {
+    return { context: '', sources: [] };
+  }
+
+  const uniqueUrls = Array.from(new Set(urls));
+  const sources: WebSource[] = [];
+
+  for (const url of uniqueUrls) {
+    try {
+      const snippet = await fetchAndClean(url, 5000);
+      sources.push({ url, snippet });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown fetch error';
+      sources.push({ url, error: message });
+    }
+  }
+
+  const context = sources
+    .filter((source) => Boolean(source.snippet))
+    .map((source, index) => `[Source ${index + 1}] ${source.url}\n${source.snippet}`)
+    .join('\n\n');
+
+  return { context, sources };
+}
+
+export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
   const openai = getOpenAIClient();
   if (!openai) {
     const mock = generateMockResponse(userPrompt, 'guide');
@@ -13,19 +45,26 @@ export async function runGaming(userPrompt: string, guideUrl?: string) {
         intake: '[MOCK] Intake step not executed',
         reasoning: '[MOCK] Reasoning step not executed',
         finalized: mock.result
-      }
+      },
+      sources: []
     };
   }
   try {
     // Optionally enrich the prompt with a fetched guide
     let enrichedPrompt = userPrompt;
+
+    const allUrls = [];
     if (guideUrl) {
-      try {
-        const guideText = await fetchAndClean(guideUrl);
-        enrichedPrompt = `${userPrompt}\n\nReference:\n${guideText}`;
-      } catch (err) {
-        console.error(`Failed to fetch guide from ${guideUrl}:`, err);
-      }
+      allUrls.push(guideUrl);
+    }
+    if (Array.isArray(guideUrls) && guideUrls.length > 0) {
+      allUrls.push(...guideUrls);
+    }
+
+    const { context: webContext, sources } = await buildWebContext(allUrls);
+
+    if (webContext) {
+      enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${webContext}\n\nUse the sources above to keep recommendations current. If the sources do not mention the requested details, say so instead of guessing.`;
     }
 
     // Step 1: Fine-tuned ARCANOS Intake
@@ -70,7 +109,8 @@ export async function runGaming(userPrompt: string, guideUrl?: string) {
         intake: refinedPrompt,
         reasoning: reasoningOutput,
         finalized
-      }
+      },
+      sources
     };
   } catch (err) {
     console.error('❌ ARCANOS:GAMING Error:', err);
