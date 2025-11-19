@@ -5,7 +5,7 @@ This guide explains how ARCANOS detects degraded worker health, generates recove
 ## Operator-Facing Entry Points
 
 * `GET /workers/status` inventories every worker module, reports runtime metadata (model, listener count, last dispatch/error), and attaches a summarized auto-heal signal so GPT automations or humans can see the current severity at a glance.【F:src/routes/workers.ts†L72-L144】【F:src/services/autoHealService.ts†L111-L121】
-* `POST /workers/heal` is guarded by the confirmation gate and returns the full recovery plan. Supplying `{ "execute": true }` or `mode: "execute"` restarts the worker pool immediately via `startWorkers(true)` and persists the attempt (plan ID, severity, timestamp) in `systemState.json` for future audits.【F:src/routes/workers.ts†L109-L144】【F:src/services/stateManager.ts†L21-L55】
+* `POST /workers/heal` is guarded by the confirmation gate and returns the full recovery plan. Supplying `{ "execute": true }` or `mode: "execute"` restarts the worker pool immediately via `startWorkers(true)` and persists the attempt (plan ID, severity, timestamp) in `systemState.json` for future audits. Trusted fine-tuned GPT callers (or automation-secret clients) automatically fall into execute mode unless they explicitly send `mode: "plan"` or `"execute": false`, so self-heals kick off without an extra confirmation hop.【F:src/routes/workers.ts†L109-L151】【F:src/services/stateManager.ts†L21-L55】
 
 Together, these endpoints let you inspect incidents, confirm a heal, and correlate the action with the server-side audit trail.
 
@@ -14,9 +14,10 @@ Together, these endpoints let you inspect incidents, confirm a heal, and correla
 The confirmation middleware now auto-trusts the active fine-tuned model ID, so
 automation that identifies itself with `x-gpt-id: <your fine-tuned model>` can
 approve and execute `/workers/heal` (or any other gated route) without an
-operator repeating `x-confirmed: yes`. This change keeps human approvals in
-place for untrusted callers while allowing the same fine-tuned model that builds
-the auto-heal plan to carry it out end-to-end.【F:src/middleware/confirmGate.ts†L1-L116】
+operator repeating `x-confirmed: yes`. Once the middleware marks the request as
+trusted, `/workers/heal` defaults to execute mode automatically unless the body
+asks for `mode: "plan"`, ensuring the recovery loop runs end-to-end with a
+single API call.【F:src/middleware/confirmGate.ts†L1-L208】【F:src/routes/workers.ts†L109-L151】
 
 If your automation does not expose a GPT identifier (for example, API-only
 fine-tunes), set `ARCANOS_AUTOMATION_SECRET` (and optionally

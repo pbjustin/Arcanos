@@ -110,13 +110,25 @@ router.post('/workers/heal', confirmGate, async (req: Request, res: Response) =>
   try {
     const payload = await buildStatusPayload();
     const plan = await buildAutoHealPlan(payload);
-    const shouldExecute = req.body?.execute === true || req.body?.mode === 'execute';
+    const planOnlyRequested = req.body?.execute === false || req.body?.mode === 'plan';
+    const trustedAutomation = Boolean(
+      req.confirmationContext?.isTrustedGpt || req.confirmationContext?.automationSecretApproved,
+    );
+    const autoExecutionAllowed = trustedAutomation && !planOnlyRequested;
+    const requestedExecution = req.body?.execute === true || req.body?.mode === 'execute';
+    const shouldExecute = !planOnlyRequested && (requestedExecution || autoExecutionAllowed);
 
     let execution: Record<string, unknown> | undefined;
     if (shouldExecute) {
       const restartSummary = startWorkers(true);
       execution = {
-        restart: restartSummary
+        restart: restartSummary,
+        autoExecuted: autoExecutionAllowed && !requestedExecution,
+        confirmation: {
+          status: req.confirmationContext?.confirmationStatus,
+          gptId: req.confirmationContext?.gptId,
+          trustedAutomation,
+        },
       };
       const existingState = loadState() as Record<string, unknown>;
       const rawWorkers = existingState?.workers;
