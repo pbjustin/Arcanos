@@ -144,7 +144,8 @@ See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkth
 - `POST /workers/run/:workerId` – Executes a worker by filename (requires
   confirmation).
 - `POST /workers/heal` – Generates a GPT-backed recovery plan and optionally
-  restarts the worker pool (requires confirmation header).
+  restarts the worker pool (requires confirmation header). Trusted GPT callers
+  auto-execute the restart unless they request `mode: "plan"`.
 - `POST /heartbeat` – Records operator heartbeats to `logs/heartbeat.log`
   (requires confirmation).
 - `POST /devops/self-test` – Runs the automated `/ask` self-test suite and

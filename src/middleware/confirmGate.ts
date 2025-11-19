@@ -6,6 +6,22 @@ import {
 } from './confirmationChallengeStore.js';
 import { getDefaultModel } from '../services/openai/credentialProvider.js';
 
+export interface ConfirmationContext {
+  confirmationStatus: string;
+  gptId?: string;
+  manualConfirmation: boolean;
+  usedChallengeToken: boolean;
+  isTrustedGpt: boolean;
+  automationSecretApproved: boolean;
+  allowAllOverride: boolean;
+}
+
+declare module 'express-serve-static-core' {
+  interface Request {
+    confirmationContext?: ConfirmationContext;
+  }
+}
+
 /**
  * ConfirmGate Middleware - OpenAI Terms of Service Compliance
  * 
@@ -186,6 +202,15 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     ? 'trusted-gpt'
     : 'confirmed';
   res.setHeader('x-confirmation-status', confirmationStatus);
+  req.confirmationContext = {
+    confirmationStatus,
+    gptId: gptId || undefined,
+    manualConfirmation,
+    usedChallengeToken: hasValidToken,
+    isTrustedGpt,
+    automationSecretApproved: automationBypassApproved,
+    allowAllOverride: allowAllGpts,
+  };
   console.log(`[✅ CONFIRM-GATE] Request confirmed - proceeding with execution (${confirmationStatus})`);
   next();
 }
