@@ -1,0 +1,91 @@
+name: ARCANOS CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-test-deploy:
+    name: Build → Test → Deploy
+    runs-on: ubuntu-latest
+
+    env:
+      NODE_ENV: production
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DEPLOY_ENV: production
+
+    steps:
+      # 1️⃣ Checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2️⃣ Setup Node
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      # 3️⃣ Dependency Install + Audit
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run dependency audit
+        run: npm audit --production
+
+      # 4️⃣ Run Tests
+      - name: Run unit tests
+        run: npm test
+
+      # 5️⃣ Build Project
+      - name: Build project
+        run: npm run build
+
+      # 6️⃣ Sync Environment Variables (GitHub → Railway)
+      - name: Sync environment variables
+        uses: railwayapp/railway-action@v3
+        with:
+          service: "arcanos-app"
+          envs: |
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            DEPLOY_ENV=production
+
+      # 7️⃣ Deploy to Railway
+      - name: Deploy to Railway
+        run: |
+          npx railway up --service arcanos-app --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+      # 8️⃣ Smoke Test (Post-Deploy Validation)
+      - name: Post-deploy smoke test
+        run: |
+          echo "Waiting for service to stabilize..."
+          sleep 30
+          curl -f https://your-app-url.up.railway.app/health || exit 1
+
+      # 9️⃣ Rollback Guard (Tag-based Release)
+      - name: Rollback gate check
+        if: failure()
+        run: |
+          echo "Deployment failed — initiating rollback"
+          git fetch --tags
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          echo "Rolling back to $LATEST_TAG"
+          git checkout $LATEST_TAG
+          npx railway up --service arcanos-app --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  notify:
+    name: Notify & Log
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "✅ Build/Test/Deploy complete."
+          echo "Status: ${{ job.status }}"
