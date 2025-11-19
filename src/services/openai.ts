@@ -11,6 +11,13 @@ import { createCacheKey } from '../utils/hashUtils.js';
 import { isRetryableError, classifyError } from '../utils/errorClassification.js';
 import { generateMockResponse } from './openai/mock.js';
 import {
+  CACHE_TTL_MS,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_SYSTEM_PROMPT,
+  IMAGE_PROMPT_TOKEN_LIMIT,
+  REQUEST_ID_HEADER
+} from './openai/constants.js';
+import {
   REASONING_LOG_SUMMARY_LENGTH,
   REASONING_SYSTEM_PROMPT,
   REASONING_TEMPERATURE,
@@ -175,7 +182,7 @@ export async function callOpenAI(
 ): Promise<CallOpenAIResult> {
   const client = getOpenAIClient();
 
-  const systemPrompt = options.systemPrompt ?? 'You are a helpful AI assistant.';
+  const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const baseMetadata = options.metadata ?? {};
   const rawRequestId = baseMetadata ? (baseMetadata as Record<string, unknown>)['requestId'] : undefined;
   const reinforcementRequestId = typeof rawRequestId === 'string' && rawRequestId.length > 0
@@ -289,7 +296,7 @@ export async function callOpenAI(
       output: result.output,
       model: result.model
     };
-    responseCache.set(cacheKey, cachePayload, 5 * 60 * 1000); // 5 minutes
+    responseCache.set(cacheKey, cachePayload, CACHE_TTL_MS);
   }
 
   return result;
@@ -305,7 +312,7 @@ async function makeOpenAIRequest(
   messages: ChatCompletionMessageParam[],
   tokenLimit: number,
   options: CallOpenAIOptions,
-  maxRetries: number = 3
+  maxRetries: number = DEFAULT_MAX_RETRIES
 ): Promise<CallOpenAIResult> {
   let lastError: Error | null = null;
 
@@ -345,7 +352,7 @@ async function makeOpenAIRequest(
           signal: controller.signal,
           // Add request ID for tracing
           headers: {
-            'X-Request-ID': crypto.randomUUID()
+            [REQUEST_ID_HEADER]: crypto.randomUUID()
           }
         }
       );
@@ -734,7 +741,7 @@ export async function generateImage(
   // Use the fine-tuned default model to craft a detailed image prompt
   let prompt = input;
   try {
-    const { output } = await callOpenAI(getDefaultModel(), input, 256, false);
+    const { output } = await callOpenAI(getDefaultModel(), input, IMAGE_PROMPT_TOKEN_LIMIT, false);
     if (output && output.trim().length > 0) {
       prompt = output.trim();
     }
