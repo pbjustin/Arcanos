@@ -35,6 +35,9 @@ async function buildWebContext(urls: string[]): Promise<{ context: string; sourc
   return { context, sources };
 }
 
+const WEB_UNCERTAINTY_GUIDANCE =
+  'If you are unsure about mechanics, progression steps, or patch-specific details, ask for a guide URL so the ARCANOS web fetcher can pull the latest info instead of guessing.';
+
 export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
   const openai = getOpenAIClient();
   if (!openai) {
@@ -51,8 +54,6 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
   }
   try {
     // Optionally enrich the prompt with a fetched guide
-    let enrichedPrompt = userPrompt;
-
     const allUrls = [];
     if (guideUrl) {
       allUrls.push(guideUrl);
@@ -63,8 +64,14 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
 
     const { context: webContext, sources } = await buildWebContext(allUrls);
 
+    const noWebContextNote = allUrls.length > 0
+      ? 'Guides were requested but no usable snippets were retrieved.'
+      : 'No live sources were provided.';
+
+    let enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${noWebContextNote}\n\n${WEB_UNCERTAINTY_GUIDANCE}`;
+
     if (webContext) {
-      enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${webContext}\n\nUse the sources above to keep recommendations current. If the sources do not mention the requested details, say so instead of guessing.`;
+      enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${webContext}\n\nUse the sources above to keep recommendations current. If the sources do not mention the requested details, say so and ask for a guide URL to fetch rather than guessing.`;
     }
 
     // Step 1: Fine-tuned ARCANOS Intake
