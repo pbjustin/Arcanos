@@ -71,6 +71,8 @@ still need love after each audit sweep.
   scaffold for commit/retrieve workflows.
 - **[RAG & Research](ai-guides/RESEARCH_MODULE.md)** – Retrieval augmented
   workflows.
+- **[AI Guides Index](ai-guides/README.md)** – Curated map of the active
+  `docs/ai-guides/` documents.
 
 > **Note:** Files inside `docs/ai-guides/` describe specialised modules and
 > historical experiments. Confirm the referenced functionality exists in `src/`
@@ -105,6 +107,8 @@ needed.
   releases.
 - `docs/DOCUMENTATION_AUDIT_SUMMARY.md` – Snapshot from 2024 superseded by the
   living status report referenced above.
+- `docs/ai-guides/CLARKE_HANDLER_GUIDE.md` – Deprecated resilience wrapper; use
+  the AI patch system and dispatcher refactor guides instead.
 
 ---
 
