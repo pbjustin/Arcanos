@@ -122,6 +122,18 @@ class SessionMemoryRepository {
       }
     }
 
+    const processCached = this.getProcessCache(sessionId, channel);
+    if (processCached) {
+      logger.warn('Using process cache for session channel', {
+        module: 'sessionMemoryRepository',
+        operation: 'getChannel',
+        sessionId,
+        channel,
+        source: 'processCache'
+      });
+      return cloneMessages(processCached);
+    }
+
     return [];
   }
 
@@ -164,6 +176,29 @@ class SessionMemoryRepository {
       messages: cloneMessages(messages),
       expiresAt: Date.now() + this.fallbackTtlMs
     });
+  }
+
+  private getProcessCache(sessionId: string, channel: ChannelName): any[] | null {
+    const session = memoryStore.getSession(sessionId);
+    if (!session) {
+      return null;
+    }
+
+    if (channel === 'conversations_core' && Array.isArray(session.conversations_core)) {
+      return session.conversations_core;
+    }
+
+    if (channel === 'system_meta') {
+      if (Array.isArray(session.metadata)) {
+        return session.metadata as any[];
+      }
+
+      if (session.metadata) {
+        return [session.metadata];
+      }
+    }
+
+    return null;
   }
 
   private updateProcessCache(sessionId: string, channel: ChannelName, history: any[], message: any): void {
