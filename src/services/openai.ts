@@ -57,6 +57,8 @@ export type {
 
 let openai: OpenAI | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
+const DEFAULT_ROUTING_MAX_TOKENS = 4096;
+const ARCANOS_ROUTING_MESSAGE = 'ARCANOS routing active';
 
 /**
  * Initializes OpenAI client with API key validation and default model configuration
@@ -344,6 +346,9 @@ async function attemptModelCall(
   return { response, model };
 }
 
+const formatErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : 'Unknown error';
+
 /**
  * Helper to extract token count from request parameters
  */
@@ -373,6 +378,36 @@ async function attemptGPT5Call(
   return { response, model: gpt5Model };
 }
 
+type ModelAttemptResult = { response: any; model: string };
+type ModelAttemptTransformer<T> = (result: ModelAttemptResult) => T;
+
+const executeModelFallbacks = async <T>(
+  attempts: Array<{
+    label: string;
+    executor: () => Promise<ModelAttemptResult>;
+    transform: ModelAttemptTransformer<T>;
+  }>,
+  failureContext: string
+): Promise<T> => {
+  let lastError: unknown;
+
+  for (const { label, executor, transform } of attempts) {
+    try {
+      const result = await executor();
+      return transform(result);
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ ${label} Failed: ${formatErrorMessage(error)}`);
+    }
+  }
+
+  console.error(`❌ ${failureContext}`);
+  if (lastError instanceof Error) {
+    throw new Error(`${failureContext}: ${formatErrorMessage(lastError)}`);
+  }
+  throw new Error(failureContext);
+};
+
 /**
  * Enhanced chat completion with graceful fallback handling
  * Sequence: fine-tuned GPT-4.1 → retry → GPT-5.1 → configured fallback
@@ -384,59 +419,53 @@ export const createChatCompletionWithFallback = async (
   const primaryModel = getDefaultModel(); // fine-tuned GPT-4.1
   const gpt5Model = getGPT5Model();
   const finalFallbackModel = getFallbackModel(); // Configurable fallback
-  
-  // First attempt with the fine-tuned model
-  try {
-    const { response, model } = await attemptModelCall(client, params, primaryModel, '🧠 [PRIMARY]');
-    return {
-      ...response,
-      activeModel: model,
-      fallbackFlag: false
-    };
-  } catch (primaryError) {
-    console.warn(`⚠️ [PRIMARY] Failed: ${primaryError instanceof Error ? primaryError.message : 'Unknown error'}`);
-    
-    // Retry with the fine-tuned model once more
-    try {
-      const { response, model } = await attemptModelCall(client, params, primaryModel, '🔄 [RETRY]');
-      return {
+
+  const attempts = [
+    {
+      label: '🧠 [PRIMARY]',
+      executor: () => attemptModelCall(client, params, primaryModel, '🧠 [PRIMARY]'),
+      transform: ({ response, model }: ModelAttemptResult) => ({
+        ...response,
+        activeModel: model,
+        fallbackFlag: false
+      })
+    },
+    {
+      label: '🔄 [RETRY]',
+      executor: () => attemptModelCall(client, params, primaryModel, '🔄 [RETRY]'),
+      transform: ({ response, model }: ModelAttemptResult) => ({
         ...response,
         activeModel: model,
         fallbackFlag: false,
         retryUsed: true
-      };
-    } catch (retryError) {
-      console.warn(`⚠️ [RETRY] Also failed: ${retryError instanceof Error ? retryError.message : 'Unknown error'}`);
-      
-      // Fall back to GPT-5.1
-      try {
-        const { response, model } = await attemptGPT5Call(client, params, gpt5Model);
-        return {
-          ...response,
-          activeModel: model,
-          fallbackFlag: true,
-          fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5.1`,
-          gpt5Used: true
-        };
-      } catch (gpt5Error) {
-        console.warn(`⚠️ [GPT-5.1 FALLBACK] Failed: ${gpt5Error instanceof Error ? gpt5Error.message : 'Unknown error'}`);
-        
-        // Final fallback to configured backup model
-        try {
-          const { response, model } = await attemptModelCall(client, params, finalFallbackModel, '🛟 [FINAL FALLBACK]');
-          return {
-            ...response,
-            activeModel: model,
-            fallbackFlag: true,
-            fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5.1 fallback), using final fallback`
-          };
-        } catch {
-          console.error(`❌ [COMPLETE FAILURE] All fallback attempts failed`);
-          throw new Error(`All models failed: Primary (${primaryModel}), GPT-5.1 (${gpt5Model}), Final (${finalFallbackModel})`);
-        }
-      }
+      })
+    },
+    {
+      label: '🧠 [GPT-5.1 FALLBACK]',
+      executor: () => attemptGPT5Call(client, params, gpt5Model),
+      transform: ({ response, model }: ModelAttemptResult) => ({
+        ...response,
+        activeModel: model,
+        fallbackFlag: true,
+        fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5.1`,
+        gpt5Used: true
+      })
+    },
+    {
+      label: '🛟 [FINAL FALLBACK]',
+      executor: () => attemptModelCall(client, params, finalFallbackModel, '🛟 [FINAL FALLBACK]'),
+      transform: ({ response, model }: ModelAttemptResult) => ({
+        ...response,
+        activeModel: model,
+        fallbackFlag: true,
+        fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5.1 fallback), using final fallback`
+      })
     }
-  }
+  ];
+
+  const failureContext = `All models failed: Primary (${primaryModel}), GPT-5.1 (${gpt5Model}), Final (${finalFallbackModel})`;
+
+  return executeModelFallbacks(attempts, `${failureContext} [COMPLETE FAILURE]`);
 };
 
 export const validateAPIKeyAtStartup = (): boolean => {
@@ -752,7 +781,7 @@ export async function createCentralizedCompletion(
   
   // Prepend ARCANOS routing system message to ensure proper handling
   const arcanosMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: 'system', content: 'ARCANOS routing active' },
+    { role: 'system', content: ARCANOS_ROUTING_MESSAGE },
     ...messages
   ];
 
@@ -764,7 +793,7 @@ export async function createCentralizedCompletion(
   console.log(`🎯 ARCANOS centralized routing - Model: ${model}`);
 
   // Prepare request with token parameters for the specific model
-  const tokenParams = getTokenParameter(model, options.max_tokens || 4096);
+  const tokenParams = getTokenParameter(model, options.max_tokens || DEFAULT_ROUTING_MAX_TOKENS);
   
   const requestPayload = {
     model,
