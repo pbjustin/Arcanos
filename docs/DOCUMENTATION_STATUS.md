@@ -101,6 +101,7 @@ Files with some documentation but missing module headers or comprehensive covera
 - `docs/DATABASE_INTEGRATION.md` – incorporate latest connection pooling defaults
 - `docs/BACKGROUND_WORKERS.md` – align with worker health telemetry
 - AI guides under `docs/ai-guides/` – confirm referenced tools exist in `src/`
+  (Clarke handler guide removed; see the new folder index for current topics).
 - `docs/api/API_REFERENCE.md` – verify payload examples for `/api/memory/*`
 
 ### Retired / Archived Files (February 2025)
