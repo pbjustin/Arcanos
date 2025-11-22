@@ -31,6 +31,8 @@ export function validateAIRequest(
 ): { client: any; input: string; body: AIRequestDTO } | null {
   console.log(`📨 /${endpointName} received`);
 
+  const clientContext = (req.body as AIRequestDTO).clientContext;
+
   const parsed = aiRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     const details = parsed.error.errors.map(err => `${err.path.join('.') || 'body'}: ${err.message}`);
@@ -54,7 +56,7 @@ export function validateAIRequest(
   if (!hasValidAPIKey()) {
     console.log(`🤖 Returning mock response for /${endpointName} (no API key)`);
     const mockResponse = generateMockResponse(input, endpointName);
-    res.json(mockResponse as AIResponseDTO);
+    res.json({ ...(mockResponse as AIResponseDTO), clientContext });
     return null;
   }
 
@@ -62,7 +64,7 @@ export function validateAIRequest(
   if (!openai) {
     console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);
     const mockResponse = generateMockResponse(input, endpointName);
-    res.json(mockResponse as AIResponseDTO);
+    res.json({ ...(mockResponse as AIResponseDTO), clientContext });
     return null;
   }
 
