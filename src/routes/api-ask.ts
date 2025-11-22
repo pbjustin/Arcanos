@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { handleAIRequest, type AskRequest, type AskResponse } from './ask.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
+import { inferHttpMethodIntent } from '../utils/httpMethodIntent.js';
 import type { ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
@@ -83,6 +84,16 @@ router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorR
     contextDirectives.push(`Metadata keys: ${metadataKeys.join(', ')}`);
   }
 
+  const httpMethodIntent = inferHttpMethodIntent(basePrompt);
+
+  if (httpMethodIntent) {
+    contextDirectives.push(
+      `HTTP intent detected: ${httpMethodIntent.method} (${httpMethodIntent.confidence} confidence${
+        httpMethodIntent.signals.length ? ` via ${httpMethodIntent.signals.join(', ')}` : ''
+      })`
+    );
+  }
+
   const normalizedPrompt = contextDirectives.length
     ? `${basePrompt}\n\n[ARCANOS CONTEXT]\n${contextDirectives.join('\n')}`
     : basePrompt;
@@ -96,7 +107,8 @@ router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorR
       useRAG,
       useHRC,
       metadataKeys,
-      sourceField
+      sourceField,
+      httpMethodIntent
     }
   };
 
