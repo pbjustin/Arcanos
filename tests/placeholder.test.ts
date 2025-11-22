@@ -66,6 +66,15 @@ describe('AI endpoints in mock mode', () => {
     const payload = await response.json();
     expect(payload.result).toContain('[MOCK AI RESPONSE]');
     expect(payload.routingStages).toContain('ARCANOS-INTAKE:MOCK');
+    expect(payload.clientContext.basePrompt).toBe('How does the system behave?');
+    expect(payload.clientContext.flags).toMatchObject({
+      domain: 'diagnostics',
+      useRAG: true,
+      useHRC: false,
+      sourceField: 'message'
+    });
+    expect(payload.clientContext.routingDirectives).toContain('Domain routing hint: diagnostics');
+    expect(payload.clientContext.normalizedPrompt).toContain('[ARCANOS CONTEXT]');
   });
 
   it('provides deterministic mock diagnostics for /arcanos', async () => {
