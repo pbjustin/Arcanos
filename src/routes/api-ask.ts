@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { handleAIRequest, type AskRequest, type AskResponse } from './ask.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import type { ErrorResponseDTO } from '../types/dto.js';
+import type { ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
 
@@ -43,6 +43,14 @@ interface ChatGPTActionBody {
 router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorResponseDTO, ChatGPTActionBody>, res: Response<AskResponse | ErrorResponseDTO>) => {
   const { domain, useRAG, useHRC, sessionId, overrideAuditSafe, metadata } = req.body;
 
+  const sourceField =
+    (req.body.message && 'message') ||
+    (req.body.prompt && 'prompt') ||
+    (req.body.userInput && 'userInput') ||
+    (req.body.content && 'content') ||
+    (req.body.text && 'text') ||
+    (req.body.query && 'query');
+
   const basePrompt =
     req.body.message ||
     req.body.prompt ||
@@ -69,19 +77,34 @@ router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorR
   if (typeof useHRC === 'boolean') {
     contextDirectives.push(`HRC requested: ${useHRC ? 'ENABLED' : 'DISABLED'}`);
   }
+  let metadataKeys: string[] | undefined;
   if (metadata && Object.keys(metadata).length > 0) {
-    const keys = Object.keys(metadata).slice(0, 10);
-    contextDirectives.push(`Metadata keys: ${keys.join(', ')}`);
+    metadataKeys = Object.keys(metadata).slice(0, 10);
+    contextDirectives.push(`Metadata keys: ${metadataKeys.join(', ')}`);
   }
 
   const normalizedPrompt = contextDirectives.length
     ? `${basePrompt}\n\n[ARCANOS CONTEXT]\n${contextDirectives.join('\n')}`
     : basePrompt;
 
+  const clientContext: ClientContextDTO = {
+    basePrompt,
+    normalizedPrompt,
+    routingDirectives: contextDirectives,
+    flags: {
+      domain,
+      useRAG,
+      useHRC,
+      metadataKeys,
+      sourceField
+    }
+  };
+
   const normalizedRequest: AskRequest = {
     prompt: normalizedPrompt,
     sessionId,
-    overrideAuditSafe
+    overrideAuditSafe,
+    clientContext
   };
 
   const typedRequest = req as unknown as Request<{}, AskResponse | ErrorResponseDTO, AskRequest>;

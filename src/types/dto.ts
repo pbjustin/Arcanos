@@ -9,6 +9,32 @@
 import { z } from 'zod';
 
 /**
+ * Client context captured from frontend hints.
+ * Preserves normalized prompts and routing directives so callers can
+ * render the exact context that was attached to a request.
+ */
+export const clientContextSchema = z.object({
+  basePrompt: z.string().trim().max(6000, 'Base prompt exceeds maximum length of 6000 characters').optional(),
+  normalizedPrompt: z
+    .string()
+    .trim()
+    .max(8000, 'Normalized prompt exceeds maximum length of 8000 characters')
+    .optional(),
+  routingDirectives: z.array(z.string()).max(50, 'Too many routing directives provided').optional(),
+  flags: z
+    .object({
+      domain: z.string().trim().max(120, 'Domain hint cannot exceed 120 characters').optional(),
+      useRAG: z.boolean().optional(),
+      useHRC: z.boolean().optional(),
+      metadataKeys: z.array(z.string().trim()).max(50, 'Too many metadata keys provided').optional(),
+      sourceField: z.string().trim().max(50, 'Source field hint cannot exceed 50 characters').optional()
+    })
+    .optional()
+});
+
+export type ClientContextDTO = z.infer<typeof clientContextSchema>;
+
+/**
  * Reusable string field validator for text inputs.
  * Enforces trimming, minimum length of 1 character, and maximum of 6000 characters.
  */
@@ -39,7 +65,8 @@ export const aiRequestSchema = z
       .string()
       .trim()
       .max(50, 'Override token cannot exceed 50 characters')
-      .optional()
+      .optional(),
+    clientContext: clientContextSchema.optional()
   })
   .refine(
     data =>
@@ -88,6 +115,7 @@ export const aiResponseSchema = z.object({
   activeModel: z.string().optional(),
   fallbackFlag: z.boolean().optional(),
   error: z.string().optional(),
+  clientContext: clientContextSchema.optional(),
   datasetHarvest: z
     .array(
       z.object({
