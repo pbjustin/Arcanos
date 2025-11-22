@@ -3,7 +3,7 @@ import { runThroughBrain } from '../logic/trinity.js';
 import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders, commonSchemas } from '../utils/security.js';
-import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
+import type { AIRequestDTO, AIResponseDTO, ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
 
@@ -24,6 +24,7 @@ export type AskRequest = AIRequestDTO & {
   prompt: string;
   sessionId?: string;
   overrideAuditSafe?: string;
+  clientContext?: ClientContextDTO;
 };
 
 export interface AskResponse extends AIResponseDTO {
@@ -45,6 +46,7 @@ export interface AskResponse extends AIResponseDTO {
     requestId: string;
     logged: boolean;
   };
+  clientContext?: ClientContextDTO;
 }
 
 /**
@@ -72,7 +74,7 @@ export const handleAIRequest = async (
   try {
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe);
-    return res.json(output as AskResponse);
+    return res.json({ ...(output as AskResponse), clientContext: req.body.clientContext });
   } catch (err) {
     handleAIError(err, prompt, endpointName, res);
   }
