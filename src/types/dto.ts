@@ -27,7 +27,14 @@ export const clientContextSchema = z.object({
       useRAG: z.boolean().optional(),
       useHRC: z.boolean().optional(),
       metadataKeys: z.array(z.string().trim()).max(50, 'Too many metadata keys provided').optional(),
-      sourceField: z.string().trim().max(50, 'Source field hint cannot exceed 50 characters').optional()
+      sourceField: z.string().trim().max(50, 'Source field hint cannot exceed 50 characters').optional(),
+      httpMethodIntent: z
+        .object({
+          method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+          signals: z.array(z.string().trim()).max(20, 'Too many HTTP intent signals provided').optional(),
+          confidence: z.enum(['high', 'medium', 'low']).optional()
+        })
+        .optional()
     })
     .optional()
 });
