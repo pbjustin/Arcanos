@@ -15,15 +15,27 @@ export interface QueryInput {
   prompt: string;
   domain?: Domain;
   explicitSystemAccess?: boolean;
+  context?: string[];
 }
 
 export interface GuardedQuery extends QueryInput {
   domain: Domain;
+  prompt: string;
+  context?: string[];
 }
 
 export const DOMAIN_CATEGORIES = {
   user: ["gaming", "guides", "knowledge"] as Domain[],
   system: ["builds", "memory patterns", "audit logs"] as Domain[],
+};
+
+const DOMAIN_GUIDANCE: Record<Domain, string> = {
+  gaming: "Provide strategic, factual guidance grounded in known game mechanics.",
+  guides: "Offer step-by-step instructions and highlight prerequisites.",
+  knowledge: "Deliver concise, sourced facts; acknowledge gaps if unsure.",
+  builds: "Return reproducible build or deployment steps and configuration notes.",
+  "memory patterns": "Work with memory schema expectations and avoid leaking secrets.",
+  "audit logs": "Summarize observations precisely and flag any anomalies you infer.",
 };
 
 // ----------------------
@@ -35,6 +47,15 @@ function detectDomain(query: QueryInput): "user" | "system" {
 }
 
 export function guardQuery(query: QueryInput): GuardedQuery {
+  const trimmedPrompt = query.prompt?.trim();
+  if (!trimmedPrompt) {
+    throw new Error("Prompt cannot be empty");
+  }
+
+  const normalizedContext = query.context
+    ?.map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
   const domainType = detectDomain(query);
 
   if (domainType === "system" && !query.explicitSystemAccess) {
@@ -45,6 +66,8 @@ export function guardQuery(query: QueryInput): GuardedQuery {
 
   return {
     ...query,
+    prompt: trimmedPrompt,
+    context: normalizedContext,
     domain: query.domain || "knowledge", // Default to knowledge
   };
 }
@@ -52,6 +75,29 @@ export function guardQuery(query: QueryInput): GuardedQuery {
 // ----------------------
 // OpenAI Dispatch Wrapper
 // ----------------------
+function buildMessages(query: GuardedQuery) {
+  const messages: { role: "system" | "user"; content: string }[] = [
+    {
+      role: "system",
+      content: `Domain: ${query.domain}. ${DOMAIN_GUIDANCE[query.domain]}`,
+    },
+    {
+      role: "system",
+      content:
+        "Respond concisely, cite only provided facts, and say when information is unavailable.",
+    },
+  ];
+
+  if (query.context?.length) {
+    const formatted = query.context.map((item) => `- ${item}`).join("\n");
+    messages.push({ role: "system", content: `Context:\n${formatted}` });
+  }
+
+  messages.push({ role: "user", content: query.prompt });
+
+  return messages;
+}
+
 export async function dispatchQuery(rawQuery: QueryInput): Promise<string> {
   const safeQuery = guardQuery(rawQuery);
 
@@ -61,11 +107,11 @@ export async function dispatchQuery(rawQuery: QueryInput): Promise<string> {
 
   const response = await openai.chat.completions.create({
     model: getDefaultModel(),
-    messages: [
-      { role: "system", content: `Domain: ${safeQuery.domain}` },
-      { role: "user", content: safeQuery.prompt },
-    ],
-    temperature: 0.2,
+    messages: buildMessages(safeQuery),
+    temperature: 0.1,
+    top_p: 0.8,
+    frequency_penalty: 0.1,
+    presence_penalty: 0,
   });
 
   return response.choices[0].message?.content || "";
