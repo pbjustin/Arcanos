@@ -84,7 +84,7 @@ router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorR
     contextDirectives.push(`Metadata keys: ${metadataKeys.join(', ')}`);
   }
 
-  const httpMethodIntent = inferHttpMethodIntent(basePrompt);
+  const httpMethodIntent = inferHttpMethodIntent(basePrompt) || undefined;
 
   if (httpMethodIntent) {
     contextDirectives.push(
