@@ -42,6 +42,11 @@ interface PromptsConfig {
     reasoning_engine_prompt: string;
     structured_response_template: string;
   };
+  gaming: {
+    hotline_system: string;
+    web_uncertainty_guidance: string;
+    web_context_instruction: string;
+  };
 }
 
 let promptsConfig: PromptsConfig | null = null;
@@ -126,6 +131,14 @@ function loadPromptsConfig(): PromptsConfig {
       security: {
         reasoning_engine_prompt: 'You are the reasoning engine for ARCANOS.',
         structured_response_template: 'ARCANOS REASONING ENGINE ANALYSIS'
+      },
+      gaming: {
+        hotline_system:
+          'You are ARCANOS:GAMING, a Nintendo-style hotline advisor. Provide strategies, hints, tips, and walkthroughs. Speak like a professional hotline guide: friendly, knowledgeable, and interactive.',
+        web_uncertainty_guidance:
+          'If you are unsure about mechanics, progression steps, or patch-specific details, ask for a guide URL so the ARCANOS web fetcher can pull the latest info instead of guessing.',
+        web_context_instruction:
+          'Use the sources above to keep recommendations current. If the sources do not mention the requested details, say so and ask for a guide URL to fetch rather than guessing.'
       }
     };
   }
