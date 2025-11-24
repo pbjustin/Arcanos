@@ -1,8 +1,8 @@
 import fs from 'fs/promises';
-import path from 'path';
 import { getOpenAIClient } from './openai.js';
 import config from '../config/index.js';
 import { aiLogger } from '../utils/structuredLogging.js';
+import { writeJsonFile } from '../utils/fileStorage.js';
 
 export interface AssistantInfo {
   id: string;
@@ -83,10 +83,6 @@ export function normalizeAssistantName(name: string | null | undefined): string 
   return sanitized.replace(/\s+/g, '_').toUpperCase();
 }
 
-async function ensureRegistryDirectory(): Promise<void> {
-  await fs.mkdir(path.dirname(REGISTRY_PATH), { recursive: true });
-}
-
 export async function loadAssistantRegistry(): Promise<AssistantRegistry> {
   try {
     const content = await fs.readFile(REGISTRY_PATH, 'utf8');
@@ -115,8 +111,7 @@ export async function loadAssistantRegistry(): Promise<AssistantRegistry> {
 }
 
 export async function saveAssistantRegistry(registry: AssistantRegistry): Promise<void> {
-  await ensureRegistryDirectory();
-  await fs.writeFile(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  await writeJsonFile(REGISTRY_PATH, registry);
 }
 
 export async function getAssistantRegistry(): Promise<AssistantRegistry> {
