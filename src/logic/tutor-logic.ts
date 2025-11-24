@@ -5,6 +5,15 @@ import {
   generateMockResponse
 } from '../services/openai.js';
 import { searchScholarly } from '../services/scholarlyFetcher.js';
+import {
+  DEFAULT_AUDIT_SYSTEM_PROMPT,
+  DEFAULT_INTAKE_SYSTEM_PROMPT,
+  DEFAULT_REASONING_SYSTEM_PROMPT,
+  RESEARCH_REASONING_PROMPT,
+  buildGenericTutorPrompt,
+  buildResearchBriefPrompt,
+  buildResearchFallbackPrompt
+} from '../config/tutorPrompts.js';
 
 const DEFAULT_TOKEN_LIMIT = parseInt(process.env.TUTOR_DEFAULT_TOKEN_LIMIT ?? '200', 10);
 
@@ -74,10 +83,7 @@ async function runTutorPipeline(
     const intakeResponse = await client.chat.completions.create({
       model: intakeModel,
       messages: [
-        {
-          role: 'system',
-          content: options.intakePrompt || 'ARCANOS Intake: Route to Tutor module.'
-        },
+        { role: 'system', content: options.intakePrompt || DEFAULT_INTAKE_SYSTEM_PROMPT },
         { role: 'user', content: prompt }
       ],
       max_tokens: tokenLimit
@@ -90,9 +96,7 @@ async function runTutorPipeline(
       messages: [
         {
           role: 'system',
-          content:
-            options.reasoningPrompt ||
-            'You are ARCANOS:TUTOR, a professional educator. Provide structured, learner-friendly guidance that builds understanding step by step.'
+          content: options.reasoningPrompt || DEFAULT_REASONING_SYSTEM_PROMPT
         },
         { role: 'user', content: refinedPrompt }
       ],
@@ -107,9 +111,7 @@ async function runTutorPipeline(
       messages: [
         {
           role: 'system',
-          content:
-            options.auditPrompt ||
-            'ARCANOS Audit: Validate the tutoring response for accuracy, clarity, and pedagogical tone. Fix issues while preserving intent.'
+          content: options.auditPrompt || DEFAULT_AUDIT_SYSTEM_PROMPT
         },
         { role: 'user', content: reasoningOutput }
       ],
@@ -170,20 +172,14 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
       findSources: async (payload) => {
         const topic = (payload?.topic as string) || '';
         const sources = await searchScholarly(topic);
-        const list = sources
-          .map(
-            (s, i) => `${i + 1}. ${s.title} (${s.year}) - ${s.journal}`
-          )
-          .join('\n');
 
         const pipeline = await runTutorPipeline(
           sources.length
-            ? `Create a concise learning brief about ${topic} using the numbered academic sources below. Cite them inline as [source #] and highlight key takeaways for students.\n\n${list}`
-            : `No scholarly sources were located. Provide a credible overview of ${topic} and recommend next steps for finding academic references.`,
+            ? buildResearchBriefPrompt(topic, sources)
+            : buildResearchFallbackPrompt(topic),
           {
             tokenLimit: payload?.tokenLimit ?? DEFAULT_TOKEN_LIMIT,
-            reasoningPrompt:
-              'You are ARCANOS:TUTOR, an academic mentor. Synthesize the provided material into clear guidance with citations where possible.',
+            reasoningPrompt: RESEARCH_REASONING_PROMPT,
             temperature: 0.25
           }
         );
@@ -211,9 +207,7 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
     id: 'universal_fallback',
     modules: {
       generic: async (payload) => {
-        const pipeline = await runTutorPipeline(
-          `Process this request as a professional tutor. Respond with clear steps and checks for understanding. Input: ${JSON.stringify(payload)}`
-        );
+        const pipeline = await runTutorPipeline(buildGenericTutorPrompt(payload));
         return { ...pipeline };
       }
     }
