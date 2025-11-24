@@ -41,21 +41,6 @@ export function logAIConfig(defaultModel: string, fallbackModel: string): void {
 }
 
 /**
- * Logs worker initialization results
- */
-export function logWorkerStatus(workerResults: WorkerInitResult): void {
-  console.log(`🤖 Active Model: ${workerResults.database.connected ? 'Connected' : 'Using fallback'}`);
-  console.log(`🔌 Database: ${workerResults.database.connected ? 'Connected' : 'Disconnected'}`);
-  console.log(`📁 Workers Directory: ${SERVER_CONSTANTS.WORKERS_DIRECTORY}`);
-  console.log(`🔧 Workers Initialized: ${workerResults.initialized.length}`);
-  console.log(`📅 Workers Scheduled: ${workerResults.scheduled.length}`);
-  
-  if (workerResults.failed.length > 0) {
-    console.log(`❌ Workers Failed: ${workerResults.failed.length}`);
-  }
-}
-
-/**
  * Logs core route information
  */
 export function logCoreRoutes(): void {
