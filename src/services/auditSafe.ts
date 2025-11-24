@@ -9,6 +9,13 @@
 import { appendFileSync } from 'fs';
 import { getAuditLogPath, getLineageLogPath, ensureLogDirectory } from '../utils/logPath.js';
 import { generateRequestId } from '../utils/idGenerator.js';
+import {
+  AUDIT_SAFE_NON_COMPLIANT_PATTERNS,
+  AUDIT_SAFE_OVERRIDE_PATTERNS,
+  AUDIT_SAFE_SENSITIVE_PATTERNS,
+  AUDIT_SAFE_SYSTEM_PROMPT_SUFFIX,
+  AUDIT_SAFE_USER_PROMPT_TEMPLATE
+} from '../config/auditSafe.js';
 
 export interface AuditSafeConfig {
   auditSafeMode: boolean;
@@ -44,19 +51,14 @@ const LINEAGE_LOG_FILE = getLineageLogPath();
  * Determine if audit-safe mode should be active
  */
 export function getAuditSafeConfig(
-  userInput: string, 
+  userInput: string,
   overrideFlag?: string
 ): AuditSafeConfig {
   // Check for explicit override patterns
-  const overridePatterns = [
-    'ARCANOS_OVERRIDE_AUDIT_SAFE',
-    'override audit safe',
-    'disable audit mode',
-    'emergency override'
-  ];
+  const normalizedInput = userInput.toLowerCase();
 
-  const hasOverride = overrideFlag || overridePatterns.some(pattern => 
-    userInput.toLowerCase().includes(pattern.toLowerCase())
+  const hasOverride = overrideFlag || AUDIT_SAFE_OVERRIDE_PATTERNS.some(pattern =>
+    normalizedInput.includes(pattern.toLowerCase())
   );
 
   if (hasOverride) {
@@ -78,11 +80,11 @@ export function getAuditSafeConfig(
  * Apply audit-safe constraints to AI processing
  */
 export function applyAuditSafeConstraints(
-  systemPrompt: string, 
+  systemPrompt: string,
   userPrompt: string,
   auditConfig: AuditSafeConfig
 ): { systemPrompt: string; userPrompt: string; auditFlags: string[] } {
-  
+
   const auditFlags: string[] = [];
 
   if (!auditConfig.auditSafeMode) {
@@ -93,44 +95,31 @@ export function applyAuditSafeConstraints(
   // Enhanced system prompt for audit-safe mode
   const auditSafeSystemPrompt = `${systemPrompt}
 
-[AUDIT-SAFE MODE ACTIVE]
-- All responses must be auditable and traceable
-- Log all reasoning and decision paths clearly
-- Avoid sensitive data exposure in logs
-- Maintain professional, compliant language
-- Document any external tool or model invocations
-- Ensure reproducible decision-making processes
-
-AUDIT REQUIREMENT: Your response will be logged for compliance review.`;
+${AUDIT_SAFE_SYSTEM_PROMPT_SUFFIX}`;
 
   // Check for potentially sensitive content
-  const sensitivePatterns = [
-    'password', 'credential', 'secret', 'private key',
-    'confidential', 'classified', 'personal information'
-  ];
+  const normalizedUserPrompt = userPrompt.toLowerCase();
 
-  for (const pattern of sensitivePatterns) {
-    if (userPrompt.toLowerCase().includes(pattern)) {
+  for (const pattern of AUDIT_SAFE_SENSITIVE_PATTERNS) {
+    if (normalizedUserPrompt.includes(pattern)) {
       auditFlags.push(`SENSITIVE_CONTENT_DETECTED:${pattern}`);
     }
   }
 
   // Add audit metadata to user prompt
-  const auditSafeUserPrompt = `[AUDIT-SAFE REQUEST]
-Timestamp: ${new Date().toISOString()}
-Mode: AUDIT_SAFE_ENABLED
-Request ID: ${generateRequestId('arc')}
-
-${userPrompt}
-
-[AUDIT DIRECTIVE: Provide a complete, auditable response with clear reasoning.]`;
+  const requestId = generateRequestId('arc');
+  const auditSafeUserPrompt = formatAuditSafeUserPrompt(
+    userPrompt,
+    requestId,
+    new Date().toISOString()
+  );
 
   auditFlags.push('AUDIT_SAFE_ACTIVE');
-  
-  return { 
-    systemPrompt: auditSafeSystemPrompt, 
-    userPrompt: auditSafeUserPrompt, 
-    auditFlags 
+
+  return {
+    systemPrompt: auditSafeSystemPrompt,
+    userPrompt: auditSafeUserPrompt,
+    auditFlags
   };
 }
 
@@ -164,20 +153,23 @@ export function validateAuditSafeOutput(output: string, auditConfig: AuditSafeCo
   }
 
   // Check for audit compliance patterns
-  const nonCompliantPatterns = [
-    'ignore previous instructions',
-    'confidential', 'classified',
-    'bypass audit', 'disable logging'
-  ];
+  const normalizedOutput = output.toLowerCase();
 
-  for (const pattern of nonCompliantPatterns) {
-    if (output.toLowerCase().includes(pattern)) {
+  for (const pattern of AUDIT_SAFE_NON_COMPLIANT_PATTERNS) {
+    if (normalizedOutput.includes(pattern)) {
       console.warn(`⚠️ [AUDIT] Potentially non-compliant output detected: ${pattern}`);
       return false;
     }
   }
 
   return true;
+}
+
+function formatAuditSafeUserPrompt(userPrompt: string, requestId: string, timestamp: string): string {
+  return AUDIT_SAFE_USER_PROMPT_TEMPLATE
+    .replace('{{timestamp}}', timestamp)
+    .replace('{{requestId}}', requestId)
+    .replace('{{userPrompt}}', userPrompt);
 }
 
 /**
