@@ -1,3 +1,4 @@
+import { getPrompt } from '../config/prompts.js';
 import { getOpenAIClient, getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js';
 import { fetchAndClean } from './webFetcher.js';
 
@@ -35,8 +36,11 @@ async function buildWebContext(urls: string[]): Promise<{ context: string; sourc
   return { context, sources };
 }
 
-const WEB_UNCERTAINTY_GUIDANCE =
-  'If you are unsure about mechanics, progression steps, or patch-specific details, ask for a guide URL so the ARCANOS web fetcher can pull the latest info instead of guessing.';
+const gamingPrompts = {
+  hotlineSystem: getPrompt('gaming', 'hotline_system'),
+  webUncertaintyGuidance: getPrompt('gaming', 'web_uncertainty_guidance'),
+  webContextInstruction: getPrompt('gaming', 'web_context_instruction')
+};
 
 export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
   const openai = getOpenAIClient();
@@ -68,10 +72,10 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
       ? 'Guides were requested but no usable snippets were retrieved.'
       : 'No live sources were provided.';
 
-    let enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${noWebContextNote}\n\n${WEB_UNCERTAINTY_GUIDANCE}`;
+    let enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${noWebContextNote}\n\n${gamingPrompts.webUncertaintyGuidance}`;
 
     if (webContext) {
-      enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${webContext}\n\nUse the sources above to keep recommendations current. If the sources do not mention the requested details, say so and ask for a guide URL to fetch rather than guessing.`;
+      enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${webContext}\n\n${gamingPrompts.webContextInstruction}`;
     }
 
     // Step 1: Fine-tuned ARCANOS Intake
@@ -90,8 +94,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
       messages: [
         {
           role: 'system',
-          content:
-            'You are ARCANOS:GAMING, a Nintendo-style hotline advisor. Provide strategies, hints, tips, and walkthroughs. Speak like a professional hotline guide: friendly, knowledgeable, and interactive.'
+          content: gamingPrompts.hotlineSystem
         },
         { role: 'user', content: refinedPrompt }
       ],

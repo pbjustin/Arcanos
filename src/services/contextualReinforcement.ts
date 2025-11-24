@@ -83,6 +83,25 @@ function limitText(text: string, maxLength: number = 320): string {
   return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function buildReinforcementSection(basePrompt: string, digest?: string, lastAudit?: AuditRecord): string {
+  const reinforcementLines = [
+    '[ARCANOS Contextual Reinforcement]',
+    `Mode: ${config.reinforcement.mode}`,
+    `Window: ${config.reinforcement.window}`,
+    `Minimum CLEAR score: ${config.reinforcement.minimumClearScore}`
+  ];
+
+  if (digest) {
+    reinforcementLines.push(`Recent context digest:\n${digest}`);
+  }
+
+  if (lastAudit) {
+    reinforcementLines.push(`Last CLEAR score: ${lastAudit.clearScore.toFixed(2)} (${lastAudit.patternId ?? 'n/a'})`);
+  }
+
+  return `${basePrompt}\n\n${reinforcementLines.join('\n')}`;
+}
+
 /**
  * Creates a complete context entry from partial data.
  * Auto-generates ID and timestamp if not provided.
@@ -236,7 +255,7 @@ export function buildContextualSystemPrompt(basePrompt: string): string {
   }
 
   if (contextWindow.length === 0) {
-    return `${basePrompt}\n\n[ARCANOS Contextual Reinforcement]\nMode: ${config.reinforcement.mode}\nWindow: ${config.reinforcement.window}\nMinimum CLEAR score: ${config.reinforcement.minimumClearScore}`;
+    return buildReinforcementSection(basePrompt);
   }
 
   const effectiveWindow = Math.min(contextWindow.length, config.reinforcement.window);
@@ -255,14 +274,7 @@ export function buildContextualSystemPrompt(basePrompt: string): string {
 
   const lastAudit = auditHistory[auditHistory.length - 1];
 
-  return (
-    `${basePrompt}\n\n[ARCANOS Contextual Reinforcement]\n` +
-    `Mode: ${config.reinforcement.mode}\n` +
-    `Window: ${config.reinforcement.window}\n` +
-    `Minimum CLEAR score: ${config.reinforcement.minimumClearScore}\n` +
-    `Recent context digest:\n${digest}` +
-    (lastAudit ? `\nLast CLEAR score: ${lastAudit.clearScore.toFixed(2)} (${lastAudit.patternId ?? 'n/a'})` : '')
-  );
+  return buildReinforcementSection(basePrompt, digest, lastAudit);
 }
 
 export function getContextWindow(): ReinforcementContextEntry[] {
