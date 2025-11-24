@@ -42,7 +42,7 @@ function loadConfigFile(): Partial<FallbackMessagesConfig> | null {
   return null;
 }
 
-let cachedFallbackMessages: FallbackMessagesConfig | null = null;
+let cachedFallbackMessages: FallbackMessagesConfig | undefined;
 
 export function getFallbackMessages(): FallbackMessagesConfig {
   if (cachedFallbackMessages) {
@@ -61,7 +61,7 @@ export function getFallbackMessages(): FallbackMessagesConfig {
 
   cachedFallbackMessages = mergedMessages;
 
-  return cachedFallbackMessages!;
+  return cachedFallbackMessages;
 }
 
 function applyTemplate(message: string, prompt?: string): string {
