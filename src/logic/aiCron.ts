@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../utils/structuredLogging.js';
+import { writeJsonFile } from '../utils/fileStorage.js';
 
 /**
  * Sets up recurring AI maintenance tasks.
@@ -12,8 +13,7 @@ const HB_FILE = path.join(process.cwd(), 'memory', 'heartbeat.json');
 async function writeHeartbeat(): Promise<void> {
   const hb = { ts: Date.now(), pid: process.pid };
   try {
-    await fs.mkdir(path.dirname(HB_FILE), { recursive: true });
-    await fs.writeFile(HB_FILE, JSON.stringify(hb));
+    await writeJsonFile(HB_FILE, hb, { space: 0 });
   } catch (err) {
     logger.error('Failed to write heartbeat file', {
       module: 'aiCron',
