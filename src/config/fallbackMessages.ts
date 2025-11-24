@@ -3,10 +3,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from '../utils/structuredLogging.js';
 
-export interface FallbackMessagesConfig {
-  default: string;
-  [key: string]: string;
-}
+export type FallbackMessagesConfig = Record<string, string> & { default: string };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,13 +49,19 @@ export function getFallbackMessages(): FallbackMessagesConfig {
     return cachedFallbackMessages;
   }
 
-  const configMessages = loadConfigFile();
-  cachedFallbackMessages = {
+  const configMessages = loadConfigFile() ?? {};
+  const sanitizedMessages: Record<string, string> = Object.fromEntries(
+    Object.entries(configMessages).filter(([, value]) => typeof value === 'string')
+  ) as Record<string, string>;
+
+  const mergedMessages: FallbackMessagesConfig = {
     ...DEFAULT_FALLBACK_MESSAGES,
-    ...(configMessages ?? {})
+    ...sanitizedMessages
   };
 
-  return cachedFallbackMessages;
+  cachedFallbackMessages = mergedMessages;
+
+  return cachedFallbackMessages!;
 }
 
 function applyTemplate(message: string, prompt?: string): string {
