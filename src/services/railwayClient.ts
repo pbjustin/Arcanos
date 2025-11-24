@@ -1,25 +1,19 @@
+import { getRailwayApiConfig, RAILWAY_DEFAULTS } from '../config/railway.js';
 import { logger } from '../utils/structuredLogging.js';
 
-const DEFAULT_GRAPHQL_ENDPOINT = 'https://backboard.railway.app/graphql/v2';
-const GRAPHQL_ENDPOINT = process.env.RAILWAY_GRAPHQL_ENDPOINT || DEFAULT_GRAPHQL_ENDPOINT;
-const DEFAULT_GRAPHQL_TIMEOUT_MS = 15_000;
+const railwayApiConfig = getRailwayApiConfig();
 
-const GRAPHQL_TIMEOUT_MS = (() => {
-  const rawTimeout = process.env.RAILWAY_GRAPHQL_TIMEOUT_MS?.trim();
-  if (!rawTimeout) {
-    return DEFAULT_GRAPHQL_TIMEOUT_MS;
-  }
+if (
+  process.env.RAILWAY_GRAPHQL_TIMEOUT_MS &&
+  railwayApiConfig.timeoutMs === RAILWAY_DEFAULTS.GRAPHQL_TIMEOUT_MS &&
+  process.env.RAILWAY_GRAPHQL_TIMEOUT_MS.trim() !== `${RAILWAY_DEFAULTS.GRAPHQL_TIMEOUT_MS}`
+) {
+  logger.warn('Ignoring invalid RAILWAY_GRAPHQL_TIMEOUT_MS value', {
+    rawTimeout: process.env.RAILWAY_GRAPHQL_TIMEOUT_MS,
+  });
+}
 
-  const parsed = Number.parseInt(rawTimeout, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    logger.warn('Ignoring invalid RAILWAY_GRAPHQL_TIMEOUT_MS value', {
-      rawTimeout
-    });
-    return DEFAULT_GRAPHQL_TIMEOUT_MS;
-  }
-
-  return parsed;
-})();
+const { endpoint: GRAPHQL_ENDPOINT, timeoutMs: GRAPHQL_TIMEOUT_MS } = railwayApiConfig;
 
 interface GraphQLErrorPayload {
   message: string;
