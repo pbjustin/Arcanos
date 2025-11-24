@@ -5,18 +5,12 @@
 
 import { Request, Response, NextFunction } from 'express';
 import config from '../config/index.js';
-import { getOpenAIClient, getGPT5Model } from '../services/openai.js';
+import { getOpenAIClient } from '../services/openai.js';
 import { responseCache } from '../utils/cache.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { getFallbackMessage } from '../config/fallbackMessages.js';
-
-interface FallbackRequest {
-  prompt: string;
-  max_completion_tokens?: number;
-  temperature?: number;
-  model?: string;
-}
+import { FALLBACK_RESPONSE_MESSAGES } from '../config/fallbackResponseMessages.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -30,7 +24,7 @@ export interface DegradedResponse {
  * Generates a cached or minimal response when AI services are unavailable
  */
 export function generateDegradedResponse(
-  prompt: string, 
+  prompt: string,
   endpoint: string = 'unknown'
 ): DegradedResponse {
   const timestamp = new Date().toISOString();
@@ -42,8 +36,9 @@ export function generateDegradedResponse(
   if (cachedResponse) {
     return {
       status: 'degraded',
-      message: 'Service temporarily unavailable - returning cached response',
-      data: cachedResponse.output || cachedResponse.result || 'Cached response available',
+      message: FALLBACK_RESPONSE_MESSAGES.cacheUnavailable,
+      data:
+        cachedResponse.output || cachedResponse.result || FALLBACK_RESPONSE_MESSAGES.cachedResponsePlaceholder,
       fallbackMode: 'cache',
       timestamp
     };
@@ -57,7 +52,7 @@ export function generateDegradedResponse(
 
   return {
     status: 'degraded',
-    message: 'AI services temporarily unavailable - operating in degraded mode',
+    message: FALLBACK_RESPONSE_MESSAGES.degradedMode,
     data: mockResponse,
     fallbackMode: 'mock',
     timestamp
@@ -85,7 +80,8 @@ export function createFallbackMiddleware() {
 
     // Determine endpoint from request path
     const endpoint = req.path.split('/').pop() || 'unknown';
-    const prompt = req.body?.prompt || req.body?.scenario || req.body?.query || 'No input provided';
+    const prompt =
+      req.body?.prompt || req.body?.scenario || req.body?.query || FALLBACK_RESPONSE_MESSAGES.defaultPrompt;
 
     console.log(`🔄 Fallback mode activated for ${endpoint} - ${err.message}`);
 
@@ -159,7 +155,8 @@ export function createHealthCheckMiddleware() {
     // If OpenAI client is not available, immediately trigger degraded mode
     if (!client && enforcePreemptive) {
       const endpoint = req.path.split('/').pop() || 'unknown';
-      const prompt = req.body?.prompt || req.body?.scenario || req.body?.query || 'Health check triggered fallback';
+      const prompt =
+        req.body?.prompt || req.body?.scenario || req.body?.query || FALLBACK_RESPONSE_MESSAGES.healthCheckPrompt;
 
       console.log(`🔄 Preemptive fallback mode activated for ${endpoint} - OpenAI client unavailable`);
 
@@ -181,70 +178,16 @@ export function createHealthCheckMiddleware() {
 export function createFallbackTestRoute() {
   return (req: Request, res: Response) => {
     const testResponse = generateDegradedResponse(
-      'Test degraded mode functionality',
+      FALLBACK_RESPONSE_MESSAGES.fallbackTestPrompt,
       'test'
     );
     
     res.json({
       ...testResponse,
-      message: 'Fallback system test - this endpoint simulates degraded mode',
+      message: FALLBACK_RESPONSE_MESSAGES.fallbackTestMessage,
       systemHealth: getFallbackSystemHealth()
     });
   };
-}
-
-/**
- * Handle fallback request by ensuring token parameter defaults.
- * Adds default max_completion_tokens when missing.
- * This consolidates functionality from the old services/fallbackHandler.ts
- */
-export async function handleFallbackRequest(request: FallbackRequest) {
-  const {
-    prompt,
-    max_completion_tokens = 1024,
-    temperature = 0.7,
-    model = getGPT5Model()
-  } = request;
-
-  // Log diagnostic for transparency
-  console.log(`[FallbackHandler] Model: ${model}, Tokens: ${max_completion_tokens}`);
-
-  // Use centralized OpenAI service instead of direct API call
-  return await callModelAPI({
-    model,
-    prompt,
-    max_completion_tokens,
-    temperature
-  });
-}
-
-// Use centralized OpenAI client instead of direct fetch
-async function callModelAPI(payload: {
-  model: string;
-  prompt: string;
-  max_completion_tokens: number;
-  temperature: number;
-}) {
-  try {
-    const client = getOpenAIClient();
-    if (!client) {
-      throw new Error('OpenAI client not available');
-    }
-
-    const response = await client.chat.completions.create({
-      model: payload.model,
-      messages: [
-        { role: 'user', content: payload.prompt }
-      ],
-      max_completion_tokens: payload.max_completion_tokens,
-      temperature: payload.temperature
-    });
-
-    return response;
-  } catch (error) {
-    console.error('[FallbackHandler] Error:', error);
-    throw error;
-  }
 }
 
 export default {
@@ -252,6 +195,5 @@ export default {
   createHealthCheckMiddleware,
   createFallbackTestRoute,
   generateDegradedResponse,
-  getFallbackSystemHealth,
-  handleFallbackRequest
+  getFallbackSystemHealth
 };
