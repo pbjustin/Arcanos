@@ -7,6 +7,7 @@ import {
   getDefaultModel
 } from './openai.js';
 import { setMemory } from './memory.js';
+import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from '../config/researchPrompts.js';
 
 export interface ResearchSourceSummary {
   url: string;
@@ -41,6 +42,21 @@ function sanitizeSegment(segment: string): string {
 function resolveSourcesDir(topic: string): string {
   const safeTopic = sanitizeSegment(topic);
   return path.join('memory', 'research', safeTopic, 'sources');
+}
+
+async function runResearchCompletion(
+  messages: Parameters<typeof createCentralizedCompletion>[0],
+  model: string,
+  temperature: number,
+  maxTokens: number
+): Promise<string> {
+  const response = await createCentralizedCompletion(messages, {
+    temperature,
+    max_tokens: maxTokens,
+    model
+  });
+
+  return (response as any)?.choices?.[0]?.message?.content?.trim() || '';
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -91,20 +107,14 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
       const messages = [
         {
           role: 'system' as const,
-          content:
-            'You are ARCANOS Research Summarizer. Provide a concise, factual summary of the provided source. Highlight key points relevant to the topic and keep it under 180 words.'
+          content: RESEARCH_SUMMARIZER_PROMPT
         },
         {
           role: 'user' as const,
           content: `Topic: ${topic}\nSource URL: ${url}\n\nContent (truncated):\n${content}`
         }
       ];
-      const response = await createCentralizedCompletion(messages, {
-        temperature: 0.2,
-        max_tokens: 600,
-        model: researchModel
-      });
-      const summary = (response as any)?.choices?.[0]?.message?.content?.trim();
+      const summary = await runResearchCompletion(messages, researchModel, 0.2, 600);
       if (summary) {
         summaries.push({ url, summary });
       } else {
@@ -119,8 +129,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   const synthesisMessages = [
     {
       role: 'system' as const,
-      content:
-        'You are ARCANOS Research Synthesizer. Combine provided source notes into a cohesive research brief with citations in the form [Source #]. Finish with a sentence that states how many sources were analyzed.'
+      content: RESEARCH_SYNTHESIS_PROMPT
     },
     {
       role: 'user' as const,
@@ -132,12 +141,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
     }
   ];
 
-  const synthesis = await createCentralizedCompletion(synthesisMessages, {
-    temperature: 0.25,
-    max_tokens: 900,
-    model: researchModel
-  });
-  const insight = (synthesis as any)?.choices?.[0]?.message?.content?.trim() || '';
+  const insight = await runResearchCompletion(synthesisMessages, researchModel, 0.25, 900);
 
   const result: ResearchResult = {
     topic,
