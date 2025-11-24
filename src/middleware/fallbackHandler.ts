@@ -9,6 +9,7 @@ import { getOpenAIClient, getGPT5Model } from '../services/openai.js';
 import { responseCache } from '../utils/cache.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
+import { getFallbackMessage } from '../config/fallbackMessages.js';
 
 interface FallbackRequest {
   prompt: string;
@@ -49,15 +50,10 @@ export function generateDegradedResponse(
   }
 
   // Generate appropriate mock responses based on endpoint
-  const mockResponses = {
-    ask: ARCANOS_SYSTEM_PROMPTS.FALLBACK_MODE(prompt),
-    arcanos: `ARCANOS system temporarily operating in fallback mode. Your request has been noted but cannot be fully processed at this time.`,
-    sim: `Simulation request received but cannot be processed in degraded mode. Please retry when services are restored.`,
-    memory: `Memory operation temporarily unavailable. System is operating in read-only fallback mode.`,
-    default: `Service temporarily unavailable. Operating in degraded mode with limited functionality.`
-  };
-
-  const mockResponse = mockResponses[endpoint as keyof typeof mockResponses] || mockResponses.default;
+  const mockResponse =
+    endpoint === 'ask'
+      ? ARCANOS_SYSTEM_PROMPTS.FALLBACK_MODE(prompt)
+      : getFallbackMessage(endpoint, prompt);
 
   return {
     status: 'degraded',
