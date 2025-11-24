@@ -1,12 +1,19 @@
 import { callOpenAI, getDefaultModel } from './openai.js';
 import type { WorkerInfoDTO, WorkerStatusResponseDTO } from '../types/dto.js';
+import {
+  AUTO_HEAL_RECOMMENDED_ACTIONS,
+  AUTO_HEAL_SEVERITY_LEVELS,
+  AUTO_HEAL_TOKEN_LIMIT,
+  buildAutoHealPrompt
+} from '../config/autoHeal.js';
 
-export type AutoHealSeverity = 'ok' | 'warning' | 'critical';
+export type AutoHealSeverity = (typeof AUTO_HEAL_SEVERITY_LEVELS)[number];
+export type AutoHealRecommendedAction = (typeof AUTO_HEAL_RECOMMENDED_ACTIONS)[number];
 
 export interface AutoHealPlan {
   planId: string;
   severity: AutoHealSeverity;
-  recommendedAction: 'monitor' | 'restart-workers' | 'fallback-model' | 'escalate';
+  recommendedAction: AutoHealRecommendedAction;
   message: string;
   steps: string[];
   fallbackModel?: string;
@@ -72,16 +79,9 @@ export async function buildAutoHealPlan(status: WorkerStatusResponseDTO): Promis
       heuristic: heuristics
     };
 
-    const prompt = [
-      `You are ARCANOS reliability control operating on fine-tuned model ${model}.`,
-      'Analyze the worker status JSON and produce recovery guidance in JSON with fields planId, severity, recommendedAction,',
-      'message, steps (array), and fallbackModel.',
-      'Recommended actions must be one of monitor, restart-workers, fallback-model, or escalate.',
-      'JSON input:',
-      JSON.stringify(payload)
-    ].join('\n');
+    const prompt = buildAutoHealPrompt(model, payload);
 
-    const result = await callOpenAI(model, prompt, 1200, false, {
+    const result = await callOpenAI(model, prompt, AUTO_HEAL_TOKEN_LIMIT, false, {
       responseFormat: { type: 'json_object' },
       metadata: { route: 'auto-heal' }
     });
@@ -91,10 +91,10 @@ export async function buildAutoHealPlan(status: WorkerStatusResponseDTO): Promis
 
     return {
       planId: typeof parsed.planId === 'string' ? parsed.planId : 'ai-plan',
-      severity: ['ok', 'warning', 'critical'].includes(parsed.severity)
+      severity: AUTO_HEAL_SEVERITY_LEVELS.includes(parsed.severity)
         ? (parsed.severity as AutoHealSeverity)
         : heuristics.severity,
-      recommendedAction: ['monitor', 'restart-workers', 'fallback-model', 'escalate'].includes(parsed.recommendedAction)
+      recommendedAction: AUTO_HEAL_RECOMMENDED_ACTIONS.includes(parsed.recommendedAction)
         ? parsed.recommendedAction
         : heuristics.recommendedAction,
       message: typeof parsed.message === 'string' ? parsed.message : heuristics.message,
