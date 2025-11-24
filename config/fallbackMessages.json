@@ -1,0 +1,6 @@
+{
+  "arcanos": "ARCANOS system temporarily operating in fallback mode. Your request has been noted but cannot be fully processed at this time.",
+  "sim": "Simulation request received but cannot be processed in degraded mode. Please retry when services are restored.",
+  "memory": "Memory operation temporarily unavailable. System is operating in read-only fallback mode.",
+  "default": "Service temporarily unavailable. Operating in degraded mode with limited functionality."
+}
