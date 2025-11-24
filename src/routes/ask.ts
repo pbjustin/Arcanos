@@ -29,7 +29,15 @@ const askValidationSchema = {
 };
 
 export const askValidationMiddleware = (req: Request, res: Response, next: () => void) => {
-  const validation = validateInput(req.body, askValidationSchema);
+  const rawSource = req.method === 'GET' ? req.query : req.body;
+  const source =
+    req.method === 'GET'
+      ? Object.fromEntries(
+          Object.entries(rawSource).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value])
+        )
+      : rawSource;
+
+  const validation = validateInput(source, askValidationSchema);
 
   if (!validation.isValid) {
     return res.status(400).json({
@@ -120,8 +128,10 @@ export const handleAIRequest = async (
 
 // Primary ask endpoint routed through the Trinity brain (no confirmation required)
 router.post('/ask', askValidationMiddleware, (req, res) => handleAIRequest(req, res, 'ask'));
+router.get('/ask', askValidationMiddleware, (req, res) => handleAIRequest(req, res, 'ask'));
 
 // Brain endpoint (alias for ask with same functionality) still requires confirmation
 router.post('/brain', askValidationMiddleware, confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
+router.get('/brain', askValidationMiddleware, confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
 
 export default router;
