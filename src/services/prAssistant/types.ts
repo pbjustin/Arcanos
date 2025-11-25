@@ -1,5 +1,3 @@
-import type { VALIDATION_CONSTANTS } from './constants.js';
-
 export interface CheckResult {
   status: '✅' | '❌' | '⚠️';
   message: string;
@@ -20,7 +18,15 @@ export interface PRAnalysisResult {
   reasoning: string;
   recommendations: string[];
 }
-export type ValidationConfig = typeof VALIDATION_CONSTANTS;
+
+export interface ValidationConfig {
+  LARGE_FILE_THRESHOLD: number;
+  LARGE_STRING_THRESHOLD: number;
+  TEST_TIMEOUT: number;
+  BUILD_TIMEOUT: number;
+  LINT_TIMEOUT: number;
+  DEFAULT_PORT: number;
+}
 
 export interface CheckContext {
   workingDir: string;
