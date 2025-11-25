@@ -6,6 +6,11 @@
 
 import { getStatus, query } from '../db.js';
 import { getWorkerRuntimeStatus, type WorkerRuntimeStatus } from '../config/workerConfig.js';
+import {
+  DIAGNOSTIC_JOBS,
+  DIAGNOSTIC_QUERIES,
+  DIAGNOSTIC_WORKER_MAPPING
+} from '../config/systemDiagnosticsConfig.js';
 
 interface WorkerDiagnostics {
   count: number;
@@ -53,6 +58,13 @@ interface SystemDiagnostics {
   system_error?: string;
 }
 
+type DiagnosticJob = (typeof DIAGNOSTIC_JOBS)[number];
+type DiagnosticRoute = keyof typeof DIAGNOSTIC_WORKER_MAPPING;
+
+function getWorkerIdForRoute(route: DiagnosticRoute): string | undefined {
+  return DIAGNOSTIC_WORKER_MAPPING[route];
+}
+
 /**
  * Get worker count and health status
  */
@@ -70,14 +82,7 @@ async function getWorkerDiagnostics(): Promise<WorkerDiagnostics> {
 
   try {
     // Get recent worker activity (last hour)
-    const workerActivity = await query(
-      `SELECT worker_id, COUNT(*) as activity_count, 
-              MAX(created_at) as last_activity
-       FROM execution_log 
-       WHERE created_at > NOW() - INTERVAL '1 hour'
-       GROUP BY worker_id`,
-      []
-    );
+    const workerActivity = await query(DIAGNOSTIC_QUERIES.WORKER_ACTIVITY_LAST_HOUR, []);
 
     const activeWorkers = workerActivity.rows.length;
     const expectedWorkers = 4; // init-workers spawns 4 workers
@@ -104,12 +109,7 @@ async function getWorkerDiagnostics(): Promise<WorkerDiagnostics> {
  */
 async function getSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
   const dbStatus = getStatus();
-  
-  const jobs: Omit<ScheduledJob, 'status' | 'lastRun' | 'executions24h'>[] = [
-    { name: 'nightly-audit', schedule: '0 2 * * *', route: 'audit.cron' },
-    { name: 'hourly-cleanup', schedule: '0 * * * *', route: 'job.cleanup' },
-    { name: 'async-processing', schedule: '*/5 * * * *', route: 'worker.queue' }
-  ];
+  const jobs: DiagnosticJob[] = [...DIAGNOSTIC_JOBS];
 
   if (!dbStatus.connected) {
     return {
@@ -119,14 +119,7 @@ async function getSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
 
   try {
     // Check for recent executions of scheduled jobs
-    const jobExecutions = await query(
-      `SELECT worker_id, COUNT(*) as executions, MAX(created_at) as last_run
-       FROM execution_log 
-       WHERE created_at > NOW() - INTERVAL '24 hours'
-         AND worker_id IN ('audit-runner', 'cleanup-worker', 'task-processor')
-       GROUP BY worker_id`,
-      []
-    );
+    const jobExecutions = await query(DIAGNOSTIC_QUERIES.JOB_EXECUTIONS_LAST_DAY, []);
 
     const executionMap: Record<string, { executions: number; lastRun: string }> = {};
     jobExecutions.rows.forEach((row: any) => {
@@ -138,12 +131,7 @@ async function getSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
 
     return {
       jobs: jobs.map(job => {
-        const workerId = {
-          'audit.cron': 'audit-runner',
-          'job.cleanup': 'cleanup-worker',
-          'worker.queue': 'task-processor'
-        }[job.route];
-
+        const workerId = getWorkerIdForRoute(job.route as DiagnosticRoute);
         const execution = workerId ? executionMap[workerId] : undefined;
         
         return {
@@ -169,11 +157,9 @@ async function getSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
  * Get route health status
  */
 async function getRouteDiagnostics(): Promise<RouteStatus[]> {
-  const routes: Omit<RouteStatus, 'active' | 'requests1h'>[] = [
-    { name: 'worker.queue' },
-    { name: 'audit.cron' },
-    { name: 'job.cleanup' }
-  ];
+  const routes: Omit<RouteStatus, 'active' | 'requests1h'>[] = Object.keys(DIAGNOSTIC_WORKER_MAPPING).map(
+    route => ({ name: route })
+  );
 
   const dbStatus = getStatus();
   
@@ -183,14 +169,7 @@ async function getRouteDiagnostics(): Promise<RouteStatus[]> {
 
   try {
     // Check recent activity for each route
-    const routeActivity = await query(
-      `SELECT worker_id, COUNT(*) as requests
-       FROM execution_log 
-       WHERE created_at > NOW() - INTERVAL '1 hour'
-         AND worker_id IN ('audit-runner', 'cleanup-worker', 'task-processor')
-       GROUP BY worker_id`,
-      []
-    );
+    const routeActivity = await query(DIAGNOSTIC_QUERIES.ROUTE_ACTIVITY_LAST_HOUR, []);
 
     const activityMap: Record<string, number> = {};
     routeActivity.rows.forEach((row: any) => {
@@ -198,16 +177,12 @@ async function getRouteDiagnostics(): Promise<RouteStatus[]> {
     });
 
     return routes.map(route => {
-      const workerId = {
-        'worker.queue': 'task-processor',
-        'audit.cron': 'audit-runner',
-        'job.cleanup': 'cleanup-worker'
-      }[route.name];
+      const workerId = getWorkerIdForRoute(route.name as DiagnosticRoute);
 
       return {
         name: route.name,
         active: workerId ? !!activityMap[workerId] : false,
-        requests1h: workerId ? (activityMap[workerId] || 0) : 0
+        requests1h: workerId ? activityMap[workerId] || 0 : 0
       };
     });
   } catch (error) {
