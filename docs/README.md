@@ -1,6 +1,6 @@
 # Arcanos Documentation Index
 
-> **Last Updated:** 2025-02-14 | **Version:** 1.0.0
+> **Last Updated:** 2025-11-25 | **Version:** 1.0.0
 
 Welcome to the documentation hub for the Arcanos AI-assisted backend. This
 index highlights the most relevant guides for getting started, configuring the
@@ -99,12 +99,12 @@ still need love after each audit sweep.
 
 ## 🗃️ Archived / Retired Notes
 
-The February 2025 review removed duplicate or stale files so we only maintain
+The November 2025 audit removed redundant or stale files so we only maintain
 one source of truth per topic. Pull historical context from Git history if
 needed.
 
-- `docs/changelog.md` – Duplicate of the root changelog and lagging by two
-  releases.
+- `docs/CHANGELOG.md` – Removed duplicate of the root changelog.
+- `docs/changelog.md` – Older duplicate that lagged behind by two releases.
 - `docs/DOCUMENTATION_AUDIT_SUMMARY.md` – Snapshot from 2024 superseded by the
   living status report referenced above.
 - `docs/ai-guides/CLARKE_HANDLER_GUIDE.md` – Deprecated resilience wrapper; use
