@@ -3,98 +3,15 @@
  * Focused on codebase integrity and platform alignment
  */
 
-import { spawn, type SpawnOptions } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
-import { logger } from '../utils/structuredLogging.js';
 import { getNumericConfig } from '../utils/constants.js';
-import { CHECK_TITLES, REPORT_TEMPLATE } from '../config/prAssistantTemplates.js';
-
-// Configuration Constants
-const VALIDATION_CONSTANTS = {
-  LARGE_FILE_THRESHOLD: 500,  // Lines threshold for large file detection
-  LARGE_STRING_THRESHOLD: 100, // Character threshold for large inline strings
-  TEST_TIMEOUT: 120000, // 2 minutes timeout for test execution
-  BUILD_TIMEOUT: 120000, // 2 minutes timeout for build execution  
-  LINT_TIMEOUT: 60000, // 1 minute timeout for linting
-  DEFAULT_PORT: getNumericConfig('DEFAULT_PORT', 'DEFAULT_PORT') // Default port from environment or Railway default
-} as const;
-
-// Railway deployment validation patterns
-const RAILWAY_VALIDATION_PATTERNS = [
-  { pattern: /(?:http:\/\/|https:\/\/)(?!localhost|127\.0\.0\.1|example\.com)/gi, message: 'Hardcoded URLs detected' },
-  { pattern: /['"`]\w+\.\w+\.\w+['"`]/gi, message: 'Potential hardcoded domains' },
-  { pattern: /:\s*\d{4,5}(?!\s*[,}\]])/gi, message: 'Hardcoded port numbers' },
-  { pattern: /password\s*[=:]\s*['"`][^'"`]{3,}['"`]/gi, message: 'Hardcoded password detected' },
-  { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }
-] as const;
-
-function sanitizeArgs(args: string[]): string[] {
-  return args.map(a => a.replace(/[^\w:/.-]/g, ''));
-}
-
-function runCommand(command: string, args: string[], options: SpawnOptions = {}): Promise<{ stdout: string; stderr: string; }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command, sanitizeArgs(args), { ...options, shell: false });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout?.on('data', d => { stdout += d; });
-    proc.stderr?.on('data', d => { stderr += d; });
-    proc.on('close', code => {
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(new Error(stderr || `Command failed: ${command} ${args.join(' ')}`));
-      }
-    });
-  });
-}
-
-/**
- * Helper to create standardized check results
- */
-function createCheckResult(
-  issuesCount: number,
-  successMessage: string,
-  warningMessage: string,
-  errorMessage: string,
-  warningThreshold: number,
-  details: string[]
-): CheckResult {
-  if (issuesCount === 0) {
-    return {
-      status: '✅',
-      message: successMessage,
-      details: details.length > 0 ? details : ['No issues detected']
-    };
-  } else if (issuesCount < warningThreshold) {
-    return {
-      status: '⚠️',
-      message: warningMessage,
-      details
-    };
-  } else {
-    return {
-      status: '❌',
-      message: errorMessage,
-      details
-    };
-  }
-}
-
-/**
- * Helper to get the status message based on check status
- */
-function getStatusMessage(status: '✅' | '❌' | '⚠️'): string {
-  switch (status) {
-    case '✅':
-      return REPORT_TEMPLATE.statusMessages.approved;
-    case '⚠️':
-      return REPORT_TEMPLATE.statusMessages.conditional;
-    case '❌':
-      return REPORT_TEMPLATE.statusMessages.rejected;
-  }
-}
+import { logger } from '../utils/structuredLogging.js';
+import { REPORT_TEMPLATE } from '../config/prAssistantTemplates.js';
+import { createCheckResult, formatChecksMarkdown, getStatusMessage } from './prAssistant/checkResults.js';
+import { runCommand } from './prAssistant/commandUtils.js';
+import { RAILWAY_VALIDATION_PATTERNS, VALIDATION_CONSTANTS } from './prAssistant/constants.js';
+import type { CheckResult, PRAnalysisResult } from './prAssistant/types.js';
 
 /**
  * Validates environment variables documentation in .env.example
@@ -128,29 +45,12 @@ async function validateEnvDocumentation(workingDir: string, envVars: string[]): 
   return { issues, details };
 }
 
-export interface PRAnalysisResult {
-  status: '✅' | '❌' | '⚠️';
-  summary: string;
-  checks: {
-    deadCodeRemoval: CheckResult;
-    simplification: CheckResult;
-    openaiCompatibility: CheckResult;
-    railwayReadiness: CheckResult;
-    automatedValidation: CheckResult;
-    finalDoubleCheck: CheckResult;
-  };
-  reasoning: string;
-  recommendations: string[];
-}
-
-export interface CheckResult {
-  status: '✅' | '❌' | '⚠️';
-  message: string;
-  details: string[];
-}
-
 export class PRAssistant {
   private workingDir: string;
+  private validationConstants = {
+    ...VALIDATION_CONSTANTS,
+    DEFAULT_PORT: getNumericConfig('DEFAULT_PORT', 'DEFAULT_PORT') || VALIDATION_CONSTANTS.DEFAULT_PORT
+  } as const;
 
   constructor(workingDir: string = process.cwd()) {
     this.workingDir = workingDir;
@@ -205,7 +105,7 @@ export class PRAssistant {
           const content = await fs.readFile(path.join(this.workingDir, file), 'utf-8');
           const lineCount = content.split('\n').length;
           
-          if (lineCount > VALIDATION_CONSTANTS.LARGE_FILE_THRESHOLD) {
+          if (lineCount > this.validationConstants.LARGE_FILE_THRESHOLD) {
             issues.push(`Large file detected: ${file} (${lineCount} lines)`);
             details.push(`Consider breaking down ${file} into smaller, focused modules`);
           }
@@ -286,7 +186,7 @@ export class PRAssistant {
       }
 
       // Check for inline SQL or large string literals
-      const largeStringPattern = new RegExp(`^\\+.*['"\`][^'"\`]{${VALIDATION_CONSTANTS.LARGE_STRING_THRESHOLD},}['"\`]`, 'gim');
+      const largeStringPattern = new RegExp(`^\\+.*['"\`][^'"\`]{${this.validationConstants.LARGE_STRING_THRESHOLD},}['"\`]`, 'gim');
       const largeStrings = diff.match(largeStringPattern) || [];
       
       if (largeStrings.length > 0) {
@@ -431,7 +331,7 @@ export class PRAssistant {
 
       if (hasPortHandling && !diff.includes('process.env.PORT')) {
         issues.push('Server files changed without proper PORT environment handling');
-        details.push(`Ensure dynamic port assignment with process.env.PORT || ${VALIDATION_CONSTANTS.DEFAULT_PORT}`);
+        details.push(`Ensure dynamic port assignment with process.env.PORT || ${this.validationConstants.DEFAULT_PORT}`);
       }
 
       return createCheckResult(
@@ -462,7 +362,7 @@ export class PRAssistant {
       logger.info('Running test validation', { operation: 'automatedValidation' });
       const testResult = await runCommand('npm', ['test'], {
         cwd: this.workingDir,
-        timeout: VALIDATION_CONSTANTS.TEST_TIMEOUT // 2 minutes timeout
+        timeout: this.validationConstants.TEST_TIMEOUT // 2 minutes timeout
       });
 
       if (testResult.stdout.includes('PASS') || testResult.stdout.includes('✓')) {
@@ -473,7 +373,7 @@ export class PRAssistant {
       logger.info('Running build validation', { operation: 'automatedValidation' });
       const buildResult = await runCommand('npm', ['run', 'build'], {
         cwd: this.workingDir,
-        timeout: VALIDATION_CONSTANTS.BUILD_TIMEOUT
+        timeout: this.validationConstants.BUILD_TIMEOUT
       });
 
       if (!buildResult.stderr || buildResult.stderr.trim() === '') {
@@ -486,7 +386,7 @@ export class PRAssistant {
       try {
         await runCommand('npm', ['run', 'lint'], {
           cwd: this.workingDir,
-          timeout: VALIDATION_CONSTANTS.LINT_TIMEOUT
+          timeout: this.validationConstants.LINT_TIMEOUT
         });
         details.push('Linting passed');
       } catch {
@@ -579,14 +479,14 @@ export class PRAssistant {
       try {
         await runCommand('npm', ['run', 'type-check'], {
           cwd: this.workingDir,
-          timeout: VALIDATION_CONSTANTS.LINT_TIMEOUT
+        timeout: this.validationConstants.LINT_TIMEOUT
         });
         details.push('✓ TypeScript type checking passed');
       } catch {
         try {
           await runCommand('tsc', ['--noEmit'], {
             cwd: this.workingDir,
-            timeout: VALIDATION_CONSTANTS.LINT_TIMEOUT
+            timeout: this.validationConstants.LINT_TIMEOUT
           });
           details.push('✓ TypeScript type checking passed');
         } catch {
@@ -673,21 +573,9 @@ export class PRAssistant {
     let markdown = `${REPORT_TEMPLATE.header}\n\n`;
     
     markdown += `${REPORT_TEMPLATE.summarySection.replace('{status}', result.status)}\n${result.summary}\n\n`;
-    
-    markdown += `${REPORT_TEMPLATE.detailsSection}\n\n`;
 
-    Object.entries(result.checks).forEach(([key, check]) => {
-      const title = CHECK_TITLES[key as keyof typeof CHECK_TITLES];
-      markdown += `### ${check.status} ${title}\n`;
-      markdown += `${check.message}\n\n`;
-      
-      if (check.details.length > 0) {
-        check.details.forEach(detail => {
-          markdown += `- ${detail}\n`;
-        });
-        markdown += '\n';
-      }
-    });
+    markdown += `${REPORT_TEMPLATE.detailsSection}\n\n`;
+    markdown += formatChecksMarkdown(result.checks);
 
     if (result.reasoning) {
       markdown += `${REPORT_TEMPLATE.reasoningSection}\n\n${result.reasoning}\n\n`;
