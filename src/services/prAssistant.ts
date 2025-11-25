@@ -8,6 +8,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../utils/structuredLogging.js';
 import { getNumericConfig } from '../utils/constants.js';
+import { CHECK_TITLES, REPORT_TEMPLATE } from '../config/prAssistantTemplates.js';
 
 // Configuration Constants
 const VALIDATION_CONSTANTS = {
@@ -27,36 +28,6 @@ const RAILWAY_VALIDATION_PATTERNS = [
   { pattern: /password\s*[=:]\s*['"`][^'"`]{3,}['"`]/gi, message: 'Hardcoded password detected' },
   { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }
 ] as const;
-
-// Check titles and report template configuration
-const CHECK_TITLES = {
-  deadCodeRemoval: '1. **Dead/Bloated Code Removal**',
-  simplification: '2. **Simplification & Streamlining**',
-  openaiCompatibility: '3. **OpenAI SDK Compatibility**',
-  railwayReadiness: '4. **Railway Deployment Readiness**',
-  automatedValidation: '5. **Automated Validation**',
-  finalDoubleCheck: '6. **Final Double-Check**'
-} as const;
-
-const REPORT_TEMPLATE = {
-  header: '# 🤖 ARCANOS PR Analysis Report',
-  summarySection: '## {status} Summary',
-  detailsSection: '## 📋 Detailed Checks',
-  reasoningSection: '## 🔍 Analysis Reasoning',
-  recommendationsSection: '## 💡 Recommendations',
-  footer: {
-    divider: '---',
-    completedBy: '*Analysis completed by ARCANOS PR Assistant*',
-    sdkVersion: '*OpenAI SDK Version: 5.15.0+ ✅*',
-    railwayStatus: '*Railway Deployment: {status} {icon}*',
-    productionStatus: '*Status: {statusMessage}*'
-  },
-  statusMessages: {
-    approved: '🎉 **PRODUCTION READY**',
-    conditional: '⚠️ **REVIEW RECOMMENDED**',
-    rejected: '❌ **FIXES REQUIRED**'
-  }
-} as const;
 
 function sanitizeArgs(args: string[]): string[] {
   return args.map(a => a.replace(/[^\w:/.-]/g, ''));
