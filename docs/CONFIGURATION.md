@@ -1,6 +1,6 @@
 # ARCANOS Configuration Guide
 
-> **Last Updated:** 2024-10-30 | **Version:** 1.0.0
+> **Last Updated:** 2025-11-25 | **Version:** 1.0.0
 
 This guide documents environment variables and configuration patterns used by
 the Arcanos backend. Defaults are taken from `src/config/index.ts` and

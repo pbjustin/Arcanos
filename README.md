@@ -1,6 +1,6 @@
 # Arcanos Backend
 
-> **Last Updated:** 2025-11-18 | **Version:** 1.0.0 | **OpenAI SDK:** v6.9.1
+> **Last Updated:** 2025-11-25 | **Version:** 1.0.0 | **OpenAI SDK:** v6.9.1
 
 Arcanos is an AI-assisted TypeScript backend built on Express. The service routes
 requests through a centralized OpenAI integration, persists state to disk, and
@@ -44,9 +44,10 @@ npm start
 ### Common Scripts
 
 ```bash
-npm run dev      # Start the server with ts-node-dev
-npm test         # Run Jest test suites
-npm run lint     # Lint TypeScript sources
+npm run dev        # Compile TypeScript and start the compiled server (no watch mode)
+npm run dev:watch  # Rebuild TypeScript incrementally; run "npm start" in another shell to serve changes
+npm test           # Run Jest test suites
+npm run lint       # Lint TypeScript sources
 ```
 
 ### Health Checks
@@ -110,6 +111,7 @@ autonomous approval path.
 | `POST /siri` | Yes | Siri-style prompt handler with Trinity routing. |
 | `POST /arcanos-pipeline` | Yes | Multi-stage pipeline combining ARCANOS, GPT‑3.5, and GPT‑5. |
 | `POST /api/arcanos/ask` | Yes | Minimal JSON API that streams or returns ARCANOS completions. |
+| `POST /api/assistants/run` | Yes | Assistant-runner bridge powered by `openai-assistants.ts`. |
 
 See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkthrough of how these routes share the Trinity brain, how GPT-5.1 reasoning is invoked, and how audit-safe, memory-aware guardrails are enforced inside `runThroughBrain`.
 
@@ -146,6 +148,8 @@ See [`docs/TRINITY_PIPELINE.md`](docs/TRINITY_PIPELINE.md) for a detailed walkth
 - `POST /workers/heal` – Generates a GPT-backed recovery plan and optionally
   restarts the worker pool (requires confirmation header). Trusted GPT callers
   auto-execute the restart unless they request `mode: "plan"`.
+- `POST /api/afol/execute` – Runs Adaptive Failover Orchestration Layer commands
+  with audit logging.
 - `POST /heartbeat` – Records operator heartbeats to `logs/heartbeat.log`
   (requires confirmation).
 - `POST /devops/self-test` – Runs the automated `/ask` self-test suite and
@@ -168,6 +172,9 @@ confirmation.
 - `POST /sdk/research` – SDK-friendly research bridge that reuses the central
   OpenAI client (requires confirmation).
 - `POST /api/ask-hrc` – Hallucination Resistant Core evaluation.
+- `POST /api/openai/chat` – Direct OpenAI passthrough with confirmation guard.
+- `POST /api/codebase/diff` – Compare repository snapshots for assistants and
+  orchestrators.
 - `POST /api/pr-analysis/*`, `/api/openai/*`, `/api/commands/*` – Specialized
   automation surfaces documented in the `docs/api` directory.
 
