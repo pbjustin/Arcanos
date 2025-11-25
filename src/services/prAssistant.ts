@@ -10,7 +10,9 @@ import { logger } from '../utils/structuredLogging.js';
 import { REPORT_TEMPLATE } from '../config/prAssistantTemplates.js';
 import { createCheckResult, formatChecksMarkdown, getStatusMessage } from './prAssistant/checkResults.js';
 import { runCommand } from './prAssistant/commandUtils.js';
+import { CHECK_THRESHOLDS, DEAD_CODE_PATTERNS, SIMPLIFICATION_PATTERNS } from './prAssistant/analysisRules.js';
 import { RAILWAY_VALIDATION_PATTERNS, VALIDATION_CONSTANTS } from './prAssistant/constants.js';
+import { collectMatches, getFileLineCount, hasLongFunctionAddition, uniqueStrings } from './prAssistant/utils.js';
 import type { CheckResult, PRAnalysisResult } from './prAssistant/types.js';
 
 /**
@@ -102,9 +104,8 @@ export class PRAssistant {
       // Check for large files being added (>500 lines)
       for (const file of files) {
         try {
-          const content = await fs.readFile(path.join(this.workingDir, file), 'utf-8');
-          const lineCount = content.split('\n').length;
-          
+          const lineCount = await getFileLineCount(this.workingDir, file);
+
           if (lineCount > this.validationConstants.LARGE_FILE_THRESHOLD) {
             issues.push(`Large file detected: ${file} (${lineCount} lines)`);
             details.push(`Consider breaking down ${file} into smaller, focused modules`);
@@ -115,28 +116,27 @@ export class PRAssistant {
       }
 
       // Check for TODO/FIXME comments being added
-      const todoPattern = /^\+.*(?:TODO|FIXME|XXX|HACK)/gim;
-      const todoMatches = diff.match(todoPattern);
+      const todoMatches = collectMatches(diff, DEAD_CODE_PATTERNS.todo);
       if (todoMatches && todoMatches.length > 0) {
         issues.push(`${todoMatches.length} TODO/FIXME comments added`);
         details.push('Consider resolving these before merging');
       }
 
       // Check for console.log/debug statements
-      const debugPattern = /^\+.*console\.(?:log|debug|warn|error)/gim;
-      const debugMatches = diff.match(debugPattern);
-      if (debugMatches && debugMatches.length > 3) {
+      const debugMatches = collectMatches(diff, DEAD_CODE_PATTERNS.debug);
+      if (debugMatches.length > CHECK_THRESHOLDS.maxDebugStatements) {
         issues.push(`${debugMatches.length} console statements added`);
         details.push('Consider using structured logging instead');
       }
 
       // Check for duplicate code patterns
-      const duplicatePattern = /^\+.*(\w+.*){3,}/gim;
-      const duplicateMatches = diff.match(duplicatePattern);
-      if (duplicateMatches && duplicateMatches.length > 5) {
+      const duplicateMatches = collectMatches(diff, DEAD_CODE_PATTERNS.duplicate);
+      if (duplicateMatches.length > 5) {
         issues.push('Potential code duplication detected');
         details.push('Look for opportunities to extract reusable utilities');
       }
+
+      const detailMessages = issues.length === 0 ? ['PR maintains clean codebase standards'] : uniqueStrings(details);
 
       return createCheckResult(
         issues.length,
@@ -144,7 +144,7 @@ export class PRAssistant {
         `Minor code quality concerns found: ${issues.length} issues`,
         `Significant code quality issues found: ${issues.length} problems`,
         3,
-        issues.length === 0 ? ['PR maintains clean codebase standards'] : details
+        detailMessages
       );
     } catch (error) {
       return {
@@ -164,44 +164,41 @@ export class PRAssistant {
 
     try {
       // Check for overly complex function additions
-      const functionPattern = /^\+.*(?:function|=>|\bconst\s+\w+\s*=)/gim;
-      const hasComplexFunctions = functionPattern.test(diff);
+      const hasComplexFunctions = SIMPLIFICATION_PATTERNS.functionAddition.test(diff);
 
       // Look for very long functions (>50 lines in diff)
-      const longFunctionPattern = /^\+.*(?:function|=>)[\s\S]*?(?=^[+-]|\n\n|$)/gim;
-      const longFunctions = diff.match(longFunctionPattern) || [];
-      
-      if (hasComplexFunctions && longFunctions.some(fn => fn.split('\n').length > 50)) {
+      const longFunctions = collectMatches(diff, SIMPLIFICATION_PATTERNS.longFunction);
+
+      if (hasComplexFunctions && hasLongFunctionAddition(longFunctions, CHECK_THRESHOLDS.longFunctionLineCount)) {
         issues.push('Large function additions detected');
         details.push('Consider breaking down complex functions into smaller utilities');
       }
 
       // Check for nested complexity (multiple levels of if/for/while)
-      const complexityPattern = /^\+.*(?:if|for|while|switch).*{[\s\S]*?(?:if|for|while|switch)/gim;
-      const complexPatterns = diff.match(complexityPattern) || [];
-      
-      if (complexPatterns.length > 2) {
+      const complexPatterns = collectMatches(diff, SIMPLIFICATION_PATTERNS.complexity);
+
+      if (complexPatterns.length > CHECK_THRESHOLDS.maxComplexityPatterns) {
         issues.push('High cyclomatic complexity detected');
         details.push('Refactor nested logic into separate functions');
       }
 
       // Check for inline SQL or large string literals
-      const largeStringPattern = new RegExp(`^\\+.*['"\`][^'"\`]{${this.validationConstants.LARGE_STRING_THRESHOLD},}['"\`]`, 'gim');
-      const largeStrings = diff.match(largeStringPattern) || [];
-      
+      const largeStrings = collectMatches(diff, SIMPLIFICATION_PATTERNS.largeString(this.validationConstants.LARGE_STRING_THRESHOLD));
+
       if (largeStrings.length > 0) {
         issues.push('Large inline strings detected');
         details.push('Consider moving large strings to configuration files');
       }
 
       // Check for magic numbers
-      const magicNumberPattern = /^\+.*(?<![.\w])\d{3,}(?![.\w])/gim;
-      const magicNumbers = diff.match(magicNumberPattern) || [];
-      
-      if (magicNumbers.length > 2) {
+      const magicNumbers = collectMatches(diff, SIMPLIFICATION_PATTERNS.magicNumbers);
+
+      if (magicNumbers.length > CHECK_THRESHOLDS.maxMagicNumbers) {
         issues.push('Magic numbers detected');
         details.push('Define constants for numeric literals');
       }
+
+      const detailMessages = issues.length === 0 ? ['Good separation of concerns and readable code structure'] : uniqueStrings(details);
 
       return createCheckResult(
         issues.length,
@@ -209,7 +206,7 @@ export class PRAssistant {
         `Minor complexity concerns: ${issues.length} areas for improvement`,
         `Significant complexity issues: ${issues.length} problems`,
         3,
-        issues.length === 0 ? ['Good separation of concerns and readable code structure'] : details
+        detailMessages
       );
     } catch (error) {
       return {
@@ -314,8 +311,8 @@ export class PRAssistant {
 
       // Check for proper environment variable usage
       const envPattern = /process\.env\.(\w+)/gi;
-      const envVars = diff.match(envPattern) || [];
-      const uniqueEnvVars = [...new Set(envVars)];
+      const envVars = collectMatches(diff, envPattern);
+      const uniqueEnvVars = uniqueStrings(envVars);
 
       // Validate environment variables documentation
       const envValidation = await validateEnvDocumentation(this.workingDir, uniqueEnvVars);
@@ -334,13 +331,15 @@ export class PRAssistant {
         details.push(`Ensure dynamic port assignment with process.env.PORT || ${this.validationConstants.DEFAULT_PORT}`);
       }
 
+      const detailMessages = issues.length === 0 ? ['Proper environment variable usage and Railway compatibility'] : uniqueStrings(details);
+
       return createCheckResult(
         issues.length,
         'Railway deployment ready',
         `Minor Railway readiness concerns: ${issues.length} items`,
         `Railway deployment issues: ${issues.length} problems`,
         3,
-        issues.length === 0 ? ['Proper environment variable usage and Railway compatibility'] : details
+        detailMessages
       );
     } catch (error) {
       return {
