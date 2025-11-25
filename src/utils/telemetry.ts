@@ -57,8 +57,19 @@ interface TelemetryState {
   traceEvents: TelemetryTraceEvent[];
 }
 
-const MAX_RECENT_LOGS = parseInt(process.env.TELEMETRY_RECENT_LOGS_LIMIT || '100', 10);
-const MAX_TRACE_EVENTS = parseInt(process.env.TELEMETRY_TRACE_EVENT_LIMIT || '200', 10);
+function parseLimit(envValue: string | undefined, defaultValue: number): number {
+  const parsed = parseInt(envValue ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return defaultValue;
+  }
+
+  return parsed;
+}
+
+const MAX_RECENT_LOGS = parseLimit(process.env.TELEMETRY_RECENT_LOGS_LIMIT, 100);
+const MAX_TRACE_EVENTS = parseLimit(process.env.TELEMETRY_TRACE_EVENT_LIMIT, 200);
+const RECENT_LOG_BUFFER_LIMIT = Math.max(10, MAX_RECENT_LOGS);
+const TRACE_EVENT_BUFFER_LIMIT = Math.max(25, MAX_TRACE_EVENTS);
 
 const telemetryEmitter = new EventEmitter();
 
@@ -107,7 +118,7 @@ export function recordLogEvent(entry: Omit<TelemetryLogEvent, 'id'>): TelemetryL
   }
 
   telemetryState.recentLogs.push(event);
-  clampBuffer(telemetryState.recentLogs, Math.max(10, MAX_RECENT_LOGS));
+  clampBuffer(telemetryState.recentLogs, RECENT_LOG_BUFFER_LIMIT);
 
   telemetryEmitter.emit('log', event);
   return event;
@@ -129,7 +140,7 @@ export function recordTraceEvent(name: string, attributes: Record<string, unknow
   };
 
   telemetryState.traceEvents.push(event);
-  clampBuffer(telemetryState.traceEvents, Math.max(25, MAX_TRACE_EVENTS));
+  clampBuffer(telemetryState.traceEvents, TRACE_EVENT_BUFFER_LIMIT);
   telemetryEmitter.emit('trace', event);
   return event;
 }
