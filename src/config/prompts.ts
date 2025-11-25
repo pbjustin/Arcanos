@@ -22,6 +22,7 @@ interface PromptsConfig {
     intake_system: string;
     gpt5_reasoning: string;
     fallback_mode: string;
+    final_review_system: string;
     system_prompt: string;
     secure_reasoning_integration: string;
     user_prompt: string;
@@ -112,6 +113,7 @@ function loadPromptsConfig(): PromptsConfig {
         intake_system: 'You are ARCANOS AI system.',
         gpt5_reasoning: 'Use reasoning for analysis.',
         fallback_mode: 'System temporarily unavailable.',
+        final_review_system: 'Review GPT-5.1 analysis and deliver the final ARCANOS response.',
         system_prompt: 'You are ARCANOS AI system.',
         secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
         user_prompt: 'You are ARCANOS.'
@@ -164,6 +166,12 @@ export const ARCANOS_SYSTEM_PROMPTS = {
     const template = loadPromptsConfig().arcanos.fallback_mode;
     const truncatedPrompt = prompt.slice(0, 200);
     return template.replace('{prompt}', truncatedPrompt);
+  },
+
+  FINAL_REVIEW: (memoryContext: string) => {
+    const template = loadPromptsConfig().arcanos.final_review_system;
+    const safeContext = memoryContext?.trim() || 'No memory context provided.';
+    return template.replace('{memoryContext}', safeContext);
   }
 } as const;
 
