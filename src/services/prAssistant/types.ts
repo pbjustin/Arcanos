@@ -1,3 +1,5 @@
+import type { VALIDATION_CONSTANTS } from './constants.js';
+
 export interface CheckResult {
   status: '✅' | '❌' | '⚠️';
   message: string;
@@ -17,4 +19,10 @@ export interface PRAnalysisResult {
   };
   reasoning: string;
   recommendations: string[];
+}
+export type ValidationConfig = typeof VALIDATION_CONSTANTS;
+
+export interface CheckContext {
+  workingDir: string;
+  validationConstants: ValidationConfig;
 }
