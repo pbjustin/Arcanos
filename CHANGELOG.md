@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enhanced Railway Compatibility**: Validated deployment configuration and health checks
 - **Automated Quality Gates**: Continuous audit system ensures ongoing codebase health
 
+### Documentation
+- Updated README and documentation index to reflect current scripts and mounted routes.
+- Removed the duplicate `docs/CHANGELOG.md` in favor of the canonical root changelog.
+
 ### Added - Previous Changes
 - Comprehensive documentation audit and update following CLEAR 2.0 standards
 - CONTRIBUTING.md with detailed development guidelines and best practices
