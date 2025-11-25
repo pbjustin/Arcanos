@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { logger } from './structuredLogging.js';
 import { KNOWN_ENVIRONMENT_FINGERPRINTS, EnvironmentFingerprintRecord } from '../config/environmentFingerprints.js';
 import { setAuditSafeMode } from '../persistenceManagerHierarchy.js';
+import { RUNTIME_PROBE_SUMMARY_SCRIPT } from '../config/runtimeProbeScripts.js';
 
 export interface EnvironmentFingerprint {
   platform: NodeJS.Platform | string;
@@ -201,7 +202,7 @@ export async function executeInSandbox(
 
 async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxExecutionResult }> {
   const sandbox = await executeInSandbox(
-    "const summary = { nodeVersion: process.version, hasFetch: typeof fetch === 'function', hasIntl: typeof Intl !== 'undefined' }; console.log(JSON.stringify(summary));"
+    RUNTIME_PROBE_SUMMARY_SCRIPT.trim()
   );
 
   const issues: string[] = [];
