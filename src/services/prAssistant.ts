@@ -21,7 +21,7 @@ export class PRAssistant {
     this.validationConstants = {
       ...VALIDATION_CONSTANTS,
       DEFAULT_PORT: getNumericConfig('DEFAULT_PORT', 'DEFAULT_PORT') || VALIDATION_CONSTANTS.DEFAULT_PORT
-    } as const;
+    };
   }
 
   private getContext(): CheckContext {
