@@ -59,6 +59,14 @@ export function generateDegradedResponse(
   };
 }
 
+function getEndpointFromRequest(req: Request): string {
+  return req.path.split('/').pop() || 'unknown';
+}
+
+function extractPromptFromRequest(req: Request, defaultPrompt: string = FALLBACK_RESPONSE_MESSAGES.defaultPrompt): string {
+  return req.body?.prompt || req.body?.scenario || req.body?.query || defaultPrompt;
+}
+
 /**
  * Fallback middleware that intercepts errors and provides degraded responses
  */
@@ -79,9 +87,8 @@ export function createFallbackMiddleware() {
     }
 
     // Determine endpoint from request path
-    const endpoint = req.path.split('/').pop() || 'unknown';
-    const prompt =
-      req.body?.prompt || req.body?.scenario || req.body?.query || FALLBACK_RESPONSE_MESSAGES.defaultPrompt;
+    const endpoint = getEndpointFromRequest(req);
+    const prompt = extractPromptFromRequest(req);
 
     console.log(`🔄 Fallback mode activated for ${endpoint} - ${err.message}`);
 
@@ -154,9 +161,8 @@ export function createHealthCheckMiddleware() {
 
     // If OpenAI client is not available, immediately trigger degraded mode
     if (!client && enforcePreemptive) {
-      const endpoint = req.path.split('/').pop() || 'unknown';
-      const prompt =
-        req.body?.prompt || req.body?.scenario || req.body?.query || FALLBACK_RESPONSE_MESSAGES.healthCheckPrompt;
+      const endpoint = getEndpointFromRequest(req);
+      const prompt = extractPromptFromRequest(req, FALLBACK_RESPONSE_MESSAGES.healthCheckPrompt);
 
       console.log(`🔄 Preemptive fallback mode activated for ${endpoint} - OpenAI client unavailable`);
 
