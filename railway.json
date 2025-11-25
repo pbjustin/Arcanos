@@ -3,7 +3,7 @@
   "name": "arcanos-backend",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm ci --omit=dev && npm run build",
+    "buildCommand": "npm ci --include=dev && npm run build",
     "env": {
       "NODE_ENV": "production",
       "NODE_OPTIONS": "--max_old_space_size=2048"
