@@ -27,6 +27,7 @@ import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
+import type { ChatCompletionMessageParam } from '../services/openai/types.js';
 import {
   getAuditSafeConfig,
   applyAuditSafeConstraints,
@@ -109,6 +110,19 @@ const validateModel = async (client: OpenAI): Promise<string> => {
     return APPLICATION_CONSTANTS.MODEL_GPT_4;
   }
 };
+
+function buildFinalArcanosMessages(
+  memoryContextSummary: string,
+  auditSafePrompt: string,
+  gpt5Output: string
+): ChatCompletionMessageParam[] {
+  return [
+    { role: 'system', content: ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary) },
+    { role: 'user', content: `Original request: ${auditSafePrompt}` },
+    { role: 'assistant', content: `GPT-5.1 analysis: ${gpt5Output}` },
+    { role: 'user', content: 'Provide the final ARCANOS response.' }
+  ];
+}
 
 /**
  * Universal Trinity pipeline - Core AI processing workflow for ARCANOS
@@ -195,15 +209,7 @@ export async function runThroughBrain(
   routingStages.push('ARCANOS-FINAL');
   const finalTokenParams = getTokenParameter(actualModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalResponse = await createChatCompletionWithFallback(client, {
-    messages: [
-      {
-        role: 'system',
-        content: `You are ARCANOS. GPT-5.1 has provided analysis which you must review, ensure safety, adjust tone, and deliver the final response.\n\nMEMORY CONTEXT: ${memoryContext.contextSummary}\nAUDIT REQUIREMENT: Document your final reasoning.`
-      },
-      { role: 'user', content: `Original request: ${auditSafePrompt}` },
-      { role: 'assistant', content: `GPT-5.1 analysis: ${gpt5Output}` },
-      { role: 'user', content: 'Provide the final ARCANOS response.' }
-    ],
+    messages: buildFinalArcanosMessages(memoryContext.contextSummary, auditSafePrompt, gpt5Output),
     temperature: 0.2,
     ...finalTokenParams
   });
