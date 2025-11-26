@@ -41,18 +41,13 @@ function logBootSummary(actualPort: number, workerResults: WorkerInitResult): vo
   logCompleteBootSummary(actualPort, config.server.port, config.server.environment, getDefaultModel(), workerResults);
 }
 
-function registerProcessHandlers(server: Server, actualPort: number): void {
-  server.on('error', (err: Error) => {
-    console.error('Server error:', err);
-    process.exit(1);
-  });
-
-  function logAndShutdown(signal: string) {
+function createShutdownHandler(server: Server): (signal: string) => void {
+  return (signal: string) => {
     const mem = process.memoryUsage();
-    console.log(
-      `${signal} received. uptime=${process.uptime().toFixed(1)}s heapMB=${(mem.heapUsed / 1024 / 1024).toFixed(1)} rssMB=${(mem.rss /
- 1024 / 1024).toFixed(1)}`
-    );
+    const uptimeSeconds = process.uptime().toFixed(1);
+    const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
+    const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
+    console.log(`${signal} received. uptime=${uptimeSeconds}s heapMB=${heapMB} rssMB=${rssMB}`);
     console.log('railway vars', {
       release: process.env.RAILWAY_RELEASE_ID,
       deployment: process.env.RAILWAY_DEPLOYMENT_ID
@@ -60,7 +55,27 @@ function registerProcessHandlers(server: Server, actualPort: number): void {
     server.close(() => {
       process.exit(0);
     });
-  }
+  };
+}
+
+function scheduleSystemDiagnostic(actualPort: number): void {
+  setTimeout(async () => {
+    try {
+      console.log(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_START, 'Running system diagnostic...'));
+      await runSystemDiagnostic(actualPort);
+    } catch (error) {
+      console.error(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_ERROR, `System diagnostic failed: ${error}`));
+    }
+  }, SERVER_CONSTANTS.DIAGNOSTIC_DELAY_MS);
+}
+
+function registerProcessHandlers(server: Server, actualPort: number): void {
+  server.on('error', (err: Error) => {
+    console.error('Server error:', err);
+    process.exit(1);
+  });
+
+  const logAndShutdown = createShutdownHandler(server);
 
   process.on('SIGTERM', () => logAndShutdown('SIGTERM'));
   process.on('SIGINT', () => logAndShutdown('SIGINT'));
@@ -78,14 +93,7 @@ function registerProcessHandlers(server: Server, actualPort: number): void {
     console.error('uncaughtException', err);
   });
 
-  setTimeout(async () => {
-    try {
-      console.log(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_START, 'Running system diagnostic...'));
-      await runSystemDiagnostic(actualPort);
-    } catch (error) {
-      console.error(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_ERROR, `System diagnostic failed: ${error}`));
-    }
-  }, SERVER_CONSTANTS.DIAGNOSTIC_DELAY_MS);
+  scheduleSystemDiagnostic(actualPort);
 }
 
 export async function createServer(options: ServerFactoryOptions = {}): Promise<ServerLifecycle> {
