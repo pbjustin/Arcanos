@@ -12,8 +12,11 @@ import { getDefaultModel } from './services/openai.js';
 import { createApp } from './app.js';
 import { performStartup } from './startup.js';
 import type { WorkerInitResult } from './utils/workerBoot.js';
-import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage } from './utils/bootLogger.js';
+import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, logShutdownEvent } from './utils/bootLogger.js';
+import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS } from './config/serverMessages.js';
+
+const serverLogger = logger.child({ module: 'server' });
 
 export interface ServerFactoryOptions {
   port?: number;
@@ -45,10 +48,7 @@ function createShutdownHandler(server: Server): (signal: string) => void {
   return (signal: string) => {
     const mem = process.memoryUsage();
     const uptimeSeconds = process.uptime().toFixed(1);
-    const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
-    const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
-    console.log(`${signal} received. uptime=${uptimeSeconds}s heapMB=${heapMB} rssMB=${rssMB}`);
-    console.log('railway vars', {
+    logShutdownEvent(signal, mem, Number(uptimeSeconds), {
       release: process.env.RAILWAY_RELEASE_ID,
       deployment: process.env.RAILWAY_DEPLOYMENT_ID
     });
@@ -61,17 +61,22 @@ function createShutdownHandler(server: Server): (signal: string) => void {
 function scheduleSystemDiagnostic(actualPort: number): void {
   setTimeout(async () => {
     try {
-      console.log(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_START, 'Running system diagnostic...'));
+      serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_START, 'Running system diagnostic...'));
       await runSystemDiagnostic(actualPort);
     } catch (error) {
-      console.error(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_ERROR, `System diagnostic failed: ${error}`));
+      serverLogger.error(
+        formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_ERROR, `System diagnostic failed: ${error}`),
+        undefined,
+        undefined,
+        error as Error
+      );
     }
   }, SERVER_CONSTANTS.DIAGNOSTIC_DELAY_MS);
 }
 
 function registerProcessHandlers(server: Server, actualPort: number): void {
   server.on('error', (err: Error) => {
-    console.error('Server error:', err);
+    serverLogger.error('Server error', undefined, undefined, err);
     process.exit(1);
   });
 
@@ -82,15 +87,15 @@ function registerProcessHandlers(server: Server, actualPort: number): void {
 
   process.on('beforeExit', (code) => {
     const handles = (process as any)._getActiveHandles?.() || [];
-    console.log('beforeExit', code, 'open handles', handles.length);
+    serverLogger.info('beforeExit event', { code, openHandles: handles.length });
   });
 
   process.on('unhandledRejection', (err) => {
-    console.error('unhandledRejection', err);
+    serverLogger.error('unhandledRejection', undefined, undefined, err as Error);
   });
 
   process.on('uncaughtException', (err) => {
-    console.error('uncaughtException', err);
+    serverLogger.error('uncaughtException', undefined, undefined, err);
   });
 
   scheduleSystemDiagnostic(actualPort);
@@ -100,15 +105,24 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
   await performStartup();
   const app = createApp();
 
-  console.log(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_CHECK, 'Checking port availability...'));
+  serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_CHECK, 'Checking port availability...'));
   const host = options.host ?? config.server.host;
   const preferredPort = options.port ?? config.server.port;
 
   const portResult = await getAvailablePort(preferredPort, host);
 
   if (!portResult.isPreferred) {
-    console.log(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_WARNING, portResult.message || 'Port unavailable'));
-    console.log(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_SWITCH, 'Consider stopping other services or setting a different PORT in .env'));
+    serverLogger.warn(
+      formatBootMessage(SERVER_MESSAGES.BOOT.PORT_WARNING, portResult.message || 'Port unavailable'),
+      { preferredPort, host }
+    );
+    serverLogger.warn(
+      formatBootMessage(
+        SERVER_MESSAGES.BOOT.PORT_SWITCH,
+        'Consider stopping other services or setting a different PORT in .env'
+      ),
+      { preferredPort, host }
+    );
   }
 
   const workerResults = await initializeWorkers();
@@ -131,9 +145,17 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
         port: actualPort,
         environment: config.server.environment
       });
-      console.log(formatBootMessage(SERVER_MESSAGES.BOOT.BACKEND_SYNC, 'System state initialized'));
+      serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.BACKEND_SYNC, 'System state initialized'));
     } catch (error) {
-      console.error(formatBootMessage(SERVER_MESSAGES.BOOT.BACKEND_SYNC_ERROR, `Failed to initialize system state: ${error}`));
+      serverLogger.error(
+        formatBootMessage(
+          SERVER_MESSAGES.BOOT.BACKEND_SYNC_ERROR,
+          `Failed to initialize system state: ${error}`
+        ),
+        undefined,
+        undefined,
+        error as Error
+      );
     }
 
     registerProcessHandlers(server, actualPort);
