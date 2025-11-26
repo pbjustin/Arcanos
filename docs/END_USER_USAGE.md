@@ -2,6 +2,28 @@
 
 This guide explains how to run the Arcanos backend locally and how to call its most common endpoints as an end user. It focuses on the HTTP interface and the minimal headers you need to send to get real responses from the AI pipeline.
 
+## What the backend does for end users
+
+The Arcanos backend powers several AI-first experiences shipped as separate frontends:
+
+- **Arcanos Gaming Tutor** – a conversational coach that answers gameplay questions and generates tailored drills by hitting `/ask`, `/write`, and RAG routes for topical tips.
+- **Backstage** – an internal productivity surface that uses `/commands/research`, `/guide`, and worker endpoints to summarize docs and keep services healthy.
+- **Booker** – a travel-style assistant that leans on `/ask`, `/sim`, and memory APIs to draft itineraries, store preferences, and return revisable plans.
+
+All of these products share the same core: the Trinity pipeline for reasoning, content generation, and safety checks; memory storage for user context; and worker automation for background jobs. Any frontend that can send HTTP requests can reuse these capabilities without change.
+
+## Adapting the backend to your product
+
+You can re-skin the backend for a different surface—web app, CLI, chatbot—by changing inputs, prompts, or persistence without touching the core runtime.
+
+- **Tune prompts and behaviors:** Adjust the prompt templates and role hints in `src/commands` (e.g., `write.ts`, `guide.ts`, `sim.ts`) to align with your domain voice. Use feature flags or custom request headers to switch personas per tenant.
+- **Extend or rename routes:** Add new Express handlers in `src/routes/register.ts` and corresponding controller files to expose bespoke flows (e.g., `/bookings/create`, `/support/escalate`). Reuse existing confirmation middleware to keep safeguards consistent.
+- **Swap storage options:** Point `DATABASE_URL` to your own Postgres instance or implement alternative adapters in the memory service if you need organization-scoped data or stricter retention.
+- **Automate background tasks:** Add or modify worker scripts in `workers/` to schedule cleanups, enrichment jobs, or alerts. You can trigger them from your frontend via `/workers/run/:name` once you gate them with `x-confirmed` or a trusted GPT ID.
+- **Embed in your auth model:** Wrap calls behind your authentication proxy and inject user or tenant identifiers as headers. The backend is header-driven, so you can propagate identity (`x-user-id`, `x-tenant`) into prompts or storage keys without modifying every route.
+
+Because the API surface is HTTP and schema-light, you can start by calling `/ask` or `/brain` from your UI, then incrementally wire deeper features—memory, research, workers—based on what your product needs.
+
 ## Prerequisites
 
 - Node.js 20+ and npm.
