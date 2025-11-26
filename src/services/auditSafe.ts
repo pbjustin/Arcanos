@@ -14,7 +14,8 @@ import {
   AUDIT_SAFE_OVERRIDE_PATTERNS,
   AUDIT_SAFE_SENSITIVE_PATTERNS,
   AUDIT_SAFE_SYSTEM_PROMPT_SUFFIX,
-  AUDIT_SAFE_USER_PROMPT_TEMPLATE
+  AUDIT_SAFE_USER_PROMPT_TEMPLATE,
+  AUDIT_LINEAGE_TEMPLATE
 } from '../config/auditSafe.js';
 
 export interface AuditSafeConfig {
@@ -135,8 +136,7 @@ export function logAITaskLineage(entry: AuditLogEntry) {
     appendFileSync(AUDIT_LOG_FILE, auditLine);
 
     // Human-readable lineage log
-    const lineageLine = `${entry.timestamp} | ${entry.requestId} | ${entry.endpoint} | Model:${entry.modelUsed} | GPT5:${entry.gpt5Delegated} | AuditSafe:${entry.auditSafeMode} | Flags:[${entry.auditFlags.join(',')}]\n`;
-    appendFileSync(LINEAGE_LOG_FILE, lineageLine);
+    appendFileSync(LINEAGE_LOG_FILE, formatAuditLineage(entry));
 
     console.log(`📋 [AUDIT] Task logged: ${entry.requestId} | Endpoint: ${entry.endpoint} | AuditSafe: ${entry.auditSafeMode}`);
   } catch (error) {
@@ -170,6 +170,19 @@ function formatAuditSafeUserPrompt(userPrompt: string, requestId: string, timest
     .replace('{{timestamp}}', timestamp)
     .replace('{{requestId}}', requestId)
     .replace('{{userPrompt}}', userPrompt);
+}
+
+function formatAuditLineage(entry: AuditLogEntry): string {
+  const flags = entry.auditFlags.join(',');
+
+  return AUDIT_LINEAGE_TEMPLATE
+    .replace('{{timestamp}}', entry.timestamp)
+    .replace('{{requestId}}', entry.requestId)
+    .replace('{{endpoint}}', entry.endpoint)
+    .replace('{{modelUsed}}', entry.modelUsed)
+    .replace('{{gpt5Delegated}}', String(entry.gpt5Delegated ?? false))
+    .replace('{{auditSafeMode}}', String(entry.auditSafeMode))
+    .replace('{{auditFlags}}', flags);
 }
 
 /**

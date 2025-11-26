@@ -43,3 +43,6 @@ Request ID: {{requestId}}
 {{userPrompt}}
 
 [AUDIT DIRECTIVE: Provide a complete, auditable response with clear reasoning.]`;
+
+export const AUDIT_LINEAGE_TEMPLATE =
+  '{{timestamp}} | {{requestId}} | {{endpoint}} | Model:{{modelUsed}} | GPT5:{{gpt5Delegated}} | AuditSafe:{{auditSafeMode}} | Flags:[{{auditFlags}}]\n';
