@@ -11,6 +11,7 @@ import { VALIDATION_CONSTANTS } from './prAssistant/constants.js';
 import { checkDeadCodeRemoval, checkOpenAICompatibility, checkRailwayReadiness, checkSimplification, performFinalDoubleCheck, runAutomatedValidation } from './prAssistant/checks.js';
 import { generateReasoning, generateRecommendations, generateSummary } from './prAssistant/formatters.js';
 import type { CheckContext, PRAnalysisResult, ValidationConfig } from './prAssistant/types.js';
+import type { CheckResult } from './prAssistant/types.js';
 
 export class PRAssistant {
   private workingDir: string;
@@ -29,6 +30,29 @@ export class PRAssistant {
       workingDir: this.workingDir,
       validationConstants: this.validationConstants
     };
+  }
+
+  /**
+   * Expose individual checks for targeted testing and diagnostics
+   */
+  async checkDeadCodeRemoval(files: string[], diff: string): Promise<CheckResult> {
+    const context = this.getContext();
+    return checkDeadCodeRemoval(context, files, diff);
+  }
+
+  async checkSimplification(diff: string): Promise<CheckResult> {
+    const context = this.getContext();
+    return checkSimplification(context, diff);
+  }
+
+  async checkOpenAICompatibility(files: string[], diff: string): Promise<CheckResult> {
+    const context = this.getContext();
+    return checkOpenAICompatibility(context, diff);
+  }
+
+  async checkRailwayReadiness(files: string[], diff: string): Promise<CheckResult> {
+    const context = this.getContext();
+    return checkRailwayReadiness(context, files, diff);
   }
 
   /**
