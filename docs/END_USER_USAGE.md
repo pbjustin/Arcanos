@@ -7,8 +7,7 @@ This guide explains how to run the Arcanos backend locally and how to call its m
 The Arcanos backend powers several AI-first experiences shipped as separate frontends:
 
 - **Arcanos Gaming Tutor** – a conversational coach that answers gameplay questions and generates tailored drills by hitting `/ask`, `/write`, and RAG routes for topical tips.
-- **Backstage** – an internal productivity surface that uses `/commands/research`, `/guide`, and worker endpoints to summarize docs and keep services healthy.
-- **Booker** – a travel-style assistant that leans on `/ask`, `/sim`, and memory APIs to draft itineraries, store preferences, and return revisable plans.
+- **BackstageBooker** – a WWE/AEW booking engine that hits `/backstage/book-event`, `/backstage/book-gpt`, `/backstage/simulate-match`, `/backstage/update-roster`, and `/backstage/track-storyline` to manage events, simulate matches, and persist rosters and storylines.
 
 All of these products share the same core: the Trinity pipeline for reasoning, content generation, and safety checks; memory storage for user context; and worker automation for background jobs. Any frontend that can send HTTP requests can reuse these capabilities without change.
 
