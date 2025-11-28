@@ -4,6 +4,7 @@
  */
 
 import { APPLICATION_CONSTANTS } from './constants.js';
+import { logger } from './structuredLogging.js';
 
 export interface CacheOptions {
   defaultTtlMs: number;
@@ -21,6 +22,9 @@ interface CacheEntry<T> {
 export class MemoryCache<T = any> {
   private cache = new Map<string, CacheEntry<T>>();
   private cleanupTimer: NodeJS.Timeout | null = null;
+  private readonly cacheLogger = logger.child({ module: 'cache' });
+
+  private static readonly EVICTION_RATIO = 0.1;
 
   constructor(private options: CacheOptions) {
     this.startCleanupTimer();
@@ -28,10 +32,10 @@ export class MemoryCache<T = any> {
 
   set(key: string, value: T, ttlMs?: number): void {
     const expireTime = Date.now() + (ttlMs || this.options.defaultTtlMs);
-    
+
     // Enforce max entries by removing oldest accessed items
     if (this.cache.size >= this.options.maxEntries) {
-      this.evictOldestEntries(Math.floor(this.options.maxEntries * 0.1)); // Remove 10%
+      this.evictOldestEntries(Math.floor(this.options.maxEntries * MemoryCache.EVICTION_RATIO)); // Remove 10%
     }
 
     this.cache.set(key, {
@@ -44,12 +48,12 @@ export class MemoryCache<T = any> {
 
   get(key: string): T | null {
     const entry = this.cache.get(key);
-    
+
     if (!entry) {
       return null;
     }
 
-    if (Date.now() > entry.expiresAt) {
+    if (this.isExpired(entry)) {
       this.cache.delete(key);
       return null;
     }
@@ -64,8 +68,8 @@ export class MemoryCache<T = any> {
   has(key: string): boolean {
     const entry = this.cache.get(key);
     if (!entry) return false;
-    
-    if (Date.now() > entry.expiresAt) {
+
+    if (this.isExpired(entry)) {
       this.cache.delete(key);
       return false;
     }
@@ -90,8 +94,8 @@ export class MemoryCache<T = any> {
     for (const entry of this.cache.values()) {
       total++;
       totalAccessCount += entry.accessCount;
-      
-      if (now > entry.expiresAt) {
+
+      if (this.isExpired(entry, now)) {
         expired++;
       }
     }
@@ -106,6 +110,10 @@ export class MemoryCache<T = any> {
   }
 
   private evictOldestEntries(count: number): void {
+    if (count <= 0) {
+      return;
+    }
+
     const entries = Array.from(this.cache.entries())
       .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed)
       .slice(0, count);
@@ -114,9 +122,11 @@ export class MemoryCache<T = any> {
       this.cache.delete(key);
     }
 
-    if (count > 0) {
-      console.log(`🧹 Cache: Evicted ${count} oldest entries to maintain max size`);
-    }
+    this.cacheLogger.info('Cache eviction completed', {
+      count,
+      reason: 'max_entries',
+      cacheSize: this.cache.size
+    });
   }
 
   private cleanup(): void {
@@ -129,9 +139,12 @@ export class MemoryCache<T = any> {
         removedCount++;
       }
     }
-
     if (removedCount > 0) {
-      console.log(`🧹 Cache: Cleaned up ${removedCount} expired entries`);
+      this.cacheLogger.info('Cache cleanup completed', {
+        removedCount,
+        cacheSize: this.cache.size,
+        action: 'expired_entry_prune'
+      });
     }
   }
 
@@ -150,6 +163,10 @@ export class MemoryCache<T = any> {
       this.cleanupTimer = null;
     }
     this.clear();
+  }
+
+  private isExpired(entry: CacheEntry<T>, now: number = Date.now()): boolean {
+    return now > entry.expiresAt;
   }
 }
 
