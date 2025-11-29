@@ -65,7 +65,7 @@ const FALLBACK_TEXT_SELECTOR = '[No text output]';
 type ResponseRequestConfig = {
   model: string;
   messages: ChatCompletionMessageParam[];
-  tokenParams: Record<string, unknown>;
+  tokenParams: ReturnType<typeof getTokenParameter>;
   options: CallOpenAIOptions;
 };
 
