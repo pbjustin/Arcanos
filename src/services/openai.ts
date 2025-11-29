@@ -59,6 +59,7 @@ let openai: OpenAI | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
 const DEFAULT_ROUTING_MAX_TOKENS = 4096;
 const ARCANOS_ROUTING_MESSAGE = 'ARCANOS routing active';
+const IMAGE_GENERATION_MODEL = 'gpt-image-1';
 
 /**
  * Initializes OpenAI client with API key validation and default model configuration
@@ -679,6 +680,19 @@ type ImageSize =
   | '1024x1792'
   | 'auto';
 
+const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
+  try {
+    const { output } = await callOpenAI(getDefaultModel(), input, IMAGE_PROMPT_TOKEN_LIMIT, false);
+    if (output && output.trim().length > 0) {
+      return output.trim();
+    }
+  } catch (err) {
+    console.error('❌ Failed to generate prompt via fine-tuned model:', err);
+  }
+
+  return input;
+};
+
 export async function generateImage(
   input: string,
   size: ImageSize = '1024x1024'
@@ -690,18 +704,10 @@ export async function generateImage(
   }
 
   // Use the fine-tuned default model to craft a detailed image prompt
-  let prompt = input;
-  try {
-    const { output } = await callOpenAI(getDefaultModel(), input, IMAGE_PROMPT_TOKEN_LIMIT, false);
-    if (output && output.trim().length > 0) {
-      prompt = output.trim();
-    }
-  } catch (err) {
-    console.error('❌ Failed to generate prompt via fine-tuned model:', err);
-  }
+  const prompt = await buildEnhancedImagePrompt(input);
 
   const response = await client.images.generate({
-    model: 'gpt-image-1',
+    model: IMAGE_GENERATION_MODEL,
     prompt,
     size
   });
