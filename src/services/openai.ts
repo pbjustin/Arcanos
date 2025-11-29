@@ -60,6 +60,60 @@ const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10
 const DEFAULT_ROUTING_MAX_TOKENS = 4096;
 const ARCANOS_ROUTING_MESSAGE = 'ARCANOS routing active';
 const IMAGE_GENERATION_MODEL = 'gpt-image-1';
+const FALLBACK_TEXT_SELECTOR = '[No text output]';
+
+type ResponseRequestConfig = {
+  model: string;
+  messages: ChatCompletionMessageParam[];
+  tokenParams: ReturnType<typeof getTokenParameter>;
+  options: CallOpenAIOptions;
+};
+
+const mapMessagesToResponseInput = (messages: ChatCompletionMessageParam[]) =>
+  messages.map(({ role, content }) => ({ role, content }));
+
+const buildResponseRequestPayload = ({
+  model,
+  messages,
+  tokenParams,
+  options
+}: ResponseRequestConfig) => {
+  const basePayload = prepareGPT5Request({
+    model,
+    input: mapMessagesToResponseInput(messages),
+    ...tokenParams,
+    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.top_p !== undefined ? { top_p: options.top_p } : {}),
+    ...(options.frequency_penalty !== undefined
+      ? { frequency_penalty: options.frequency_penalty }
+      : {}),
+    ...(options.presence_penalty !== undefined ? { presence_penalty: options.presence_penalty } : {}),
+    ...(options.responseFormat !== undefined ? { response_format: options.responseFormat } : {}),
+    ...(options.user !== undefined ? { user: options.user } : {})
+  });
+
+  // Ensure a max_output_tokens parameter for responses API compatibility
+  if (
+    basePayload &&
+    typeof basePayload === 'object' &&
+    !('max_output_tokens' in basePayload) &&
+    'max_tokens' in basePayload
+  ) {
+    Object.assign(basePayload, { max_output_tokens: (basePayload as any).max_tokens });
+  }
+
+  return basePayload;
+};
+
+const extractResponseOutput = (response: any): string => {
+  const rawOutput =
+    response?.output_text ||
+    response?.output?.[0]?.content?.[0]?.text ||
+    response?.choices?.[0]?.message?.content ||
+    FALLBACK_TEXT_SELECTOR;
+
+  return typeof rawOutput === 'string' ? rawOutput : FALLBACK_TEXT_SELECTOR;
+};
 
 /**
  * Initializes OpenAI client with API key validation and default model configuration
@@ -253,37 +307,25 @@ async function makeOpenAIRequest(
       }
 
       const tokenParams = getTokenParameter(model, tokenLimit);
-      const requestPayload = prepareGPT5Request({
+      const requestPayload = buildResponseRequestPayload({
         model,
         messages,
-        ...tokenParams,
-        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-        ...(options.top_p !== undefined ? { top_p: options.top_p } : {}),
-        ...(options.frequency_penalty !== undefined
-          ? { frequency_penalty: options.frequency_penalty }
-          : {}),
-        ...(options.presence_penalty !== undefined
-          ? { presence_penalty: options.presence_penalty }
-          : {}),
-        ...(options.responseFormat !== undefined ? { response_format: options.responseFormat } : {}),
-        ...(options.user !== undefined ? { user: options.user } : {})
+        tokenParams,
+        options
       });
 
       console.log(`🤖 OpenAI request (attempt ${attempt}/${maxRetries}) - Model: ${model}`);
 
-      const response: any = await client.chat.completions.create(
-        requestPayload,
-        { 
-          signal: controller.signal,
-          // Add request ID for tracing
-          headers: {
-            [REQUEST_ID_HEADER]: crypto.randomUUID()
-          }
+      const response: any = await client.responses.create(requestPayload, {
+        signal: controller.signal,
+        // Add request ID for tracing
+        headers: {
+          [REQUEST_ID_HEADER]: crypto.randomUUID()
         }
-      );
-      
+      });
+
       clearTimeout(timeout);
-      const output = response.choices?.[0]?.message?.content || '';
+      const output = extractResponseOutput(response);
       const activeModel = response.model || model;
 
       // Log success metrics
