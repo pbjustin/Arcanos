@@ -21,7 +21,7 @@ const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
 // Cache for model capability testing to avoid repeated API calls
 const modelCapabilityCache = new Map<string, 'max_tokens' | 'max_completion_tokens'>();
 
-interface TokenParameterResult {
+export interface TokenParameterResult {
   max_tokens?: number;
   max_completion_tokens?: number;
 }
