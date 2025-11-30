@@ -14,14 +14,25 @@ import { createServer, Server } from 'http';
 export async function isPortAvailable(port: number, host: string = '0.0.0.0'): Promise<boolean> {
   return new Promise((resolve) => {
     const server: Server = createServer();
-    
-    server.listen(port, host, () => {
+
+    const cleanup = () => {
+      server.removeAllListeners('listening');
+      server.removeAllListeners('error');
+    };
+
+    server.once('listening', () => {
       server.close(() => {
+        cleanup();
         resolve(true);
       });
     });
-    
-    server.on('error', () => resolve(false));
+
+    server.once('error', () => {
+      cleanup();
+      resolve(false);
+    });
+
+    server.listen(port, host);
   });
 }
 
