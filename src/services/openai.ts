@@ -23,7 +23,6 @@ import {
 import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
 import { buildChatMessages } from './openai/messageBuilder.js';
 import { prepareGPT5Request, buildReasoningRequestPayload } from './openai/requestTransforms.js';
-import { getRoutingActiveMessage } from '../config/prompts.js';
 import { buildResponseRequestPayload, extractResponseOutput } from './openai/responsePayload.js';
 import {
   CallOpenAIOptions,
@@ -33,14 +32,11 @@ import {
   ChatCompletionResponseFormat
 } from './openai/types.js';
 import {
-  resolveOpenAIKey,
-  resolveOpenAIBaseURL,
-  getOpenAIKeySource,
-  hasValidAPIKey,
   getDefaultModel,
-  setDefaultModel,
   getFallbackModel,
-  getGPT5Model
+  getGPT5Model,
+  getOpenAIKeySource,
+  hasValidAPIKey
 } from './openai/credentialProvider.js';
 import {
   RESILIENCE_CONSTANTS,
@@ -48,6 +44,13 @@ import {
   calculateRetryDelay,
   getCircuitBreakerSnapshot
 } from './openai/resilience.js';
+import {
+  API_TIMEOUT_MS,
+  ARCANOS_ROUTING_MESSAGE,
+  getOpenAIClient,
+  getOpenAIServiceHealth,
+  validateAPIKeyAtStartup
+} from './openai/clientFactory.js';
 
 export type {
   CallOpenAIOptions,
@@ -57,68 +60,8 @@ export type {
   ChatCompletionResponseFormat
 };
 
-let openai: OpenAI | null = null;
-const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
 const DEFAULT_ROUTING_MAX_TOKENS = 4096;
-const ARCANOS_ROUTING_MESSAGE = getRoutingActiveMessage();
-const ARCANOS_ROUTING_LOG = `${ARCANOS_ROUTING_MESSAGE} - all calls will use configured model by default`;
 const IMAGE_GENERATION_MODEL = 'gpt-image-1';
-
-/**
- * Initializes OpenAI client with API key validation and default model configuration
- *
- * @returns OpenAI client instance or null if initialization fails
- */
-const initializeOpenAI = (): OpenAI | null => {
-  if (openai) return openai;
-
-  try {
-    const apiKey = resolveOpenAIKey();
-    if (!apiKey) {
-      aiLogger.warn('OpenAI API key not configured - AI endpoints will return mock responses', {
-        operation: 'initialization'
-      });
-      return null; // Return null to indicate mock mode
-    }
-
-    const baseURL = resolveOpenAIBaseURL();
-    openai = new OpenAI({
-      apiKey,
-      timeout: API_TIMEOUT_MS,
-      ...(baseURL ? { baseURL } : {})
-    });
-    // Support OPENAI_MODEL (primary), FINETUNED_MODEL_ID, and AI_MODEL for Railway compatibility
-    const configuredDefaultModel =
-      process.env.OPENAI_MODEL ||
-      process.env.RAILWAY_OPENAI_MODEL ||
-      process.env.FINETUNED_MODEL_ID ||
-      process.env.FINE_TUNED_MODEL_ID ||
-      process.env.AI_MODEL ||
-      'gpt-4o';
-    setDefaultModel(configuredDefaultModel);
-
-    console.log('✅ OpenAI client initialized');
-    console.log(`🧠 Default AI Model: ${configuredDefaultModel}`);
-    console.log(`🔄 Fallback Model: ${getFallbackModel()}`);
-    console.log(`🎯 ${ARCANOS_ROUTING_LOG}`);
-
-    return openai;
-  } catch (error) {
-    console.error('❌ Failed to initialize OpenAI client:', error);
-    return null;
-  }
-};
-
-/**
- * Gets the active OpenAI client instance, initializing if needed
- * 
- * @returns OpenAI client instance or null if unavailable
- */
-export const getOpenAIClient = (): OpenAI | null => {
-  return openai || initializeOpenAI();
-};
-
-// Note: createCacheKey is now imported from utils/hashUtils.js
 
 /**
  * Enhanced OpenAI call helper with circuit breaker, exponential backoff, and caching
@@ -460,18 +403,6 @@ export const createChatCompletionWithFallback = async (
   return executeModelFallbacks(attempts, `${failureContext} [COMPLETE FAILURE]`);
 };
 
-export const validateAPIKeyAtStartup = (): boolean => {
-  const apiKey = resolveOpenAIKey();
-  if (!apiKey) {
-    console.warn('⚠️ OPENAI_API_KEY not set - will return mock responses');
-    return true; // Allow startup but return mock responses
-  }
-  console.log(
-    `✅ OPENAI_API_KEY validation passed${getOpenAIKeySource() ? ` (source: ${getOpenAIKeySource()})` : ''}`
-  );
-  return true;
-};
-
 const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 
 const ensureModelMatchesExpectation = (response: any, expectedModel: string): string => {
@@ -718,37 +649,8 @@ export async function generateImage(
 /**
  * Gets comprehensive OpenAI service health metrics including circuit breaker status
  */
-export const getOpenAIServiceHealth = () => {
-  const circuitBreakerMetrics = getCircuitBreakerSnapshot();
-  const cacheStats = responseCache.getStats();
-  const configured = hasValidAPIKey();
-
-  return {
-    apiKey: {
-      configured,
-      status: configured ? 'valid' : 'missing_or_invalid',
-      source: getOpenAIKeySource()
-    },
-    client: {
-      initialized: openai !== null,
-      model: getDefaultModel(),
-      timeout: API_TIMEOUT_MS,
-      baseURL: resolveOpenAIBaseURL()
-    },
-    circuitBreaker: {
-      ...circuitBreakerMetrics,
-      healthy: circuitBreakerMetrics.state !== 'OPEN'
-    },
-    cache: {
-      ...cacheStats,
-      enabled: true
-    },
-    lastHealthCheck: new Date().toISOString()
-  };
-};
-
 /**
- * Centralized OpenAI completion wrapper that ensures all calls go through 
+ * Centralized OpenAI completion wrapper that ensures all calls go through
  * the fine-tuned model by default with ARCANOS routing system message.
  * This is the main function that should be used for all AI completions.
  * 
@@ -820,13 +722,16 @@ export async function createCentralizedCompletion(
 }
 
 export {
+  getOpenAIClient,
   getOpenAIKeySource,
   hasValidAPIKey,
   getDefaultModel,
   getFallbackModel,
   getGPT5Model,
   generateMockResponse,
-  getCircuitBreakerSnapshot
+  getCircuitBreakerSnapshot,
+  getOpenAIServiceHealth,
+  validateAPIKeyAtStartup
 };
 
 export default {

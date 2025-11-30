@@ -1,3 +1,4 @@
+import type OpenAI from 'openai';
 import fs from 'fs/promises';
 import { getOpenAIClient } from './openai.js';
 import config from '../config/index.js';
@@ -18,6 +19,8 @@ export interface AssistantRecord extends AssistantInfo {
 
 export type AssistantRegistry = Record<string, AssistantRecord>;
 
+type AssistantListPage = Awaited<ReturnType<OpenAI['beta']['assistants']['list']>>;
+
 const LOG_CONTEXT = { module: 'assistant-sync' } as const;
 const REGISTRY_PATH = config.assistantSync.registryPath;
 
@@ -32,7 +35,7 @@ export async function getAllAssistants(): Promise<AssistantInfo[]> {
   let cursor: string | undefined = undefined;
 
   while (true) {
-    const resp = await client.beta.assistants.list({ limit: 20, after: cursor });
+    const resp: AssistantListPage = await client.beta.assistants.list({ limit: 20, after: cursor });
     resp.data.forEach((a: any) => {
       assistants.push({
         id: a.id,
