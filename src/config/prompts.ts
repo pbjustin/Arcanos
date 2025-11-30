@@ -218,13 +218,17 @@ export const getArcanosSystemPrompt = (): string => {
 
 export const getArcanosUserPrompt = (userInput: string, memoryContext?: string): string => {
   const template = loadPromptsConfig().arcanos.user_prompt;
-  const memorySection = memoryContext 
+  const memorySection = memoryContext
     ? `\n[MEMORY CONTEXT INTEGRATION]\n${memoryContext}\nApply relevant memory context to maintain continuity in your response.`
     : '';
-  
+
   return template
     .replace('{memoryContext}', memorySection)
     .replace('{userInput}', userInput);
+};
+
+export const getRoutingActiveMessage = (): string => {
+  return loadPromptsConfig().system.routing_active;
 };
 
 export const getSecureReasoningIntegrationPrompt = (
