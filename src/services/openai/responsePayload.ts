@@ -1,3 +1,4 @@
+import { TokenParameterResult } from '../../utils/tokenParameterHelper.js';
 import { prepareGPT5Request } from './requestTransforms.js';
 import { ChatCompletionMessageParam, CallOpenAIOptions } from './types.js';
 
@@ -14,7 +15,7 @@ export const buildResponseRequestPayload = ({
 }: {
   model: string;
   messages: ChatCompletionMessageParam[];
-  tokenParams: Record<string, unknown>;
+  tokenParams: TokenParameterResult;
   options: CallOpenAIOptions;
 }) => {
   const basePayload = prepareGPT5Request({
