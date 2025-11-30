@@ -23,6 +23,7 @@ import {
 import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
 import { buildChatMessages } from './openai/messageBuilder.js';
 import { prepareGPT5Request, buildReasoningRequestPayload } from './openai/requestTransforms.js';
+import { getRoutingActiveMessage } from '../config/prompts.js';
 import {
   CallOpenAIOptions,
   CallOpenAIResult,
@@ -58,7 +59,8 @@ export type {
 let openai: OpenAI | null = null;
 const API_TIMEOUT_MS = parseInt(process.env.WORKER_API_TIMEOUT_MS || '60000', 10);
 const DEFAULT_ROUTING_MAX_TOKENS = 4096;
-const ARCANOS_ROUTING_MESSAGE = 'ARCANOS routing active';
+const ARCANOS_ROUTING_MESSAGE = getRoutingActiveMessage();
+const ARCANOS_ROUTING_LOG = `${ARCANOS_ROUTING_MESSAGE} - all calls will use configured model by default`;
 const IMAGE_GENERATION_MODEL = 'gpt-image-1';
 const FALLBACK_TEXT_SELECTOR = '[No text output]';
 
@@ -151,7 +153,7 @@ const initializeOpenAI = (): OpenAI | null => {
     console.log('✅ OpenAI client initialized');
     console.log(`🧠 Default AI Model: ${configuredDefaultModel}`);
     console.log(`🔄 Fallback Model: ${getFallbackModel()}`);
-    console.log('🎯 ARCANOS routing active - all calls will use configured model by default');
+    console.log(`🎯 ${ARCANOS_ROUTING_LOG}`);
 
     return openai;
   } catch (error) {
@@ -838,7 +840,7 @@ export async function createCentralizedCompletion(
   runtime.addMessages(sessionId, arcanosMessages);
   runtime.setMetadata(sessionId, { model });
 
-  console.log(`🎯 ARCANOS centralized routing - Model: ${model}`);
+  console.log(`🎯 ${ARCANOS_ROUTING_MESSAGE} - Model: ${model}`);
 
   // Prepare request with token parameters for the specific model
   const tokenParams = getTokenParameter(model, options.max_tokens || DEFAULT_ROUTING_MAX_TOKENS);
