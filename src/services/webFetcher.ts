@@ -35,8 +35,38 @@ export async function fetchAndClean(url: string, maxChars = DEFAULT_MAX_CHARS): 
   const $ = load(data);
   $('script, style, noscript').remove();
   const text = $('body').text();
+  const cleanedText = text.replace(/\s+/g, ' ').trim();
 
-  return text.replace(/\s+/g, ' ').trim().slice(0, Math.max(0, maxChars));
+  const seenLinks = new Set<string>();
+  const linkSummaries: string[] = [];
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href');
+    if (!href) return;
+
+    try {
+      const resolved = new URL(href, parsed);
+      if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') {
+        return;
+      }
+
+      if (seenLinks.has(resolved.href)) {
+        return;
+      }
+      seenLinks.add(resolved.href);
+
+      const anchorText = $(el).text().replace(/\s+/g, ' ').trim();
+      const label = anchorText || resolved.href;
+      linkSummaries.push(`${label} -> ${resolved.href}`);
+    } catch {
+      return;
+    }
+  });
+
+  const linkBlock = linkSummaries.length
+    ? `\n\n[LINKS]\n- ${linkSummaries.slice(0, 15).join('\n- ')}`
+    : '';
+
+  return `${cleanedText}${linkBlock}`.slice(0, Math.max(0, maxChars));
 }
 
 export { assertHttpUrl };
