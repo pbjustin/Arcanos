@@ -14,7 +14,7 @@ import { performStartup } from './startup.js';
 import type { WorkerInitResult } from './utils/workerBoot.js';
 import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, logShutdownEvent } from './utils/bootLogger.js';
 import { logger } from './utils/structuredLogging.js';
-import { SERVER_MESSAGES, SERVER_CONSTANTS } from './config/serverMessages.js';
+import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -58,14 +58,53 @@ function createShutdownHandler(server: Server): (signal: string) => void {
   };
 }
 
+function logPortAvailabilityWarnings(portResult: { isPreferred: boolean; message?: string }, preferredPort: number, host: string): void {
+  if (!portResult.isPreferred) {
+    serverLogger.warn(
+      formatBootMessage(SERVER_MESSAGES.BOOT.PORT_WARNING, portResult.message || 'Port unavailable'),
+      { preferredPort, host }
+    );
+    serverLogger.warn(
+      formatBootMessage(SERVER_MESSAGES.BOOT.PORT_SWITCH, SERVER_TEXT.PORT_CONFLICT_TIP),
+      { preferredPort, host }
+    );
+  }
+}
+
+function initializeSystemState(actualPort: number): void {
+  try {
+    updateState({
+      status: 'running',
+      version: process.env.npm_package_version || '1.0.0',
+      startTime: new Date().toISOString(),
+      port: actualPort,
+      environment: config.server.environment
+    });
+    serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.BACKEND_SYNC, SERVER_TEXT.STATE_INIT_SUCCESS));
+  } catch (error) {
+    serverLogger.error(
+      formatBootMessage(
+        SERVER_MESSAGES.BOOT.BACKEND_SYNC_ERROR,
+        `${SERVER_TEXT.STATE_INIT_FAILURE_PREFIX}${error}`
+      ),
+      undefined,
+      undefined,
+      error as Error
+    );
+  }
+}
+
 function scheduleSystemDiagnostic(actualPort: number): void {
   setTimeout(async () => {
     try {
-      serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_START, 'Running system diagnostic...'));
+      serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_START, SERVER_TEXT.DIAGNOSTIC_START));
       await runSystemDiagnostic(actualPort);
     } catch (error) {
       serverLogger.error(
-        formatBootMessage(SERVER_MESSAGES.BOOT.GPT_SYNC_ERROR, `System diagnostic failed: ${error}`),
+        formatBootMessage(
+          SERVER_MESSAGES.BOOT.GPT_SYNC_ERROR,
+          `${SERVER_TEXT.DIAGNOSTIC_FAILURE_PREFIX}${error}`
+        ),
         undefined,
         undefined,
         error as Error
@@ -111,19 +150,7 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
 
   const portResult = await getAvailablePort(preferredPort, host);
 
-  if (!portResult.isPreferred) {
-    serverLogger.warn(
-      formatBootMessage(SERVER_MESSAGES.BOOT.PORT_WARNING, portResult.message || 'Port unavailable'),
-      { preferredPort, host }
-    );
-    serverLogger.warn(
-      formatBootMessage(
-        SERVER_MESSAGES.BOOT.PORT_SWITCH,
-        'Consider stopping other services or setting a different PORT in .env'
-      ),
-      { preferredPort, host }
-    );
-  }
+  logPortAvailabilityWarnings(portResult, preferredPort, host);
 
   const workerResults = await initializeWorkers();
 
@@ -137,26 +164,7 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
 
     logBootSummary(actualPort, workerResults);
 
-    try {
-      updateState({
-        status: 'running',
-        version: process.env.npm_package_version || '1.0.0',
-        startTime: new Date().toISOString(),
-        port: actualPort,
-        environment: config.server.environment
-      });
-      serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.BACKEND_SYNC, 'System state initialized'));
-    } catch (error) {
-      serverLogger.error(
-        formatBootMessage(
-          SERVER_MESSAGES.BOOT.BACKEND_SYNC_ERROR,
-          `Failed to initialize system state: ${error}`
-        ),
-        undefined,
-        undefined,
-        error as Error
-      );
-    }
+    initializeSystemState(actualPort);
 
     registerProcessHandlers(server, actualPort);
 

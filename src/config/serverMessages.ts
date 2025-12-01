@@ -38,6 +38,14 @@ export const SERVER_MESSAGES = {
   }
 } as const;
 
+export const SERVER_TEXT = {
+  DIAGNOSTIC_START: 'Running system diagnostic...',
+  DIAGNOSTIC_FAILURE_PREFIX: 'System diagnostic failed: ',
+  PORT_CONFLICT_TIP: 'Consider stopping other services or setting a different PORT in .env',
+  STATE_INIT_SUCCESS: 'System state initialized',
+  STATE_INIT_FAILURE_PREFIX: 'Failed to initialize system state: '
+} as const;
+
 export const SERVER_CONSTANTS = {
   WORKERS_DIRECTORY: './workers',
   DIAGNOSTIC_DELAY_MS: 2000, // Delay before running system diagnostic
