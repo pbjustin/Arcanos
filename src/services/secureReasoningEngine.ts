@@ -11,12 +11,17 @@ import { getDefaultModel, createChatCompletionWithFallback } from './openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
-import { 
-  applySecurityCompliance, 
-  createSecureReasoningPrompt, 
-  createStructuredSecureResponse, 
+import {
+  applySecurityCompliance,
+  createSecureReasoningPrompt,
+  createStructuredSecureResponse,
   logSecurityAudit
 } from './securityCompliance.js';
+import {
+  SECURE_REASONING_FALLBACK_ANALYSIS,
+  SECURE_REASONING_SIMPLE_FALLBACK,
+  SECURE_REASONING_SYSTEM_PROMPT
+} from '../config/secureReasoningMessages.js';
 
 interface SecureReasoningRequest {
   userInput: string;
@@ -67,30 +72,12 @@ export async function executeSecureReasoning(
   // Get appropriate model for reasoning
   const model = getDefaultModel();
   console.log(`[🧠 SECURE REASONING] Using model: ${model}`);
-  
+
   try {
     // Execute reasoning with enhanced error handling
     const tokenParams = getTokenParameter(model, APPLICATION_CONSTANTS.EXTENDED_TOKEN_LIMIT);
     const response = await createChatCompletionWithFallback(client, {
-      messages: [
-        {
-          role: 'system',
-          content: `You are the reasoning engine for ARCANOS. Follow these rules at all times:
-
-1. Do NOT generate, expose, or guess real API keys, tokens, passwords, access credentials, or any sensitive authentication strings.
-2. If your reasoning requires an example of such data, replace it with a safe placeholder in the format: <KEY_REDACTED> or <TOKEN_REDACTED>.
-3. Do NOT output internal file paths, environment variables, or proprietary code from ARCANOS's backend unless explicitly requested by ARCANOS.
-4. When giving technical examples, use fictional or generic identifiers that cannot be mistaken for live credentials.
-5. Always assume your output will be logged, audited, and stored. Write with compliance and confidentiality in mind.
-6. Focus on reasoning and structured solutions — ARCANOS will handle execution, tone, and delivery.
-
-Your output should be structured, clear, and free of any confidential or security-sensitive strings.`
-        },
-        {
-          role: 'user',
-          content: fullPrompt
-        }
-      ],
+      messages: buildSecureReasoningMessages(fullPrompt),
       temperature: 0.3, // Balanced for reasoning consistency
       ...tokenParams
     });
@@ -189,35 +176,12 @@ function createSecureFallbackResponse(
   timestamp: string,
   error: Error
 ): SecureReasoningResult {
-  
+
   // Create safe error analysis without exposing system details
-  const fallbackAnalysis = `
-🧠 ARCANOS REASONING ENGINE - FALLBACK ANALYSIS
-═══════════════════════════════════════════════
+  const complianceCheck = applySecurityCompliance(SECURE_REASONING_FALLBACK_ANALYSIS);
 
-The reasoning engine encountered a processing limitation and has activated secure fallback mode.
-
-📋 REQUEST ANALYSIS
-Request processed in secure mode to maintain compliance standards.
-Input has been analyzed for security requirements.
-
-🔍 STRUCTURED ANALYSIS
-The system has applied security-compliant processing to your request.
-Analysis focuses on providing structured solutions while maintaining confidentiality.
-
-🎯 GENERAL RECOMMENDATIONS
-- Review request formatting for clarity
-- Ensure request does not contain sensitive information
-- Consider breaking complex requests into smaller components
-- Verify that all technical examples use generic identifiers
-
-This fallback response ensures compliance with security and audit requirements.
-`;
-
-  const complianceCheck = applySecurityCompliance(fallbackAnalysis);
-  
   return {
-    structuredAnalysis: fallbackAnalysis,
+    structuredAnalysis: SECURE_REASONING_FALLBACK_ANALYSIS,
     problemSolvingSteps: [
       'Review and clarify the request',
       'Ensure no sensitive information is included',
@@ -274,17 +238,28 @@ export async function executeQuickSecureAnalysis(
     
   } catch (error) {
     console.error('[❌ QUICK ANALYSIS] Error:', error);
-    
+
     // Secure fallback
-    const fallbackAnalysis = applySecurityCompliance(
-      `Analysis request processed in secure mode. Please ensure your request follows ARCANOS security guidelines and does not contain sensitive information.`
-    );
+    const fallbackAnalysis = applySecurityCompliance(SECURE_REASONING_SIMPLE_FALLBACK);
     
     return {
       analysis: fallbackAnalysis.content,
       compliant: fallbackAnalysis.complianceStatus === 'COMPLIANT'
     };
   }
+}
+
+function buildSecureReasoningMessages(fullPrompt: string): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  return [
+    {
+      role: 'system',
+      content: SECURE_REASONING_SYSTEM_PROMPT
+    },
+    {
+      role: 'user',
+      content: fullPrompt
+    }
+  ];
 }
 
 /**
