@@ -18,7 +18,8 @@ import {
   REQUEST_ID_HEADER
 } from './openai/constants.js';
 import {
-  REASONING_LOG_SUMMARY_LENGTH
+  REASONING_LOG_SUMMARY_LENGTH,
+  REASONING_FALLBACK_TEXT
 } from '../config/reasoningTemplates.js';
 import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
 import { buildChatMessages } from './openai/messageBuilder.js';
@@ -405,6 +406,9 @@ export const createChatCompletionWithFallback = async (
 
 const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 
+const extractReasoningText = (response: any, fallback: string = REASONING_FALLBACK_TEXT): string =>
+  response?.output_text || response?.output?.[0]?.content?.[0]?.text || fallback;
+
 const ensureModelMatchesExpectation = (response: any, expectedModel: string): string => {
   const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
 
@@ -466,10 +470,7 @@ export const createGPT5Reasoning = async (
     const response: any = await client.responses.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
-    const content =
-      response.output_text ||
-      response.output?.[0]?.content?.[0]?.text ||
-      '[No reasoning provided]';
+    const content = extractReasoningText(response);
     console.log(`✅ [GPT-5.1 REASONING] Success: ${content.substring(0, 100)}...`);
     return { content, model: resolvedModel };
   } catch (err: any) {
@@ -512,10 +513,7 @@ export const createGPT5ReasoningLayer = async (
     const response: any = await client.responses.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
-    const reasoningContent =
-      response.output_text ||
-      response.output?.[0]?.content?.[0]?.text ||
-      '[No reasoning provided]';
+    const reasoningContent = extractReasoningText(response);
 
     // The GPT-5.1 response IS the refined result
     const refinedResult = reasoningContent;
