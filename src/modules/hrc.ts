@@ -1,5 +1,6 @@
 import { getOpenAIClient } from '../services/openai.js';
 import { getDefaultModel } from '../services/openai.js';
+import { HRC_SYSTEM_PROMPT } from '../config/hrcPrompts.js';
 
 export interface HRCResult {
   fidelity: number;
@@ -33,11 +34,7 @@ export class HRCCore {
         model,
         response_format: { type: 'json_object' },
         messages: [
-          {
-            role: 'system',
-            content:
-              'You are the Hallucination-Resistant Core. Analyse the user message and return JSON {"fidelity":0-1,"resilience":0-1,"verdict":string}.',
-          },
+          { role: 'system', content: HRC_SYSTEM_PROMPT },
           { role: 'user', content: input }
         ],
         temperature: 0
