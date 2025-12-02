@@ -1,6 +1,7 @@
 export const REASONING_TOKEN_LIMIT = 1500;
 export const REASONING_TEMPERATURE = 0.7;
 export const REASONING_LOG_SUMMARY_LENGTH = 200;
+export const REASONING_FALLBACK_TEXT = '[No reasoning provided]';
 
 export const REASONING_SYSTEM_PROMPT =
   'You are an advanced reasoning layer for ARCANOS AI. Your role is to refine and enhance ARCANOS responses through deeper analysis while preserving the original intent and structure. Focus on logical consistency, completeness, and clarity.';
