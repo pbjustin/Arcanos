@@ -51,10 +51,8 @@ export async function handlePrompt(
   if (!validation) return; // Response already handled (mock or error)
 
   const { input: prompt } = validation;
-  const model =
-    typeof req.body.model === 'string' && req.body.model.trim().length > 0
-      ? req.body.model
-      : getDefaultModel();
+  const modelOverride = typeof req.body.model === 'string' ? req.body.model.trim() : undefined;
+  const model = modelOverride && modelOverride.length > 0 ? modelOverride : getDefaultModel();
 
   try {
     const { output } = await callOpenAI(model, prompt, 256);

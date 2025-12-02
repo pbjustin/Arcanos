@@ -69,6 +69,24 @@ describe('handlePrompt', () => {
     );
   });
 
+  it('trims provided model names before sending to OpenAI', async () => {
+    validateAIRequest.mockReturnValue({ input: 'hi', client: {} });
+    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:custom-model', cached: false });
+
+    const req: any = { body: { prompt: 'hi', model: '  ft:custom-model  ' } };
+    const res: any = { json: jest.fn() };
+
+    await handlePrompt(req, res);
+
+    expect(callOpenAI).toHaveBeenCalledWith('ft:custom-model', 'hi', 256);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'ft:custom-model',
+        activeModel: 'ft:custom-model'
+      })
+    );
+  });
+
   it('falls back to default model when none provided', async () => {
     validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
     getDefaultModel.mockReturnValue('ft:default-model');
