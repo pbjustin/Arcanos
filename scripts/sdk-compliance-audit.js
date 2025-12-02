@@ -124,12 +124,14 @@ async function auditSDKCompliance(result) {
         const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
         result.sdkValidation.version = packageJson.dependencies?.openai || 'not found';
         console.log(`   📦 OpenAI SDK Version: ${result.sdkValidation.version}`);
-        if (!result.sdkValidation.version.includes('5.')) {
+        const majorVersionMatch = result.sdkValidation.version.match(/\d+/);
+        const majorVersion = majorVersionMatch ? parseInt(majorVersionMatch[0], 10) : 0;
+        if (majorVersion < 5) {
             result.summary.recommendedActions.push('Update OpenAI SDK to version 5.x or higher');
             result.summary.overallRisk = 'high';
         }
         else {
-            console.log('   ✅ SDK version is compliant (v5.x)');
+            console.log(`   ✅ SDK version is compliant (v${majorVersion}.x)`);
         }
     }
     catch (error) {
