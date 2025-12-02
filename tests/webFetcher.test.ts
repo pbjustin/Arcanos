@@ -17,6 +17,8 @@ describe('fetchAndClean', () => {
           <body>
             Hello <strong>World</strong>!
             <noscript>fallback</noscript>
+            <a href="/guide">Guide Index</a>
+            <a href="https://example.com/faq">FAQ</a>
           </body>
         </html>
       `);
@@ -39,7 +41,7 @@ describe('fetchAndClean', () => {
 
   it('strips non-text elements and condenses whitespace', async () => {
     const cleaned = await fetchAndClean(baseUrl);
-    expect(cleaned).toBe('Hello World!');
+    expect(cleaned).toContain('Hello World!');
   });
 
   it('enforces http/https schemes', async () => {
@@ -49,5 +51,12 @@ describe('fetchAndClean', () => {
   it('truncates content when maxChars is provided', async () => {
     const cleaned = await fetchAndClean(baseUrl, 5);
     expect(cleaned).toBe('Hello');
+  });
+
+  it('appends a compact link directory', async () => {
+    const cleaned = await fetchAndClean(baseUrl);
+    expect(cleaned).toContain('[LINKS]');
+    expect(cleaned).toContain('Guide Index ->');
+    expect(cleaned).toContain('FAQ ->');
   });
 });
