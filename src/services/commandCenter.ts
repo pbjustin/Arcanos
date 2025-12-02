@@ -1,6 +1,7 @@
 import { sanitizeInput } from '../utils/security.js';
 import { createCentralizedCompletion, generateMockResponse, hasValidAPIKey } from './openai.js';
 import { getAuditSafeMode, interpretCommand, setAuditSafeMode } from './auditSafeToggle.js';
+import { extractTextPrompt } from '../utils/payloadNormalization.js';
 
 export type CommandName = 'audit-safe:set-mode' | 'audit-safe:interpret' | 'ai:prompt';
 
@@ -76,7 +77,7 @@ const commandHandlers: Record<CommandName, CommandHandler> = {
     });
   },
   'ai:prompt': async (payload) => {
-    const prompt = typeof payload?.prompt === 'string' ? payload.prompt.trim() : '';
+    const prompt = extractTextPrompt(payload, ['prompt']);
 
     if (!prompt) {
       return buildResult('ai:prompt', false, 'Prompt text is required.');
