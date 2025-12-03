@@ -9,16 +9,24 @@ export async function webFetcher<T = unknown>(
 ): Promise<T> {
   const res = await fetch(url, options);
 
-  if (!res.ok) {
-    throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-  }
-
   const contentType = res.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) {
-    return (await res.json()) as T;
+  const bodyText = await res.text();
+
+  if (!res.ok) {
+    const snippet = bodyText.replace(/\s+/g, ' ').trim().slice(0, 300);
+    const bodyInfo = snippet ? ` Body: ${snippet}` : '';
+    throw new Error(`Fetch failed for ${url}: ${res.status} ${res.statusText}.${bodyInfo}`);
   }
 
-  return (await res.text()) as unknown as T;
+  if (contentType.includes('application/json')) {
+    try {
+      return JSON.parse(bodyText) as T;
+    } catch (err) {
+      throw new Error(`Failed to parse JSON response from ${url}: ${(err as Error).message}`);
+    }
+  }
+
+  return bodyText as unknown as T;
 }
 
 export default webFetcher;
