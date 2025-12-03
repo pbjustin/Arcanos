@@ -41,6 +41,7 @@ export const SERVER_MESSAGES = {
 export const SERVER_TEXT = {
   DIAGNOSTIC_START: 'Running system diagnostic...',
   DIAGNOSTIC_FAILURE_PREFIX: 'System diagnostic failed: ',
+  PORT_CHECK_PROGRESS: 'Checking port availability...',
   PORT_CONFLICT_TIP: 'Consider stopping other services or setting a different PORT in .env',
   STATE_INIT_SUCCESS: 'System state initialized',
   STATE_INIT_FAILURE_PREFIX: 'Failed to initialize system state: '
