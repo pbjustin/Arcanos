@@ -8,14 +8,30 @@ import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { getOpenAIClient } from './openai.js';
 
 import config from '../config/index.js';
-import { GPT_SYNC_STRINGS } from '../config/gptSyncMessages.js';
+import { GPT_SYNC_CONFIG } from '../config/gptSyncConfig.js';
+import { GPT_SYNC_ERRORS, GPT_SYNC_LOG_MESSAGES, GPT_SYNC_STRINGS } from '../config/gptSyncMessages.js';
 
 function getRequiredOpenAIClient() {
   const client = getOpenAIClient();
   if (!client) {
-    throw new Error('OpenAI client not available - API key required for GPT sync functionality');
+    throw new Error(GPT_SYNC_ERRORS.clientUnavailable);
   }
   return client;
+}
+
+function logSyncInfo(message: string, data?: unknown): void {
+  const formattedMessage = `${GPT_SYNC_CONFIG.logPrefix} ${message}`;
+
+  if (typeof data !== 'undefined') {
+    console.log(formattedMessage, data);
+    return;
+  }
+
+  console.log(formattedMessage);
+}
+
+function logSyncError(message: string, error: unknown): void {
+  console.error(`${GPT_SYNC_CONFIG.logPrefix} ${message}`, error);
 }
 
 function buildSystemPrompt(
@@ -38,7 +54,7 @@ function buildSystemPrompt(
 
 async function createSyncedCompletion(systemPrompt: string, userPrompt: string, model: string) {
   const client = getRequiredOpenAIClient();
-  const tokenParams = getTokenParameter(model, 1000);
+  const tokenParams = getTokenParameter(model, GPT_SYNC_CONFIG.maxCompletionTokens);
 
   const response = await client.chat.completions.create({
     model: model,
@@ -47,10 +63,10 @@ async function createSyncedCompletion(systemPrompt: string, userPrompt: string, 
       { role: 'user', content: userPrompt }
     ],
     ...tokenParams,
-    temperature: 0.7
+    temperature: GPT_SYNC_CONFIG.temperature
   });
 
-  return response.choices[0]?.message?.content || 'No response generated';
+  return response.choices[0]?.message?.content || GPT_SYNC_CONFIG.fallbackResponse;
 }
 
 /**
@@ -59,7 +75,7 @@ async function createSyncedCompletion(systemPrompt: string, userPrompt: string, 
 export async function askGPTWithSync(
   userPrompt: string,
   port: number = config.server.port,
-  model: string = 'gpt-4'
+  model: string = GPT_SYNC_CONFIG.defaultModel
 ): Promise<string> {
   try {
     // Get current backend state
@@ -68,16 +84,16 @@ export async function askGPTWithSync(
     // Create system prompt with backend state
     const systemPrompt = buildSystemPrompt(backendState);
 
-    console.log('[GPT-SYNC] Making GPT call with backend state');
-    console.log('[GPT-SYNC] Backend state:', JSON.stringify(backendState, null, 2));
+    logSyncInfo(GPT_SYNC_LOG_MESSAGES.makingCall);
+    logSyncInfo(GPT_SYNC_LOG_MESSAGES.backendState, JSON.stringify(backendState, null, 2));
 
     // Make the GPT call
     const content = await createSyncedCompletion(systemPrompt, userPrompt, model);
-    console.log('[GPT-SYNC] GPT Response:', content);
+    logSyncInfo(GPT_SYNC_LOG_MESSAGES.response, content);
 
     return content;
   } catch (error) {
-    console.error('[GPT-SYNC] Error in GPT call with sync:', error);
+    logSyncError(GPT_SYNC_LOG_MESSAGES.errorSync, error);
     throw error;
   }
 }
@@ -96,7 +112,7 @@ export async function askGPTWithContext(
   userPrompt: string,
   additionalContext: Record<string, any> = {},
   port: number = config.server.port,
-  model: string = 'gpt-4'
+  model: string = GPT_SYNC_CONFIG.defaultModel
 ): Promise<{
   response: string;
   backendState: SystemState;
@@ -117,7 +133,7 @@ export async function askGPTWithContext(
       context: additionalContext
     };
   } catch (error) {
-    console.error('[GPT-SYNC] Error in enhanced GPT call:', error);
+    logSyncError(GPT_SYNC_LOG_MESSAGES.errorEnhanced, error);
     throw error;
   }
 }
