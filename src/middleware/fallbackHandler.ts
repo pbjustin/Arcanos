@@ -11,6 +11,7 @@ import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { getFallbackMessage } from '../config/fallbackMessages.js';
 import { FALLBACK_RESPONSE_MESSAGES } from '../config/fallbackResponseMessages.js';
+import { FALLBACK_LOG_MESSAGES, FALLBACK_LOG_REASON } from '../config/fallbackLogMessages.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -67,6 +68,20 @@ function extractPromptFromRequest(req: Request, defaultPrompt: string = FALLBACK
   return req.body?.prompt || req.body?.scenario || req.body?.query || defaultPrompt;
 }
 
+function logFallbackEvent(
+  type: 'degraded' | 'preemptive',
+  endpoint: string,
+  reason: string,
+  metadata: Record<string, unknown> = {}
+): void {
+  const message = type === 'degraded'
+    ? FALLBACK_LOG_MESSAGES.degraded(endpoint, reason)
+    : FALLBACK_LOG_MESSAGES.preemptive(endpoint);
+
+  console.log(message);
+  recordTraceEvent(`fallback.${type}`, { endpoint, reason, ...metadata });
+}
+
 /**
  * Fallback middleware that intercepts errors and provides degraded responses
  */
@@ -90,16 +105,12 @@ export function createFallbackMiddleware() {
     const endpoint = getEndpointFromRequest(req);
     const prompt = extractPromptFromRequest(req);
 
-    console.log(`🔄 Fallback mode activated for ${endpoint} - ${err.message}`);
+    logFallbackEvent('degraded', endpoint, err.message || FALLBACK_LOG_REASON.unknown);
 
     const degradedResponse = generateDegradedResponse(prompt, endpoint);
 
     // Set appropriate HTTP status for degraded mode
     res.status(503).json(degradedResponse);
-    recordTraceEvent('fallback.degraded', {
-      endpoint,
-      reason: err instanceof Error ? err.message : 'unknown'
-    });
   };
 }
 
@@ -164,13 +175,11 @@ export function createHealthCheckMiddleware() {
       const endpoint = getEndpointFromRequest(req);
       const prompt = extractPromptFromRequest(req, FALLBACK_RESPONSE_MESSAGES.healthCheckPrompt);
 
-      console.log(`🔄 Preemptive fallback mode activated for ${endpoint} - OpenAI client unavailable`);
-
-      const degradedResponse = generateDegradedResponse(prompt, endpoint);
-      recordTraceEvent('fallback.preemptive', {
-        endpoint,
+      logFallbackEvent('preemptive', endpoint, FALLBACK_LOG_REASON.unavailable, {
         environment: config.server.environment
       });
+
+      const degradedResponse = generateDegradedResponse(prompt, endpoint);
       return res.status(503).json(degradedResponse);
     }
 
