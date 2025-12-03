@@ -1,12 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { updateState } from './stateManager.js';
-
-export interface SelfTestPrompt {
-  id: string;
-  prompt: string;
-  expectation: string;
-}
+import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from '../config/selfTestConfig.js';
 
 export interface SelfTestResult {
   id: string;
@@ -37,24 +32,6 @@ export interface SelfTestOptions {
   triggeredBy?: string;
   targetModel?: string;
 }
-
-const defaultPrompts: SelfTestPrompt[] = [
-  {
-    id: 'readiness',
-    prompt: 'Respond with a concise status update proving ARCANOS is online and ready for work.',
-    expectation: 'Model responds with operational readiness signal.'
-  },
-  {
-    id: 'memory-awareness',
-    prompt: 'Summarize any memory context you can access in one paragraph.',
-    expectation: 'Model references stored memory context without errors.'
-  },
-  {
-    id: 'module-routing',
-    prompt: 'Which internal module handled this request? Reply in JSON {"module":"name"}.',
-    expectation: 'Model identifies the executing module and formats JSON correctly.'
-  }
-];
 
 const LOG_FILE = path.join(process.cwd(), 'logs', 'healthcheck.json');
 
@@ -116,7 +93,7 @@ async function executePrompt(
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'user-agent': 'arcanos-self-test/1.0',
+        'user-agent': SELF_TEST_USER_AGENT,
         'x-confirmed': 'yes'
       },
       body: JSON.stringify({
@@ -177,7 +154,7 @@ async function executePrompt(
 
 export async function runSelfTestPipeline(options: SelfTestOptions = {}): Promise<SelfTestSummary> {
   const baseUrl = options.baseUrl || resolveBaseUrl();
-  const prompts = options.prompts && options.prompts.length > 0 ? options.prompts : defaultPrompts;
+  const prompts = options.prompts && options.prompts.length > 0 ? options.prompts : DEFAULT_SELF_TEST_PROMPTS;
   const targetModel = options.targetModel || process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'gpt-4o';
   const triggeredBy = options.triggeredBy || 'cli';
 
