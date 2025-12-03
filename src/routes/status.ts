@@ -9,6 +9,7 @@ import { confirmGate } from '../middleware/confirmGate.js';
 import { getOpenAIServiceHealth } from '../services/openai.js';
 import { queryCache, configCache } from '../utils/cache.js';
 import { getStatus as getDbStatus } from '../db.js';
+import { sendJsonError } from '../utils/responseHelpers.js';
 
 const router = express.Router();
 
@@ -21,10 +22,12 @@ router.get('/status', (_: Request, res: Response) => {
     res.json(state);
   } catch (error) {
     console.error('[STATUS] Error retrieving system state:', error);
-    res.status(500).json({
-      error: 'Failed to retrieve system state',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    });
+    sendJsonError(
+      res,
+      500,
+      'Failed to retrieve system state',
+      error instanceof Error ? error.message : 'Unknown error'
+    );
   }
 });
 
@@ -66,12 +69,13 @@ router.get('/health', async (_: Request, res: Response) => {
     
   } catch (error) {
     console.error('[HEALTH] Error retrieving health status:', error);
-    res.status(500).json({
-      status: 'unhealthy',
-      error: 'Failed to retrieve health status',
-      message: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+    sendJsonError(
+      res,
+      500,
+      'Failed to retrieve health status',
+      error instanceof Error ? error.message : 'Unknown error',
+      { status: 'unhealthy' }
+    );
   }
 });
 
@@ -92,14 +96,16 @@ router.post('/status', confirmGate, (req: Request, res: Response) => {
     
     const updatedState = updateState(updates);
     console.log('[STATUS] System state updated:', Object.keys(updates));
-    
+
     res.json(updatedState);
   } catch (error) {
     console.error('[STATUS] Error updating system state:', error);
-    res.status(500).json({
-      error: 'Failed to update system state',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    });
+    sendJsonError(
+      res,
+      500,
+      'Failed to update system state',
+      error instanceof Error ? error.message : 'Unknown error'
+    );
   }
 });
 
