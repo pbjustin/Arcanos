@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
 import { confirmGate } from '../middleware/confirmGate.js';
+import { HEARTBEAT_LOG_FILENAME, HEARTBEAT_RESPONSE_TEMPLATE } from '../config/heartbeat.js';
 
 interface HeartbeatPayload {
   write_override: boolean;
@@ -19,7 +20,17 @@ interface HeartbeatRequest {
 const router = express.Router();
 
 const logDir = path.join(process.cwd(), 'logs');
-const logFile = path.join(logDir, 'heartbeat.log');
+const logFile = path.join(logDir, HEARTBEAT_LOG_FILENAME);
+
+function formatHeartbeatMessage(mode: string, payload: HeartbeatPayload): string {
+  const writeStatus = payload.db_write_enable ? 'enabled' : 'disabled';
+
+  return HEARTBEAT_RESPONSE_TEMPLATE
+    .replace('{mode}', mode)
+    .replace('{writeStatus}', writeStatus)
+    .replace('{suppressionLevel}', payload.suppression_level)
+    .replace('{confirmation}', payload.confirmation);
+}
 
 function logHeartbeat(entry: HeartbeatRequest): void {
   if (!existsSync(logDir)) {
@@ -37,8 +48,7 @@ router.post('/heartbeat', confirmGate, (req: Request<{}, any, HeartbeatRequest>,
 
   logHeartbeat({ timestamp, mode, payload });
 
-  const writeStatus = payload.db_write_enable ? 'enabled' : 'disabled';
-  const message = `Heartbeat acknowledged. Mode: ${mode}, write operations ${writeStatus}, suppression level: ${payload.suppression_level}. Confirmation: ${payload.confirmation}.`;
+  const message = formatHeartbeatMessage(mode, payload);
 
   res.json({ message });
 });
