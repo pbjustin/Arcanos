@@ -4,6 +4,19 @@
  */
 
 import { createServer, Server } from 'http';
+import { PORT_CONSTANTS, PORT_TEXT } from '../config/portMessages.js';
+
+const DEFAULT_HOST = '0.0.0.0';
+const { DEFAULT_MAX_ATTEMPTS, SEARCH_START_OFFSET } = PORT_CONSTANTS;
+
+function createPortInUseError(preferredPort: number): Error {
+  return new Error(PORT_TEXT.preferredPortInUse(preferredPort));
+}
+
+function createPortSearchError(startPort: number, attempts: number): Error {
+  const endPort = startPort + attempts - 1;
+  return new Error(PORT_TEXT.noAvailablePort(startPort, endPort, attempts));
+}
 
 /**
  * Check if a port is available for binding
@@ -11,7 +24,7 @@ import { createServer, Server } from 'http';
  * @param host Host to bind to (default: '0.0.0.0')
  * @returns Promise<boolean> True if port is available, false otherwise
  */
-export async function isPortAvailable(port: number, host: string = '0.0.0.0'): Promise<boolean> {
+export async function isPortAvailable(port: number, host: string = DEFAULT_HOST): Promise<boolean> {
   return new Promise((resolve) => {
     const server: Server = createServer();
 
@@ -45,21 +58,17 @@ export async function isPortAvailable(port: number, host: string = '0.0.0.0'): P
  * @throws Error if no available port found within maxAttempts
  */
 export async function findAvailablePort(
-  startPort: number, 
-  host: string = '0.0.0.0', 
-  maxAttempts: number = 50
+  startPort: number,
+  host: string = DEFAULT_HOST,
+  maxAttempts: number = DEFAULT_MAX_ATTEMPTS
 ): Promise<number> {
   for (let port = startPort; port < startPort + maxAttempts; port++) {
     if (await isPortAvailable(port, host)) {
       return port;
     }
   }
-  
-  throw new Error(
-    `No available port found in range ${startPort}-${startPort + maxAttempts - 1}. ` +
-    `Tried ${maxAttempts} ports. Please stop other services using these ports, ` +
-    'use a different PORT in your environment, or increase the port search range.'
-  );
+
+  throw createPortSearchError(startPort, maxAttempts);
 }
 
 /**
@@ -71,39 +80,30 @@ export async function findAvailablePort(
  */
 export async function getAvailablePort(
   preferredPort: number,
-  host: string = '0.0.0.0',
+  host: string = DEFAULT_HOST,
   enableAutoSelect: boolean = true
 ): Promise<{port: number, isPreferred: boolean, message?: string}> {
-  
-  // Check if preferred port is available
   if (await isPortAvailable(preferredPort, host)) {
     return {
       port: preferredPort,
       isPreferred: true
     };
   }
-  
-  // If auto-select is disabled, throw error
+
   if (!enableAutoSelect) {
-    throw new Error(
-      `Port ${preferredPort} is already in use. ` +
-      'Please stop the service using this port or set a different PORT in your environment.'
-    );
+    throw createPortInUseError(preferredPort);
   }
-  
-  // Try to find an alternative port
+
+  const searchStart = preferredPort + SEARCH_START_OFFSET;
+
   try {
-    const availablePort = await findAvailablePort(preferredPort + 1, host);
+    const availablePort = await findAvailablePort(searchStart, host);
     return {
       port: availablePort,
       isPreferred: false,
-      message: `Port ${preferredPort} was in use, automatically selected port ${availablePort}`
+      message: PORT_TEXT.autoSelectedPort(preferredPort, availablePort)
     };
   } catch {
-    throw new Error(
-      `Port ${preferredPort} is in use and no alternative ports are available. ` +
-      `Searched ${preferredPort + 1}-${preferredPort + 50} but all were in use. ` +
-      'Please stop other services or choose a different port range.'
-    );
+    throw createPortSearchError(searchStart, DEFAULT_MAX_ATTEMPTS);
   }
 }

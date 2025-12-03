@@ -144,7 +144,7 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
   await performStartup();
   const app = createApp();
 
-  serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_CHECK, 'Checking port availability...'));
+  serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_CHECK, SERVER_TEXT.PORT_CHECK_PROGRESS));
   const host = options.host ?? config.server.host;
   const preferredPort = options.port ?? config.server.port;
 
