@@ -50,6 +50,9 @@ export interface PolicyEnvelope {
   safeModeEnvFlag: string;
 }
 
+const DEFAULT_SANDBOX_TIMEOUT_MS = 2000;
+const FINGERPRINT_HASH_PREFIX_LENGTH = 8;
+
 const policyEnvelope: PolicyEnvelope = {
   onUnknownEnvironment: 'safe-mode',
   onSandboxFailure: 'safe-mode',
@@ -125,13 +128,13 @@ export function summarizeFingerprint(fingerprint: EnvironmentFingerprint): strin
     fingerprint.arch,
     `node${fingerprint.nodeMajor}`,
     fingerprint.packageVersion,
-    fingerprint.hash.slice(0, 8)
+    fingerprint.hash.slice(0, FINGERPRINT_HASH_PREFIX_LENGTH)
   ].join(' | ');
 }
 
 export async function executeInSandbox(
   script: string,
-  timeoutMs = 2000
+  timeoutMs = DEFAULT_SANDBOX_TIMEOUT_MS
 ): Promise<SandboxExecutionResult> {
   return new Promise(resolve => {
     const child = spawn(process.execPath, ['-e', script], {
