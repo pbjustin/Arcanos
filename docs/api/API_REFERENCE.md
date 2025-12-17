@@ -66,7 +66,7 @@ Diagnostic orchestration endpoint. Requires confirmation.
 - `result` – Rich diagnostic summary.
 - `componentStatus` – Service-level status message.
 - `taskLineage` – Request ID and logging flag.
-- `gpt5Delegation` – Indicates whether GPT‑5.1 reasoning was used.
+- `gpt5Delegation` – Indicates whether GPT‑5.2 reasoning was used.
 
 ### `POST /api/arcanos/ask`
 Programmatic JSON API (confirmation required).
@@ -115,7 +115,7 @@ ARCANOS). Requires confirmation.
   "stages": {
     "arcFirst": { "content": "Initial ARCANOS output" },
     "subAgent": { "content": "GPT-3.5 refinement" },
-    "gpt5Reasoning": { "content": "GPT-5.1 oversight summary" }
+    "gpt5Reasoning": { "content": "GPT-5.2 oversight summary" }
   }
 }
 ```

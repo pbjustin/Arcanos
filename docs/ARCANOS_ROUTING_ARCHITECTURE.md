@@ -2,7 +2,7 @@
 
 ## Overview
 
-The ARCANOS system now implements a sophisticated routing architecture that ensures ALL tasks are processed through the fine-tuned ARCANOS model (`REDACTED_FINE_TUNED_MODEL_ID`) while conditionally leveraging GPT-5.1 for complex reasoning.
+The ARCANOS system now implements a sophisticated routing architecture that ensures ALL tasks are processed through the fine-tuned ARCANOS model (`REDACTED_FINE_TUNED_MODEL_ID`) while conditionally leveraging GPT-5.2 for complex reasoning.
 
 ## Key Implementation Features
 
@@ -14,13 +14,13 @@ The ARCANOS system now implements a sophisticated routing architecture that ensu
 ### 🔄 Routing Flow
 
 ```
-User Request → ARCANOS Shell → ARCANOS Decision → [GPT-5.1?] → ARCANOS Filter → User Response
+User Request → ARCANOS Shell → ARCANOS Decision → [GPT-5.2?] → ARCANOS Filter → User Response
 ```
 
 #### Stage 1: ARCANOS Shell Injection
 All endpoints inject requests through ARCANOS shell wrappers:
 - `/ask` - General purpose with routing capability
-- `/write` - Content generation with optional GPT-5.1 for complex writing
+- `/write` - Content generation with optional GPT-5.2 for complex writing
 - `/guide` - Step-by-step guidance with domain expertise routing
 - `/audit` - Analysis with specialized knowledge routing
 - `/sim` - Simulation with advanced modeling capability
@@ -28,22 +28,22 @@ All endpoints inject requests through ARCANOS shell wrappers:
 #### Stage 2: ARCANOS Decision
 The fine-tuned model analyzes each request and decides:
 - **Simple requests**: Handle directly with ARCANOS capabilities
-- **Complex requests**: Route to GPT-5.1 via JSON hook:
+- **Complex requests**: Route to GPT-5.2 via JSON hook:
   ```json
   {
     "next_model": "gpt-5",
     "purpose": "Advanced reasoning required",
-    "input": "Specific prompt for GPT-5.1"
+    "input": "Specific prompt for GPT-5.2"
   }
   ```
 
-#### Stage 3: GPT-5.1 Processing (Optional)
+#### Stage 3: GPT-5.2 Processing (Optional)
 - Only triggered when ARCANOS determines complex reasoning is needed
 - Processes specialized tasks requiring advanced capabilities
 - **NEVER** responds directly to users
 
 #### Stage 4: ARCANOS Filtering
-- GPT-5.1 output is ALWAYS filtered back through ARCANOS
+- GPT-5.2 output is ALWAYS filtered back through ARCANOS
 - ARCANOS refines, enhances, and formats the final response
 - Ensures consistent response style and quality
 - Adds ARCANOS perspective and insights
@@ -54,14 +54,14 @@ The system provides comprehensive logging of routing stages:
 
 ```
 🔀 [ARCANOS ROUTING] STARTING | Model: REDACTED_FINE_TUNED_MODEL_ID
-🚀 [GPT-5.1 INVOCATION] Reason: Complex analysis required
-🔀 [ARCANOS ROUTING] FINAL_FILTERING | Processing GPT-5.1 output through ARCANOS
-📊 [ROUTING SUMMARY] ARCANOS: REDACTED_FINE_TUNED_MODEL_ID | GPT-5.1 Used: true
+🚀 [GPT-5.2 INVOCATION] Reason: Complex analysis required
+🔀 [ARCANOS ROUTING] FINAL_FILTERING | Processing GPT-5.2 output through ARCANOS
+📊 [ROUTING SUMMARY] ARCANOS: REDACTED_FINE_TUNED_MODEL_ID | GPT-5.2 Used: true
 ```
 
 ### 🛡️ Security Guarantees
 
-1. **No Direct GPT-5.1 Responses**: Users NEVER receive unfiltered GPT-5.1 output
+1. **No Direct GPT-5.2 Responses**: Users NEVER receive unfiltered GPT-5.2 output
 2. **ARCANOS Control**: All responses are processed through the fine-tuned model
 3. **Transparent Routing**: Full routing stages logged for audit purposes
 4. **Fallback Safety**: System continues operation even if models are unavailable
@@ -113,14 +113,14 @@ node test-arcanos-routing.js
 
 This demonstrates:
 - Simple requests handled directly by ARCANOS
-- Complex requests routed through GPT-5.1 and filtered back
+- Complex requests routed through GPT-5.2 and filtered back
 - Full logging of routing stages
 - Response format consistency
 
 ## Benefits
 
 1. **Consistent Experience**: All responses come from ARCANOS, maintaining brand consistency
-2. **Optimal Resource Usage**: GPT-5.1 only used when truly needed for complex reasoning
+2. **Optimal Resource Usage**: GPT-5.2 only used when truly needed for complex reasoning
 3. **Quality Control**: ARCANOS filters and enhances all responses
 4. **Transparency**: Full routing audit trail for debugging and optimization
 5. **Reliability**: Multiple fallback layers ensure system availability

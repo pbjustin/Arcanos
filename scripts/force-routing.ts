@@ -18,12 +18,12 @@ const routingModules = (process.env.ARCANOS_ROUTING_MODULES || DEFAULT_ROUTING_M
   .map(moduleName => moduleName.trim())
   .filter(Boolean);
 
-// Hardcode routing: Force GPT-5.1 + ARCANOS only
+// Hardcode routing: Force GPT-5.2 + ARCANOS only
 async function forceArcanosRouting(prompt: string) {
   try {
     const response = await axios.post(routingUrl, {
       prompt,
-      // Force GPT-5.1 analysis with no fallback allowed
+      // Force GPT-5.2 analysis with no fallback allowed
       routing: {
         allowFallback: false,
         forceModel: routingModel,

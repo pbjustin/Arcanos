@@ -1,5 +1,5 @@
 /**
- * Purge + Redeploy for GPT-5.1 Orchestration Shell
+ * Purge + Redeploy for GPT-5.2 Orchestration Shell
  * Compatible with OpenAI Node.js SDK v4.x/v5.x
  * Integrates with existing ARCANOS infrastructure
  */
@@ -33,7 +33,7 @@ interface OrchestrationResult {
 }
 
 /**
- * Orchestration reset function - purges and redeploys GPT-5.1 orchestration shell
+ * Orchestration reset function - purges and redeploys GPT-5.2 orchestration shell
  * Integrates with existing ARCANOS infrastructure for audit safety and logging
  */
 export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfig): Promise<OrchestrationResult> {
@@ -41,8 +41,8 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
   const stages: string[] = [];
   const logs: string[] = [];
 
-  logs.push("🔄 Starting GPT-5.1 Orchestration Shell purge...");
-  console.log("🔄 Starting GPT-5.1 Orchestration Shell purge...");
+  logs.push("🔄 Starting GPT-5.2 Orchestration Shell purge...");
+  console.log("🔄 Starting GPT-5.2 Orchestration Shell purge...");
 
   // Get OpenAI client using existing infrastructure
   const client = getOpenAIClient();
@@ -68,7 +68,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     endpoint: 'ORCHESTRATION_RESET',
     auditSafeMode: true,
     overrideUsed: false,
-    inputSummary: 'GPT-5.1 Orchestration Shell purge and redeploy',
+    inputSummary: 'GPT-5.2 Orchestration Shell purge and redeploy',
     outputSummary: 'Processing...',
     modelUsed: getGPT5Model(),
     memoryAccessed: [],
@@ -127,7 +127,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     // Log successful completion
     logArcanosRouting('ORCHESTRATION_RESET_COMPLETE', getGPT5Model(), `Stages: ${stages.join(' -> ')}`);
     
-    const finalMessage = "✅ GPT-5.1 orchestration shell has been purged and redeployed with ARCANOS integration.";
+    const finalMessage = "✅ GPT-5.2 orchestration shell has been purged and redeployed with ARCANOS integration.";
     logs.push(finalMessage);
     console.log(finalMessage);
 

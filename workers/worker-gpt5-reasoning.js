@@ -1,5 +1,5 @@
 export const id = 'worker-gpt5-reasoning';
-export const description = 'Provides scheduled GPT-5.1 reasoning pulses for diagnostics.';
+export const description = 'Provides scheduled GPT-5.2 reasoning pulses for diagnostics.';
 export const schedule = '*/15 * * * *';
 
 async function requestStatusSummary(context) {
@@ -17,12 +17,12 @@ async function requestStatusSummary(context) {
 
 export default {
   id,
-  name: 'GPT-5.1 Reasoning Pulse',
+  name: 'GPT-5.2 Reasoning Pulse',
   description,
   schedule,
   async run(context) {
     const requestedAt = new Date().toISOString();
-    await context.log(`GPT-5.1 reasoning pulse requested at ${requestedAt}`);
+    await context.log(`GPT-5.2 reasoning pulse requested at ${requestedAt}`);
 
     const summary = await requestStatusSummary(context);
 

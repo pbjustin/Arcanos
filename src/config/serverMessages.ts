@@ -30,7 +30,7 @@ export const SERVER_MESSAGES = {
     AI_ENDPOINTS: '   🔌 /ai-endpoints - AI processing endpoints',
     MEMORY: '   🔌 /memory - Memory management',
     WORKERS: '   🔌 /workers/* - Worker management',
-    ORCHESTRATION: '   🔌 /orchestration/* - GPT-5.1 Orchestration Shell',
+    ORCHESTRATION: '   🔌 /orchestration/* - GPT-5.2 Orchestration Shell',
     SDK: '   🔌 /sdk/* - OpenAI SDK interface',
     STATUS: '   🔌 /status - System state (Backend Sync)',
     SIRI: '   🔌 /siri - Siri query endpoint',

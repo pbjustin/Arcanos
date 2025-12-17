@@ -78,7 +78,7 @@ The repository includes several ready-to-run modules under `workers/`:
 | `worker-logger` | Heartbeat only | Initializes the centralized worker execution logger and emits periodic heartbeats so status dashboards stay warm. |
 | `worker-planner-engine` | `*/5 * * * *` | Scans the `job_data` table, logs queue depth, and can coordinate future scheduling. Scheduling is automatically skipped when the database is offline. |
 | `worker-memory` | `*/10 * * * *` | Counts rows in the `memory` table and records synchronization telemetry. |
-| `worker-gpt5-reasoning` | `*/15 * * * *` | Requests a GPT‑5.1 reasoning summary about background services and stores the response via the worker context. |
+| `worker-gpt5-reasoning` | `*/15 * * * *` | Requests a GPT‑5.2 reasoning summary about background services and stores the response via the worker context. |
 
 Each worker follows the same default-export contract, which keeps new modules
 straightforward to author.
