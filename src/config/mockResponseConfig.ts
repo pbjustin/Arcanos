@@ -36,8 +36,8 @@ export const MOCK_RESPONSE_MESSAGES = {
   CONFIGURE_API_KEY: 'MOCK: Configure OPENAI_API_KEY for real analysis',
   CORE_LOGIC_TRACE: 'MOCK: Trinity -> ARCANOS -> Mock Response Generator',
   
-  // GPT-5.1 delegation
-  GPT5_ROUTING: 'Unconditional GPT-5.1 routing (mock)'
+  // GPT-5.2 delegation
+  GPT5_ROUTING: 'Unconditional GPT-5.2 routing (mock)'
 } as const;
 
 /**

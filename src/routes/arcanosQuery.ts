@@ -31,7 +31,7 @@ const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> 
         timestamp: new Date().toISOString(),
         processSteps: [
           'Fine-tuned ARCANOS model (configured in AI_MODEL)',
-          'GPT-5.1 reasoning and refinement'
+          'GPT-5.2 reasoning and refinement'
         ]
       },
       activeModel: process.env.AI_MODEL || 'gpt-4o',

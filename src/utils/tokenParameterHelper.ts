@@ -15,7 +15,7 @@ const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
   // Add specific model names here as they are discovered
   // This will be populated based on API testing and documentation
   'gpt-5',
-  'gpt-5.1'
+  'gpt-5.2'
 ]);
 
 // Cache for model capability testing to avoid repeated API calls
@@ -117,7 +117,7 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
     return 'max_tokens';
   }
 
-  // GPT-5.1 models require max_completion_tokens
+  // GPT-5.2 models require max_completion_tokens
   if (lowerModelName.includes('gpt-5')) {
     return 'max_completion_tokens';
   }

@@ -4,7 +4,7 @@
  * Implements the ARCANOS Trinity architecture, a three-stage AI processing workflow:
  * 
  * 1. **ARCANOS Intake**: Prepares and frames user requests with memory context
- * 2. **GPT-5.1 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
+ * 2. **GPT-5.2 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
  * 3. **ARCANOS Execution**: Synthesizes results and generates final responses
  * 
  * Key Features:
@@ -119,7 +119,7 @@ function buildFinalArcanosMessages(
   return [
     { role: 'system', content: ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary) },
     { role: 'user', content: `Original request: ${auditSafePrompt}` },
-    { role: 'assistant', content: `GPT-5.1 analysis: ${gpt5Output}` },
+    { role: 'assistant', content: `GPT-5.2 analysis: ${gpt5Output}` },
     { role: 'user', content: 'Provide the final ARCANOS response.' }
   ];
 }
@@ -129,7 +129,7 @@ function buildFinalArcanosMessages(
  * 
  * This function implements a three-stage AI processing pipeline:
  * 1. ARCANOS Intake - Initial request processing and model validation
- * 2. GPT-5.1 Reasoning - Advanced reasoning and analysis stage (always invoked)
+ * 2. GPT-5.2 Reasoning - Advanced reasoning and analysis stage (always invoked)
  * 3. ARCANOS Execution - Final processing and response generation
  * 
  * Features:
@@ -154,7 +154,7 @@ export async function runThroughBrain(
   const requestId = generateRequestId('trinity');
 
   const routingStages: string[] = [];
-  const gpt5Used = true; // GPT-5.1 is now unconditional
+  const gpt5Used = true; // GPT-5.2 is now unconditional
 
   const auditConfig = getAuditSafeConfig(prompt, overrideFlag);
   console.log(`[🔒 TRINITY AUDIT-SAFE] Mode: ${auditConfig.auditSafeMode ? 'ENABLED' : 'DISABLED'}`);
@@ -169,7 +169,7 @@ export async function runThroughBrain(
   // Apply audit-safe constraints
   const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
 
-  // ARCANOS intake prepares framed request for GPT-5.1
+  // ARCANOS intake prepares framed request for GPT-5.2
   const intakeSystemPrompt = ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContext.contextSummary);
   const intakeTokenParams = getTokenParameter(arcanosModel, 500);
   const intakeResponse = await createChatCompletionWithFallback(client, {
@@ -184,20 +184,20 @@ export async function runThroughBrain(
   const actualModel = intakeResponse.activeModel || arcanosModel;
   const isFallback = intakeResponse.fallbackFlag || false;
 
-  // GPT-5.1 reasoning stage (always invoked)
+  // GPT-5.2 reasoning stage (always invoked)
   logGPT5Invocation('Primary reasoning stage', framedRequest);
   routingStages.push('GPT5-REASONING');
   const gpt5Result = await createGPT5Reasoning(client, framedRequest, ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING());
   const gpt5Output = gpt5Result.content;
   const gpt5ModelUsed = gpt5Result.model || getGPT5Model();
   if (gpt5Result.error) {
-    logger.warn('GPT-5.1 reasoning fallback in Trinity pipeline', {
+    logger.warn('GPT-5.2 reasoning fallback in Trinity pipeline', {
       module: 'trinity',
       operation: 'gpt5-reasoning',
       error: gpt5Result.error
     });
   } else {
-    logger.info('GPT-5.1 reasoning confirmed', {
+    logger.info('GPT-5.2 reasoning confirmed', {
       module: 'trinity',
       operation: 'gpt5-reasoning',
       model: gpt5ModelUsed
@@ -205,7 +205,7 @@ export async function runThroughBrain(
   }
 
   // Final ARCANOS execution and filtering
-  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
+  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.2 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
   const finalTokenParams = getTokenParameter(actualModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalResponse = await createChatCompletionWithFallback(client, {
@@ -225,7 +225,7 @@ export async function runThroughBrain(
       'Successful Trinity pipeline',
       [
         `Input pattern: ${prompt.substring(0, 50)}...`,
-        `GPT-5.1 output pattern: ${gpt5Output.substring(0, 50)}...`,
+        `GPT-5.2 output pattern: ${gpt5Output.substring(0, 50)}...`,
         `Final output pattern: ${finalText.substring(0, 50)}...`
       ],
       sessionId

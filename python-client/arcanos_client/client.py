@@ -1,4 +1,4 @@
-"""Python helper for invoking the fine-tuned GPT-5.1 model."""
+"""Python helper for invoking the fine-tuned GPT-5.2 model."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class ConfigurationError(RuntimeError):
 
 @dataclass
 class ArcanosPythonClient:
-    """Runs GPT-5.1 reasoning with enforced configuration.
+    """Runs GPT-5.2 reasoning with enforced configuration.
 
     Parameters
     ----------
@@ -28,7 +28,7 @@ class ArcanosPythonClient:
         Environment variable that stores the OpenAI API key. Defaults to
         ``OPENAI_API_KEY`` for parity with the Node.js backend.
     model_env:
-        Environment variable containing the fine-tuned GPT-5.1 model ID. Defaults
+        Environment variable containing the fine-tuned GPT-5.2 model ID. Defaults
         to ``ARCANOS_FINE_TUNED_MODEL``.
     notifier:
         Optional :class:`MaintenanceNotifier` instance. When omitted a default
@@ -79,7 +79,7 @@ class ArcanosPythonClient:
             )
         except Exception as exc:  # pragma: no cover - network failure path
             self.notifier.notify(
-                f"GPT-5.1 reasoning failure while calling model '{model}'",
+                f"GPT-5.2 reasoning failure while calling model '{model}'",
                 incident=type(exc).__name__,
             )
             raise
