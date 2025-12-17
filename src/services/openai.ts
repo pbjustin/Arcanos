@@ -63,7 +63,18 @@ export type {
 };
 
 const DEFAULT_ROUTING_MAX_TOKENS = 4096;
-const IMAGE_GENERATION_MODEL = 'gpt-image-1';
+const ROUTING_MAX_TOKENS = Number(process.env.ROUTING_MAX_TOKENS) || DEFAULT_ROUTING_MAX_TOKENS;
+const IMAGE_GENERATION_MODEL = process.env.IMAGE_MODEL || 'gpt-image-1';
+const OPENAI_REQUEST_LOG_CONTEXT = { module: 'openai' } as const;
+
+const logOpenAIEvent = (
+  level: 'debug' | 'info' | 'warn' | 'error',
+  message: string,
+  metadata?: Record<string, unknown>,
+  error?: Error
+) => {
+  aiLogger[level](message, { ...OPENAI_REQUEST_LOG_CONTEXT, ...metadata }, undefined, error);
+};
 
 /**
  * Enhanced OpenAI call helper with circuit breaker, exponential backoff, and caching
@@ -129,7 +140,7 @@ export async function callOpenAI(
     cacheKey = createCacheKey(model, cacheDescriptor);
     const cachedResult = responseCache.get(cacheKey) as CallOpenAICacheEntry | undefined;
     if (cachedResult) {
-      console.log('💾 Cache hit for OpenAI request');
+      logOpenAIEvent('info', '💾 Cache hit for OpenAI request', { cacheKey });
       trackModelResponse(cachedResult.output, reinforcementMetadata);
       return { ...cachedResult, cached: true };
     }
@@ -208,7 +219,7 @@ async function makeOpenAIRequest(
         options
       });
 
-      console.log(`🤖 OpenAI request (attempt ${attempt}/${maxRetries}) - Model: ${model}`);
+      logOpenAIEvent('info', `🤖 OpenAI request (attempt ${attempt}/${maxRetries}) - Model: ${model}`);
 
       const response: any = await client.responses.create(requestPayload, {
         signal: controller.signal,
@@ -223,11 +234,11 @@ async function makeOpenAIRequest(
       const activeModel = response.model || model;
 
       // Log success metrics
-      console.log(
-        `✅ OpenAI request succeeded (attempt ${attempt}) - Model: ${activeModel}, Tokens: ${
-          response.usage?.total_tokens || 'unknown'
-        }`
-      );
+      logOpenAIEvent('info', '✅ OpenAI request succeeded', {
+        attempt,
+        model: activeModel,
+        totalTokens: response.usage?.total_tokens || 'unknown'
+      });
 
       return { response, output, model: activeModel, cached: false };
       
@@ -241,7 +252,13 @@ async function makeOpenAIRequest(
       // Enhanced error logging with error taxonomy
       const errorType = classifyError(err);
       
-      console.warn(`⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}, type: ${errorType}): ${err.message}`);
+      logOpenAIEvent('warn', `⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}, type: ${errorType})`, {
+        attempt,
+        maxRetries,
+        errorType,
+        message: err.message
+      },
+      err);
       recordTraceEvent('openai.call.failure', {
         attempt,
         maxRetries,
@@ -250,11 +267,15 @@ async function makeOpenAIRequest(
       });
 
       if (!shouldRetry) {
-        console.error(`❌ OpenAI request failed permanently after ${attempt} attempts`);
+        logOpenAIEvent('error', `❌ OpenAI request failed permanently after ${attempt} attempts`, undefined, err);
         break;
       }
 
-      console.log(`🔄 Retrying OpenAI request (${maxRetries - attempt} attempts remaining)`);
+      logOpenAIEvent('info', '🔄 Retrying OpenAI request', {
+        attemptsRemaining: maxRetries - attempt,
+        errorType,
+        message: err.message
+      });
     }
   }
 
@@ -283,7 +304,7 @@ export const createGPT5Reasoning = async (
 
   try {
     const gpt5Model = getGPT5Model();
-    console.log(`🚀 [GPT-5.2 REASONING] Using model: ${gpt5Model}`);
+    logOpenAIEvent('info', '🚀 [GPT-5.2 REASONING] Using model', { model: gpt5Model });
 
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
@@ -306,11 +327,14 @@ export const createGPT5Reasoning = async (
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const content = extractReasoningText(response);
-    console.log(`✅ [GPT-5.2 REASONING] Success: ${content.substring(0, 100)}...`);
+    logOpenAIEvent('info', '✅ [GPT-5.2 REASONING] Success', {
+      model: resolvedModel,
+      preview: content.substring(0, 100)
+    });
     return { content, model: resolvedModel };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
-    console.error(`❌ [GPT-5.2 REASONING] Error: ${errorMsg}`);
+    logOpenAIEvent('error', '❌ [GPT-5.2 REASONING] Error', { model: gpt5Model }, err as Error);
     return { content: `[Fallback: GPT-5.2 unavailable - ${errorMsg}]`, error: errorMsg };
   }
 };
@@ -341,7 +365,7 @@ export const createGPT5ReasoningLayer = async (
 
   try {
     const gpt5Model = getGPT5Model();
-    console.log(`🔄 [GPT-5.2 LAYER] Refining ARCANOS response with ${gpt5Model}`);
+    logOpenAIEvent('info', '🔄 [GPT-5.2 LAYER] Refining ARCANOS response', { model: gpt5Model });
 
     const requestPayload = buildReasoningRequestPayload(gpt5Model, originalPrompt, arcanosResult, context);
 
@@ -353,7 +377,10 @@ export const createGPT5ReasoningLayer = async (
     // The GPT-5.2 response IS the refined result
     const refinedResult = reasoningContent;
 
-    console.log(`✅ [GPT-5.2 LAYER] Successfully refined response (${refinedResult.length} chars)`);
+    logOpenAIEvent('info', '✅ [GPT-5.2 LAYER] Successfully refined response', {
+      model: resolvedModel,
+      length: refinedResult.length
+    });
 
     return {
       refinedResult,
@@ -363,7 +390,7 @@ export const createGPT5ReasoningLayer = async (
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
-    console.error(`❌ [GPT-5.2 LAYER] Reasoning layer failed: ${errorMsg}`);
+    logOpenAIEvent('error', '❌ [GPT-5.2 LAYER] Reasoning layer failed', { model: gpt5Model }, err as Error);
     
     // Return original ARCANOS result on failure
     return { 
@@ -387,7 +414,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
   const gpt5Model = getGPT5Model();
 
   try {
-    console.log(`🎯 [GPT-5.2 STRICT] Making strict call with model: ${gpt5Model}`);
+    logOpenAIEvent('info', '🎯 [GPT-5.2 STRICT] Making strict call', { model: gpt5Model });
 
     const requestPayload = prepareGPT5Request({
       model: gpt5Model,
@@ -410,7 +437,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
       );
     }
 
-    console.log(`✅ [GPT-5.2 STRICT] Success with model: ${response.model}`);
+    logOpenAIEvent('info', '✅ [GPT-5.2 STRICT] Success with model', { model: response.model });
     return response;
   } catch (error: any) {
     // Re-throw with clear error message indicating no fallback
@@ -442,7 +469,7 @@ const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
       return output.trim();
     }
   } catch (err) {
-    console.error('❌ Failed to generate prompt via fine-tuned model:', err);
+    logOpenAIEvent('error', '❌ Failed to generate prompt via fine-tuned model', undefined, err as Error);
   }
 
   return input;
@@ -522,10 +549,10 @@ export async function createCentralizedCompletion(
   runtime.addMessages(sessionId, arcanosMessages);
   runtime.setMetadata(sessionId, { model });
 
-  console.log(`🎯 ${ARCANOS_ROUTING_MESSAGE} - Model: ${model}`);
+  logOpenAIEvent('info', `🎯 ${ARCANOS_ROUTING_MESSAGE}`, { model });
 
   // Prepare request with token parameters for the specific model
-  const tokenParams = getTokenParameter(model, options.max_tokens || DEFAULT_ROUTING_MAX_TOKENS);
+  const tokenParams = getTokenParameter(model, options.max_tokens || ROUTING_MAX_TOKENS);
   
   const requestPayload = {
     model,
@@ -542,14 +569,17 @@ export async function createCentralizedCompletion(
     const response = await client.chat.completions.create(requestPayload);
     
     if (!options.stream && 'usage' in response) {
-      console.log(`✅ ARCANOS completion successful - Model: ${model}, Tokens: ${response.usage?.total_tokens || 'unknown'}`);
+      logOpenAIEvent('info', '✅ ARCANOS completion successful', {
+        model,
+        totalTokens: response.usage?.total_tokens || 'unknown'
+      });
     } else {
-      console.log(`✅ ARCANOS streaming completion started - Model: ${model}`);
+      logOpenAIEvent('info', '✅ ARCANOS streaming completion started', { model });
     }
-    
+
     return response;
   } catch (error) {
-    console.error(`❌ ARCANOS completion failed - Model: ${model}:`, error);
+    logOpenAIEvent('error', '❌ ARCANOS completion failed', { model }, error as Error);
     throw error;
   }
 }
