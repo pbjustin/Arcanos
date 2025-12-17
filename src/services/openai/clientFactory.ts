@@ -52,14 +52,14 @@ export const initializeOpenAI = (): OpenAI | null => {
 
     setDefaultModel(configuredDefaultModel);
 
-    console.log('✅ OpenAI client initialized');
-    console.log(`🧠 Default AI Model: ${configuredDefaultModel}`);
-    console.log(`🔄 Fallback Model: ${getFallbackModel()}`);
-    console.log(`🎯 ${ARCANOS_ROUTING_LOG}`);
+    aiLogger.info('✅ OpenAI client initialized', { module: 'openai.client' });
+    aiLogger.info('🧠 Default AI Model configured', { module: 'openai.client', model: configuredDefaultModel });
+    aiLogger.info('🔄 Fallback Model configured', { module: 'openai.client', fallbackModel: getFallbackModel() });
+    aiLogger.info(`🎯 ${ARCANOS_ROUTING_LOG}`, { module: 'openai.client' });
 
     return openai;
   } catch (error) {
-    console.error('❌ Failed to initialize OpenAI client:', error);
+    aiLogger.error('❌ Failed to initialize OpenAI client', { module: 'openai.client' }, undefined, error as Error);
     return null;
   }
 };
@@ -71,12 +71,13 @@ export const getOpenAIClient = (): OpenAI | null => {
 export const validateAPIKeyAtStartup = (): boolean => {
   const apiKey = resolveOpenAIKey();
   if (!apiKey) {
-    console.warn('⚠️ OPENAI_API_KEY not set - will return mock responses');
+    aiLogger.warn('⚠️ OPENAI_API_KEY not set - will return mock responses', { module: 'openai.client' });
     return true;
   }
-  console.log(
-    `✅ OPENAI_API_KEY validation passed${getOpenAIKeySource() ? ` (source: ${getOpenAIKeySource()})` : ''}`
-  );
+  aiLogger.info('✅ OPENAI_API_KEY validation passed', {
+    module: 'openai.client',
+    source: getOpenAIKeySource()
+  });
   return true;
 };
 
