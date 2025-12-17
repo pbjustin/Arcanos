@@ -24,7 +24,7 @@
 
 ## Pipeline
 1. **Intake (Fine-tuned model).** Normalizes the user prompt and routes to the Gaming persona. System message: `ARCANOS Intake: Route to Gaming module.`
-2. **Reasoning (GPT-5.1).** Generates hotline-quality strategy guidance with a friendly, professional tone.
+2. **Reasoning (GPT-5.2).** Generates hotline-quality strategy guidance with a friendly, professional tone.
 3. **Audit (Fine-tuned model).** Validates clarity, safety, and alignment before releasing the answer. System message: `ARCANOS Audit: Validate Gaming module response for clarity, safety, and alignment.`
 
 If OpenAI access is unavailable, the module emits deterministic mock text plus a trace indicating that intake and reasoning were skipped.
@@ -35,7 +35,7 @@ If OpenAI access is unavailable, the module emits deterministic mock text plus a
   "gaming_response": "Final audited answer...",
   "audit_trace": {
     "intake": "Refined prompt...",
-    "reasoning": "Raw GPT-5.1 output...",
+    "reasoning": "Raw GPT-5.2 output...",
     "finalized": "Audited answer"
   },
   "sources": [
