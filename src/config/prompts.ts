@@ -113,7 +113,7 @@ function loadPromptsConfig(): PromptsConfig {
         intake_system: 'You are ARCANOS AI system.',
         gpt5_reasoning: 'Use reasoning for analysis.',
         fallback_mode: 'System temporarily unavailable.',
-        final_review_system: 'Review GPT-5.1 analysis and deliver the final ARCANOS response.',
+        final_review_system: 'Review GPT-5.2 analysis and deliver the final ARCANOS response.',
         system_prompt: 'You are ARCANOS AI system.',
         secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
         user_prompt: 'You are ARCANOS.'

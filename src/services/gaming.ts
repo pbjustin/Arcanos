@@ -88,7 +88,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
     });
     const refinedPrompt = intake.choices[0].message?.content || '';
 
-    // Step 2: GPT-5.1 Reasoning (Hotline Advisor Mode)
+    // Step 2: GPT-5.2 Reasoning (Hotline Advisor Mode)
     const gpt5 = await openai.chat.completions.create({
       model: getGPT5Model(),
       messages: [

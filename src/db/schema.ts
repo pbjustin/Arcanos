@@ -240,7 +240,7 @@ export async function initializeTables(): Promise<void> {
       completed_at TIMESTAMPTZ
     )`,
     
-    // Reasoning logs table for GPT-5.1 reasoning results
+    // Reasoning logs table for GPT-5.2 reasoning results
     `CREATE TABLE IF NOT EXISTS reasoning_logs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       timestamp TIMESTAMPTZ DEFAULT NOW(),
