@@ -302,8 +302,9 @@ export const createGPT5Reasoning = async (
     return { content: '[Fallback: GPT-5.2 unavailable - no OpenAI client]', error: 'No OpenAI client' };
   }
 
+  const gpt5Model = getGPT5Model();
+
   try {
-    const gpt5Model = getGPT5Model();
     logOpenAIEvent('info', '🚀 [GPT-5.2 REASONING] Using model', { model: gpt5Model });
 
     // Use token parameter utility for correct parameter selection
@@ -363,8 +364,9 @@ export const createGPT5ReasoningLayer = async (
     };
   }
 
+  const gpt5Model = getGPT5Model();
+
   try {
-    const gpt5Model = getGPT5Model();
     logOpenAIEvent('info', '🔄 [GPT-5.2 LAYER] Refining ARCANOS response', { model: gpt5Model });
 
     const requestPayload = buildReasoningRequestPayload(gpt5Model, originalPrompt, arcanosResult, context);
