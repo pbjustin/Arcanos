@@ -31,8 +31,15 @@ import {
   CallOpenAIResult,
   CallOpenAICacheEntry,
   ChatCompletionMessageParam,
-  ChatCompletionResponseFormat
+  ChatCompletionResponseFormat,
+  ImageSize
 } from './openai/types.js';
+import {
+  DEFAULT_IMAGE_SIZE,
+  IMAGE_GENERATION_MODEL,
+  OPENAI_REQUEST_LOG_CONTEXT,
+  ROUTING_MAX_TOKENS
+} from './openai/config.js';
 import {
   getDefaultModel,
   getFallbackModel,
@@ -59,13 +66,9 @@ export type {
   CallOpenAIResult,
   CallOpenAICacheEntry,
   ChatCompletionMessageParam,
-  ChatCompletionResponseFormat
+  ChatCompletionResponseFormat,
+  ImageSize
 };
-
-const DEFAULT_ROUTING_MAX_TOKENS = 4096;
-const ROUTING_MAX_TOKENS = Number(process.env.ROUTING_MAX_TOKENS) || DEFAULT_ROUTING_MAX_TOKENS;
-const IMAGE_GENERATION_MODEL = process.env.IMAGE_MODEL || 'gpt-image-1';
-const OPENAI_REQUEST_LOG_CONTEXT = { module: 'openai' } as const;
 
 const logOpenAIEvent = (
   level: 'debug' | 'info' | 'warn' | 'error',
@@ -454,16 +457,6 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
  * @param size - Image size (e.g., '256x256', '512x512', '1024x1024')
  * @returns Object containing base64 image data and metadata
  */
-type ImageSize =
-  | '256x256'
-  | '512x512'
-  | '1024x1024'
-  | '1536x1024'
-  | '1024x1536'
-  | '1792x1024'
-  | '1024x1792'
-  | 'auto';
-
 const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
   try {
     const { output } = await callOpenAI(getDefaultModel(), input, IMAGE_PROMPT_TOKEN_LIMIT, false);
@@ -479,7 +472,7 @@ const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
 
 export async function generateImage(
   input: string,
-  size: ImageSize = '1024x1024'
+  size: ImageSize = DEFAULT_IMAGE_SIZE
 ): Promise<{ image: string; prompt: string; meta: { id: string; created: number }; error?: string }> {
   const client = getOpenAIClient();
   if (!client) {
