@@ -4,6 +4,16 @@ export type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionM
 export type ChatCompletionResponseFormat =
   OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format'];
 
+export type ImageSize =
+  | '256x256'
+  | '512x512'
+  | '1024x1024'
+  | '1536x1024'
+  | '1024x1536'
+  | '1792x1024'
+  | '1024x1792'
+  | 'auto';
+
 export interface CallOpenAIOptions {
   systemPrompt?: string;
   messages?: ChatCompletionMessageParam[];
