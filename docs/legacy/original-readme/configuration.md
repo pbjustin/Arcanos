@@ -30,7 +30,7 @@ WORKER_API_TIMEOUT_MS=60000    # Worker API timeout in milliseconds
 ## OpenAI Advanced Features
 ```bash
 GPT51_MODEL=gpt-5.2            # Preferred GPT-5.2 model configuration
-GPT5_MODEL=gpt-5               # Backwards compatible GPT-5.2 model configuration
+GPT5_MODEL=gpt-5.2             # Backwards compatible GPT-5.2 model configuration
 BOOKER_TOKEN_LIMIT=512         # Token limit for backstage booking prompts
 TUTOR_DEFAULT_TOKEN_LIMIT=200  # Default token limit for tutor queries
 ```
