@@ -28,6 +28,7 @@ const reinforcementMode = (process.env.ARCANOS_CONTEXT_MODE || 'reinforcement') 
 const reinforcementWindow = parseNumber(process.env.ARCANOS_CONTEXT_WINDOW, 50, 1);
 const reinforcementDigestSize = parseNumber(process.env.ARCANOS_MEMORY_DIGEST_SIZE, 8, 1);
 const reinforcementMinimumClearScore = parseNumber(process.env.ARCANOS_CLEAR_MIN_SCORE, 0.85);
+const statelessMode = process.env.ARCANOS_STATELESS === 'true';
 const fallbackStrictEnvironments = (process.env.FALLBACK_STRICT_ENVIRONMENTS || 'production,staging')
   .split(',')
   .map(value => value.trim())
@@ -40,7 +41,8 @@ export const config = {
     host: serverHost,
     environment: process.env.NODE_ENV || 'development',
     baseUrl: serverBaseUrl,
-    statusEndpoint
+    statusEndpoint,
+    stateless: statelessMode
   },
 
   // AI configuration

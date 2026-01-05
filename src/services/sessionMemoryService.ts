@@ -1,10 +1,15 @@
 import sessionMemoryRepository from './sessionMemoryRepository.js';
 import { recordConversationSnippet } from './webRag.js';
 import { logger } from '../utils/structuredLogging.js';
+import config from '../config/index.js';
 
 const sessionMemoryLogger = logger.child({ module: 'sessionMemory' });
 
 export async function saveMessage(sessionId: string, channel: string, message: any): Promise<void> {
+  if (config.server.stateless) {
+    return;
+  }
+
   await sessionMemoryRepository.appendMessage(sessionId, channel, message);
 
   if (channel === 'conversations_core') {
@@ -52,13 +57,25 @@ export async function saveMessage(sessionId: string, channel: string, message: a
 }
 
 export async function getChannel(sessionId: string, channel: string): Promise<any[]> {
+  if (config.server.stateless) {
+    return [];
+  }
+
   return sessionMemoryRepository.getChannel(sessionId, channel);
 }
 
 export async function getConversation(sessionId: string): Promise<any[]> {
+  if (config.server.stateless) {
+    return [];
+  }
+
   return sessionMemoryRepository.getConversation(sessionId);
 }
 
 export function getCachedSessions() {
+  if (config.server.stateless) {
+    return [];
+  }
+
   return sessionMemoryRepository.getCachedSessions();
 }
