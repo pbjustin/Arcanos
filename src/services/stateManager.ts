@@ -5,6 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import config from '../config/index.js';
 
 const STATE_FILE = path.join(process.cwd(), 'systemState.json');
 
@@ -15,10 +16,20 @@ export interface SystemState {
   [key: string]: any; // Allow additional properties
 }
 
+const defaultState = (): SystemState => ({
+  status: 'unknown',
+  version: '0.0.0',
+  lastSync: null
+});
+
 /**
  * Load system state from file
  */
 export function loadState(): SystemState {
+  if (config.server.stateless) {
+    return defaultState();
+  }
+
   try {
     if (fs.existsSync(STATE_FILE)) {
       const data = fs.readFileSync(STATE_FILE, 'utf8');
@@ -29,17 +40,21 @@ export function loadState(): SystemState {
   }
   
   // Return default state
-  return { 
-    status: 'unknown', 
-    version: '0.0.0', 
-    lastSync: null 
-  };
+  return defaultState();
 }
 
 /**
  * Update system state with new data
  */
 export function updateState(newData: Partial<SystemState>): SystemState {
+  if (config.server.stateless) {
+    return {
+      ...defaultState(),
+      ...newData,
+      lastSync: new Date().toISOString()
+    };
+  }
+
   try {
     const currentState = loadState();
     const updatedState: SystemState = { 
@@ -59,7 +74,6 @@ export function updateState(newData: Partial<SystemState>): SystemState {
 /**
  * Get current system state (for GPT sync)
  */
-import config from '../config/index.js';
 import { webFetcher } from '../utils/webFetcher.js';
 
 function buildStatusUrl(portOverride?: number): string {
