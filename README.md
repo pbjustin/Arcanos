@@ -7,6 +7,14 @@ requests through a centralized OpenAI integration, persists state to disk, and
 exposes a collection of HTTP APIs for AI orchestration, diagnostics, memory
 management, and background worker coordination.
 
+## 🤖 AI Guides Purpose
+
+This backend powers the **ai-guides** experience—handling prompt routing,
+structured content generation, memory snapshots, and the operational workflows
+that keep guides accurate, auditable, and continuously refreshed. In short:
+ai-guides uses Arcanos to generate, manage, and maintain guided AI content at
+scale with confirmation-gated controls and health monitoring baked in.
+
 ---
 
 ## 🧠 Core Architecture & Features
