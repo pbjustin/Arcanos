@@ -15,6 +15,11 @@ guides cover the operational playbooks, resilience patterns, memory systems,
 and integration details that keep the ai-guides experience accurate, auditable,
 and continuously refreshed.
 
+Need to wire up a ChatGPT Custom GPT to the backend? Start with the
+[Custom GPT integration overview](docs/ai-guides/custom-gpt/overview.md), which
+explains what a Custom GPT is (a ChatGPT-configured assistant with Actions that
+call your ARCANOS endpoints) and walks through the required setup checklist.
+
 ---
 
 ## 🧠 Core Architecture & Features
