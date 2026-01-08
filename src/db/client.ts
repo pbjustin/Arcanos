@@ -111,10 +111,12 @@ export async function initializeDatabase(workerId = ''): Promise<boolean> {
   console.log('[🔌 DB] Initializing PostgreSQL connection pool...');
 
   try {
-    const isRailway = !!process.env.RAILWAY_ENVIRONMENT || !!process.env.PGHOST;
+    const shouldUseSsl =
+      !!process.env.RAILWAY_ENVIRONMENT ||
+      (host !== 'localhost' && host !== '127.0.0.1');
     pool = new Pool({
       connectionString: databaseUrl,
-      ...(isRailway ? { ssl: { rejectUnauthorized: false } } : {}),
+      ...(shouldUseSsl ? { ssl: { rejectUnauthorized: false } } : {}),
       max: 10,
       min: 2,
       idleTimeoutMillis: 30000,
