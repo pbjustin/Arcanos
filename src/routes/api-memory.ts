@@ -100,7 +100,7 @@ router.delete("/delete", confirmGate, asyncHandler(async (req: Request, res: Res
 // List recent memory entries
 router.get("/list", asyncHandler(async (req: Request, res: Response) => {
   const limitParam = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
-  const parsedLimit = Number.parseInt(limitParam ?? '', 10);
+  const parsedLimit = Number.parseInt(limitParam === undefined ? '' : String(limitParam), 10);
   const limit = Number.isNaN(parsedLimit) || parsedLimit <= 0 ? 50 : parsedLimit;
   
   const result = await query(
