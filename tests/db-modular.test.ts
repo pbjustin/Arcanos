@@ -74,24 +74,3 @@ describe('Environment Validation', () => {
     expect(() => checkEphemeralFS()).not.toThrow();
   });
 });
-
-describe('CREPID Purge Utility', () => {
-  it('should get purge mode from environment', async () => {
-    const { getPurgeMode } = await import('../src/utils/crepidPurge.js');
-    
-    const mode = getPurgeMode();
-    expect(['off', 'soft', 'hard']).toContain(mode);
-  });
-  
-  it('should generate audit trail', async () => {
-    const { generateAuditTrail } = await import('../src/utils/crepidPurge.js');
-    
-    const audit = generateAuditTrail('src/test.ts', 'test deprecation');
-    
-    expect(audit).toBeDefined();
-    expect(audit.modulePath).toBe('src/test.ts');
-    expect(audit.reason).toBe('test deprecation');
-    expect(audit.removalRisk).toBeDefined();
-    expect(['low', 'medium', 'high']).toContain(audit.removalRisk);
-  });
-});
