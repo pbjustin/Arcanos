@@ -105,7 +105,6 @@ report the degraded state for observability.
 | `ADMIN_KEY` | – | Optional admin key consumed by orchestration workflows. |
 | `REGISTER_KEY` | – | Optional key for automated registration flows. |
 | `ARC_SHADOW_MODE` | `enabled` | Controls the shadow routing feature (`services/shadowControl.ts`). |
-| `CREPID_PURGE` | `off` | Governs purge mode for `utils/crepidPurge.ts`. |
 
 Confirmation behaviour is implemented in
 [`src/middleware/confirmGate.ts`](../src/middleware/confirmGate.ts).

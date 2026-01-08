@@ -130,7 +130,6 @@ The Arcanos codebase has successfully completed a comprehensive audit and modern
 - ✅ Enhanced environment variable documentation
 
 ### Retained (Intentional)
-- ✅ `deprecated/` folder (serves CREPID audit process)
 - ✅ Legacy environment variable support (backward compatibility)
 - ✅ Fine-tuned model configurations (user-specific)
 
