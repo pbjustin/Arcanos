@@ -1,6 +1,7 @@
 import { getOpenAIClient } from './openai.js';
 import { getCachedSessions } from './sessionMemoryService.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
+import { createEmbedding } from './openai/embeddings.js';
 
 interface ResolveResult {
   sessionId: string;
@@ -24,12 +25,7 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   // 2. If none found, use embeddings for semantic match
   const openai = getOpenAIClient();
   if (candidates.length === 0 && openai && process.env.OPENAI_API_KEY) {
-    const queryEmbedding = await openai.embeddings.create({
-      model: 'text-embedding-3-small',
-      input: nlQuery,
-    });
-
-    const queryVector = queryEmbedding.data[0].embedding;
+    const queryVector = await createEmbedding(nlQuery, openai);
 
     let bestMatch: any = null;
     let bestScore = -Infinity;
@@ -43,12 +39,9 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
           ? sess.conversations_core.map((m: any) => m.content || '')
           : [])
       ].filter(Boolean);
-      const metaEmbedding = await openai.embeddings.create({
-        model: 'text-embedding-3-small',
-        input: metaPieces.join(' '),
-      });
+      const metaVector = await createEmbedding(metaPieces.join(' '), openai);
 
-      const score = cosineSimilarity(queryVector, metaEmbedding.data[0].embedding);
+      const score = cosineSimilarity(queryVector, metaVector);
       if (score > bestScore) {
         bestScore = score;
         bestMatch = sess;
@@ -71,4 +64,3 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
     conversations_core: chosen.conversations_core,
   };
 }
-
