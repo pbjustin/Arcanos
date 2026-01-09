@@ -39,7 +39,9 @@ async function buildWebContext(urls: string[]): Promise<{ context: string; sourc
 const gamingPrompts = {
   hotlineSystem: getPrompt('gaming', 'hotline_system'),
   webUncertaintyGuidance: getPrompt('gaming', 'web_uncertainty_guidance'),
-  webContextInstruction: getPrompt('gaming', 'web_context_instruction')
+  webContextInstruction: getPrompt('gaming', 'web_context_instruction'),
+  intakeSystem: getPrompt('gaming', 'intake_system'),
+  auditSystem: getPrompt('gaming', 'audit_system')
 };
 
 export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
@@ -82,7 +84,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
     const intake = await openai.chat.completions.create({
       model: FINETUNE_MODEL,
       messages: [
-        { role: 'system', content: 'ARCANOS Intake: Route to Gaming module.' },
+        { role: 'system', content: gamingPrompts.intakeSystem },
         { role: 'user', content: enrichedPrompt }
       ]
     });
@@ -106,7 +108,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
     const audit = await openai.chat.completions.create({
       model: FINETUNE_MODEL,
       messages: [
-        { role: 'system', content: 'ARCANOS Audit: Validate Gaming module response for clarity, safety, and alignment.' },
+        { role: 'system', content: gamingPrompts.auditSystem },
         { role: 'user', content: reasoningOutput }
       ]
     });
