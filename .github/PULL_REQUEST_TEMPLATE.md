@@ -23,7 +23,7 @@ Please verify you have completed all of the following:
 - [ ] Unit tests added/updated for new functionality
 - [ ] Integration tests pass
 - [ ] Manual testing completed
-- [ ] Tested with OpenAI SDK v5.16.0
+- [ ] Tested with OpenAI SDK v6.15.0
 - [ ] Railway deployment compatibility verified
 
 #### AI-Specific Requirements (if applicable)
