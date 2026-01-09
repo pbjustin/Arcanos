@@ -2,125 +2,64 @@
 
 > **Last Updated:** 2026-01-09 | **Version:** 1.0.0
 
-Welcome to the documentation hub for the Arcanos AI-assisted backend. This
-index highlights the most relevant guides for getting started, configuring the
-environment, and exploring advanced modules. It is now paired with
-[`DOCUMENTATION_STATUS.md`](DOCUMENTATION_STATUS.md), which tracks which areas
-still need love after each audit sweep.
+## Overview
 
----
+This index maps the current documentation set for the Arcanos backend. Use it to find
+the most accurate references for configuration, API surface area, and deployment on Railway.
 
-## 🚀 Getting Started
+## Prerequisites
 
-1. **[Project Overview](arcanos-overview.md)** – Conceptual summary of the
-   backend architecture.
-2. **[Repository README](../README.md)** – Quick start instructions and API
-   highlights.
-3. **[Configuration Guide](CONFIGURATION.md)** – Environment variables and
-   defaults.
-4. **[API Reference](api/README.md)** – Endpoint catalogue and confirmation
-   requirements.
+- Familiarity with the repository root README and the `docs/` structure.
 
----
+## Setup
 
-## 🏗️ Architecture & System Design
+Start with these documents in order:
 
-- **[Backend Architecture](backend.md)** – Boot process, runtime components, and
-  observability.
-- **[Database Integration](DATABASE_INTEGRATION.md)** – Persistence and fallback
-  behaviour.
-- **[Routing Architecture](ARCANOS_ROUTING_ARCHITECTURE.md)** – Request routing
-  and module dispatch.
-- **[Secure Reasoning Engine](secure-reasoning-engine.md)** – Safety guardrails.
-- **[AFOL Overview](AFOL_OVERVIEW.md)** – Failover orchestration and routing safeguards.
+1. `../README.md` – primary overview and quick start.
+2. `CONFIGURATION.md` – environment variables and defaults.
+3. `api/README.md` – API reference and confirmation requirements.
 
----
+## Configuration
 
-## 🌐 API Documentation
+Configuration details live in `CONFIGURATION.md` and the `.env.example` template at the
+repository root. Use those documents to align environment variables with the runtime.
 
-- **[API Overview](api/README.md)** – Summary of public routes.
-- **[API Reference Details](api/API_REFERENCE.md)** – Request/response examples.
-- **[Command Execution API](api/COMMAND_EXECUTION.md)** – `/api/commands`
-  namespace documentation.
-- **[Orchestration API](ORCHESTRATION_API.md)** – GPT‑5 orchestration shell
-  controls.
+## Run locally
 
----
+Local run instructions are documented in `../README.md` and validated by the scripts in
+`package.json` (`npm run build`, `npm start`, `npm test`).
 
-## ⚙️ Configuration & Deployment
+## Deploy (Railway)
 
-- **[Configuration Guide](CONFIGURATION.md)** – Environment matrix and variable reference.
-- **[Railway Deployment Guide](RAILWAY_DEPLOYMENT.md)** – **NEW!** Comprehensive Railway deployment walkthrough with troubleshooting.
-- **[General Deployment Guide](deployment/DEPLOYMENT.md)** – Multi-platform deployment strategies.
-- **[Environment Security Overview](environment-security-overview.md)** – Startup
-  validation and safe-mode rules.
-- **[Railway Compatibility](../RAILWAY_COMPATIBILITY_GUIDE.md)** – Platform
-  specific considerations and API integration.
-- **[Railway GraphQL](RAILWAY_GRAPHQL.md)** – Programmatic Railway management via API.
-- **[Why We Chose Railway](why-we-chose-railway.md)** – Platform comparison and rationale.
+Railway deployment instructions and platform specifics:
 
----
+- `RAILWAY_DEPLOYMENT.md` – step-by-step deployment guide.
+- `../railway.json` – build/start/healthcheck configuration.
+- `../Procfile` – process entrypoint used by Railway when configured.
 
-## 🧠 AI Modules & Memory
+## Troubleshooting
 
-- **[Backend Sync Implementation](BACKEND_SYNC_IMPLEMENTATION.md)** – `/status`
-  endpoints and GPT sync.
-- **[Pinned Memory Guide](pinned-memory-guide.md)** – Persistent memory
-  strategies.
-- **[Universal Memory Guide](ai-guides/UNIVERSAL_MEMORY_GUIDE.md)** – Concepts
-  for cross-session memory coordination.
-- **[Standalone Memory Service](memory-service-standalone.md)** – Express
-  scaffold for commit/retrieve workflows.
-- **[RAG & Research](ai-guides/RESEARCH_MODULE.md)** – Retrieval augmented
-  workflows.
-- **[AI Guides Index](ai-guides/README.md)** – Curated map of the active
-  `docs/ai-guides/` documents.
+If a document is missing, outdated, or contradictory, log the gap in
+`DOCUMENTATION_STATUS.md` and add a TODO in the relevant doc until it is resolved.
 
-> **Note:** Files inside `docs/ai-guides/` describe specialised modules and
-> historical experiments. Confirm the referenced functionality exists in `src/`
-> before relying on a given guide.
+## References
 
----
+**Core references**
+- `arcanos-overview.md`
+- `backend.md`
+- `AFOL_OVERVIEW.md`
 
-## 🛠️ Development & Operations
+**Deployment**
+- `RAILWAY_DEPLOYMENT.md`
+- `deployment/DEPLOYMENT.md`
+- `../RAILWAY_COMPATIBILITY_GUIDE.md`
 
-- **[Contributing Guide](../CONTRIBUTING.md)** – Development workflow and coding
-  standards.
-- **[PR Assistant README](PR_ASSISTANT_README.md)** – Automated review tooling.
-- **[Diagnostics](audits-and-resiliency.md)** – Audit and resiliency reports.
-- **[Backstage Booker Server](BACKSTAGE_BOOKER_SERVER.md)** – Legacy integration
-  notes.
+**API**
+- `api/README.md`
+- `api/API_REFERENCE.md`
+- `ORCHESTRATION_API.md`
 
----
-
-## 📊 Release Management
-
-- **[Changelog](../CHANGELOG.md)** – Canonical version history.
-- **[Documentation Status](DOCUMENTATION_STATUS.md)** – Live coverage tracker.
-- **[Refactor Report](refactor-report.md)** – Architecture improvements.
-
-## 🗃️ Archived / Retired Notes
-
-The November 2025 audit removed redundant or stale files so we only maintain
-one source of truth per topic. Pull historical context from Git history if
-needed.
-
-- `docs/CHANGELOG.md` – Removed duplicate of the root changelog.
-- `docs/changelog.md` – Older duplicate that lagged behind by two releases.
-- `docs/DOCUMENTATION_AUDIT_SUMMARY.md` – Snapshot from 2024 superseded by the
-  living status report referenced above.
-- `docs/ai-guides/CLARKE_HANDLER_GUIDE.md` – Deprecated resilience wrapper; use
-  the AI patch system and dispatcher refactor guides instead.
-
----
-
-## Contribution Standards
-
-- Include last-updated metadata when modifying documentation.
-- Keep examples in sync with the Express routes under `src/routes/`.
-- Run `npm test` after configuration changes to validate environment checks.
-- Use descriptive commit messages and update the documentation index when adding
-  or removing guides.
-
-For questions or suggestions, open an issue or consult the maintainer guide in
-[`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+**AI modules & memory**
+- `ai-guides/README.md`
+- `BACKEND_SYNC_IMPLEMENTATION.md`
+- `pinned-memory-guide.md`

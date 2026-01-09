@@ -1,175 +1,128 @@
-# ARCANOS Configuration Guide
+# Arcanos Configuration Guide
 
-> **Last Updated:** 2025-11-25 | **Version:** 1.0.0
+> **Last Updated:** 2026-01-09 | **Version:** 1.0.0
 
-This guide documents environment variables and configuration patterns used by
-the Arcanos backend. Defaults are taken from `src/config/index.ts` and
-`src/utils/env.ts`.
+## Overview
 
----
+This guide documents the environment variables used by the Arcanos backend. Defaults are
+sourced from `src/utils/env.ts`, `src/config/index.ts`, and the OpenAI client helpers in
+`src/services/openai/*`.
 
-## 📋 Configuration Self-Check
+## Prerequisites
 
-- [x] Required vs optional variables highlighted
-- [x] Default values documented with source references
-- [x] Confirmation and security flags explained
-- [x] Railway deployment notes included
-- [x] Consistent with package version `1.0.0`
+- Access to `.env.example` and the repository root README.
 
----
+## Setup
 
-## ⚙️ Core Environment Variables
+1. Copy `.env.example` to `.env`.
+2. Populate required variables (minimum: `OPENAI_API_KEY`).
+3. Keep the final values in sync with Railway variables when deploying.
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `OPENAI_API_KEY` | ✅ | – | OpenAI API key. When omitted the service returns deterministic mock responses. |
-| `PORT` | ❌ | `8080` | Preferred HTTP port. `src/utils/portUtils.ts` falls back to the next free port. |
-| `HOST` | ❌ | `0.0.0.0` | Bind address for the HTTP server. |
-| `SERVER_URL` | ❌ | `http://127.0.0.1:<port>` | Used when constructing absolute URLs for backend sync. |
-| `NODE_ENV` | ❌ | `development` | Controls logging verbosity and certain feature defaults. |
-| `LOG_LEVEL` | ❌ | `info` | Logging level for `utils/structuredLogging.ts`. |
-| `ARC_LOG_PATH` | ❌ | `/tmp/arc/log` | Directory for session logs and heartbeat output. |
-| `ARC_MEMORY_PATH` | ❌ | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
+## Configuration
 
----
+### Core runtime
 
-## 🧠 Model Selection
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | – | Required for live OpenAI calls. Missing keys yield mock responses. |
+| `PORT` | `8080` | Preferred HTTP port; the server falls back to the next available port. |
+| `HOST` | `0.0.0.0` | Bind address for the HTTP server. |
+| `SERVER_URL` | `http://127.0.0.1:<port>` | Used for internal callbacks and self-tests. |
+| `NODE_ENV` | `development` | Controls logging, health checks, and worker defaults. |
+| `LOG_LEVEL` | `info` | Logging verbosity for the structured logger. |
+| `ARC_LOG_PATH` | `/tmp/arc/log` | Directory for logs and audit output. |
+| `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem cache for memory snapshots. |
 
-`src/services/openai.ts` chooses the first non-empty value in the chain below:
+### OpenAI model selection
+
+The OpenAI client selects the first non-empty model in this order:
 
 1. `OPENAI_MODEL`
-2. `FINETUNED_MODEL_ID`
-3. `FINE_TUNED_MODEL_ID`
-4. `AI_MODEL`
-5. `gpt-4o` (fallback)
+2. `RAILWAY_OPENAI_MODEL`
+3. `FINETUNED_MODEL_ID`
+4. `FINE_TUNED_MODEL_ID`
+5. `AI_MODEL`
+6. `gpt-4o` (fallback)
 
 Additional model-related variables:
 
-| Variable | Default | Description |
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `GPT51_MODEL` / `GPT5_MODEL` | `gpt-5.2` | Identifiers used for GPT‑5.2 reasoning fallbacks (the service checks `GPT51_MODEL` first, then `GPT5_MODEL`). |
-| `API_KEY` | – | Legacy alias checked before `OPENAI_API_KEY`. |
+| `GPT51_MODEL` / `GPT5_MODEL` | `gpt-5.2` | GPT-5.2 reasoning model (checks `GPT51_MODEL` first). |
+| `RESEARCH_MODEL_ID` | – | Optional override for the research pipeline model. |
+| `IMAGE_MODEL` | `gpt-image-1` | Image generation model. |
+| `IMAGE_DEFAULT_SIZE` | `1024x1024` | Default image size if not supplied in requests. |
 
----
+### OpenAI client behavior
 
-## 🗄️ Database Configuration
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `DATABASE_URL` | – | Primary PostgreSQL connection string. Enables persistent memory. |
-| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | – | If `DATABASE_URL` is missing these values are combined to create one. |
-| `SESSION_PERSISTENCE_CLIENT` | – | Optional override for session persistence backend (`memory/sessionPersistence.ts`). |
-| `SESSION_PERSISTENCE_URL` | – | Explicit connection string for the session persistence client. |
-| `SESSION_PERSISTENCE_SQLITE_PATH` | – | Path used when SQLite is selected. |
+| `OPENAI_BASE_URL` / `OPENAI_API_BASE_URL` | – | Optional API base URL override. |
+| `OPENAI_SYSTEM_PROMPT` | – | Optional default system prompt for requests. |
+| `OPENAI_CACHE_TTL_MS` | `300000` | Cache TTL for OpenAI responses. |
+| `OPENAI_MAX_RETRIES` | `3` | Retry budget for OpenAI calls. |
+| `OPENAI_IMAGE_PROMPT_TOKEN_LIMIT` | `256` | Token limit for image prompt expansion. |
 
-Database failures gracefully fall back to in-memory storage; health endpoints
-report the degraded state for observability.
+### Database & persistence
 
----
-
-## 🧾 Session & Memory Tuning
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `SESSION_CACHE_TTL_MS` | `300000` | TTL for session cache entries. |
-| `SESSION_CACHE_CAPACITY` | `200` | Maximum number of cached sessions. |
-| `SESSION_RETENTION_MINUTES` | `1440` | Persistence retention window for session snapshots. |
-| `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem directory for memory snapshots. |
+| `DATABASE_URL` | – | PostgreSQL connection string. |
+| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | – | Used to build `DATABASE_URL` if absent. |
+| `SESSION_PERSISTENCE_URL` | – | Optional override for session persistence connection. |
 
----
+### Workers & automation
 
-## 🤖 Worker & Automation Settings
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `RUN_WORKERS` | `true` (disabled automatically in tests) | Enables worker bootstrap in `src/utils/workerBoot.ts`. |
-| `WORKER_COUNT` | `4` | Number of workers reported in diagnostics. |
-| `WORKER_MODEL` | Derived from model chain | Model used by worker tasks. |
-| `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for OpenAI calls made by workers. |
-| `ORCHESTRATION_LAST_RESET` | – | Optional metadata surfaced by the orchestration shell. |
+| `RUN_WORKERS` | `true` (disabled in tests) | Controls worker bootstrap. |
+| `WORKER_COUNT` | `4` | Worker count for diagnostics and scheduling. |
+| `WORKER_MODEL` | `AI_MODEL` | Model used by worker tasks. |
+| `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for OpenAI calls from workers. |
 
-`src/config/workerConfig.ts` registers worker tasks automatically when
-`RUN_WORKERS` evaluates to `true`.
+### Confirmation gate & security
 
----
-
-## 🔐 Security & Access Control
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `TRUSTED_GPT_IDS` | – | Comma-separated GPT identifiers that bypass the confirmation gate. The active fine-tuned model ID (from `FINE_TUNED_MODEL_ID` / `OPENAI_MODEL`) is appended automatically so it can run automation via `x-gpt-id`. |
-| `ARCANOS_AUTOMATION_SECRET` / `ARCANOS_AUTOMATION_HEADER` | – | Shared secret/header pair that lets backend automations self-identify when a GPT ID isn’t available. The header defaults to `x-arcanos-automation`; matching requests bypass `confirmGate` like a trusted GPT. |
-| `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` | Lifetime (in milliseconds) for pending confirmation challenges returned by `confirmGate`. |
-| `ALLOW_ROOT_OVERRIDE` | `false` | Enables elevated persistence operations when paired with `ROOT_OVERRIDE_TOKEN`. |
-| `ROOT_OVERRIDE_TOKEN` | – | Secret required when root override mode is enabled. |
-| `ADMIN_KEY` | – | Optional admin key consumed by orchestration workflows. |
-| `REGISTER_KEY` | – | Optional key for automated registration flows. |
-| `ARC_SHADOW_MODE` | `enabled` | Controls the shadow routing feature (`services/shadowControl.ts`). |
+| `TRUSTED_GPT_IDS` | – | Comma-separated GPT identifiers that bypass confirmation checks. |
+| `ARCANOS_AUTOMATION_SECRET` | – | Shared secret for automation bypass. |
+| `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header name for automation bypass. |
+| `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` | TTL for confirmation challenges. |
 
-Confirmation behaviour is implemented in
-[`src/middleware/confirmGate.ts`](../src/middleware/confirmGate.ts).
+### HTTP server tuning
 
----
-
-## 📚 Feature Integrations
-
-| Variable | Default | Description |
+| Variable | Default | Notes |
 | --- | --- | --- |
-| `NOTION_API_KEY` | – | Enables Notion synchronisation in `services/notionSync.ts`. |
-| `RESEARCH_MAX_CONTENT_CHARS` | `6000` | Upper bound on content length ingested by the research module. |
-| `RESEARCH_MODEL_ID` | – | Overrides the research module's default model (falls back to the global AI model). |
-| `HRC_MODEL` | Falls back to default model | Preferred model for Hallucination Resistant Core (`modules/hrc.ts`). |
-| `BOOKER_TOKEN_LIMIT` | `512` | Token limit used by the Backstage booker module. |
-| `USER_GPT_ID` | – | Propagated to Backstage modules for context. |
-| `TUTOR_DEFAULT_TOKEN_LIMIT` | `200` | Default token limit for tutor logic. |
-| `BACKEND_REGISTRY_URL` | – | Optional registry endpoint referenced by diagnostics. |
-| `GPT_MODULE_MAP` | – | Serialized JSON map of GPT IDs to module routes (`config/gptRouterConfig.ts`). |
-| `GPTID_BACKSTAGE_BOOKER`, `GPTID_ARCANOS_GAMING`, `GPTID_ARCANOS_TUTOR` | – | Convenience identifiers resolved by the GPT router. |
+| `JSON_LIMIT` | `10mb` | JSON payload size limit. |
+| `REQUEST_TIMEOUT` | `30000` | Request timeout in milliseconds. |
+| `ALLOWED_ORIGINS` | – | Comma-separated CORS allow list (non-development). |
 
----
+## Run locally
 
-## 🛠️ Deployment Notes
+1. Set `OPENAI_API_KEY` and optional variables in `.env`.
+2. Run `npm run build` followed by `npm start`.
+3. Validate health endpoints at `/health`, `/healthz`, and `/readyz`.
 
-### Railway
+## Deploy (Railway)
 
-- `RAILWAY_ENVIRONMENT`, `RAILWAY_PROJECT_ID`, `RAILWAY_DEPLOYMENT_ID`,
-  `RAILWAY_RELEASE_ID` are logged during shutdown to aid debugging.
-- If the platform injects a managed PostgreSQL instance, `PG*` variables are
-  automatically combined into `DATABASE_URL` by `src/db/client.ts`.
+Railway config is codified in `railway.json`. Key notes:
 
-### Local Development
+- `PORT` is injected by Railway and mirrored into the environment.
+- `RUN_WORKERS` defaults to `false` in the Railway deploy config.
+- If you attach PostgreSQL, Railway injects `DATABASE_URL` (or `PG*` variables) automatically.
 
-1. Copy `.env.example` to `.env` and populate the required fields.
-2. Run `npm run dev` for a watch-mode server.
-3. Use `npm test` to validate environment assumptions.
-
----
-
-## 🧪 Validation Utilities
-
-- `utils/envValidation.ts` performs basic range checks (e.g. `PORT` between 1 and
-  65535) and ensures log directories exist.
-- `utils/environmentSecurity.ts` toggles safe mode when high-risk variables are
-  missing.
-- `npm test` includes coverage for environment enforcement in
-  `tests/environment-security.test.ts`.
-
----
+Keep Railway variables aligned with this document and the `.env.example` template.
 
 ## Troubleshooting
 
-- **Mock AI responses** – Confirm `OPENAI_API_KEY` is set and not equal to the
-  placeholder value from `.env.example`.
-- **Database fallback** – When `DATABASE_URL` is absent or unreachable, memory
-  endpoints remain available but `/health` reports status `degraded`.
-- **Worker bootstrap disabled** – Set `RUN_WORKERS=true` (not needed when
-  `workers/` is empty).
-- **Trusted GPT IDs** – Ensure `TRUSTED_GPT_IDS` and the caller’s `x-gpt-id`
-  value match exactly (case-sensitive).
-- **Automation secret header** – Configure `ARCANOS_AUTOMATION_SECRET` (and
-  optionally `ARCANOS_AUTOMATION_HEADER`) when your automation cannot send a
-  GPT ID. Requests must include the shared secret header to bypass the
-  confirmation challenge.
+- **Mock OpenAI responses**: ensure `OPENAI_API_KEY` is set and valid.
+- **Database unavailable**: verify `DATABASE_URL` or `PG*` variables and watch `/health`.
+- **CORS errors**: set `ALLOWED_ORIGINS` when `NODE_ENV=production`.
+- **Confirmation failures**: confirm `TRUSTED_GPT_IDS` or `ARCANOS_AUTOMATION_SECRET` match the caller.
 
-Keep this document aligned with changes to `src/config`, `src/utils/env.ts`, and
-any new feature-specific services that rely on environment variables.
+## References
+
+- `../README.md`
+- `RAILWAY_DEPLOYMENT.md`
+- `../railway.json`
+- `../.env.example`
