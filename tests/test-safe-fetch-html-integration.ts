@@ -2,7 +2,7 @@
  * Integration example showing how safeFetchHtml can be used within the ARCANOS codebase
  */
 
-import { safeFetchHtml, SafeFetchHtmlResult } from '../src/utils/http';
+import { safeFetchHtml, SafeFetchHtmlResult } from '../src/utils/http.js';
 
 /**
  * Example service function that uses safeFetchHtml for safe HTML content retrieval
