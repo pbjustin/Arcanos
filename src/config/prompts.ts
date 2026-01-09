@@ -45,6 +45,8 @@ interface PromptsConfig {
   };
   gaming: {
     hotline_system: string;
+    intake_system: string;
+    audit_system: string;
     web_uncertainty_guidance: string;
     web_context_instruction: string;
   };
@@ -135,6 +137,8 @@ function loadPromptsConfig(): PromptsConfig {
         structured_response_template: 'ARCANOS REASONING ENGINE ANALYSIS'
       },
       gaming: {
+        intake_system: 'ARCANOS Intake: Route to Gaming module.',
+        audit_system: 'ARCANOS Audit: Validate Gaming module response for clarity, safety, and alignment.',
         hotline_system:
           'You are ARCANOS:GAMING, a Nintendo-style hotline advisor. Provide strategies, hints, tips, and walkthroughs. Speak like a professional hotline guide: friendly, knowledgeable, and interactive.',
         web_uncertainty_guidance:
