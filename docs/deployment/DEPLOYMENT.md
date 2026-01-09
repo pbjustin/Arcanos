@@ -33,7 +33,7 @@ railway logs
 
 # Check if build output exists
 echo "Checking for build output..."
-ls dist/index.js || echo "❌ dist/index.js not found. Run 'npm run build'"
+ls dist/start-server.js || echo "❌ dist/start-server.js not found. Run 'npm run build'"
 
 # Run local build to catch compile issues
 echo "Running TypeScript build..."
@@ -46,11 +46,11 @@ cat .env | grep -E 'OPENAI_API_KEY|AI_MODEL|FINE_TUNE_MODEL|FINE_TUNED_MODEL|NOD
 
 # Try running the app manually to catch runtime errors
 echo "Starting server manually to catch errors..."
-NODE_ENV=production node dist/index.js
+NODE_ENV=production node dist/start-server.js
 
 # Final tip: Make sure your 'start' script in package.json is correct
 echo "Ensure this exists in package.json scripts block:"
-echo '"start": "node dist/index.js"'
+echo '"start": "node dist/start-server.js"'
 echo "Note: NODE_ENV should be set as an environment variable, not in the start script"
 ```
 
@@ -91,7 +91,7 @@ npm start
 The following scripts are available:
 - `npm run dev` - Start development server with hot reload (7GB memory allocation)
 - `npm run build` - Build TypeScript to JavaScript (output to dist/)
-- `npm start` - Start production server from compiled JavaScript (dist/index.js)
+- `npm start` - Start production server from compiled JavaScript (dist/start-server.js)
 - `npm run start:railway` - Railway-specific start command (same as start)
 
 **Note**: Make sure to run `npm run build` before `npm start` to ensure the compiled output exists in the `dist/` directory.
@@ -209,6 +209,6 @@ npm install dotenv openai express tsx typescript
 # Complete build verification
 npm install
 npm run build
-ls dist/index.js  # Should exist
+ls dist/start-server.js  # Should exist
 npm start  # Should start successfully
 ```

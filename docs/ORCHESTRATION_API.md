@@ -6,7 +6,7 @@ This implementation provides a GPT-5.2 Orchestration Shell with purge and redepl
 
 - **Purge + Redeploy**: Complete orchestration shell reset with memory clearing
 - **ARCANOS Integration**: Full integration with existing audit-safe, memory-aware, and logging systems  
-- **OpenAI SDK Compatibility**: Works with both v4.x and v5.x of the OpenAI Node.js SDK
+- **OpenAI SDK Compatibility**: Works with v6.x of the OpenAI Node.js SDK
 - **Fallback Safeguards**: Automatic fallback when OpenAI API is not available
 - **Rebirth-Osiris v1.04**: Applies the specified configuration during redeploy
 

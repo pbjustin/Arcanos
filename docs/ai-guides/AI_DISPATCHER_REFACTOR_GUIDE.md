@@ -9,7 +9,7 @@ The dispatcher has been enhanced to:
 - Disable fallback to defaultWorker unless manually triggered
 - Route memory and API services through AI-bound flows
 - Provide manual override logic for emergency access
-- Maintain compatibility with OpenAI SDK v5.16.0+
+- Maintain compatibility with OpenAI SDK v6.15.0+
 
 ## New Components
 
@@ -131,7 +131,7 @@ The system now prevents automatic fallback to defaultWorker:
 
 ## OpenAI SDK Compatibility
 
-- Compatible with OpenAI SDK v5.16.0+
+- Compatible with OpenAI SDK v6.15.0+
 - Uses latest chat completion API patterns
 - Supports fine-tuned models and function calling
 - Includes proper error handling and retry logic
