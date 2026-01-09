@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getOpenAIClient, getDefaultModel, hasValidAPIKey } from './openai.js';
+import { createEmbedding } from './openai/embeddings.js';
 import { fetchAndClean } from './webFetcher.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
 import { saveRagDoc, loadAllRagDocs, initializeDatabase, getStatus } from '../db.js';
@@ -84,15 +85,11 @@ export async function ingestUrl(url: string): Promise<Doc> {
   if (!client) {
     throw new Error('OpenAI client not initialized');
   }
-  const embeddingRes = await client.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: content,
-  });
   const doc: Doc = {
     id: url,
     url,
     content,
-    embedding: embeddingRes.data[0].embedding,
+    embedding: await createEmbedding(content, client),
     metadata: {
       sourceType: 'url',
       fetchedAt: new Date().toISOString(),
@@ -133,16 +130,11 @@ export async function ingestContent(options: IngestContentOptions): Promise<Doc>
     sanitizedMetadata.source = sourceLabel;
   }
 
-  const embeddingRes = await client.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: content,
-  });
-
   const doc: Doc = {
     id: docId,
     url: sourceLabel,
     content,
-    embedding: embeddingRes.data[0].embedding,
+    embedding: await createEmbedding(content, client),
     metadata: sanitizedMetadata,
   };
 
@@ -217,14 +209,11 @@ export async function answerQuestion(question: string): Promise<{ answer: string
   if (!client) {
     throw new Error('OpenAI client not initialized');
   }
-  const qEmbed = await client.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: question,
-  });
+  const qEmbedding = await createEmbedding(question, client);
   const docs = vectorStore || [];
   const scored = docs.map((doc) => ({
     doc,
-    score: cosineSimilarity(qEmbed.data[0].embedding, doc.embedding),
+    score: cosineSimilarity(qEmbedding, doc.embedding),
   }));
   scored.sort((a, b) => b.score - a.score);
   const topDocs = scored.slice(0, 3).map((s) => s.doc);
