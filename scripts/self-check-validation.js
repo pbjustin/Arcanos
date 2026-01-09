@@ -60,7 +60,7 @@ check('Port 8080 configuration', openaiService.includes('8080') || readFileSync(
 console.log('\n🚀 Entry Point Validation:');
 check('index.js exists', existsSync('./index.js'));
 const indexJs = readFileSync('./index.js', 'utf8');
-check('Entry point forwards to dist/server.js', indexJs.includes('dist/server.js'));
+check('Entry point forwards to dist/start-server.js', indexJs.includes('dist/start-server.js'));
 
 // Summary
 console.log('\n📊 VALIDATION SUMMARY:');

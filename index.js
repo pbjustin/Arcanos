@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
  * ARCANOS Main Entry Point
- * Wrapper for backward compatibility - forwards to compiled dist/server.js
+ * Wrapper for backward compatibility - forwards to compiled dist/start-server.js
  */
 
 import { existsSync } from 'fs';
 import { spawn } from 'child_process';
 
-console.log('🚀 ARCANOS Entry Point - Forwarding to dist/server.js');
+console.log('🚀 ARCANOS Entry Point - Forwarding to dist/start-server.js');
 
-// Check if dist/server.js exists
-if (!existsSync('./dist/server.js')) {
-  console.error('❌ Error: dist/server.js not found. Run "npm run build" first.');
+// Check if dist/start-server.js exists
+if (!existsSync('./dist/start-server.js')) {
+  console.error('❌ Error: dist/start-server.js not found. Run "npm run build" first.');
   process.exit(1);
 }
 
