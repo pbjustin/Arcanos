@@ -483,22 +483,35 @@ export async function generateImage(
   // Use the fine-tuned default model to craft a detailed image prompt
   const prompt = await buildEnhancedImagePrompt(input);
 
-  const response = await client.images.generate({
-    model: IMAGE_GENERATION_MODEL,
-    prompt,
-    size
-  });
+  try {
+    const response = await client.images.generate({
+      model: IMAGE_GENERATION_MODEL,
+      prompt,
+      size
+    });
 
-  const image = response.data?.[0]?.b64_json || '';
+    const image = response.data?.[0]?.b64_json || '';
 
-  return {
-    image,
-    prompt,
-    meta: {
-      id: crypto.randomUUID(),
-      created: response.created
-    }
-  };
+    return {
+      image,
+      prompt,
+      meta: {
+        id: crypto.randomUUID(),
+        created: response.created
+      }
+    };
+  } catch (err) {
+    logOpenAIEvent('error', '❌ OpenAI image generation failed', { model: IMAGE_GENERATION_MODEL }, err as Error);
+    return {
+      image: '',
+      prompt,
+      meta: {
+        id: crypto.randomUUID(),
+        created: Date.now()
+      },
+      error: err instanceof Error ? err.message : 'Unknown error'
+    };
+  }
 }
 
 /**
