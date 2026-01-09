@@ -349,3 +349,32 @@ The codebase is now:
 
 No further optimizations are required at this time. The repository is ready for production deployment.
 
+
+---
+
+## 2026-03-07 Refactoring Pass
+
+### Pass 0: Inventory & Dead Code Flags
+- **Change:** Identified unreferenced maintenance scripts in `scripts/` (no references in repo or package scripts).
+- **Reason:** Reduce unused maintenance tooling to keep production surface lean for Railway deployments.
+- **Verification:** `rg -n "self-healing-auto-repair|force-routing|fallback-memory-handler" -S .`
+
+### Pass 1: Dead Code Removal
+- **Change:** Removed unused scripts `scripts/self-healing-auto-repair.sh`, `scripts/force-routing.ts`, `scripts/fallback-memory-handler.ts`.
+- **Reason:** Scripts were unreferenced and not wired into build/runtime; removal reduces maintenance overhead and keeps production scope focused.
+- **Verification:** `rg -n "self-healing-auto-repair|force-routing|fallback-memory-handler" -S .` confirms no references remain.
+
+### Pass 2: OpenAI SDK Modernization
+- **Change:** No changes required; OpenAI usage already centralized under `src/services/openai.ts` with SDK v6 patterns.
+- **Reason:** Confirmed compatibility with latest OpenAI Node SDK.
+- **Verification:** Manual review of `src/services/openai.ts`.
+
+### Pass 3: Railway Hardening
+- **Change:** No changes required in this pass.
+- **Reason:** Existing Railway config already present and unchanged.
+- **Verification:** Manual review of `railway.json` and `Procfile`.
+
+### Pass 4: Modularization
+- **Change:** No additional modularization changes needed after pruning unused scripts.
+- **Reason:** Core runtime modules already centralized for OpenAI configuration.
+- **Verification:** Manual review of `src/services/openai.ts`.
