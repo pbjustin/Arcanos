@@ -1,3 +1,9 @@
+> **⚠️ HISTORICAL DOCUMENT**: This document is preserved for historical reference.  
+> **Last Updated:** 2024 (Historical) | **SDK Version at time:** v5.16.0  
+> **Current Version:** See [/README.md](../../../README.md) for latest (OpenAI SDK v6.15.0)
+
+---
+
 # Arcanos Backend Overview
 
 Arcanos is an AI-controlled TypeScript backend that combines fine-tuned OpenAI model integration, intelligent routing, and persistent memory storage. The system is orchestrated entirely by an AI worker capable of handling scheduling, memory management, and advanced API interactions.
