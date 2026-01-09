@@ -7,7 +7,7 @@ This guide covers deploying ARCANOS to Railway with full OpenAI SDK integration 
 ## 🎯 Pre-Deployment Checklist
 
 ### ✅ Requirements Met
-- [x] **OpenAI SDK v5.16.0**: Latest version with proper error handling
+- [x] **OpenAI SDK v6.15.0**: Latest version with proper error handling
 - [x] **Railway Configuration**: Dockerfile, Procfile, and environment setup
 - [x] **Clean Architecture**: Modular codebase with proper separation
 - [x] **Comprehensive Testing**: Unit and integration tests with CI/CD
