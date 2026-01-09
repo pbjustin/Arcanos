@@ -13,7 +13,7 @@ Before submitting contributions, verify:
 - [x] Documentation is updated for new features
 - [x] Environment variables are documented in `.env.example`
 - [x] API changes include confirmation gate documentation
-- [x] Changes are tested with OpenAI SDK v5.16.0
+- [x] Changes are tested with OpenAI SDK v6.15.0
 - [x] Railway deployment compatibility verified
 
 ## 🚀 Getting Started
