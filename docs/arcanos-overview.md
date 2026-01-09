@@ -16,7 +16,7 @@ callers.
 
 This overview includes:
 - [x] Core AI-controlled architecture principles
-- [x] Integration patterns with OpenAI SDK v5.16.0
+- [x] Integration patterns with OpenAI SDK v6.15.0
 - [x] Database fallback behaviors
 - [x] Worker system architecture
 - [x] Configuration patterns and environment dependencies
