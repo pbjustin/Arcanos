@@ -1,6 +1,6 @@
 # Arcanos Documentation Index
 
-> **Last Updated:** 2025-11-25 | **Version:** 1.0.0
+> **Last Updated:** 2026-01-09 | **Version:** 1.0.0
 
 Welcome to the documentation hub for the Arcanos AI-assisted backend. This
 index highlights the most relevant guides for getting started, configuring the
@@ -49,13 +49,15 @@ still need love after each audit sweep.
 
 ## ⚙️ Configuration & Deployment
 
-- **[Configuration Guide](CONFIGURATION.md)** – Environment matrix.
-- **[Deployment Guide](deployment/DEPLOYMENT.md)** – Railway and production
-  deployment.
+- **[Configuration Guide](CONFIGURATION.md)** – Environment matrix and variable reference.
+- **[Railway Deployment Guide](RAILWAY_DEPLOYMENT.md)** – **NEW!** Comprehensive Railway deployment walkthrough with troubleshooting.
+- **[General Deployment Guide](deployment/DEPLOYMENT.md)** – Multi-platform deployment strategies.
 - **[Environment Security Overview](environment-security-overview.md)** – Startup
   validation and safe-mode rules.
 - **[Railway Compatibility](../RAILWAY_COMPATIBILITY_GUIDE.md)** – Platform
-  specific considerations.
+  specific considerations and API integration.
+- **[Railway GraphQL](RAILWAY_GRAPHQL.md)** – Programmatic Railway management via API.
+- **[Why We Chose Railway](why-we-chose-railway.md)** – Platform comparison and rationale.
 
 ---
 

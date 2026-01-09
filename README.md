@@ -260,6 +260,12 @@ diagnostic and `/api/test` returns a lightweight readiness payload for Railway.
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) – Environment configuration reference
 - [`docs/DOCUMENTATION_STATUS.md`](docs/DOCUMENTATION_STATUS.md) – Documentation coverage report
 
+### Deployment & Infrastructure
+- **[`docs/RAILWAY_DEPLOYMENT.md`](docs/RAILWAY_DEPLOYMENT.md)** – **NEW!** Complete Railway deployment guide
+- [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md) – Quick deployment reference
+- [`RAILWAY_COMPATIBILITY_GUIDE.md`](RAILWAY_COMPATIBILITY_GUIDE.md) – Railway API integration
+- [`docs/why-we-chose-railway.md`](docs/why-we-chose-railway.md) – Platform comparison
+
 ### Architecture & Integration
 - [`docs/AFOL_OVERVIEW.md`](docs/AFOL_OVERVIEW.md) – Adaptive Failover Orchestration Layer
 - [`docs/DATABASE_INTEGRATION.md`](docs/DATABASE_INTEGRATION.md) – Database integration patterns
