@@ -1,730 +1,129 @@
-# ARCANOS Railway Deployment Guide
+# Arcanos Railway Deployment Guide
 
 > **Last Updated:** 2026-01-09 | **Version:** 1.0.0 | **OpenAI SDK:** v6.15.0
 
-Complete guide for deploying the ARCANOS AI backend to Railway with full OpenAI SDK integration, CI/CD pipeline, and production-ready configuration.
-
----
-
 ## Overview
 
-ARCANOS is an AI-assisted TypeScript backend built on Express that routes requests through a centralized OpenAI integration. This guide walks you through deploying to [Railway](https://railway.app), a modern platform-as-a-service that simplifies deployment and scaling.
-
-### Why Railway?
-
-- **Zero-Configuration Deployments**: Automatic detection of Node.js projects
-- **GitHub Integration**: Automatic deployments on git push
-- **Environment Management**: Secure environment variable handling
-- **Built-in PostgreSQL**: One-click database provisioning
-- **Health Monitoring**: Automatic health checks and restart policies
-- **Cost-Effective**: Generous free tier, pay-as-you-go pricing
-
-See [why-we-chose-railway.md](why-we-chose-railway.md) for detailed comparison.
-
----
+This guide describes how to deploy the Arcanos backend to Railway using the repository’s
+existing `railway.json` and `Procfile` configuration. It reflects the current build/start
+commands and health checks defined in the repo.
 
 ## Prerequisites
 
-### Required
-
-- ✅ **GitHub Account** with access to the repository
-- ✅ **Railway Account** (sign up at [railway.app](https://railway.app))
-- ✅ **OpenAI API Key** from [platform.openai.com](https://platform.openai.com/api-keys)
-- ✅ **Node.js 18+** and **npm 8+** for local testing
-
-### Optional
-
-- ⚙️ **Railway CLI** for advanced management (install: `npm install -g @railway/cli`)
-- ⚙️ **PostgreSQL Database** for persistent memory (Railway provides this)
-- ⚙️ **Notion API Key** for optional integrations
-
----
+- Railway account with access to the target GitHub repository.
+- OpenAI API key (`OPENAI_API_KEY`).
+- Optional: Railway PostgreSQL service for persistence.
+- Local Node.js 18+ for pre-deploy validation (optional but recommended).
 
 ## Setup
 
-### 1. Repository Setup
-
-1. **Fork or clone** the repository to your GitHub account:
-   ```bash
-   git clone https://github.com/pbjustin/Arcanos.git
-   cd Arcanos
-   ```
-
-2. **Install dependencies** and verify build:
-   ```bash
-   npm install
-   npm run build
-   npm run lint
-   ```
-
-3. **Test locally** (optional but recommended):
-   ```bash
-   cp .env.example .env
-   # Edit .env with your OPENAI_API_KEY
-   npm start
-   # Test: curl http://localhost:8080/health
-   ```
-
-### 2. Railway Project Creation
-
-#### Option A: Deploy via Railway Dashboard (Recommended)
-
-1. Visit [railway.app](https://railway.app) and sign in
-2. Click **"New Project"**
-3. Select **"Deploy from GitHub repo"**
-4. Choose your forked **Arcanos** repository
-5. Railway automatically detects it as a Node.js project
-6. Click **"Deploy Now"**
-
-#### Option B: Deploy via Railway CLI
+### 1) Prepare the repository
 
 ```bash
-# Install Railway CLI
+git clone https://github.com/pbjustin/Arcanos.git
+cd Arcanos
+npm install
+npm run build
+```
+
+### 2) Create a Railway project
+
+**Via Railway dashboard (recommended):**
+
+1. Create a new Railway project.
+2. Choose **Deploy from GitHub repo**.
+3. Select the Arcanos repository and deploy.
+
+**Via Railway CLI (optional):**
+
+```bash
 npm install -g @railway/cli
-
-# Login to Railway
 railway login
-
-# Initialize project (in Arcanos directory)
 railway init
-
-# Link to GitHub repository
 railway link
-
-# Deploy
 railway up
 ```
 
----
-
 ## Configuration
 
-### Environment Variables
+### Build & start commands
 
-Railway requires specific environment variables for production deployment. Set these in the Railway dashboard under **Variables** tab.
+Railway uses `railway.json` as the source of truth:
 
-#### Required Variables
+- **Build:** `npm ci --include=dev && npm run build`
+- **Start:** `node --max-old-space-size=7168 dist/start-server.js`
+- **Health check path:** `/health`
+- **Restart policy:** `ON_FAILURE` with `restartPolicyMaxRetries=10`
 
-```bash
-# OpenAI Integration (REQUIRED)
-OPENAI_API_KEY=sk-proj-your-openai-api-key-here
+The `Procfile` mirrors the start command for compatibility.
 
-# Node Environment
-NODE_ENV=production
+### Environment variables
 
-# Server Configuration (Railway auto-sets PORT)
-PORT=8080  # Railway overrides this automatically
-```
+**Required:**
 
-#### Railway-Managed Variables (Auto-Set)
+- `OPENAI_API_KEY`
 
-These are automatically provided by Railway:
+**Recommended:**
 
-```bash
-RAILWAY_ENVIRONMENT=production
-RAILWAY_PROJECT_ID=<auto-set>
-RAILWAY_SERVICE_ID=<auto-set>
-RAILWAY_DEPLOYMENT_ID=<auto-set>
-```
+- `OPENAI_MODEL`, `FINETUNED_MODEL_ID`, or `AI_MODEL` (model selection)
+- `GPT51_MODEL` / `GPT5_MODEL` (reasoning model override)
+- `DATABASE_URL` (if not auto-provisioned)
+- `ARC_LOG_PATH` / `ARC_MEMORY_PATH` (filesystem paths)
 
-#### AI Model Configuration
+**Railway defaults (from `railway.json`):**
 
-Choose your primary AI model (optional - defaults to gpt-4o):
+- `NODE_ENV=production`
+- `RUN_WORKERS=false`
+- `WORKER_API_TIMEOUT_MS=60000`
+- `PORT=$PORT` (injected by Railway)
 
-```bash
-# Option 1: Using standard OpenAI variable (recommended)
-OPENAI_MODEL=gpt-4o
+If you attach PostgreSQL, Railway injects `DATABASE_URL` or `PG*` values. The backend
+constructs `DATABASE_URL` from `PG*` if needed.
 
-# Option 2: Using fine-tuned model
-FINETUNED_MODEL_ID=ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote
+### Environment separation
 
-# Option 3: Legacy variable (still supported)
-AI_MODEL=ft:gpt-3.5-turbo-0125:personal:arcanos-v2:BxRSDrhH
-```
+- Use Railway environments (development, production) to isolate secrets and database
+  instances.
+- Mirror critical variables between environments via Railway’s **Variables** UI.
 
-**Priority Order:** `OPENAI_MODEL` > `FINETUNED_MODEL_ID` > `FINE_TUNED_MODEL_ID` > `AI_MODEL` > default `gpt-4o`
-
-#### Advanced Model Configuration
+## Run locally
 
 ```bash
-# GPT-5 Reasoning Models (for advanced features)
-GPT5_MODEL=gpt-5
-GPT51_MODEL=gpt-5.2
-
-# Research Pipeline Override
-RESEARCH_MODEL_ID=gpt-4o  # Leave empty to use primary model
-
-# Routing Configuration
-ROUTING_MAX_TOKENS=4096
-```
-
-#### Database Configuration (Optional)
-
-Railway can provision a PostgreSQL database. If added, configure:
-
-```bash
-# Railway provides DATABASE_URL automatically
-DATABASE_URL=postgresql://user:pass@host:port/db
-
-# Or use individual variables (Railway auto-populates)
-PGHOST=<railway-db-host>
-PGPORT=5432
-PGUSER=postgres
-PGPASSWORD=<auto-generated>
-PGDATABASE=railway
-```
-
-**Note:** ARCANOS gracefully degrades to in-memory storage if database is unavailable.
-
-#### Worker Configuration
-
-```bash
-# Background Workers
-RUN_WORKERS=false  # Set to false on Railway (use cron jobs instead)
-WORKER_COUNT=2
-WORKER_MODEL=gpt-4o
-WORKER_API_TIMEOUT_MS=60000
-```
-
-**Important:** Set `RUN_WORKERS=false` on Railway to use Railway's cron job system instead of internal workers.
-
-#### Security & Trust Configuration
-
-```bash
-# Trusted GPT IDs for auto-confirmation
-TRUSTED_GPT_IDS=gpt-abc123,gpt-xyz789
-
-# Automation Secret (for API-based automation)
-ARCANOS_AUTOMATION_SECRET=your-secret-here
-ARCANOS_AUTOMATION_HEADER=x-arcanos-automation
-
-# Confirmation Challenge Settings
-CONFIRMATION_CHALLENGE_TTL_MS=120000
-```
-
-#### Optional Integration Variables
-
-```bash
-# Notion Integration
-NOTION_API_KEY=secret_notionkey123
-WWE_DATABASE_ID=notion-database-id
-
-# Memory & Cache Configuration
-SESSION_CACHE_TTL_MS=300000
-SESSION_CACHE_CAPACITY=100
-SESSION_RETENTION_MINUTES=60
-
-# Logging & Paths
-ARC_LOG_PATH=/tmp/arc/log  # Railway uses /tmp for ephemeral storage
-ARC_MEMORY_PATH=/tmp/arc/memory
-```
-
-### Railway Configuration File
-
-The repository includes `railway.json` with optimized settings:
-
-```json
-{
-  "build": {
-    "builder": "NIXPACKS",
-    "buildCommand": "npm ci --include=dev && npm run build"
-  },
-  "deploy": {
-    "startCommand": "node --max-old-space-size=7168 dist/start-server.js",
-    "healthcheckPath": "/health",
-    "healthcheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10
-  }
-}
-```
-
-**Memory Optimization:** Railway Hobby plan provides 8GB RAM. We allocate 7GB to Node.js and reserve 1GB for system overhead.
-
----
-
-## Deployment Process
-
-### Automatic Deployment Workflow
-
-Once connected to GitHub, Railway automatically:
-
-1. **Detects** git push to main/master branch
-2. **Installs** dependencies via `npm ci`
-3. **Builds** TypeScript via `npm run build`
-4. **Starts** server using `npm start` command
-5. **Monitors** health via `/health` endpoint
-6. **Restarts** on failure (up to 10 retries)
-
-### Build Process
-
-Railway executes these commands automatically:
-
-```bash
-# 1. Install all dependencies (including dev for TypeScript)
-npm ci --include=dev
-
-# 2. Compile TypeScript to JavaScript
-npm run build
-
-# 3. Start the production server
-node --max-old-space-size=7168 dist/start-server.js
-```
-
-### Health Check Configuration
-
-Railway monitors the application via health endpoints:
-
-- **Healthcheck Path:** `/health`
-- **Liveness:** `/healthz` (checks if server is running)
-- **Readiness:** `/readyz` (checks if server can handle requests)
-- **Timeout:** 300 seconds for initial startup
-
-All health endpoints return:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-01-09T18:37:00.000Z",
-  "uptime": 12345,
-  "checks": {
-    "openai": "connected",
-    "database": "available"  // or "degraded" if using in-memory
-  }
-}
-```
-
----
-
-## Run Locally
-
-### Local Development Setup
-
-1. **Copy environment template:**
-   ```bash
-   cp .env.example .env
-   ```
-
-2. **Configure minimum required variables:**
-   ```env
-   NODE_ENV=development
-   PORT=8080
-   OPENAI_API_KEY=sk-your-key-here
-   ```
-
-3. **Install and build:**
-   ```bash
-   npm install
-   npm run build
-   ```
-
-4. **Start development server:**
-   ```bash
-   # Option 1: Development mode (rebuild and run)
-   npm run dev
-
-   # Option 2: Watch mode (continuous rebuild)
-   npm run dev:watch
-   # In another terminal: npm start
-
-   # Option 3: Production simulation
-   npm run build && npm start
-   ```
-
-5. **Verify it's running:**
-   ```bash
-   # Health check
-   curl http://localhost:8080/health
-
-   # Test AI endpoint
-   curl -X POST http://localhost:8080/ask \
-     -H "Content-Type: application/json" \
-     -d '{"prompt": "Hello ARCANOS"}'
-   ```
-
-### Available Scripts
-
-```bash
-npm run dev          # Compile and start (single run)
-npm run dev:watch    # Auto-recompile on file changes
-npm run build        # Build TypeScript to dist/
-npm start            # Start production server
-npm test             # Run Jest test suites
-npm run lint         # ESLint check
-npm run type-check   # TypeScript validation
-```
-
-### Railway Environment Simulation
-
-To simulate Railway environment locally:
-
-```bash
-# Set Railway-like environment
-NODE_ENV=production
-PORT=8080
-RUN_WORKERS=false
-ARC_LOG_PATH=/tmp/arc/log
-
-# Build and start
+cp .env.example .env
+# Set OPENAI_API_KEY and any optional values
 npm run build
 npm start
 ```
 
----
-
-## Post-Deployment
-
-### Verify Deployment
-
-1. **Check deployment status** in Railway dashboard:
-   - Look for green "Active" status
-   - View deployment logs for errors
-
-2. **Test health endpoints:**
-   ```bash
-   # Replace with your Railway domain
-   RAILWAY_DOMAIN="your-app-name.railway.app"
-
-   # Health check
-   curl https://$RAILWAY_DOMAIN/health
-
-   # Liveness probe
-   curl https://$RAILWAY_DOMAIN/healthz
-
-   # Readiness probe
-   curl https://$RAILWAY_DOMAIN/readyz
-   ```
-
-3. **Test API endpoints:**
-   ```bash
-   # Basic AI query
-   curl -X POST https://$RAILWAY_DOMAIN/ask \
-     -H "Content-Type: application/json" \
-     -d '{"prompt": "Test query"}'
-
-   # Memory service check
-   curl https://$RAILWAY_DOMAIN/api/memory/health
-   ```
-
-### Monitor Logs
-
-#### Via Railway Dashboard
-
-1. Open your project in Railway
-2. Click on your service
-3. Go to **"Deployments"** tab
-4. Click **"View Logs"** on latest deployment
-
-#### Via Railway CLI
+Validate health before deploying:
 
 ```bash
-# Stream live logs
-railway logs
-
-# View recent logs
-railway logs --recent 100
-
-# Follow logs
-railway logs -f
+curl http://localhost:8080/health
 ```
 
-### Domain Configuration
+## Deploy (Railway)
 
-Railway provides a default domain: `your-app-name.railway.app`
+1. Push changes to your GitHub repo.
+2. Railway triggers a build using `railway.json`.
+3. Confirm `/health` passes after deploy.
+4. (Optional) Run `npm run validate:railway` locally to pre-check Railway readiness.
 
-To use a custom domain:
+### Rollback
 
-1. Go to **Settings** tab in Railway dashboard
-2. Scroll to **"Domains"** section
-3. Click **"Add Domain"**
-4. Enter your custom domain
-5. Configure DNS records as instructed
-
----
-
-## CI/CD Integration
-
-### GitHub Actions + Railway
-
-The repository includes CI/CD workflows in `.github/workflows/` that run on every push:
-
-1. **Automated Testing** - Runs test suite
-2. **Type Checking** - Validates TypeScript
-3. **Linting** - Enforces code style
-4. **Security Audit** - Checks for vulnerabilities
-5. **Railway Validation** - Verifies Railway compatibility
-
-Railway automatically deploys after CI passes.
-
-### Cron Jobs (Scheduled Tasks)
-
-Railway supports cron jobs via `railway/cron.yaml`:
-
-```yaml
-# Self-test every 30 minutes
-- name: self-test
-  schedule: "*/30 * * * *"
-  command: "node dist/commands/runSelfTest.js"
-
-# Daily summary at 11 PM UTC
-- name: daily-summary
-  schedule: "0 23 * * *"
-  command: "node dist/commands/runDailySummary.js"
-```
-
-**Setup:**
-1. Enable cron jobs in Railway project settings
-2. Deploy - Railway automatically detects `cron.yaml`
-3. Monitor execution in **"Cron Jobs"** tab
-
----
+- Use the Railway dashboard **Deployments** view to redeploy a previous deployment.
+- TODO: Confirm the exact Railway CLI rollback command for this repo.
 
 ## Troubleshooting
 
-### Common Issues
-
-#### Issue: Deployment Fails with "Build Error"
-
-**Symptoms:**
-- Railway shows "Build Failed" status
-- Logs show TypeScript compilation errors
-
-**Solutions:**
-```bash
-# 1. Test build locally
-npm run build
-
-# 2. Check TypeScript errors
-npm run type-check
-
-# 3. Verify all dependencies installed
-npm install
-
-# 4. Check railway.json build command
-cat railway.json | grep buildCommand
-```
-
-#### Issue: "OPENAI_API_KEY not found"
-
-**Symptoms:**
-- Health endpoint shows unhealthy OpenAI status
-- API calls return mock responses
-
-**Solutions:**
-1. Verify API key in Railway dashboard **Variables** tab
-2. Ensure key starts with `sk-` (or `sk-proj-` for project keys)
-3. Check key has necessary permissions on OpenAI platform
-4. Restart deployment after adding key
-
-#### Issue: "Port Binding Error"
-
-**Symptoms:**
-- Logs show: "Error: Port already in use"
-- Service fails to start
-
-**Solutions:**
-- Railway automatically sets `PORT` environment variable
-- Remove any hardcoded PORT values in code
-- Railway injects the correct port at runtime
-- Restart the deployment
-
-#### Issue: Database Connection Timeout
-
-**Symptoms:**
-- `/health` shows database as "degraded"
-- Memory operations slow or fail
-
-**Solutions:**
-```bash
-# 1. Check if DATABASE_URL is set in Railway
-railway variables
-
-# 2. Verify database is running (if using Railway PostgreSQL)
-# Go to PostgreSQL service in Railway dashboard
-
-# 3. ARCANOS automatically falls back to in-memory storage
-# Verify this in logs: "Using in-memory storage fallback"
-
-# 4. To enable database, add PostgreSQL plugin in Railway
-```
-
-#### Issue: Workers Not Running
-
-**Expected Behavior:** Workers should be disabled on Railway (`RUN_WORKERS=false`)
-
-**If workers are needed:**
-1. Set `RUN_WORKERS=true` in Railway variables
-2. Monitor memory usage (workers increase RAM consumption)
-3. Consider using Railway cron jobs instead
-
-#### Issue: Memory/Performance Issues
-
-**Symptoms:**
-- Service crashes due to memory limit
-- Slow response times
-
-**Solutions:**
-```bash
-# 1. Check current memory allocation in railway.json
-cat railway.json | grep max-old-space-size
-
-# 2. Railway Hobby: 8GB RAM available
-# Current allocation: 7GB to Node, 1GB system overhead
-
-# 3. Monitor memory in Railway dashboard metrics
-
-# 4. Optimize if needed:
-# - Disable unused features
-# - Reduce WORKER_COUNT
-# - Lower SESSION_CACHE_CAPACITY
-# - Set RUN_WORKERS=false
-```
-
-### Rollback Procedures
-
-#### Quick Rollback via Dashboard
-
-1. Go to **"Deployments"** tab
-2. Find last known good deployment
-3. Click **"Redeploy"** on that deployment
-4. Confirm rollback
-
-#### Rollback via CLI
-
-```bash
-# List recent deployments
-railway status --json
-
-# Rollback to specific deployment
-railway rollback <deployment-id>
-```
-
-#### Rollback via Git
-
-```bash
-# Revert last commit
-git revert HEAD
-git push origin main
-
-# Railway auto-deploys the reverted commit
-```
-
-### Debug Commands
-
-```bash
-# Check Railway status
-railway status
-
-# View environment variables
-railway variables
-
-# Open Railway dashboard
-railway open
-
-# SSH into running service (if enabled)
-railway run bash
-
-# Test Railway API token
-railway whoami
-```
-
----
-
-## Advanced Configuration
-
-### Railway API Management
-
-ARCANOS includes Railway GraphQL API integration for programmatic management.
-
-**Enable by setting:**
-```bash
-RAILWAY_API_TOKEN=your-railway-api-token
-RAILWAY_GRAPHQL_TIMEOUT_MS=20000  # Optional, default 15s
-```
-
-**Get API token:**
-1. Go to [railway.app/account/tokens](https://railway.app/account/tokens)
-2. Create new token
-3. Copy to Railway environment variables
-
-**Use cases:**
-- Automated deployments
-- Programmatic rollbacks
-- Health monitoring scripts
-- Integration with CI/CD pipelines
-
-### Multiple Environments
-
-Railway supports multiple environments (staging, production):
-
-```bash
-# Create staging environment
-railway environment create staging
-
-# Switch environments
-railway environment staging
-
-# Deploy to specific environment
-railway up --environment production
-```
-
-**Environment-specific variables:**
-```json
-{
-  "environments": {
-    "production": {
-      "NODE_ENV": "production",
-      "OPENAI_MODEL": "gpt-4o"
-    },
-    "staging": {
-      "NODE_ENV": "staging",
-      "OPENAI_MODEL": "gpt-4o-mini"
-    }
-  }
-}
-```
-
-### Scaling Configuration
-
-Railway automatically scales based on traffic. Configure limits:
-
-```json
-{
-  "deploy": {
-    "numReplicas": 1,  // Number of instances
-    "sleepApplication": false  // Keep alive
-  }
-}
-```
-
----
+- **Build fails on Railway**: ensure `npm ci --include=dev` succeeds locally and
+  `package-lock.json` is committed.
+- **Service fails health check**: verify `OPENAI_API_KEY` and database connectivity.
+- **Workers starting unexpectedly**: ensure `RUN_WORKERS=false` is set in Railway variables.
+- **Database not connected**: confirm Railway PostgreSQL is attached and `DATABASE_URL` exists.
 
 ## References
 
-### Railway Documentation
-- [Railway Docs](https://docs.railway.app/)
-- [Railway CLI](https://docs.railway.app/develop/cli)
-- [Environment Variables](https://docs.railway.app/develop/variables)
-- [Health Checks](https://docs.railway.app/deploy/healthchecks)
-
-### ARCANOS Documentation
-- [Main README](../README.md) - Project overview
-- [Configuration Guide](CONFIGURATION.md) - All environment variables
-- [API Reference](api/README.md) - Complete API documentation
-- [Backend Architecture](backend.md) - System design details
-- [Why Railway](why-we-chose-railway.md) - Platform comparison
-
-### OpenAI Documentation
-- [OpenAI API Docs](https://platform.openai.com/docs)
-- [OpenAI Node SDK](https://github.com/openai/openai-node)
-- [Model Pricing](https://openai.com/pricing)
-
-### Support
-- [GitHub Issues](https://github.com/pbjustin/Arcanos/issues)
-- [Railway Discord](https://discord.gg/railway)
-- [Contributing Guide](../CONTRIBUTING.md)
-
----
-
-**Last Updated:** 2026-01-09 | **Next Review:** 2026-02-09
-
-For questions or issues, please open a GitHub issue or consult the [troubleshooting section](#troubleshooting).
+- `../railway.json`
+- `../Procfile`
+- `CONFIGURATION.md`
+- `../README.md`
