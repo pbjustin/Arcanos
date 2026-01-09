@@ -3,7 +3,7 @@
  * Validates HTML fetching with content-type validation and error handling
  */
 
-import { safeFetchHtml } from '../src/utils/http';
+import { safeFetchHtml } from '../src/utils/http.js';
 
 async function runSafeFetchHtmlTests() {
   console.log('🧪 Running safeFetchHtml Tests\n');
