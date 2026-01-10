@@ -8,15 +8,18 @@ let openaiInstance: OpenAI | null = null;
 
 function getOpenAIClient(): OpenAI {
   if (!openaiInstance) {
-    openaiInstance = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY || 'dummy-key-for-testing'
-    });
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('Missing OpenAI API key. Please set OPENAI_API_KEY environment variable.');
+    }
+    openaiInstance = new OpenAI({ apiKey });
   }
   return openaiInstance;
 }
 
 export default new Proxy({} as OpenAI, {
   get(_target, prop) {
-    return getOpenAIClient()[prop as keyof OpenAI];
+    const client = getOpenAIClient();
+    return client[prop as keyof OpenAI];
   }
 });

@@ -4,6 +4,9 @@ import type { JobHandler } from '../jobs/index.js';
 
 console.log('[memorySync] Initialized handler module');
 
+// Default embedding model, aligned with main OpenAI service
+const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
+
 /**
  * Synchronize in-memory state to persistent store.
  * Handler for MEMORY_SYNC job type.
@@ -20,15 +23,16 @@ export const memorySyncHandler: JobHandler<'MEMORY_SYNC'> = async ({ payload }) 
     // 2. Optional embedding via OpenAI SDK
     if (embed) {
       const text = typeof value === 'string' ? value : JSON.stringify(value);
+      const model = process.env.EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
 
       const embedding = await openai.embeddings.create({
-        model: 'text-embedding-ada-002',
+        model,
         input: text,
       });
 
       await MemoryStore.set(`${key}:embedding`, embedding.data[0].embedding);
       console.log(
-        `[memorySync] Embedding stored for ${key} (dim: ${embedding.data[0].embedding.length})`
+        `[memorySync] Embedding stored for ${key} (model: ${model}, dim: ${embedding.data[0].embedding.length})`
       );
     }
 
