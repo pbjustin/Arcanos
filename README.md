@@ -1,6 +1,6 @@
 # Arcanos Backend
 
-> **Last Updated:** 2026-01-09 | **Version:** 1.0.0 | **OpenAI SDK:** v6.15.0
+> **Last Updated:** 2026-01-10 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
 
 ## Overview
 
