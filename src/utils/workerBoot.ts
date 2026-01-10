@@ -78,13 +78,28 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
       return results;
     }
 
-    const files = fs.readdirSync(workersDir);
-    const workerFiles = files.filter(file => file.endsWith('.js') && !file.includes('shared'));
+    const resolveWorkerFiles = (directory: string) =>
+      fs
+        .readdirSync(directory)
+        .filter(file => file.endsWith('.js') && !file.includes('shared'));
 
-    console.log(`[🔧 WORKER-BOOT] Found ${workerFiles.length} worker files`);
+    let resolvedWorkersDir = workersDir;
+    let workerFiles = resolveWorkerFiles(resolvedWorkersDir);
+
+    if (workerFiles.length === 0) {
+      const distDir = path.join(workersDir, 'dist');
+      if (fs.existsSync(distDir)) {
+        resolvedWorkersDir = distDir;
+        workerFiles = resolveWorkerFiles(resolvedWorkersDir);
+      }
+    }
+
+    console.log(
+      `[🔧 WORKER-BOOT] Found ${workerFiles.length} worker files in ${resolvedWorkersDir}`
+    );
 
     // Initialize worker-logger first for registry
-    const loggerPath = path.join(workersDir, 'worker-logger.js');
+    const loggerPath = path.join(resolvedWorkersDir, 'worker-logger.js');
     if (fs.existsSync(loggerPath)) {
       try {
         const workerLogger = await import(loggerPath);
@@ -101,7 +116,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
     }
 
     // Initialize worker-planner-engine and start scheduling
-    const plannerPath = path.join(workersDir, 'worker-planner-engine.js');
+    const plannerPath = path.join(resolvedWorkersDir, 'worker-planner-engine.js');
     if (fs.existsSync(plannerPath)) {
       try {
         const plannerEngine = await import(plannerPath);
@@ -136,7 +151,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
       }
 
       try {
-        const workerPath = path.join(workersDir, file);
+        const workerPath = path.join(resolvedWorkersDir, file);
         const worker = await import(workerPath);
         
         // Check for new worker pattern (context-based with schedule)

@@ -37,7 +37,7 @@ cron jobs are running.
    or not workers are enabled.
 3. If `RUN_WORKERS` is disabled, return immediately with the captured database
    status so API consumers can still see connectivity.
-4. Load `worker-logger.js` first so that log messages are centralized, then boot
+4. Load `worker-logger.js` (compiled from `workers/src/worker-logger.ts`) first so that log messages are centralized, then boot
    the planner engine. The planner automatically schedules itself when the
    database is connected.
 5. Iterate through every remaining `.js` file, create a worker context, and
@@ -87,7 +87,7 @@ straightforward to author.
 
 ## 🛠️ Authoring a new worker
 
-1. Create a new `.js` file under `workers/` with a unique `id`.
+1. Create a new `.ts` file under `workers/src/` with a unique `id`.
 2. Export `name`, `description`, an optional cron `schedule`, and an async
    `run(context)` function. Importing TypeScript helpers from `dist/` builds is
    not required; the worker context exposes the database and AI clients.
@@ -95,8 +95,9 @@ straightforward to author.
    for persistence, and `context.ai.ask()` for AI calls.
 4. Handle errors gracefully and return a structured object so `/workers/run/:id`
    can display a useful payload.
-5. Restart the server or call `initializeWorkers()` manually; the new module will
-   be detected automatically.
+5. Run the workers build (`npm --prefix workers run build:workers`) so the
+   compiled `.js` file lands in `workers/dist/`, then restart the server or call
+   `initializeWorkers()` manually; the new module will be detected automatically.
 
 ---
 
