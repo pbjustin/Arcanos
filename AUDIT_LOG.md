@@ -59,12 +59,12 @@
    - Reason: Standalone Python client not integrated with backend
    - Action: Mark for removal in Pass 1
 
-3. **workers/*.js files** (JavaScript workers)
+3. **workers/src/*.ts files** (TypeScript workers)
    - Status: 🟡 CHECK - May be loaded dynamically at runtime
-   - Files: 4 JS files (worker-gpt5-reasoning.js, worker-logger.js, worker-memory.js, worker-planner-engine.js)
-   - Current Usage: Worker boot system loads files from workers/ directory
-   - Note: These are JS files but the main app is TypeScript
-   - Action: Verify if actively used, consider migration to TypeScript or removal
+   - Files: 4 TS files (worker-gpt5-reasoning.ts, worker-logger.ts, worker-memory.ts, worker-planner-engine.ts)
+   - Current Usage: Worker boot system loads compiled files from workers/dist
+   - Note: These are TypeScript sources compiled for runtime execution
+   - Action: Verify if actively used, consider further cleanup if unused
 
 4. **arcanos_controller.js** (Root level)
    - Status: 🟡 CHECK
