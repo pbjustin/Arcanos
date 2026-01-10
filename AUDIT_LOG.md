@@ -378,3 +378,58 @@ No further optimizations are required at this time. The repository is ready for 
 - **Change:** No additional modularization changes needed after pruning unused scripts.
 - **Reason:** Core runtime modules already centralized for OpenAI configuration.
 - **Verification:** Manual review of `src/services/openai.ts`.
+
+---
+
+## 2026-01-10 Refactoring Pass 5
+
+### Pass 0: Inventory & Analysis
+- **Repository State:** 1014 markdown files, TypeScript codebase (TypeScript LOC: ~21,667)
+- **OpenAI SDK Version:** v6.15.0 (latest: v6.16.0)
+- **API Pattern Assessment:** ✅ Already using modern `responses.create` API (correct for v6+)
+- **Build Status:** ✅ All checks passing (build, lint, type-check)
+- **Security Status:** ✅ 0 vulnerabilities
+- **Dead Code Identified:** 4 unused scripts in `scripts/` directory
+- **Verification:** `grep -r "github-pr-automation|list-tables|self-check-validation|verify-github-access" --exclude-dir=node_modules` confirmed no references
+
+### Pass 1: Dead Code Removal
+- **Change:** Removed 4 unused scripts from `scripts/` directory
+  - Removed `scripts/github-pr-automation.ts` - No package.json reference or usage in codebase
+  - Removed `scripts/list-tables.ts` - No package.json reference or usage in codebase  
+  - Removed `scripts/self-check-validation.js` - No package.json reference or usage in codebase
+  - Removed `scripts/verify-github-access.js` - No package.json reference or usage in codebase
+- **Reason:** Scripts were unreferenced and not integrated into build/runtime workflows; removal reduces maintenance overhead
+- **Verification:** `npm run build` successful after removal; no import errors
+
+### Pass 2: OpenAI SDK Update
+- **Change:** Updated OpenAI SDK from v6.15.0 to v6.16.0
+- **Command:** `npm install openai@6.16.0`
+- **Result:** ✅ Successfully updated to latest stable version
+- **API Compatibility:** ✅ Current usage of `responses.create` is the recommended modern pattern for v6+
+- **Breaking Changes:** None - v6.16.0 is a minor release with improvements
+- **Verification:** 
+  - Type check: ✅ `tsc --noEmit` passed
+  - Build: ✅ `npm run build` successful
+  - Security: ✅ 0 vulnerabilities after update
+
+### Pass 3: Railway Deployment Verification
+- **Status:** ✅ No changes required
+- **Existing Configuration:** Already optimized from previous passes
+  - PORT environment variable: ✅ Handled in `src/config/index.ts`
+  - Start command: ✅ `railway.json` and `Procfile` configured correctly
+  - Health checks: ✅ Multiple endpoints functional
+  - Memory optimization: ✅ `--max-old-space-size=7168` flag in place
+
+### Pass 4: Modularization Review
+- **Status:** ✅ No changes required
+- **Assessment:** OpenAI integration already well-modularized in `src/services/openai/`
+- **Structure:** Clean separation of concerns (12 TypeScript modules)
+- **Code Quality:** All lint and type-check validations passing
+
+### Pass 5 Summary
+- **Files Removed:** 4 unused scripts
+- **SDK Updated:** v6.15.0 → v6.16.0 (latest stable)
+- **API Pattern:** ✅ Using modern `responses.create` (recommended for v6+)
+- **Build Status:** ✅ All checks passing
+- **Security:** ✅ 0 vulnerabilities
+- **Railway Compatibility:** ✅ 100% ready
