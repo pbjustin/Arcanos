@@ -3,6 +3,9 @@ import { TypedWorkerQueue } from '../workers/src/queue/index.js';
 import { memorySyncHandler } from '../workers/src/handlers/memorySync.js';
 import { MemoryStore } from '../workers/src/infrastructure/memory/index.js';
 
+// Set a dummy API key for testing
+process.env.OPENAI_API_KEY = 'test-api-key';
+
 describe('memorySync worker', () => {
   let queue: TypedWorkerQueue;
 
