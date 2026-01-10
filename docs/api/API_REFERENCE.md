@@ -335,7 +335,7 @@ Lists worker files and the runtime configuration.
 ```
 
 ### `POST /workers/run/:workerId`
-Confirmation required. Example for `worker-memory.js`:
+Confirmation required. Example for `worker-memory` (source: `workers/src/worker-memory.ts`):
 
 ```bash
 curl -X POST http://localhost:8080/workers/run/worker-memory \

@@ -1,3 +1,5 @@
+import type { WorkerContext } from './workerTypes.js';
+
 export const id = 'worker-logger';
 export const description = 'Initializes the centralized worker execution logger.';
 
@@ -15,7 +17,7 @@ export default {
   id,
   name: 'Worker Logger',
   description,
-  async run(context) {
+  async run(context?: WorkerContext) {
     const timestamp = new Date().toISOString();
     if (context?.log) {
       await context.log(`Logger heartbeat at ${timestamp}`);
