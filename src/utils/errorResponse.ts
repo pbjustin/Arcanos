@@ -4,7 +4,6 @@
  */
 
 import type { Response } from 'express';
-import type { ErrorResponseDTO } from '../types/dto.js';
 
 /**
  * Send a standardized validation error response
@@ -18,7 +17,7 @@ export function sendValidationError(
   details: string[],
   acceptedFields?: string[]
 ): void {
-  const response: ErrorResponseDTO & { acceptedFields?: string[] } = {
+  const response: any = {
     error: 'Validation failed',
     details,
     timestamp: new Date().toISOString()
@@ -43,7 +42,7 @@ export function sendServerError(
   message: string,
   error?: Error
 ): void {
-  const response: ErrorResponseDTO = {
+  const response: any = {
     error: message,
     details: error ? [error.message] : undefined,
     timestamp: new Date().toISOString()
@@ -62,7 +61,7 @@ export function sendNotFoundError(
   res: Response,
   resource: string
 ): void {
-  const response: ErrorResponseDTO = {
+  const response: any = {
     error: `${resource} not found`,
     timestamp: new Date().toISOString()
   };
@@ -80,7 +79,7 @@ export function sendUnauthorizedError(
   res: Response,
   message: string = 'Unauthorized'
 ): void {
-  const response: ErrorResponseDTO = {
+  const response: any = {
     error: message,
     timestamp: new Date().toISOString()
   };
