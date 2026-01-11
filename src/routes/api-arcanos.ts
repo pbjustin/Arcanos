@@ -3,6 +3,7 @@ import { createCentralizedCompletion } from '../services/openai.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import type { IdleStateService } from '../services/idleStateService.js';
 
 const router = express.Router();
 
@@ -61,7 +62,10 @@ router.post('/ask', confirmGate, createValidationMiddleware(arcanosSchema), asyn
     const { prompt, options = {} } = req.body;
 
     // Simple ping/pong healthcheck - bypass AI processing for ping
+    //audit Assumption: "ping" indicates user activity only; risk: false positives; invariant: ping refreshes idle timer; handling: record ping then respond.
     if (prompt.toLowerCase().trim() === 'ping') {
+      const idleStateService = req.app.locals.idleStateService as IdleStateService | undefined;
+      idleStateService?.noteUserPing({ route: '/ask', source: 'api-arcanos' });
       return res.json({ 
         success: true, 
         result: 'pong',
@@ -159,4 +163,3 @@ router.post('/ask', confirmGate, createValidationMiddleware(arcanosSchema), asyn
 }));
 
 export default router;
-

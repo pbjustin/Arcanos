@@ -15,6 +15,7 @@ import type { WorkerInitResult } from './utils/workerBoot.js';
 import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, logShutdownEvent } from './utils/bootLogger.js';
 import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
+import { createIdleStateService } from './services/idleStateService.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -44,7 +45,7 @@ function logBootSummary(actualPort: number, workerResults: WorkerInitResult): vo
   logCompleteBootSummary(actualPort, config.server.port, config.server.environment, getDefaultModel(), workerResults);
 }
 
-function createShutdownHandler(server: Server): (signal: string) => void {
+function createShutdownHandler(server: Server, onShutdown?: () => void): (signal: string) => void {
   return (signal: string) => {
     const mem = process.memoryUsage();
     const uptimeSeconds = process.uptime().toFixed(1);
@@ -52,6 +53,10 @@ function createShutdownHandler(server: Server): (signal: string) => void {
       release: process.env.RAILWAY_RELEASE_ID,
       deployment: process.env.RAILWAY_DEPLOYMENT_ID
     });
+    //audit Assumption: optional shutdown hook should not block exit; risk: slow cleanup; invariant: hook is best-effort; handling: guard and invoke.
+    if (onShutdown) {
+      onShutdown();
+    }
     server.close(() => {
       process.exit(0);
     });
@@ -113,13 +118,13 @@ function scheduleSystemDiagnostic(actualPort: number): void {
   }, SERVER_CONSTANTS.DIAGNOSTIC_DELAY_MS);
 }
 
-function registerProcessHandlers(server: Server, actualPort: number): void {
+function registerProcessHandlers(server: Server, actualPort: number, onShutdown?: () => void): void {
   server.on('error', (err: Error) => {
     serverLogger.error('Server error', undefined, undefined, err);
     process.exit(1);
   });
 
-  const logAndShutdown = createShutdownHandler(server);
+  const logAndShutdown = createShutdownHandler(server, onShutdown);
 
   process.on('SIGTERM', () => logAndShutdown('SIGTERM'));
   process.on('SIGINT', () => logAndShutdown('SIGINT'));
@@ -143,6 +148,8 @@ function registerProcessHandlers(server: Server, actualPort: number): void {
 export async function createServer(options: ServerFactoryOptions = {}): Promise<ServerLifecycle> {
   await performStartup();
   const app = createApp();
+  const idleStateService = createIdleStateService();
+  app.locals.idleStateService = idleStateService;
 
   serverLogger.info(formatBootMessage(SERVER_MESSAGES.BOOT.PORT_CHECK, SERVER_TEXT.PORT_CHECK_PROGRESS));
   const host = options.host ?? config.server.host;
@@ -166,7 +173,10 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
 
     initializeSystemState(actualPort);
 
-    registerProcessHandlers(server, actualPort);
+    registerProcessHandlers(server, actualPort, () => {
+      idleStateService.stopMonitoring();
+    });
+    idleStateService.startMonitoring();
 
     return {
       app,
