@@ -1,0 +1,67 @@
+{
+  "refactoringPlan": {
+    "version": "1.0",
+    "date": "2026-01-11",
+    "codebase": "Arcanos AI Backend",
+    "totalPasses": 7,
+    "baseline": {
+      "totalFiles": 220,
+      "totalLines": 24751,
+      "largestFiles": [
+        { "file": "services/openai.ts", "lines": 621 },
+        { "file": "routes/sdk.ts", "lines": 607 },
+        { "file": "logic/arcanos.ts", "lines": 499 },
+        { "file": "services/memoryAware.ts", "lines": 470 }
+      ]
+    },
+    "identifiedRedundancies": {
+      "openaiClientInstantiation": {
+        "description": "Multiple OpenAI client instantiations across codebase",
+        "files": [
+          "src/services/openai/clientFactory.ts",
+          "workers/src/handlers/openai.ts",
+          "workers/src/infrastructure/sdk/openai.ts"
+        ],
+        "solution": "Consolidate to single client factory pattern",
+        "priority": "high"
+      },
+      "environmentVariableAccess": {
+        "description": "Direct process.env access in 60+ files",
+        "files": 60,
+        "solution": "Create centralized config module with typed exports",
+        "priority": "high"
+      },
+      "loggingPatterns": {
+        "description": "Multiple logging implementations (console.log: 305 usages)",
+        "files": [
+          "src/utils/structuredLogging.ts",
+          "src/utils/aiLogger.ts",
+          "src/utils/bootLogger.ts"
+        ],
+        "solution": "Consolidate to single logging utility",
+        "priority": "medium"
+      },
+      "duplicateRoutes": {
+        "description": "Multiple similar prompt/query handling routes",
+        "files": [
+          "src/routes/ask.ts",
+          "src/routes/api-ask.ts",
+          "src/routes/arcanosQuery.ts",
+          "src/routes/modules.ts",
+          "src/routes/hrc.ts",
+          "src/routes/rag.ts",
+          "src/routes/api-arcanos.ts",
+          "src/routes/openai.ts"
+        ],
+        "solution": "Merge similar routes using shared handlers",
+        "priority": "high"
+      },
+      "errorHandling": {
+        "description": "183 catch blocks with varying error handling patterns",
+        "solution": "Create centralized error handling middleware",
+        "priority": "medium"
+      }
+    },
+    "passes": []
+  }
+}
