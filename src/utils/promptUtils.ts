@@ -18,6 +18,16 @@ export const PROMPT_FIELD_NAMES = [
 export type PromptFieldName = typeof PROMPT_FIELD_NAMES[number];
 
 /**
+ * Check if a string is non-empty after trimming
+ * 
+ * @param value - String value to check (can be null or undefined)
+ * @returns True if the string has content after trimming, false for null, undefined, or empty strings
+ */
+export function hasContent(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
  * Extract prompt text from request body, checking all common field names
  * 
  * @param body - Request body object
@@ -29,7 +39,7 @@ export function extractPromptFromBody(body: Record<string, any>): {
 } {
   for (const fieldName of PROMPT_FIELD_NAMES) {
     const value = body[fieldName];
-    if (typeof value === 'string' && value.trim().length > 0) {
+    if (hasContent(value)) {
       return {
         prompt: value.trim(),
         sourceField: fieldName
@@ -110,14 +120,4 @@ export function truncateText(
   
   const truncated = text.substring(0, maxLength);
   return ellipsis ? `${truncated}...` : truncated;
-}
-
-/**
- * Check if a string is non-empty after trimming
- * 
- * @param value - String value to check (can be null or undefined)
- * @returns True if the string has content after trimming, false for null, undefined, or empty strings
- */
-export function hasContent(value: string | null | undefined): boolean {
-  return typeof value === 'string' && value.trim().length > 0;
 }
