@@ -9,6 +9,7 @@ import { callOpenAI } from '../services/openai.js';
 import { getDefaultModel } from '../services/openai/credentialProvider.js';
 import { auditLogger, AuditLogger } from '../utils/auditLogger.js';
 import { createIdleManager, IdleManager } from '../utils/idleManager.js';
+import { logger } from '../utils/structuredLogging.js';
 
 type IdleState = 'active' | 'idle' | 'critical';
 
@@ -76,7 +77,16 @@ const requestTimestamps: number[] = [];
 const batchQueue: BatchQueueItem[] = [];
 let batchTimer: NodeJS.Timeout | null = null;
 
-const defaultIdleManager: IdleManager = createIdleManager(auditLogger);
+function createIdleManagerLogger() {
+  return {
+    log: (message: string, metadata?: unknown) => {
+      //audit Assumption: idle manager audit logs are informational; risk: noisy logging; invariant: message remains intact; handling: log via structured logger.
+      logger.info(message, { module: 'idle-manager' }, metadata);
+    }
+  };
+}
+
+const defaultIdleManager: IdleManager = createIdleManager(createIdleManagerLogger());
 
 const defaultIdleStateProvider: IdleStateProvider = {
   getState: () => {
