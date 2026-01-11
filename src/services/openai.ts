@@ -15,13 +15,15 @@ import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_SYSTEM_PROMPT,
   IMAGE_PROMPT_TOKEN_LIMIT,
-  REQUEST_ID_HEADER
+  REQUEST_ID_HEADER,
+  OPENAI_COMPLETION_DEFAULTS
 } from './openai/constants.js';
 import {
   REASONING_LOG_SUMMARY_LENGTH,
   REASONING_FALLBACK_TEXT
 } from '../config/reasoningTemplates.js';
 import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
+import { SERVER_CONSTANTS } from '../config/serverMessages.js';
 import { buildChatMessages } from './openai/messageBuilder.js';
 import { prepareGPT5Request, buildReasoningRequestPayload } from './openai/requestTransforms.js';
 import { buildResponseRequestPayload, extractResponseOutput } from './openai/responsePayload.js';
@@ -333,7 +335,7 @@ export const createGPT5Reasoning = async (
     const content = extractReasoningText(response);
     logOpenAIEvent('info', '✅ [GPT-5.2 REASONING] Success', {
       model: resolvedModel,
-      preview: content.substring(0, 100)
+      preview: content.substring(0, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
     });
     return { content, model: resolvedModel };
   } catch (err: any) {
@@ -565,10 +567,10 @@ export async function createCentralizedCompletion(
   const requestPayload = {
     model,
     messages: arcanosMessages,
-    temperature: options.temperature ?? 0.7,
-    top_p: options.top_p ?? 1,
-    frequency_penalty: options.frequency_penalty ?? 0,
-    presence_penalty: options.presence_penalty ?? 0,
+    temperature: options.temperature ?? OPENAI_COMPLETION_DEFAULTS.TEMPERATURE,
+    top_p: options.top_p ?? OPENAI_COMPLETION_DEFAULTS.TOP_P,
+    frequency_penalty: options.frequency_penalty ?? OPENAI_COMPLETION_DEFAULTS.FREQUENCY_PENALTY,
+    presence_penalty: options.presence_penalty ?? OPENAI_COMPLETION_DEFAULTS.PRESENCE_PENALTY,
     stream: options.stream ?? false,
     ...tokenParams
   };

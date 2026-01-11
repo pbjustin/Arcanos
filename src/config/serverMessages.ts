@@ -50,5 +50,7 @@ export const SERVER_TEXT = {
 export const SERVER_CONSTANTS = {
   WORKERS_DIRECTORY: './workers',
   DIAGNOSTIC_DELAY_MS: 2000, // Delay before running system diagnostic
-  SHUTDOWN_GRACE_PERIOD_MS: 5000 // Grace period for graceful shutdown
+  SHUTDOWN_GRACE_PERIOD_MS: 5000, // Grace period for graceful shutdown
+  DEFAULT_APP_VERSION: '1.0.0', // Default application version when npm version is unavailable
+  LOG_PREVIEW_LENGTH: 100 // Default length for log message previews
 } as const;
