@@ -269,3 +269,46 @@ This refactoring pass successfully:
 **Refactoring Agent**: GitHub Copilot  
 **Date**: January 11, 2026  
 **Status**: ✅ PASS COMPLETE - No regressions, all tests passing
+
+## Known Limitations
+
+### TypeScript Build Constraints
+
+The workers directory (`workers/src/`) has a separate `tsconfig.json` with `rootDir: "src"` that prevents importing from the parent `src/` directory. This creates necessary duplication in:
+
+- `workers/src/infrastructure/sdk/openai.ts` - Contains same credential resolution logic as `src/lib/openai-client.ts`
+
+**Why This Is Acceptable:**
+1. The duplication follows an identical pattern (documented in code comments)
+2. Only ~70 lines of code affected
+3. Alternative solutions (monorepo, symlinks, build complexity) add more cost than benefit
+4. Both files are well-documented with cross-references
+
+**Future Consideration:**
+- Extract shared constants to a JSON config file that both can import
+- Consider restructuring build to allow shared TypeScript modules
+- Evaluate monorepo structure (e.g., with pnpm workspaces)
+
+For now, the pattern duplication is **intentional and documented** to maintain build simplicity.
+
+---
+
+## Code Review Feedback Addressed
+
+### Review Comments
+The automated code review identified the credential resolution duplication between:
+- `src/lib/openai-client.ts`
+- `workers/src/infrastructure/sdk/openai.ts`
+
+**Response:**
+This duplication is **necessary** due to TypeScript build constraints. Both files:
+- Use identical credential resolution patterns
+- Are documented with cross-references
+- Follow the same priority order for environment variables
+- Will be kept in sync through code review
+
+**Alternative Rejected:**
+Restructuring the build system to allow cross-imports would add complexity that outweighs the ~70 lines of duplication.
+
+---
+
