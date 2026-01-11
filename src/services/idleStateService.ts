@@ -57,7 +57,12 @@ interface IdleStateServiceDependencies {
  * Edge cases: missing dependencies fall back to defaults.
  */
 export function createIdleStateService({
-  idleManager = createIdleManager(idleStateLogger),
+  idleManager = createIdleManager({
+    log: (message: string, metadata?: Record<string, unknown>) => {
+      //audit Assumption: structured logger accepts message + metadata; risk: metadata mismatch; invariant: audit logs are captured; handling: forward as info-level log.
+      idleStateLogger.info(message, metadata);
+    }
+  }),
   stateUpdater = updateState
 }: IdleStateServiceDependencies = {}): IdleStateService {
   let monitoringInterval: NodeJS.Timeout | null = null;
