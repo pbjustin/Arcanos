@@ -18,6 +18,16 @@ export const PROMPT_FIELD_NAMES = [
 export type PromptFieldName = typeof PROMPT_FIELD_NAMES[number];
 
 /**
+ * Check if a string is non-empty after trimming
+ * 
+ * @param value - String value to check (can be null or undefined)
+ * @returns True if the string has content after trimming, false for null, undefined, or empty strings
+ */
+export function hasContent(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
  * Extract prompt text from request body, checking all common field names
  * 
  * @param body - Request body object
@@ -29,7 +39,7 @@ export function extractPromptFromBody(body: Record<string, any>): {
 } {
   for (const fieldName of PROMPT_FIELD_NAMES) {
     const value = body[fieldName];
-    if (typeof value === 'string' && value.trim().length > 0) {
+    if (hasContent(value)) {
       return {
         prompt: value.trim(),
         sourceField: fieldName
@@ -89,4 +99,25 @@ export function validatePromptLength(
   }
 
   return { isValid: true };
+}
+
+/**
+ * Truncate text to a specified length with optional ellipsis
+ * 
+ * @param text - Text to truncate
+ * @param maxLength - Maximum length (default: 100)
+ * @param ellipsis - Add ellipsis if truncated (default: false)
+ * @returns Truncated text
+ */
+export function truncateText(
+  text: string,
+  maxLength: number = 100,
+  ellipsis: boolean = false
+): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  
+  const truncated = text.substring(0, maxLength);
+  return ellipsis ? `${truncated}...` : truncated;
 }

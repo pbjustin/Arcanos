@@ -15,14 +15,17 @@ import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_SYSTEM_PROMPT,
   IMAGE_PROMPT_TOKEN_LIMIT,
-  REQUEST_ID_HEADER
+  REQUEST_ID_HEADER,
+  OPENAI_COMPLETION_DEFAULTS
 } from './openai/constants.js';
 import {
   REASONING_LOG_SUMMARY_LENGTH,
   REASONING_FALLBACK_TEXT
 } from '../config/reasoningTemplates.js';
 import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
+import { SERVER_CONSTANTS } from '../config/serverMessages.js';
 import { buildChatMessages } from './openai/messageBuilder.js';
+import { truncateText, hasContent } from '../utils/promptUtils.js';
 import { prepareGPT5Request, buildReasoningRequestPayload } from './openai/requestTransforms.js';
 import { buildResponseRequestPayload, extractResponseOutput } from './openai/responsePayload.js';
 import { createChatCompletionWithFallback, ensureModelMatchesExpectation } from './openai/chatFallbacks.js';
@@ -94,8 +97,9 @@ export async function callOpenAI(
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const baseMetadata = options.metadata ?? {};
   const rawRequestId = baseMetadata ? (baseMetadata as Record<string, unknown>)['requestId'] : undefined;
-  const reinforcementRequestId = typeof rawRequestId === 'string' && rawRequestId.length > 0
-    ? rawRequestId
+  const requestIdString = typeof rawRequestId === 'string' ? rawRequestId : undefined;
+  const reinforcementRequestId = hasContent(requestIdString)
+    ? requestIdString
     : generateRequestId('ctx');
   const reinforcementMetadata: Record<string, unknown> = {
     ...baseMetadata,
@@ -333,7 +337,7 @@ export const createGPT5Reasoning = async (
     const content = extractReasoningText(response);
     logOpenAIEvent('info', '✅ [GPT-5.2 REASONING] Success', {
       model: resolvedModel,
-      preview: content.substring(0, 100)
+      preview: truncateText(content, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
     });
     return { content, model: resolvedModel };
   } catch (err: any) {
@@ -460,7 +464,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
 const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
   try {
     const { output } = await callOpenAI(getDefaultModel(), input, IMAGE_PROMPT_TOKEN_LIMIT, false);
-    if (output && output.trim().length > 0) {
+    if (hasContent(output)) {
       return output.trim();
     }
   } catch (err) {
@@ -565,10 +569,10 @@ export async function createCentralizedCompletion(
   const requestPayload = {
     model,
     messages: arcanosMessages,
-    temperature: options.temperature ?? 0.7,
-    top_p: options.top_p ?? 1,
-    frequency_penalty: options.frequency_penalty ?? 0,
-    presence_penalty: options.presence_penalty ?? 0,
+    temperature: options.temperature ?? OPENAI_COMPLETION_DEFAULTS.TEMPERATURE,
+    top_p: options.top_p ?? OPENAI_COMPLETION_DEFAULTS.TOP_P,
+    frequency_penalty: options.frequency_penalty ?? OPENAI_COMPLETION_DEFAULTS.FREQUENCY_PENALTY,
+    presence_penalty: options.presence_penalty ?? OPENAI_COMPLETION_DEFAULTS.PRESENCE_PENALTY,
     stream: options.stream ?? false,
     ...tokenParams
   };
