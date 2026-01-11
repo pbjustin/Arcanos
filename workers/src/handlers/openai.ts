@@ -1,7 +1,7 @@
-import OpenAI from 'openai';
 import type { JobHandler } from '../jobs/index.js';
+import openaiClient from '../infrastructure/sdk/openai.js';
 
-const client = new OpenAI();
+const client = openaiClient;
 
 export const openaiCompletionHandler: JobHandler<'OPENAI_COMPLETION'> = async ({ payload }) => {
   const response = await client.chat.completions.create({
