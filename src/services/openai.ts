@@ -25,6 +25,7 @@ import {
 import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
 import { SERVER_CONSTANTS } from '../config/serverMessages.js';
 import { buildChatMessages } from './openai/messageBuilder.js';
+import { truncateText, hasContent } from '../utils/promptUtils.js';
 import { prepareGPT5Request, buildReasoningRequestPayload } from './openai/requestTransforms.js';
 import { buildResponseRequestPayload, extractResponseOutput } from './openai/responsePayload.js';
 import { createChatCompletionWithFallback, ensureModelMatchesExpectation } from './openai/chatFallbacks.js';
@@ -96,8 +97,8 @@ export async function callOpenAI(
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const baseMetadata = options.metadata ?? {};
   const rawRequestId = baseMetadata ? (baseMetadata as Record<string, unknown>)['requestId'] : undefined;
-  const reinforcementRequestId = typeof rawRequestId === 'string' && rawRequestId.length > 0
-    ? rawRequestId
+  const reinforcementRequestId = hasContent(rawRequestId as string)
+    ? rawRequestId as string
     : generateRequestId('ctx');
   const reinforcementMetadata: Record<string, unknown> = {
     ...baseMetadata,
@@ -335,7 +336,7 @@ export const createGPT5Reasoning = async (
     const content = extractReasoningText(response);
     logOpenAIEvent('info', '✅ [GPT-5.2 REASONING] Success', {
       model: resolvedModel,
-      preview: content.substring(0, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
+      preview: truncateText(content, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
     });
     return { content, model: resolvedModel };
   } catch (err: any) {
@@ -462,7 +463,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
 const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
   try {
     const { output } = await callOpenAI(getDefaultModel(), input, IMAGE_PROMPT_TOKEN_LIMIT, false);
-    if (output && output.trim().length > 0) {
+    if (hasContent(output)) {
       return output.trim();
     }
   } catch (err) {
