@@ -1,10 +1,7 @@
 /**
- * Workers OpenAI Client
- * Shared OpenAI client instance with lazy initialization
- * 
- * Note: This uses the same pattern as src/lib/openai-client.ts
- * but is duplicated here due to TypeScript build constraints.
- * Both implementations follow the same credential resolution logic.
+ * Shared OpenAI Client Factory
+ * Single source of truth for OpenAI client instantiation
+ * Used by both main application and workers
  */
 
 import OpenAI from 'openai';
@@ -28,7 +25,7 @@ const baseUrlCandidates = [
   process.env.OPENAI_API_BASE
 ].filter((value): value is string => Boolean(value && value.trim().length > 0));
 
-function resolveOpenAIKey(): string | null {
+export function resolveOpenAIKey(): string | null {
   for (const envName of OPENAI_KEY_ENV_PRIORITY) {
     const rawValue = process.env[envName];
     if (!rawValue) continue;
@@ -44,20 +41,26 @@ function resolveOpenAIKey(): string | null {
   return null;
 }
 
-function resolveOpenAIBaseURL(): string | undefined {
+export function resolveOpenAIBaseURL(): string | undefined {
   return baseUrlCandidates[0]?.trim();
 }
 
 let openaiInstance: OpenAI | null = null;
 
-function getOpenAIClient(): OpenAI {
+/**
+ * Get or create shared OpenAI client instance
+ * Lazily initialized to avoid requiring API key at module load time
+ * 
+ * @returns OpenAI client instance or null if no API key is configured
+ */
+export function getSharedOpenAIClient(): OpenAI | null {
   if (openaiInstance) {
     return openaiInstance;
   }
 
   const apiKey = resolveOpenAIKey();
   if (!apiKey) {
-    throw new Error('Missing OpenAI API key. Please set OPENAI_API_KEY environment variable.');
+    return null;
   }
 
   const baseURL = resolveOpenAIBaseURL();
@@ -72,9 +75,26 @@ function getOpenAIClient(): OpenAI {
   return openaiInstance;
 }
 
-export default new Proxy({} as OpenAI, {
-  get(_target, prop) {
-    const client = getOpenAIClient();
-    return client[prop as keyof OpenAI];
-  }
-});
+/**
+ * Create a Proxy that lazily initializes OpenAI client on first access
+ * Useful for workers that need immediate import but lazy initialization
+ */
+export function createLazyOpenAIClient(): OpenAI {
+  return new Proxy({} as OpenAI, {
+    get(_target, prop) {
+      const client = getSharedOpenAIClient();
+      if (!client) {
+        throw new Error('Missing OpenAI API key. Please set OPENAI_API_KEY environment variable.');
+      }
+      return client[prop as keyof OpenAI];
+    }
+  });
+}
+
+/**
+ * Reset the shared client instance
+ * Useful for testing or when credentials change
+ */
+export function resetSharedOpenAIClient(): void {
+  openaiInstance = null;
+}
