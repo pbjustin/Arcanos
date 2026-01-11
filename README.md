@@ -4,16 +4,16 @@
 
 ## Overview
 
-Arcanos is a TypeScript/Express backend that centralizes OpenAI access, provides AI-oriented
-HTTP APIs, and persists state to disk or PostgreSQL. The runtime boots from
-`src/start-server.ts`, registers routes in `src/routes/register.ts`, and uses a shared OpenAI
-client from `src/services/openai.ts` for chat, reasoning, and image generation.
+Arcanos is a TypeScript/Express backend that centralizes OpenAI access, provides AI-focused
+HTTP APIs, and persists state to disk or PostgreSQL. The server boots from
+`src/start-server.ts`, registers routes in `src/routes/register.ts`, and initializes the
+OpenAI client via `src/services/openai.ts` and `src/services/openai/*`.
 
 ## Prerequisites
 
 - Node.js 18+ and npm 8+ (see `package.json` engines).
 - An OpenAI API key for live responses (`OPENAI_API_KEY`).
-- Optional: PostgreSQL for persistent memory (`DATABASE_URL` or `PG*` variables).
+- Optional: PostgreSQL for persistence (`DATABASE_URL` or `PG*` variables).
 
 ## Setup
 
@@ -26,11 +26,13 @@ Populate at least `OPENAI_API_KEY` in `.env` before running locally.
 
 ## Configuration
 
-Key environment variables (see `docs/CONFIGURATION.md` for the full matrix):
+Key environment variables (see `docs/CONFIGURATION.md` for the complete matrix):
 
 - `OPENAI_API_KEY` – required for live OpenAI calls (missing keys return mock responses).
 - `OPENAI_MODEL`, `FINETUNED_MODEL_ID`, `FINE_TUNED_MODEL_ID`, `AI_MODEL` – model selection
   chain used by the OpenAI client.
+- `FALLBACK_MODEL`, `AI_FALLBACK_MODEL`, `RAILWAY_OPENAI_FALLBACK_MODEL` – fallback model
+  chain used when the primary model fails.
 - `GPT51_MODEL` / `GPT5_MODEL` – GPT-5.2 reasoning model override (defaults to `gpt-5.2`).
 - `DATABASE_URL` or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` – database connection.
 - `RUN_WORKERS`, `WORKER_COUNT`, `WORKER_MODEL`, `WORKER_API_TIMEOUT_MS` – background workers.
@@ -46,7 +48,7 @@ npm start
 Common scripts:
 
 ```bash
-npm run dev        # Compile TypeScript and start the compiled server (no watch mode)
+npm run dev        # Build workers + TypeScript, then start the compiled server
 npm run dev:watch  # Rebuild TypeScript incrementally; run "npm start" in another shell
 npm test           # Run Jest test suites
 npm run lint       # Lint TypeScript sources
@@ -67,7 +69,7 @@ Railway deployment is configured via `railway.json` and `Procfile`:
 - Build: `npm ci --include=dev && npm run build`
 - Start: `node --max-old-space-size=7168 dist/start-server.js`
 - Health check: `GET /health`
-- `RUN_WORKERS` is set to `false` by default in Railway deploy config.
+- `RUN_WORKERS` defaults to `false` in Railway deploy config.
 
 High-level steps:
 
@@ -75,6 +77,7 @@ High-level steps:
 2. Add required environment variables (`OPENAI_API_KEY`, optional model overrides).
 3. (Optional) Provision PostgreSQL and set `DATABASE_URL` if not auto-injected.
 4. Deploy and confirm health checks pass.
+5. Roll back from the Railway **Deployments** view if needed.
 
 See `docs/RAILWAY_DEPLOYMENT.md` for a detailed, step-by-step guide.
 

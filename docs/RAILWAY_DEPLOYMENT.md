@@ -1,12 +1,12 @@
 # Arcanos Railway Deployment Guide
 
-> **Last Updated:** 2026-01-09 | **Version:** 1.0.0 | **OpenAI SDK:** v6.15.0
+> **Last Updated:** 2026-01-10 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
 
 ## Overview
 
 This guide describes how to deploy the Arcanos backend to Railway using the repository’s
-existing `railway.json` and `Procfile` configuration. It reflects the current build/start
-commands and health checks defined in the repo.
+`railway.json` and `Procfile` configuration. It reflects the current build/start commands
+and health checks defined in the repo.
 
 ## Prerequisites
 
@@ -53,6 +53,7 @@ Railway uses `railway.json` as the source of truth:
 - **Build:** `npm ci --include=dev && npm run build`
 - **Start:** `node --max-old-space-size=7168 dist/start-server.js`
 - **Health check path:** `/health`
+- **Health check timeout:** `300s`
 - **Restart policy:** `ON_FAILURE` with `restartPolicyMaxRetries=10`
 
 The `Procfile` mirrors the start command for compatibility.
@@ -77,7 +78,7 @@ The `Procfile` mirrors the start command for compatibility.
 - `WORKER_API_TIMEOUT_MS=60000`
 - `PORT=$PORT` (injected by Railway)
 
-If you attach PostgreSQL, Railway injects `DATABASE_URL` or `PG*` values. The backend
+If you attach PostgreSQL, Railway injects `DATABASE_URL` (or `PG*` values). The backend
 constructs `DATABASE_URL` from `PG*` if needed.
 
 ### Environment separation
@@ -111,7 +112,7 @@ curl http://localhost:8080/health
 ### Rollback
 
 - Use the Railway dashboard **Deployments** view to redeploy a previous deployment.
-- TODO: Confirm the exact Railway CLI rollback command for this repo.
+- TODO: Confirm whether the Railway CLI exposes a stable rollback command for this repo.
 
 ## Troubleshooting
 
