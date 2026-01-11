@@ -5,15 +5,18 @@
  * Fully Railway-ready, audit-logged, and OpenAI SDK compatible.
  */
 
+import { createCacheKey } from './hashUtils.js';
+
+// Configuration with environment variable overrides
 const DEFAULTS = {
-  IDLE_MEMORY_THRESHOLD_MB: 150,       // If RSS exceeds this, stay awake
-  MEMORY_GROWTH_WINDOW_MS: 60000,      // Check memory growth every minute
-  INITIAL_IDLE_TIMEOUT_MS: 30000,      // 30s base idle window
-  MIN_IDLE_TIMEOUT_MS: 10000,
-  MAX_IDLE_TIMEOUT_MS: 120000,
-  EWMA_DECAY: 0.85,                    // Smooth average for traffic rate
-  CACHE_TTL_MS: 60000,                 // Cache OpenAI responses for 1m
-  BATCH_WINDOW_MS: 150,                // Batch duplicate OpenAI calls
+  IDLE_MEMORY_THRESHOLD_MB: parseInt(process.env.IDLE_MEMORY_THRESHOLD_MB || '150', 10),
+  MEMORY_GROWTH_WINDOW_MS: parseInt(process.env.MEMORY_GROWTH_WINDOW_MS || '60000', 10),
+  INITIAL_IDLE_TIMEOUT_MS: parseInt(process.env.INITIAL_IDLE_TIMEOUT_MS || '30000', 10),
+  MIN_IDLE_TIMEOUT_MS: parseInt(process.env.MIN_IDLE_TIMEOUT_MS || '10000', 10),
+  MAX_IDLE_TIMEOUT_MS: parseInt(process.env.MAX_IDLE_TIMEOUT_MS || '120000', 10),
+  EWMA_DECAY: parseFloat(process.env.EWMA_DECAY || '0.85'),
+  CACHE_TTL_MS: parseInt(process.env.OPENAI_CACHE_TTL_MS || '60000', 10),
+  BATCH_WINDOW_MS: parseInt(process.env.OPENAI_BATCH_WINDOW_MS || '150', 10),
 };
 
 interface Logger {
@@ -44,9 +47,18 @@ interface OpenAIWrapper {
       create: (payload: any) => Promise<any>;
     };
   };
+  destroy: () => void;
 }
 
-export function createIdleManager(auditLogger: Logger = console) {
+export interface IdleManager {
+  noteTraffic: (meta?: any) => void;
+  isIdle: () => boolean;
+  wrapOpenAI: (openai: any) => OpenAIWrapper;
+  getStats: () => IdleStats;
+  destroy: () => void;
+}
+
+export function createIdleManager(auditLogger: Logger = console as Logger): IdleManager {
   // --- Internal state ---
   let lastMemory = process.memoryUsage().heapUsed;
   let lastMemoryCheck = Date.now();
@@ -59,6 +71,7 @@ export function createIdleManager(auditLogger: Logger = console) {
 
   const responseCache = new Map<string, CacheEntry>();
   const requestQueue: QueuedRequest[] = [];
+  let batchInterval: NodeJS.Timeout | null = null;
 
   // --- Traffic tracking ---
   function noteTraffic(meta: any = {}) {
@@ -111,7 +124,8 @@ export function createIdleManager(auditLogger: Logger = console) {
   // --- OpenAI wrapper (memoization + batching) ---
   function wrapOpenAI(openai: any): OpenAIWrapper {
     async function batchedChat(payload: any): Promise<any> {
-      const key = JSON.stringify({ model: payload.model, messages: payload.messages });
+      // Use hash-based cache key for better performance and consistency
+      const key = createCacheKey(payload.model, payload.messages);
       const now = Date.now();
 
       // Serve from cache
@@ -129,41 +143,62 @@ export function createIdleManager(auditLogger: Logger = console) {
       });
     }
 
-    // Batch executor
-    const batchInterval = setInterval(async () => {
-      if (requestQueue.length === 0) return;
+    // Batch executor - process queue at regular intervals
+    if (batchInterval === null) {
+      batchInterval = setInterval(async () => {
+        if (requestQueue.length === 0) return;
 
-      const grouped = new Map<string, QueuedRequest[]>();
-      for (const r of requestQueue.splice(0)) {
-        if (!grouped.has(r.key)) grouped.set(r.key, []);
-        grouped.get(r.key)!.push(r);
-      }
-
-      for (const [key, group] of grouped.entries()) {
-        try {
-          const payload = group[0].payload;
-          const data = await openai.chat.completions.create(payload);
-          responseCache.set(key, { timestamp: Date.now(), data });
-
-          for (const r of group) r.resolve(data);
-
-          auditLogger.log?.("[AUDIT] Batched OpenAI call", {
-            key,
-            batchSize: group.length,
-          });
-        } catch (err) {
-          for (const r of group) r.reject(err);
+        const grouped = new Map<string, QueuedRequest[]>();
+        // Drain the queue
+        const itemsToBatch = requestQueue.splice(0, requestQueue.length);
+        
+        for (const r of itemsToBatch) {
+          if (!grouped.has(r.key)) grouped.set(r.key, []);
+          grouped.get(r.key)!.push(r);
         }
-      }
-    }, DEFAULTS.BATCH_WINDOW_MS);
+
+        for (const [key, group] of grouped.entries()) {
+          try {
+            const payload = group[0].payload;
+            const data = await openai.chat.completions.create(payload);
+            responseCache.set(key, { timestamp: Date.now(), data });
+
+            for (const r of group) r.resolve(data);
+
+            auditLogger.log?.("[AUDIT] Batched OpenAI call", {
+              key,
+              batchSize: group.length,
+            });
+          } catch (err) {
+            for (const r of group) r.reject(err);
+          }
+        }
+      }, DEFAULTS.BATCH_WINDOW_MS);
+    }
 
     return {
       chat: {
         completions: {
           create: batchedChat
         }
+      },
+      destroy: () => {
+        if (batchInterval !== null) {
+          clearInterval(batchInterval);
+          batchInterval = null;
+        }
       }
     };
+  }
+
+  // --- Cleanup function ---
+  function destroy() {
+    if (batchInterval !== null) {
+      clearInterval(batchInterval);
+      batchInterval = null;
+    }
+    responseCache.clear();
+    requestQueue.length = 0;
   }
 
   // --- Public API ---
@@ -174,5 +209,6 @@ export function createIdleManager(auditLogger: Logger = console) {
     getStats(): IdleStats {
       return { idleTimeoutMs, trafficRate, memoryIsGrowing };
     },
+    destroy,
   };
 }

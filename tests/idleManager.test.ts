@@ -267,6 +267,37 @@ describe('IdleManager', () => {
       expect(typeof stats.idleTimeoutMs).toBe('number');
       expect(typeof stats.trafficRate).toBe('number');
       expect(typeof stats.memoryIsGrowing).toBe('boolean');
+      
+      manager.destroy();
+    });
+  });
+
+  describe('destroy', () => {
+    test('should clean up resources', () => {
+      const manager = createIdleManager(mockLogger);
+      const mockOpenAI = {
+        chat: {
+          completions: {
+            create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
+          }
+        }
+      };
+      
+      const wrapped = manager.wrapOpenAI(mockOpenAI);
+      
+      // Create a request to start the batch interval
+      const promise = wrapped.chat.completions.create({ model: 'gpt-4', messages: [] });
+      
+      // Destroy the manager
+      manager.destroy();
+      
+      // Should clean up without errors
+      expect(() => manager.destroy()).not.toThrow();
+      
+      // Clean up wrapped instance too
+      wrapped.destroy();
+      
+      jest.advanceTimersByTime(200);
     });
   });
 
