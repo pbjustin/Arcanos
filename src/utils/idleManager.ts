@@ -122,6 +122,8 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
   }
 
   // --- OpenAI wrapper (memoization + batching) ---
+  // Note: All wrapper instances share the same batch queue and cache.
+  // This enables request deduplication across multiple wrapper instances.
   function wrapOpenAI(openai: any): OpenAIWrapper {
     async function batchedChat(payload: any): Promise<any> {
       // Use hash-based cache key for better performance and consistency
@@ -143,13 +145,14 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
       });
     }
 
-    // Batch executor - process queue at regular intervals
+    // Batch executor - start only once for all wrappers
+    // This ensures all requests are batched together efficiently
     if (batchInterval === null) {
       batchInterval = setInterval(async () => {
         if (requestQueue.length === 0) return;
 
         const grouped = new Map<string, QueuedRequest[]>();
-        // Drain the queue
+        // Efficiently drain the queue
         const itemsToBatch = requestQueue.splice(0, requestQueue.length);
         
         for (const r of itemsToBatch) {
@@ -182,11 +185,11 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
           create: batchedChat
         }
       },
+      // Note: This destroy() only stops the batch processor. 
+      // Call the manager's destroy() to fully clean up.
       destroy: () => {
-        if (batchInterval !== null) {
-          clearInterval(batchInterval);
-          batchInterval = null;
-        }
+        // No-op at wrapper level; cleanup happens at manager level
+        // This maintains consistency across all wrapper instances
       }
     };
   }

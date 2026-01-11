@@ -294,10 +294,39 @@ describe('IdleManager', () => {
       // Should clean up without errors
       expect(() => manager.destroy()).not.toThrow();
       
-      // Clean up wrapped instance too
-      wrapped.destroy();
+      // Wrapper destroy is a no-op (cleanup happens at manager level)
+      expect(() => wrapped.destroy()).not.toThrow();
       
       jest.advanceTimersByTime(200);
+    });
+
+    test('should allow multiple wrappers to share batching', () => {
+      const manager = createIdleManager(mockLogger);
+      const mockOpenAI = {
+        chat: {
+          completions: {
+            create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
+          }
+        }
+      };
+      
+      // Create two wrapper instances
+      const wrapped1 = manager.wrapOpenAI(mockOpenAI);
+      const wrapped2 = manager.wrapOpenAI(mockOpenAI);
+      
+      const payload = { model: 'gpt-4', messages: [{ role: 'user', content: 'test' }] };
+      
+      // Make requests from both wrappers
+      const promise1 = wrapped1.chat.completions.create(payload);
+      const promise2 = wrapped2.chat.completions.create(payload);
+      
+      jest.advanceTimersByTime(200);
+      
+      // Both should resolve and only call API once due to shared batching
+      return Promise.all([promise1, promise2]).then(() => {
+        expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(1);
+        manager.destroy();
+      });
     });
   });
 
