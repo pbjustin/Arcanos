@@ -9,6 +9,7 @@
 import express, { Request, Response } from 'express';
 import { getStatus as getDbStatus } from '../db.js';
 import { getOpenAIServiceHealth } from '../services/openai.js';
+import { assessCoreServiceReadiness } from '../utils/healthChecks.js';
 
 const router = express.Router();
 
@@ -33,34 +34,37 @@ router.get('/readyz', async (_: Request, res: Response) => {
   try {
     const dbStatus = getDbStatus();
     const openaiHealth = getOpenAIServiceHealth();
-    
-    // Check if critical services are ready
-    const isDatabaseReady = dbStatus.connected || !process.env.DATABASE_URL;
-    const isOpenAIReady = openaiHealth.circuitBreaker.healthy;
-    
-    const isReady = isDatabaseReady && isOpenAIReady;
-    
+
+    //audit Assumption: readiness depends on database connectivity and OpenAI health; risk: misclassification; invariant: readiness requires critical services; handling: shared readiness helper.
+    const readiness = assessCoreServiceReadiness(
+      dbStatus,
+      openaiHealth,
+      process.env.DATABASE_URL
+    );
+
     const response = {
-      status: isReady ? 'ready' : 'not_ready',
+      status: readiness.isReady ? 'ready' : 'not_ready',
       timestamp: new Date().toISOString(),
       checks: {
         database: {
-          status: isDatabaseReady ? 'ready' : 'not_ready',
+          status: readiness.isDatabaseReady ? 'ready' : 'not_ready',
           connected: dbStatus.connected,
           error: dbStatus.error
         },
         openai: {
-          status: isOpenAIReady ? 'ready' : 'not_ready',
+          status: readiness.isOpenAIReady ? 'ready' : 'not_ready',
           healthy: openaiHealth.circuitBreaker.healthy,
           configured: openaiHealth.apiKey.configured
         }
       }
     };
-    
-    const statusCode = isReady ? 200 : 503;
+
+    //audit Assumption: readiness maps to HTTP 200/503; risk: incorrect status code; invariant: readiness dictates service availability; handling: set status based on readiness.
+    const statusCode = readiness.isReady ? 200 : 503;
     res.status(statusCode).json(response);
     
   } catch (error) {
+    //audit Assumption: readiness failure should surface as 503; risk: masking root cause; invariant: readiness endpoint signals unavailability; handling: log and return error payload.
     console.error('[READYZ] Error checking readiness:', error);
     res.status(503).json({
       status: 'not_ready',

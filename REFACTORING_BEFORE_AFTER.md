@@ -484,3 +484,62 @@ Continue iterative refactoring with focus on:
 1. Console.log consolidation (305 instances)
 2. Route handler consolidation (8 similar routes)
 3. Environment variable centralization (113 vars)
+
+---
+
+## 3. Health/Readiness Evaluation
+
+### ❌ Before: Duplicated Readiness Checks
+
+**Route 1: routes/health.ts**
+```typescript
+const isDatabaseReady = dbStatus.connected || !process.env.DATABASE_URL;
+const isOpenAIReady = openaiHealth.circuitBreaker.healthy;
+const isReady = isDatabaseReady && isOpenAIReady;
+```
+
+**Route 2: routes/status.ts**
+```typescript
+const isHealthy = openaiHealth.circuitBreaker.healthy &&
+                 (dbStatus.connected || !process.env.DATABASE_URL);
+```
+
+**Problems:**
+- ❌ Repeated readiness logic across routes
+- ❌ Multiple places to update readiness criteria
+- ❌ Inconsistent naming for readiness state
+
+---
+
+### ✅ After: Shared Readiness Helper
+
+**New: utils/healthChecks.ts**
+```typescript
+export function assessCoreServiceReadiness(
+  dbStatus: DatabaseStatusLike,
+  openaiHealth: OpenAIHealthLike,
+  databaseUrl: string | undefined
+): CoreServiceReadiness {
+  const isDatabaseReady = resolveDatabaseReadiness(dbStatus, databaseUrl);
+  const isOpenAIReady = openaiHealth.circuitBreaker.healthy;
+  const isReady = isDatabaseReady && isOpenAIReady;
+
+  return { isDatabaseReady, isOpenAIReady, isReady };
+}
+```
+
+**Usage Everywhere:**
+```typescript
+const readiness = assessCoreServiceReadiness(
+  dbStatus,
+  openaiHealth,
+  process.env.DATABASE_URL
+);
+
+const isHealthy = readiness.isReady;
+```
+
+**Benefits:**
+- ✅ Single source of truth for readiness evaluation
+- ✅ Shared logic for /health and /readyz
+- ✅ Clearer naming and reusable output structure
