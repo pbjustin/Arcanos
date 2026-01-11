@@ -80,7 +80,7 @@ function initializeSystemState(actualPort: number): void {
   try {
     updateState({
       status: 'running',
-      version: process.env.npm_package_version || '1.0.0',
+      version: process.env.npm_package_version || SERVER_CONSTANTS.DEFAULT_APP_VERSION,
       startTime: new Date().toISOString(),
       port: actualPort,
       environment: config.server.environment
