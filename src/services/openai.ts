@@ -97,8 +97,9 @@ export async function callOpenAI(
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const baseMetadata = options.metadata ?? {};
   const rawRequestId = baseMetadata ? (baseMetadata as Record<string, unknown>)['requestId'] : undefined;
-  const reinforcementRequestId = hasContent(rawRequestId as string)
-    ? rawRequestId as string
+  const requestIdString = typeof rawRequestId === 'string' ? rawRequestId : undefined;
+  const reinforcementRequestId = hasContent(requestIdString)
+    ? requestIdString
     : generateRequestId('ctx');
   const reinforcementMetadata: Record<string, unknown> = {
     ...baseMetadata,

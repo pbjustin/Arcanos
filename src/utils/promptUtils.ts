@@ -115,8 +115,8 @@ export function truncateText(
 /**
  * Check if a string is non-empty after trimming
  * 
- * @param value - String value to check
- * @returns True if the string has content after trimming
+ * @param value - String value to check (can be null or undefined)
+ * @returns True if the string has content after trimming, false for null, undefined, or empty strings
  */
 export function hasContent(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0;
