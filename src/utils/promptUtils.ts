@@ -90,3 +90,34 @@ export function validatePromptLength(
 
   return { isValid: true };
 }
+
+/**
+ * Truncate text to a specified length with optional ellipsis
+ * 
+ * @param text - Text to truncate
+ * @param maxLength - Maximum length (default: 100)
+ * @param ellipsis - Add ellipsis if truncated (default: false)
+ * @returns Truncated text
+ */
+export function truncateText(
+  text: string,
+  maxLength: number = 100,
+  ellipsis: boolean = false
+): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  
+  const truncated = text.substring(0, maxLength);
+  return ellipsis ? `${truncated}...` : truncated;
+}
+
+/**
+ * Check if a string is non-empty after trimming
+ * 
+ * @param value - String value to check
+ * @returns True if the string has content after trimming
+ */
+export function hasContent(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
