@@ -3,6 +3,45 @@
  *
  * Memory-aware idle detection + dynamic timeout + OpenAI memoization
  * Fully Railway-ready, audit-logged, and OpenAI SDK compatible.
+ * 
+ * ## Features
+ * - **Memory-aware idle detection**: Monitors heap and RSS to prevent shutdown under load
+ * - **Dynamic timeout adjustment**: Uses EWMA to adapt idle timeout based on traffic patterns
+ * - **OpenAI memoization**: Caches responses and batches identical requests
+ * - **Resource management**: Proper cleanup to prevent memory leaks
+ * 
+ * ## Configuration (via environment variables)
+ * - `IDLE_MEMORY_THRESHOLD_MB` (default: 150): RSS threshold for staying awake
+ * - `MEMORY_GROWTH_WINDOW_MS` (default: 60000): Memory growth check interval
+ * - `INITIAL_IDLE_TIMEOUT_MS` (default: 30000): Starting idle timeout
+ * - `MIN_IDLE_TIMEOUT_MS` (default: 10000): Minimum idle timeout
+ * - `MAX_IDLE_TIMEOUT_MS` (default: 120000): Maximum idle timeout
+ * - `EWMA_DECAY` (default: 0.85): Traffic rate smoothing factor
+ * - `OPENAI_CACHE_TTL_MS` (default: 60000): Response cache lifetime
+ * - `OPENAI_BATCH_WINDOW_MS` (default: 150): Batch processing interval
+ * 
+ * ## Usage Example
+ * ```typescript
+ * import { createIdleManager } from './utils/idleManager.js';
+ * import { aiLogger } from './utils/structuredLogging.js';
+ * 
+ * const manager = createIdleManager(aiLogger);
+ * 
+ * // Track traffic
+ * manager.noteTraffic({ endpoint: '/api/chat' });
+ * 
+ * // Check if idle
+ * if (manager.isIdle()) {
+ *   console.log('System is idle, can shut down');
+ * }
+ * 
+ * // Wrap OpenAI client for batching and caching
+ * const wrappedClient = manager.wrapOpenAI(openaiClient);
+ * const response = await wrappedClient.chat.completions.create({ ... });
+ * 
+ * // Clean up when done
+ * manager.destroy();
+ * ```
  */
 
 import { createCacheKey } from './hashUtils.js';
