@@ -2,7 +2,7 @@
  * Workers OpenAI Client
  * Shared OpenAI client instance with lazy initialization
  * 
- * Note: This uses the same pattern as src/lib/openai-client.ts
+ * Note: This follows the same pattern as src/services/openai/clientFactory.ts
  * but is duplicated here due to TypeScript build constraints.
  * Both implementations follow the same credential resolution logic.
  */
