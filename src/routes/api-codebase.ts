@@ -2,6 +2,8 @@ import express, { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { createRateLimitMiddleware } from '../utils/security.js';
 import { listDirectory, readRepositoryFile } from '../services/codebaseAccess.js';
+import { buildTimestampedPayload } from '../utils/responseHelpers.js';
+import { resolveErrorMessage } from '../utils/errorHandling.js';
 
 const router = express.Router();
 
@@ -12,54 +14,55 @@ router.get('/tree', asyncHandler(async (req: Request, res: Response) => {
 
   try {
     const result = await listDirectory(relativePath);
-    res.json({
+    res.json(buildTimestampedPayload({
       status: 'success',
       message: 'Directory contents retrieved',
       data: result,
-      timestamp: new Date().toISOString(),
-    });
+    }));
   } catch (error) {
-    res.status(400).json({
+    //audit Assumption: errors from listDirectory indicate a bad request; risk: masking server issues; invariant: 400 responses include message; handling: fallback to safe message.
+    res.status(400).json(buildTimestampedPayload({
       status: 'error',
-      message: error instanceof Error ? error.message : 'Unable to list directory',
-      timestamp: new Date().toISOString(),
-    });
+      message: resolveErrorMessage(error, 'Unable to list directory'),
+    }));
   }
 }));
 
 router.get('/file', asyncHandler(async (req: Request, res: Response) => {
   const relativePath = typeof req.query.path === 'string' ? req.query.path : undefined;
+  //audit Assumption: path is required; risk: missing query parameter; invariant: request is rejected early; handling: respond with 400 error.
   if (!relativePath) {
-    return res.status(400).json({
+    return res.status(400).json(buildTimestampedPayload({
       status: 'error',
       message: 'Query parameter "path" is required',
-      timestamp: new Date().toISOString(),
-    });
+    }));
   }
 
   const startLineRaw = typeof req.query.startLine === 'string' ? Number(req.query.startLine) : undefined;
   const endLineRaw = typeof req.query.endLine === 'string' ? Number(req.query.endLine) : undefined;
 
+  //audit Assumption: numeric bounds are optional; risk: NaN propagates; invariant: undefined when invalid; handling: guard with Number.isFinite.
   const startLine = Number.isFinite(startLineRaw) ? startLineRaw : undefined;
+  //audit Assumption: numeric bounds are optional; risk: NaN propagates; invariant: undefined when invalid; handling: guard with Number.isFinite.
   const endLine = Number.isFinite(endLineRaw) ? endLineRaw : undefined;
 
   const maxBytesRaw = typeof req.query.maxBytes === 'string' ? Number(req.query.maxBytes) : undefined;
+  //audit Assumption: maxBytes should be numeric when provided; risk: NaN or invalid sizes; invariant: undefined when invalid; handling: guard with Number.isFinite.
   const maxBytes = Number.isFinite(maxBytesRaw) ? maxBytesRaw : undefined;
 
   try {
     const result = await readRepositoryFile(relativePath, { startLine, endLine, maxBytes });
-    res.json({
+    res.json(buildTimestampedPayload({
       status: 'success',
       message: 'File content retrieved',
       data: result,
-      timestamp: new Date().toISOString(),
-    });
+    }));
   } catch (error) {
-    res.status(400).json({
+    //audit Assumption: readRepositoryFile errors are request-related; risk: hiding server errors; invariant: 400 responses include message; handling: fallback to safe message.
+    res.status(400).json(buildTimestampedPayload({
       status: 'error',
-      message: error instanceof Error ? error.message : 'Unable to read file',
-      timestamp: new Date().toISOString(),
-    });
+      message: resolveErrorMessage(error, 'Unable to read file'),
+    }));
   }
 }));
 
