@@ -3,6 +3,8 @@ import { createCentralizedCompletion } from '../services/openai.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { buildTimestampedPayload } from '../utils/responseHelpers.js';
+import { resolveErrorMessage } from '../utils/errorHandling.js';
 
 const router = express.Router();
 
@@ -125,7 +127,7 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
     const completion = response as any;
     const simulationResult = completion.choices[0]?.message?.content || '';
 
-    res.json({
+    res.json(buildTimestampedPayload({
       status: 'success',
       message: 'Simulation completed successfully',
       data: {
@@ -138,17 +140,17 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
           simulationId: generateRequestId('sim')
         }
       }
-    });
+    }));
 
   } catch (error) {
     console.error('Simulation error:', error);
-    
-    res.status(500).json({
+
+    //audit Assumption: simulation errors should return 500; risk: leaking internal details; invariant: response includes timestamp; handling: sanitize error message.
+    res.status(500).json(buildTimestampedPayload({
       status: 'error',
       message: 'Simulation failed',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
+      error: resolveErrorMessage(error)
+    }));
   }
 }));
 
