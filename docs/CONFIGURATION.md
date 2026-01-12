@@ -85,6 +85,11 @@ Additional model-related variables:
 | `OPENAI_CACHE_TTL_MS` | `300000` | Cache TTL for OpenAI responses (5 minutes). |
 | `OPENAI_MAX_RETRIES` | `3` | Retry budget for OpenAI calls. |
 | `OPENAI_IMAGE_PROMPT_TOKEN_LIMIT` | `256` | Token limit for image prompt expansion. |
+| `OPENAI_DEFAULT_MAX_TOKENS` | `256` | Default max tokens for responses when not specified. |
+| `OPENAI_DEFAULT_TEMPERATURE` | `0.7` | Default temperature for responses. |
+| `OPENAI_DEFAULT_TOP_P` | `1` | Default nucleus sampling value. |
+| `OPENAI_DEFAULT_FREQUENCY_PENALTY` | `0` | Default frequency penalty. |
+| `OPENAI_DEFAULT_PRESENCE_PENALTY` | `0` | Default presence penalty. |
 
 ### Database & persistence
 
