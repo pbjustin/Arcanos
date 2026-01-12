@@ -2,7 +2,7 @@ import type { WorkerContext } from './workerTypes.js';
 
 export const id = 'worker-gpt5-reasoning';
 export const description = 'Provides scheduled GPT-5.2 reasoning pulses for diagnostics.';
-export const schedule = '*/15 * * * *';
+export const schedule = '0 */6 * * *';
 
 async function requestStatusSummary(context: WorkerContext) {
   try {
