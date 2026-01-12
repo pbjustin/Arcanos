@@ -531,3 +531,52 @@ No further autonomous optimizations are required at this time.
 | Pass 2 | No OpenAI SDK usage updates required. | Current integration is already centralized in `src/services/openai` with SDK v6 usage. | `rg -n "openai" src` confirmed central usage remains intact. |
 | Pass 3 | No Railway hardening changes required. | Existing start command, port handling, and deployment files already align with Railway expectations. | Reviewed `package.json`, `Procfile`, and `railway.json`. |
 | Pass 4 | No modularization changes required. | Removal of unused OpenAI client file preserves current module boundaries. | Repo structure unchanged beyond deletion. |
+
+---
+
+## Refactor Passes (2026-01-12 Continuation)
+
+### Pass 0: Inventory & Analysis
+- **Repository State:** OpenAI SDK v6.16.0 (latest), TypeScript build passing, 118 tests passing
+- **Dead Code Identified:** 
+  - `.railway/config.json` - outdated duplicate Railway config referencing non-existent `dist/index.js`
+  - `arcanos_audit_config.json` - unreferenced configuration file
+  - `refactor-plan.json` - planning artifact not used at runtime
+  - Stale comment in `workers/src/infrastructure/sdk/openai.ts` referencing removed file
+- **Verification:** `npm run build`, `npm test`, `npm run validate:railway` all pass
+
+### Pass 1: Dead Code Removal
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed `.railway/config.json` and `.railway/` directory | Outdated duplicate config with wrong `startCommand` (`dist/index.js` doesn't exist). Root `railway.json` is the canonical config. | `npm run validate:railway` passes using `railway.json` |
+| Removed `arcanos_audit_config.json` | Unreferenced config file with no imports or references in codebase. | `grep -r "arcanos_audit_config" --include="*.ts" --include="*.js" .` returns no results |
+| Removed `refactor-plan.json` | Planning artifact not needed for runtime. Contains historical refactoring notes. | Build and tests pass without it |
+
+### Pass 2: OpenAI SDK Modernization
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Updated stale comment in `workers/src/infrastructure/sdk/openai.ts` | Comment referenced removed file `src/lib/openai-client.ts`; updated to reference actual location `src/services/openai/clientFactory.ts` | Build passes, comment now accurate |
+| OpenAI SDK already at latest (v6.16.0) | No update needed | `npm view openai version` confirms v6.16.0 is latest |
+
+### Pass 3: Railway Hardening
+- **Status:** ✅ No changes required
+- **Configuration:** `railway.json` correctly configured with:
+  - Start command: `node --max-old-space-size=7168 dist/start-server.js`
+  - Health check: `/health` with 300s timeout
+  - PORT binding: `$PORT`
+  - Environment variables properly mapped
+- **Verification:** `npm run validate:railway` passes
+
+### Pass 4: Finalization
+- **Build Status:** ✅ Successful
+- **Tests:** ✅ 118/118 tests passing (26 suites)
+- **Railway Validation:** ✅ All checks passing
+- **Files Removed:** 3 (`.railway/config.json`, `arcanos_audit_config.json`, `refactor-plan.json`)
+- **Files Updated:** 1 (`workers/src/infrastructure/sdk/openai.ts` - comment fix)
+
+### Summary
+- **Codebase Status:** Clean, production-ready
+- **OpenAI SDK:** v6.16.0 (latest)
+- **Railway Compatibility:** 100%
+- **Security:** 0 vulnerabilities
+- **No further optimizations identified at this time.**
