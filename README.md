@@ -29,10 +29,10 @@ Populate at least `OPENAI_API_KEY` in `.env` before running locally.
 Key environment variables (see `docs/CONFIGURATION.md` for the complete matrix):
 
 - `OPENAI_API_KEY` – required for live OpenAI calls (missing keys return mock responses).
-- `OPENAI_MODEL`, `FINETUNED_MODEL_ID`, `FINE_TUNED_MODEL_ID`, `AI_MODEL` – model selection
-  chain used by the OpenAI client.
+- `OPENAI_MODEL`, `RAILWAY_OPENAI_MODEL`, `FINETUNED_MODEL_ID`, `FINE_TUNED_MODEL_ID`, `AI_MODEL`
+  – model selection chain used by the OpenAI client (default: `gpt-4o`).
 - `FALLBACK_MODEL`, `AI_FALLBACK_MODEL`, `RAILWAY_OPENAI_FALLBACK_MODEL` – fallback model
-  chain used when the primary model fails.
+  chain used when the primary model fails (default: `gpt-4`).
 - `GPT51_MODEL` / `GPT5_MODEL` – GPT-5.2 reasoning model override (defaults to `gpt-5.2`).
 - `DATABASE_URL` or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` – database connection.
 - `RUN_WORKERS`, `WORKER_COUNT`, `WORKER_MODEL`, `WORKER_API_TIMEOUT_MS` – background workers.
@@ -75,8 +75,8 @@ High-level steps:
 
 1. Create a Railway project and connect the GitHub repository.
 2. Add required environment variables (`OPENAI_API_KEY`, optional model overrides).
-3. (Optional) Provision PostgreSQL and set `DATABASE_URL` if not auto-injected.
-4. Deploy and confirm health checks pass.
+3. (Optional) Provision PostgreSQL and confirm `DATABASE_URL` is injected.
+4. Deploy and confirm the `/health` check passes.
 5. Roll back from the Railway **Deployments** view if needed.
 
 See `docs/RAILWAY_DEPLOYMENT.md` for a detailed, step-by-step guide.
