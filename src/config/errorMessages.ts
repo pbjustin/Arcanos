@@ -23,5 +23,5 @@ export const ERROR_MESSAGE_PATTERNS = [
   { patterns: ['403', 'forbidden'], message: ARCANOS_ERROR_MESSAGES.forbidden },
   { patterns: ['429', 'rate limit'], message: ARCANOS_ERROR_MESSAGES.rateLimit },
   { patterns: ['502', '503', '504', 'service unavailable'], message: ARCANOS_ERROR_MESSAGES.serviceUnavailable },
-  { patterns: ['model', 'does not exist'], message: ARCANOS_ERROR_MESSAGES.modelNotFound },
+  { patterns: ['model does not exist'], message: ARCANOS_ERROR_MESSAGES.modelNotFound },
 ] as const;
