@@ -36,7 +36,7 @@ type PromptResponse = AIResponseDTO & {
   model?: string;
 };
 
-const PROMPT_MAX_TOKENS = config.ai.defaultMaxTokens || 256;
+const PROMPT_MAX_TOKENS = config.ai.defaultMaxTokens;
 
 /**
  * Handles direct OpenAI prompt execution requests.

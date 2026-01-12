@@ -11,7 +11,7 @@ export function mapErrorToFriendlyMessage(error: unknown): string | null {
   const normalizedMessage = rawMessage.toLowerCase();
 
   const matched = ERROR_MESSAGE_PATTERNS.find(entry =>
-    entry.patterns.some(pattern => normalizedMessage.includes(pattern.toLowerCase()))
+    entry.patterns.some(pattern => normalizedMessage.includes(pattern))
   );
 
   return matched?.message ?? null;
