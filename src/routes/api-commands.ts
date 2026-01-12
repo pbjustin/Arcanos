@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { buildTimestampedPayload } from '../utils/responseHelpers.js';
 import { executeCommand, listAvailableCommands } from '../services/commandCenter.js';
 import type { CommandName } from '../services/commandCenter.js';
 
@@ -27,13 +28,13 @@ const commandExecutionSchema = {
 router.get(
   '/',
   (_: Request, res: Response) => {
+    const availableCommands = listAvailableCommands();
     res.json({
       success: true,
-      commands: listAvailableCommands(),
-      metadata: {
-        count: listAvailableCommands().length,
-        timestamp: new Date().toISOString()
-      }
+      commands: availableCommands,
+      metadata: buildTimestampedPayload({
+        count: availableCommands.length
+      })
     });
   }
 );
@@ -41,11 +42,13 @@ router.get(
 router.get(
   '/health',
   (_: Request, res: Response) => {
-    res.json({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      availableCommands: listAvailableCommands().length
-    });
+    const availableCommands = listAvailableCommands();
+    res.json(
+      buildTimestampedPayload({
+        status: 'ok',
+        availableCommands: availableCommands.length
+      })
+    );
   }
 );
 
@@ -58,6 +61,7 @@ router.post(
 
     const result = await executeCommand(command, payload);
 
+    //audit Assumption: success flag maps to HTTP 200/400; risk: incorrect status mapping for partial failures; invariant: failures return non-200; handling: map via ternary.
     res.status(result.success ? 200 : 400).json(result);
   })
 );
