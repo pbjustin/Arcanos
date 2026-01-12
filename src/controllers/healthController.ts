@@ -20,6 +20,7 @@ interface HealthResponse {
   };
   version: string;
   uptime: number;
+  error?: string;
 }
 
 function determineHealthStatus(hasOpenAiKey: boolean, hasDatabaseUrl: boolean): HealthStatus {
