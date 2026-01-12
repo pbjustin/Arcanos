@@ -48,7 +48,7 @@ export const config = {
     apiKey: process.env.OPENAI_API_KEY,
     model: process.env.AI_MODEL || APPLICATION_CONSTANTS.MODEL_GPT_4_TURBO,
     fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
-    defaultMaxTokens: 200,
+    defaultMaxTokens: parseNumber(process.env.OPENAI_DEFAULT_MAX_TOKENS, 256, 1),
     defaultTemperature: 0.2
   },
 

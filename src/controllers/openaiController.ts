@@ -19,6 +19,7 @@ import {
 import { validateAIRequest, handleAIError } from '../utils/requestHandler.js';
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 import { getConfirmGateConfiguration } from '../middleware/confirmGate.js';
+import config from '../config/index.js';
 
 /**
  * Request type for prompt execution with optional model override.
@@ -34,6 +35,8 @@ type PromptRequest = AIRequestDTO & {
 type PromptResponse = AIResponseDTO & {
   model?: string;
 };
+
+const PROMPT_MAX_TOKENS = config.ai.defaultMaxTokens || 256;
 
 /**
  * Handles direct OpenAI prompt execution requests.
@@ -55,7 +58,7 @@ export async function handlePrompt(
   const model = modelOverride && modelOverride.length > 0 ? modelOverride : getDefaultModel();
 
   try {
-    const { output } = await callOpenAI(model, prompt, 256);
+    const { output } = await callOpenAI(model, prompt, PROMPT_MAX_TOKENS);
     const timestamp = Math.floor(Date.now() / 1000);
     res.json({
       result: output,
