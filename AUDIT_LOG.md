@@ -519,3 +519,15 @@ No further autonomous optimizations are required at this time.
 - Simplified 2 modules, extracted 1 utility, removed 1 redundancy.
 - Added shared readiness evaluation for database/OpenAI health checks.
 - Centralized readiness status mapping for /readyz and /health endpoints.
+
+---
+
+## Refactor Passes (2026-01-12)
+
+| Pass | Change | Reason | Verification |
+| --- | --- | --- | --- |
+| Pass 0 | Inventoried OpenAI-related modules and found `src/lib/openai-client.ts` unused. | Establish dead code candidates before pruning. | `rg -n "openai-client" src` returned no references. |
+| Pass 1 | Removed `src/lib/openai-client.ts`. | Unused duplicate client wrapper; central OpenAI integration already exists in `src/services/openai`. | `rg -n "openai-client" src` still returns no references after deletion. |
+| Pass 2 | No OpenAI SDK usage updates required. | Current integration is already centralized in `src/services/openai` with SDK v6 usage. | `rg -n "openai" src` confirmed central usage remains intact. |
+| Pass 3 | No Railway hardening changes required. | Existing start command, port handling, and deployment files already align with Railway expectations. | Reviewed `package.json`, `Procfile`, and `railway.json`. |
+| Pass 4 | No modularization changes required. | Removal of unused OpenAI client file preserves current module boundaries. | Repo structure unchanged beyond deletion. |
