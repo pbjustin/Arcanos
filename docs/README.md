@@ -23,6 +23,9 @@ Start with these documents in order:
 
 Configuration details live in `CONFIGURATION.md` and the `.env.example` template at the
 repository root. Use those documents to align environment variables with the runtime.
+Every documentation file in this repo should follow the standard structure:
+Overview → Prerequisites → Setup → Configuration → Run locally → Deploy (Railway) →
+Troubleshooting → References.
 
 ## Run locally
 
@@ -48,6 +51,9 @@ If a document is missing, outdated, or contradictory, log the gap in
 - `arcanos-overview.md`
 - `backend.md`
 - `AFOL_OVERVIEW.md`
+
+**SDK usage**
+- `../README.md` (Node + Python OpenAI SDK examples)
 
 **Deployment**
 - `RAILWAY_DEPLOYMENT.md`

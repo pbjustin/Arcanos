@@ -108,6 +108,12 @@ curl http://localhost:8080/health
 2. Railway triggers a build using `railway.json`.
 3. Confirm `/health` passes after deploy.
 4. (Optional) Run `npm run validate:railway` locally to pre-check Railway readiness.
+5. Verify the `RUN_WORKERS` toggle and `DATABASE_URL` are set for the target environment.
+
+### Health checks
+
+- Railway uses `GET /health` for deploy readiness.
+- `/healthz` and `/readyz` are also available for local validation.
 
 ### Rollback
 
