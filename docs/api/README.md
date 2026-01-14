@@ -1,6 +1,6 @@
 # ARCANOS API Reference
 
-> **Last Updated:** 2026-01-09 | **Version:** 1.0.0 | **OpenAI SDK:** v6.15.0
+> **Last Updated:** 2026-01-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
 
 This guide summarises the HTTP API exposed by the Arcanos backend. All routes
 are registered in [`src/routes/register.ts`](../../src/routes/register.ts).
