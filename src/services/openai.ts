@@ -16,7 +16,8 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   IMAGE_PROMPT_TOKEN_LIMIT,
   REQUEST_ID_HEADER,
-  OPENAI_COMPLETION_DEFAULTS
+  OPENAI_COMPLETION_DEFAULTS,
+  NO_RESPONSE_CONTENT_FALLBACK
 } from './openai/constants.js';
 import {
   REASONING_LOG_SUMMARY_LENGTH,
@@ -246,7 +247,7 @@ async function makeOpenAIRequest(
       } as any);
 
       clearTimeout(timeout);
-      const output = response.choices?.[0]?.message?.content?.trim() || '[No response content]';
+      const output = response.choices?.[0]?.message?.content?.trim() || NO_RESPONSE_CONTENT_FALLBACK;
       const activeModel = response.model || model;
 
       // Log success metrics
