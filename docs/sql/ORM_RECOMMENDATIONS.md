@@ -22,7 +22,7 @@ Knex can remain in narrow, infrastructure-oriented scopes when it provides concr
 - Thin persistence layers (e.g., session or cache tables) where raw SQL control is useful.
 - Data pipelines or admin utilities that already rely on Knex.
 
-In these cases, isolate Knex behind a dedicated module so the rest of the app stays ORM-agnostic.
+In these cases, isolate Knex behind a dedicated module so the rest of the app stays ORM-agnostic. The audit/persistence and session cache layers now flow through `src/db/auditStore.ts` and `src/db/sessionCacheStore.ts` to keep Knex usage contained until they are migrated.
 
 ## Recommendations to Improve SQL Layer Quality
 1. **Standardize on a single primary ORM**
@@ -32,6 +32,7 @@ In these cases, isolate Knex behind a dedicated module so the rest of the app st
 2. **Define a single migration source of truth**
    - Prisma migrations should be the canonical schema path for domain data.
    - Avoid separate migration stacks that drift over time.
+   - Legacy/infra tables still created via SQL bootstraps should be tracked for migration or retirement.
 
 3. **Create a DB access boundary**
    - Centralize all data access in a `src/db/` or `src/data/` layer.
