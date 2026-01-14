@@ -16,11 +16,16 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   IMAGE_PROMPT_TOKEN_LIMIT,
   REQUEST_ID_HEADER,
-  OPENAI_COMPLETION_DEFAULTS
+  OPENAI_COMPLETION_DEFAULTS,
+  NO_RESPONSE_CONTENT_FALLBACK
 } from './openai/constants.js';
 import {
   REASONING_LOG_SUMMARY_LENGTH,
-  REASONING_FALLBACK_TEXT
+  REASONING_FALLBACK_TEXT,
+  REASONING_SYSTEM_PROMPT,
+  REASONING_TEMPERATURE,
+  REASONING_TOKEN_LIMIT,
+  buildReasoningPrompt
 } from '../config/reasoningTemplates.js';
 import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
 import { SERVER_CONSTANTS } from '../config/serverMessages.js';
@@ -219,25 +224,30 @@ async function makeOpenAIRequest(
       }
 
       const tokenParams = getTokenParameter(model, tokenLimit);
-      const requestPayload = buildResponseRequestPayload({
+      const requestPayload: any = {
         model,
         messages,
-        tokenParams,
-        options
-      });
+        ...tokenParams,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(options.top_p !== undefined ? { top_p: options.top_p } : {}),
+        ...(options.frequency_penalty !== undefined ? { frequency_penalty: options.frequency_penalty } : {}),
+        ...(options.presence_penalty !== undefined ? { presence_penalty: options.presence_penalty } : {}),
+        ...(options.responseFormat !== undefined ? { response_format: options.responseFormat } : {}),
+        ...(options.user !== undefined ? { user: options.user } : {})
+      };
 
       logOpenAIEvent('info', `🤖 OpenAI request (attempt ${attempt}/${maxRetries}) - Model: ${model}`);
 
-      const response: any = await client.responses.create(requestPayload, {
+      const response: any = await client.chat.completions.create(requestPayload, {
         signal: controller.signal,
         // Add request ID for tracing
         headers: {
           [REQUEST_ID_HEADER]: crypto.randomUUID()
         }
-      });
+      } as any);
 
       clearTimeout(timeout);
-      const output = extractResponseOutput(response);
+      const output = response.choices?.[0]?.message?.content?.trim() || NO_RESPONSE_CONTENT_FALLBACK;
       const activeModel = response.model || model;
 
       // Log success metrics
@@ -294,7 +304,7 @@ async function makeOpenAIRequest(
 }
 
 const extractReasoningText = (response: any, fallback: string = REASONING_FALLBACK_TEXT): string =>
-  response?.output_text || response?.output?.[0]?.content?.[0]?.text || fallback;
+  response?.choices?.[0]?.message?.content?.trim() || fallback;
 
 /**
  * Centralized GPT-5.2 helper function for reasoning tasks
@@ -317,21 +327,18 @@ export const createGPT5Reasoning = async (
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
 
-    const requestPayload = prepareGPT5Request({
-      model: gpt5Model,
-      input: [
-        ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
-        { role: 'user' as const, content: prompt }
-      ],
-      text: { verbosity: 'medium' as const },
-      // The OpenAI Responses API only supports 'none', 'low', 'medium', or 'high'.
-      // Using 'minimal' causes a 400 error, so we align with the supported value.
-      reasoning: { effort: 'low' as const },
-      ...tokenParams,
-      // Temperature omitted to use default (1) for GPT-5.2
-    });
+    const messages = [
+      ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
+      { role: 'user' as const, content: prompt }
+    ];
 
-    const response: any = await client.responses.create(requestPayload);
+    const requestPayload: any = {
+      model: gpt5Model,
+      messages,
+      ...tokenParams
+    };
+
+    const response: any = await client.chat.completions.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const content = extractReasoningText(response);
@@ -376,9 +383,20 @@ export const createGPT5ReasoningLayer = async (
   try {
     logOpenAIEvent('info', '🔄 [GPT-5.2 LAYER] Refining ARCANOS response', { model: gpt5Model });
 
-    const requestPayload = buildReasoningRequestPayload(gpt5Model, originalPrompt, arcanosResult, context);
+    const tokenParams = getTokenParameter(gpt5Model, REASONING_TOKEN_LIMIT);
+    const messages = [
+      { role: 'system' as const, content: REASONING_SYSTEM_PROMPT },
+      { role: 'user' as const, content: buildReasoningPrompt(originalPrompt, arcanosResult, context) }
+    ];
 
-    const response: any = await client.responses.create(requestPayload);
+    const requestPayload: any = {
+      model: gpt5Model,
+      messages,
+      ...tokenParams,
+      temperature: REASONING_TEMPERATURE
+    };
+
+    const response: any = await client.chat.completions.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const reasoningContent = extractReasoningText(response);
@@ -425,19 +443,18 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
   try {
     logOpenAIEvent('info', '🎯 [GPT-5.2 STRICT] Making strict call', { model: gpt5Model });
 
-    const requestPayload = prepareGPT5Request({
-      model: gpt5Model,
-      input: [
-        { role: 'system', content: STRICT_ASSISTANT_PROMPT },
-        { role: 'user', content: prompt }
-      ],
-      text: { verbosity: 'medium' },
-      // Strict GPT-5.2 calls cannot recover from invalid parameters, so use the supported option.
-      reasoning: { effort: 'low' },
-      ...kwargs
-    });
+    const messages = [
+      { role: 'system' as const, content: STRICT_ASSISTANT_PROMPT },
+      { role: 'user' as const, content: prompt }
+    ];
 
-    const response: any = await client.responses.create(requestPayload);
+    const requestPayload: any = {
+      model: gpt5Model,
+      messages,
+      ...kwargs
+    };
+
+    const response: any = await client.chat.completions.create(requestPayload);
 
     // Validate that the response actually came from GPT-5.2
     if (!response.model || response.model !== gpt5Model) {

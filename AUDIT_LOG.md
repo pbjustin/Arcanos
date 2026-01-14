@@ -1,5 +1,16 @@
 # ARCANOS Autonomous Refactoring Audit Log
 
+> **⚠️ HISTORICAL DOCUMENT - Contains Inaccuracies**  
+> This log documents historical refactoring decisions. Some technical claims are now known to be incorrect:
+> - Claims about `responses.create()` API being correct are **WRONG** (correct API is `chat.completions.create()`)
+> - Some SDK version claims may be outdated
+> - This is kept for historical reference only
+> 
+> **For current, accurate documentation, see:**
+> - [README.md](README.md) - Current project overview
+> - [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md) - Current deployment guide
+> - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) - Current configuration reference
+
 **Date Started:** 2026-01-09  
 **OpenAI SDK Version:** v6.9.1 → v6.15.0 ✅  
 **Node Version:** 18+  
