@@ -5,30 +5,16 @@
 
 import { callOpenAI, getDefaultModel } from './openai.js';
 import { saveSelfReflection } from '../db/repositories/selfReflectionRepository.js';
+import {
+  AI_REFLECTION_DEFAULT_SYSTEM_PROMPT,
+  buildReflectionPrompt,
+  buildDefaultPatchContent,
+  buildFallbackPatchContent
+} from '../config/aiReflectionTemplates.js';
+import { parseEnvInt, parseEnvFloat, parseEnvBoolean } from '../utils/envParsers.js';
 
 const DEFAULT_REFLECTION_SYSTEM_PROMPT =
-  process.env.AI_REFLECTION_SYSTEM_PROMPT ||
-  'You are the ARCANOS self-reflection engine. Provide concise, actionable improvement notes that help engineers iterate on the system.';
-
-const parseEnvInt = (value: string | undefined, fallback: number): number => {
-  if (!value) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
-};
-
-const parseEnvFloat = (value: string | undefined, fallback: number): number => {
-  if (!value) return fallback;
-  const parsed = Number.parseFloat(value);
-  return Number.isNaN(parsed) ? fallback : parsed;
-};
-
-const shouldUseCache = (value: string | undefined, fallback: boolean): boolean => {
-  if (value === undefined) return fallback;
-  const normalized = value.trim().toLowerCase();
-  if (['false', '0', 'off', 'no'].includes(normalized)) return false;
-  if (['true', '1', 'on', 'yes'].includes(normalized)) return true;
-  return fallback;
-};
+  process.env.AI_REFLECTION_SYSTEM_PROMPT || AI_REFLECTION_DEFAULT_SYSTEM_PROMPT;
 
 export interface PatchSetOptions {
   useMemory?: boolean;
@@ -80,6 +66,7 @@ async function persistSelfReflection(patch: PatchSet): Promise<void> {
       metadata: patch.metadata
     });
   } catch (error) {
+    //audit Assumption: persistence failure should not stop execution; risk: losing audit trail; invariant: caller receives patch; handling: log warning and continue.
     console.warn(
       '[🧠 Reflections] Failed to persist self-reflection:',
       (error as Error).message
@@ -88,7 +75,10 @@ async function persistSelfReflection(patch: PatchSet): Promise<void> {
 }
 
 /**
- * Build a patch set with optional memory bypass
+ * Build a patch set with optional memory bypass.
+ * Inputs: PatchSetOptions for model/config overrides.
+ * Outputs: PatchSet describing reflection content and metadata.
+ * Edge cases: falls back to templated content when AI call fails.
  */
 export async function buildPatchSet(options: PatchSetOptions = {}): Promise<PatchSet> {
   const {
@@ -107,9 +97,10 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
   const presencePenalty =
     options.presencePenalty ?? parseEnvFloat(process.env.AI_REFLECTION_PRESENCE_PENALTY, 0);
   const systemPrompt = options.systemPrompt || DEFAULT_REFLECTION_SYSTEM_PROMPT;
-  const useCache = options.useCache ?? shouldUseCache(process.env.AI_REFLECTION_CACHE, true);
+  const useCache = options.useCache ?? parseEnvBoolean(process.env.AI_REFLECTION_CACHE, true);
 
   // If useMemory is false, bypass memory orchestration
+  //audit Assumption: stateless mode should skip memory coordination; risk: reduced context; invariant: log when bypassing; handling: informational log.
   if (!useMemory) {
     console.log('🧠 Bypassing memory orchestration (stateless mode)');
   }
@@ -119,17 +110,13 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
 
   try {
     // Generate AI-driven reflection content
-    const reflectionPrompt = `Generate a system improvement reflection for an AI system. 
-    Priority level: ${priority}
-    Category: ${category}
-    Memory mode: ${useMemory ? 'enabled' : 'stateless'}
-    
-    Please provide:
-    1. A brief analysis of current system state
-    2. Specific improvement recommendations
-    3. Implementation suggestions
-    
-    Keep the response concise and actionable.`;
+    const memoryMode = useMemory ? 'enabled' : 'stateless';
+    //audit Assumption: prompt template inputs are trusted; risk: prompt injection via inputs; invariant: string prompt; handling: use controlled values.
+    const reflectionPrompt = buildReflectionPrompt({
+      priority,
+      category,
+      memoryMode
+    });
 
     const aiResponse = await callOpenAI(reflectionModel, reflectionPrompt, tokenLimit, useCache, {
       systemPrompt,
@@ -146,16 +133,19 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
       }
     });
 
+    //audit Assumption: non-empty output indicates a successful AI response; risk: empty output treated as failure; invariant: improvements list tracks state; handling: gate on output.
     if (aiResponse.output) {
       improvements.push('AI-generated system analysis completed');
+      //audit Assumption: cache flag drives success messaging; risk: mislabeling; invariant: message reflects cache state; handling: ternary selection.
       improvements.push(
         aiResponse.cached ? 'Reflection content retrieved from cache' : 'Reflection content generated successfully'
       );
 
       // Extract system state analysis if requested
+      //audit Assumption: systemAnalysis toggles metadata creation; risk: missing state data; invariant: metadata matches flag; handling: conditional build.
       if (systemAnalysis) {
         systemState = {
-          memoryMode: useMemory ? 'enabled' : 'stateless',
+          memoryMode,
           timestamp: new Date().toISOString(),
           aiModelUsed: aiResponse.model,
           category,
@@ -167,16 +157,15 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
     }
 
     // Build the patch content
+    //audit Assumption: fallback template is acceptable when AI output missing; risk: less personalized content; invariant: content always set; handling: template fallback.
     const patchContent = aiResponse.output
       ? aiResponse.output
-      : `Automated system improvement patch (${priority} priority)
-        
-Category: ${category}
-Memory mode: ${useMemory ? 'enabled' : 'stateless'}
-Generated: ${new Date().toISOString()}
-
-This patch represents an automated improvement to the ARCANOS system.
-The changes are designed to enhance system performance and reliability.`;
+      : buildDefaultPatchContent({
+          priority,
+          category,
+          memoryMode,
+          generatedAt: new Date().toISOString()
+        });
 
     const patch: PatchSet = {
       content: patchContent,
@@ -207,26 +196,26 @@ The changes are designed to enhance system performance and reliability.`;
     return patch;
 
   } catch (error: any) {
+    //audit Assumption: AI call failures are recoverable; risk: missing AI insight; invariant: returns fallback patch; handling: log and return fallback.
     console.error('❌ Error generating patch set:', error.message);
 
     // Fallback patch set
+    const fallbackTimestamp = new Date().toISOString();
+    const fallbackMemoryMode = useMemory ? 'enabled' : 'stateless';
     const fallbackPatch: PatchSet = {
-      content: `Fallback system improvement patch
-
-Generated due to AI service unavailability.
-Priority: ${priority}
-Category: ${category}
-Memory mode: ${useMemory ? 'enabled' : 'stateless'}
-Timestamp: ${new Date().toISOString()}
-
-This is a minimal fallback improvement patch that maintains system functionality
-while providing basic enhancement capabilities.`,
+      content: buildFallbackPatchContent({
+        priority,
+        category,
+        memoryMode: fallbackMemoryMode,
+        generatedAt: fallbackTimestamp
+      }),
       priority,
       category,
       improvements: ['Fallback patch generated', 'Error handling activated'],
       metadata: {
-        generated: new Date().toISOString(),
+        generated: fallbackTimestamp,
         useMemory,
+        //audit Assumption: reuse existing systemState when available; risk: losing error context; invariant: systemState always defined; handling: fallback object.
         systemState: systemState || {
           error: error.message,
           fallbackMode: true,
@@ -254,10 +243,13 @@ while providing basic enhancement capabilities.`,
 }
 
 /**
- * Generate reflection content for specific system components
+ * Generate reflection content for specific system components.
+ * Inputs: component identifier, PatchSetOptions overrides.
+ * Outputs: PatchSet scoped to the component.
+ * Edge cases: inherits buildPatchSet fallback behavior.
  */
 export async function generateComponentReflection(
-  component: string, 
+  component: string,
   options: PatchSetOptions = {}
 ): Promise<PatchSet> {
   return buildPatchSet({
@@ -267,21 +259,25 @@ export async function generateComponentReflection(
 }
 
 /**
- * Create a prioritized improvement queue
+ * Create a prioritized improvement queue.
+ * Inputs: ordered priority list, PatchSetOptions overrides.
+ * Outputs: PatchSet array in requested priority order.
+ * Edge cases: sequential execution to preserve ordering.
  */
 export async function createImprovementQueue(
   priorities: ('low' | 'medium' | 'high')[] = ['high', 'medium', 'low'],
   options: PatchSetOptions = {}
 ): Promise<PatchSet[]> {
   const queue = [];
-  
+
   for (const priority of priorities) {
+    //audit Assumption: sequential execution preserves priority ordering; risk: slower processing; invariant: queue ordered by priorities; handling: await per iteration.
     const patch = await buildPatchSet({
       ...options,
       priority
     });
     queue.push(patch);
   }
-  
+
   return queue;
 }
