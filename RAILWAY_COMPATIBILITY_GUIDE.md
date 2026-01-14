@@ -1,161 +1,147 @@
-# ARCANOS OpenAI API & Railway Compatibility Implementation
+# Arcanos OpenAI API & Railway Compatibility
 
-## 🎯 Implementation Summary
+> **Last Updated:** 2026-01-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
 
-This implementation provides full compatibility with OpenAI's API interface standards and Railway deployment pipelines while ensuring all requests pass through the fine-tuned ARCANOS model.
+## Overview
 
-## 🔧 Key Features Implemented
+This document provides technical implementation details for Arcanos Railway compatibility.
+For deployment instructions, see the [Railway Deployment Guide](docs/RAILWAY_DEPLOYMENT.md).
 
-### 1. Centralized Model Layer
-All AI requests now route through `createCentralizedCompletion()` which:
-- **Forces fine-tuned model by default**: `ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote`
-- **Adds ARCANOS routing**: Prepends "ARCANOS routing active" system message
-- **Supports overrides**: Allow custom model via `options.model`
-- **Environment flexibility**: Supports both `FINETUNED_MODEL_ID` and `AI_MODEL`
+## OpenAI SDK Integration
 
-### 2. Lightweight Runtime Memory Isolation
-To prevent metadata from leaking into conversation context, a simple in-process
-runtime (`openaiRuntime.ts`) now stores messages and metadata in separate
-scopes. This mimics the OpenAI Runtime’s memory behaviour while remaining
-compatible with Railway deployments.
+### Current Implementation
 
-### 3. RESTful API Structure
-```
-/api/arcanos     - Core ARCANOS functionality
-/api/memory      - Memory management with JSON responses
-/api/sim         - Simulation scenarios
-/api/fallback    - Fallback system testing
+Arcanos uses OpenAI Node.js SDK v6.16.0 with the standard `chat.completions.create()` API:
+
+```javascript
+const response = await client.chat.completions.create({
+  model: "gpt-4o",  // or configured fine-tuned model
+  messages: [
+    { role: "system", content: "You are a helpful assistant." },
+    { role: "user", content: "Hello!" }
+  ]
+});
+
+const content = response.choices[0].message.content;
 ```
 
-### 4. Railway Deployment Ready
-- **Port binding**: Configured for Railway's PORT environment variable
-- **Environment support**: Added RAILWAY_ENVIRONMENT variable
-- **Structured config**: Updated railway.json with environments and services
-- **Health checks**: Built-in health monitoring for Railway observability
+### Centralized Completion Function
 
-### 5. Enhanced Security & Resilience
-- **Rate limiting**: 50-100 requests per 15 minutes per endpoint
-- **Input validation**: Comprehensive sanitization and validation
-- **Circuit breaker**: Exponential backoff for API calls
-- **Fallback modes**: Graceful degradation when services unavailable
+All AI requests route through `createCentralizedCompletion()` which:
+- Uses fine-tuned model by default (configurable via `OPENAI_MODEL` or `AI_MODEL`)
+- Adds ARCANOS routing system message for proper handling
+- Supports model override via `options.model`
+- Records conversation context in lightweight runtime
 
-## 🚀 Usage Examples
-
-### Basic Centralized AI Call
 ```javascript
 import { createCentralizedCompletion } from './services/openai.js';
 
-// All calls automatically use fine-tuned model with ARCANOS routing
 const response = await createCentralizedCompletion([
   { role: 'user', content: 'Hello ARCANOS' }
 ]);
 ```
 
-### API Endpoints
+## Railway Deployment Features
+
+### 1. RESTful API Structure
+```
+/api/arcanos     - Core ARCANOS functionality
+/api/memory      - Memory management with JSON responses
+/api/sim         - Simulation scenarios
+/health          - Health monitoring
+/healthz         - Liveness probe
+/readyz          - Readiness probe
+```
+
+### 2. Environment Configuration
+
+Railway automatically provides:
+- `PORT` - Service port binding
+- `RAILWAY_ENVIRONMENT` - Environment identifier
+- `DATABASE_URL` - PostgreSQL connection (if attached)
+
+Required configuration:
+- `OPENAI_API_KEY` - OpenAI API authentication
+
+Recommended configuration:
+- `OPENAI_MODEL` or `AI_MODEL` - Model selection
+- `RUN_WORKERS` - Worker process control (default: `false` on Railway)
+
+### 3. Build Process
+
+Railway build (via `railway.json`):
 ```bash
-# Health checks
-curl http://localhost:8080/api/sim/health
-curl http://localhost:8080/api/memory/health
-
-# Simulation scenarios
-curl -X POST http://localhost:8080/api/sim \
-  -H "Content-Type: application/json" \
-  -d '{"scenario": "AI impact simulation", "context": "Healthcare industry"}'
-
-# Memory operations
-curl -X POST http://localhost:8080/api/memory/save \
-  -H "Content-Type: application/json" \
-  -d '{"key": "test", "value": "data"}'
-
-# Fallback testing
-curl http://localhost:8080/api/fallback/test
+npm ci --include=dev && npm run build
 ```
 
-### Streaming Support
-```javascript
-const response = await createCentralizedCompletion(messages, {
-  stream: true,
-  max_tokens: 2048
-});
+This:
+1. Installs all dependencies (including dev dependencies for TypeScript)
+2. Builds workers (`npm run build:workers`)
+3. Compiles TypeScript (`tsc`)
+4. Produces `dist/` directory with compiled JavaScript
 
-// Handle streaming response
-for await (const chunk of response) {
-  const content = chunk.choices[0]?.delta?.content || '';
-  if (content) {
-    console.log(content);
-  }
-}
-```
+### 4. Start Process
 
-## ⚙️ Environment Configuration
-
-### Required for Production
+Railway start command:
 ```bash
-OPENAI_API_KEY=sk-your-openai-key
-FINETUNED_MODEL_ID=ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote
-RAILWAY_ENVIRONMENT=production
-PORT=8080
+node --max-old-space-size=7168 dist/start-server.js
 ```
 
-### Management API (optional)
-```bash
-RAILWAY_API_TOKEN=your-railway-api-token
-RAILWAY_GRAPHQL_TIMEOUT_MS=20000
-```
+Memory configuration:
+- `7168MB` max old space for Railway production environment
+- Optimized for Railway's memory allocation
 
-### Railway Deployment
-The application automatically:
-- Binds to Railway's provided PORT
-- Uses structured JSON logging for observability
-- Handles Railway's restart policies
-- Supports Railway's environment management
+### 5. Health Monitoring
 
-## 🛡️ Resilience Features
+Railway health check configuration:
+- **Path:** `GET /health`
+- **Timeout:** 300 seconds
+- **Restart policy:** `ON_FAILURE` with max 10 retries
 
-### Fallback Modes
-1. **Cache fallback**: Returns cached responses when available
-2. **Mock responses**: Generates appropriate mock data
-3. **Degraded mode**: Limited functionality with clear user messaging
+Health response includes:
+- OpenAI client status
+- Database connectivity
+- Uptime and timestamp
+- Service readiness
 
-### Error Handling
-- Circuit breaker pattern prevents cascade failures
-- Comprehensive error boundaries with safe fallbacks
-- Rate limiting prevents API abuse
-- Input validation prevents malformed requests
+### 6. Security & Resilience
 
-## 📊 Monitoring & Observability
+Production features:
+- Rate limiting (50-100 requests per 15 minutes per endpoint)
+- Input validation and sanitization
+- Circuit breaker pattern for API calls
+- Exponential backoff retry logic
+- Graceful degradation (mock responses when API unavailable)
+- Confirmation gates for mutating operations
 
-### Health Endpoints
-- `/api/sim/health` - Simulation service status
-- `/api/memory/health` - Memory service status  
-- `/api/fallback/test` - Fallback system test
+## Compatibility Validation
 
-### Structured Logging
-All requests include:
-- Request ID for tracing
-- Performance metrics
-- Error details with context
-- Model routing information
-
-## ✅ Validation
-
-Run the comprehensive validation test:
+Run validation before deploying:
 ```bash
 npm run validate:railway
 ```
 
-This validates all requirements:
-- ✅ Centralized fine-tuned model routing
-- ✅ Railway deployment compatibility  
-- ✅ OpenAI SDK v5+ compliance
-- ✅ RESTful API structure
-- ✅ Environment variable management
-- ✅ Security middleware
-- ✅ Fallback handler with degraded mode
-- ✅ Streaming support
-- ✅ JSON logging for observability
-- ✅ Error boundaries and resilience
+This checks:
+- Railway configuration validity
+- Environment variable setup
+- Build process compatibility
+- Start command correctness
+- Health check endpoints
 
-## 🎯 Result
+## References
 
-ARCANOS now provides a production-ready, Railway-compatible backend that ensures all AI interactions pass through the fine-tuned model while maintaining high availability, security, and observability standards.
+**Deployment Guide:**
+- [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md) - Complete deployment instructions
+
+**Configuration:**
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) - Environment variables reference
+- [railway.json](railway.json) - Railway build/deploy configuration
+- [Procfile](Procfile) - Process definition
+
+**API Documentation:**
+- [docs/api/README.md](docs/api/README.md) - API endpoint reference
+
+**External Resources:**
+- [Railway Documentation](https://docs.railway.app/)
+- [OpenAI Node.js SDK](https://github.com/openai/openai-node)
+- [OpenAI API Reference](https://platform.openai.com/docs/api-reference)

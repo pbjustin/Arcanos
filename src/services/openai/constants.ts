@@ -32,6 +32,8 @@ export const DEFAULT_MAX_RETRIES = parseIntegerEnv('OPENAI_MAX_RETRIES', 3);
 
 export const IMAGE_PROMPT_TOKEN_LIMIT = parseIntegerEnv('OPENAI_IMAGE_PROMPT_TOKEN_LIMIT', 256);
 
+export const NO_RESPONSE_CONTENT_FALLBACK = '[No response content]';
+
 // Default values for completion parameters
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_TOP_P = 1;

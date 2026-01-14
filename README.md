@@ -1,6 +1,6 @@
 # Arcanos Backend
 
-> **Last Updated:** 2026-01-10 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
+> **Last Updated:** 2026-01-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
 
 ## Overview
 
@@ -104,12 +104,14 @@ import OpenAI from "openai";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const response = await client.responses.create({
+const response = await client.chat.completions.create({
   model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-  input: "Summarize the Arcanos health status."
+  messages: [
+    { role: "user", content: "Summarize the Arcanos health status." }
+  ]
 });
 
-console.log(response.output_text);
+console.log(response.choices[0].message.content);
 ```
 
 **Python (openai)**
@@ -119,10 +121,12 @@ import os
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-response = client.responses.create(
+response = client.chat.completions.create(
     model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-    input="Summarize the Arcanos health status."
+    messages=[
+        {"role": "user", "content": "Summarize the Arcanos health status."}
+    ]
 )
 
-print(response.output_text)
+print(response.choices[0].message.content)
 ```
