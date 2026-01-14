@@ -27,6 +27,10 @@ model User {
 }
 ```
 
+Prisma migrations are the source of truth for domain tables. Add or change core
+entities in the Prisma schema first, then run the migration workflow to apply
+those updates in each environment to avoid drift.
+
 ### 4. Prisma Commands
 Available npm scripts for Prisma:
 ```bash

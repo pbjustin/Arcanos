@@ -75,6 +75,21 @@ export {
   saveSelfReflection
 } from './repositories/selfReflectionRepository.js';
 
+// Adapter exports
+export {
+  createAuditStore,
+  type AuditStore,
+  type AuditStoreTransaction,
+  type AuditStoreConfig
+} from './auditStore.js';
+
+export {
+  createSessionCacheStore,
+  type SessionCacheStore,
+  type SessionCacheStoreConfig,
+  type SessionCacheRow
+} from './sessionCacheStore.js';
+
 /**
  * Initialize database with full schema setup
  * This is the main entry point for database initialization

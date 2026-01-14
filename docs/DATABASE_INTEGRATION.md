@@ -18,6 +18,8 @@ re-exports stable helpers for backward compatibility:
 | `schema.ts` | Zod schemas plus the SQL migrations executed during boot (`initializeTables`, `refreshDatabaseCollation`). |
 | `query.ts` | Centralized query helper with caching, retry, and transaction utilities. |
 | `repositories/` | Entity-specific helpers (`memoryRepository`, `ragRepository`, `executionLogRepository`, `jobRepository`, `reasoningLogRepository`, `selfReflectionRepository`). |
+| `auditStore.ts` | Audit/persistence adapter that hides the underlying SQL client (Knex today, Prisma-ready interface). |
+| `sessionCacheStore.ts` | Session cache adapter for the session persistence layer, isolated behind a DB-neutral contract. |
 | `index.ts` | Public surface that wires the client, schema, and repositories, and exposes `initializeDatabaseWithSchema()` for worker/server boot. |
 
 `src/db.ts` re-exports everything from `src/db/index.ts` so existing imports continue to work while the modular layout remains organized.
@@ -39,6 +41,16 @@ re-exports stable helpers for backward compatibility:
 
 Every schema export also ships with a matching Zod type so higher-level modules
 can validate payloads before writing to the database.
+
+--- 
+
+## Migration source of truth
+
+Prisma is the source of truth for **domain** tables. Add or change core
+application models in `prisma/schema.prisma` and ship migrations from there to
+avoid drift. The SQL bootstrapping in `schema.ts` is a transitional layer for
+legacy/infra tables (for example, audit logs or session caches) and should stay
+aligned with Prisma migrations as those tables are migrated or deprecated.
 
 ---
 
