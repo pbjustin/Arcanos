@@ -30,7 +30,7 @@ export const handleOpenAIRequestError = (
   // Log the failure with classification
   logOpenAIFailure(
     'warn',
-    OPENAI_LOG_MESSAGES.REQUEST.FAILED_ATTEMPT(attempt, maxRetries, errorType),
+    OPENAI_LOG_MESSAGES.REQUEST.FAILED_ATTEMPT(attempt, maxRetries, String(errorType)),
     {
       attempt,
       maxRetries,
