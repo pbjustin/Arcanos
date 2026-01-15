@@ -3,7 +3,7 @@
  * Provides reusable error handling logic for OpenAI requests
  */
 
-import { isRetryableError, classifyError } from './errorClassification.js';
+import { isRetryableError, classifyError, ErrorType } from './errorClassification.js';
 import { logOpenAIFailure, logOpenAIEvent } from './openaiLogger.js';
 import { OPENAI_LOG_MESSAGES } from '../config/openaiLogMessages.js';
 
@@ -19,7 +19,7 @@ export const handleOpenAIRequestError = (
   maxRetries: number
 ): {
   shouldRetry: boolean;
-  errorType: string;
+  errorType: ErrorType;
   message: string;
 } => {
   const isRetryable = isRetryableError(err);

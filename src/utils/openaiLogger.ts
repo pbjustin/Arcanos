@@ -55,7 +55,7 @@ export const logOpenAISuccess = (
   context: {
     attempt?: number;
     model: string;
-    totalTokens?: number | string;
+    totalTokens?: number | 'unknown';
     [key: string]: unknown;
   }
 ) => {

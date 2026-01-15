@@ -282,7 +282,7 @@ export const createGPT5Reasoning = async (
   const gpt5Model = getGPT5Model();
 
   try {
-    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_START(gpt5Model), { model: gpt5Model });
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_START(gpt5Model));
 
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
@@ -416,7 +416,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
       );
     }
 
-    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_SUCCESS(response.model), { model: response.model });
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_SUCCESS(response.model));
     return response;
   } catch (error: any) {
     // Re-throw with clear error message indicating no fallback
