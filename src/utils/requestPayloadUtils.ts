@@ -3,7 +3,7 @@
  * Provides reusable functions for constructing OpenAI request payloads
  */
 
-import type { ChatCompletionMessageParam } from '../services/openai/types.js';
+import type { ChatCompletionMessageParam, ChatCompletionResponseFormat } from '../services/openai/types.js';
 
 /**
  * Build standardized completion request payload
@@ -18,7 +18,7 @@ export const buildCompletionRequestPayload = (
     top_p?: number;
     frequency_penalty?: number;
     presence_penalty?: number;
-    response_format?: any;
+    responseFormat?: ChatCompletionResponseFormat;
     user?: string;
   } = {}
 ): Record<string, any> => {
@@ -41,8 +41,8 @@ export const buildCompletionRequestPayload = (
   if (options.presence_penalty !== undefined) {
     payload.presence_penalty = options.presence_penalty;
   }
-  if (options.response_format !== undefined) {
-    payload.response_format = options.response_format;
+  if (options.responseFormat !== undefined) {
+    payload.response_format = options.responseFormat;
   }
   if (options.user !== undefined) {
     payload.user = options.user;
