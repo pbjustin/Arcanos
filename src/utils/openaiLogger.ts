@@ -9,6 +9,11 @@ import { OPENAI_REQUEST_LOG_CONTEXT } from '../services/openai/config.js';
 
 /**
  * Centralized OpenAI event logger
+ * 
+ * @param level - Log level (debug, info, warn, error)
+ * @param message - Log message
+ * @param metadata - Optional metadata to include in log
+ * @param error - Optional error object for error logs
  */
 export const logOpenAIEvent = (
   level: 'debug' | 'info' | 'warn' | 'error',
