@@ -1,4 +1,5 @@
 export type ReinforcementMode = 'off' | 'reinforcement';
+export type ClearScoreScale = '0-1' | '0-10';
 
 export interface ReinforcementConfig {
   mode: ReinforcementMode;
@@ -35,7 +36,18 @@ export interface ClearFeedbackPayload {
   system: string;
   requestId: string;
   payload: {
-    CLEAR_score: number;
+    CLEAR_score?: number;
+    scores?: {
+      clarity: number;
+      leverage: number;
+      efficiency: number;
+      alignment: number;
+      resilience: number;
+    };
+    asset?: string;
+    revision?: string;
+    recommendations?: string[];
+    score_scale?: ClearScoreScale;
     pattern_id?: string;
     [key: string]: unknown;
   };
@@ -46,6 +58,8 @@ export interface AuditRecord {
   requestId: string;
   timestamp: number;
   clearScore: number;
+  normalizedClearScore: number;
+  scoreScale: ClearScoreScale;
   patternId?: string;
   accepted: boolean;
   payload: Record<string, unknown>;

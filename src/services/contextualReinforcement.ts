@@ -22,6 +22,7 @@ import { aiLogger } from '../utils/structuredLogging.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import type {
   AuditRecord,
+  ClearScoreScale,
   ReinforcementConfig,
   ReinforcementContextEntry,
   ReinforcementHealth,
@@ -92,11 +93,21 @@ function buildReinforcementSection(basePrompt: string, digest?: string, lastAudi
   ];
 
   if (digest) {
+    //audit assumption: digest is non-empty string when present
+    //audit failure risk: undefined digest reduces context clarity
+    //audit expected invariant: digest lines are appended only when available
+    //audit handling strategy: guard on digest presence
     reinforcementLines.push(`Recent context digest:\n${digest}`);
   }
 
   if (lastAudit) {
-    reinforcementLines.push(`Last CLEAR score: ${lastAudit.clearScore.toFixed(2)} (${lastAudit.patternId ?? 'n/a'})`);
+    //audit assumption: lastAudit exists when audit history is non-empty
+    //audit failure risk: missing audit details for reviewers
+    //audit expected invariant: lastAudit contains clearScore metadata
+    //audit handling strategy: guard on lastAudit presence
+    reinforcementLines.push(
+      `Last CLEAR score: ${lastAudit.clearScore.toFixed(2)} (${lastAudit.scoreScale}, normalized ${lastAudit.normalizedClearScore.toFixed(2)}) (${lastAudit.patternId ?? 'n/a'})`
+    );
   }
 
   return `${basePrompt}\n\n${reinforcementLines.join('\n')}`;
@@ -147,6 +158,10 @@ export function registerContextEntry(entry: Omit<ReinforcementContextEntry, 'id'
   timestamp?: number;
 }): ReinforcementContextEntry | null {
   if (!shouldRecord()) {
+    //audit assumption: contextual recording can be disabled via config
+    //audit failure risk: missing audit trail during disabled state
+    //audit expected invariant: no entries recorded when disabled
+    //audit handling strategy: return null to signal skip
     return null;
   }
 
@@ -200,15 +215,24 @@ export function trackModelResponse(output: string, metadata: Record<string, unkn
   });
 }
 
+/**
+ * Register an audit record and mirror it into the contextual reinforcement window.
+ *
+ * @param record - Audit record with CLEAR score details.
+ */
 export function registerAuditRecord(record: AuditRecord): void {
   if (!shouldRecord()) {
+    //audit assumption: contextual recording can be disabled via config
+    //audit failure risk: audit trail missing when disabled
+    //audit expected invariant: no audit records stored when disabled
+    //audit handling strategy: return early
     return;
   }
 
   auditHistory.push(record);
   limitQueue(auditHistory, config.reinforcement.window);
 
-  const auditSummary = `CLEAR score ${record.clearScore.toFixed(2)} for pattern ${record.patternId ?? 'n/a'} (${record.accepted ? 'accepted' : 'rejected'})`;
+  const auditSummary = `CLEAR score ${record.clearScore.toFixed(2)} (${record.scoreScale}, normalized ${record.normalizedClearScore.toFixed(2)}) for pattern ${record.patternId ?? 'n/a'} (${record.accepted ? 'accepted' : 'rejected'})`;
 
   registerContextEntry({
     id: record.patternId ?? record.id,
@@ -216,6 +240,10 @@ export function registerAuditRecord(record: AuditRecord): void {
     source: 'audit',
     summary: auditSummary,
     requestId: record.requestId,
+    metadata: {
+      scoreScale: record.scoreScale,
+      normalizedClearScore: record.normalizedClearScore
+    },
     bias: record.accepted ? 'positive' : 'negative',
     score: record.clearScore,
     patternId: record.patternId
@@ -230,8 +258,17 @@ export function registerAuditRecord(record: AuditRecord): void {
   });
 }
 
+/**
+ * Register a trace event for request lifecycle auditing.
+ *
+ * @param event - Trace event metadata to persist.
+ */
 export function registerTraceEvent(event: ReinforcementTraceEvent): void {
   if (!config.tracing.audit.enabled) {
+    //audit assumption: trace audit logging may be disabled via config
+    //audit failure risk: missing trace history when disabled
+    //audit expected invariant: no trace entries stored when disabled
+    //audit handling strategy: return early
     return;
   }
 
@@ -249,12 +286,26 @@ export function registerTraceEvent(event: ReinforcementTraceEvent): void {
   });
 }
 
+/**
+ * Build the system prompt augmented with contextual reinforcement details.
+ *
+ * @param basePrompt - Primary system prompt text.
+ * @returns Prompt with reinforcement context appended when enabled.
+ */
 export function buildContextualSystemPrompt(basePrompt: string): string {
   if (!shouldRecord()) {
+    //audit assumption: reinforcement mode controls prompt enrichment
+    //audit failure risk: missing context when reinforcement is disabled
+    //audit expected invariant: basePrompt returned when disabled
+    //audit handling strategy: return basePrompt
     return basePrompt;
   }
 
   if (contextWindow.length === 0) {
+    //audit assumption: empty context window yields no digest
+    //audit failure risk: prompt missing reinforcement header
+    //audit expected invariant: reinforcement header still emitted
+    //audit handling strategy: build header without digest
     return buildReinforcementSection(basePrompt);
   }
 
@@ -277,21 +328,44 @@ export function buildContextualSystemPrompt(basePrompt: string): string {
   return buildReinforcementSection(basePrompt, digest, lastAudit);
 }
 
+/**
+ * Get a copy of the current reinforcement context window.
+ *
+ * @returns Array copy of stored reinforcement entries.
+ */
 export function getContextWindow(): ReinforcementContextEntry[] {
   return [...contextWindow];
 }
 
+/**
+ * Get a copy of the audit history records.
+ *
+ * @returns Array copy of audit history.
+ */
 export function getAuditHistory(): AuditRecord[] {
   return [...auditHistory];
 }
 
+/**
+ * Get a copy of the trace history records.
+ *
+ * @returns Array copy of trace history.
+ */
 export function getTraceHistory(): ReinforcementTraceEvent[] {
   return [...traceHistory];
 }
 
+/**
+ * Create a new audit record from validated inputs.
+ *
+ * @param options - Audit record fields to persist.
+ * @returns Audit record ready for storage.
+ */
 export function createAuditRecord(options: {
   requestId: string;
   clearScore: number;
+  normalizedClearScore: number;
+  scoreScale: ClearScoreScale;
   patternId?: string;
   accepted: boolean;
   payload: Record<string, unknown>;
@@ -301,14 +375,25 @@ export function createAuditRecord(options: {
     requestId: options.requestId,
     timestamp: Date.now(),
     clearScore: options.clearScore,
+    normalizedClearScore: options.normalizedClearScore,
+    scoreScale: options.scoreScale,
     patternId: options.patternId,
     accepted: options.accepted,
     payload: options.payload
   };
 }
 
+/**
+ * Provide health information about the reinforcement subsystem.
+ *
+ * @returns Summary of reinforcement mode, window, and last audit.
+ */
 export function getReinforcementHealth(): ReinforcementHealth {
   const lastAudit = auditHistory[auditHistory.length - 1];
+  //audit assumption: lastAudit may be undefined when no audits exist
+  //audit failure risk: missing last audit timestamp
+  //audit expected invariant: lastAudit is defined only when auditHistory has entries
+  //audit handling strategy: return undefined lastAudit when history is empty
   return {
     status: shouldRecord() ? 'ok' : 'disabled',
     mode: config.reinforcement.mode,
