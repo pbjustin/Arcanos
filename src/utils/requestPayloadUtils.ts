@@ -3,7 +3,16 @@
  * Provides reusable functions for constructing OpenAI request payloads
  */
 
+import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionResponseFormat } from '../services/openai/types.js';
+
+type ChatCompletionPayload = Omit<
+  OpenAI.Chat.Completions.ChatCompletionCreateParams,
+  'model' | 'messages'
+> & {
+  model: string;
+  messages: ChatCompletionMessageParam[];
+};
 
 /**
  * Build standardized completion request payload
@@ -21,8 +30,8 @@ export const buildCompletionRequestPayload = (
     responseFormat?: ChatCompletionResponseFormat;
     user?: string;
   } = {}
-): Record<string, any> => {
-  const payload: Record<string, any> = {
+): ChatCompletionPayload => {
+  const payload: ChatCompletionPayload = {
     model,
     messages,
     ...tokenParams
