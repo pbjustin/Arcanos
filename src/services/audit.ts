@@ -1,14 +1,21 @@
 import { aiLogger } from '../utils/structuredLogging.js';
-import type { AuditResult, ClearFeedbackPayload } from '../types/reinforcement.js';
+import type { AuditResult, ClearFeedbackPayload, ClearScoreScale } from '../types/reinforcement.js';
 import { createAuditRecord, getReinforcementConfig, registerAuditRecord } from './contextualReinforcement.js';
 import { sendClearFeedback } from './clearClient.js';
+import {
+  buildClearScorecardSummary,
+  parseClearPrincipleScores,
+  type ClearScorecardSummary
+} from './clearScorecard.js';
 
 const CLEAR_SYSTEM_IDENTIFIER = 'CLEAR';
 
 interface ClearPayloadValidationResult {
   score: number;
+  scoreScale: ClearScoreScale;
   patternId?: string;
   payload: Record<string, unknown>;
+  scorecardSummary?: ClearScorecardSummary;
 }
 
 class ClearAuditValidationError extends Error {
@@ -59,22 +66,108 @@ function validateClearPayload(payload: ClearFeedbackPayload): ClearPayloadValida
   }
 
   const payloadRecord = payload.payload as Record<string, unknown>;
-  const score = payloadRecord.CLEAR_score;
+  const scorecardScores = parseClearPrincipleScores(payloadRecord.scores);
+  const scorecardSummary = scorecardScores ? buildClearScorecardSummary(scorecardScores) : undefined;
+  const rawScore = payloadRecord.CLEAR_score;
+  const score = typeof rawScore === 'number' && !Number.isNaN(rawScore)
+    ? rawScore
+    : scorecardSummary?.compositeScore;
+
   if (typeof score !== 'number' || Number.isNaN(score)) {
-    //audit assumption: CLEAR_score is a valid number
+    //audit assumption: CLEAR_score or scorecard summary is provided
     //audit failure risk: accepting invalid scoring data
-    //audit expected invariant: CLEAR_score is numeric
+    //audit expected invariant: score value is numeric
     //audit handling strategy: throw validation error with context
-    throw new ClearAuditValidationError('Audit payload missing numeric CLEAR_score', { score });
+    throw new ClearAuditValidationError('Audit payload missing numeric CLEAR score', {
+      score: rawScore,
+      scores: payloadRecord.scores
+    });
   }
+
+  const scoreScale = resolveClearScoreScale(score, payloadRecord.score_scale);
+  //audit assumption: scorecardSummary is available only when principle scores are provided
+  //audit failure risk: missing scorecard details in audit payload
+  //audit expected invariant: normalizedPayload includes clear_scorecard when derived
+  //audit handling strategy: append clear_scorecard when summary is computed
+  const normalizedPayload = scorecardSummary
+    ? { ...payloadRecord, clear_scorecard: scorecardSummary }
+    : payloadRecord;
 
   const patternId = typeof payloadRecord.pattern_id === 'string' ? payloadRecord.pattern_id : undefined;
 
   return {
     score,
+    scoreScale,
     patternId,
-    payload: payloadRecord
+    payload: normalizedPayload,
+    scorecardSummary
   };
+}
+
+/**
+ * Resolve the score scale using an explicit payload hint or heuristic fallback.
+ * Inputs: numeric score and optional declared scale.
+ * Outputs: score scale string used for normalization.
+ * Edge cases: defaults to heuristic based on score magnitude.
+ */
+function resolveClearScoreScale(score: number, declaredScale?: unknown): ClearScoreScale {
+  if (declaredScale === '0-1' || declaredScale === '0-10') {
+    //audit assumption: declared scale is trusted when provided
+    //audit failure risk: incorrect scale hints could skew acceptance gating
+    //audit expected invariant: declared scale matches actual score scale
+    //audit handling strategy: honor declared scale and rely on audits
+    return declaredScale;
+  }
+
+  if (score <= 1) {
+    //audit assumption: scores <= 1 are normalized 0-1 scores
+    //audit failure risk: misclassifying low 0-10 scores as normalized
+    //audit expected invariant: normalized scores fall between 0 and 1
+    //audit handling strategy: default to 0-1 scale when score <= 1
+    return '0-1';
+  }
+
+  //audit assumption: scores above 1 use 0-10 scale
+  //audit failure risk: accepting over-scaled scores
+  //audit expected invariant: 0-10 scale scores exceed 1
+  //audit handling strategy: default to 0-10 scale for score > 1
+  return '0-10';
+}
+
+/**
+ * Normalize a CLEAR score to the same scale as the configured minimum.
+ * Inputs: score value, score scale, and minimum configured score.
+ * Outputs: normalized score for acceptance checks.
+ * Edge cases: if scale differs, the score is converted to match the minimum scale.
+ */
+function normalizeClearScoreForThreshold(
+  score: number,
+  scoreScale: ClearScoreScale,
+  minimumClearScore: number
+): number {
+  const minimumScale: ClearScoreScale = minimumClearScore <= 1 ? '0-1' : '0-10';
+
+  if (scoreScale === minimumScale) {
+    //audit assumption: score and minimum share the same scale
+    //audit failure risk: mismatched comparisons if scale not aligned
+    //audit expected invariant: scoreScale matches minimumScale
+    //audit handling strategy: return score unchanged
+    return score;
+  }
+
+  if (scoreScale === '0-10' && minimumScale === '0-1') {
+    //audit assumption: converting 0-10 score to 0-1 for comparison
+    //audit failure risk: inaccurate normalization if input scale is wrong
+    //audit expected invariant: dividing by 10 yields normalized score
+    //audit handling strategy: divide by 10 for comparison
+    return score / 10;
+  }
+
+  //audit assumption: converting 0-1 score to 0-10 for comparison
+  //audit failure risk: inaccurate normalization if input scale is wrong
+  //audit expected invariant: multiplying by 10 yields 0-10 score
+  //audit handling strategy: multiply by 10 for comparison
+  return score * 10;
 }
 
 /**
@@ -117,11 +210,12 @@ async function attemptClearFeedbackDelivery(
  * Edge cases: throws validation errors for malformed payloads.
  */
 export async function processClearFeedback(payload: ClearFeedbackPayload): Promise<AuditResult> {
-  const { score, patternId, payload: normalizedPayload } = validateClearPayload(payload);
+  const { score, scoreScale, patternId, payload: normalizedPayload } = validateClearPayload(payload);
 
   const { minimumClearScore } = getReinforcementConfig();
-  const accepted = score >= minimumClearScore;
-  //audit assumption: minimumClearScore is configured within [0,1] range
+  const normalizedScore = normalizeClearScoreForThreshold(score, scoreScale, minimumClearScore);
+  const accepted = normalizedScore >= minimumClearScore;
+  //audit assumption: minimumClearScore is configured for either 0-1 or 0-10 scale
   //audit failure risk: acceptance threshold may be misconfigured
   //audit expected invariant: accepted reflects score threshold comparison
   //audit handling strategy: log acceptance decision and continue
@@ -129,6 +223,8 @@ export async function processClearFeedback(payload: ClearFeedbackPayload): Promi
   const record = createAuditRecord({
     requestId: payload.requestId,
     clearScore: score,
+    normalizedClearScore: normalizedScore,
+    scoreScale,
     patternId,
     accepted,
     payload: normalizedPayload
