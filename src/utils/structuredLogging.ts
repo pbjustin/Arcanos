@@ -114,18 +114,30 @@ class StructuredLogger {
     });
   }
 
+  /**
+   * Logs a debug-level message with optional context and metadata.
+   */
   debug(message: string, context?: LogContext, metadata?: any): void {
     this.log(this.createLogEntry(LogLevel.DEBUG, message, context, metadata));
   }
 
+  /**
+   * Logs an info-level message with optional context and metadata.
+   */
   info(message: string, context?: LogContext, metadata?: any): void {
     this.log(this.createLogEntry(LogLevel.INFO, message, context, metadata));
   }
 
+  /**
+   * Logs a warning-level message with optional context, metadata, and error.
+   */
   warn(message: string, context?: LogContext, metadata?: any, error?: Error): void {
     this.log(this.createLogEntry(LogLevel.WARN, message, context, metadata, undefined, error));
   }
 
+  /**
+   * Logs an error-level message with optional context, metadata, and error.
+   */
   error(message: string, context?: LogContext, metadata?: any, error?: Error): void {
     this.log(this.createLogEntry(LogLevel.ERROR, message, context, metadata, undefined, error));
   }
@@ -182,6 +194,42 @@ function sanitize(obj: Record<string, any>): Record<string, any> {
 }
 
 /**
+ * Safely serialize log payloads to avoid circular reference and BigInt crashes.
+ */
+function serializeForLog(data: unknown): string {
+  const seenObjects = new WeakSet<object>();
+  try {
+    return JSON.stringify(data, (_key, value) => {
+      if (typeof value === 'bigint') {
+        //audit: BigInt is not JSON-serializable; convert to string to preserve value without crashing.
+        return value.toString();
+      }
+      if (typeof value === 'object' && value !== null) {
+        //audit: Track object references to prevent circular structure errors.
+        if (seenObjects.has(value)) {
+          //audit: Circular reference detected; return a placeholder to keep logs intact.
+          return '[Circular]';
+        }
+        seenObjects.add(value);
+      }
+      return value;
+    });
+  } catch (error) {
+    //audit: Serialization failed; fall back to a safe sentinel string to avoid breaking responses.
+    return '"[Unserializable]"';
+  }
+}
+
+/**
+ * Calculate serialized payload size in bytes for response logging.
+ */
+function getSerializedSizeBytes(data: unknown): number {
+  const serialized = serializeForLog(data);
+  //audit: Buffer byte length is used as a consistent UTF-8 size estimator for logging metadata.
+  return Buffer.byteLength(serialized, 'utf8');
+}
+
+/**
  * Express middleware for request logging
  */
 export function requestLoggingMiddleware(req: any, res: any, next: any) {
@@ -220,7 +268,7 @@ export function requestLoggingMiddleware(req: any, res: any, next: any) {
       duration,
       { statusCode },
       { 
-        responseSize: JSON.stringify(data).length,
+        responseSize: getSerializedSizeBytes(data),
         success: statusCode < 400
       },
       statusCode >= 400 ? LogLevel.WARN : LogLevel.INFO
@@ -238,6 +286,9 @@ export function requestLoggingMiddleware(req: any, res: any, next: any) {
 class HealthMetrics {
   private metrics: Map<string, any> = new Map();
 
+  /**
+   * Records a health metric value with the current timestamp.
+   */
   record(key: string, value: any): void {
     this.metrics.set(key, {
       value,
@@ -245,11 +296,17 @@ class HealthMetrics {
     });
   }
 
+  /**
+   * Increments a numeric metric value by the provided amount.
+   */
   increment(key: string, amount: number = 1): void {
     const current = this.metrics.get(key)?.value || 0;
     this.record(key, current + amount);
   }
 
+  /**
+   * Returns a raw metrics map suitable for internal inspection.
+   */
   getMetrics(): Record<string, any> {
     const result: Record<string, any> = {};
     for (const [key, metric] of this.metrics.entries()) {
@@ -258,6 +315,9 @@ class HealthMetrics {
     return result;
   }
 
+  /**
+   * Returns a snapshot including process uptime and memory usage.
+   */
   getSnapshot(): Record<string, any> {
     return {
       timestamp: new Date().toISOString(),
