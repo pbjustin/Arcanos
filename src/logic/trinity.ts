@@ -4,7 +4,7 @@
  * Implements the ARCANOS Trinity architecture, a three-stage AI processing workflow:
  * 
  * 1. **ARCANOS Intake**: Prepares and frames user requests with memory context
- * 2. **GPT-5.2 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
+ * 2. **GPT-5.1 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
  * 3. **ARCANOS Execution**: Synthesizes results and generates final responses
  * 
  * Key Features:
@@ -184,7 +184,7 @@ function buildFinalArcanosMessages(
   return [
     { role: 'system', content: ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary) },
     { role: 'user', content: `Original request: ${auditSafePrompt}` },
-    { role: 'assistant', content: `GPT-5.2 analysis: ${gpt5Output}` },
+    { role: 'assistant', content: `GPT-5.1 analysis: ${gpt5Output}` },
     { role: 'user', content: 'Provide the final ARCANOS response.' }
   ];
 }
@@ -246,15 +246,15 @@ async function runReasoningStage(
   const gpt5ModelUsed = gpt5Result.model || getGPT5Model();
   const fallbackUsed = Boolean(gpt5Result.error);
 
-  //audit Assumption: GPT-5.2 may fail and return fallback text; Failure risk: degraded reasoning quality; Expected invariant: gpt5Result.content is non-empty; Handling: log fallback and mark.
+  //audit Assumption: GPT-5.1 may fail and return fallback text; Failure risk: degraded reasoning quality; Expected invariant: gpt5Result.content is non-empty; Handling: log fallback and mark.
   if (fallbackUsed) {
-    logger.warn('GPT-5.2 reasoning fallback in Trinity pipeline', {
+    logger.warn('GPT-5.1 reasoning fallback in Trinity pipeline', {
       module: 'trinity',
       operation: 'gpt5-reasoning',
       error: gpt5Result.error
     });
   } else {
-    logger.info('GPT-5.2 reasoning confirmed', {
+    logger.info('GPT-5.1 reasoning confirmed', {
       module: 'trinity',
       operation: 'gpt5-reasoning',
       model: gpt5ModelUsed
@@ -372,7 +372,7 @@ function buildAuditLogEntry(
  * 
  * This function implements a three-stage AI processing pipeline:
  * 1. ARCANOS Intake - Initial request processing and model validation
- * 2. GPT-5.2 Reasoning - Advanced reasoning and analysis stage (always invoked)
+ * 2. GPT-5.1 Reasoning - Advanced reasoning and analysis stage (always invoked)
  * 3. ARCANOS Execution - Final processing and response generation
  * 
  * Features:
@@ -399,7 +399,7 @@ export async function runThroughBrain(
   const requestId = generateRequestId('trinity');
 
   const routingStages: string[] = [];
-  const gpt5Used = true; // GPT-5.2 is now unconditional
+  const gpt5Used = true; // GPT-5.1 is now unconditional
 
   const auditConfig = getAuditSafeConfig(prompt, overrideFlag);
   //audit Assumption: audit-safe mode can be toggled; Failure risk: incorrect mode reporting; Expected invariant: log reflects current mode; Handling: log boolean state.
@@ -475,19 +475,19 @@ export async function runThroughBrain(
   // Apply audit-safe constraints
   const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
 
-  // ARCANOS intake prepares framed request for GPT-5.2
+  // ARCANOS intake prepares framed request for GPT-5.1
   const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary);
   const framedRequest = intakeOutput.framedRequest;
   const actualModel = intakeOutput.activeModel;
 
-  // GPT-5.2 reasoning stage (always invoked)
+  // GPT-5.1 reasoning stage (always invoked)
   routingStages.push('GPT5-REASONING');
   const reasoningOutput = await runReasoningStage(client, framedRequest);
   const gpt5Output = reasoningOutput.output;
   const gpt5ModelUsed = reasoningOutput.model;
 
   // Final ARCANOS execution and filtering
-  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.2 output through ARCANOS');
+  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
   const finalOutput = await runFinalStage(client, actualModel, memoryContext.contextSummary, auditSafePrompt, gpt5Output);
   const finalText = finalOutput.output;
@@ -504,7 +504,7 @@ export async function runThroughBrain(
       'Successful Trinity pipeline',
       [
         `Input pattern: ${prompt.substring(0, 50)}...`,
-        `GPT-5.2 output pattern: ${gpt5Output.substring(0, 50)}...`,
+        `GPT-5.1 output pattern: ${gpt5Output.substring(0, 50)}...`,
         `Final output pattern: ${finalText.substring(0, 50)}...`
       ],
       sessionId
@@ -533,7 +533,7 @@ export async function runThroughBrain(
     finalFallbackUsed: finalOutput.fallbackUsed,
     fallbackReasons: [
       ...(intakeOutput.fallbackUsed ? ['Intake fallback used'] : []),
-      ...(reasoningOutput.fallbackUsed ? ['GPT-5.2 fallback used'] : []),
+      ...(reasoningOutput.fallbackUsed ? ['GPT-5.1 fallback used'] : []),
       ...(finalOutput.fallbackUsed ? ['Final fallback used'] : [])
     ]
   };

@@ -33,7 +33,7 @@ Key environment variables (see `docs/CONFIGURATION.md` for the complete matrix):
   – model selection chain used by the OpenAI client (default: `gpt-4o`).
 - `FALLBACK_MODEL`, `AI_FALLBACK_MODEL`, `RAILWAY_OPENAI_FALLBACK_MODEL` – fallback model
   chain used when the primary model fails (default: `gpt-4`).
-- `GPT51_MODEL` / `GPT5_MODEL` – GPT-5.2 reasoning model override (defaults to `gpt-5.2`).
+- `GPT51_MODEL` / `GPT5_MODEL` – GPT-5.1 reasoning model override (defaults to `gpt-5.1`).
 - `DATABASE_URL` or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` – database connection.
 - `RUN_WORKERS`, `WORKER_COUNT`, `WORKER_MODEL`, `WORKER_API_TIMEOUT_MS` – background workers.
 - `ARC_LOG_PATH`, `ARC_MEMORY_PATH`, `LOG_LEVEL` – filesystem paths and logging.

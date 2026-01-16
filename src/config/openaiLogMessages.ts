@@ -18,14 +18,14 @@ export const OPENAI_LOG_MESSAGES = {
     HIT: '💾 Cache hit for OpenAI request'
   },
   GPT5: {
-    REASONING_START: (model: string) => `🚀 [GPT-5.2 REASONING] Using model ${model}`,
-    REASONING_SUCCESS: '✅ [GPT-5.2 REASONING] Success',
-    REASONING_ERROR: '❌ [GPT-5.2 REASONING] Error',
-    LAYER_REFINING: '🔄 [GPT-5.2 LAYER] Refining ARCANOS response',
-    LAYER_SUCCESS: '✅ [GPT-5.2 LAYER] Successfully refined response',
-    LAYER_ERROR: '❌ [GPT-5.2 LAYER] Reasoning layer failed',
-    STRICT_CALL: '🎯 [GPT-5.2 STRICT] Making strict call',
-    STRICT_SUCCESS: (model: string) => `✅ [GPT-5.2 STRICT] Success with model ${model}`
+    REASONING_START: (model: string) => `🚀 [GPT-5.1 REASONING] Using model ${model}`,
+    REASONING_SUCCESS: '✅ [GPT-5.1 REASONING] Success',
+    REASONING_ERROR: '❌ [GPT-5.1 REASONING] Error',
+    LAYER_REFINING: '🔄 [GPT-5.1 LAYER] Refining ARCANOS response',
+    LAYER_SUCCESS: '✅ [GPT-5.1 LAYER] Successfully refined response',
+    LAYER_ERROR: '❌ [GPT-5.1 LAYER] Reasoning layer failed',
+    STRICT_CALL: '🎯 [GPT-5.1 STRICT] Making strict call',
+    STRICT_SUCCESS: (model: string) => `✅ [GPT-5.1 STRICT] Success with model ${model}`
   },
   IMAGE: {
     PROMPT_GENERATION_ERROR: '❌ Failed to generate prompt via fine-tuned model',

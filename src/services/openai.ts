@@ -267,7 +267,7 @@ const extractReasoningText = (response: any, fallback: string = REASONING_FALLBA
   response?.choices?.[0]?.message?.content?.trim() || fallback;
 
 /**
- * Centralized GPT-5.2 helper function for reasoning tasks
+ * Centralized GPT-5.1 helper function for reasoning tasks
  * Used by both core logic and workers
  */
 export const createGPT5Reasoning = async (
@@ -276,7 +276,7 @@ export const createGPT5Reasoning = async (
   systemPrompt?: string
 ): Promise<{ content: string; model?: string; error?: string }> => {
   if (!client) {
-    return { content: '[Fallback: GPT-5.2 unavailable - no OpenAI client]', error: 'No OpenAI client' };
+    return { content: '[Fallback: GPT-5.1 unavailable - no OpenAI client]', error: 'No OpenAI client' };
   }
 
   const gpt5Model = getGPT5Model();
@@ -306,13 +306,13 @@ export const createGPT5Reasoning = async (
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
     logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.REASONING_ERROR, { model: gpt5Model }, err as Error);
-    return { content: `[Fallback: GPT-5.2 unavailable - ${errorMsg}]`, error: errorMsg };
+    return { content: `[Fallback: GPT-5.1 unavailable - ${errorMsg}]`, error: errorMsg };
   }
 };
 
 /**
- * Enhanced GPT-5.2 reasoning layer that refines ARCANOS responses
- * Implements the layered approach: ARCANOS -> GPT-5.2 reasoning -> refined output
+ * Enhanced GPT-5.1 reasoning layer that refines ARCANOS responses
+ * Implements the layered approach: ARCANOS -> GPT-5.1 reasoning -> refined output
  */
 export const createGPT5ReasoningLayer = async (
   client: OpenAI,
@@ -330,7 +330,7 @@ export const createGPT5ReasoningLayer = async (
     return { 
       refinedResult: arcanosResult, 
       reasoningUsed: false, 
-      error: 'No OpenAI client available for GPT-5.2 reasoning' 
+      error: 'No OpenAI client available for GPT-5.1 reasoning' 
     };
   }
 
@@ -357,7 +357,7 @@ export const createGPT5ReasoningLayer = async (
 
     const reasoningContent = extractReasoningText(response);
 
-    // The GPT-5.2 response IS the refined result
+    // The GPT-5.1 response IS the refined result
     const refinedResult = reasoningContent;
 
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.LAYER_SUCCESS, {
@@ -385,13 +385,13 @@ export const createGPT5ReasoningLayer = async (
 };
 
 /**
- * Strict GPT-5.2 call function that only uses GPT-5.2 with no fallback
- * Raises RuntimeError if the response doesn't come from GPT-5.2
+ * Strict GPT-5.1 call function that only uses GPT-5.1 with no fallback
+ * Raises RuntimeError if the response doesn't come from GPT-5.1
  */
 export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promise<any> {
   const client = getOpenAIClient();
   if (!client) {
-    throw new Error("GPT-5.2 call failed — no fallback allowed. OpenAI client not available.");
+    throw new Error("GPT-5.1 call failed — no fallback allowed. OpenAI client not available.");
   }
 
   const gpt5Model = getGPT5Model();
@@ -409,10 +409,10 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
 
     const response: any = await client.chat.completions.create(requestPayload);
 
-    // Validate that the response actually came from GPT-5.2
+    // Validate that the response actually came from GPT-5.1
     if (!response.model || response.model !== gpt5Model) {
       throw new Error(
-        `GPT-5.2 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`
+        `GPT-5.1 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`
       );
     }
 
@@ -420,7 +420,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
     return response;
   } catch (error: any) {
     // Re-throw with clear error message indicating no fallback
-    throw new Error(`GPT-5.2 call failed — no fallback allowed. ${error.message}`);
+    throw new Error(`GPT-5.1 call failed — no fallback allowed. ${error.message}`);
   }
 }
 
