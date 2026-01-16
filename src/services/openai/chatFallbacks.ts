@@ -32,7 +32,7 @@ async function attemptGPT5Call(
   params: any,
   gpt5Model: string,
 ): Promise<{ response: any; model: string }> {
-  console.log(`🚀 [GPT-5.2 FALLBACK] Attempting with GPT-5.2: ${gpt5Model}`);
+  console.log(`🚀 [GPT-5.1 FALLBACK] Attempting with GPT-5.1: ${gpt5Model}`);
 
   const tokenParams = getTokenParameter(gpt5Model, getTokensFromParams(params));
   const gpt5Payload = prepareGPT5Request({
@@ -42,7 +42,7 @@ async function attemptGPT5Call(
   });
 
   const response = await client.chat.completions.create(gpt5Payload);
-  console.log(`✅ [GPT-5.2 FALLBACK] Success with ${gpt5Model}`);
+  console.log(`✅ [GPT-5.1 FALLBACK] Success with ${gpt5Model}`);
   return { response, model: gpt5Model };
 }
 
@@ -50,7 +50,7 @@ const ensureModelMatchesExpectation = (response: any, expectedModel: string): st
   const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
 
   if (!actualModel) {
-    throw new Error(`GPT-5.2 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
+    throw new Error(`GPT-5.1 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
   }
 
   const normalizedActual = normalizeModelId(actualModel);
@@ -63,7 +63,7 @@ const ensureModelMatchesExpectation = (response: any, expectedModel: string): st
 
   if (!matchesExpected) {
     throw new Error(
-      `GPT-5.2 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`,
+      `GPT-5.1 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`,
     );
   }
 
@@ -129,13 +129,13 @@ export const createChatCompletionWithFallback = async (
       }),
     },
     {
-      label: '🧠 [GPT-5.2 FALLBACK]',
+      label: '🧠 [GPT-5.1 FALLBACK]',
       executor: () => attemptGPT5Call(client, params, gpt5Model),
       transform: ({ response, model }: ModelAttemptResult) => ({
         ...response,
         activeModel: model,
         fallbackFlag: true,
-        fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5.2`,
+        fallbackReason: `Primary model ${primaryModel} failed twice, used GPT-5.1`,
         gpt5Used: true,
       }),
     },
@@ -146,12 +146,12 @@ export const createChatCompletionWithFallback = async (
         ...response,
         activeModel: model,
         fallbackFlag: true,
-        fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5.2 fallback), using final fallback`,
+        fallbackReason: `All models failed: ${primaryModel} (primary), ${gpt5Model} (GPT-5.1 fallback), using final fallback`,
       }),
     },
   ];
 
-  const failureContext = `All models failed: Primary (${primaryModel}), GPT-5.2 (${gpt5Model}), Final (${finalFallbackModel})`;
+  const failureContext = `All models failed: Primary (${primaryModel}), GPT-5.1 (${gpt5Model}), Final (${finalFallbackModel})`;
 
   return executeModelFallbacks(attempts, `${failureContext} [COMPLETE FAILURE]`);
 };

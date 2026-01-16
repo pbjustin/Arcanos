@@ -14,7 +14,7 @@ export const APPLICATION_CONSTANTS = {
   MODEL_GPT_4O: 'gpt-4o',
   MODEL_GPT_4O_MINI: 'gpt-4o-mini',
   MODEL_GPT_5: 'gpt-5',
-  MODEL_GPT_5_1: 'gpt-5.2',
+  MODEL_GPT_5_1: 'gpt-5.1',
   // Legacy models (for reference only, prefer gpt-4o)
   MODEL_GPT_4_TURBO: 'gpt-4-turbo',
   MODEL_GPT_3_5_TURBO: 'gpt-3.5-turbo',

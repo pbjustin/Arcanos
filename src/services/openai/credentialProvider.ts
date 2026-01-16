@@ -98,6 +98,6 @@ export function getFallbackModel(): string {
 }
 
 export function getGPT5Model(): string {
-  return process.env.GPT51_MODEL || process.env.GPT5_MODEL || 'gpt-5.2';
+  return process.env.GPT51_MODEL || process.env.GPT5_MODEL || 'gpt-5.1';
 }
 

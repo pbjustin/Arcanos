@@ -338,13 +338,13 @@ export async function runARCANOS(
   // Create the ARCANOS prompt with shell wrapper and memory context
   const prompt = arcanosPrompt(auditSafeUserPrompt, memoryContext);
   
-  // Use strict GPT-5.2 calls only - no fallback allowed
+  // Use strict GPT-5.1 calls only - no fallback allowed
   const gpt5Model = getGPT5Model();
   let finalResult: string;
   let response: any;
   
   try {
-    // Use strict GPT-5.2 call with no fallback
+    // Use strict GPT-5.1 call with no fallback
     const tokenParams = getTokenParameter(gpt5Model, APPLICATION_CONSTANTS.EXTENDED_TOKEN_LIMIT);
     
     // Prepare messages for call_gpt5_strict
@@ -352,7 +352,7 @@ export async function runARCANOS(
     const userMessage = prompt;
     const combinedPrompt = `${systemMessage}\n\nUser: ${userMessage}`;
     
-    console.log(`[🎯 ARCANOS] Using strict GPT-5.2 call with model: ${gpt5Model}`);
+    console.log(`[🎯 ARCANOS] Using strict GPT-5.1 call with model: ${gpt5Model}`);
     response = await call_gpt5_strict(combinedPrompt, {
       temperature: 0.1, // Low temperature for consistent diagnostic output
       ...tokenParams,
@@ -362,11 +362,11 @@ export async function runARCANOS(
       response.output_text ||
       response.output?.[0]?.content?.[0]?.text ||
       '';
-    console.log(`[🔬 ARCANOS] Diagnosis complete using strict GPT-5.2: ${gpt5Model}`);
+    console.log(`[🔬 ARCANOS] Diagnosis complete using strict GPT-5.1: ${gpt5Model}`);
     
   } catch (err) {
     // No fallback - throw error immediately
-    const errorMessage = `GPT-5.2 strict call failed — no fallback allowed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    const errorMessage = `GPT-5.1 strict call failed — no fallback allowed: ${err instanceof Error ? err.message : 'Unknown error'}`;
     console.error(`❌ [ARCANOS] ${errorMessage}`);
     throw new Error(errorMessage);
   }
@@ -382,7 +382,7 @@ export async function runARCANOS(
     finalResult, 
     response, 
     gpt5Model, 
-    false, // No fallback used - always strict GPT-5.2
+    false, // No fallback used - always strict GPT-5.1
     reasoningDelegation,
     auditConfig,
     memoryContext,
@@ -394,7 +394,7 @@ export async function runARCANOS(
   // Store successful patterns for learning
   if (processedSafely) {
     storePattern(
-      'Successful ARCANOS diagnosis with strict GPT-5.2',
+      'Successful ARCANOS diagnosis with strict GPT-5.1',
       [`Input pattern: ${userInput.substring(0, 50)}...`, `Output pattern: ${finalResult.substring(0, 50)}...`],
       sessionId
     );

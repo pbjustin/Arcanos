@@ -13,8 +13,8 @@ The `/api/ask` route accepts flexible payloads (`message`, `prompt`, `text`, `qu
 `handleAIRequest` powers both `/ask` and `/api/ask`. After running the standard request validator and audit logging, the handler invokes `runThroughBrain`. The Trinity pipeline performs staged dispatching:
 
 1. **ARCANOS intake** validates the fine-tuned model and applies audit-safe constraints.
-2. **GPT-5.2 reasoning** is invoked unconditionally to perform deep analysis.
-3. **ARCANOS finalization** filters GPT-5.2 output, applies memory context, and emits the final response along with routing metadata.
+2. **GPT-5.1 reasoning** is invoked unconditionally to perform deep analysis.
+3. **ARCANOS finalization** filters GPT-5.1 output, applies memory context, and emits the final response along with routing metadata.
 
 This pipeline is the “dispatcher” that interprets the normalized prompt (including the context hints added by `/api/ask`) and decides how to process it, tracking every stage in the `routingStages` array that flows back to the caller. 【F:src/routes/ask.ts†L1-L87】【F:src/logic/trinity.ts†L1-L200】
 
@@ -24,7 +24,7 @@ When a Custom GPT is configured with an ID (e.g., `arcanos-tutor`), requests sen
 ## 5. Putting it together
 1. A Custom GPT Action POSTs to `/api/ask` (or `/ask` if it already conforms to the contract).
 2. The route normalizes the payload, adds routing hints, and forwards the request to `handleAIRequest`.
-3. The Trinity dispatcher validates models, runs GPT-5.2 reasoning, and produces a response annotated with `routingStages`, memory, and audit metadata.
+3. The Trinity dispatcher validates models, runs GPT-5.1 reasoning, and produces a response annotated with `routingStages`, memory, and audit metadata.
 4. If the GPT is tied to a module-specific endpoint, the `/gpt/:gptId` router ensures the prompt reaches the proper module handler after Trinity processing.
 
 Because all of these steps are wired together in code, you can point Custom GPTs at the Ask dispatcher with confidence that the backend will normalize the payload, audit it, and route it to the appropriate execution path without bypassing any guardrails.
