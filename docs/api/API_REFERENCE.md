@@ -115,7 +115,7 @@ ARCANOS). Requires confirmation.
   "stages": {
     "arcFirst": { "content": "Initial ARCANOS output" },
     "subAgent": { "content": "GPT-3.5 refinement" },
-    "gpt5Reasoning": { "content": "GPT-5.2 oversight summary" }
+    "gpt5Reasoning": { "content": "GPT-5.1 oversight summary" }
   }
 }
 ```

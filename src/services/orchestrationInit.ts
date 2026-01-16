@@ -17,25 +17,25 @@ export async function initializeGPT5Orchestration(config: GPT5OrchestrationConfi
     }
 
     if (!config.agentId || !config.sessionId) {
-      throw new Error('Missing agentId or sessionId for GPT-5.2 init');
+      throw new Error('Missing agentId or sessionId for GPT-5.1 init');
     }
 
     let attached = false;
     for (let i = 0; i < 2; i++) {
       attached = await attachMemoryContext(config);
       if (attached) break;
-      console.warn('[GPT5-INIT] Retrying GPT-5.2 memory context attachment...');
+      console.warn('[GPT5-INIT] Retrying GPT-5.1 memory context attachment...');
     }
 
     if (!attached) {
-      throw new Error('GPT-5.2 memory context failed to attach');
+      throw new Error('GPT-5.1 memory context failed to attach');
     }
 
     console.log('✅ [GPT5-INIT] Memory context attached successfully');
-    logEvent('GPT-5.2 memory context attached', config);
+    logEvent('GPT-5.1 memory context attached', config);
   } catch (err: any) {
     console.error('❌ [GPT5-INIT] Orchestration init failed:', err);
-    logEvent('GPT-5.2 orchestration init failure', { error: err.message });
+    logEvent('GPT-5.1 orchestration init failure', { error: err.message });
     throw err;
   }
 }

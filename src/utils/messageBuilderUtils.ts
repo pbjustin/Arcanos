@@ -7,7 +7,7 @@ import type { ChatCompletionMessageParam } from '../services/openai/types.js';
 
 /**
  * Build message array with optional system prompt
- * Consolidates repeated pattern across GPT-5.2 calls
+ * Consolidates repeated pattern across GPT-5.1 calls
  */
 export const buildSystemPromptMessages = (
   prompt: string,

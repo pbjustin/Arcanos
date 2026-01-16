@@ -70,7 +70,7 @@ Additional model-related variables:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `GPT51_MODEL` / `GPT5_MODEL` | `gpt-5.2` | GPT-5.2 reasoning model override (checks `GPT51_MODEL` first). |
+| `GPT51_MODEL` / `GPT5_MODEL` | `gpt-5.1` | GPT-5.1 reasoning model override (checks `GPT51_MODEL` first). |
 | `RESEARCH_MODEL_ID` | – | Optional override for the research pipeline model. |
 | `IMAGE_MODEL` | `gpt-image-1` | Image generation model. |
 | `IMAGE_DEFAULT_SIZE` | `1024x1024` | Default image size if not supplied in requests. |

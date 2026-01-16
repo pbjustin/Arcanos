@@ -34,7 +34,7 @@ export async function getUniverseRoster(databaseId: string): Promise<UniverseRos
 }
 
 /**
- * Use GPT-5.2 to analyze roster data
+ * Use GPT-5.1 to analyze roster data
  */
 export async function analyzeRoster(roster: string[]): Promise<string> {
   const client = getOpenAIClient();

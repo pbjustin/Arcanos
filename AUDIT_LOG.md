@@ -622,7 +622,7 @@ No further autonomous optimizations are required at this time.
 | Embeddings API | ✅ Modern pattern | Uses `embeddings.create()` with text-embedding-3-small |
 | Image Generation API | ✅ Modern pattern | Uses `images.generate()` |
 | Client initialization | ✅ Centralized | Single client instance in `src/services/openai/clientFactory.ts` |
-| Model configuration | ✅ Proper defaults | Uses gpt-4o as default, gpt-5.2 for reasoning |
+| Model configuration | ✅ Proper defaults | Uses gpt-4o as default, gpt-5.1 for reasoning |
 | Fallback handling | ✅ Implemented | Circuit breaker and retry logic in `src/services/openai/resilience.ts` |
 | Mock responses | ✅ Implemented | Graceful degradation when API key missing |
 

@@ -105,23 +105,23 @@ export class WorkerTaskQueue extends EventEmitter {
 
 export const workerTaskQueue = new WorkerTaskQueue();
 
-// ✅ GPT-5.2 reasoning function using centralized helper
+// ✅ GPT-5.1 reasoning function using centralized helper
 export async function gpt5Reasoning(prompt: string): Promise<string> {
   const client = getOpenAIClient();
-  if (!client) return '[Fallback: GPT-5.2 unavailable]';
+  if (!client) return '[Fallback: GPT-5.1 unavailable]';
 
   const result = await createGPT5Reasoning(
     client,
     prompt,
-    'ARCANOS: Use GPT-5.2 for deep reasoning on every request. Return structured analysis only.'
+    'ARCANOS: Use GPT-5.1 for deep reasoning on every request. Return structured analysis only.'
   );
 
   if (result.error) {
-    logger.warn('[WORKER] GPT-5.2 reasoning fallback triggered', {
+    logger.warn('[WORKER] GPT-5.1 reasoning fallback triggered', {
       error: result.error
     });
   } else if (result.model) {
-    logger.info('[WORKER] GPT-5.2 reasoning confirmed', {
+    logger.info('[WORKER] GPT-5.1 reasoning confirmed', {
       model: result.model
     });
   }
@@ -163,7 +163,7 @@ export async function workerTask(input: string): Promise<WorkerResult> {
   // Step 1: Run ARCANOS core logic
   const logicOutput = await arcanosCoreLogic(input);
 
-  // Step 2: If reasoning is required, consult GPT-5.2
+  // Step 2: If reasoning is required, consult GPT-5.1
   if (logicOutput.requiresReasoning && logicOutput.reasoningPrompt) {
     const reasoning = await gpt5Reasoning(logicOutput.reasoningPrompt);
     return { ...logicOutput, reasoning };
