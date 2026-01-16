@@ -92,7 +92,7 @@ The `Procfile` mirrors the start command for compatibility.
 | `OPENAI_MODEL` | `gpt-4o` | Primary model selection (first in chain) |
 | `AI_MODEL` | - | Alternative model variable (legacy support) |
 | `FINETUNED_MODEL_ID` | - | Fine-tuned model override |
-| `GPT5_MODEL` | `gpt-5.2` | GPT-5.2 reasoning model |
+| `GPT5_MODEL` | `gpt-5.1` | GPT-5.1 reasoning model |
 | `DATABASE_URL` | - | PostgreSQL connection string (auto-injected by Railway) |
 | `ARC_LOG_PATH` | `/tmp/arc/log` | Log file directory |
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Memory cache directory |

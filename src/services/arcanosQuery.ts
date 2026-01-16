@@ -37,7 +37,7 @@ export async function arcanosQuery(prompt: string): Promise<string> {
 
     const ftOutput = ftResponse.choices[0].message.content || '';
 
-    // Step 2 → Reasoning with GPT-5.2
+    // Step 2 → Reasoning with GPT-5.1
     const reasoningResponse = await client.chat.completions.create({
       model: REASONING_MODEL,
       messages: buildReasoningMessages(ftOutput)

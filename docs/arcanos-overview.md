@@ -38,7 +38,7 @@ Key capabilities include:
 In short, Arcanos acts as a comprehensive AI backend where the model plays an
 active role in system management while exposing a conventional API for clients.
 
-For strict GPT-5.2 reasoning from Python, the project includes a companion module
+For strict GPT-5.1 reasoning from Python, the project includes a companion module
 outlined in [`ARCANOS_PYTHON_README.md`](../ARCANOS_PYTHON_README.md). It
 enforces the fine-tuned model and automatically alerts a maintenance assistant
 on any failure.

@@ -199,7 +199,7 @@ router.post('/workers/run/:workerId', confirmGate, async (
         success: !primaryResult.error,
         workerId: primaryResult.workerId || workerId,
         name: 'ARCANOS Core Worker',
-        description: 'ARCANOS core logic with GPT-5.2 reasoning',
+        description: 'ARCANOS core logic with GPT-5.1 reasoning',
         pattern: 'arcanos-core',
         result: primaryResult,
         executionTime: `${duration}ms`,

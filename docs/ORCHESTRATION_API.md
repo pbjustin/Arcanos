@@ -1,6 +1,6 @@
-# GPT-5.2 Orchestration Shell - API Documentation
+# GPT-5.1 Orchestration Shell - API Documentation
 
-This implementation provides a GPT-5.2 Orchestration Shell with purge and redeploy functionality, fully integrated with the ARCANOS backend infrastructure.
+This implementation provides a GPT-5.1 Orchestration Shell with purge and redeploy functionality, fully integrated with the ARCANOS backend infrastructure.
 
 ## Features
 
@@ -29,7 +29,7 @@ curl -X POST http://localhost:8080/orchestration/reset
     "id": "orchestration_reset_...",
     "created": 1754881108
   },
-  "activeModel": "gpt-5.2",
+  "activeModel": "gpt-5.1",
   "fallbackFlag": false,
   "gpt5Used": true,
   "routingStages": ["ORCHESTRATION_RESET", "ISOLATE_MODULE", "PURGE_MEMORY", "REDEPLOY_SAFEGUARDS", "VERIFY_DEPLOYMENT"],
@@ -50,20 +50,20 @@ curl -X POST http://localhost:8080/orchestration/reset
   },
   "orchestration": {
     "success": true,
-    "message": "✅ GPT-5.2 orchestration shell has been purged and redeployed.",
+    "message": "✅ GPT-5.1 orchestration shell has been purged and redeployed.",
     "meta": {
       "timestamp": "2025-08-11T02:58:28.299Z",
       "stages": ["ISOLATE_MODULE", "PURGE_MEMORY", "REDEPLOY_SAFEGUARDS", "VERIFY_DEPLOYMENT"],
-      "gpt5Model": "gpt-5.2",
+      "gpt5Model": "gpt-5.1",
       "safeguardsApplied": true
     },
     "logs": [
-      "🔄 Starting GPT-5.2 Orchestration Shell purge...",
+      "🔄 Starting GPT-5.1 Orchestration Shell purge...",
       "📦 Isolating orchestration shell...",
       "🧹 Purging memory state...",
       "🚀 Redeploying with safeguards...",
       "✅ Verifying deployment and ARCANOS integration...",
-      "✅ GPT-5.2 orchestration shell has been purged and redeployed with ARCANOS integration."
+      "✅ GPT-5.1 orchestration shell has been purged and redeployed with ARCANOS integration."
     ]
   }
 }
@@ -87,7 +87,7 @@ curl -X GET http://localhost:8080/orchestration/status
     "message": "Status retrieved successfully",
     "status": {
       "active": true,
-      "model": "gpt-5.2",
+      "model": "gpt-5.1",
       "memoryEntries": 0,
       "lastReset": "2025-08-11T02:58:28.299Z"
     }
@@ -119,7 +119,7 @@ The orchestration shell reset follows this sequence:
 - **Audit-Safe Mode**: All operations are logged and audit-compliant
 - **Memory Awareness**: Integrates with ARCANOS memory management system
 - **Task Lineage**: Complete operation tracking for debugging
-- **GPT-5.2 Routing**: Automatic routing through GPT-5.2 reasoning stages
+- **GPT-5.1 Routing**: Automatic routing through GPT-5.1 reasoning stages
 - **Fallback Handling**: Graceful degradation when OpenAI API unavailable
 
 ## Standalone Script
@@ -151,8 +151,8 @@ npm test
 
 ## Environment Variables
 
-- `OPENAI_API_KEY` or `API_KEY`: OpenAI API key for GPT-5.2 access
-- `GPT51_MODEL` / `GPT5_MODEL`: GPT-5.2 reasoning model identifiers (defaults to `gpt-5.2`)
+- `OPENAI_API_KEY` or `API_KEY`: OpenAI API key for GPT-5.1 access
+- `GPT51_MODEL` / `GPT5_MODEL`: GPT-5.1 reasoning model identifiers (defaults to `gpt-5.1`)
 - `ORCHESTRATION_LAST_RESET`: Timestamp of last reset (automatically set)
 
 ## Error Handling
@@ -160,7 +160,7 @@ npm test
 The system gracefully handles:
 - Missing OpenAI API keys (returns mock responses)
 - Network connectivity issues
-- Invalid GPT-5.2 model configurations
+- Invalid GPT-5.1 model configurations
 - Memory system failures
 
 All errors are logged through the ARCANOS audit system with appropriate error codes and recovery suggestions.
