@@ -8,8 +8,12 @@ import crypto from 'crypto';
 import { runtime } from './openaiRuntime.js';
 import { trackModelResponse, trackPromptUsage } from './contextualReinforcement.js';
 import { createCacheKey } from '../utils/hashUtils.js';
-import { isRetryableError, classifyError } from '../utils/errorClassification.js';
 import { generateMockResponse } from './openai/mock.js';
+import { logOpenAIEvent, logOpenAISuccess } from '../utils/openaiLogger.js';
+import { handleOpenAIRequestError } from '../utils/openaiErrorHandler.js';
+import { buildSystemPromptMessages } from '../utils/messageBuilderUtils.js';
+import { buildCompletionRequestPayload } from '../utils/requestPayloadUtils.js';
+import { OPENAI_LOG_MESSAGES } from '../config/openaiLogMessages.js';
 import {
   CACHE_TTL_MS,
   DEFAULT_MAX_RETRIES,
@@ -45,7 +49,6 @@ import {
 import {
   DEFAULT_IMAGE_SIZE,
   IMAGE_GENERATION_MODEL,
-  OPENAI_REQUEST_LOG_CONTEXT,
   ROUTING_MAX_TOKENS
 } from './openai/config.js';
 import {
@@ -76,15 +79,6 @@ export type {
   ChatCompletionMessageParam,
   ChatCompletionResponseFormat,
   ImageSize
-};
-
-const logOpenAIEvent = (
-  level: 'debug' | 'info' | 'warn' | 'error',
-  message: string,
-  metadata?: Record<string, unknown>,
-  error?: Error
-) => {
-  aiLogger[level](message, { ...OPENAI_REQUEST_LOG_CONTEXT, ...metadata }, undefined, error);
 };
 
 /**
@@ -152,7 +146,7 @@ export async function callOpenAI(
     cacheKey = createCacheKey(model, cacheDescriptor);
     const cachedResult = responseCache.get(cacheKey) as CallOpenAICacheEntry | undefined;
     if (cachedResult) {
-      logOpenAIEvent('info', '💾 Cache hit for OpenAI request', { cacheKey });
+      logOpenAIEvent('info', OPENAI_LOG_MESSAGES.CACHE.HIT, { cacheKey });
       trackModelResponse(cachedResult.output, reinforcementMetadata);
       return { ...cachedResult, cached: true };
     }
@@ -224,19 +218,9 @@ async function makeOpenAIRequest(
       }
 
       const tokenParams = getTokenParameter(model, tokenLimit);
-      const requestPayload: any = {
-        model,
-        messages,
-        ...tokenParams,
-        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-        ...(options.top_p !== undefined ? { top_p: options.top_p } : {}),
-        ...(options.frequency_penalty !== undefined ? { frequency_penalty: options.frequency_penalty } : {}),
-        ...(options.presence_penalty !== undefined ? { presence_penalty: options.presence_penalty } : {}),
-        ...(options.responseFormat !== undefined ? { response_format: options.responseFormat } : {}),
-        ...(options.user !== undefined ? { user: options.user } : {})
-      };
+      const requestPayload = buildCompletionRequestPayload(model, messages, tokenParams, options);
 
-      logOpenAIEvent('info', `🤖 OpenAI request (attempt ${attempt}/${maxRetries}) - Model: ${model}`);
+      logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(attempt, maxRetries, model));
 
       const response: any = await client.chat.completions.create(requestPayload, {
         signal: controller.signal,
@@ -251,7 +235,7 @@ async function makeOpenAIRequest(
       const activeModel = response.model || model;
 
       // Log success metrics
-      logOpenAIEvent('info', '✅ OpenAI request succeeded', {
+      logOpenAISuccess(OPENAI_LOG_MESSAGES.REQUEST.SUCCESS, {
         attempt,
         model: activeModel,
         totalTokens: response.usage?.total_tokens || 'unknown'
@@ -263,36 +247,12 @@ async function makeOpenAIRequest(
       clearTimeout(timeout);
       lastError = err;
       
-      const isRetryable = isRetryableError(err);
-      const shouldRetry = attempt < maxRetries && isRetryable;
-      
-      // Enhanced error logging with error taxonomy
-      const errorType = classifyError(err);
-      
-      logOpenAIEvent('warn', `⚠️ OpenAI request failed (attempt ${attempt}/${maxRetries}, type: ${errorType})`, {
-        attempt,
-        maxRetries,
-        errorType,
-        message: err.message
-      },
-      err);
-      recordTraceEvent('openai.call.failure', {
-        attempt,
-        maxRetries,
-        errorType,
-        message: err.message
-      });
+      // Handle error with centralized logic
+      const { shouldRetry } = handleOpenAIRequestError(err, attempt, maxRetries);
 
       if (!shouldRetry) {
-        logOpenAIEvent('error', `❌ OpenAI request failed permanently after ${attempt} attempts`, undefined, err);
         break;
       }
-
-      logOpenAIEvent('info', '🔄 Retrying OpenAI request', {
-        attemptsRemaining: maxRetries - attempt,
-        errorType,
-        message: err.message
-      });
     }
   }
 
@@ -322,15 +282,11 @@ export const createGPT5Reasoning = async (
   const gpt5Model = getGPT5Model();
 
   try {
-    logOpenAIEvent('info', '🚀 [GPT-5.2 REASONING] Using model', { model: gpt5Model });
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_START(gpt5Model));
 
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
-
-    const messages = [
-      ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
-      { role: 'user' as const, content: prompt }
-    ];
+    const messages = buildSystemPromptMessages(prompt, systemPrompt);
 
     const requestPayload: any = {
       model: gpt5Model,
@@ -342,14 +298,14 @@ export const createGPT5Reasoning = async (
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const content = extractReasoningText(response);
-    logOpenAIEvent('info', '✅ [GPT-5.2 REASONING] Success', {
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_SUCCESS, {
       model: resolvedModel,
       preview: truncateText(content, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
     });
     return { content, model: resolvedModel };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
-    logOpenAIEvent('error', '❌ [GPT-5.2 REASONING] Error', { model: gpt5Model }, err as Error);
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.REASONING_ERROR, { model: gpt5Model }, err as Error);
     return { content: `[Fallback: GPT-5.2 unavailable - ${errorMsg}]`, error: errorMsg };
   }
 };
@@ -381,13 +337,13 @@ export const createGPT5ReasoningLayer = async (
   const gpt5Model = getGPT5Model();
 
   try {
-    logOpenAIEvent('info', '🔄 [GPT-5.2 LAYER] Refining ARCANOS response', { model: gpt5Model });
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.LAYER_REFINING, { model: gpt5Model });
 
     const tokenParams = getTokenParameter(gpt5Model, REASONING_TOKEN_LIMIT);
-    const messages = [
-      { role: 'system' as const, content: REASONING_SYSTEM_PROMPT },
-      { role: 'user' as const, content: buildReasoningPrompt(originalPrompt, arcanosResult, context) }
-    ];
+    const messages = buildSystemPromptMessages(
+      buildReasoningPrompt(originalPrompt, arcanosResult, context),
+      REASONING_SYSTEM_PROMPT
+    );
 
     const requestPayload: any = {
       model: gpt5Model,
@@ -404,7 +360,7 @@ export const createGPT5ReasoningLayer = async (
     // The GPT-5.2 response IS the refined result
     const refinedResult = reasoningContent;
 
-    logOpenAIEvent('info', '✅ [GPT-5.2 LAYER] Successfully refined response', {
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.LAYER_SUCCESS, {
       model: resolvedModel,
       length: refinedResult.length
     });
@@ -417,7 +373,7 @@ export const createGPT5ReasoningLayer = async (
     };
   } catch (err: any) {
     const errorMsg = err?.message || 'Unknown error';
-    logOpenAIEvent('error', '❌ [GPT-5.2 LAYER] Reasoning layer failed', { model: gpt5Model }, err as Error);
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.LAYER_ERROR, { model: gpt5Model }, err as Error);
     
     // Return original ARCANOS result on failure
     return { 
@@ -441,12 +397,9 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
   const gpt5Model = getGPT5Model();
 
   try {
-    logOpenAIEvent('info', '🎯 [GPT-5.2 STRICT] Making strict call', { model: gpt5Model });
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_CALL, { model: gpt5Model });
 
-    const messages = [
-      { role: 'system' as const, content: STRICT_ASSISTANT_PROMPT },
-      { role: 'user' as const, content: prompt }
-    ];
+    const messages = buildSystemPromptMessages(prompt, STRICT_ASSISTANT_PROMPT);
 
     const requestPayload: any = {
       model: gpt5Model,
@@ -463,7 +416,7 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
       );
     }
 
-    logOpenAIEvent('info', '✅ [GPT-5.2 STRICT] Success with model', { model: response.model });
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_SUCCESS(response.model));
     return response;
   } catch (error: any) {
     // Re-throw with clear error message indicating no fallback
@@ -485,7 +438,7 @@ const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
       return output.trim();
     }
   } catch (err) {
-    logOpenAIEvent('error', '❌ Failed to generate prompt via fine-tuned model', undefined, err as Error);
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.IMAGE.PROMPT_GENERATION_ERROR, undefined, err as Error);
   }
 
   return input;
@@ -522,7 +475,7 @@ export async function generateImage(
       }
     };
   } catch (err) {
-    logOpenAIEvent('error', '❌ OpenAI image generation failed', { model: IMAGE_GENERATION_MODEL }, err as Error);
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.IMAGE.GENERATION_ERROR, { model: IMAGE_GENERATION_MODEL }, err as Error);
     return {
       image: '',
       prompt,
@@ -578,7 +531,7 @@ export async function createCentralizedCompletion(
   runtime.addMessages(sessionId, arcanosMessages);
   runtime.setMetadata(sessionId, { model });
 
-  logOpenAIEvent('info', `🎯 ${ARCANOS_ROUTING_MESSAGE}`, { model });
+  logOpenAIEvent('info', `${OPENAI_LOG_MESSAGES.ARCANOS.ROUTING_PREFIX} ${ARCANOS_ROUTING_MESSAGE}`, { model });
 
   // Prepare request with token parameters for the specific model
   const tokenParams = getTokenParameter(model, options.max_tokens || ROUTING_MAX_TOKENS);
@@ -598,17 +551,17 @@ export async function createCentralizedCompletion(
     const response = await client.chat.completions.create(requestPayload);
     
     if (!options.stream && 'usage' in response) {
-      logOpenAIEvent('info', '✅ ARCANOS completion successful', {
+      logOpenAIEvent('info', OPENAI_LOG_MESSAGES.ARCANOS.COMPLETION_SUCCESS, {
         model,
         totalTokens: response.usage?.total_tokens || 'unknown'
       });
     } else {
-      logOpenAIEvent('info', '✅ ARCANOS streaming completion started', { model });
+      logOpenAIEvent('info', OPENAI_LOG_MESSAGES.ARCANOS.STREAMING_START, { model });
     }
 
     return response;
   } catch (error) {
-    logOpenAIEvent('error', '❌ ARCANOS completion failed', { model }, error as Error);
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.ARCANOS.COMPLETION_ERROR, { model }, error as Error);
     throw error;
   }
 }
