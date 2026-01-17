@@ -81,8 +81,16 @@ jobs:
         id: build_info
         run: |
           cd daemon-python
-          $version = pip show pyinstaller | Select-String "Version:" | ForEach-Object { $_.ToString().Split(":")[1].Trim() }
-          echo "pyinstaller_version=$version" >> $env:GITHUB_OUTPUT
+          try {
+            $version = pip show pyinstaller | Select-String "Version:" | ForEach-Object { $_.ToString().Split(":")[1].Trim() }
+            if ([string]::IsNullOrWhiteSpace($version)) {
+              $version = "unknown"
+            }
+            echo "pyinstaller_version=$version" >> $env:GITHUB_OUTPUT
+          } catch {
+            Write-Host "Warning: Could not retrieve PyInstaller version"
+            echo "pyinstaller_version=unknown" >> $env:GITHUB_OUTPUT
+          }
         shell: pwsh
 
       - name: 📝 Generate release notes
@@ -103,8 +111,8 @@ jobs:
           
           1. Download the executables from the assets below
           2. Place them in your desired directory
-          3. Run ``daemon.exe`` to start the background service
-          4. Use ``cli.exe read <key>`` or ``cli.exe write <key> <value>`` to interact with memory
+          3. Run `daemon.exe` to start the background service
+          4. Use `cli.exe read <key>` or `cli.exe write <key> <value>` to interact with memory
           
           ## 📋 Requirements
           
@@ -115,7 +123,7 @@ jobs:
           
           - Built with PyInstaller ${{ steps.build_info.outputs.pyinstaller_version }}
           - Python runtime: 3.11
-          - Build date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+          - Build date: $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')) UTC
           
           ---
           
