@@ -11,7 +11,47 @@ OpenAI client via `src/services/openai.ts` and `src/services/openai/*`.
 
 ## Daemon Download
 
-Download the Windows daemon executable here: **[Daemon Download](https://github.com/Arcanos/Arcanos/releases/download/v1.0.0/arcanos-daemon.exe)**.
+Download the Windows daemon executable here: **[Daemon Download](https://github.com/pbjustin/Arcanos/releases/latest)**.
+
+### Building Windows Executables
+
+The repository includes automated GitHub Actions workflow to build Windows executables for the daemon and CLI tools.
+
+#### Automatic Build (Recommended)
+
+To create a new release with pre-built executables:
+
+1. Create and push a version tag:
+   ```bash
+   git tag v1.0.1
+   git push origin v1.0.1
+   ```
+
+2. The workflow automatically:
+   - Builds `daemon.exe` and `cli.exe` using PyInstaller
+   - Creates a GitHub Release with the tag
+   - Uploads the executables as release assets
+
+#### Manual Build
+
+Or trigger the workflow manually from the Actions tab:
+
+1. Go to **Actions** → **Build and Release Windows Executables**
+2. Click **Run workflow**
+3. Enter a tag name (e.g., `v1.0.1`)
+4. Click **Run workflow**
+
+#### Local Build
+
+To build executables locally on Windows:
+
+```powershell
+cd daemon-python
+pip install -r requirements.txt
+.\build_windows.ps1
+```
+
+This creates `daemon.exe` and `cli.exe` in the `daemon-python/dist/` directory.
 
 ## Prerequisites
 
