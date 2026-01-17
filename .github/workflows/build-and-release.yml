@@ -65,6 +65,26 @@ jobs:
           }
         shell: pwsh
 
+      - name: 🔐 Generate checksums
+        run: |
+          cd daemon-python/dist
+          $daemonHash = (Get-FileHash daemon.exe -Algorithm SHA256).Hash
+          $cliHash = (Get-FileHash cli.exe -Algorithm SHA256).Hash
+          
+          Write-Host "Checksums generated:"
+          Write-Host "  daemon.exe: $daemonHash"
+          Write-Host "  cli.exe: $cliHash"
+          
+          # Save checksums to file
+          "SHA256 Checksums" | Out-File -FilePath checksums.txt -Encoding utf8
+          "================" | Out-File -FilePath checksums.txt -Encoding utf8 -Append
+          "daemon.exe: $daemonHash" | Out-File -FilePath checksums.txt -Encoding utf8 -Append
+          "cli.exe: $cliHash" | Out-File -FilePath checksums.txt -Encoding utf8 -Append
+          
+          Write-Host ""
+          Write-Host "Checksums saved to checksums.txt"
+        shell: pwsh
+
       - name: 🏷️ Determine release tag
         id: get_tag
         run: |
@@ -97,6 +117,14 @@ jobs:
         id: release_notes
         run: |
           $tag = "${{ steps.get_tag.outputs.tag }}"
+          
+          # Read checksums
+          if (-not (Test-Path "daemon-python/dist/checksums.txt")) {
+            Write-Error "Checksums file not found. Build may have failed."
+            exit 1
+          }
+          $checksums = Get-Content daemon-python/dist/checksums.txt -Raw
+          
           $notes = @"
           # ARCANOS Daemon Release $tag
           
@@ -118,6 +146,12 @@ jobs:
           
           - Windows 10 or later
           - No additional dependencies required (executables are self-contained)
+          
+          ## 🔐 Checksums
+          
+          ```
+          $checksums
+          ```
           
           ## 🔧 Build Information
           
@@ -147,6 +181,7 @@ jobs:
           files: |
             daemon-python/dist/daemon.exe
             daemon-python/dist/cli.exe
+            daemon-python/dist/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -156,6 +191,7 @@ jobs:
           Write-Host "📦 Uploaded assets:"
           Write-Host "   - daemon.exe"
           Write-Host "   - cli.exe"
+          Write-Host "   - checksums.txt"
           Write-Host ""
           Write-Host "🔗 View release: ${{ steps.create_release.outputs.url }}"
         shell: pwsh
