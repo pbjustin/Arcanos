@@ -9,6 +9,10 @@ HTTP APIs, and persists state to disk or PostgreSQL. The server boots from
 `src/start-server.ts`, registers routes in `src/routes/register.ts`, and initializes the
 OpenAI client via `src/services/openai.ts` and `src/services/openai/*`.
 
+## Daemon Download
+
+Download the Windows daemon executable here: **[Daemon Download](https://github.com/Arcanos/Arcanos/releases/download/v1.0.0/arcanos-daemon.exe)**.
+
 ## Prerequisites
 
 - Node.js 18+ and npm 8+ (see `package.json` engines).
