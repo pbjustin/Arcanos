@@ -1,1 +1,2 @@
 # Standard library only; add extras if needed.
+pyinstaller==6.10.0
