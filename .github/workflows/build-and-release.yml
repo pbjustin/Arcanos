@@ -1,0 +1,153 @@
+name: Build and Release Windows Executables
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-executables:
+    name: Build Windows Executables
+    runs-on: windows-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install Python dependencies
+        run: |
+          cd daemon-python
+          pip install -r requirements.txt
+        shell: pwsh
+
+      - name: 🔨 Build Windows executables
+        run: |
+          cd daemon-python
+          ./build_windows.ps1
+        shell: pwsh
+
+      - name: 📋 Verify build outputs
+        run: |
+          cd daemon-python
+          if (Test-Path "dist/daemon.exe") {
+            Write-Host "✅ daemon.exe built successfully"
+            $daemonSize = (Get-Item "dist/daemon.exe").Length
+            Write-Host "   Size: $([math]::Round($daemonSize/1MB, 2)) MB"
+          } else {
+            Write-Host "❌ daemon.exe not found"
+            exit 1
+          }
+          
+          if (Test-Path "dist/cli.exe") {
+            Write-Host "✅ cli.exe built successfully"
+            $cliSize = (Get-Item "dist/cli.exe").Length
+            Write-Host "   Size: $([math]::Round($cliSize/1MB, 2)) MB"
+          } else {
+            Write-Host "❌ cli.exe not found"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: 🏷️ Determine release tag
+        id: get_tag
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag_name }}"
+          } else {
+            $tag = "${{ github.ref_name }}"
+          }
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Release tag: $tag"
+        shell: pwsh
+
+      - name: 📦 Get PyInstaller version for release notes
+        id: build_info
+        run: |
+          cd daemon-python
+          $version = pip show pyinstaller | Select-String "Version:" | ForEach-Object { $_.ToString().Split(":")[1].Trim() }
+          echo "pyinstaller_version=$version" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: 📝 Generate release notes
+        id: release_notes
+        run: |
+          $tag = "${{ steps.get_tag.outputs.tag }}"
+          $notes = @"
+          # ARCANOS Daemon Release $tag
+          
+          ## 📦 Windows Executables
+          
+          This release includes pre-built Windows executables for the ARCANOS daemon and CLI tools:
+          
+          - **daemon.exe** - Background service for periodic memory synchronization
+          - **cli.exe** - Command-line interface for reading and writing daemon memory
+          
+          ## 🚀 Quick Start
+          
+          1. Download the executables from the assets below
+          2. Place them in your desired directory
+          3. Run ``daemon.exe`` to start the background service
+          4. Use ``cli.exe read <key>`` or ``cli.exe write <key> <value>`` to interact with memory
+          
+          ## 📋 Requirements
+          
+          - Windows 10 or later
+          - No additional dependencies required (executables are self-contained)
+          
+          ## 🔧 Build Information
+          
+          - Built with PyInstaller ${{ steps.build_info.outputs.pyinstaller_version }}
+          - Python runtime: 3.11
+          - Build date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+          
+          ---
+          
+          *Generated automatically by GitHub Actions*
+          "@
+          
+          # Save to file for release creation
+          $notes | Out-File -FilePath release_notes.md -Encoding utf8
+          Write-Host "Release notes generated"
+        shell: pwsh
+
+      - name: 🚀 Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: ARCANOS Daemon ${{ steps.get_tag.outputs.tag }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            daemon-python/dist/daemon.exe
+            daemon-python/dist/cli.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ✅ Release complete
+        run: |
+          Write-Host "🎉 Release ${{ steps.get_tag.outputs.tag }} created successfully!"
+          Write-Host "📦 Uploaded assets:"
+          Write-Host "   - daemon.exe"
+          Write-Host "   - cli.exe"
+          Write-Host ""
+          Write-Host "🔗 View release: ${{ steps.create_release.outputs.url }}"
+        shell: pwsh
