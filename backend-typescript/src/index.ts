@@ -1,7 +1,7 @@
 import express from "express";
-import askRoute from "./routes/ask";
-import updateRoute from "./routes/update";
-import healthRoute from "./routes/health";
+import askRoute from "./routes/ask.js";
+import updateRoute from "./routes/update.js";
+import healthRoute from "./routes/health.js";
 
 /**
  * Create and configure the ARCANOS HTTP server.

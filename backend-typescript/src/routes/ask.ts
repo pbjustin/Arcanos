@@ -1,5 +1,5 @@
 import { Router } from "express";
-import memory from "../memory";
+import memory from "../memory.js";
 
 const router = Router();
 
