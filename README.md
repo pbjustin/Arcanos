@@ -11,7 +11,9 @@ OpenAI client via `src/services/openai.ts` and `src/services/openai/*`.
 
 ## Daemon Download
 
-Download the Windows daemon executable here: **[Daemon Download](https://github.com/pbjustin/Arcanos/releases/latest)**.
+Download the latest Windows daemon executables from the **[GitHub Releases](https://github.com/pbjustin/Arcanos/releases/latest)** page.
+
+> **Note:** If no releases are available yet, you can trigger the automated build workflow or build locally (see instructions below).
 
 ### Building Windows Executables
 
