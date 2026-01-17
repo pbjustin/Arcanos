@@ -23,6 +23,7 @@ src/**/*.js.map
 # Runtime state files
 systemState.json
 .env.production.local
+daemon-python/memory.json
 
 # Logs
 logs/*.log
