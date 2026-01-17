@@ -119,6 +119,10 @@ jobs:
           $tag = "${{ steps.get_tag.outputs.tag }}"
           
           # Read checksums
+          if (-not (Test-Path "daemon-python/dist/checksums.txt")) {
+            Write-Error "Checksums file not found. Build may have failed."
+            exit 1
+          }
           $checksums = Get-Content daemon-python/dist/checksums.txt -Raw
           
           $notes = @"
