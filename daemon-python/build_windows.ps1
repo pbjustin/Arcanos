@@ -14,4 +14,17 @@ Write-Host "[ARCANOS] Packaging daemon for Windows..."
 
 # //audit Assumption: build path is writable. Risk: file permission errors. Invariant: dist directory created. Handling: let pyinstaller fail visibly.
 pyinstaller --onefile --distpath dist --name daemon daemon.py
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "[ARCANOS] Failed to build daemon.exe"
+    exit 1
+}
+
 pyinstaller --onefile --distpath dist --name cli cli.py
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "[ARCANOS] Failed to build cli.exe"
+    exit 1
+}
+
+Write-Host "[ARCANOS] Build completed successfully!"
+Write-Host "  - daemon.exe: dist/daemon.exe"
+Write-Host "  - cli.exe: dist/cli.exe"
