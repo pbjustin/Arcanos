@@ -5,6 +5,50 @@
 
 import type { Response } from 'express';
 
+export interface ValidationErrorOptions {
+  acceptedFields?: readonly string[];
+  maxLength?: number;
+}
+
+export interface ValidationErrorPayload {
+  error: string;
+  details: string[];
+  timestamp: string;
+  acceptedFields?: readonly string[];
+  maxLength?: number;
+}
+
+/**
+ * Build a standardized validation error payload.
+ *
+ * @param details - Validation error messages.
+ * @param options - Optional payload extensions for accepted fields and max length.
+ * @returns Validation error payload with timestamp.
+ * @edgeCases Includes optional fields only when provided to avoid noisy responses.
+ */
+export function buildValidationErrorResponse(
+  details: string[],
+  options: ValidationErrorOptions = {}
+): ValidationErrorPayload {
+  const response: ValidationErrorPayload = {
+    error: 'Validation failed',
+    details,
+    timestamp: new Date().toISOString()
+  };
+
+  //audit Assumption: acceptedFields is optional; risk: leaking extra metadata; invariant: only include when provided; handling: conditional assignment.
+  if (options.acceptedFields) {
+    response.acceptedFields = options.acceptedFields;
+  }
+
+  //audit Assumption: maxLength is optional; risk: mismatched schema limits; invariant: only include when provided; handling: conditional assignment.
+  if (typeof options.maxLength === 'number') {
+    response.maxLength = options.maxLength;
+  }
+
+  return response;
+}
+
 /**
  * Send a standardized validation error response
  * 
@@ -15,17 +59,9 @@ import type { Response } from 'express';
 export function sendValidationError(
   res: Response,
   details: string[],
-  acceptedFields?: string[]
+  options?: ValidationErrorOptions
 ): void {
-  const response: any = {
-    error: 'Validation failed',
-    details,
-    timestamp: new Date().toISOString()
-  };
-
-  if (acceptedFields) {
-    response.acceptedFields = acceptedFields;
-  }
+  const response = buildValidationErrorResponse(details, options);
 
   res.status(400).json(response);
 }

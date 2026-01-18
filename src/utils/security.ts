@@ -4,6 +4,7 @@
  */
 
 import { Response } from 'express';
+import { buildValidationErrorResponse } from './errorResponse.js';
 
 // Input validation schemas
 export interface ValidationRule {
@@ -124,11 +125,8 @@ export function createValidationMiddleware(schema: ValidationSchema) {
     const validation = validateInput(req.body, schema);
     
     if (!validation.isValid) {
-      return res.status(400).json({
-        error: 'Validation failed',
-        details: validation.errors,
-        timestamp: new Date().toISOString()
-      });
+      //audit Assumption: validation errors map directly to client payload; risk: leaking schema details; invariant: only include validation errors; handling: standardized payload.
+      return res.status(400).json(buildValidationErrorResponse(validation.errors));
     }
     
     // Replace request body with sanitized version

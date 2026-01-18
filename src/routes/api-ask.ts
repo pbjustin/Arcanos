@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { handleAIRequest, type AskRequest, type AskResponse } from './ask.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
 import { inferHttpMethodIntent } from '../utils/httpMethodIntent.js';
+import { buildValidationErrorResponse } from '../utils/errorResponse.js';
 import type { ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
@@ -61,10 +62,14 @@ router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorR
     req.body.query;
 
   if (!basePrompt) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      details: ['Request must include one of message, prompt, userInput, content, text, or query fields']
-    });
+    //audit Assumption: at least one text field is required; risk: rejecting new aliases; invariant: prompt content must exist; handling: return standardized validation error.
+    return res
+      .status(400)
+      .json(
+        buildValidationErrorResponse([
+          'Request must include one of message, prompt, userInput, content, text, or query fields'
+        ])
+      );
   }
 
   const contextDirectives: string[] = [];
@@ -126,4 +131,3 @@ router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorR
 });
 
 export default router;
-
