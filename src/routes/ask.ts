@@ -3,6 +3,7 @@ import { runThroughBrain } from '../logic/trinity.js';
 import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware, securityHeaders, validateInput } from '../utils/security.js';
+import { buildValidationErrorResponse } from '../utils/errorResponse.js';
 import type { AIRequestDTO, AIResponseDTO, ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
@@ -28,6 +29,14 @@ const askValidationSchema = {
   overrideAuditSafe: { type: 'string' as const, maxLength: 50, sanitize: true }
 };
 
+/**
+ * Validate and sanitize ask request payloads.
+ *
+ * @param req - Express request.
+ * @param res - Express response used for validation errors.
+ * @param next - Express next handler.
+ * @edgeCases Rejects requests missing any supported text field aliases.
+ */
 export const askValidationMiddleware = (req: Request, res: Response, next: () => void) => {
   const rawSource = req.method === 'GET' ? req.query : req.body;
   const source =
@@ -40,11 +49,8 @@ export const askValidationMiddleware = (req: Request, res: Response, next: () =>
   const validation = validateInput(source, askValidationSchema);
 
   if (!validation.isValid) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      details: validation.errors,
-      timestamp: new Date().toISOString()
-    });
+    //audit Assumption: validation errors are safe to expose; risk: leaking schema expectations; invariant: only validation errors returned; handling: standardized payload.
+    return res.status(400).json(buildValidationErrorResponse(validation.errors));
   }
 
   const hasTextField = ASK_TEXT_FIELDS.some(field => {
@@ -53,13 +59,15 @@ export const askValidationMiddleware = (req: Request, res: Response, next: () =>
   });
 
   if (!hasTextField) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      details: [`Request must include one of ${ASK_TEXT_FIELDS.join(', ')} fields`],
-      acceptedFields: ASK_TEXT_FIELDS,
-      maxLength: 10000,
-      timestamp: new Date().toISOString()
-    });
+    //audit Assumption: a text payload is required; risk: rejecting valid requests; invariant: at least one text field must be present; handling: return accepted fields.
+    return res
+      .status(400)
+      .json(
+        buildValidationErrorResponse([`Request must include one of ${ASK_TEXT_FIELDS.join(', ')} fields`], {
+          acceptedFields: ASK_TEXT_FIELDS,
+          maxLength: 10000
+        })
+      );
   }
 
   req.body = validation.sanitized;
