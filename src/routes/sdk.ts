@@ -16,6 +16,7 @@ import {
 } from '../config/workerConfig.js';
 import { createValidationMiddleware } from '../utils/security.js';
 import { connectResearchBridge } from '../services/researchHub.js';
+import { buildValidationErrorResponse } from '../utils/errorResponse.js';
 
 const router = express.Router();
 const sdkResearchBridge = connectResearchBridge('SDK:RESEARCH');
@@ -42,12 +43,10 @@ router.post(
     const { topic, urls = [] } = req.body as { topic: string; urls?: string[] };
 
     if (!Array.isArray(urls) || urls.some(url => typeof url !== 'string')) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: ["Field 'urls' must be an array of strings"],
-        timestamp: new Date().toISOString()
-      });
+      //audit Assumption: urls must be string array; risk: rejecting valid payloads; invariant: only strings allowed; handling: standardized validation error.
+      return res
+        .status(400)
+        .json({ success: false, ...buildValidationErrorResponse(["Field 'urls' must be an array of strings"]) });
     }
 
     const result = await sdkResearchBridge.requestResearch({ topic, urls });
