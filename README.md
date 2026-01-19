@@ -21,6 +21,13 @@ They are versioned together for now but should be treated as independent codebas
 
 ---
 
+## Upcoming (WIP)
+
+- **Demon**: Work in progress and an upcoming feature.
+
+---
+
+
 ## ✨ Features
 
 ### 🤖 Core AI
