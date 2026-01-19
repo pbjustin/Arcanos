@@ -1,0 +1,29 @@
+# Build artifacts
+node_modules/
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs and temp files
+logs/
+npm_logs/
+tmp/
+temp/
+*.log
+*.tmp
+
+# Version control and CI files
+.git/
+.github/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

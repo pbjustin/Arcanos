@@ -1,0 +1,127 @@
+name: Feature Request
+description: Suggest a new feature for Arcanos Backend
+title: "[FEATURE] "
+labels: ["enhancement", "needs-discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📋 Feature Request Self-Check
+        Before submitting, verify:
+        - [ ] Feature aligns with AI-controlled architecture principles
+        - [ ] Not a duplicate of existing feature requests
+        - [ ] Backward compatibility impact considered
+        - [ ] OpenAI SDK v5.16.0 compatibility requirements identified
+        - [ ] Railway deployment implications considered
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: Describe the problem or gap this feature would address...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your proposed implementation approach
+      placeholder: How would you like this feature to work?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which component would this feature primarily affect?
+      options:
+        - AI/OpenAI Integration
+        - API Endpoints
+        - Memory System
+        - Worker System
+        - Railway Deployment
+        - Database/PostgreSQL
+        - Documentation
+        - Build/CI System
+        - Multiple Components
+    validations:
+      required: true
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Implementation Complexity
+      description: What's your estimate of the development effort?
+      options:
+        - Low (1-2 days)
+        - Medium (1-2 weeks)
+        - High (1+ months)
+        - Unknown
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact Assessment
+      description: Who would benefit from this feature?
+      options:
+        - label: End users of the API
+        - label: Developers contributing to the project
+        - label: System administrators/DevOps
+        - label: AI model training/fine-tuning workflows
+        - label: Railway deployment processes
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Approaches
+      description: What other approaches have you considered?
+      placeholder: Describe alternative solutions you've considered...
+
+  - type: dropdown
+    id: confirmation
+    attributes:
+      label: Confirmation Gate Requirement
+      description: Would this feature require confirmation gates for sensitive operations?
+      options:
+        - "No confirmation needed"
+        - "Yes - requires X-Confirmation header"
+        - "Depends on implementation"
+        - "Unsure"
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Usage Examples
+      description: Provide examples of how this feature would be used
+      render: typescript
+      placeholder: |
+        // Example API usage
+        const response = await fetch('/api/new-feature', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ example: 'data' })
+        });
+
+  - type: checkboxes
+    id: requirements
+    attributes:
+      label: Additional Requirements
+      options:
+        - label: Backward compatibility required
+        - label: Documentation updates needed
+        - label: Tests required
+        - label: CI/CD pipeline updates needed
+        - label: Environment variable additions
+        - label: Database migration required
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context or screenshots about the feature request
+      placeholder: Any additional information that might be helpful...

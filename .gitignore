@@ -1,12 +1,133 @@
-# Python
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Compiled JS files in src directory (should only be in dist/)
+src/**/*.js
+src/**/*.js.map
+!src/persistenceManagerHierarchy.js
+!src/commands/arcanos/audit_override.js
+
+# Environment variables
+.env.local
+.env.development.local
+.env.test.local
+
+# Runtime state files
+systemState.json
+.env.production.local
+
+# Logs
+logs/*.log
+logs/*.txt
+logs/audit-*.json
+!logs/compliance_report.json
+!logs/.gitkeep
+*.log
+!memory/state/audit.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# Dependency directories
+node_modules/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# NPM log directory
+npm_logs/
+
+# Test files
+test-webhook.js
+test-guide-handler.js
+test-formatter.js
+test-integration.js
+demo-ai-patch-system.sh
+test-ai-service-dispatcher.ts
+test-dispatcher-integration.ts
+test-worker-loading.js
+requirements-verification.js
+
+# Development and debugging scripts  
+dev-tests/
+
+# Storage directories
+storage/canon/*.txt
+!storage/canon/sample-storyline.txt
+storage/canon/test-logger.json
+storage/memory-snapshots/
+storage/code-improvements/
+
+# Runtime heartbeat file
+memory/heartbeat.json
+
+/src/generated/prisma
+
+# Python files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+
+# Dead code scanner reports
+dead_code_report.txt
+dead_code_test_report.txt
+
+# Deprecated code (CREPID purge)
+# Keep README but ignore deprecated files
+deprecated/*
+!deprecated/README.md
+!deprecated/audit/.gitkeep
+!deprecated/modules/.gitkeep
+!deprecated/scripts/.gitkeep
+!deprecated/utils/.gitkeep
+# Python
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -19,34 +140,12 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-venv/
-env/
-ENV/
-
 # Node
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.npm
-.eslintcache
-
 # Environment
 .env
-.env.local
 .env.production
-
 # IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
 # OS
-.DS_Store
-Thumbs.db
-
 # ARCANOS specific
 daemon-python/memories.json
 daemon-python/logs/
@@ -56,9 +155,7 @@ daemon-python/crash_reports/
 daemon-python/telemetry/
 daemon-python/backups/
 daemon-python/screenshots/
-*.log
 *.db
-
 # Sensitive runtime artifacts
 daemon-python/.env
 backend-typescript/.env
@@ -69,13 +166,10 @@ backend-typescript/.env
 daemon-python/cert.pfx
 daemon-python/*.pem
 daemon-python/*.key
-
 # User data (except templates)
 daemon-python/memories_*.json
 daemon-python/user_*.json
 !daemon-python/memory/bootstrap_template.json
-
-# Temporary files
 daemon-python/temp/
 daemon-python/cache/
 **/__pycache__/
@@ -83,7 +177,6 @@ daemon-python/cache/
 **/*.pyc
 **/*.pyo
 **/*.pyd
-
 # Build artifacts
 *.exe
 *.msi
@@ -93,22 +186,13 @@ daemon-python/cache/
 daemon-python/dist/
 daemon-python/build/
 backend-typescript/dist/
-
 # IDE and OS
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
 .vscode/settings.json
 .vscode/launch.json
-.idea/
-
 # Testing
-.pytest_cache/
 .coverage
 htmlcov/
 .tox/
-
 # Certificates
 *.pfx
 *.p12
