@@ -42,13 +42,13 @@ describe('Daemon Purge System', () => {
       expect(existsSync(configPath)).toBe(true);
     });
 
-    test('should have valid JSON structure in config', () => {
+    test('should have valid JSON structure in config', async () => {
       const result = validateAuthorizedServices();
 
       if (result.valid) {
         // Config should have required fields
-        const fs = require('fs');
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const { readFileSync } = await import('fs');
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 
         expect(config).toHaveProperty('authorizedProcesses');
         expect(config).toHaveProperty('authorizedServices');
