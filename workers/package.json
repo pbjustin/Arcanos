@@ -1,0 +1,19 @@
+{
+  "name": "arcanos-workers",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:workers": "tsc",
+    "start:openai": "node dist/workers/openai-worker.js",
+    "start:memory": "node dist/workers/memory-worker.js",
+    "start:memorySync": "node dist/workers/memorySync-worker.js"
+  },
+  "dependencies": {
+    "openai": "^6.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}

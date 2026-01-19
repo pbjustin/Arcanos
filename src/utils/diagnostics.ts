@@ -1,0 +1,241 @@
+/**
+ * System Diagnostics and Health Checks
+ * 
+ * Provides comprehensive health monitoring for the Arcanos backend, including:
+ * - Memory usage and system metrics
+ * - Worker module availability
+ * - Security environment validation
+ * - Telemetry aggregation
+ * - Circuit breaker status
+ * 
+ * Used by health endpoints (/health, /healthz, /readyz) for liveness and readiness probes.
+ * 
+ * @module diagnostics
+ */
+
+import fs from 'fs';
+import os from 'os';
+import { getCircuitBreakerSnapshot } from '../services/openai.js';
+import { getTelemetrySnapshot } from './telemetry.js';
+import { getEnvironmentSecuritySummary } from './environmentSecurity.js';
+import { resolveWorkersDirectory } from './workerPaths.js';
+
+/**
+ * Worker subsystem health status.
+ */
+interface WorkerHealth {
+  expected: boolean;
+  directoryExists: boolean;
+  healthy: boolean;
+  files: string[];
+  reason?: string;
+}
+
+/**
+ * Complete health check report aggregating all system components.
+ */
+export interface HealthCheckReport {
+  status: 'ok' | 'degraded';
+  summary: string;
+  raw: NodeJS.MemoryUsage;
+  security: ReturnType<typeof getEnvironmentSecuritySummary>;
+  components: {
+    workers: WorkerHealth;
+    memory: {
+      heapMB: string;
+      rssMB: string;
+      externalMB: string;
+      arrayBuffersMB: string;
+    };
+  };
+  metrics: {
+    uptimeSeconds: number;
+    loadAverage: {
+      oneMinute: string;
+      fiveMinute: string;
+      fifteenMinute: string;
+    };
+  };
+  telemetry: ReturnType<typeof getTelemetrySnapshot>;
+  resilience: {
+    circuitBreaker: ReturnType<typeof getCircuitBreakerSnapshot>;
+  };
+}
+
+/**
+ * Evaluates the health of the worker subsystem.
+ * Checks if workers are enabled, directory exists, and worker files are available.
+ * 
+ * @returns Worker health assessment with status and reason
+ */
+function evaluateWorkerHealth(): WorkerHealth {
+  const { path: workersDir, exists: directoryExists, checked } = resolveWorkersDirectory();
+  const runWorkersEnv = process.env.RUN_WORKERS;
+  const workersEnabled = runWorkersEnv === 'true' || runWorkersEnv === '1';
+
+  if (!workersEnabled) {
+    return {
+      expected: false,
+      directoryExists,
+      healthy: true,
+      files: [],
+      reason: 'Workers disabled via RUN_WORKERS'
+    };
+  }
+
+  if (!directoryExists || !fs.existsSync(workersDir)) {
+    return {
+      expected: true,
+      directoryExists: false,
+      healthy: false,
+      files: [],
+      reason:
+        checked.length > 0
+          ? `Workers directory not found (checked: ${checked.join(' | ')})`
+          : 'Workers directory not found (worker modules optional)'
+    };
+  }
+
+  let workerFiles: string[] = [];
+  try {
+    workerFiles = fs
+      .readdirSync(workersDir)
+      .filter(file => file.endsWith('.js') && !file.includes('shared'));
+  } catch (error) {
+    return {
+      expected: true,
+      directoryExists: true,
+      healthy: false,
+      files: [],
+      reason: error instanceof Error ? error.message : 'Failed to read workers directory'
+    };
+  }
+
+  if (workerFiles.length === 0) {
+    return {
+      expected: true,
+      directoryExists: true,
+      healthy: true,
+      files: workerFiles,
+      reason: 'No worker modules registered'
+    };
+  }
+
+  return {
+    expected: true,
+    directoryExists: true,
+    healthy: true,
+    files: workerFiles
+  };
+}
+
+/**
+ * Executes a comprehensive health check of all system components.
+ * Aggregates memory usage, worker status, security status, telemetry,
+ * and circuit breaker state into a single report.
+ * 
+ * @returns Complete health check report with status summary
+ */
+export function runHealthCheck(): HealthCheckReport {
+  console.log('[🩺 HealthCheck] Running diagnostics');
+  const mem = process.memoryUsage();
+  const heapMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
+  const rssMB = (mem.rss / 1024 / 1024).toFixed(2);
+  const externalMB = (mem.external / 1024 / 1024).toFixed(2);
+  const arrayBuffersMB = mem.arrayBuffers
+    ? (mem.arrayBuffers / 1024 / 1024).toFixed(2)
+    : '0.00';
+  const uptimeSeconds = process.uptime();
+  const uptime = uptimeSeconds.toFixed(1);
+  const security = getEnvironmentSecuritySummary();
+  const workers = evaluateWorkerHealth();
+  const [load1, load5, load15] = os.loadavg().map(avg => avg.toFixed(2));
+  const telemetry = getTelemetrySnapshot();
+  const circuitBreaker = getCircuitBreakerSnapshot();
+
+  console.log(
+    `[🩺 HealthCheck] Memory | Heap: ${heapMB}MB | RSS: ${rssMB}MB | External: ${externalMB}MB | ArrayBuffers: ${arrayBuffersMB}MB`
+  );
+  console.log(`[🖥️ Runtime] PID: ${process.pid} | Node: ${process.version} | Uptime: ${uptime}s`);
+  console.log(`[📊 Load] 1m=${load1} | 5m=${load5} | 15m=${load15}`);
+
+  if (security) {
+    const matchedFingerprint = security.matchedFingerprint
+      ? ` matched=${security.matchedFingerprint}`
+      : '';
+    console.log(
+      `[🛡️ Security] Trusted=${security.trusted} SafeMode=${security.safeMode} Fingerprint=${security.fingerprint}${matchedFingerprint}`
+    );
+    if (security.issues.length > 0) {
+      console.log(`[🛡️ Security] Issues: ${security.issues.join(' | ')}`);
+    }
+  }
+
+  if (!workers.healthy) {
+    console.warn('[🧵 Workers] Worker subsystem reported an unhealthy status', workers.reason);
+  } else {
+    console.log(
+      `[🧵 Workers] Healthy=${workers.healthy} Expected=${workers.expected} DirectoryExists=${workers.directoryExists} Files=${
+        workers.files.length > 0 ? workers.files.join(', ') : 'none'
+      }`
+    );
+    if (workers.reason) {
+      console.log(`[🧵 Workers] Detail: ${workers.reason}`);
+    }
+  }
+
+  console.log(
+    `[🧰 Resilience] CircuitBreaker state=${circuitBreaker.state} failures=${circuitBreaker.failureCount} lastFailure=${
+      circuitBreaker.lastFailureTime ? new Date(circuitBreaker.lastFailureTime).toISOString() : 'n/a'
+    }`
+  );
+  console.log(
+    `[📈 Telemetry] Logs=${telemetry.metrics.totalLogs} RecentEvents=${telemetry.traces.recentEvents.length}`
+  );
+
+  const status: HealthCheckReport['status'] = workers.healthy ? 'ok' : 'degraded';
+  const summaryParts = [
+    `Heap ${heapMB}MB`,
+    `RSS ${rssMB}MB`,
+    `External ${externalMB}MB`,
+    `Uptime ${uptime}s`
+  ];
+
+  if (!workers.healthy && workers.reason) {
+    summaryParts.push(`Workers: ${workers.reason}`);
+  } else if (workers.expected) {
+    summaryParts.push('Workers: healthy');
+  }
+
+  if (security) {
+    summaryParts.push(`Security trusted=${security.trusted ? 'yes' : 'no'} safeMode=${security.safeMode ? 'on' : 'off'}`);
+  }
+
+  return {
+    status,
+    summary: summaryParts.join(' | '),
+    raw: mem,
+    security,
+    components: {
+      workers,
+      memory: {
+        heapMB,
+        rssMB,
+        externalMB,
+        arrayBuffersMB
+      }
+    },
+    metrics: {
+      uptimeSeconds,
+      loadAverage: {
+        oneMinute: load1,
+        fiveMinute: load5,
+        fifteenMinute: load15
+      }
+    },
+    telemetry,
+    resilience: {
+      circuitBreaker
+    }
+  };
+}
