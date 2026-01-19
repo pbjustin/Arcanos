@@ -19,6 +19,8 @@ This repo currently hosts two separate codebases on `main`:
 
 They are versioned together for now but should be treated as independent codebases with separate dependencies, builds, tests, and release steps.
 
+The pre-merge backend README is preserved at `README_PRE_MERGE.md`.
+
 ---
 
 ## Upcoming (WIP)
