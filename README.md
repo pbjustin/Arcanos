@@ -9,10 +9,6 @@ HTTP APIs, and persists state to disk or PostgreSQL. The server boots from
 `src/start-server.ts`, registers routes in `src/routes/register.ts`, and initializes the
 OpenAI client via `src/services/openai.ts` and `src/services/openai/*`.
 
-## Upcoming (WIP)
-
-- Demon: Work in progress and an upcoming feature.
-
 ## Prerequisites
 
 - Node.js 18+ and npm 8+ (see `package.json` engines).
