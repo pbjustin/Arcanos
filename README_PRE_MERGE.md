@@ -28,15 +28,15 @@ Populate at least `OPENAI_API_KEY` in `.env` before running locally.
 
 Key environment variables (see `docs/CONFIGURATION.md` for the complete matrix):
 
-- `OPENAI_API_KEY` â€“ required for live OpenAI calls (missing keys return mock responses).
+- `OPENAI_API_KEY` – required for live OpenAI calls (missing keys return mock responses).
 - `OPENAI_MODEL`, `RAILWAY_OPENAI_MODEL`, `FINETUNED_MODEL_ID`, `FINE_TUNED_MODEL_ID`, `AI_MODEL`
-  â€“ model selection chain used by the OpenAI client (default: `gpt-4o`).
-- `FALLBACK_MODEL`, `AI_FALLBACK_MODEL`, `RAILWAY_OPENAI_FALLBACK_MODEL` â€“ fallback model
+  – model selection chain used by the OpenAI client (default: `gpt-4o`).
+- `FALLBACK_MODEL`, `AI_FALLBACK_MODEL`, `RAILWAY_OPENAI_FALLBACK_MODEL` – fallback model
   chain used when the primary model fails (default: `gpt-4`).
-- `GPT51_MODEL` / `GPT5_MODEL` â€“ GPT-5.1 reasoning model override (defaults to `gpt-5.1`).
-- `DATABASE_URL` or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` â€“ database connection.
-- `RUN_WORKERS`, `WORKER_COUNT`, `WORKER_MODEL`, `WORKER_API_TIMEOUT_MS` â€“ background workers.
-- `ARC_LOG_PATH`, `ARC_MEMORY_PATH`, `LOG_LEVEL` â€“ filesystem paths and logging.
+- `GPT51_MODEL` / `GPT5_MODEL` – GPT-5.1 reasoning model override (defaults to `gpt-5.1`).
+- `DATABASE_URL` or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` – database connection.
+- `RUN_WORKERS`, `WORKER_COUNT`, `WORKER_MODEL`, `WORKER_API_TIMEOUT_MS` – background workers.
+- `ARC_LOG_PATH`, `ARC_MEMORY_PATH`, `LOG_LEVEL` – filesystem paths and logging.
 
 ## Run locally
 
