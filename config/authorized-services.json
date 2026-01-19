@@ -1,0 +1,29 @@
+{
+  "authorizedProcesses": [
+    "node",
+    "npm",
+    "nginx",
+    "postgresql",
+    "postgres",
+    "redis-server",
+    "systemd",
+    "sshd",
+    "cron",
+    "dockerd",
+    "containerd"
+  ],
+  "authorizedServices": [
+    "nginx",
+    "postgresql",
+    "redis",
+    "docker",
+    "ssh",
+    "cron"
+  ],
+  "pm2Ecosystem": "ecosystem.config.js",
+  "allowedDockerImages": [
+    "postgres",
+    "redis",
+    "nginx"
+  ]
+}
