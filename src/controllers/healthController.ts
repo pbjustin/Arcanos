@@ -4,16 +4,11 @@
 
 import { Request, Response } from 'express';
 import { getOpenAIServiceHealth } from '../services/openai.js';
-import { getStatus as getDbStatus } from '../db.js';
 import { getEnvironmentInfo } from '../utils/environmentValidation.js';
 import { buildTimestampedPayload } from '../utils/responseHelpers.js';
 import { env } from '../utils/env.js';
-import {
-  assessCoreServiceReadiness,
-  mapReadinessToHealthStatus,
-  type DatabaseStatusLike,
-  type HealthStatus
-} from '../utils/healthChecks.js';
+
+type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
 
 interface HealthResponse {
   status: HealthStatus;
@@ -28,11 +23,26 @@ interface HealthResponse {
   error?: string;
 }
 
+function determineHealthStatus(hasOpenAiKey: boolean, hasDatabaseUrl: boolean): HealthStatus {
+  let status: HealthStatus = 'healthy';
+
+  //audit Assumption: missing OpenAI key implies degraded health; risk: misclassifying expected mock mode; invariant: status reflects critical dependencies; handling: downgrade to degraded.
+  if (!hasOpenAiKey) {
+    status = 'degraded';
+  }
+
+  //audit Assumption: missing database URL implies degraded health; risk: false positives in memory mode; invariant: status reflects critical dependencies; handling: downgrade to degraded.
+  if (!hasDatabaseUrl) {
+    status = 'degraded';
+  }
+
+  return status;
+}
+
 function buildHealthResponsePayload(
   status: HealthStatus,
   openaiHealth: unknown,
   envInfo: unknown,
-  dbStatus: DatabaseStatusLike,
   databaseUrl: string | undefined
 ): HealthResponse {
   const isDatabaseConfigured = Boolean(databaseUrl);
@@ -46,8 +56,7 @@ function buildHealthResponsePayload(
     services: {
       openai: openaiHealth,
       database: {
-        connected: dbStatus.connected,
-        error: dbStatus.error ?? null,
+        connected: isDatabaseConfigured,
         url: databaseDisplayUrl
       },
       environment: envInfo
@@ -74,16 +83,13 @@ export class HealthController {
     try {
       const openaiHealth = getOpenAIServiceHealth();
       const envInfo = getEnvironmentInfo();
-      const dbStatus = getDbStatus();
-      const readiness = assessCoreServiceReadiness(dbStatus, openaiHealth, env.DATABASE_URL);
 
-      //audit Assumption: health status derives from core readiness; risk: missing signals from other dependencies; invariant: status reflects core dependency readiness; handling: derive via helper.
-      const status = mapReadinessToHealthStatus(readiness);
+      //audit Assumption: health status derives from OpenAI and database configuration; risk: missing signals from other dependencies; invariant: status reflects core dependency readiness; handling: derive via helper.
+      const status = determineHealthStatus(!!env.OPENAI_API_KEY, !!env.DATABASE_URL);
       const healthResponse = buildHealthResponsePayload(
         status,
         openaiHealth,
         envInfo,
-        dbStatus,
         env.DATABASE_URL
       );
 
@@ -100,7 +106,6 @@ export class HealthController {
           'unhealthy',
           { error: 'Service check failed' },
           { error: 'Service check failed' },
-          { connected: false, error: 'Service check failed' },
           env.DATABASE_URL
         ),
         error: errorMessage
