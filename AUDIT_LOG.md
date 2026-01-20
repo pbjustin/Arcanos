@@ -852,3 +852,65 @@ grep -n "router.get.*health" src/routes/status.ts src/routes/health.ts
 
 **Result:** ✅ **Pass 3 Complete** - Railway deployment configuration is production-ready and fully compatible
 
+### Pass 4: Modularization & Final Cleanup
+**Verification Date:** 2026-01-20  
+**Focus:** Code quality, structure review, and final cleanup
+
+#### Code Quality Checks
+
+| Check | Status | Details |
+| --- | --- | --- |
+| **Lint** | ✅ PASSING | Fixed 5 errors (unused imports/variables)<br>2 acceptable warnings (non-null assertions in idleManager.ts) |
+| **Type Check** | ✅ PASSING | `tsc --noEmit` - 0 errors |
+| **Build** | ✅ PASSING | TypeScript compilation successful |
+| **Tests** | ✅ PASSING | 26 test suites, 118 tests, 0 failures |
+
+**Lint Fixes Applied:**
+- Removed unused imports from `src/services/openai.ts`:
+  - `prepareGPT5Request`, `buildReasoningRequestPayload` (from requestTransforms.js)
+  - `buildResponseRequestPayload`, `extractResponseOutput` (from responsePayload.js)
+- Fixed unused catch parameter in `src/utils/structuredLogging.ts` (changed to empty catch)
+
+#### OpenAI Integration Structure Review
+
+**Module Location:** `src/services/openai/` (12 TypeScript files, 819 lines total)
+
+| Module | Lines | Purpose |
+| --- | --- | --- |
+| `clientFactory.ts` | 120 | Centralized OpenAI client initialization with timeout/baseURL config |
+| `credentialProvider.ts` | 91 | API key resolution and model configuration management |
+| `chatFallbacks.ts` | 137 | Fallback logic for failed completions |
+| `resilience.ts` | 85 | Circuit breaker and retry logic for API resilience |
+| `mock.ts` | 106 | Mock response generation when API key unavailable |
+| `messageBuilder.ts` | 41 | Chat message construction utilities |
+| `constants.ts` | 53 | Shared constants (cache TTL, token limits, headers) |
+| `types.ts` | 31 | TypeScript type definitions |
+| `config.ts` | 26 | Configuration constants (image models, sizes) |
+| `embeddings.ts` | 18 | Embeddings API wrapper |
+| `requestTransforms.ts` | 49 | Request payload transformation utilities |
+| `responsePayload.ts` | 62 | Response parsing and extraction utilities |
+
+**Architecture Assessment:**
+- ✅ **Well-Modularized:** Clear separation of concerns across 12 focused files
+- ✅ **Centralized:** Single client instance pattern (singleton)
+- ✅ **Resilient:** Circuit breaker, retry logic, fallback handling
+- ✅ **Testable:** Mock support for testing without API keys
+- ✅ **Type-Safe:** Comprehensive TypeScript types
+- ✅ **Maintainable:** Small, focused modules (avg 68 lines per file)
+
+#### Repository Health Metrics (Post-Cleanup)
+
+| Metric | Value | Status |
+| --- | --- | --- |
+| **TypeScript Files** | 234 | ✅ Clean |
+| **JavaScript Files** | 38 | ✅ (scripts, config, tests) |
+| **Total Source LOC** | ~21,667 | ✅ Well-organized |
+| **Test Suites** | 26 | ✅ Comprehensive |
+| **Test Cases** | 118 | ✅ All passing |
+| **Build Size** | ~1.3MB | ✅ Efficient |
+| **Dependencies** | 736 packages | ✅ All secure (except 8 low-severity dev deps) |
+| **OpenAI SDK** | v6.16.0 | ✅ Latest stable |
+| **Node Version** | 18+ | ✅ LTS |
+
+**Result:** ✅ **Pass 4 Complete** - Codebase is clean, well-structured, and production-ready
+
