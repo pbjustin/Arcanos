@@ -1,70 +1,23 @@
-/**
- * Update Route
- * Handle user data updates (preferences, settings, etc.)
- */
-
-import { Router, Request, Response } from 'express';
-import { logAuditEvent } from '../database';
-import { logger } from '../logger';
+import { Router } from "express";
+import memory from "../memory";
 
 const router = Router();
 
-router.post('/', async (req: Request, res: Response) => {
-  try {
-    const { updateType, data } = req.body || {};
-    const userId = req.user?.userId || 'anonymous';
-
-    // Validation
-    if (typeof updateType !== 'string' || updateType.trim().length === 0) {
-      return res.status(400).json({
-        error: 'Bad Request',
-        message: 'updateType is required'
-      });
-    }
-    if (data === undefined || data === null) {
-      return res.status(400).json({
-        error: 'Bad Request',
-        message: 'data is required'
-      });
-    }
-    let dataSize = 0;
-    try {
-      dataSize = JSON.stringify(data).length;
-    } catch (error) {
-      return res.status(400).json({
-        error: 'Bad Request',
-        message: 'data must be JSON-serializable'
-      });
-    }
-    if (dataSize > 10000) {
-      return res.status(413).json({
-        error: 'Payload Too Large',
-        message: 'data exceeds maximum size'
-      });
-    }
-
-    // Log audit event
-    await logAuditEvent(
-      userId,
-      `update_${updateType}`,
-      data,
-      req.ip,
-      req.get('user-agent')
-    );
-
-    logger.info('User data updated', { userId, updateType });
-
-    return res.json({
-      success: true,
-      message: 'Update recorded'
-    });
-  } catch (error) {
-    logger.error('Failed to update user data', { error });
-    return res.status(500).json({
-      error: 'Internal Server Error',
-      message: 'Failed to update'
-    });
-  }
+/**
+ * Update a value in memory by key.
+ *
+ * Purpose:
+ *   Store provided values for later retrieval.
+ * Inputs/Outputs:
+ *   Expects JSON body with key/value; responds with status.
+ * Edge cases:
+ *   If key is missing, stores under undefined key.
+ */
+router.post("/", (req, res) => {
+  const { key, value } = req.body;
+  // //audit Assumption: key/value provided. Risk: undefined key. Invariant: memory.set accepts any key. Handling: write as provided.
+  memory.set(key, value);
+  res.json({ status: "success", key, value });
 });
 
 export default router;
