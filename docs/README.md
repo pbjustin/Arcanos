@@ -1,6 +1,6 @@
 # Arcanos Documentation Index
 
-> **Last Updated:** 2026-01-14 | **Version:** 1.0.0
+> **Last Updated:** 2025-02-14 | **Version:** 1.0.0
 
 ## Overview
 
