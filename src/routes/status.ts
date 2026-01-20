@@ -10,7 +10,7 @@ import { getOpenAIServiceHealth } from '../services/openai.js';
 import { queryCache, configCache } from '../utils/cache.js';
 import { getStatus as getDbStatus } from '../db.js';
 import { sendJsonError } from '../utils/responseHelpers.js';
-import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from '../utils/healthChecks.js';
+import { assessCoreServiceReadiness } from '../utils/healthChecks.js';
 
 const router = express.Router();
 
@@ -68,12 +68,13 @@ router.get('/health', async (_: Request, res: Response) => {
 
     // Determine overall health status
     //audit Assumption: degraded health should map to 503; risk: false negatives; invariant: health reflects readiness flags; handling: derive from readiness helper.
-    const healthStatus = mapReadinessToHealthStatus(readiness);
+    const isHealthy = readiness.isReady;
+
     //audit Assumption: status reflects readiness; risk: mismatch; invariant: status matches readiness; handling: update status from readiness result.
-    health.status = healthStatus;
+    health.status = isHealthy ? 'healthy' : 'degraded';
 
     //audit Assumption: health status maps to HTTP 200/503; risk: incorrect status code; invariant: unhealthy signals 503; handling: set status based on readiness.
-    const statusCode = healthStatus === 'healthy' ? 200 : 503;
+    const statusCode = isHealthy ? 200 : 503;
     res.status(statusCode).json(health);
     
   } catch (error) {
