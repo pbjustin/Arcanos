@@ -1,6 +1,6 @@
 # Arcanos Backend
 
-> **Last Updated:** 2026-01-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
+> **Last Updated:** 2025-02-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
 
 ## Overview
 
@@ -70,6 +70,7 @@ Railway deployment is configured via `railway.json` and `Procfile`:
 - Start: `node --max-old-space-size=7168 dist/start-server.js`
 - Health check: `GET /health`
 - `RUN_WORKERS` defaults to `false` in Railway deploy config.
+- Build-time Node memory is tuned via `NODE_OPTIONS=--max_old_space_size=2048`.
 
 High-level steps:
 
@@ -89,6 +90,8 @@ See `docs/RAILWAY_DEPLOYMENT.md` for a detailed, step-by-step guide.
 - **Worker boot disabled**: set `RUN_WORKERS=true` (or leave `false` on Railway).
 - **Confirmation gate**: send `x-confirmed: yes` for manual runs or configure
   `TRUSTED_GPT_IDS` / `ARCANOS_AUTOMATION_SECRET` for automation.
+- **Railway health checks**: confirm `/health` is reachable (Railway) or use
+  `/railway/healthcheck` for a detailed status snapshot.
 
 ## References
 
