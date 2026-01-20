@@ -1,160 +1,65 @@
-# ARCANOS Documentation Status
+# Arcanos Documentation Status
 
-> **Last Updated:** 2026-01-09 | **Audit Cycle:** 2026-Q1 | **Version:** 2.0.0
+> **Last Updated:** 2025-02-14 | **Audit Cycle:** 2025-Q1 | **Version:** 2.0.0
 
-This document tracks the current state of documentation coverage across the ARCANOS repository following the comprehensive audit and standardization pass completed on January 9, 2026.
+## Overview
 
----
+This document tracks the current state of documentation coverage across the Arcanos repository.
+It is updated as each audit pass standardizes documentation to the required structure and
+verifies accuracy against the current codebase.
 
-## Executive Summary
+**Current status:** ⏳ In progress. The documentation set is being standardized across multiple
+passes, starting with deployment and Railway compatibility guides.
 
-**Status**: ✅ **Production Ready**
+## Prerequisites
 
-The ARCANOS documentation has undergone a comprehensive audit and standardization pass, ensuring all content is accurate, up-to-date, and aligned with:
-- Current OpenAI Node SDK **v6.15.0**
-- Railway deployment best practices
-- Production-ready documentation standards
+- Familiarity with the repository structure and the `docs/` directory.
+- Access to the current codebase for verifying doc statements.
 
-### Key Achievements
-- ✅ All SDK version references updated (v5.16.0 → v6.15.0)
-- ✅ File path corrections throughout (dist/index.js → dist/start-server.js)
-- ✅ New comprehensive Railway deployment guide (16KB)
-- ✅ Legacy documentation clearly marked
-- ✅ Documentation indices updated
-- ✅ 17 files updated, 2 comprehensive guides created
+## Setup
 
----
+When updating documentation:
 
-## Documentation Statistics
+1. Audit each document against the current code and config files.
+2. Rewrite the content into the standard structure:
+   **Overview → Prerequisites → Setup → Configuration → Run locally → Deploy (Railway) → Troubleshooting → References**.
+3. Add TODO notes for any sections that cannot be verified immediately.
+4. Record the update in the Audit Records section (below) for traceability.
 
-- **Total Markdown Files**: 104
-- **Actively Maintained**: 85+ files
-- **Legacy/Historical**: 5 files (clearly marked)
-- **Recently Updated**: 17 files (2026-01-09)
-- **New Guides Created**: 2
+## Configuration
 
----
+Primary sources of truth for configuration details:
 
-## Coverage by Category
+- `docs/CONFIGURATION.md`
+- `.env.example`
+- `railway.json`
 
-### ✅ Excellent Coverage (Production Ready)
+## Run locally
 
-**Core Documentation**
-- README.md - Comprehensive, v6.15.0 aligned
-- CONTRIBUTING.md - Updated SDK requirements
-- CHANGELOG.md - Complete history
-- docs/README.md - Well-organized navigation
+See `README.md` for validated local run instructions, including build and start commands.
 
-**Deployment** ⭐
-- docs/RAILWAY_DEPLOYMENT.md - **NEW!** 16KB comprehensive guide
-- DEPLOYMENT_GUIDE.md - Updated, accurate
-- RAILWAY_COMPATIBILITY_GUIDE.md - API integration
-- docs/deployment/DEPLOYMENT.md - Multi-platform
-- docs/RAILWAY_GRAPHQL.md - Programmatic management
-- docs/why-we-chose-railway.md - Platform comparison
+## Deploy (Railway)
 
-**Configuration**
-- docs/CONFIGURATION.md - Complete environment matrix
-- .env.example - Comprehensive inline documentation
+Railway deployment guidance lives in `docs/RAILWAY_DEPLOYMENT.md`, which is the canonical
+reference for build/start commands, environment variables, and rollback steps.
 
-**API Documentation**
-- docs/api/README.md - v6.15.0, complete catalog
-- docs/api/API_REFERENCE.md - Detailed examples
-- docs/api/COMMAND_EXECUTION.md - Commands guide
-- docs/api/CONTEXTUAL_REINFORCEMENT.md - Endpoints
+## Troubleshooting
 
-### ✓ Good Coverage
+### Known gaps / TODOs
 
-**Architecture** (8 files)
-- Backend architecture, AFOL, Trinity, Database, Workers, GPT-5
+- **TODO:** Standardize remaining docs under `docs/`, `.github/`, and root-level markdown to the
+  required structure.
+- **TODO:** Re-validate OpenAI SDK usage examples in legacy docs for v6.16.0 alignment.
+- **TODO:** Confirm any historical/legacy documentation is clearly labeled and separated.
 
-**AI Modules** (6 files)
-- Memory systems, OpenAI runtime, state sync
+### Audit Records (latest pass)
 
-### ⚠️ Needs Review (Planned for Next Cycle)
+- **2025-02-14:** Standardized deployment and Railway compatibility docs (`docs/RAILWAY_DEPLOYMENT.md`,
+  `DEPLOYMENT_GUIDE.md`, `RAILWAY_COMPATIBILITY_GUIDE.md`).
 
-**AI Guides** (33 files)
-- 5 files updated with SDK v6.15.0
-- 28 files need spot-checks for accuracy
+## References
 
-**Custom GPT Templates** (10 files)
-- Verify templates are current
-
----
-
-## Recent Changes (2026-01-09)
-
-### Pass 1: Critical Fixes (6 files + 1 new)
-- DEPLOYMENT_GUIDE.md - SDK & path fixes
-- docs/deployment/DEPLOYMENT.md - Path fixes
-- docs/api/README.md - SDK update
-- CONTRIBUTING.md - SDK update
-- .github/PULL_REQUEST_TEMPLATE.md - SDK update
-- DOCUMENTATION_AUDIT_2026.md - **NEW** comprehensive audit
-
-### Pass 2: SDK Alignment (7 files)
-- 3 ai-guides files - SDK updates
-- docs/ORCHESTRATION_API.md - SDK v6.x
-- docs/arcanos-overview.md - SDK update
-- 2 legacy files - Historical disclaimers
-
-### Pass 3: Railway Guide (3 files + 1 new)
-- docs/RAILWAY_DEPLOYMENT.md - **NEW!** Comprehensive guide
-- docs/README.md - Updated index
-- README.md - Added deployment section
-
-### Pass 4: Status Report (1 file)
-- docs/DOCUMENTATION_STATUS.md - Comprehensive status tracking
-
----
-
-## Quality Score: 8.5/10
-
-**Strengths:**
-- ✅ SDK consistency achieved
-- ✅ Comprehensive Railway guide
-- ✅ Clear navigation structure
-- ✅ Well-maintained changelog
-- ✅ Production-ready API docs
-
-**Improvements Needed:**
-- ⚠️ Python SDK examples
-- ⚠️ AI guides spot-check
-- ⚠️ Video content
-- ⚠️ Troubleshooting index
-
----
-
-## Next Review: 2026-02-09
-
-**Focus Areas:**
-1. **AI Guides Audit** (28 files remaining)
-2. **Python SDK Examples**
-3. **Custom GPT Templates** verification
-4. **Troubleshooting Index** creation
-5. **Automated Validation** setup
-
----
-
-## Maintenance Guidelines
-
-### When to Update Documentation
-- **Immediately**: SDK version changes, breaking changes, security fixes
-- **Within 1 week**: New features, API changes, configuration updates
-- **Monthly**: Review and spot-check existing docs
-- **Quarterly**: Comprehensive audit like this one
-
-### Update Checklist
-- [ ] Update "Last Updated" metadata
-- [ ] Check SDK version references
-- [ ] Verify all code examples work
-- [ ] Update cross-references
-- [ ] Test all commands/scripts
-- [ ] Review for outdated information
-- [ ] Update DOCUMENTATION_STATUS.md
-
----
-
-For detailed audit findings, see [DOCUMENTATION_AUDIT_2026.md](../DOCUMENTATION_AUDIT_2026.md)
-
-**End of Status Report**
+- `docs/README.md` - Documentation index
+- `docs/RAILWAY_DEPLOYMENT.md` - Railway deployment guide
+- `docs/CONFIGURATION.md` - Environment variable reference
+- `README.md` - Root overview and SDK examples

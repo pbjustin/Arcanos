@@ -1,145 +1,176 @@
 # Arcanos OpenAI API & Railway Compatibility
 
-> **Last Updated:** 2026-01-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
+> **Last Updated:** 2025-02-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
 
 ## Overview
 
-This document provides technical implementation details for Arcanos Railway compatibility.
-For deployment instructions, see the [Railway Deployment Guide](docs/RAILWAY_DEPLOYMENT.md).
+This document provides implementation-level details that explain why the current Arcanos
+codebase is compatible with Railway deployments and the OpenAI SDK. For step-by-step
+Railway deployment instructions, see the Railway deployment guide.
 
-## OpenAI SDK Integration
+## Prerequisites
 
-### Current Implementation
+- Familiarity with the core backend architecture in `docs/README.md`.
+- Access to the repository configuration files (`railway.json`, `Procfile`).
+- OpenAI API key (`OPENAI_API_KEY`) for live API usage.
 
-Arcanos uses OpenAI Node.js SDK v6.16.0 with the standard `chat.completions.create()` API:
+## Setup
 
-```javascript
+Review the following files before making compatibility changes:
+
+1. `railway.json` - build/start commands and Railway defaults.
+2. `Procfile` - Railway process fallback entrypoint.
+3. `docs/RAILWAY_DEPLOYMENT.md` - deployment workflow and rollback steps.
+
+## Configuration
+
+### OpenAI SDK alignment (Node.js + Python)
+
+Arcanos uses OpenAI Node.js SDK v6.16.0 with the standard `chat.completions.create()` API.
+Use these examples when testing or validating SDK changes.
+
+**Node.js (openai v6)**
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 const response = await client.chat.completions.create({
-  model: "gpt-4o",  // or configured fine-tuned model
+  model: process.env.OPENAI_MODEL || "gpt-4o-mini",
   messages: [
     { role: "system", content: "You are a helpful assistant." },
     { role: "user", content: "Hello!" }
   ]
 });
 
-const content = response.choices[0].message.content;
+console.log(response.choices[0].message.content);
 ```
 
-### Centralized Completion Function
+**Python (openai)**
+```python
+from openai import OpenAI
+import os
 
-All AI requests route through `createCentralizedCompletion()` which:
-- Uses fine-tuned model by default (configurable via `OPENAI_MODEL` or `AI_MODEL`)
-- Adds ARCANOS routing system message for proper handling
-- Supports model override via `options.model`
-- Records conversation context in lightweight runtime
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-```javascript
-import { createCentralizedCompletion } from './services/openai.js';
+response = client.chat.completions.create(
+    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello!"}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
+
+### Centralized completion entry point
+
+All AI requests route through `createCentralizedCompletion()` (see `src/services/openai.ts`), which:
+- Selects the model based on `OPENAI_MODEL` / `AI_MODEL` / fine-tuned overrides.
+- Injects the Arcanos routing system message.
+- Supports model overrides via `options.model`.
+- Records telemetry and contextual reinforcement data.
+
+```js
+import { createCentralizedCompletion } from "./src/services/openai.js";
 
 const response = await createCentralizedCompletion([
-  { role: 'user', content: 'Hello ARCANOS' }
+  { role: "user", content: "Hello ARCANOS" }
 ]);
 ```
 
-## Railway Deployment Features
+### Railway deployment features
 
-### 1. RESTful API Structure
+**RESTful API structure (selected endpoints):**
 ```
-/api/arcanos     - Core ARCANOS functionality
-/api/memory      - Memory management with JSON responses
-/api/sim         - Simulation scenarios
-/health          - Health monitoring
-/healthz         - Liveness probe
-/readyz          - Readiness probe
+/ask            - Core prompt execution
+/api/ask        - API-compatible prompt execution
+/api/memory     - Memory management with JSON responses
+/api/sim        - Simulation scenarios
+/health         - Health monitoring
+/healthz        - Liveness probe
+/readyz         - Readiness probe
 ```
 
-### 2. Environment Configuration
+**Environment configuration:**
 
 Railway automatically provides:
-- `PORT` - Service port binding
-- `RAILWAY_ENVIRONMENT` - Environment identifier
-- `DATABASE_URL` - PostgreSQL connection (if attached)
+- `PORT` - Service port binding.
+- `RAILWAY_ENVIRONMENT` - Environment identifier.
+- `DATABASE_URL` - PostgreSQL connection (if attached).
 
 Required configuration:
-- `OPENAI_API_KEY` - OpenAI API authentication
+- `OPENAI_API_KEY` - OpenAI API authentication.
 
 Recommended configuration:
-- `OPENAI_MODEL` or `AI_MODEL` - Model selection
-- `RUN_WORKERS` - Worker process control (default: `false` on Railway)
+- `OPENAI_MODEL` or `AI_MODEL` - Model selection.
+- `RUN_WORKERS` - Worker process control (default: `false` on Railway).
 
-### 3. Build Process
-
-Railway build (via `railway.json`):
+**Build process (railway.json):**
 ```bash
 npm ci --include=dev && npm run build
 ```
 
-This:
-1. Installs all dependencies (including dev dependencies for TypeScript)
-2. Builds workers (`npm run build:workers`)
-3. Compiles TypeScript (`tsc`)
-4. Produces `dist/` directory with compiled JavaScript
-
-### 4. Start Process
-
-Railway start command:
+**Start process (railway.json):**
 ```bash
 node --max-old-space-size=7168 dist/start-server.js
 ```
 
-Memory configuration:
-- `7168MB` max old space for Railway production environment
-- Optimized for Railway's memory allocation
-
-### 5. Health Monitoring
-
-Railway health check configuration:
+**Health monitoring:**
 - **Path:** `GET /health`
 - **Timeout:** 300 seconds
 - **Restart policy:** `ON_FAILURE` with max 10 retries
 
-Health response includes:
-- OpenAI client status
-- Database connectivity
-- Uptime and timestamp
-- Service readiness
+### Security & resilience considerations
 
-### 6. Security & Resilience
+Production features in the current codebase include:
+- Rate limiting (60 requests per 15 minutes on `/ask`).
+- Input validation and sanitization.
+- Circuit breaker pattern for API calls.
+- Exponential backoff retry logic.
+- Graceful degradation (mock responses when OpenAI is unavailable).
+- Confirmation gates for mutating operations.
 
-Production features:
-- Rate limiting (50-100 requests per 15 minutes per endpoint)
-- Input validation and sanitization
-- Circuit breaker pattern for API calls
-- Exponential backoff retry logic
-- Graceful degradation (mock responses when API unavailable)
-- Confirmation gates for mutating operations
+## Run locally
 
-## Compatibility Validation
-
-Run validation before deploying:
 ```bash
-npm run validate:railway
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY
+npm run build
+npm start
 ```
 
-This checks:
-- Railway configuration validity
-- Environment variable setup
-- Build process compatibility
-- Start command correctness
-- Health check endpoints
+Validate health:
+
+```bash
+curl http://localhost:8080/health
+```
+
+## Deploy (Railway)
+
+Follow the Railway deployment guide for the full workflow:
+
+- [`docs/RAILWAY_DEPLOYMENT.md`](docs/RAILWAY_DEPLOYMENT.md)
+
+## Troubleshooting
+
+- Run `npm run validate:railway` to confirm Railway compatibility before deployment.
+- If `/health` is degraded, verify `OPENAI_API_KEY` and database connectivity.
+- Use `/railway/healthcheck` for a deeper diagnostic snapshot.
 
 ## References
 
 **Deployment Guide:**
-- [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md) - Complete deployment instructions
+- [`docs/RAILWAY_DEPLOYMENT.md`](docs/RAILWAY_DEPLOYMENT.md) - Complete deployment instructions
 
 **Configuration:**
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) - Environment variables reference
-- [railway.json](railway.json) - Railway build/deploy configuration
-- [Procfile](Procfile) - Process definition
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) - Environment variables reference
+- [`railway.json`](railway.json) - Railway build/deploy configuration
+- [`Procfile`](Procfile) - Process definition
 
 **API Documentation:**
-- [docs/api/README.md](docs/api/README.md) - API endpoint reference
+- [`docs/api/README.md`](docs/api/README.md) - API endpoint reference
 
 **External Resources:**
 - [Railway Documentation](https://docs.railway.app/)
