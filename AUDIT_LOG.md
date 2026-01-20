@@ -730,3 +730,36 @@ All autonomous refactoring passes have been successfully executed. The codebase 
 
 No further autonomous optimizations are required at this time. The repository is ready for production deployment.
 
+---
+
+## 2026-01-20 Refactoring Pass 7 - Deep Code Pruning
+
+### Pass 0: Inventory & Analysis
+- **Repository State:** OpenAI SDK v6.16.0, TypeScript build passing, 118 tests passing (26 suites)
+- **Files Analyzed:** 1189 TypeScript/JavaScript files
+- **Dead Code Identified:**
+  - `backend-typescript/` directory - Complete duplicate backend implementation (6 files)
+    - Separate Express server with minimal routes (ask, update, health)
+    - Own package.json (v1.3.4) with only express dependency
+    - No references in main codebase, build scripts, or deployment config
+    - Appears to be legacy/abandoned backend experiment
+- **Verification:** 
+  - `grep -r "backend-typescript" src/ tests/ scripts/` - no references
+  - `grep -i "backend-typescript" package.json Procfile railway.json` - no references
+  - Build and tests pass without it
+
+### Pass 1: Dead Code Removal
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed `backend-typescript/` directory (6 files total) | Duplicate/legacy backend implementation with no references in codebase. Main backend is in `src/` with full TypeScript implementation, OpenAI integration, Railway config, and comprehensive test coverage. | `npm run build` - ✅ successful<br>`npm test` - ✅ 118/118 tests passing<br>No import errors or missing modules |
+
+**Files Removed:**
+- `backend-typescript/package.json`
+- `backend-typescript/tsconfig.json`
+- `backend-typescript/build_windows.ps1`
+- `backend-typescript/src/index.ts`
+- `backend-typescript/src/memory.ts`
+- `backend-typescript/src/routes/ask.ts`
+- `backend-typescript/src/routes/update.ts`
+- `backend-typescript/src/routes/health.ts`
+
