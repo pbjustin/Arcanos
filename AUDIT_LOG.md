@@ -763,3 +763,92 @@ No further autonomous optimizations are required at this time. The repository is
 - `backend-typescript/src/routes/update.ts`
 - `backend-typescript/src/routes/health.ts`
 
+### Pass 2: OpenAI SDK Compliance Verification
+- **OpenAI SDK Version:** v6.16.0 (latest stable)
+- **Audit Scope:** All OpenAI API calls across src/, workers/, and scripts/
+- **Verification Method:** grep analysis of all .create() patterns and client initialization
+
+| API Pattern | Status | Details |
+| --- | --- | --- |
+| `chat.completions.create()` | ✅ CORRECT | 30+ occurrences - all using modern v6 pattern |
+| `embeddings.create()` | ✅ CORRECT | 1 occurrence in `src/services/openai/embeddings.ts` |
+| `images.generate()` | ✅ CORRECT | 1 occurrence in `src/services/openai.ts` |
+| `new OpenAI({ apiKey, timeout })` | ✅ CORRECT | Centralized in `src/services/openai/clientFactory.ts` |
+| `responses.create()` | ✅ NOT USED | Historical claims in AUDIT_LOG were incorrect (warning added) |
+
+**Key Findings:**
+1. All OpenAI API calls use **correct modern patterns** for SDK v6.16.0
+2. Client initialization is **centralized** with proper timeout and baseURL support
+3. **No deprecated patterns** found in user code
+4. Mock response system properly implemented for missing API keys
+5. Historical audit log claims about `responses.create()` were **incorrect** - this was never the right API
+
+**Verification Commands:**
+```bash
+# Chat completions - 30+ correct usages
+grep -r "chat\.completions\.create" src/ workers/src/ scripts/
+
+# Embeddings - correct usage
+grep -r "embeddings\.create" src/ workers/src/
+
+# Images - correct usage  
+grep -r "images\.generate" src/
+
+# No deprecated patterns
+grep -r "responses\.create" src/ workers/src/ scripts/  # Returns 0 results
+```
+
+**Result:** ✅ **Pass 2 Complete** - All OpenAI SDK usage is compliant with latest v6.16.0 patterns
+
+### Pass 3: Railway Deployment Verification
+**Verification Date:** 2026-01-20  
+**Deployment Target:** Railway  
+**Configuration Files:** railway.json, Procfile, src/config/index.ts
+
+| Configuration | Status | Details |
+| --- | --- | --- |
+| **PORT Environment Variable** | ✅ CORRECT | `src/config/index.ts:14` - `Number(process.env.PORT) \|\| 8080`<br>Reads Railway's `$PORT` variable, falls back to 8080 |
+| **HOST Binding** | ✅ CORRECT | `src/config/index.ts:15` - `process.env.HOST \|\| '0.0.0.0'`<br>Binds to 0.0.0.0 for Railway compatibility |
+| **Start Command** | ✅ CORRECT | `railway.json:13` - `node --max-old-space-size=7168 dist/start-server.js`<br>`Procfile:1` - Same command<br>Memory optimized for production |
+| **Build Command** | ✅ CORRECT | `railway.json:6` - `npm ci --include=dev && npm run build`<br>Installs dev dependencies for build, then compiles TypeScript |
+| **Health Check Path** | ✅ CORRECT | `railway.json:14` - `/health`<br>Implemented in `src/routes/status.ts:39` |
+| **Health Check Timeout** | ✅ CORRECT | `railway.json:15` - `300` seconds<br>Sufficient for startup and diagnostics |
+| **Restart Policy** | ✅ CORRECT | `railway.json:16-17` - `ON_FAILURE` with 10 max retries<br>Resilient restart configuration |
+
+**Health Endpoints Verification:**
+- `/health` (status.ts:39) - Comprehensive health check with OpenAI, DB, cache stats
+  - Returns 200 if healthy, 503 if degraded
+  - Checks: OpenAI client, database, cache, system metrics
+- `/healthz` (health.ts:20) - Liveness probe
+  - Always returns 200 if app is running
+  - Kubernetes/Railway standard endpoint
+- `/readyz` (health.ts:33) - Readiness probe
+  - Returns 200 if ready to serve, 503 if not
+  - Checks: Database connectivity, OpenAI health
+
+**Environment Variables (railway.json production config):**
+- `PORT`: `$PORT` ✅ (Railway-provided)
+- `DATABASE_URL`: `$DATABASE_URL` ✅ (Optional, falls back to in-memory)
+- `OPENAI_API_KEY`: `$OPENAI_API_KEY` ✅ (Falls back to mock mode)
+- `AI_MODEL`: `$AI_MODEL` ✅ (Defaults to gpt-4o)
+- `GPT51_MODEL`, `GPT5_MODEL`: ✅ (Reasoning model overrides)
+- `RUN_WORKERS`: `false` ✅ (Disabled in production for Railway)
+- `NODE_ENV`: `production` ✅
+
+**Verification Commands:**
+```bash
+# Start command points to correct entry
+grep "startCommand" railway.json Procfile
+# Output: Both files use dist/start-server.js
+
+# PORT handling
+grep "PORT" src/config/index.ts
+# Output: Line 14 - Number(process.env.PORT) || 8080
+
+# Health endpoints exist
+grep -n "router.get.*health" src/routes/status.ts src/routes/health.ts
+# Output: /health (status.ts:39), /healthz (health.ts:20), /readyz (health.ts:33)
+```
+
+**Result:** ✅ **Pass 3 Complete** - Railway deployment configuration is production-ready and fully compatible
+
