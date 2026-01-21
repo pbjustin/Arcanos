@@ -12,6 +12,13 @@ interface BridgeRouteContext {
   gptId?: string;
 }
 
+type BridgeModule = {
+  bridge?: {
+    active?: boolean;
+    routeRequest?: (payload: unknown) => void;
+  };
+};
+
 function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
   if (!value) return undefined;
   return Array.isArray(value) ? value[0] : value;
@@ -59,7 +66,9 @@ export async function routeBridgeRequest(
   );
 
   try {
-    const { bridge } = await import('../../daemon/bridge.js');
+    const bridgeUrl = new URL('../../daemon/bridge.js', import.meta.url);
+    const bridgeModule = (await import(bridgeUrl.href)) as BridgeModule;
+    const { bridge } = bridgeModule;
     if (bridge?.active) {
       bridge.routeRequest(payload);
     }
