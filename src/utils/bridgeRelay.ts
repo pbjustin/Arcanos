@@ -69,7 +69,7 @@ export async function routeBridgeRequest(
     const bridgeUrl = new URL('../../daemon/bridge.js', import.meta.url);
     const bridgeModule = (await import(bridgeUrl.href)) as BridgeModule;
     const { bridge } = bridgeModule;
-    if (bridge?.active) {
+    if (bridge?.active && typeof bridge.routeRequest === 'function') {
       bridge.routeRequest(payload);
     }
   } catch (err) {
