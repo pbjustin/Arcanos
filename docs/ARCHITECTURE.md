@@ -265,7 +265,7 @@ User: Hold SPACEBAR → PTT Manager → Audio System → Microphone
 
 ### Planned Improvements
 
-1. **WebSocket Support:** Real-time bidirectional communication
+1. **WebSocket Support:** Implemented bidirectional IPC bridge for daemon connections.
 2. **Web UI:** Browser-based dashboard for settings
 3. **Mobile App:** iOS/Android companion app
 4. **Plugin System:** Third-party extensions
