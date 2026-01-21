@@ -17,6 +17,7 @@ from typing import Callable, Mapping, Optional
 from backend_auth_client import BackendAuthError, BackendLoginResult, request_backend_login
 from config import Config
 from env_store import EnvFileError, upsert_env_values
+from openai_key_validation import normalize_openai_api_key, is_openai_api_key_placeholder
 
 
 class CredentialBootstrapError(RuntimeError):
@@ -142,6 +143,35 @@ def prompt_for_password(
     raise CredentialBootstrapError("Maximum password attempts exceeded")
 
 
+def _prompt_for_openai_api_key(
+    input_provider: Callable[[str], str],
+    max_attempts: int = 3
+) -> str:
+    """
+    Purpose: Prompt for a non-placeholder OpenAI API key.
+    Inputs/Outputs: input provider and attempts; returns validated API key.
+    Edge cases: Raises CredentialBootstrapError after max attempts.
+    """
+    for attempt in range(max_attempts):
+        raw_value = input_provider("OpenAI API key: ").strip()
+        if not raw_value:
+            # //audit assumption: empty input invalid; risk: missing key; invariant: retry or fail; strategy: continue.
+            if attempt < max_attempts - 1:
+                continue
+            raise CredentialBootstrapError("Maximum input attempts exceeded")
+
+        normalized_value = normalize_openai_api_key(raw_value)
+        if normalized_value:
+            # //audit assumption: normalized value valid; risk: false positives; invariant: return key; strategy: accept.
+            return normalized_value
+
+        # //audit assumption: placeholder input invalid; risk: repeated invalid input; invariant: retry or fail; strategy: continue.
+        if attempt < max_attempts - 1:
+            continue
+
+    raise CredentialBootstrapError("OpenAI API key appears to be a placeholder.")
+
+
 def apply_runtime_env_updates(updates: Mapping[str, str]) -> None:
     """
     Purpose: Apply env updates to os.environ and Config for runtime use.
@@ -184,17 +214,21 @@ def bootstrap_credentials(
     Inputs/Outputs: Optional env_path and injected I/O dependencies; returns bootstrap result.
     Edge cases: Backend login is skipped if BACKEND_URL is unset.
     """
-    resolved_env_path = env_path or (Path(__file__).parent / ".env")
-    openai_api_key = Config.OPENAI_API_KEY or ""
+    # //audit assumption: env_path override may be provided; risk: wrong file; invariant: resolved path chosen; strategy: use override or Config.ENV_PATH.
+    resolved_env_path = env_path or Config.ENV_PATH
+    raw_openai_api_key = Config.OPENAI_API_KEY or ""
+    # //audit assumption: normalization strips placeholders; risk: false negatives; invariant: normalized key or None; strategy: normalize.
+    normalized_openai_api_key = normalize_openai_api_key(raw_openai_api_key)
+    openai_api_key = normalized_openai_api_key or ""
     backend_token = Config.BACKEND_TOKEN or None
     backend_login_email = Config.BACKEND_LOGIN_EMAIL or None
 
     if not openai_api_key:
         # //audit assumption: OpenAI key required; risk: GPT client init fails; invariant: non-empty key; strategy: prompt and persist.
-        openai_api_key = prompt_for_value(
-            "OpenAI API key: ",
-            input_provider
-        )
+        if raw_openai_api_key.strip() and is_openai_api_key_placeholder(raw_openai_api_key):
+            # //audit assumption: placeholder should be called out; risk: confusion; invariant: message shown; strategy: print warning.
+            print("OPENAI_API_KEY appears to be a placeholder. Please enter a real key.")
+        openai_api_key = _prompt_for_openai_api_key(input_provider)
         persist_credentials(resolved_env_path, {"OPENAI_API_KEY": openai_api_key})
 
     backend_url = Config.BACKEND_URL or ""
