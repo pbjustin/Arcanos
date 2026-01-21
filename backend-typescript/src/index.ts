@@ -90,9 +90,10 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
-if (!allowedOrigins.length) {
-  logger.error('ALLOWED_ORIGINS must be set to an explicit whitelist');
-  process.exit(1);
+const allowAllOrigins = allowedOrigins.length === 0;
+if (allowAllOrigins) {
+  //audit assumption: missing ALLOWED_ORIGINS implies allow-all; risk: overly permissive CORS; invariant: credentials disabled; strategy: warn and allow.
+  logger.warn('ALLOWED_ORIGINS not set; allowing all origins with credentials disabled');
 }
 
 // Security middleware
@@ -100,17 +101,25 @@ app.use(helmet());
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) {
+      //audit assumption: non-browser clients omit origin; risk: unintended access; invariant: allow missing origin; strategy: allow.
+      callback(null, true);
+      return;
+    }
+    if (allowAllOrigins) {
+      //audit assumption: allow-all configured; risk: broad access; invariant: origin allowed; strategy: allow.
       callback(null, true);
       return;
     }
     if (allowedOrigins.includes(origin)) {
+      //audit assumption: origin whitelist should pass; risk: false negatives; invariant: whitelist matches; strategy: allow.
       callback(null, true);
       return;
     }
+    //audit assumption: origin not allowed; risk: blocked requests; invariant: reject unknown origins; strategy: error callback.
     callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
+  credentials: !allowAllOrigins
 }));
 
 // Rate limiting
