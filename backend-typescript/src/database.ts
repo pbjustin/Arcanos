@@ -3,154 +3,35 @@
  * PostgreSQL connection and schema management
  */
 
-import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { Pool, QueryResult, QueryResultRow } from 'pg';
 import { logger } from './logger';
 
-export class DatabaseUnavailableError extends Error {
-  /**
-   * Purpose: Represent a database-unavailable condition without crashing handlers.
-   * Inputs/Outputs: message string; extends Error for structured handling.
-   * Edge cases: message may be empty; defaults to generic label.
-   */
-  constructor(message: string) {
-    super(message || 'Database unavailable');
-    this.name = 'DatabaseUnavailableError';
-  }
-}
+// Create connection pool
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
 
-export interface DatabaseStatus {
-  ready: boolean;
-  reason?: string;
-}
+// Test connection
+pool.on('connect', () => {
+  logger.info('Database connection established');
+});
 
-function resolveDatabaseUrl(): string | null {
-  /**
-   * Purpose: Normalize the database URL from environment.
-   * Inputs/Outputs: none; returns normalized URL or null when missing.
-   * Edge cases: Empty/whitespace values return null.
-   */
-  const rawUrl = process.env.DATABASE_URL;
-  if (!rawUrl) {
-    //audit assumption: DATABASE_URL may be unset; risk: no persistence; invariant: null returned; strategy: return null.
-    return null;
-  }
-  const trimmedUrl = rawUrl.trim();
-  if (!trimmedUrl) {
-    //audit assumption: whitespace-only URL invalid; risk: no persistence; invariant: null returned; strategy: return null.
-    return null;
-  }
-  //audit assumption: trimmed URL is usable; risk: invalid URL; invariant: string returned; strategy: return trimmed string.
-  return trimmedUrl;
-}
-
-function normalizeDatabaseError(error: unknown): string {
-  /**
-   * Purpose: Normalize database errors into a loggable string.
-   * Inputs/Outputs: unknown error; returns string message.
-   * Edge cases: Non-Error values fallback to generic message.
-   */
-  if (error instanceof Error) {
-    //audit assumption: Error message is useful; risk: empty message; invariant: string returned; strategy: use error.message.
-    return error.message || 'Database error';
-  }
-  //audit assumption: error may not be Error; risk: lost context; invariant: fallback message; strategy: stringify type.
-  return 'Database error';
-}
-
-const databaseUrl = resolveDatabaseUrl();
-// Create connection pool when URL is configured
-export const pool: Pool | null = databaseUrl
-  ? new Pool({
-    connectionString: databaseUrl,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-  })
-  : null;
-
-if (pool) {
-  // Test connection
-  pool.on('connect', () => {
-    logger.info('Database connection established');
-  });
-
-  pool.on('error', (err) => {
-    //audit assumption: database errors can occur; risk: dropped connections; invariant: error logged; strategy: log error.
-    logger.error('Unexpected database error', { error: err.message });
-  });
-} else {
-  //audit assumption: missing DB URL disables persistence; risk: no database writes; invariant: explicit warning logged; strategy: warn.
-  logger.warn('DATABASE_URL not set; database persistence disabled');
-}
-
-let databaseReady = false;
-let databaseFailureReason: string | null = null;
-
-function markDatabaseAvailable(): void {
-  //audit assumption: success clears failure state; risk: stale reason; invariant: ready flag true; strategy: reset reason.
-  databaseReady = true;
-  databaseFailureReason = null;
-}
-
-function markDatabaseUnavailable(reason: string): void {
-  //audit assumption: failure reason should be stored; risk: missing diagnostics; invariant: ready flag false; strategy: set reason.
-  databaseReady = false;
-  databaseFailureReason = reason;
-}
-
-function ensureDatabaseReady(actionLabel: string): boolean {
-  if (!databaseReady) {
-    //audit assumption: database may be unavailable; risk: failed persistence; invariant: action skipped; strategy: warn and return false.
-    logger.warn('Database unavailable; skipping action', { action: actionLabel, reason: databaseFailureReason });
-    return false;
-  }
-  return true;
-}
-
-/**
- * Purpose: Report current database status for health checks.
- * Inputs/Outputs: none; returns DatabaseStatus with readiness and reason.
- * Edge cases: reason omitted when database is ready.
- */
-export function getDatabaseStatus(): DatabaseStatus {
-  if (databaseReady) {
-    //audit assumption: ready implies no reason; risk: stale reason; invariant: reason omitted; strategy: return ready only.
-    return { ready: true };
-  }
-  return {
-    ready: false,
-    reason: databaseFailureReason || 'Database not initialized'
-  };
-}
+pool.on('error', (err) => {
+  //audit assumption: database errors can occur; risk: dropped connections; invariant: error logged; strategy: log error.
+  logger.error('Unexpected database error', { error: err.message });
+});
 
 /**
  * Purpose: Initialize database schema for conversations and audit logs.
  * Inputs/Outputs: none; creates tables and indexes if missing.
  * Edge cases: Throws if schema creation fails.
  */
-export async function initDatabase(): Promise<boolean> {
-  /**
-   * Purpose: Initialize database schema for conversations and audit logs.
-   * Inputs/Outputs: none; returns true when schema is ready.
-   * Edge cases: Missing DATABASE_URL returns false and logs a warning.
-   */
-  if (!pool) {
-    //audit assumption: pool missing means DB disabled; risk: no persistence; invariant: ready false; strategy: mark unavailable and return false.
-    markDatabaseUnavailable('DATABASE_URL is not configured');
-    return false;
-  }
-
-  let client: PoolClient | null = null;
-  try {
-    client = await pool.connect();
-  } catch (error) {
-    //audit assumption: connection can fail; risk: no persistence; invariant: ready false; strategy: log and return false.
-    const reason = normalizeDatabaseError(error);
-    logger.error('Failed to connect to database', { error: reason });
-    markDatabaseUnavailable(reason);
-    return false;
-  }
+export async function initDatabase(): Promise<void> {
+  const client = await pool.connect();
 
   try {
     // Create conversations table
@@ -197,19 +78,12 @@ export async function initDatabase(): Promise<boolean> {
     `);
 
     logger.info('Database schema initialized');
-    markDatabaseAvailable();
-    return true;
   } catch (error) {
     //audit assumption: schema creation can fail; risk: backend startup failure; invariant: error surfaced; strategy: log and rethrow.
-    const reason = normalizeDatabaseError(error);
-    logger.error('Failed to initialize database', { error: reason });
-    markDatabaseUnavailable(reason);
-    return false;
+    logger.error('Failed to initialize database', { error });
+    throw error;
   } finally {
-    if (client) {
-      //audit assumption: client release should always run; risk: pool exhaustion; invariant: release executed; strategy: release when allocated.
-      client.release();
-    }
+    client.release();
   }
 }
 
@@ -219,22 +93,12 @@ export async function initDatabase(): Promise<boolean> {
  * Edge cases: Throws on query execution failure.
  */
 export async function query<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<QueryResult<T>> {
-  if (!pool) {
-    //audit assumption: pool required for query; risk: misconfigured DB; invariant: error thrown; strategy: throw unavailable error.
-    throw new DatabaseUnavailableError('DATABASE_URL is not configured');
-  }
-  if (!databaseReady) {
-    //audit assumption: database not ready; risk: query failure; invariant: error thrown; strategy: throw unavailable error.
-    throw new DatabaseUnavailableError(databaseFailureReason || 'Database not initialized');
-  }
   try {
     const result = await pool.query<T>(text, params);
     return result;
   } catch (error) {
     //audit assumption: query can fail; risk: data not persisted; invariant: error surfaced; strategy: log and rethrow.
-    const reason = normalizeDatabaseError(error);
-    logger.error('Database query error', { query: text, error: reason });
-    markDatabaseUnavailable(reason);
+    logger.error('Database query error', { query: text, error });
     throw error;
   }
 }
@@ -251,19 +115,10 @@ export async function saveConversation(
   tokensUsed: number,
   cost: number
 ): Promise<void> {
-  if (!ensureDatabaseReady('save conversation')) {
-    //audit assumption: database unavailable; risk: lost persistence; invariant: safe return; strategy: skip write.
-    return;
-  }
-  try {
-    await query(
-      'INSERT INTO conversations (user_id, user_message, ai_response, tokens_used, cost) VALUES ($1, $2, $3, $4, $5)',
-      [userId, userMessage, aiResponse, tokensUsed, cost]
-    );
-  } catch (error) {
-    //audit assumption: insert can fail; risk: lost persistence; invariant: error logged; strategy: warn and continue.
-    logger.warn('Failed to save conversation', { error: normalizeDatabaseError(error) });
-  }
+  await query(
+    'INSERT INTO conversations (user_id, user_message, ai_response, tokens_used, cost) VALUES ($1, $2, $3, $4, $5)',
+    [userId, userMessage, aiResponse, tokensUsed, cost]
+  );
 }
 
 /**
@@ -272,21 +127,11 @@ export async function saveConversation(
  * Edge cases: Returns empty array if no conversations exist.
  */
 export async function getRecentConversations(userId: string, limit: number = 10): Promise<any[]> {
-  if (!ensureDatabaseReady('fetch recent conversations')) {
-    //audit assumption: database unavailable; risk: empty history; invariant: empty list returned; strategy: return empty list.
-    return [];
-  }
-  try {
-    const result = await query(
-      'SELECT * FROM conversations WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [userId, limit]
-    );
-    return result.rows;
-  } catch (error) {
-    //audit assumption: query can fail; risk: empty history; invariant: empty list returned; strategy: warn and return empty list.
-    logger.warn('Failed to fetch recent conversations', { error: normalizeDatabaseError(error) });
-    return [];
-  }
+  const result = await query(
+    'SELECT * FROM conversations WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [userId, limit]
+  );
+  return result.rows;
 }
 
 /**
@@ -301,19 +146,10 @@ export async function logAuditEvent(
   ipAddress?: string,
   userAgent?: string
 ): Promise<void> {
-  if (!ensureDatabaseReady('log audit event')) {
-    //audit assumption: database unavailable; risk: lost audit log; invariant: safe return; strategy: skip write.
-    return;
-  }
-  try {
-    await query(
-      'INSERT INTO audit_logs (user_id, event_type, event_data, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5)',
-      [userId, eventType, JSON.stringify(eventData), ipAddress, userAgent]
-    );
-  } catch (error) {
-    //audit assumption: insert can fail; risk: lost audit log; invariant: error logged; strategy: warn and continue.
-    logger.warn('Failed to save audit event', { error: normalizeDatabaseError(error) });
-  }
+  await query(
+    'INSERT INTO audit_logs (user_id, event_type, event_data, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5)',
+    [userId, eventType, JSON.stringify(eventData), ipAddress, userAgent]
+  );
 }
 
 /**
@@ -322,21 +158,11 @@ export async function logAuditEvent(
  * Edge cases: Returns empty array if no logs exist.
  */
 export async function getAuditLogs(userId: string, limit: number = 50): Promise<any[]> {
-  if (!ensureDatabaseReady('fetch audit logs')) {
-    //audit assumption: database unavailable; risk: missing audit logs; invariant: empty list returned; strategy: return empty list.
-    return [];
-  }
-  try {
-    const result = await query(
-      'SELECT * FROM audit_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [userId, limit]
-    );
-    return result.rows;
-  } catch (error) {
-    //audit assumption: query can fail; risk: missing audit logs; invariant: empty list returned; strategy: warn and return empty list.
-    logger.warn('Failed to fetch audit logs', { error: normalizeDatabaseError(error) });
-    return [];
-  }
+  const result = await query(
+    'SELECT * FROM audit_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
+    [userId, limit]
+  );
+  return result.rows;
 }
 
 export default pool;

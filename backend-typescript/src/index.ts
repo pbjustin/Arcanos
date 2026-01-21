@@ -62,8 +62,6 @@ function parseBooleanEnv(value: string | undefined, defaultValue: boolean): bool
 
 //audit assumption: seamless mode defaults to anonymous auth; risk: insecure defaults; invariant: explicit env overrides; strategy: default false.
 const authRequiredFlag = parseBooleanEnv(process.env.AUTH_REQUIRED, false);
-//audit assumption: database can be optional in seamless mode; risk: missing persistence; invariant: env overrides; strategy: default false.
-const databaseRequiredFlag = parseBooleanEnv(process.env.DATABASE_REQUIRED, false);
 const rawAuthMode = (process.env.AUTH_MODE || '').trim().toLowerCase();
 if (rawAuthMode && !['jwt', 'api_key', 'none'].includes(rawAuthMode)) {
   //audit assumption: auth mode must be valid; risk: invalid config; invariant: allowed values; strategy: log and exit.
@@ -72,12 +70,8 @@ if (rawAuthMode && !['jwt', 'api_key', 'none'].includes(rawAuthMode)) {
 }
 //audit assumption: auth mode derives from AUTH_MODE or AUTH_REQUIRED; risk: mismatch; invariant: valid mode; strategy: fallback to boolean flag.
 const authMode: AuthMode = rawAuthMode ? (rawAuthMode as AuthMode) : (authRequiredFlag ? 'jwt' : 'none');
-//audit assumption: required env list depends on auth mode and DB requirement; risk: missing secrets; invariant: required envs enforced; strategy: conditional list.
-const requiredEnv = ['OPENAI_API_KEY'];
-if (databaseRequiredFlag) {
-  //audit assumption: database required flag enforces URL; risk: missing DB; invariant: required env enforced; strategy: add to required list.
-  requiredEnv.push('DATABASE_URL');
-}
+//audit assumption: required env list depends on auth mode; risk: missing secrets; invariant: required envs enforced; strategy: conditional list.
+const requiredEnv = ['DATABASE_URL', 'OPENAI_API_KEY'];
 if (authMode === 'jwt') {
   //audit assumption: jwt auth requires secret; risk: missing JWT secret; invariant: env required; strategy: add to required list.
   requiredEnv.push('JWT_SECRET');
@@ -90,11 +84,6 @@ const missingEnv = requiredEnv.filter((key) => !process.env[key]);
 if (missingEnv.length) {
   logger.error('Missing required environment variables', { missing: missingEnv });
   process.exit(1);
-}
-
-if (!process.env.DATABASE_URL) {
-  //audit assumption: database optional; risk: no persistence; invariant: warning logged; strategy: warn without exit.
-  logger.warn('DATABASE_URL is not set; backend will run without persistence');
 }
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
@@ -303,14 +292,8 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 async function startServer() {
   try {
     // Initialize database
-    const databaseReady = await initDatabase();
-    if (databaseReady) {
-      //audit assumption: database init success; risk: none; invariant: log ready; strategy: info log.
-      logger.info('Database initialized');
-    } else {
-      //audit assumption: database init failed or disabled; risk: missing persistence; invariant: degraded mode; strategy: warn and continue.
-      logger.warn('Database unavailable; running in degraded mode');
-    }
+    await initDatabase();
+    logger.info('Database initialized');
 
     // Start listening
     httpServer.listen(PORT, () => {
