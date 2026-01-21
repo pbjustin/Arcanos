@@ -6,32 +6,20 @@ Handles all OpenAI API interactions with retry logic and caching.
 import time
 from io import BytesIO
 from typing import Optional, Dict, Any
-from openai import OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError, NotFoundError
+from openai import OpenAI, OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError, NotFoundError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from ai_client import OpenAIClientProvider, resolve_openai_settings
 from config import Config
 
 
 class GPTClient:
     """OpenAI API client with built-in rate limiting and error handling"""
 
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        client_provider: Optional[OpenAIClientProvider] = None
-    ):
-        """
-        Purpose: Initialize GPTClient with optional API key or injected provider.
-        Inputs/Outputs: api_key override, client_provider; prepares OpenAI client.
-        Edge cases: Raises ValueError if API key is missing.
-        """
-        if client_provider is None:
-            # //audit assumption: provider not supplied; risk: missing API key; invariant: settings resolved; strategy: resolve settings.
-            settings = resolve_openai_settings(api_key)
-            client_provider = OpenAIClientProvider(settings)
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or Config.OPENAI_API_KEY
+        if not self.api_key:
+            raise ValueError("OpenAI API key is required")
 
-        self._client_provider = client_provider
-        self.client = client_provider.get_client()
+        self.client = OpenAI(api_key=self.api_key)
         self._request_cache: Dict[str, tuple[str, float]] = {}
         self._cache_ttl = 300  # 5 minutes
 

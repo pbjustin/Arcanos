@@ -115,7 +115,3 @@ htmlcov/
 *.pem
 *.key
 !public.key
-
-# Allow backend source lib folder (otherwise blocked by top-level lib/ rule)
-!backend-typescript/src/lib/
-!backend-typescript/src/lib/**

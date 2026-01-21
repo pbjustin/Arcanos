@@ -12,7 +12,6 @@ SpeechRecognition>=3.10.1
 pyaudio>=0.2.14
 pyttsx3>=2.90
 pynput>=1.7.6
-websocket-client>=1.7.0
 webrtcvad-wheels>=2.0.14; platform_system == "Windows"
 webrtcvad>=2.0.10; platform_system != "Windows"
 pywin32>=306

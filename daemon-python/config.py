@@ -189,22 +189,6 @@ class Config:
     BACKEND_URL: Optional[str] = os.getenv("BACKEND_URL")
     BACKEND_TOKEN: Optional[str] = os.getenv("BACKEND_TOKEN")
     BACKEND_LOGIN_EMAIL: Optional[str] = os.getenv("BACKEND_LOGIN_EMAIL")
-    BACKEND_API_KEY: Optional[str] = os.getenv("BACKEND_API_KEY") or None
-    BACKEND_AUTH_HEADER: str = os.getenv("BACKEND_AUTH_HEADER", "Authorization")
-    BACKEND_AUTH_PREFIX: Optional[str] = os.getenv("BACKEND_AUTH_PREFIX", "Bearer")
-    # //audit assumption: prompt flag is boolean-like; risk: invalid value; invariant: bool parsed; strategy: strict "true".
-    BACKEND_LOGIN_PROMPT_ENABLED: bool = os.getenv("BACKEND_LOGIN_PROMPT_ENABLED", "false").lower() == "true"
-    # //audit assumption: auth required flag is boolean-like; risk: invalid value; invariant: bool parsed; strategy: strict "true".
-    BACKEND_REQUIRE_AUTH: bool = os.getenv("BACKEND_REQUIRE_AUTH", "false").lower() == "true"
-    # //audit assumption: auth mode can be overridden; risk: invalid mode; invariant: normalized mode; strategy: fallback to require_auth.
-    _RAW_BACKEND_AUTH_MODE: str = os.getenv("BACKEND_AUTH_MODE", "").strip().lower()
-    BACKEND_AUTH_MODE: str = (
-        _RAW_BACKEND_AUTH_MODE
-        if _RAW_BACKEND_AUTH_MODE
-        else ("none" if not BACKEND_REQUIRE_AUTH else "jwt")
-    )
-    # //audit assumption: auth required when mode is not none; risk: wrong auth expectation; invariant: derived bool; strategy: compare mode.
-    BACKEND_AUTH_REQUIRED: bool = BACKEND_AUTH_MODE != "none"
     BACKEND_ROUTING_MODE: str = os.getenv("BACKEND_ROUTING_MODE", "hybrid").lower()
     # //audit assumption: prefixes are comma-separated; risk: empty tokens; invariant: trimmed list; strategy: strip and filter.
     BACKEND_DEEP_PREFIXES: list[str] = [
@@ -221,27 +205,8 @@ class Config:
     BACKEND_HISTORY_LIMIT: int = int(os.getenv("BACKEND_HISTORY_LIMIT", "8"))
     BACKEND_VISION_ENABLED: bool = os.getenv("BACKEND_VISION_ENABLED", "false").lower() == "true"
     BACKEND_TRANSCRIBE_ENABLED: bool = os.getenv("BACKEND_TRANSCRIBE_ENABLED", "false").lower() == "true"
-    BACKEND_AUTO_ROUTE_ENABLED: bool = os.getenv("BACKEND_AUTO_ROUTE_ENABLED", "true").lower() == "true"
-    # //audit assumption: keywords are comma-separated; risk: empty entries; invariant: trimmed list; strategy: strip and filter.
-    BACKEND_AUTO_ROUTE_KEYWORDS: list[str] = [
-        keyword.strip()
-        for keyword in os.getenv(
-            "BACKEND_AUTO_ROUTE_KEYWORDS",
-            "database,db,sql,postgres,postgresql,table,schema,query,queries,join,select,insert,update,delete,"
-            "migration,foreign key,primary key,reporting,analytics,deep,deeper,reasoning,complex,multi-step,step-by-step"
-        ).split(",")
-        if keyword.strip()
-    ]
-    # //audit assumption: min words is integer; risk: invalid value; invariant: int parsed; strategy: int cast with validation.
-    BACKEND_AUTO_ROUTE_MIN_WORDS: int = int(os.getenv("BACKEND_AUTO_ROUTE_MIN_WORDS", "30"))
     BACKEND_WS_URL: Optional[str] = os.getenv("BACKEND_WS_URL") or None
     BACKEND_WS_PATH: str = os.getenv("BACKEND_WS_PATH", "/ws/daemon")
-    # //audit assumption: daemon GPT ID optional; risk: whitespace or empty values; invariant: trimmed string or None; strategy: strip and fallback.
-    _RAW_DAEMON_GPT_ID: str = os.getenv("DAEMON_GPT_ID", "").strip()
-    DAEMON_GPT_ID: Optional[str] = _RAW_DAEMON_GPT_ID or None
-    # //audit assumption: header override may be empty; risk: missing header name; invariant: default header applied; strategy: strip and fallback.
-    _RAW_DAEMON_GPT_ID_HEADER: str = os.getenv("DAEMON_GPT_ID_HEADER", "OpenAI-GPT-ID").strip()
-    DAEMON_GPT_ID_HEADER: str = _RAW_DAEMON_GPT_ID_HEADER or "OpenAI-GPT-ID"
     IPC_HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("IPC_HEARTBEAT_INTERVAL_SECONDS", "30"))
     IPC_RECONNECT_MAX_SECONDS: int = int(os.getenv("IPC_RECONNECT_MAX_SECONDS", "60"))
     IPC_ENABLED: bool = os.getenv("IPC_ENABLED", "true").lower() == "true"
@@ -343,27 +308,12 @@ class Config:
         if cls.BACKEND_ROUTING_MODE not in {"local", "backend", "hybrid"}:
             # //audit assumption: routing mode should be valid; risk: invalid routing; invariant: allowed values; strategy: add error.
             errors.append("BACKEND_ROUTING_MODE must be one of: local, backend, hybrid")
-        if cls.BACKEND_AUTH_MODE not in {"jwt", "api_key", "none"}:
-            # //audit assumption: auth mode should be valid; risk: invalid auth; invariant: allowed values; strategy: add error.
-            errors.append("BACKEND_AUTH_MODE must be one of: jwt, api_key, none")
-        if cls.BACKEND_URL and cls.BACKEND_AUTH_MODE == "api_key" and not cls.BACKEND_API_KEY:
-            # //audit assumption: api_key mode requires key; risk: auth failures; invariant: key present; strategy: add error.
-            errors.append("BACKEND_API_KEY is required when BACKEND_AUTH_MODE=api_key and BACKEND_URL is set")
-        if cls.BACKEND_AUTH_MODE in {"jwt", "api_key"} and not cls.BACKEND_AUTH_HEADER.strip():
-            # //audit assumption: auth header required; risk: missing auth header; invariant: header name present; strategy: add error.
-            errors.append("BACKEND_AUTH_HEADER must be set when BACKEND_AUTH_MODE requires auth")
         if cls.BACKEND_REQUEST_TIMEOUT < 1:
             # //audit assumption: backend timeout positive; risk: invalid timeout; invariant: >=1; strategy: add error.
             errors.append("BACKEND_REQUEST_TIMEOUT must be at least 1 second")
         if cls.BACKEND_HISTORY_LIMIT < 0:
             # //audit assumption: history limit non-negative; risk: invalid limit; invariant: >=0; strategy: add error.
             errors.append("BACKEND_HISTORY_LIMIT must be 0 or greater")
-        if cls.BACKEND_AUTO_ROUTE_MIN_WORDS < 0:
-            # //audit assumption: auto-route threshold non-negative; risk: invalid value; invariant: >=0; strategy: add error.
-            errors.append("BACKEND_AUTO_ROUTE_MIN_WORDS must be 0 or greater")
-        if cls.DAEMON_GPT_ID and len(cls.DAEMON_GPT_ID) > 128:
-            # //audit assumption: daemon GPT ID should be bounded; risk: oversized header; invariant: <=128 chars; strategy: add error.
-            errors.append("DAEMON_GPT_ID must be 128 characters or fewer")
         if cls.IPC_HEARTBEAT_INTERVAL_SECONDS < 5:
             # //audit assumption: heartbeat interval positive; risk: tight loop; invariant: >=5; strategy: add error.
             errors.append("IPC_HEARTBEAT_INTERVAL_SECONDS must be at least 5 seconds")
