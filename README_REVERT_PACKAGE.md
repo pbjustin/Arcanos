@@ -180,10 +180,13 @@ You have everything needed to safely revert to PR #1008:
 ## Git Command Quick Reference
 
 ```bash
+# Prepare: Fetch all references first
+git fetch origin
+
 # The three essential commands:
-git branch backup-$(date +%Y%m%d-%H%M%S)              # 1. Backup
+git branch backup-$(date +%Y%m%d-%H%M%S)                     # 1. Backup
 git reset --hard 53b4755a01eb1dca29837481c47221f5f075445b  # 2. Reset
-git push --force origin main                          # 3. Push
+git push --force origin main                                  # 3. Push
 ```
 
 **Remember**: Safety first. Use the automated script if unsure. ⭐
