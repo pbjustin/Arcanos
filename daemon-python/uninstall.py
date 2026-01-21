@@ -19,7 +19,7 @@ class Uninstaller:
     """Handles complete ARCANOS uninstallation"""
 
     def __init__(self):
-        self.base_dir = Config.APP_DIR
+        self.base_dir = Config.BASE_DIR
         desktop = self._get_desktop_path()
         start_menu = self._get_start_menu_programs_path()
         startup = self._get_startup_path()
@@ -135,9 +135,8 @@ class Uninstaller:
                 print("   ✅ Backed up memories")
 
             # Backup .env
-            env_file = Config.ENV_PATH
+            env_file = Config.BASE_DIR / ".env"
             if env_file.exists():
-                # //audit assumption: env file exists; risk: missing config; invariant: backup copy made; strategy: copy env file.
                 shutil.copy2(env_file, backup_path / ".env")
                 print("   ✅ Backed up configuration")
 

@@ -1,5 +1,5 @@
 """
-Credential bootstrapper for OpenAI and backend authentication.
+Credential bootstrapper for OpenAI and backend JWT authentication.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class CredentialBootstrapResult:
     """
     Purpose: Result of credential bootstrap for runtime updates.
     Inputs/Outputs: OpenAI key, backend token, and backend login email.
-    Edge cases: backend_token and backend_login_email may be None if backend is unused or non-JWT auth is selected.
+    Edge cases: backend_token and backend_login_email may be None if backend is unused.
     """
 
     openai_api_key: str
@@ -222,8 +222,6 @@ def bootstrap_credentials(
     openai_api_key = normalized_openai_api_key or ""
     backend_token = Config.BACKEND_TOKEN or None
     backend_login_email = Config.BACKEND_LOGIN_EMAIL or None
-    backend_login_prompt_enabled = Config.BACKEND_LOGIN_PROMPT_ENABLED
-    backend_auth_mode = Config.BACKEND_AUTH_MODE
 
     if not openai_api_key:
         # //audit assumption: OpenAI key required; risk: GPT client init fails; invariant: non-empty key; strategy: prompt and persist.
@@ -234,44 +232,32 @@ def bootstrap_credentials(
         persist_credentials(resolved_env_path, {"OPENAI_API_KEY": openai_api_key})
 
     backend_url = Config.BACKEND_URL or ""
-    if backend_url and backend_auth_mode == "jwt":
-        # //audit assumption: JWT login required when auth mode is jwt; risk: unauthenticated backend calls; invariant: token available; strategy: ensure token.
+    if backend_url:
+        # //audit assumption: backend login required when URL set; risk: unauthenticated backend calls; invariant: token available; strategy: ensure token.
         token_is_valid = bool(backend_token) and not is_jwt_expired(backend_token, now_seconds())
 
         if not token_is_valid:
-            if not backend_login_prompt_enabled:
-                # //audit assumption: login prompt can be disabled; risk: backend unavailable; invariant: startup continues; strategy: skip login and warn.
-                if backend_token:
-                    # //audit assumption: stale token should be cleared; risk: repeated auth errors; invariant: token cleared; strategy: clear runtime token.
-                    apply_runtime_env_updates({"BACKEND_TOKEN": ""})
-                    backend_token = None
-                print("Backend login prompt disabled. Set BACKEND_TOKEN to enable backend requests.")
-            else:
-                # //audit assumption: login needed when token missing/expired; risk: auth failures; invariant: fresh token; strategy: prompt and login.
-                backend_login_email = prompt_for_value(
-                    "Backend login email: ",
-                    input_provider,
-                    default_value=backend_login_email
-                )
-                backend_password = prompt_for_password(
-                    "Backend password: ",
-                    password_provider
-                )
-                try:
-                    login_result = login_requester(backend_url, backend_login_email, backend_password)
-                except BackendAuthError as exc:
-                    # //audit assumption: login can fail; risk: blocked startup; invariant: error surfaced; strategy: raise CredentialBootstrapError.
-                    raise CredentialBootstrapError(str(exc)) from exc
+            # //audit assumption: login needed when token missing/expired; risk: auth failures; invariant: fresh token; strategy: prompt and login.
+            backend_login_email = prompt_for_value(
+                "Backend login email: ",
+                input_provider,
+                default_value=backend_login_email
+            )
+            backend_password = prompt_for_password(
+                "Backend password: ",
+                password_provider
+            )
+            try:
+                login_result = login_requester(backend_url, backend_login_email, backend_password)
+            except BackendAuthError as exc:
+                # //audit assumption: login can fail; risk: blocked startup; invariant: error surfaced; strategy: raise CredentialBootstrapError.
+                raise CredentialBootstrapError(str(exc)) from exc
 
-                backend_token = login_result.token
-                persist_credentials(
-                    resolved_env_path,
-                    {"BACKEND_TOKEN": backend_token, "BACKEND_LOGIN_EMAIL": backend_login_email}
-                )
-    elif backend_url and backend_auth_mode == "api_key":
-        # //audit assumption: API key auth does not use login prompts; risk: missing key; invariant: key set; strategy: warn.
-        if not (Config.BACKEND_API_KEY or "").strip():
-            print("Backend API key is missing. Set BACKEND_API_KEY to enable backend requests.")
+            backend_token = login_result.token
+            persist_credentials(
+                resolved_env_path,
+                {"BACKEND_TOKEN": backend_token, "BACKEND_LOGIN_EMAIL": backend_login_email}
+            )
 
     return CredentialBootstrapResult(
         openai_api_key=openai_api_key,

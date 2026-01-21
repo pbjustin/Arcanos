@@ -21,14 +21,11 @@ pool.on('connect', () => {
 });
 
 pool.on('error', (err) => {
-  //audit assumption: database errors can occur; risk: dropped connections; invariant: error logged; strategy: log error.
   logger.error('Unexpected database error', { error: err.message });
 });
 
 /**
- * Purpose: Initialize database schema for conversations and audit logs.
- * Inputs/Outputs: none; creates tables and indexes if missing.
- * Edge cases: Throws if schema creation fails.
+ * Initialize database schema
  */
 export async function initDatabase(): Promise<void> {
   const client = await pool.connect();
@@ -43,15 +40,10 @@ export async function initDatabase(): Promise<void> {
         ai_response TEXT NOT NULL,
         tokens_used INTEGER NOT NULL,
         cost DECIMAL(10, 6) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_id (user_id),
+        INDEX idx_created_at (created_at)
       );
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations (user_id);
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON conversations (created_at);
     `);
 
     // Create audit_logs table
@@ -63,23 +55,15 @@ export async function initDatabase(): Promise<void> {
         event_data JSONB,
         ip_address VARCHAR(45),
         user_agent TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_id (user_id),
+        INDEX idx_event_type (event_type),
+        INDEX idx_created_at (created_at)
       );
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs (user_id);
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_event_type ON audit_logs (event_type);
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at);
     `);
 
     logger.info('Database schema initialized');
   } catch (error) {
-    //audit assumption: schema creation can fail; risk: backend startup failure; invariant: error surfaced; strategy: log and rethrow.
     logger.error('Failed to initialize database', { error });
     throw error;
   } finally {
@@ -88,25 +72,20 @@ export async function initDatabase(): Promise<void> {
 }
 
 /**
- * Purpose: Execute a parameterized SQL query.
- * Inputs/Outputs: SQL text and optional params; returns QueryResult.
- * Edge cases: Throws on query execution failure.
+ * Query helper with error handling
  */
 export async function query<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<QueryResult<T>> {
   try {
     const result = await pool.query<T>(text, params);
     return result;
   } catch (error) {
-    //audit assumption: query can fail; risk: data not persisted; invariant: error surfaced; strategy: log and rethrow.
     logger.error('Database query error', { query: text, error });
     throw error;
   }
 }
 
 /**
- * Purpose: Persist a conversation record for a user.
- * Inputs/Outputs: userId, userMessage, aiResponse, tokensUsed, cost; writes to database.
- * Edge cases: Throws on database errors.
+ * Save conversation to database
  */
 export async function saveConversation(
   userId: string,
@@ -122,9 +101,7 @@ export async function saveConversation(
 }
 
 /**
- * Purpose: Fetch recent conversations for a user.
- * Inputs/Outputs: userId and limit; returns array of rows.
- * Edge cases: Returns empty array if no conversations exist.
+ * Get recent conversations for a user
  */
 export async function getRecentConversations(userId: string, limit: number = 10): Promise<any[]> {
   const result = await query(
@@ -135,9 +112,7 @@ export async function getRecentConversations(userId: string, limit: number = 10)
 }
 
 /**
- * Purpose: Persist an audit log event.
- * Inputs/Outputs: userId, eventType, eventData, ipAddress, userAgent; writes to database.
- * Edge cases: eventData is stored as JSON string.
+ * Log audit event
  */
 export async function logAuditEvent(
   userId: string,
@@ -153,9 +128,7 @@ export async function logAuditEvent(
 }
 
 /**
- * Purpose: Fetch recent audit logs for a user.
- * Inputs/Outputs: userId and limit; returns array of rows.
- * Edge cases: Returns empty array if no logs exist.
+ * Get audit logs for a user
  */
 export async function getAuditLogs(userId: string, limit: number = 50): Promise<any[]> {
   const result = await query(

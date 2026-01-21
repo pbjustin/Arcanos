@@ -4,9 +4,9 @@
  */
 
 import { Router, Request, Response } from 'express';
+import OpenAI from 'openai';
 import { saveConversation, logAuditEvent } from '../database';
 import { logger } from '../logger';
-import { getOpenAiClient } from '../lib/openaiClient';
 
 const router = Router();
 
@@ -252,19 +252,19 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    const openAiResult = getOpenAiClient();
-    if (!openAiResult.ok || !openAiResult.client) {
-      //audit assumption: OpenAI client must be available; risk: backend unusable; invariant: client ready; strategy: return 500.
-      const message = openAiResult.error || 'OpenAI client is not configured';
-      logger.error('OpenAI client unavailable', { error: message });
+    if (!process.env.OPENAI_API_KEY) {
+      //audit assumption: API key configured; risk: backend unusable; invariant: key set; strategy: return 500.
+      logger.error('OPENAI_API_KEY is not configured');
       return res.status(500).json({
         error: 'Internal Server Error',
-        message
+        message: 'OpenAI API key is not configured'
       });
     }
 
     // Call OpenAI API
-    const openai = openAiResult.client;
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
 
     if (parsedRequest.value.stream) {
       //audit assumption: streaming requested; risk: client disconnect; invariant: SSE headers set; strategy: stream with try/finally.
