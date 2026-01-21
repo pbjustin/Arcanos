@@ -1,0 +1,144 @@
+name: Documentation Issue
+description: Report issues with documentation or suggest improvements
+title: "[DOCS] "
+labels: ["documentation", "needs-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 📋 Documentation Issue Self-Check
+        Before submitting, verify:
+        - [ ] Issue relates to existing documentation
+        - [ ] Checked current version of documentation
+        - [ ] Not a duplicate of existing documentation issues
+        - [ ] Specific file or section identified
+        - [ ] Clear improvement suggestion provided
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Documentation Issue Type
+      description: What type of documentation issue is this?
+      options:
+        - Inaccurate information
+        - Missing information
+        - Outdated content
+        - Unclear instructions
+        - Broken links
+        - Missing examples
+        - Formatting issues
+        - Translation needed
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: documentation_section
+    attributes:
+      label: Affected Documentation Section
+      description: Which documentation section is affected?
+      options:
+        - README.md
+        - CONTRIBUTING.md
+        - CODE_OF_CONDUCT.md
+        - API Documentation (docs/api/)
+        - Configuration Guide (docs/CONFIGURATION.md)
+        - Deployment Guide (docs/deployment/)
+        - AI Guides (docs/ai-guides/)
+        - Architecture Documentation
+        - Issue Templates
+        - PR Templates
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_content
+    attributes:
+      label: Current Content (if applicable)
+      description: Quote the current documentation content that needs fixing
+      render: markdown
+      placeholder: |
+        ```markdown
+        Current content that needs to be changed...
+        ```
+
+  - type: textarea
+    id: issue_description
+    attributes:
+      label: Issue Description
+      description: Clearly describe what's wrong or missing
+      placeholder: Explain what's incorrect, unclear, or missing in the current documentation...
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested_improvement
+    attributes:
+      label: Suggested Improvement
+      description: How should the documentation be improved?
+      render: markdown
+      placeholder: |
+        ```markdown
+        Suggested improved content...
+        ```
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority Level
+      description: How critical is this documentation issue?
+      options:
+        - Low (minor improvement)
+        - Medium (affects user experience)
+        - High (blocks users or contains errors)
+        - Critical (security or safety issue)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: audience
+    attributes:
+      label: Affected Audience
+      description: Who is impacted by this documentation issue?
+      options:
+        - label: New users/developers
+        - label: Existing contributors
+        - label: System administrators
+        - label: API consumers
+        - label: AI/ML developers
+        - label: Railway deployment users
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: What led you to discover this issue?
+      placeholder: |
+        - Were you following a tutorial?
+        - Trying to set up the system?
+        - Looking for specific information?
+        - Found this while using the API?
+
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Documentation Verification
+      description: Please verify the following
+      options:
+        - label: I have checked the latest version of the documentation
+        - label: I have searched for existing documentation issues
+        - label: I have tested any code examples mentioned
+        - label: I have verified this affects the current software version (OpenAI SDK v5.16.0)
+
+  - type: textarea
+    id: related_files
+    attributes:
+      label: Related Files or URLs
+      description: Links to specific documentation files or sections
+      placeholder: |
+        - File path: docs/example.md
+        - URL: https://github.com/user/repo/blob/main/docs/example.md
+        - Section: ## Configuration
