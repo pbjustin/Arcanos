@@ -383,6 +383,8 @@ signtool sign /f cert.pfx /p %CERT_PASSWORD% /tr http://timestamp.digicert.com /
 2. **Set environment variables**:
 ```env
 DATABASE_URL=postgresql://...
+# Require DATABASE_URL (default false for seamless mode)
+DATABASE_REQUIRED=false
 # JWT_SECRET is required when AUTH_MODE=jwt
 JWT_SECRET=your_random_secret_key_here
 AUTH_USER_EMAIL=admin@example.com
@@ -407,6 +409,7 @@ node -e "const crypto=require('crypto'); const salt=crypto.randomBytes(16).toStr
 
 To allow anonymous backend access (no email/password), set `AUTH_MODE=none` (or `AUTH_REQUIRED=false`) and optionally change `AUTH_ANONYMOUS_USER_ID`.
 If `ALLOWED_ORIGINS` is empty, the backend allows all origins with credentials disabled.
+If `DATABASE_URL` is unset and `DATABASE_REQUIRED=false`, the backend runs without persistence and reports `degraded` in `/api/health`.
 To use API key auth instead of email/password, set `AUTH_MODE=api_key` and provide `AUTH_API_KEY` (and header/prefix overrides if needed).
 
 3. **Railway auto-deploys** on push to main branch
