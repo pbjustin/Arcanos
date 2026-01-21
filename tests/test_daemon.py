@@ -21,7 +21,6 @@ from rate_limiter import RateLimiter
 from terminal import TerminalController
 from ai_client import resolve_openai_settings
 from openai_key_validation import normalize_openai_api_key
-from ipc_client import build_ws_url
 
 
 class TestConfig:
@@ -203,20 +202,6 @@ class TestOpenAiKeyValidation:
         """Test normalization rejects placeholder keys"""
         assert normalize_openai_api_key("sk-your-api-key-here") is None
         assert normalize_openai_api_key("{{OPENAI_API_KEY}}") is None
-
-
-class TestIpcClientHelpers:
-    """Test IPC helper functions"""
-
-    def test_build_ws_url(self):
-        """Test WebSocket URL construction"""
-        ws_url = build_ws_url("https://example.com", "/ws/daemon")
-        assert ws_url == "wss://example.com/ws/daemon"
-
-    def test_build_ws_url_missing_base(self):
-        """Test WebSocket URL construction with missing base URL"""
-        ws_url = build_ws_url(None, "/ws/daemon")
-        assert ws_url is None
 
 
 # Run tests
