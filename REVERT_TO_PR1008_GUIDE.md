@@ -324,7 +324,7 @@ Here's the complete sequence for quick reference:
 
 ```bash
 # 1. Fetch and verify target commit
-git fetch origin 53b4755a01eb1dca29837481c47221f5f075445b
+git fetch origin
 git show 53b4755a01eb1dca29837481c47221f5f075445b --stat
 
 # 2. Review what will be removed
