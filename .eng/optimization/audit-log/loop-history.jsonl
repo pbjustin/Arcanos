@@ -1,0 +1,1 @@
+{"iteration":1,"timestamp":"2025-11-11T07:39:00+00:00","findings":{"critical":0,"major":1,"moderate":1,"minor":0},"actions":["Removed unused src/router.ts","Refactored tests/openai-prompt.test.ts for isolated ESM mocking","Updated audit-summary.json","Updated change-plan.json"],"status":"clean"}
