@@ -195,7 +195,7 @@ class Config:
     # //audit assumption: prompt flag is boolean-like; risk: invalid value; invariant: bool parsed; strategy: strict "true".
     BACKEND_LOGIN_PROMPT_ENABLED: bool = os.getenv("BACKEND_LOGIN_PROMPT_ENABLED", "false").lower() == "true"
     # //audit assumption: auth required flag is boolean-like; risk: invalid value; invariant: bool parsed; strategy: strict "true".
-    BACKEND_REQUIRE_AUTH: bool = os.getenv("BACKEND_REQUIRE_AUTH", "true").lower() == "true"
+    BACKEND_REQUIRE_AUTH: bool = os.getenv("BACKEND_REQUIRE_AUTH", "false").lower() == "true"
     # //audit assumption: auth mode can be overridden; risk: invalid mode; invariant: normalized mode; strategy: fallback to require_auth.
     _RAW_BACKEND_AUTH_MODE: str = os.getenv("BACKEND_AUTH_MODE", "").strip().lower()
     BACKEND_AUTH_MODE: str = (

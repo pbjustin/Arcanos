@@ -185,11 +185,11 @@ BACKEND_URL=https://your-railway-app.railway.app
 BACKEND_TOKEN=your-backend-jwt
 BACKEND_LOGIN_EMAIL=you@example.com
 BACKEND_LOGIN_PROMPT_ENABLED=false
-BACKEND_AUTH_MODE=jwt
+BACKEND_AUTH_MODE=none
 BACKEND_API_KEY=
 BACKEND_AUTH_HEADER=Authorization
 BACKEND_AUTH_PREFIX=Bearer
-BACKEND_REQUIRE_AUTH=true
+BACKEND_REQUIRE_AUTH=false
 BACKEND_ROUTING_MODE=hybrid
 BACKEND_DEEP_PREFIXES=deep:,backend:
 BACKEND_FALLBACK_TO_LOCAL=true
@@ -216,6 +216,7 @@ If `BACKEND_URL` is set, ARCANOS uses `BACKEND_AUTH_MODE` to choose authenticati
 For `jwt`, set `BACKEND_TOKEN` or enable `BACKEND_LOGIN_PROMPT_ENABLED=true` to prompt for login and store the token.
 For `api_key`, set `BACKEND_API_KEY` and optionally adjust `BACKEND_AUTH_HEADER` / `BACKEND_AUTH_PREFIX`.
 For `none`, configure the backend with `AUTH_MODE=none` (or `AUTH_REQUIRED=false`) to allow anonymous access.
+For seamless local use, set both `BACKEND_AUTH_MODE=none` and backend `AUTH_MODE=none` so `JWT_SECRET` is not required.
 `BACKEND_REQUIRE_AUTH` remains as a legacy fallback when `BACKEND_AUTH_MODE` is unset.
 Use `deep <prompt>` or `deep:` / `backend:` prefixes to route a request through the backend when running in hybrid mode.
 Set `DAEMON_GPT_ID` to tag daemon requests with your GPT ID; override `DAEMON_GPT_ID_HEADER` if your backend expects a different header name (default `OpenAI-GPT-ID`).
@@ -382,12 +383,13 @@ signtool sign /f cert.pfx /p %CERT_PASSWORD% /tr http://timestamp.digicert.com /
 2. **Set environment variables**:
 ```env
 DATABASE_URL=postgresql://...
+# JWT_SECRET is required when AUTH_MODE=jwt
 JWT_SECRET=your_random_secret_key_here
 AUTH_USER_EMAIL=admin@example.com
 AUTH_PASSWORD_SALT=replace-with-generated-salt
 AUTH_PASSWORD_HASH=replace-with-generated-hash
-AUTH_MODE=jwt
-AUTH_REQUIRED=true
+AUTH_MODE=none
+AUTH_REQUIRED=false
 AUTH_API_KEY=
 AUTH_API_KEY_HEADER=Authorization
 AUTH_API_KEY_PREFIX=Bearer

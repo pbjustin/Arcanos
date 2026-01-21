@@ -60,7 +60,8 @@ function parseBooleanEnv(value: string | undefined, defaultValue: boolean): bool
   return trimmed === 'true';
 }
 
-const authRequiredFlag = parseBooleanEnv(process.env.AUTH_REQUIRED, true);
+//audit assumption: seamless mode defaults to anonymous auth; risk: insecure defaults; invariant: explicit env overrides; strategy: default false.
+const authRequiredFlag = parseBooleanEnv(process.env.AUTH_REQUIRED, false);
 const rawAuthMode = (process.env.AUTH_MODE || '').trim().toLowerCase();
 if (rawAuthMode && !['jwt', 'api_key', 'none'].includes(rawAuthMode)) {
   //audit assumption: auth mode must be valid; risk: invalid config; invariant: allowed values; strategy: log and exit.
