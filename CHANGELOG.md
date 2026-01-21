@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-01-21
+
+### Added
+- IPC WebSocket bridge endpoints for daemon handshake and bridge payload broadcasts.
+
+### Fixed
+- Prevented IPC handshake 404s by mounting `/bridge` and `/ipc` status/handshake routes.
+
 ## [1.0.3] - 2026-01-21
 
 ### Added
