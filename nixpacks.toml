@@ -2,7 +2,7 @@
 nixPkgs = ["nodejs_20"]
 
 [phases.install]
-cmds = ["npm --prefix backend-typescript install"]
+cmds = ["npm --prefix backend-typescript ci --include=dev"]
 
 [phases.build]
 cmds = ["npm --prefix backend-typescript run build"]
