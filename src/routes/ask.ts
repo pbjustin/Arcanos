@@ -4,6 +4,7 @@ import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/r
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware, securityHeaders, validateInput } from '../utils/security.js';
 import { buildValidationErrorResponse } from '../utils/errorResponse.js';
+import { routeBridgeRequest } from '../utils/bridgeRelay.js';
 import type { AIRequestDTO, AIResponseDTO, ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
 
 const router = express.Router();
@@ -126,6 +127,16 @@ export const handleAIRequest = async (
   logRequestFeedback(prompt, endpointName);
 
   try {
+    void routeBridgeRequest(req, {
+      endpoint: endpointName,
+      payload: {
+        prompt,
+        sessionId,
+        overrideAuditSafe,
+        clientContext: req.body.clientContext
+      }
+    });
+
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe);
     return res.json({ ...(output as AskResponse), clientContext: req.body.clientContext });
