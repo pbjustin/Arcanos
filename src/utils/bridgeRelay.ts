@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import { tagRequest } from './tagRequest.js';
+import { broadcastBridgeEvent } from '../services/bridgeSocket.js';
 
 type RequestWithBridgeContext = Request & {
   requestId?: string;
@@ -66,6 +67,7 @@ export async function routeBridgeRequest(
   );
 
   try {
+    broadcastBridgeEvent(payload);
     const bridgeUrl = new URL('../../daemon/bridge.js', import.meta.url);
     const bridgeModule = (await import(bridgeUrl.href)) as BridgeModule;
     const { bridge } = bridgeModule;
