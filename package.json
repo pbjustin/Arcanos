@@ -1,6 +1,6 @@
 {
   "name": "arcanos-backend",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "ARCANOS AI Backend Service",
   "type": "module",
   "main": "dist/server.js",
