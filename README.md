@@ -190,6 +190,8 @@ BACKEND_FALLBACK_TO_LOCAL=true
 BACKEND_SEND_UPDATES=true
 BACKEND_VISION_ENABLED=false
 BACKEND_TRANSCRIBE_ENABLED=false
+DAEMON_GPT_ID=
+DAEMON_GPT_ID_HEADER=OpenAI-GPT-ID
 MAX_REQUESTS_PER_HOUR=60
 MAX_TOKENS_PER_DAY=100000
 TELEMETRY_ENABLED=false
@@ -198,6 +200,8 @@ AUTO_START=false
 
 If `BACKEND_URL` is set, ARCANOS will prompt for backend login on startup and store `BACKEND_TOKEN` locally.
 Use `deep <prompt>` or `deep:` / `backend:` prefixes to route a request through the backend when running in hybrid mode.
+Set `DAEMON_GPT_ID` to send your custom GPT ID with backend requests. The daemon uses `DAEMON_GPT_ID_HEADER`
+(default `OpenAI-GPT-ID`) so the backend can read it if needed, without requiring backend changes.
 
 ### Privacy & Data Retention
 

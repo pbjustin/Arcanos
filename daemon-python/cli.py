@@ -79,7 +79,9 @@ class ArcanosCLI:
             self.backend_client = BackendApiClient(
                 base_url=Config.BACKEND_URL,
                 token_provider=lambda: Config.BACKEND_TOKEN,
-                timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
+                timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT,
+                daemon_gpt_id=Config.DAEMON_GPT_ID,
+                daemon_gpt_header_name=Config.DAEMON_GPT_ID_HEADER
             )
 
         # PTT Manager
