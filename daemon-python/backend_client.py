@@ -93,17 +93,25 @@ class BackendApiClient:
         base_url: str,
         token_provider: Callable[[], Optional[str]],
         timeout_seconds: int = 15,
-        request_sender: Callable[..., requests.Response] = requests.request
+        request_sender: Callable[..., requests.Response] = requests.request,
+        daemon_gpt_id: Optional[str] = None,
+        daemon_gpt_header_name: str = "OpenAI-GPT-ID"
     ) -> None:
         """
         Purpose: Initialize backend API client.
-        Inputs/Outputs: base_url, token_provider, timeout_seconds, request_sender; stores config.
-        Edge cases: Empty base_url disables requests and returns config errors.
+        Inputs/Outputs: base_url, token_provider, timeout_seconds, request_sender, daemon_gpt_id, daemon_gpt_header_name.
+        Edge cases: Empty base_url disables requests and returns config errors; blank header name uses default.
         """
         self._base_url = normalize_backend_url(base_url)
         self._token_provider = token_provider
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
+        # //audit assumption: GPT ID optional; risk: whitespace input; invariant: trimmed or None; strategy: normalize and fallback.
+        normalized_daemon_gpt_id = (daemon_gpt_id or "").strip()
+        self._daemon_gpt_id = normalized_daemon_gpt_id or None
+        # //audit assumption: header name may include whitespace; risk: empty header name; invariant: default header set; strategy: normalize and fallback.
+        normalized_header_name = (daemon_gpt_header_name or "").strip()
+        self._daemon_gpt_header_name = normalized_header_name or "OpenAI-GPT-ID"
 
     def request_chat_completion(
         self,
@@ -260,6 +268,7 @@ class BackendApiClient:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
+        self._apply_daemon_gpt_header(headers)
 
         try:
             response = self._request_sender(
@@ -332,6 +341,21 @@ class BackendApiClient:
             )
 
         return BackendResponse(ok=True, value=parsed)
+
+    def _apply_daemon_gpt_header(self, headers: dict[str, str]) -> None:
+        """
+        Purpose: Attach the daemon GPT ID header to backend requests when configured.
+        Inputs/Outputs: headers mapping; mutates headers in place.
+        Edge cases: No-op when ID is missing or header already present.
+        """
+        if not self._daemon_gpt_id:
+            # //audit assumption: GPT ID optional; risk: header absent; invariant: no-op when missing; strategy: return early.
+            return
+        if self._daemon_gpt_header_name in headers:
+            # //audit assumption: caller may set header; risk: override explicit header; invariant: preserve caller header; strategy: return early.
+            return
+        # //audit assumption: header injection allowed; risk: invalid header name; invariant: header set when configured; strategy: set header.
+        headers[self._daemon_gpt_header_name] = self._daemon_gpt_id
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
         response_text = response_json.get("response")

@@ -207,6 +207,12 @@ class Config:
     BACKEND_TRANSCRIBE_ENABLED: bool = os.getenv("BACKEND_TRANSCRIBE_ENABLED", "false").lower() == "true"
     BACKEND_WS_URL: Optional[str] = os.getenv("BACKEND_WS_URL") or None
     BACKEND_WS_PATH: str = os.getenv("BACKEND_WS_PATH", "/ws/daemon")
+    # //audit assumption: daemon GPT ID optional; risk: whitespace or empty values; invariant: trimmed string or None; strategy: strip and fallback.
+    _RAW_DAEMON_GPT_ID: str = os.getenv("DAEMON_GPT_ID", "").strip()
+    DAEMON_GPT_ID: Optional[str] = _RAW_DAEMON_GPT_ID or None
+    # //audit assumption: header override may be empty; risk: missing header name; invariant: default header applied; strategy: strip and fallback.
+    _RAW_DAEMON_GPT_ID_HEADER: str = os.getenv("DAEMON_GPT_ID_HEADER", "OpenAI-GPT-ID").strip()
+    DAEMON_GPT_ID_HEADER: str = _RAW_DAEMON_GPT_ID_HEADER or "OpenAI-GPT-ID"
     IPC_HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("IPC_HEARTBEAT_INTERVAL_SECONDS", "30"))
     IPC_RECONNECT_MAX_SECONDS: int = int(os.getenv("IPC_RECONNECT_MAX_SECONDS", "60"))
     IPC_ENABLED: bool = os.getenv("IPC_ENABLED", "true").lower() == "true"
@@ -314,6 +320,9 @@ class Config:
         if cls.BACKEND_HISTORY_LIMIT < 0:
             # //audit assumption: history limit non-negative; risk: invalid limit; invariant: >=0; strategy: add error.
             errors.append("BACKEND_HISTORY_LIMIT must be 0 or greater")
+        if cls.DAEMON_GPT_ID and len(cls.DAEMON_GPT_ID) > 128:
+            # //audit assumption: daemon GPT ID should be bounded; risk: oversized header; invariant: <=128 chars; strategy: add error.
+            errors.append("DAEMON_GPT_ID must be 128 characters or fewer")
         if cls.IPC_HEARTBEAT_INTERVAL_SECONDS < 5:
             # //audit assumption: heartbeat interval positive; risk: tight loop; invariant: >=5; strategy: add error.
             errors.append("IPC_HEARTBEAT_INTERVAL_SECONDS must be at least 5 seconds")
