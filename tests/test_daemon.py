@@ -4,16 +4,24 @@ Comprehensive test suite for daemon functionality.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock
 from pathlib import Path
-import json
+import sys
+
+# Ensure daemon-python is importable
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DAEMON_DIR = ROOT_DIR / "daemon-python"
+sys.path.insert(0, str(DAEMON_DIR))
 
 # Import modules to test
-from daemon-python.config import Config
-from daemon-python.schema import Memory
-from daemon-python.gpt_client import GPTClient
-from daemon-python.rate_limiter import RateLimiter
-from daemon-python.terminal import TerminalController
+from config import Config
+from schema import Memory
+from gpt_client import GPTClient
+from rate_limiter import RateLimiter
+from terminal import TerminalController
+from ai_client import resolve_openai_settings
+from openai_key_validation import normalize_openai_api_key
+from ipc_client import build_ws_url
 
 
 class TestConfig:
@@ -145,14 +153,13 @@ class TestTerminalController:
 class TestGPTClient:
     """Test GPT client (mocked)"""
 
-    @patch('daemon-python.gpt_client.OpenAI')
-    def test_gpt_client_initialization(self, mock_openai):
+    def test_gpt_client_initialization(self, monkeypatch):
         """Test GPT client initialization"""
+        monkeypatch.setattr(Config, "OPENAI_API_KEY", "")
         with pytest.raises(ValueError):
             GPTClient(api_key="")
 
-    @patch('daemon-python.gpt_client.OpenAI')
-    def test_ask_method(self, mock_openai):
+    def test_ask_method(self):
         """Test ask method with mock"""
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -160,15 +167,56 @@ class TestGPTClient:
         mock_response.usage = MagicMock(total_tokens=10, prompt_tokens=5, completion_tokens=5)
         mock_client.chat.completions.create.return_value = mock_response
 
-        mock_openai.return_value = mock_client
+        provider = MagicMock()
+        provider.get_client.return_value = mock_client
 
-        client = GPTClient(api_key="test-key")
-        client.client = mock_client
+        client = GPTClient(api_key="test-key", client_provider=provider)
 
         response, tokens, cost = client.ask("Hello")
         assert response == "Test response"
         assert tokens == 10
         assert cost > 0
+
+
+class TestAiClient:
+    """Test OpenAI client helper functions"""
+
+    def test_resolve_openai_settings_with_override(self):
+        """Test resolving OpenAI settings with API key override"""
+        settings = resolve_openai_settings(api_key="test-key")
+        assert settings.api_key == "test-key"
+
+    def test_resolve_openai_settings_rejects_placeholder(self):
+        """Test resolving OpenAI settings rejects placeholder values"""
+        with pytest.raises(ValueError):
+            resolve_openai_settings(api_key="sk-your-api-key-here")
+
+
+class TestOpenAiKeyValidation:
+    """Test OpenAI API key validation helpers"""
+
+    def test_normalize_openai_api_key_accepts_valid(self):
+        """Test normalization accepts non-placeholder keys"""
+        assert normalize_openai_api_key("sk-proj-abc123") == "sk-proj-abc123"
+
+    def test_normalize_openai_api_key_rejects_placeholder(self):
+        """Test normalization rejects placeholder keys"""
+        assert normalize_openai_api_key("sk-your-api-key-here") is None
+        assert normalize_openai_api_key("{{OPENAI_API_KEY}}") is None
+
+
+class TestIpcClientHelpers:
+    """Test IPC helper functions"""
+
+    def test_build_ws_url(self):
+        """Test WebSocket URL construction"""
+        ws_url = build_ws_url("https://example.com", "/ws/daemon")
+        assert ws_url == "wss://example.com/ws/daemon"
+
+    def test_build_ws_url_missing_base(self):
+        """Test WebSocket URL construction with missing base URL"""
+        ws_url = build_ws_url(None, "/ws/daemon")
+        assert ws_url is None
 
 
 # Run tests

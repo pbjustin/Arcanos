@@ -52,12 +52,12 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    # //audit assumption: custom hooks needed for bundled dependencies; risk: missing hooks; invariant: hook path resolved; strategy: add hook path.
+    hookspath=[str(base_dir / 'pyinstaller_hooks')],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         'matplotlib',
-        'numpy',
         'pandas',
         'scipy',
         'IPython',
