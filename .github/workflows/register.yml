@@ -1,0 +1,136 @@
+---
+name: ARCANOS Repository Registration
+
+'on':
+  push:
+    branches: [main, master]
+
+jobs:
+  register-features:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect repository features
+        id: detect-features
+        run: |
+          echo "Scanning repository for programming language features..."
+
+          # Count files by language
+          JS_COUNT=$(find . -path "./node_modules" -prune -o \
+            -name "*.js" -type f -print | wc -l)
+          TS_COUNT=$(find . -path "./node_modules" -prune -o \
+            -name "*.ts" -type f -print | wc -l)
+          PY_COUNT=$(find . -path "./node_modules" -prune -o \
+            -name "*.py" -type f -print | wc -l)
+          GO_COUNT=$(find . -path "./node_modules" -prune -o \
+            -name "*.go" -type f -print | wc -l)
+          RB_COUNT=$(find . -path "./node_modules" -prune -o \
+            -name "*.rb" -type f -print | wc -l)
+          JAVA_COUNT=$(find . -path "./node_modules" -prune -o \
+            -name "*.java" -type f -print | wc -l)
+
+          # Collect detected languages (only include if files exist)
+          LANGUAGES=""
+          [ $JS_COUNT -gt 0 ] && LANGUAGES="${LANGUAGES}javascript,"
+          [ $TS_COUNT -gt 0 ] && LANGUAGES="${LANGUAGES}typescript,"
+          [ $PY_COUNT -gt 0 ] && LANGUAGES="${LANGUAGES}python,"
+          [ $GO_COUNT -gt 0 ] && LANGUAGES="${LANGUAGES}go,"
+          [ $RB_COUNT -gt 0 ] && LANGUAGES="${LANGUAGES}ruby,"
+          [ $JAVA_COUNT -gt 0 ] && LANGUAGES="${LANGUAGES}java,"
+
+          # Remove trailing comma
+          LANGUAGES=$(echo $LANGUAGES | sed 's/,$//')
+
+          # Get repository metadata
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          COMMIT_HASH="${GITHUB_SHA}"
+
+          # Create feature summary
+          FEATURES="{"
+          [ $JS_COUNT -gt 0 ] && \
+            FEATURES="${FEATURES}\"javascript\":${JS_COUNT},"
+          [ $TS_COUNT -gt 0 ] && \
+            FEATURES="${FEATURES}\"typescript\":${TS_COUNT},"
+          [ $PY_COUNT -gt 0 ] && \
+            FEATURES="${FEATURES}\"python\":${PY_COUNT},"
+          [ $GO_COUNT -gt 0 ] && \
+            FEATURES="${FEATURES}\"go\":${GO_COUNT},"
+          [ $RB_COUNT -gt 0 ] && \
+            FEATURES="${FEATURES}\"ruby\":${RB_COUNT},"
+          [ $JAVA_COUNT -gt 0 ] && \
+            FEATURES="${FEATURES}\"java\":${JAVA_COUNT},"
+          FEATURES=$(echo $FEATURES | sed 's/,$//')
+          FEATURES="${FEATURES}}"
+
+          echo "Repository: $REPO_NAME"
+          echo "Commit: $COMMIT_HASH"
+          echo "Languages detected: $LANGUAGES"
+          echo "File counts: $FEATURES"
+
+          # Set outputs for next step
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "languages=$LANGUAGES" >> $GITHUB_OUTPUT
+          echo "features=$FEATURES" >> $GITHUB_OUTPUT
+
+      - name: 📤 Register with ARCANOS backend
+        run: |
+          echo "Registering repository features with ARCANOS backend..."
+
+          # Prepare JSON payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "repo_name": "${{ steps.detect-features.outputs.repo_name }}",
+            "commit_hash": "${{ steps.detect-features.outputs.commit_hash }}",
+            "detected_features": ${{ steps.detect-features.outputs.features }},
+            "languages": "${{ steps.detect-features.outputs.languages }}",
+            "branch": "${GITHUB_REF_NAME}",
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "event_type": "repository_registration",
+            "github_repository": "${GITHUB_REPOSITORY}"
+          }
+          EOF
+          )
+
+          echo "Payload:"
+          echo "$PAYLOAD" | jq '.' || echo "$PAYLOAD"
+
+          # Send registration request to ARCANOS backend
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o response.json \
+            -X POST https://arcanos-v2-production.up.railway.app/ask \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: ARCANOS-GitHub-Actions/1.0" \
+            -d "$PAYLOAD")
+
+          echo "HTTP Response Code: $HTTP_CODE"
+
+          if [ -f response.json ]; then
+            echo "Response body:"
+            cat response.json | jq '.' 2>/dev/null || cat response.json
+          fi
+
+          # Check if registration was successful
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✅ Repository successfully registered with ARCANOS backend"
+          else
+            echo "⚠️ Registration request completed with HTTP $HTTP_CODE"
+            # Don't fail the workflow for non-critical registration
+            echo "Continuing workflow execution..."
+          fi
+
+      - name: 📊 Upload registration artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: >-
+            registration-data-${{ steps.detect-features.outputs.commit_hash }}
+          path: |
+            response.json
+          retention-days: 7

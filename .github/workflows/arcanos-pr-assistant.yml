@@ -1,0 +1,238 @@
+name: ARCANOS PR Assistant
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to analyze'
+        required: true
+        type: string
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+jobs:
+  arcanos-pr-analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🧰 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.11.1'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔧 Build project
+        run: npm run build
+
+      - name: 🧪 Run tests
+        run: npm test
+
+      - name: 📊 Get PR details
+        id: pr-details
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PR_NUMBER="${{ inputs.pr_number }}"
+          else
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          fi
+          
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          
+          # Get PR diff
+          gh pr diff $PR_NUMBER > pr.diff
+          
+          # Get changed files
+          gh pr view $PR_NUMBER --json files --jq '.files[].path' > changed_files.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🤖 Run ARCANOS PR Analysis
+        id: analysis
+        run: |
+          echo "Starting ARCANOS PR analysis..."
+          
+          # Start the ARCANOS server
+          npm start &
+          SERVER_PID=$!
+          
+          # Wait for server to be ready
+          sleep 15
+          
+          # Prepare analysis request
+          PR_DIFF=$(cat pr.diff | jq -Rs .)
+          PR_FILES=$(cat changed_files.txt | jq -Rs 'split("\n") | map(select(. != ""))')
+          
+          # Run PR analysis
+          curl -X POST http://localhost:8080/api/pr-analysis/analyze \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"prDiff\": $PR_DIFF,
+              \"prFiles\": $PR_FILES,
+              \"metadata\": {
+                \"prNumber\": ${{ steps.pr-details.outputs.pr_number }},
+                \"repository\": \"${{ github.repository }}\"
+              }
+            }" \
+            -o analysis_result.json
+          
+          # Stop the server
+          kill $SERVER_PID || true
+          
+          # Extract markdown output
+          jq -r '.markdown' analysis_result.json > analysis_report.md
+          
+          # Extract status for step output
+          STATUS=$(jq -r '.result.status' analysis_result.json)
+          echo "analysis_status=$STATUS" >> $GITHUB_OUTPUT
+          
+          echo "Analysis completed with status: $STATUS"
+
+      - name: 📝 Post PR Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            try {
+              const analysisReport = fs.readFileSync('analysis_report.md', 'utf8');
+              const prNumber = ${{ steps.pr-details.outputs.pr_number }};
+              
+              // Check if we already have an ARCANOS comment
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber
+              });
+              
+              const existingComment = comments.data.find(comment => 
+                comment.body.includes('🤖 ARCANOS PR Analysis Report')
+              );
+              
+              const commentBody = `${analysisReport}\n\n---\n*Analysis triggered by: ${context.actor}*\n*Workflow run: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
+              
+              if (existingComment) {
+                // Update existing comment
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existingComment.id,
+                  body: commentBody
+                });
+                console.log('Updated existing ARCANOS analysis comment');
+              } else {
+                // Create new comment
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: commentBody
+                });
+                console.log('Created new ARCANOS analysis comment');
+              }
+            } catch (error) {
+              console.error('Error posting PR comment:', error);
+              process.exit(1);
+            }
+
+      - name: 🚨 Create Issue for Critical Findings
+        if: steps.analysis.outputs.analysis_status == '❌'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const analysisReport = fs.readFileSync('analysis_report.md', 'utf8');
+            const prNumber = ${{ steps.pr-details.outputs.pr_number }};
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 ARCANOS: Critical Issues in PR #${prNumber}`,
+              body: `Critical issues detected by ARCANOS PR Assistant in PR #${prNumber}.\n\n${analysisReport}`,
+              labels: ['arcanos', 'critical', 'pr-analysis', 'needs-attention'],
+              assignees: [context.actor]
+            });
+            
+            console.log('Created critical issues tracking issue');
+
+      - name: 💾 Upload Analysis Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arcanos-pr-analysis-${{ steps.pr-details.outputs.pr_number }}
+          path: |
+            analysis_result.json
+            analysis_report.md
+            pr.diff
+            changed_files.txt
+          retention-days: 30
+
+      - name: 📊 Set Check Status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ steps.analysis.outputs.analysis_status }}';
+            const prNumber = ${{ steps.pr-details.outputs.pr_number }};
+            
+            let checkStatus, summary;
+            
+            switch(status) {
+              case '✅':
+                checkStatus = 'success';
+                summary = 'All ARCANOS checks passed - Ready for merge';
+                break;
+              case '⚠️':
+                checkStatus = 'neutral';
+                summary = 'ARCANOS found minor issues - Review recommended';
+                break;
+              case '❌':
+                checkStatus = 'failure';
+                summary = 'ARCANOS found critical issues - Fixes required';
+                break;
+              default:
+                checkStatus = 'failure';
+                summary = 'ARCANOS analysis failed';
+            }
+            
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'ARCANOS PR Assistant',
+              head_sha: context.sha,
+              status: 'completed',
+              conclusion: checkStatus,
+              output: {
+                title: 'ARCANOS PR Analysis',
+                summary: summary,
+                text: `PR #${prNumber} analysis completed with status: ${status}`
+              }
+            });
+            
+            console.log(`Set check status to: ${checkStatus}`);
+
+      - name: 🎯 Analysis Summary
+        run: |
+          echo "## 🤖 ARCANOS PR Analysis Summary"
+          echo "**PR Number:** ${{ steps.pr-details.outputs.pr_number }}"
+          echo "**Status:** ${{ steps.analysis.outputs.analysis_status }}"
+          echo "**Repository:** ${{ github.repository }}"
+          echo "**Analysis completed at:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          
+          if [ -f analysis_result.json ]; then
+            echo ""
+            echo "**Key Findings:**"
+            jq -r '.result.recommendations[] | "- " + .' analysis_result.json | head -5
+          fi
