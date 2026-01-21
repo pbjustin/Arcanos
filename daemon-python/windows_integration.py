@@ -5,7 +5,9 @@ Installs custom ARCANOS profile and desktop shortcuts.
 
 import json
 import os
+import sys
 from pathlib import Path
+from typing import Optional
 
 try:
     import winshell
@@ -26,7 +28,82 @@ class WindowsIntegration:
 
     def __init__(self):
         self.settings_path = self._get_terminal_settings_path()
-        self.arcanos_exe = Path(__file__).parent / "dist" / "ARCANOS.exe"
+        self.app_dir = Config.APP_DIR
+        self.assets_dir = Config.ASSETS_DIR
+        self.cli_script_path = self.app_dir / "cli.py"
+        self.executable_path = self._resolve_executable_path()
+        self.icon_ico_path = self.assets_dir / "icon.ico"
+        self.icon_png_path = self.assets_dir / "icon.png"
+
+    def _resolve_executable_path(self) -> Optional[Path]:
+        """
+        Purpose: Resolve the preferred executable path for shortcuts and profiles.
+        Inputs/Outputs: none; returns Path to executable or None.
+        Edge cases: Falls back to dist\ARCANOS.exe in source runs.
+        """
+        if getattr(sys, "frozen", False):
+            # //audit assumption: frozen builds use sys.executable; risk: missing exe; invariant: Path returned; strategy: use sys.executable.
+            return Path(sys.executable)
+
+        candidate = self.app_dir / "dist" / "ARCANOS.exe"
+        if candidate.exists():
+            # //audit assumption: dist exe exists when built; risk: stale binary; invariant: Path returned; strategy: use dist exe.
+            return candidate
+
+        # //audit assumption: no exe available in source run; risk: fallback required; invariant: None; strategy: return None.
+        return None
+
+    def _quote_path(self, path: Path) -> str:
+        """
+        Purpose: Quote a path for safe commandline usage.
+        Inputs/Outputs: path; returns quoted string.
+        Edge cases: Always wraps to handle spaces.
+        """
+        return f"\"{path}\""
+
+    def _build_terminal_command(self) -> str:
+        """
+        Purpose: Build the commandline used in Windows Terminal profile.
+        Inputs/Outputs: none; returns command string.
+        Edge cases: Falls back to python + cli.py when exe is unavailable.
+        """
+        if self.executable_path and self.executable_path.exists():
+            # //audit assumption: exe path should be used when available; risk: wrong target; invariant: exe command returned; strategy: use exe.
+            return self._quote_path(self.executable_path)
+
+        # //audit assumption: source runs use python interpreter; risk: missing interpreter; invariant: command returned; strategy: use sys.executable.
+        return f"{self._quote_path(Path(sys.executable))} {self._quote_path(self.cli_script_path)}"
+
+    def _resolve_terminal_icon_path(self) -> Optional[Path]:
+        """
+        Purpose: Resolve icon path for Windows Terminal profile.
+        Inputs/Outputs: none; returns icon file path or None.
+        Edge cases: Returns None if no icon files exist.
+        """
+        if self.icon_png_path.exists():
+            # //audit assumption: PNG icon preferred for Terminal; risk: missing file; invariant: PNG path returned; strategy: use PNG.
+            return self.icon_png_path
+        if self.icon_ico_path.exists():
+            # //audit assumption: ICO icon is acceptable; risk: missing file; invariant: ICO path returned; strategy: use ICO.
+            return self.icon_ico_path
+        # //audit assumption: no icon files available; risk: default icon; invariant: None; strategy: return None.
+        return None
+
+    def _resolve_shortcut_icon_path(self) -> Optional[Path]:
+        """
+        Purpose: Resolve icon path for shortcuts.
+        Inputs/Outputs: none; returns icon file or exe path for icon.
+        Edge cases: Falls back to executable when icon files are missing.
+        """
+        icon_path = self._resolve_terminal_icon_path()
+        if icon_path:
+            # //audit assumption: icon file available; risk: invalid icon; invariant: icon path returned; strategy: return icon path.
+            return icon_path
+        if self.executable_path and self.executable_path.exists():
+            # //audit assumption: exe can provide icon; risk: missing embedded icon; invariant: path returned; strategy: use exe path.
+            return self.executable_path
+        # //audit assumption: no icon available; risk: default icon; invariant: None; strategy: return None.
+        return None
 
     def _get_shell(self):
         if Dispatch is None:
@@ -116,17 +193,20 @@ class WindowsIntegration:
         # Create ARCANOS profile
         arcanos_profile = {
             "name": "ARCANOS",
-            "commandline": f"python {Path(__file__).parent / 'cli.py'}",
-            "icon": str(Path(__file__).parent / "assets" / "icon.png"),
+            "commandline": self._build_terminal_command(),
             "colorScheme": "ARCANOS Dark",
             "fontFace": "Cascadia Code",
             "fontSize": 11,
             "cursorShape": "filledBox",
             "backgroundImage": "",
             "backgroundImageOpacity": 0.1,
-            "startingDirectory": str(Path(__file__).parent),
+            "startingDirectory": str(self.app_dir),
             "hidden": False
         }
+        terminal_icon_path = self._resolve_terminal_icon_path()
+        if terminal_icon_path:
+            # //audit assumption: icon path available; risk: invalid path; invariant: icon set; strategy: set icon.
+            arcanos_profile["icon"] = str(terminal_icon_path)
 
         # Add ARCANOS Dark color scheme if not exists
         if "schemes" not in settings:
@@ -185,15 +265,20 @@ class WindowsIntegration:
         shortcut = shell.CreateShortCut(str(shortcut_path))
 
         # Check if .exe exists, otherwise use python script
-        if self.arcanos_exe.exists():
-            shortcut.TargetPath = str(self.arcanos_exe)
+        if self.executable_path and self.executable_path.exists():
+            # //audit assumption: exe path is preferred; risk: missing file; invariant: exe path used; strategy: use executable path.
+            shortcut.TargetPath = str(self.executable_path)
         else:
-            python_exe = os.path.join(os.path.dirname(os.sys.executable), "python.exe")
-            shortcut.TargetPath = python_exe
-            shortcut.Arguments = f'"{Path(__file__).parent / "cli.py"}"'
+            # //audit assumption: python fallback needed; risk: missing interpreter; invariant: python used; strategy: use sys.executable.
+            python_exe = Path(sys.executable)
+            shortcut.TargetPath = str(python_exe)
+            shortcut.Arguments = self._quote_path(self.cli_script_path)
 
-        shortcut.WorkingDirectory = str(Path(__file__).parent)
-        shortcut.IconLocation = str(Path(__file__).parent / "assets" / "icon.ico")
+        shortcut.WorkingDirectory = str(self.app_dir)
+        icon_path = self._resolve_shortcut_icon_path()
+        if icon_path:
+            # //audit assumption: icon path available; risk: missing file; invariant: icon set; strategy: set icon location.
+            shortcut.IconLocation = str(icon_path)
         shortcut.Description = "ARCANOS AI Assistant"
         shortcut.save()
 
@@ -217,15 +302,20 @@ class WindowsIntegration:
             return False
         shortcut = shell.CreateShortCut(str(shortcut_path))
 
-        if self.arcanos_exe.exists():
-            shortcut.TargetPath = str(self.arcanos_exe)
+        if self.executable_path and self.executable_path.exists():
+            # //audit assumption: exe path is preferred; risk: missing file; invariant: exe path used; strategy: use executable path.
+            shortcut.TargetPath = str(self.executable_path)
         else:
-            python_exe = os.path.join(os.path.dirname(os.sys.executable), "python.exe")
-            shortcut.TargetPath = python_exe
-            shortcut.Arguments = f'"{Path(__file__).parent / "cli.py"}"'
+            # //audit assumption: python fallback needed; risk: missing interpreter; invariant: python used; strategy: use sys.executable.
+            python_exe = Path(sys.executable)
+            shortcut.TargetPath = str(python_exe)
+            shortcut.Arguments = self._quote_path(self.cli_script_path)
 
-        shortcut.WorkingDirectory = str(Path(__file__).parent)
-        shortcut.IconLocation = str(Path(__file__).parent / "assets" / "icon.ico")
+        shortcut.WorkingDirectory = str(self.app_dir)
+        icon_path = self._resolve_shortcut_icon_path()
+        if icon_path:
+            # //audit assumption: icon path available; risk: missing file; invariant: icon set; strategy: set icon location.
+            shortcut.IconLocation = str(icon_path)
         shortcut.Description = "ARCANOS AI Assistant"
         shortcut.save()
 
@@ -249,14 +339,16 @@ class WindowsIntegration:
             return False
         shortcut = shell.CreateShortCut(str(shortcut_path))
 
-        if self.arcanos_exe.exists():
-            shortcut.TargetPath = str(self.arcanos_exe)
+        if self.executable_path and self.executable_path.exists():
+            # //audit assumption: exe path is preferred; risk: missing file; invariant: exe path used; strategy: use executable path.
+            shortcut.TargetPath = str(self.executable_path)
         else:
-            python_exe = os.path.join(os.path.dirname(os.sys.executable), "python.exe")
-            shortcut.TargetPath = python_exe
-            shortcut.Arguments = f'"{Path(__file__).parent / "cli.py"}"'
+            # //audit assumption: python fallback needed; risk: missing interpreter; invariant: python used; strategy: use sys.executable.
+            python_exe = Path(sys.executable)
+            shortcut.TargetPath = str(python_exe)
+            shortcut.Arguments = self._quote_path(self.cli_script_path)
 
-        shortcut.WorkingDirectory = str(Path(__file__).parent)
+        shortcut.WorkingDirectory = str(self.app_dir)
         shortcut.save()
 
         print(f"✅ Added to startup: {shortcut_path}")

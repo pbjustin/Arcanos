@@ -93,17 +93,35 @@ class BackendApiClient:
         base_url: str,
         token_provider: Callable[[], Optional[str]],
         timeout_seconds: int = 15,
-        request_sender: Callable[..., requests.Response] = requests.request
+        request_sender: Callable[..., requests.Response] = requests.request,
+        auth_required: bool = True,
+        auth_header_name: str = "Authorization",
+        auth_header_prefix: Optional[str] = "Bearer",
+        auth_mode: str = "jwt",
+        daemon_gpt_id: Optional[str] = None,
+        daemon_gpt_header_name: str = "OpenAI-GPT-ID"
     ) -> None:
         """
         Purpose: Initialize backend API client.
-        Inputs/Outputs: base_url, token_provider, timeout_seconds, request_sender; stores config.
+        Inputs/Outputs: base_url, token provider, timeout, request sender, auth config, daemon GPT ID; stores config.
         Edge cases: Empty base_url disables requests and returns config errors.
         """
         self._base_url = normalize_backend_url(base_url)
         self._token_provider = token_provider
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
+        self._auth_required = auth_required
+        # //audit assumption: header name may be empty; risk: missing auth header; invariant: fallback to Authorization; strategy: strip and default.
+        self._auth_header_name = auth_header_name.strip() or "Authorization"
+        # //audit assumption: prefix optional; risk: wrong auth scheme; invariant: preserve None; strategy: strip or keep None.
+        self._auth_header_prefix = auth_header_prefix.strip() if auth_header_prefix is not None else None
+        # //audit assumption: auth mode used for messaging; risk: invalid mode; invariant: normalized value; strategy: lower and default.
+        self._auth_mode = auth_mode.strip().lower() or "jwt"
+        # //audit assumption: daemon GPT ID optional; risk: whitespace/empty values; invariant: trimmed string or None; strategy: strip and fallback.
+        self._daemon_gpt_id = daemon_gpt_id.strip() if daemon_gpt_id else None
+        # //audit assumption: daemon GPT header name may be empty; risk: missing header name; invariant: default header used; strategy: strip and fallback.
+        normalized_daemon_header = daemon_gpt_header_name.strip() or "OpenAI-GPT-ID"
+        self._daemon_gpt_header_name = normalized_daemon_header
 
     def request_chat_completion(
         self,
@@ -234,6 +252,37 @@ class BackendApiClient:
             error=BackendRequestError(kind="parse", message="update response missing success flag")
         )
 
+    def _build_auth_header_value(self, token: str) -> str:
+        """
+        Purpose: Build authorization header value from token and optional prefix.
+        Inputs/Outputs: token string; returns header value string.
+        Edge cases: Empty prefix yields raw token.
+        """
+        # //audit assumption: prefix may be None; risk: missing prefix; invariant: raw token allowed; strategy: return token.
+        if not self._auth_header_prefix:
+            return token
+        # //audit assumption: prefix may be whitespace; risk: malformed header; invariant: non-empty prefix; strategy: strip and fallback.
+        trimmed_prefix = self._auth_header_prefix.strip()
+        if not trimmed_prefix:
+            return token
+        return f"{trimmed_prefix} {token}"
+
+    def _apply_daemon_gpt_header(self, headers: dict[str, str]) -> None:
+        """
+        Purpose: Append daemon GPT ID header when configured.
+        Inputs/Outputs: headers dict mutated in place; no return.
+        Edge cases: Skips when ID is missing or header would overwrite an existing header.
+        """
+        if not self._daemon_gpt_id:
+            # //audit assumption: daemon GPT ID optional; risk: header absent; invariant: no header when missing; strategy: return.
+            return
+        # //audit assumption: header comparison should be case-insensitive; risk: overwrite auth header; invariant: avoid conflicts; strategy: lowercase names.
+        existing_header_names = {name.lower() for name in headers.keys()}
+        if self._daemon_gpt_header_name.lower() in existing_header_names:
+            # //audit assumption: do not overwrite existing header; risk: auth clobbered; invariant: existing header preserved; strategy: skip.
+            return
+        headers[self._daemon_gpt_header_name] = self._daemon_gpt_id
+
     def _request_json(
         self,
         method: str,
@@ -248,18 +297,22 @@ class BackendApiClient:
             )
 
         token = self._token_provider()
-        if not token:
+        if not token and self._auth_required:
             # //audit assumption: auth token required; risk: unauthorized request; invariant: token present; strategy: return auth error.
+            auth_label = "token" if self._auth_mode == "jwt" else "API key"
             return BackendResponse(
                 ok=False,
-                error=BackendRequestError(kind="auth", message="Backend token is missing")
+                error=BackendRequestError(kind="auth", message=f"Backend {auth_label} is missing")
             )
 
         url = f"{self._base_url}{path}"
         headers = {
-            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
+        if token:
+            # //audit assumption: token optional; risk: unauthorized request; invariant: auth header when token present; strategy: add header.
+            headers[self._auth_header_name] = self._build_auth_header_value(token)
+        self._apply_daemon_gpt_header(headers)
 
         try:
             response = self._request_sender(

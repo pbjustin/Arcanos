@@ -184,10 +184,26 @@ OPENAI_API_KEY=sk-...
 BACKEND_URL=https://your-railway-app.railway.app
 BACKEND_TOKEN=your-backend-jwt
 BACKEND_LOGIN_EMAIL=you@example.com
+BACKEND_LOGIN_PROMPT_ENABLED=false
+BACKEND_AUTH_MODE=none
+BACKEND_API_KEY=
+BACKEND_AUTH_HEADER=Authorization
+BACKEND_AUTH_PREFIX=Bearer
+BACKEND_REQUIRE_AUTH=false
 BACKEND_ROUTING_MODE=hybrid
 BACKEND_DEEP_PREFIXES=deep:,backend:
 BACKEND_FALLBACK_TO_LOCAL=true
 BACKEND_SEND_UPDATES=true
+BACKEND_AUTO_ROUTE_ENABLED=true
+BACKEND_AUTO_ROUTE_KEYWORDS=database,db,sql,postgres,postgresql,table,schema,query,queries,join,select,insert,update,delete,migration,foreign key,primary key,reporting,analytics,deep,deeper,reasoning,complex,multi-step,step-by-step
+BACKEND_AUTO_ROUTE_MIN_WORDS=30
+BACKEND_WS_URL=
+BACKEND_WS_PATH=/ws/daemon
+IPC_HEARTBEAT_INTERVAL_SECONDS=30
+IPC_RECONNECT_MAX_SECONDS=60
+IPC_ENABLED=true
+DAEMON_GPT_ID=
+DAEMON_GPT_ID_HEADER=OpenAI-GPT-ID
 BACKEND_VISION_ENABLED=false
 BACKEND_TRANSCRIBE_ENABLED=false
 MAX_REQUESTS_PER_HOUR=60
@@ -196,8 +212,14 @@ TELEMETRY_ENABLED=false
 AUTO_START=false
 ```
 
-If `BACKEND_URL` is set, ARCANOS will prompt for backend login on startup and store `BACKEND_TOKEN` locally.
+If `BACKEND_URL` is set, ARCANOS uses `BACKEND_AUTH_MODE` to choose authentication (`jwt`, `api_key`, or `none`).
+For `jwt`, set `BACKEND_TOKEN` or enable `BACKEND_LOGIN_PROMPT_ENABLED=true` to prompt for login and store the token.
+For `api_key`, set `BACKEND_API_KEY` and optionally adjust `BACKEND_AUTH_HEADER` / `BACKEND_AUTH_PREFIX`.
+For `none`, configure the backend with `AUTH_MODE=none` (or `AUTH_REQUIRED=false`) to allow anonymous access.
+For seamless local use, set both `BACKEND_AUTH_MODE=none` and backend `AUTH_MODE=none` so `JWT_SECRET` is not required.
+`BACKEND_REQUIRE_AUTH` remains as a legacy fallback when `BACKEND_AUTH_MODE` is unset.
 Use `deep <prompt>` or `deep:` / `backend:` prefixes to route a request through the backend when running in hybrid mode.
+Set `DAEMON_GPT_ID` to tag daemon requests with your GPT ID; override `DAEMON_GPT_ID_HEADER` if your backend expects a different header name (default `OpenAI-GPT-ID`).
 
 ### Privacy & Data Retention
 
@@ -214,6 +236,9 @@ Use `deep <prompt>` or `deep:` / `backend:` prefixes to route a request through 
 
 # Run health checks (Python, env, memory file, optional backend, config validation)
 ./scripts/health_check.ps1
+
+# Start backend + daemon together (PowerShell)
+./scripts/start_all.ps1
 ```
 
 ### Debugging in VS Code
@@ -328,9 +353,19 @@ pyinstaller arcanos.spec
 signtool sign /f cert.pfx /p %CERT_PASSWORD% /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist/ARCANOS.exe
 ```
 
+### Build Windows installer (Inno Setup):
+```powershell
+# Install Inno Setup 6 first (https://jrsoftware.org/isinfo.php)
+# Build daemon exe + installer
+.\scripts\build_installer.ps1
+
+# Output:
+# installer\dist\ARCANOS-Setup.exe
+```
+
 ### Distribute via GitHub Releases:
 1. Create release on GitHub
-2. Upload `ARCANOS.exe` as release asset
+2. Upload `ARCANOS.exe` and/or `ARCANOS-Setup.exe` as release assets
 3. Users download and run directly
 
 ---
@@ -348,18 +383,31 @@ signtool sign /f cert.pfx /p %CERT_PASSWORD% /tr http://timestamp.digicert.com /
 2. **Set environment variables**:
 ```env
 DATABASE_URL=postgresql://...
+# JWT_SECRET is required when AUTH_MODE=jwt
 JWT_SECRET=your_random_secret_key_here
 AUTH_USER_EMAIL=admin@example.com
 AUTH_PASSWORD_SALT=replace-with-generated-salt
 AUTH_PASSWORD_HASH=replace-with-generated-hash
+AUTH_MODE=none
+AUTH_REQUIRED=false
+AUTH_API_KEY=
+AUTH_API_KEY_HEADER=Authorization
+AUTH_API_KEY_PREFIX=Bearer
+AUTH_API_KEY_USER_ID=arcanos
+AUTH_ANONYMOUS_USER_ID=anonymous
 PORT=3000
 NODE_ENV=production
+ALLOWED_ORIGINS=
 ```
 
 Generate auth hash/salt (Node.js):
 ```bash
 node -e "const crypto=require('crypto'); const salt=crypto.randomBytes(16).toString('hex'); const hash=crypto.scryptSync('your-password', salt, 64).toString('hex'); console.log('AUTH_PASSWORD_SALT=' + salt); console.log('AUTH_PASSWORD_HASH=' + hash);"
 ```
+
+To allow anonymous backend access (no email/password), set `AUTH_MODE=none` (or `AUTH_REQUIRED=false`) and optionally change `AUTH_ANONYMOUS_USER_ID`.
+If `ALLOWED_ORIGINS` is empty, the backend allows all origins with credentials disabled.
+To use API key auth instead of email/password, set `AUTH_MODE=api_key` and provide `AUTH_API_KEY` (and header/prefix overrides if needed).
 
 3. **Railway auto-deploys** on push to main branch
 
@@ -400,6 +448,14 @@ TELEMETRY_ENABLED=false
 ```
 
 Or decline during first-run setup.
+
+### Installed app data location
+
+When running the packaged app, data (logs, memory, screenshots, telemetry, `.env`) is stored under:
+
+```
+%LOCALAPPDATA%\ARCANOS
+```
 
 ---
 

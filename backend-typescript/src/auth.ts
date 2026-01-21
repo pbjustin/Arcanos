@@ -119,3 +119,20 @@ export function optionalAuth(req: Request, res: Response, next: NextFunction): v
 
   next();
 }
+
+/**
+ * Attach a default user identity for anonymous mode.
+ * Inputs/Outputs: userId string; returns middleware that sets req.user.
+ * Edge cases: empty userId falls back to "anonymous".
+ */
+export function attachAnonymousUser(userId: string): (req: Request, res: Response, next: NextFunction) => void {
+  const normalizedUserId = userId.trim() || 'anonymous';
+  return (req: Request, res: Response, next: NextFunction) => {
+    void res;
+    if (!req.user) {
+      //audit assumption: user may be missing; risk: downstream auth checks fail; invariant: user set; strategy: assign anonymous user.
+      req.user = { userId: normalizedUserId };
+    }
+    next();
+  };
+}
