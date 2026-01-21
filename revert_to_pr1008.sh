@@ -29,6 +29,7 @@ NC='\033[0m' # No Color
 # Target commit for PR #1008
 PR_1008_COMMIT="53b4755a01eb1dca29837481c47221f5f075445b"
 TARGET_BRANCH="main"
+BACKUP_BRANCH=""  # Will be set during backup creation
 
 echo -e "${BLUE}=================================================================================${NC}"
 echo -e "${BLUE}ARCANOS Repository Revert Script${NC}"
@@ -58,7 +59,7 @@ verify_commit_exists() {
     else
         echo -e "${RED}✗ Target commit ${PR_1008_COMMIT} not found${NC}"
         echo -e "${RED}Attempting to fetch from remote...${NC}"
-        git fetch origin ${PR_1008_COMMIT}
+        git fetch origin
         if git cat-file -e ${PR_1008_COMMIT} 2>/dev/null; then
             echo -e "${GREEN}✓ Successfully fetched target commit${NC}"
             return 0
@@ -88,6 +89,7 @@ show_revert_diff() {
 # Function to create backup branch
 create_backup() {
     echo -e "${BLUE}Step 3: Creating backup branch...${NC}"
+    # Set global BACKUP_BRANCH variable
     BACKUP_BRANCH="backup-before-revert-to-pr1008-$(date +%Y%m%d-%H%M%S)"
     git branch ${BACKUP_BRANCH}
     echo -e "${GREEN}✓ Created backup branch: ${BACKUP_BRANCH}${NC}"

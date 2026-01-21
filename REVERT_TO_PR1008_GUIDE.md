@@ -79,7 +79,7 @@ If you prefer to execute commands manually or need to understand each step:
 
 ```bash
 # Ensure you have the commit in your local repository
-git fetch origin 53b4755a01eb1dca29837481c47221f5f075445b
+git fetch origin
 
 # Verify the commit exists
 git cat-file -e 53b4755a01eb1dca29837481c47221f5f075445b
@@ -375,9 +375,11 @@ The `git push --force` command:
 
 ### Problem: "fatal: bad object 53b4755a..."
 
-**Solution**: Fetch the commit from remote
+**Solution**: Fetch all refs from remote
 ```bash
-git fetch origin 53b4755a01eb1dca29837481c47221f5f075445b
+git fetch origin
+# Then verify commit exists
+git cat-file -e 53b4755a01eb1dca29837481c47221f5f075445b
 ```
 
 ### Problem: "Permission denied" on force push
