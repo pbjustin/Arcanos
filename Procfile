@@ -1,1 +1,1 @@
-web: npm --prefix backend-typescript start
+web: node --max-old-space-size=7168 dist/start-server.js
