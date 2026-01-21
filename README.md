@@ -397,6 +397,7 @@ AUTH_API_KEY_USER_ID=arcanos
 AUTH_ANONYMOUS_USER_ID=anonymous
 PORT=3000
 NODE_ENV=production
+ALLOWED_ORIGINS=
 ```
 
 Generate auth hash/salt (Node.js):
@@ -405,6 +406,7 @@ node -e "const crypto=require('crypto'); const salt=crypto.randomBytes(16).toStr
 ```
 
 To allow anonymous backend access (no email/password), set `AUTH_MODE=none` (or `AUTH_REQUIRED=false`) and optionally change `AUTH_ANONYMOUS_USER_ID`.
+If `ALLOWED_ORIGINS` is empty, the backend allows all origins with credentials disabled.
 To use API key auth instead of email/password, set `AUTH_MODE=api_key` and provide `AUTH_API_KEY` (and header/prefix overrides if needed).
 
 3. **Railway auto-deploys** on push to main branch
