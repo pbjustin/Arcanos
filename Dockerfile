@@ -15,6 +15,9 @@ WORKDIR /app
 # Include package-lock.json so `npm ci` has a complete lockfile
 COPY package*.json package-lock.json ./
 
+# Copy scripts directory early so postinstall can run (if needed)
+COPY scripts/ ./scripts/
+
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --only=production --no-audit --no-fund
 
