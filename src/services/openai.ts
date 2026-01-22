@@ -35,8 +35,6 @@ import { STRICT_ASSISTANT_PROMPT } from '../config/openaiPrompts.js';
 import { SERVER_CONSTANTS } from '../config/serverMessages.js';
 import { buildChatMessages } from './openai/messageBuilder.js';
 import { truncateText, hasContent } from '../utils/promptUtils.js';
-import { prepareGPT5Request, buildReasoningRequestPayload } from './openai/requestTransforms.js';
-import { buildResponseRequestPayload, extractResponseOutput } from './openai/responsePayload.js';
 import { createChatCompletionWithFallback, ensureModelMatchesExpectation } from './openai/chatFallbacks.js';
 import {
   CallOpenAIOptions,
