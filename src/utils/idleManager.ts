@@ -170,8 +170,9 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
       const now = Date.now();
 
       // Serve from cache
-      if (responseCache.has(key)) {
-        const { timestamp, data } = responseCache.get(key)!;
+      const cached = responseCache.get(key);
+      if (cached) {
+        const { timestamp, data } = cached;
         if (now - timestamp < DEFAULTS.CACHE_TTL_MS) {
           auditLogger.log?.("[AUDIT] OpenAI cache hit", { key });
           return data;
@@ -196,7 +197,10 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
         
         for (const r of itemsToBatch) {
           if (!grouped.has(r.key)) grouped.set(r.key, []);
-          grouped.get(r.key)!.push(r);
+          const group = grouped.get(r.key);
+          if (group) {
+            group.push(r);
+          }
         }
 
         for (const [key, group] of grouped.entries()) {
