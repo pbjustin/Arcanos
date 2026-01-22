@@ -110,9 +110,10 @@ Ensures tests exist on both sides for critical functionality.
 
 1. **Make Changes** to `daemon-python/`
 2. **Run Sync Check**: `npm run sync:check`
-3. **Fix Issues** if any are found
-4. **Update Server** if API contracts changed
-5. **Commit Changes**
+3. **System Checks**: Verifies daemon matches server (source of truth)
+4. **Warns if Diverged**: Shows if daemon uses fields/routes server doesn't have
+5. **Fix Issues**: Either update server to match, or remove daemon code that doesn't match
+6. **Commit Changes**
 
 ### When Working on TypeScript Server
 

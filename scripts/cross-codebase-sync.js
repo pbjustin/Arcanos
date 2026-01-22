@@ -617,6 +617,218 @@ async function detectBreakingChanges() {
 }
 
 /**
+ * Detect daemon changes that don't match server (Daemon → Server validation)
+ * When working on daemon, check if it matches server (source of truth)
+ */
+async function detectDaemonChangesNotMatchingServer() {
+  console.log('\n🔍 Checking daemon changes against server (source of truth)...\n');
+  
+  const issues = [];
+  
+  const daemonClientFile = path.join(ROOT, 'daemon-python', 'backend_client.py');
+  const daemonAuthFile = path.join(ROOT, 'daemon-python', 'backend_auth_client.py');
+  const routesDir = path.join(ROOT, 'src', 'routes');
+  
+  try {
+    let daemonClientContent = '';
+    let daemonAuthContent = '';
+    
+    try {
+      daemonClientContent = await fs.readFile(daemonClientFile, 'utf-8');
+    } catch {
+      issues.push({
+        type: 'daemon_file_missing',
+        severity: 'error',
+        message: 'Daemon client file not found',
+        fix: 'Ensure daemon-python/backend_client.py exists'
+      });
+      return issues;
+    }
+    
+    try {
+      daemonAuthContent = await fs.readFile(daemonAuthFile, 'utf-8');
+    } catch {
+      // Auth file might not exist, that's okay
+    }
+    
+    const allDaemonContent = daemonClientContent + '\n' + daemonAuthContent;
+    
+    // Check each API contract - daemon methods should match server routes
+    for (const [endpoint, contract] of Object.entries(API_CONTRACTS)) {
+      const methodName = contract.clientMethod;
+      const serverRouteFile = contract.serverRoute || `src/routes/api-*.ts`;
+      
+      // Check if daemon has this method
+      const daemonHasMethod = allDaemonContent.includes(`def ${methodName}`) || 
+                              allDaemonContent.includes(`function ${methodName}`);
+      
+        if (daemonHasMethod) {
+        // Daemon has method - verify server has corresponding route
+        const routeFiles = await fs.readdir(routesDir).catch(() => []);
+        const apiRouteFiles = routeFiles.filter(f => 
+          (f.startsWith('api-') || f.includes('ask') || f.includes('vision') || f.includes('transcribe') || f.includes('auth')) && 
+          f.endsWith('.ts')
+        );
+        
+        // Also check all route files, not just api-* ones
+        const allRouteFiles = routeFiles.filter(f => f.endsWith('.ts'));
+        
+        let serverHasRoute = false;
+        for (const routeFile of [...apiRouteFiles, ...allRouteFiles]) {
+          const routePath = path.join(routesDir, routeFile);
+          try {
+            const routeContent = await fs.readFile(routePath, 'utf-8');
+            // Check if route file contains this endpoint (more flexible matching)
+            if (routeContent.includes(endpoint) || 
+                routeContent.includes(endpoint.replace('/api/', '')) ||
+                (endpoint === '/api/ask' && (routeContent.includes('router.post') || routeContent.includes('app.post')) && routeContent.includes('ask'))) {
+              serverHasRoute = true;
+              break;
+            }
+          } catch {
+            // Continue checking other files
+          }
+        }
+        
+        if (!serverHasRoute) {
+          issues.push({
+            type: 'daemon_method_without_server_route',
+            endpoint,
+            method: methodName,
+            severity: 'warning',
+            source: 'daemon',
+            target: 'server',
+            message: `⚠️ DAEMON has method '${methodName}()' but SERVER (source of truth) doesn't have route ${endpoint}`,
+            fix: `Either: 1) Add ${endpoint} route to server, or 2) Remove ${methodName}() from daemon if not needed`,
+            priority: 'medium',
+            action: 'daemon_diverges_from_server'
+          });
+        }
+        
+        // Check if daemon method uses fields server doesn't provide
+        for (const [field, type] of Object.entries(contract.request)) {
+          const isOptional = type.endsWith('?');
+          if (!isOptional) {
+            // Required field - check if daemon is trying to send it
+            const daemonSendsField = allDaemonContent.includes(`"${field}"`) || 
+                                     allDaemonContent.includes(`'${field}'`) ||
+                                     allDaemonContent.includes(`${field}:`);
+            
+            if (daemonSendsField) {
+              // Verify server route accepts this field
+              let serverAcceptsField = false;
+              const allRouteFiles = await fs.readdir(routesDir).catch(() => []);
+              const relevantRouteFiles = allRouteFiles.filter(f => f.endsWith('.ts'));
+              
+              for (const routeFile of relevantRouteFiles) {
+                const routePath = path.join(routesDir, routeFile);
+                try {
+                  const routeContent = await fs.readFile(routePath, 'utf-8');
+                  // More flexible matching - check if endpoint is in file and field is mentioned
+                  if ((routeContent.includes(endpoint) || 
+                       (endpoint === '/api/ask' && routeContent.includes('ask'))) && 
+                      (routeContent.includes(field) || 
+                       routeContent.includes(`req.body`) || 
+                       routeContent.includes('body.'))) {
+                    serverAcceptsField = true;
+                    break;
+                  }
+                } catch {
+                  // Continue
+                }
+              }
+              
+              if (!serverAcceptsField && serverHasRoute) {
+                issues.push({
+                  type: 'daemon_uses_field_server_doesnt_accept',
+                  endpoint,
+                  field,
+                  method: methodName,
+                  severity: 'warning',
+                  source: 'daemon',
+                  target: 'server',
+                  message: `⚠️ DAEMON method '${methodName}()' uses field '${field}' but SERVER route ${endpoint} doesn't accept it`,
+                  fix: `Either: 1) Add '${field}' to server route ${endpoint}, or 2) Remove '${field}' from daemon method`,
+                  priority: 'medium'
+                });
+              }
+            }
+          }
+        }
+        
+        // Check if daemon expects response fields server doesn't provide
+        for (const [field, type] of Object.entries(contract.response)) {
+          const daemonExpectsField = allDaemonContent.includes(`["${field}"]`) ||
+                                     allDaemonContent.includes(`['${field}']`) ||
+                                     allDaemonContent.includes(`.get("${field}")`) ||
+                                     allDaemonContent.includes(`.get('${field}')`) ||
+                                     allDaemonContent.includes(`.${field}`);
+          
+          if (daemonExpectsField && serverHasRoute) {
+            // Verify server returns this field
+            let serverReturnsField = false;
+            const allRouteFiles = await fs.readdir(routesDir).catch(() => []);
+            const relevantRouteFiles = allRouteFiles.filter(f => f.endsWith('.ts'));
+            
+            for (const routeFile of relevantRouteFiles) {
+              const routePath = path.join(routesDir, routeFile);
+              try {
+                const routeContent = await fs.readFile(routePath, 'utf-8');
+                // Check if this is the right endpoint file
+                if (routeContent.includes(endpoint) || 
+                    (endpoint === '/api/ask' && routeContent.includes('ask'))) {
+                  // Check if response includes this field (more flexible)
+                  if (routeContent.includes(`"${field}"`) || 
+                      routeContent.includes(`'${field}'`) ||
+                      routeContent.includes(`${field}:`) ||
+                      routeContent.includes(`res.json`) ||
+                      routeContent.includes(`response.${field}`)) {
+                    serverReturnsField = true;
+                    break;
+                  }
+                }
+              } catch {
+                // Continue
+              }
+            }
+            
+            if (!serverReturnsField) {
+              issues.push({
+                type: 'daemon_expects_field_server_doesnt_return',
+                endpoint,
+                field,
+                method: methodName,
+                severity: 'warning',
+                source: 'daemon',
+                target: 'server',
+                message: `⚠️ DAEMON method '${methodName}()' expects response field '${field}' but SERVER route ${endpoint} doesn't return it`,
+                fix: `Either: 1) Add '${field}' to server response for ${endpoint}, or 2) Remove '${field}' parsing from daemon method`,
+                priority: 'medium'
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    if (issues.length === 0) {
+      console.log('  ✅ Daemon changes match server (source of truth)');
+    } else {
+      console.log(`  ⚠️  Found ${issues.length} daemon changes that don't match server`);
+    }
+    
+  } catch (error) {
+    issues.push({
+      type: 'daemon_check_error',
+      severity: 'warning',
+      message: `Failed to check daemon against server: ${error.message}`
+    });
+  }
+  
+  return issues;
+}
+
+/**
  * Detect server changes that daemon should follow
  * Server is source of truth, so we check what daemon needs to update
  */
@@ -712,7 +924,8 @@ async function generateSyncReport(options = {}) {
     env: await checkEnvVarSync(),
     tests: await checkTestCoverage(),
     breaking: await detectBreakingChanges(),
-    serverChanges: await detectServerChangesRequiringDaemonUpdates()
+    serverChanges: await detectServerChangesRequiringDaemonUpdates(),
+    daemonChanges: await detectDaemonChangesNotMatchingServer()
   };
 
   const allIssues = [
@@ -722,7 +935,8 @@ async function generateSyncReport(options = {}) {
     ...results.env,
     ...results.tests,
     ...results.breaking,
-    ...results.serverChanges
+    ...results.serverChanges,
+    ...results.daemonChanges
   ];
   
   // Prioritize server → daemon issues (server is source of truth)
@@ -730,11 +944,25 @@ async function generateSyncReport(options = {}) {
     i.source === 'server' && i.target === 'daemon'
   );
   
+  // Also show daemon → server issues (daemon diverging from server)
+  const daemonToServerIssues = allIssues.filter(i => 
+    i.source === 'daemon' && i.target === 'server'
+  );
+  
   if (serverToDaemonIssues.length > 0) {
     console.log('\n🎯 PRIORITY: Server Changes Requiring Daemon Updates\n');
     console.log('⚠️  SERVER is the source of truth. DAEMON must follow server changes.\n');
     serverToDaemonIssues.forEach(issue => {
       console.log(`  🔴 ${issue.message}`);
+      if (issue.fix) console.log(`     💡 ${issue.fix}\n`);
+    });
+  }
+  
+  if (daemonToServerIssues.length > 0) {
+    console.log('\n⚠️  WARNING: Daemon Changes Not Matching Server\n');
+    console.log('⚠️  SERVER is the source of truth. DAEMON should match server.\n');
+    daemonToServerIssues.forEach(issue => {
+      console.log(`  ⚠️  ${issue.message}`);
       if (issue.fix) console.log(`     💡 ${issue.fix}\n`);
     });
   }
@@ -840,5 +1068,6 @@ export {
   checkEnvVarSync,
   checkTestCoverage,
   detectBreakingChanges,
-  detectServerChangesRequiringDaemonUpdates
+  detectServerChangesRequiringDaemonUpdates,
+  detectDaemonChangesNotMatchingServer
 };
