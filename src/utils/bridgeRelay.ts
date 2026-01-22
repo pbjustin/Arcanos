@@ -75,7 +75,7 @@ export async function routeBridgeRequest(
     if (bridge?.active && typeof bridge.routeRequest === 'function') {
       bridge.routeRequest(payload);
     }
-  } catch (err) {
+  } catch {
     console.log('[Bridge] Fallback triggered - bridge unavailable.');
   }
 }
