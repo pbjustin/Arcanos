@@ -20,7 +20,11 @@ function resolvePath(url?: string): string {
 }
 
 function isAllowedPath(pathname: string): boolean {
-  return pathname.startsWith('/ipc') || pathname.startsWith('/bridge');
+  return (
+    pathname.startsWith('/ipc') ||
+    pathname.startsWith('/bridge') ||
+    pathname.startsWith('/ws')
+  );
 }
 
 function resolveHeader(req: IncomingMessage, headerName: string): string | undefined {
@@ -55,6 +59,7 @@ export function setupBridgeSocket(server: Server): void {
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const pathname = resolvePath(req.url);
     if (!isAllowedPath(pathname)) {
+      bridgeLogger.warn('Bridge IPC upgrade rejected (path not allowed).', { path: pathname });
       rejectUpgrade(socket, 404, 'Not Found');
       return;
     }
