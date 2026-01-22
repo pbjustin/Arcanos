@@ -32,7 +32,13 @@
     "audit:continuous": "node scripts/continuous-audit.js",
     "audit:sdk-compliance": "node scripts/sdk-compliance-audit.js",
     "audit:full": "npm run lint && npm run type-check && npm run test && npm run audit:continuous",
-    "optimize": "npm run audit:sdk-compliance"
+    "optimize": "npm run audit:sdk-compliance",
+    "sync:check": "node scripts/cross-codebase-sync.js",
+    "sync:watch": "node scripts/cross-codebase-sync.js --watch",
+    "sync:fix": "node scripts/cross-codebase-sync.js --fix",
+    "sync:auto": "node scripts/auto-sync-watcher.js",
+    "sync:setup": "node scripts/setup-auto-sync.js",
+    "postinstall": "npm run sync:setup"
   },
   "keywords": [
     "ai",

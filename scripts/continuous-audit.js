@@ -1,406 +1,1130 @@
 #!/usr/bin/env node
 
 /**
- * ARCANOS Continuous Audit Script
- * 
- * Implements automated codebase auditing and refinement according to:
- * 1. Prune Aggressively, Safely
- * 2. Preserve Architectural Integrity
- * 3. Enforce OpenAI SDK Compatibility
- * 4. Optimize for Railway Deployment
- * 5. Loop Until Clean
+ * ARCANOS Continuous Audit Loop
+ * Purpose: Run recursive audits across configured workspaces with stateful tracking.
  */
 
 import fs from 'fs/promises';
 import path from 'path';
+import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, '..');
 
-console.log('🔍 ARCANOS Continuous Audit Starting...\n');
+const DEFAULT_ROOT = path.resolve(__dirname, '..');
+const LOG_DIR_NAME = 'logs';
+const STATE_FILE_NAME = 'continuous-audit-state.json';
+const LATEST_FILE_NAME = 'continuous-audit-latest.json';
+const MAX_MODULE_LINES = 300;
+const COMMENT_AGE_DAYS = 14;
 
-let auditResults = {
-  timestamp: new Date().toISOString(),
-  phase1: { status: '✅', issues: [], actions: [] },
-  phase2: { status: '✅', issues: [], actions: [] },
-  phase3: { status: '✅', issues: [], actions: [] },
-  phase4: { status: '✅', issues: [], actions: [] },
-  summary: { totalIssues: 0, criticalIssues: 0, recommendedActions: [] }
-};
+const CODE_EXTENSIONS = new Set(['.ts', '.js', '.tsx', '.jsx', '.mjs', '.cjs', '.py']);
+const TEST_FILE_REGEX = /\.test\./i;
+
+const IGNORE_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  'venv',
+  '__pycache__',
+  '.pytest_cache',
+  '.vscode',
+  'npm_logs',
+  'logs'
+]);
+
+const COMMENTED_CODE_PATTERN =
+  /^\s*(?:\/\/|#)\s*(if|for|while|return|const|let|var|class|function|def|import|from|export|try|catch|except|switch|case|break|continue|await|async|with)\b/;
+
+const LEGACY_PATTERNS = [
+  { name: 'var usage', regex: /\bvar\s+\w+/ },
+  { name: 'require() usage', regex: /\brequire\s*\(/ },
+  { name: 'module.exports usage', regex: /\bmodule\.exports\b/ },
+  { name: 'deprecated OpenAI Completion.create', regex: /\bCompletion\.create\b/ },
+  { name: 'deprecated OpenAI engine param', regex: /\bengine\s*:/ }
+];
 
 /**
- * Phase 1: Prune Aggressively, Safely
+ * Parse workspace list from argv or environment.
+ * Purpose: Determine which roots to audit.
+ * Inputs: argv array.
+ * Outputs: array of absolute paths.
+ * Edge cases: missing args -> default root; invalid paths -> filtered out.
  */
-async function auditPhase1() {
-  console.log('📋 Phase 1: Prune Aggressively, Safely');
-  
-  try {
-    // Check for unused dependencies
-    try {
-      const depcheckOutput = execSync('npx depcheck --ignores=typescript,@types/*,eslint,jest', 
-        { cwd: projectRoot, encoding: 'utf8', stdio: 'pipe' });
-      
-      if (depcheckOutput.includes('Unused dependencies')) {
-        auditResults.phase1.issues.push('Unused dependencies detected');
-        auditResults.phase1.actions.push('Run: npm uninstall <unused-deps>');
-        auditResults.phase1.status = '⚠️';
-      }
-    } catch (depcheckError) {
-      // Depcheck not available or failed, skip this check
-      console.log('   ⚠️ Skipping dependency check (depcheck not available)');
-    }
+function parseWorkspaceArgs(argv) {
+  const envValue = process.env.ARCANOS_AUDIT_WORKSPACES;
+  const flagIndex = argv.findIndex(arg => arg === '--workspaces' || arg === '--workspace');
+  let raw = '';
 
-    // Check for security vulnerabilities
+  //audit Assumption: explicit flag overrides env var; risk: ignoring env config; invariant: explicit args win; handling: read argv first.
+  if (flagIndex !== -1 && argv[flagIndex + 1]) {
+    raw = argv[flagIndex + 1];
+  } else if (envValue) {
+    raw = envValue;
+  } else {
+    return [DEFAULT_ROOT];
+  }
+
+  //audit Assumption: delimiter is comma or semicolon; risk: spaces-only input; invariant: trimmed list of paths; handling: split and filter empty entries.
+  const workspaces = raw
+    .split(/[;,]/)
+    .map(value => value.trim())
+    .filter(Boolean)
+    .map(value => path.resolve(value));
+
+  //audit Assumption: empty workspace list should fall back; risk: audit skips everything; invariant: at least one workspace; handling: fallback to default root.
+  if (workspaces.length === 0) {
+    return [DEFAULT_ROOT];
+  }
+
+  return workspaces;
+}
+
+/**
+ * Parse audit cycle count from argv.
+ * Purpose: Control recursive loop iterations.
+ * Inputs: argv array.
+ * Outputs: positive integer for cycles.
+ * Edge cases: invalid values -> fallback to 1.
+ */
+function parseCycleCount(argv) {
+  const flagIndex = argv.findIndex(arg => arg === '--cycles');
+
+  //audit Assumption: missing flag means single cycle; risk: unintended recursion; invariant: defaults to 1; handling: return 1 when flag absent.
+  if (flagIndex === -1 || !argv[flagIndex + 1]) {
+    return 1;
+  }
+
+  const parsed = Number.parseInt(argv[flagIndex + 1], 10);
+
+  //audit Assumption: non-positive cycles are invalid; risk: infinite loop; invariant: cycles >= 1; handling: clamp to 1.
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+
+  return parsed;
+}
+
+/**
+ * Determine if a path should be ignored.
+ * Purpose: Skip generated or vendor directories.
+ * Inputs: relative path string.
+ * Outputs: boolean (true = ignore).
+ * Edge cases: nested directories.
+ */
+function shouldIgnorePath(relativePath) {
+  const segments = relativePath.split(path.sep);
+
+  //audit Assumption: any ignored segment excludes the path; risk: false negatives on nested dirs; invariant: ignored segments are skipped; handling: check all segments.
+  return segments.some(segment => IGNORE_DIRS.has(segment));
+}
+
+/**
+ * Normalize a relative path to POSIX separators for logging.
+ * Purpose: Make logs consistent across OSes.
+ * Inputs: relative path.
+ * Outputs: normalized relative path.
+ * Edge cases: empty path.
+ */
+function normalizeRelativePath(relativePath) {
+  const normalized = relativePath.split(path.sep).join('/');
+
+  //audit Assumption: normalization should not change semantics; risk: double slashes; invariant: single separator; handling: trim leading './'.
+  if (normalized.startsWith('./')) {
+    return normalized.slice(2);
+  }
+
+  return normalized;
+}
+
+/**
+ * Collect files with matching extensions under a root.
+ * Purpose: Build file inventory for scanning.
+ * Inputs: root path, set of extensions.
+ * Outputs: array of absolute file paths.
+ * Edge cases: unreadable directories.
+ */
+async function collectFiles(root, extensions) {
+  const files = [];
+
+  async function walk(currentDir) {
+    let entries = [];
+
+    //audit Assumption: IO errors should not stop the audit; risk: missing files; invariant: best-effort scan; handling: swallow and continue.
     try {
-      execSync('npm audit --audit-level=high', { cwd: projectRoot, stdio: 'pipe' });
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
     } catch (error) {
-      auditResults.phase1.issues.push('Security vulnerabilities detected');
-      auditResults.phase1.actions.push('Run: npm audit fix');
-      auditResults.phase1.status = '❌';
+      return;
     }
 
-    // Check for large files that might need splitting
-    const srcDir = path.join(projectRoot, 'src');
-    const files = await findLargeFiles(srcDir, 1000); // Files > 1000 lines
-    if (files.length > 0) {
-      auditResults.phase1.issues.push(`Large files detected: ${files.map(f => f.name).join(', ')}`);
-      auditResults.phase1.actions.push('Consider splitting large files into modules');
-      auditResults.phase1.status = '⚠️';
-    }
-
-    console.log(`   ${auditResults.phase1.status} Phase 1 Complete`);
-  } catch (error) {
-    auditResults.phase1.status = '❌';
-    auditResults.phase1.issues.push(`Audit error: ${error.message}`);
-    console.log(`   ❌ Phase 1 Failed: ${error.message}`);
-  }
-}
-
-/**
- * Phase 2: Preserve Architectural Integrity
- */
-async function auditPhase2() {
-  console.log('🏗️  Phase 2: Preserve Architectural Integrity');
-  
-  try {
-    // Check for duplicate patterns
-    const duplicates = await findDuplicatePatterns();
-    if (duplicates.length > 0) {
-      auditResults.phase2.issues.push(`Duplicate patterns detected: ${duplicates.length} instances`);
-      auditResults.phase2.actions.push('Consolidate duplicate logic patterns');
-      auditResults.phase2.status = '⚠️';
-    }
-
-    // Check module boundaries
-    const crossModuleImports = await checkCrossModuleImports();
-    if (crossModuleImports.violations > 0) {
-      auditResults.phase2.issues.push(`Module boundary violations: ${crossModuleImports.violations}`);
-      auditResults.phase2.actions.push('Review and clean up cross-module dependencies');
-      auditResults.phase2.status = '⚠️';
-    }
-
-    console.log(`   ${auditResults.phase2.status} Phase 2 Complete`);
-  } catch (error) {
-    auditResults.phase2.status = '❌';
-    auditResults.phase2.issues.push(`Architecture audit error: ${error.message}`);
-    console.log(`   ❌ Phase 2 Failed: ${error.message}`);
-  }
-}
-
-/**
- * Phase 3: Enforce OpenAI SDK Compatibility
- */
-async function auditPhase3() {
-  console.log('🤖 Phase 3: Enforce OpenAI SDK Compatibility');
-  
-  try {
-    // Check OpenAI SDK version
-    const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
-    const openaiVersion = packageJson.dependencies?.openai;
-    
-    // Extract version number (e.g., "^6.9.1" -> 6)
-    const versionMatch = openaiVersion?.match(/(\d+)\./);
-    const majorVersion = versionMatch ? parseInt(versionMatch[1]) : 0;
-    
-    if (!openaiVersion || majorVersion < 5) {
-      auditResults.phase3.issues.push(`OpenAI SDK version may be outdated: ${openaiVersion}`);
-      auditResults.phase3.actions.push('Update to OpenAI SDK ≥5.15.0 (latest: 6.x)');
-      auditResults.phase3.status = '⚠️';
-    } else if (majorVersion >= 6) {
-      // Version 6.x is the latest - all good!
-      auditResults.phase3.actions.push('✅ OpenAI SDK is up to date (v6.x)');
-    }
-
-    // Check for deprecated patterns
-    const deprecatedPatterns = await findDeprecatedOpenAIPatterns();
-    if (deprecatedPatterns.length > 0) {
-      auditResults.phase3.issues.push(`Deprecated OpenAI patterns: ${deprecatedPatterns.length} instances`);
-      auditResults.phase3.actions.push('Update deprecated API usage patterns');
-      auditResults.phase3.status = '⚠️';
-    }
-
-    console.log(`   ${auditResults.phase3.status} Phase 3 Complete`);
-  } catch (error) {
-    auditResults.phase3.status = '❌';
-    auditResults.phase3.issues.push(`OpenAI audit error: ${error.message}`);
-    console.log(`   ❌ Phase 3 Failed: ${error.message}`);
-  }
-}
-
-/**
- * Phase 4: Optimize for Railway Deployment
- */
-async function auditPhase4() {
-  console.log('🚂 Phase 4: Optimize for Railway Deployment');
-  
-  try {
-    // Check Dockerfile optimization
-    const dockerfile = await fs.readFile(path.join(projectRoot, 'Dockerfile'), 'utf8');
-    if (!dockerfile.includes('--max-old-space-size')) {
-      auditResults.phase4.issues.push('Dockerfile missing memory optimization');
-      auditResults.phase4.actions.push('Add Node.js memory optimization flags');
-      auditResults.phase4.status = '⚠️';
-    }
-
-    // Check environment variable schema
-    const envExample = await fs.readFile(path.join(projectRoot, '.env.example'), 'utf8');
-    const requiredVars = ['NODE_ENV', 'PORT', 'OPENAI_API_KEY'];
-    for (const varName of requiredVars) {
-      if (!envExample.includes(varName)) {
-        auditResults.phase4.issues.push(`Missing required env var documentation: ${varName}`);
-        auditResults.phase4.actions.push('Update .env.example with required variables');
-        auditResults.phase4.status = '⚠️';
-      }
-    }
-
-    // Check health check endpoint
-    const registerFile = await fs.readFile(path.join(projectRoot, 'src/routes/register.ts'), 'utf8');
-    if (!registerFile.includes('/api/test')) {
-      auditResults.phase4.issues.push('Missing health check endpoint');
-      auditResults.phase4.actions.push('Add /api/test endpoint for Railway health checks');
-      auditResults.phase4.status = '⚠️';
-    }
-
-    console.log(`   ${auditResults.phase4.status} Phase 4 Complete`);
-  } catch (error) {
-    auditResults.phase4.status = '❌';
-    auditResults.phase4.issues.push(`Railway audit error: ${error.message}`);
-    console.log(`   ❌ Phase 4 Failed: ${error.message}`);
-  }
-}
-
-/**
- * Helper function to find large files
- */
-async function findLargeFiles(dir, maxLines) {
-  const largeFiles = [];
-  
-  async function scanDir(currentDir) {
-    const entries = await fs.readdir(currentDir, { withFileTypes: true });
-    
+    //audit Assumption: each entry is scanned once; risk: infinite recursion; invariant: directory traversal is acyclic; handling: follow filesystem tree.
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
-      
-      if (entry.isDirectory() && !entry.name.startsWith('.')) {
-        await scanDir(fullPath);
-      } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js'))) {
-        const content = await fs.readFile(fullPath, 'utf8');
-        const lineCount = content.split('\n').length;
-        
-        if (lineCount > maxLines) {
-          largeFiles.push({
-            name: path.relative(projectRoot, fullPath),
-            lines: lineCount
+      const relativePath = path.relative(root, fullPath);
+
+      //audit Assumption: ignore list covers generated content; risk: missing relevant files; invariant: known vendor dirs skipped; handling: skip ignored paths.
+      if (shouldIgnorePath(relativePath)) {
+        continue;
+      }
+
+      //audit Assumption: directories should be traversed; risk: deep nesting; invariant: recursion handles nested trees; handling: recurse on directories.
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+
+      //audit Assumption: only files with target extensions matter; risk: missing relevant code in other extensions; invariant: target set is explicit; handling: filter by extension.
+      if (entry.isFile() && extensions.has(path.extname(entry.name))) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  await walk(root);
+  return files;
+}
+
+/**
+ * Read JSON from a file path.
+ * Purpose: Safely parse JSON configuration files.
+ * Inputs: absolute file path.
+ * Outputs: object with ok boolean, data, and error.
+ * Edge cases: missing files or invalid JSON.
+ */
+async function readJsonFile(filePath) {
+  //audit Assumption: IO failures should be reported as errors; risk: throwing halts audit; invariant: caller gets error info; handling: return ok=false.
+  try {
+    const content = await fs.readFile(filePath, 'utf8');
+    const data = JSON.parse(content);
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Run a shell command and capture output.
+ * Purpose: Execute git/tsc/npm utilities.
+ * Inputs: command string, cwd path.
+ * Outputs: object with ok boolean and output string.
+ * Edge cases: non-zero exit codes.
+ */
+function runCommand(command, cwd) {
+  //audit Assumption: command output is useful even on failure; risk: missing stderr; invariant: output captured; handling: return combined output.
+  try {
+    const output = execSync(command, { cwd, encoding: 'utf8', stdio: 'pipe' });
+    return { ok: true, output };
+  } catch (error) {
+    const stdout = error?.stdout ? String(error.stdout) : '';
+    const stderr = error?.stderr ? String(error.stderr) : '';
+    return { ok: false, output: `${stdout}\n${stderr}`.trim() };
+  }
+}
+
+/**
+ * Get recent merge commits.
+ * Purpose: Provide snapshot references for diff comparison.
+ * Inputs: workspace root and limit.
+ * Outputs: array of commit SHAs.
+ * Edge cases: missing git history.
+ */
+function getMergeCommits(root, limit = 3) {
+  const result = runCommand(`git log --merges -n ${limit} --format=%H`, root);
+
+  //audit Assumption: git log may fail outside a repo; risk: empty commits list; invariant: empty array on failure; handling: fallback to [].
+  if (!result.ok) {
+    return [];
+  }
+
+  return result.output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Compute a set of files changed since a commit.
+ * Purpose: Track recent changes for findings context.
+ * Inputs: root path and commit SHA.
+ * Outputs: Set of relative file paths.
+ * Edge cases: invalid commit SHA.
+ */
+function getChangedFilesSince(root, commitSha) {
+  const result = runCommand(`git diff --name-only ${commitSha}..HEAD`, root);
+
+  //audit Assumption: git diff may fail; risk: missing change set; invariant: empty set on failure; handling: return empty set.
+  if (!result.ok) {
+    return new Set();
+  }
+
+  const files = result.output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  return new Set(files.map(file => normalizeRelativePath(file)));
+}
+
+/**
+ * Build a union of changed files across commits.
+ * Purpose: Mark findings as recently touched.
+ * Inputs: array of sets.
+ * Outputs: Set of relative file paths.
+ * Edge cases: empty input.
+ */
+function unionChangedFiles(changeSets) {
+  const union = new Set();
+
+  //audit Assumption: each change set is iterable; risk: runtime errors; invariant: union contains all entries; handling: iterate defensively.
+  for (const changeSet of changeSets) {
+    for (const file of changeSet) {
+      union.add(file);
+    }
+  }
+
+  return union;
+}
+
+/**
+ * Resolve OpenAI major version from package.json.
+ * Purpose: Detect legacy SDK versions.
+ * Inputs: package.json path.
+ * Outputs: major version number or null.
+ * Edge cases: missing dependency.
+ */
+async function getOpenAiMajor(packageJsonPath) {
+  const readResult = await readJsonFile(packageJsonPath);
+
+  //audit Assumption: missing package.json returns null; risk: false negatives; invariant: null on error; handling: return null.
+  if (!readResult.ok) {
+    return null;
+  }
+
+  const dependencies = readResult.data.dependencies || {};
+  const rawVersion = dependencies.openai;
+
+  //audit Assumption: missing openai dependency returns null; risk: skipping legacy check; invariant: null when not present; handling: return null.
+  if (!rawVersion || typeof rawVersion !== 'string') {
+    return null;
+  }
+
+  const match = rawVersion.match(/(\d+)\./);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+/**
+ * Find manifest.json files under a workspace.
+ * Purpose: Locate module interface definitions.
+ * Inputs: root path.
+ * Outputs: array of absolute manifest paths.
+ * Edge cases: none found.
+ */
+function findManifestPaths(root) {
+  const result = runCommand(`rg --files -g "manifest.json" "${root}"`, root);
+
+  //audit Assumption: rg may be unavailable; risk: missing manifests; invariant: fallback to empty list; handling: return [].
+  if (!result.ok || result.output.length === 0) {
+    return [];
+  }
+
+  return result.output
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Parse tsc output for unused symbol errors.
+ * Purpose: Extract unused code findings from compiler output.
+ * Inputs: output string and workspace root.
+ * Outputs: array of findings.
+ * Edge cases: unrelated errors.
+ */
+function parseTscUnusedOutput(output, root) {
+  const findings = [];
+  const lines = output.split(/\r?\n/);
+
+  //audit Assumption: TS6133/TS6196 represent unused code; risk: missing other unused signals; invariant: only unused entries captured; handling: filter by codes.
+  for (const line of lines) {
+    const match = line.match(/^(.*)\((\d+),(\d+)\): error TS(6133|6196): (.*)$/);
+    if (!match) {
+      continue;
+    }
+
+    const filePath = normalizeRelativePath(path.relative(root, match[1]));
+    const lineNumber = Number.parseInt(match[2], 10);
+    const message = match[5];
+
+    findings.push({
+      category: 'unused',
+      file: filePath,
+      line: lineNumber,
+      message,
+      action: 'verify'
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * Run tsc with unused checks.
+ * Purpose: Detect unused locals and parameters.
+ * Inputs: workspace root and tsconfig path.
+ * Outputs: array of findings.
+ * Edge cases: missing tsconfig.
+ */
+function runTscUnused(root, tsconfigPath) {
+  const command = `npx tsc --noEmit --noUnusedLocals --noUnusedParameters --pretty false -p "${tsconfigPath}"`;
+  const result = runCommand(command, root);
+
+  //audit Assumption: successful tsc run means no unused results; risk: silent failures; invariant: ok maps to empty findings; handling: return with blocked=false.
+  if (result.ok) {
+    return { findings: [], blocked: false };
+  }
+
+  //audit Assumption: missing output implies blocked analysis; risk: false negatives; invariant: blocked marked when no output; handling: return blocked true.
+  if (!result.output) {
+    return { findings: [], blocked: true };
+  }
+
+  const findings = parseTscUnusedOutput(result.output, root);
+  const blocked = findings.length === 0;
+
+  return { findings, blocked };
+}
+
+/**
+ * Get line age in days via git blame.
+ * Purpose: Determine age of commented-out code.
+ * Inputs: root path, relative file, line number.
+ * Outputs: number of days or null.
+ * Edge cases: untracked files.
+ */
+function getLineAgeDays(root, relativeFile, lineNumber) {
+  const command = `git blame -L ${lineNumber},${lineNumber} --date=short --porcelain -- "${relativeFile}"`;
+  const result = runCommand(command, root);
+
+  //audit Assumption: blame failure means unknown age; risk: missing age; invariant: null returned on failure; handling: return null.
+  if (!result.ok) {
+    return null;
+  }
+
+  const match = result.output.match(/author-time (\d+)/);
+
+  //audit Assumption: author-time exists; risk: missing author-time; invariant: null when missing; handling: return null.
+  if (!match) {
+    return null;
+  }
+
+  const timestampSeconds = Number.parseInt(match[1], 10);
+
+  //audit Assumption: timestamp is valid; risk: NaN; invariant: null when invalid; handling: guard with Number.isFinite.
+  if (!Number.isFinite(timestampSeconds)) {
+    return null;
+  }
+
+  const ageMs = Date.now() - (timestampSeconds * 1000);
+  return ageMs / (1000 * 60 * 60 * 24);
+}
+
+/**
+ * Scan code files for content signals.
+ * Purpose: Gather line counts, commented code, legacy patterns, exports, and hashes.
+ * Inputs: root path and file list.
+ * Outputs: structured scan results.
+ * Edge cases: unreadable files.
+ */
+async function scanFiles(root, files) {
+  const largeFiles = [];
+  const commentedLines = [];
+  const legacyMatches = [];
+  const exportMap = new Map();
+  const fileHashes = new Map();
+
+  //audit Assumption: files list is complete; risk: missing content; invariant: scan each file; handling: iterate all files.
+  for (const filePath of files) {
+    let content = '';
+
+    //audit Assumption: read errors should not stop scan; risk: missing file data; invariant: best-effort scan; handling: skip unreadable files.
+    try {
+      content = await fs.readFile(filePath, 'utf8');
+    } catch (error) {
+      continue;
+    }
+
+    const relativePath = normalizeRelativePath(path.relative(root, filePath));
+    const lines = content.split(/\r?\n/);
+    const lineCount = lines.length;
+
+    //audit Assumption: line count threshold is 300; risk: misclassifying files; invariant: consistent threshold; handling: compare to MAX_MODULE_LINES.
+    if (lineCount > MAX_MODULE_LINES) {
+      largeFiles.push({
+        file: relativePath,
+        line: 1,
+        message: `Module exceeds ${MAX_MODULE_LINES} lines (${lineCount}).`
+      });
+    }
+
+    //audit Assumption: line scanning can detect patterns; risk: regex misses matches; invariant: scan all lines; handling: loop through lines.
+    for (let index = 0; index < lines.length; index += 1) {
+      const lineText = lines[index];
+      const lineNumber = index + 1;
+
+      //audit Assumption: commented code matches heuristic; risk: false positives; invariant: logged for verification; handling: record line.
+      if (COMMENTED_CODE_PATTERN.test(lineText)) {
+        commentedLines.push({ file: relativePath, line: lineNumber, message: lineText.trim() });
+      }
+
+      //audit Assumption: legacy patterns are detectable per line; risk: missing multi-line patterns; invariant: line-based scan; handling: test per line.
+      for (const pattern of LEGACY_PATTERNS) {
+        if (pattern.regex.test(lineText)) {
+          legacyMatches.push({
+            file: relativePath,
+            line: lineNumber,
+            message: `${pattern.name} detected.`
           });
         }
       }
     }
-  }
-  
-  await scanDir(dir);
-  return largeFiles;
-}
 
-/**
- * Helper function to find duplicate patterns
- */
-async function findDuplicatePatterns() {
-  // Simple heuristic: look for similar function names or similar imports
-  const duplicates = [];
-  
-  try {
-    const srcFiles = await fs.readdir(path.join(projectRoot, 'src'), { recursive: true });
-    const patterns = new Map();
-    
-    for (const file of srcFiles) {
-      if (typeof file === 'string' && file.endsWith('.ts')) {
-        try {
-          const content = await fs.readFile(path.join(projectRoot, 'src', file), 'utf8');
-          
-          // Look for export patterns
-          const exports = content.match(/export\s+(function|class|const)\s+(\w+)/g) || [];
-          for (const exp of exports) {
-            const name = exp.split(/\s+/).pop();
-            if (patterns.has(name)) {
-              duplicates.push(`Duplicate export: ${name} in ${file} and ${patterns.get(name)}`);
-            } else {
-              patterns.set(name, file);
-            }
-          }
-        } catch (err) {
-          // Skip files that can't be read
+    const exportPatterns = [
+      /export\s+(?:async\s+)?function\s+(\w+)/g,
+      /export\s+class\s+(\w+)/g,
+      /export\s+const\s+(\w+)/g
+    ];
+
+    //audit Assumption: export regexes cover main symbols; risk: missing other exports; invariant: baseline export mapping; handling: scan patterns.
+    for (const pattern of exportPatterns) {
+      for (const match of content.matchAll(pattern)) {
+        const name = match[1];
+        const beforeMatch = content.slice(0, match.index || 0);
+        const lineNumber = beforeMatch.split(/\r?\n/).length;
+
+        if (!exportMap.has(name)) {
+          exportMap.set(name, []);
         }
+        exportMap.get(name).push({ file: relativePath, line: lineNumber });
       }
     }
-  } catch (error) {
-    console.warn('Could not scan for duplicate patterns:', error.message);
+
+    //audit Assumption: file hashes help detect duplicates; risk: hash collisions; invariant: hash computed for each file; handling: store by hash.
+    const hash = crypto.createHash('sha1').update(content).digest('hex');
+    if (!fileHashes.has(hash)) {
+      fileHashes.set(hash, []);
+    }
+    fileHashes.get(hash).push(relativePath);
   }
-  
-  return duplicates;
+
+  return { largeFiles, commentedLines, legacyMatches, exportMap, fileHashes };
 }
 
 /**
- * Helper function to check cross-module imports
+ * Scan test files for mock references and validate targets.
+ * Purpose: Detect stale mocks pointing to missing files.
+ * Inputs: root path and test file list.
+ * Outputs: array of findings.
+ * Edge cases: non-relative module names.
  */
-async function checkCrossModuleImports() {
-  let violations = 0;
-  
-  try {
-    // Simple check: services shouldn't import from routes, routes shouldn't import from logic deeply
-    const srcDir = path.join(projectRoot, 'src');
-    const files = await fs.readdir(srcDir, { recursive: true });
-    
+async function scanTestMocks(root, testFiles) {
+  const findings = [];
+  const mockRegex = /\b(jest\.mock|jest\.unstable_mockModule|vi\.mock)\(\s*['"]([^'"]+)['"]/g;
+
+  //audit Assumption: each test file can be read; risk: missing data; invariant: skip unreadable tests; handling: continue on read errors.
+  for (const testFile of testFiles) {
+    let content = '';
+    try {
+      content = await fs.readFile(testFile, 'utf8');
+    } catch (error) {
+      continue;
+    }
+
+    const relativePath = normalizeRelativePath(path.relative(root, testFile));
+
+    for (const match of content.matchAll(mockRegex)) {
+      const modulePath = match[2];
+
+      //audit Assumption: only relative mocks map to local files; risk: skipping package mocks; invariant: relative paths resolved; handling: skip non-relative.
+      if (!modulePath.startsWith('.') && !modulePath.startsWith('/')) {
+        continue;
+      }
+
+      const basePath = path.resolve(path.dirname(testFile), modulePath);
+      //audit Assumption: path extensions can be normalized; risk: incorrect trimming; invariant: base path without extension when present; handling: strip known extension.
+      const baseExtension = path.extname(basePath);
+      const baseWithoutExt = baseExtension ? basePath.slice(0, -baseExtension.length) : basePath;
+      const candidates = [
+        basePath,
+        `${baseWithoutExt}.ts`,
+        `${baseWithoutExt}.js`,
+        `${baseWithoutExt}.mjs`,
+        `${baseWithoutExt}.cjs`,
+        path.join(baseWithoutExt, 'index.ts'),
+        path.join(baseWithoutExt, 'index.js'),
+        path.join(baseWithoutExt, 'index.mjs'),
+        path.join(baseWithoutExt, 'index.cjs')
+      ];
+
+      //audit Assumption: a mock target must exist; risk: false negatives if extension differs; invariant: candidates tested; handling: check for existence.
+      let exists = false;
+      for (const candidate of candidates) {
+        try {
+          await fs.access(candidate);
+          exists = true;
+          break;
+        } catch (error) {
+          continue;
+        }
+      }
+
+      if (!exists) {
+        const lineNumber = content.slice(0, match.index || 0).split(/\r?\n/).length;
+        findings.push({
+          category: 'test-mock',
+          file: relativePath,
+          line: lineNumber,
+          message: `Mock target not found: ${modulePath}`,
+          action: 'remove'
+        });
+      }
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Build findings from duplicate exports.
+ * Purpose: Flag possible redundant logic.
+ * Inputs: export map.
+ * Outputs: array of findings.
+ * Edge cases: exports shared intentionally.
+ */
+function buildDuplicateExportFindings(exportMap) {
+  const findings = [];
+
+  //audit Assumption: duplicate exports across files may indicate redundancy; risk: false positives; invariant: duplicates flagged for review; handling: mark verify.
+  for (const [name, entries] of exportMap.entries()) {
+    if (entries.length < 2) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      findings.push({
+        category: 'duplicate',
+        file: entry.file,
+        line: entry.line,
+        message: `Duplicate export '${name}' also found in ${entries.map(item => item.file).join(', ')}`,
+        action: 'verify'
+      });
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Build findings from duplicate file hashes.
+ * Purpose: Detect exact duplicate logic files.
+ * Inputs: file hash map.
+ * Outputs: array of findings.
+ * Edge cases: small files with boilerplate.
+ */
+function buildDuplicateFileFindings(fileHashes) {
+  const findings = [];
+
+  //audit Assumption: identical hashes indicate duplicate content; risk: boilerplate matches; invariant: duplicates flagged for review; handling: mark verify.
+  for (const [hash, files] of fileHashes.entries()) {
+    if (files.length < 2) {
+      continue;
+    }
+
     for (const file of files) {
-      if (typeof file === 'string' && file.endsWith('.ts')) {
-        try {
-          const content = await fs.readFile(path.join(srcDir, file), 'utf8');
-          const imports = content.match(/import\s+.+\s+from\s+['"]([^'"]+)['"]/g) || [];
-          
-          for (const imp of imports) {
-            const importPath = imp.match(/from\s+['"]([^'"]+)['"]/)?.[1];
-            if (importPath && importPath.startsWith('../')) {
-              // Count relative imports that go up multiple levels as potential violations
-              const levels = (importPath.match(/\.\.\//g) || []).length;
-              if (levels > 2) {
-                violations++;
-              }
-            }
-          }
-        } catch (err) {
-          // Skip files that can't be read
-        }
-      }
+      findings.push({
+        category: 'duplicate',
+        file,
+        line: 1,
+        message: `Duplicate file content (hash ${hash}) shared by ${files.join(', ')}`,
+        action: 'verify'
+      });
     }
-  } catch (error) {
-    console.warn('Could not check cross-module imports:', error.message);
   }
-  
-  return { violations };
+
+  return findings;
 }
 
 /**
- * Helper function to find deprecated OpenAI patterns
+ * Load audit state for a workspace.
+ * Purpose: Track consecutive findings across runs.
+ * Inputs: state file path.
+ * Outputs: state object.
+ * Edge cases: missing state file.
  */
-async function findDeprecatedOpenAIPatterns() {
-  const deprecated = [];
-  const patterns = [
-    /engine\s*:/g,
-    /Completion\.create/g,
-    /\.complete\(/g
-  ];
-  
+async function loadAuditState(statePath) {
+  const readResult = await readJsonFile(statePath);
+
+  //audit Assumption: missing state file yields defaults; risk: losing history; invariant: default state; handling: return defaults.
+  if (!readResult.ok) {
+    return { lastSignatures: [], counts: {}, unusedCleanStreak: 0 };
+  }
+
+  const data = readResult.data;
+  return {
+    lastSignatures: Array.isArray(data.lastSignatures) ? data.lastSignatures : [],
+    counts: data.counts && typeof data.counts === 'object' ? data.counts : {},
+    unusedCleanStreak: Number.isFinite(data.unusedCleanStreak) ? data.unusedCleanStreak : 0
+  };
+}
+
+/**
+ * Save audit state to disk.
+ * Purpose: Persist consecutive tracking between runs.
+ * Inputs: state path and state object.
+ * Outputs: none.
+ * Edge cases: IO errors.
+ */
+async function saveAuditState(statePath, state) {
+  //audit Assumption: state directory exists; risk: write failure; invariant: state persisted when possible; handling: best-effort write.
   try {
-    const srcFiles = await fs.readdir(path.join(projectRoot, 'src'), { recursive: true });
-    
-    for (const file of srcFiles) {
-      if (typeof file === 'string' && file.endsWith('.ts')) {
-        try {
-          const content = await fs.readFile(path.join(projectRoot, 'src', file), 'utf8');
-          
-          for (const pattern of patterns) {
-            if (pattern.test(content)) {
-              deprecated.push(`Deprecated pattern in ${file}`);
-            }
-          }
-        } catch (err) {
-          // Skip files that can't be read
-        }
-      }
-    }
+    await fs.writeFile(statePath, JSON.stringify(state, null, 2));
   } catch (error) {
-    console.warn('Could not scan for deprecated patterns:', error.message);
+    return;
   }
-  
-  return deprecated;
 }
 
 /**
- * Generate summary and recommendations
+ * Update consecutive counts for findings.
+ * Purpose: Track repeat findings across runs.
+ * Inputs: previous state and current findings.
+ * Outputs: updated state and enriched findings.
+ * Edge cases: empty findings.
  */
-function generateSummary() {
-  const allPhases = [auditResults.phase1, auditResults.phase2, auditResults.phase3, auditResults.phase4];
-  
-  auditResults.summary.totalIssues = allPhases.reduce((sum, phase) => sum + phase.issues.length, 0);
-  auditResults.summary.criticalIssues = allPhases.filter(phase => phase.status === '❌').length;
-  
-  // Collect all actions
-  auditResults.summary.recommendedActions = allPhases.flatMap(phase => phase.actions);
-  
-  console.log('\n📊 AUDIT SUMMARY');
-  console.log('================');
-  console.log(`Total Issues: ${auditResults.summary.totalIssues}`);
-  console.log(`Critical Issues: ${auditResults.summary.criticalIssues}`);
-  console.log(`Overall Status: ${auditResults.summary.criticalIssues === 0 ? 
-    (auditResults.summary.totalIssues === 0 ? '✅ CLEAN' : '⚠️ NEEDS ATTENTION') : 
-    '❌ CRITICAL ISSUES'}`);
-  
-  if (auditResults.summary.recommendedActions.length > 0) {
-    console.log('\n🔧 RECOMMENDED ACTIONS:');
-    auditResults.summary.recommendedActions.forEach((action, i) => {
-      console.log(`${i + 1}. ${action}`);
+function applyConsecutiveCounts(previousState, findings) {
+  const previousSet = new Set(previousState.lastSignatures);
+  const nextCounts = {};
+  const signatures = [];
+
+  //audit Assumption: signature keys are stable; risk: signature churn; invariant: same issue yields same signature; handling: include file, line, category, message.
+  for (const finding of findings) {
+    const signature = `${finding.category}|${finding.file}|${finding.line}|${finding.message}`;
+    signatures.push(signature);
+
+    const previousCount = previousState.counts[signature] || 0;
+    const nextCount = previousSet.has(signature) ? previousCount + 1 : 1;
+    nextCounts[signature] = nextCount;
+
+    finding.consecutiveCount = nextCount;
+    finding.autoRemoveCandidate = finding.category === 'unused' && nextCount >= 2;
+
+    //audit Assumption: auto-remove candidates should be flagged; risk: accidental removal; invariant: only consecutive unused flagged; handling: check category and count.
+    if (finding.autoRemoveCandidate) {
+      finding.action = 'remove';
+    }
+  }
+
+  const nextState = {
+    lastSignatures: signatures,
+    counts: nextCounts,
+    unusedCleanStreak: previousState.unusedCleanStreak
+  };
+
+  return { updatedState: nextState, findings };
+}
+
+/**
+ * Audit a workspace and return results.
+ * Purpose: Execute audit checks for a single root.
+ * Inputs: root path.
+ * Outputs: result object with findings and summary.
+ * Edge cases: missing logs directory.
+ */
+async function auditWorkspace(root) {
+  const logDir = path.join(root, LOG_DIR_NAME);
+  const statePath = path.join(logDir, STATE_FILE_NAME);
+  const latestPath = path.join(logDir, LATEST_FILE_NAME);
+
+  //audit Assumption: logs directory may not exist; risk: write errors; invariant: logs directory created; handling: mkdirp.
+  await fs.mkdir(logDir, { recursive: true });
+
+  const previousState = await loadAuditState(statePath);
+  const mergeCommits = getMergeCommits(root, 3);
+  const mergeSets = mergeCommits.map(commit => getChangedFilesSince(root, commit));
+  const recentChangeSet = unionChangedFiles(mergeSets);
+
+  const findings = [];
+  const manifestPaths = findManifestPaths(root);
+
+  //audit Assumption: manifest.json should be validated; risk: missing modules; invariant: manifest references checked; handling: parse manifests and check paths.
+  for (const manifestPath of manifestPaths) {
+    const manifestResult = await readJsonFile(manifestPath);
+    const relativeManifest = normalizeRelativePath(path.relative(root, manifestPath));
+
+    if (!manifestResult.ok) {
+      findings.push({
+        category: 'manifest',
+        file: relativeManifest,
+        line: 1,
+        message: `Failed to parse manifest.json: ${manifestResult.error}`,
+        action: 'verify'
+      });
+      continue;
+    }
+
+    const modules = Array.isArray(manifestResult.data.modules) ? manifestResult.data.modules : [];
+
+    //audit Assumption: module entries include path; risk: missing module metadata; invariant: module path existence checked; handling: verify each path.
+    for (const moduleEntry of modules) {
+      if (!moduleEntry || typeof moduleEntry.path !== 'string') {
+        findings.push({
+          category: 'manifest',
+          file: relativeManifest,
+          line: 1,
+          message: 'Manifest entry missing module path.',
+          action: 'verify'
+        });
+        continue;
+      }
+
+      const modulePath = path.resolve(path.dirname(manifestPath), moduleEntry.path);
+      try {
+        await fs.access(modulePath);
+      } catch (error) {
+        findings.push({
+          category: 'manifest',
+          file: normalizeRelativePath(path.relative(root, modulePath)),
+          line: 1,
+          message: `Manifest module path not found: ${moduleEntry.path}`,
+          action: 'verify'
+        });
+      }
+    }
+  }
+
+  //audit Assumption: missing manifest is notable; risk: no interface comparison; invariant: missing manifest logged; handling: add finding when none found.
+  if (manifestPaths.length === 0) {
+    findings.push({
+      category: 'manifest',
+      file: 'manifest.json',
+      line: 1,
+      message: 'No manifest.json found in workspace.',
+      action: 'verify'
     });
   }
-}
 
-/**
- * Save audit results to file
- */
-async function saveAuditResults() {
-  const auditDir = path.join(projectRoot, 'logs');
-  await fs.mkdir(auditDir, { recursive: true });
-  
-  const auditFile = path.join(auditDir, `audit-${Date.now()}.json`);
-  await fs.writeFile(auditFile, JSON.stringify(auditResults, null, 2));
-  
-  console.log(`\n📝 Audit results saved to: ${path.relative(projectRoot, auditFile)}`);
-}
+  const memoryStatePath = path.join(root, 'memory', 'state.json');
+  const memoryStateExists = await fs
+    .access(memoryStatePath)
+    .then(() => true)
+    .catch(() => false);
 
-/**
- * Main audit execution
- */
-async function runAudit() {
-  try {
-    await auditPhase1();
-    await auditPhase2();
-    await auditPhase3();
-    await auditPhase4();
-    
-    generateSummary();
-    await saveAuditResults();
-    
-    console.log('\n🎯 ARCANOS Continuous Audit Complete');
-    
-    // Exit with appropriate code
-    process.exit(auditResults.summary.criticalIssues > 0 ? 1 : 0);
-    
-  } catch (error) {
-    console.error('❌ Audit failed:', error);
-    process.exit(1);
+  //audit Assumption: memory state represents schema; risk: wrong file; invariant: required keys checked; handling: validate known keys.
+  if (memoryStateExists) {
+    const memoryResult = await readJsonFile(memoryStatePath);
+    if (!memoryResult.ok) {
+      findings.push({
+        category: 'memory-schema',
+        file: normalizeRelativePath(path.relative(root, memoryStatePath)),
+        line: 1,
+        message: `Failed to parse memory state: ${memoryResult.error}`,
+        action: 'verify'
+      });
+    } else {
+      const requiredKeys = ['config', 'registry', 'auth', 'saveData', 'session', 'cache'];
+      for (const key of requiredKeys) {
+        if (!(key in memoryResult.data)) {
+          findings.push({
+            category: 'memory-schema',
+            file: normalizeRelativePath(path.relative(root, memoryStatePath)),
+            line: 1,
+            message: `Memory schema missing key: ${key}`,
+            action: 'verify'
+          });
+        }
+      }
+    }
+  } else {
+    findings.push({
+      category: 'memory-schema',
+      file: normalizeRelativePath(path.relative(root, memoryStatePath)),
+      line: 1,
+      message: 'Memory schema/state file not found.',
+      action: 'verify'
+    });
   }
+
+  const codeFiles = await collectFiles(root, CODE_EXTENSIONS);
+  const testFiles = codeFiles.filter(
+    file => TEST_FILE_REGEX.test(path.basename(file)) || file.includes(`${path.sep}tests${path.sep}`)
+  );
+  const scanResults = await scanFiles(root, codeFiles);
+
+  for (const item of scanResults.largeFiles) {
+    findings.push({
+      category: 'large-module',
+      file: item.file,
+      line: item.line,
+      message: item.message,
+      action: 'refactor'
+    });
+  }
+
+  //audit Assumption: commented code older than threshold should be reviewed; risk: false positives; invariant: only aged comments flagged; handling: use blame age.
+  for (const item of scanResults.commentedLines) {
+    const ageDays = getLineAgeDays(root, item.file, item.line);
+    if (ageDays !== null && ageDays > COMMENT_AGE_DAYS) {
+      findings.push({
+        category: 'commented-out',
+        file: item.file,
+        line: item.line,
+        message: `Commented-out code older than ${COMMENT_AGE_DAYS} days: ${item.message}`,
+        action: 'remove'
+      });
+    }
+  }
+
+  for (const item of scanResults.legacyMatches) {
+    findings.push({
+      category: 'legacy-pattern',
+      file: item.file,
+      line: item.line,
+      message: item.message,
+      action: 'refactor'
+    });
+  }
+
+  const duplicateExports = buildDuplicateExportFindings(scanResults.exportMap);
+  findings.push(...duplicateExports);
+
+  const duplicateFiles = buildDuplicateFileFindings(scanResults.fileHashes);
+  findings.push(...duplicateFiles);
+
+  const unusedFindings = [];
+  let unusedBlocked = false;
+  const rootTsconfig = path.join(root, 'tsconfig.json');
+  const rootTsconfigExists = await fs
+    .access(rootTsconfig)
+    .then(() => true)
+    .catch(() => false);
+
+  //audit Assumption: tsconfig indicates TypeScript project; risk: missing tsconfig; invariant: run tsc only when present; handling: check file exists.
+  if (rootTsconfigExists) {
+    const rootUnused = runTscUnused(root, rootTsconfig);
+    unusedFindings.push(...rootUnused.findings);
+    if (rootUnused.blocked) {
+      unusedBlocked = true;
+      findings.push({
+        category: 'unused-check',
+        file: normalizeRelativePath(path.relative(root, rootTsconfig)),
+        line: 1,
+        message: 'Unused analysis blocked: tsc failed before reporting unused symbols.',
+        action: 'verify'
+      });
+    }
+  }
+
+  const backendTsconfig = path.join(root, 'backend-typescript', 'tsconfig.json');
+  const backendTsconfigExists = await fs
+    .access(backendTsconfig)
+    .then(() => true)
+    .catch(() => false);
+
+  //audit Assumption: backend-typescript is a secondary project; risk: missing tsconfig; invariant: run when present; handling: check exists.
+  if (backendTsconfigExists) {
+    const backendUnused = runTscUnused(root, backendTsconfig);
+    unusedFindings.push(...backendUnused.findings);
+    if (backendUnused.blocked) {
+      unusedBlocked = true;
+      findings.push({
+        category: 'unused-check',
+        file: normalizeRelativePath(path.relative(root, backendTsconfig)),
+        line: 1,
+        message: 'Unused analysis blocked: tsc failed before reporting unused symbols.',
+        action: 'verify'
+      });
+    }
+  }
+
+  findings.push(...unusedFindings);
+
+  const mockFindings = await scanTestMocks(root, testFiles);
+  findings.push(...mockFindings);
+
+  const traceLogPath = path.join(root, LOG_DIR_NAME, 'arcanos_trace.log');
+  const traceExists = await fs
+    .access(traceLogPath)
+    .then(() => true)
+    .catch(() => false);
+
+  //audit Assumption: trace log drives runtime usage detection; risk: missing log; invariant: missing trace flagged; handling: log missing trace as blocked.
+  if (!traceExists) {
+    findings.push({
+      category: 'trace',
+      file: normalizeRelativePath(path.relative(root, traceLogPath)),
+      line: 1,
+      message: 'Trace log missing; runtime usage audit blocked.',
+      action: 'verify'
+    });
+  } else {
+    const traceContent = await fs.readFile(traceLogPath, 'utf8');
+    const traceMatches = Array.from(
+      traceContent.matchAll(/([A-Za-z0-9_./-]+\.(ts|js|tsx|jsx))/g)
+    ).map(match => match[1]);
+    const referenced = new Set(traceMatches.map(match => normalizeRelativePath(match)));
+
+    //audit Assumption: files not referenced in trace may be unused; risk: trace incomplete; invariant: flag for review; handling: log as verify.
+    for (const filePath of codeFiles) {
+      const relativePath = normalizeRelativePath(path.relative(root, filePath));
+      if (relativePath.startsWith('tests/') || relativePath.includes('/tests/')) {
+        continue;
+      }
+      if (!referenced.has(relativePath)) {
+        findings.push({
+          category: 'trace',
+          file: relativePath,
+          line: 1,
+          message: 'File not referenced in runtime trace log.',
+          action: 'verify'
+        });
+      }
+    }
+  }
+
+  const rootOpenAi = await getOpenAiMajor(path.join(root, 'package.json'));
+  const backendOpenAi = await getOpenAiMajor(path.join(root, 'backend-typescript', 'package.json'));
+
+  //audit Assumption: lower major version indicates legacy; risk: intentional divergence; invariant: log for review; handling: flag mismatch.
+  if (rootOpenAi !== null && backendOpenAi !== null && backendOpenAi < rootOpenAi) {
+    findings.push({
+      category: 'legacy-version',
+      file: 'backend-typescript/package.json',
+      line: 1,
+      message: `backend-typescript uses OpenAI v${backendOpenAi}, root uses v${rootOpenAi}.`,
+      action: 'verify'
+    });
+  }
+
+  //audit Assumption: daemon-python contains application logic; risk: missing source; invariant: log missing source; handling: record if no .py files.
+  const daemonPythonPath = path.join(root, 'daemon-python');
+  const daemonExists = await fs
+    .access(daemonPythonPath)
+    .then(() => true)
+    .catch(() => false);
+  if (daemonExists) {
+    const daemonFiles = await collectFiles(daemonPythonPath, new Set(['.py']));
+    if (daemonFiles.length === 0) {
+      findings.push({
+        category: 'daemon',
+        file: normalizeRelativePath(path.relative(root, daemonPythonPath)),
+        line: 1,
+        message: 'Daemon directory contains no Python source files (compiled artifacts only).',
+        action: 'verify'
+      });
+    }
+  }
+
+  //audit Assumption: findings should include merge context; risk: missing file info; invariant: mergeTouched boolean set; handling: annotate when file is in recent change set.
+  for (const finding of findings) {
+    finding.mergeTouched = recentChangeSet.has(finding.file);
+  }
+
+  const { updatedState, findings: enrichedFindings } = applyConsecutiveCounts(previousState, findings);
+
+  //audit Assumption: unused findings drive clean streak; risk: stale state; invariant: reset streak when unused present or check blocked; handling: update streak based on current unused count.
+  const unusedCount = enrichedFindings.filter(item => item.category === 'unused').length;
+  if (!unusedBlocked && unusedCount === 0) {
+    updatedState.unusedCleanStreak = previousState.unusedCleanStreak + 1;
+  } else {
+    updatedState.unusedCleanStreak = 0;
+  }
+
+  await saveAuditState(statePath, updatedState);
+
+  const summary = {
+    totalFindings: enrichedFindings.length,
+    unusedFindings: unusedCount,
+    unusedCheckBlocked: unusedBlocked,
+    autoRemoveCandidates: enrichedFindings.filter(item => item.autoRemoveCandidate).length
+  };
+
+  const lintResult = runCommand('npm run lint', root);
+  const typeCheckResult = runCommand('npm run type-check', root);
+  const lintStrictOk = lintResult.ok && typeCheckResult.ok;
+
+  const manifestOk = manifestPaths.length > 0 && !enrichedFindings.some(item => item.category === 'manifest');
+  const memoryOk = !enrichedFindings.some(item => item.category === 'memory-schema');
+  const unusedCleanOk = updatedState.unusedCleanStreak >= 2;
+
+  const clean = lintStrictOk && manifestOk && memoryOk && unusedCleanOk && enrichedFindings.length === 0;
+
+  const status = clean ? 'CLEAN' : 'NEEDS_ATTENTION';
+
+  const result = {
+    workspace: root,
+    timestamp: new Date().toISOString(),
+    mergeCommits,
+    summary,
+    lintStrictOk,
+    manifestOk,
+    memoryOk,
+    unusedCleanOk,
+    unusedCheckBlocked: unusedBlocked,
+    status,
+    findings: enrichedFindings
+  };
+
+  await fs.writeFile(latestPath, JSON.stringify(result, null, 2));
+
+  const timestampSlug = new Date().toISOString().replace(/[:.]/g, '-');
+  const logPath = path.join(logDir, `continuous-audit-${timestampSlug}.json`);
+  await fs.writeFile(logPath, JSON.stringify(result, null, 2));
+
+  return result;
 }
 
-// Run the audit
-runAudit();
+/**
+ * Main entry point.
+ * Purpose: Run audits across workspaces for a set number of cycles.
+ * Inputs: process argv.
+ * Outputs: exit code 0 on clean, 1 on issues.
+ * Edge cases: multiple workspaces.
+ */
+async function main() {
+  const workspaces = parseWorkspaceArgs(process.argv);
+  const cycles = parseCycleCount(process.argv);
+  let overallStatus = 'CLEAN';
+
+  //audit Assumption: cycles are finite; risk: long runs; invariant: loop bounded by cycles; handling: iterate fixed count.
+  for (let cycle = 0; cycle < cycles; cycle += 1) {
+    const cycleResults = [];
+
+    //audit Assumption: each workspace should be audited; risk: one failing stops others; invariant: all workspaces processed; handling: await sequentially.
+    for (const workspace of workspaces) {
+      const result = await auditWorkspace(workspace);
+      cycleResults.push(result);
+    }
+
+    const anyNeedsAttention = cycleResults.some(result => result.status !== 'CLEAN');
+
+    if (anyNeedsAttention) {
+      overallStatus = 'NEEDS_ATTENTION';
+    }
+
+    //audit Assumption: early exit if already clean; risk: missing future changes; invariant: stop when clean; handling: break on all clean.
+    if (!anyNeedsAttention) {
+      break;
+    }
+  }
+
+  const exitCode = overallStatus === 'CLEAN' ? 0 : 1;
+  const statusLine = `STATUS: ${overallStatus}`;
+  console.log(statusLine);
+  process.exit(exitCode);
+}
+
+main();
+
