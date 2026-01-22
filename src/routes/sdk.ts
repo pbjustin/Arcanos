@@ -318,7 +318,14 @@ router.post('/test-job', confirmGate, async (_, res) => {
     };
 
     // Create job record in database
-    let jobRecord: any = null;
+    let jobRecord: {
+      id: string;
+      worker_id: string;
+      job_type: string;
+      status?: string;
+      input?: string;
+      created_at?: string;
+    } | null = null;
     try {
       jobRecord = await createJob('worker-1', 'test_job', jobData);
     } catch {
@@ -470,9 +477,41 @@ router.post('/init-all', confirmGate, async (_, res) => {
 /**
  * Full ARCANOS SDK system test according to problem statement
  */
+/**
+ * System test results structure
+ * @confidence 1.0 - Well-defined test structure
+ */
+interface SystemTestResults {
+  workers: unknown;
+  routes: Array<{
+    name: string;
+    active: boolean;
+    handler: string;
+    metadata: Record<string, unknown>;
+  }>;
+  scheduler: {
+    jobs: Array<{
+      name: string;
+      schedule: string;
+      route: string;
+    }>;
+  };
+  job?: {
+    id: string;
+    worker_id: string;
+    job_type: string;
+    job_data: Record<string, unknown>;
+  };
+  [key: string]: unknown;
+}
+
 router.post('/system-test', confirmGate, async (_, res) => {
   try {
-    const results: any = {};
+    const results: SystemTestResults = {
+      workers: null,
+      routes: [],
+      scheduler: { jobs: [] }
+    };
 
     // 1. Initialize 4 workers with specified environment
     const workerBootstrap = startWorkers();
@@ -501,7 +540,12 @@ router.post('/system-test', confirmGate, async (_, res) => {
     };
 
     // Create job record
-    let jobRecord: any = null;
+    let jobRecord: {
+      id: string;
+      worker_id: string;
+      job_type: string;
+      job_data: Record<string, unknown>;
+    } | null = null;
     try {
       const { createJob } = await import('../db.js');
       jobRecord = await createJob('worker-1', 'test_job', testJobData);

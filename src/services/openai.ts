@@ -42,7 +42,9 @@ import {
   CallOpenAICacheEntry,
   ChatCompletionMessageParam,
   ChatCompletionResponseFormat,
-  ImageSize
+  ImageSize,
+  ChatCompletion,
+  ChatCompletionCreateParams
 } from './openai/types.js';
 import {
   DEFAULT_IMAGE_SIZE,
@@ -115,8 +117,36 @@ export async function callOpenAI(
       route: options.metadata?.route,
       reason: 'client_unavailable'
     });
-    trackModelResponse(mock.result, reinforcementMetadata);
-    return { response: mock, output: mock.result, model: 'mock', cached: false };
+    const mockResult = mock.result ?? '';
+    trackModelResponse(mockResult, reinforcementMetadata);
+    // REVIEW: Mock response structure differs from ChatCompletion, but used for fallback
+    // Confidence: 0.9 - Mock is intentionally different structure
+    // Create a minimal ChatCompletion-compatible structure for type safety
+    const mockChatCompletion: ChatCompletion = {
+      id: mock.meta.id,
+      object: 'chat.completion',
+      created: mock.meta.created,
+      model: 'mock',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: mockResult
+        },
+        finish_reason: 'stop'
+      }],
+      usage: {
+        prompt_tokens: mock.meta.tokens.prompt_tokens,
+        completion_tokens: mock.meta.tokens.completion_tokens,
+        total_tokens: mock.meta.tokens.total_tokens
+      }
+    };
+    return { 
+      response: mockChatCompletion, 
+      output: mockResult, 
+      model: 'mock', 
+      cached: false 
+    };
   }
 
   if (Object.keys(reinforcementMetadata).length > 0) {
@@ -220,13 +250,15 @@ async function makeOpenAIRequest(
 
       logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(attempt, maxRetries, model));
 
-      const response: any = await client.chat.completions.create(requestPayload, {
+      // REVIEW: OpenAI SDK types may not include custom headers in types, but runtime supports them
+      // Confidence: 0.9 - SDK types are conservative, runtime accepts headers
+      const response = await client.chat.completions.create(requestPayload, {
         signal: controller.signal,
         // Add request ID for tracing
         headers: {
           [REQUEST_ID_HEADER]: crypto.randomUUID()
         }
-      } as any);
+      } as ChatCompletionCreateParams);
 
       clearTimeout(timeout);
       const output = response.choices?.[0]?.message?.content?.trim() || NO_RESPONSE_CONTENT_FALLBACK;
@@ -241,12 +273,12 @@ async function makeOpenAIRequest(
 
       return { response, output, model: activeModel, cached: false };
       
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearTimeout(timeout);
-      lastError = err;
+      lastError = err instanceof Error ? err : new Error(String(err));
       
       // Handle error with centralized logic
-      const { shouldRetry } = handleOpenAIRequestError(err, attempt, maxRetries);
+      const { shouldRetry } = handleOpenAIRequestError(lastError, attempt, maxRetries);
 
       if (!shouldRetry) {
         break;
@@ -261,7 +293,11 @@ async function makeOpenAIRequest(
   throw lastError || new Error('OpenAI request failed after all retry attempts');
 }
 
-const extractReasoningText = (response: any, fallback: string = REASONING_FALLBACK_TEXT): string =>
+/**
+ * Extract reasoning text from OpenAI ChatCompletion response
+ * @confidence 1.0 - Type-safe extraction with fallback
+ */
+const extractReasoningText = (response: ChatCompletion, fallback: string = REASONING_FALLBACK_TEXT): string =>
   response?.choices?.[0]?.message?.content?.trim() || fallback;
 
 /**
@@ -286,13 +322,13 @@ export const createGPT5Reasoning = async (
     const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
     const messages = buildSystemPromptMessages(prompt, systemPrompt);
 
-    const requestPayload: any = {
+    const requestPayload: ChatCompletionCreateParams = {
       model: gpt5Model,
       messages,
       ...tokenParams
     };
 
-    const response: any = await client.chat.completions.create(requestPayload);
+    const response = await client.chat.completions.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const content = extractReasoningText(response);
@@ -301,9 +337,10 @@ export const createGPT5Reasoning = async (
       preview: truncateText(content, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
     });
     return { content, model: resolvedModel };
-  } catch (err: any) {
-    const errorMsg = err?.message || 'Unknown error';
-    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.REASONING_ERROR, { model: gpt5Model }, err as Error);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    const errorMsg = error.message || 'Unknown error';
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.REASONING_ERROR, { model: gpt5Model }, error);
     return { content: `[Fallback: GPT-5.1 unavailable - ${errorMsg}]`, error: errorMsg };
   }
 };
@@ -343,14 +380,14 @@ export const createGPT5ReasoningLayer = async (
       REASONING_SYSTEM_PROMPT
     );
 
-    const requestPayload: any = {
+    const requestPayload: ChatCompletionCreateParams = {
       model: gpt5Model,
       messages,
       ...tokenParams,
       temperature: REASONING_TEMPERATURE
     };
 
-    const response: any = await client.chat.completions.create(requestPayload);
+    const response = await client.chat.completions.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const reasoningContent = extractReasoningText(response);
@@ -369,9 +406,10 @@ export const createGPT5ReasoningLayer = async (
       reasoningContent: reasoningContent.substring(0, REASONING_LOG_SUMMARY_LENGTH) + '...', // Summary for logging
       model: resolvedModel
     };
-  } catch (err: any) {
-    const errorMsg = err?.message || 'Unknown error';
-    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.LAYER_ERROR, { model: gpt5Model }, err as Error);
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    const errorMsg = error.message || 'Unknown error';
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.LAYER_ERROR, { model: gpt5Model }, error);
     
     // Return original ARCANOS result on failure
     return { 
@@ -385,8 +423,12 @@ export const createGPT5ReasoningLayer = async (
 /**
  * Strict GPT-5.1 call function that only uses GPT-5.1 with no fallback
  * Raises RuntimeError if the response doesn't come from GPT-5.1
+ * @confidence 0.95 - Type-safe with proper OpenAI SDK types
  */
-export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promise<any> {
+export async function call_gpt5_strict(
+  prompt: string, 
+  kwargs: Partial<ChatCompletionCreateParams> = {}
+): Promise<ChatCompletion> {
   const client = getOpenAIClient();
   if (!client) {
     throw new Error("GPT-5.1 call failed — no fallback allowed. OpenAI client not available.");
@@ -399,13 +441,13 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
 
     const messages = buildSystemPromptMessages(prompt, STRICT_ASSISTANT_PROMPT);
 
-    const requestPayload: any = {
+    const requestPayload: ChatCompletionCreateParams = {
       model: gpt5Model,
       messages,
       ...kwargs
     };
 
-    const response: any = await client.chat.completions.create(requestPayload);
+    const response = await client.chat.completions.create(requestPayload);
 
     // Validate that the response actually came from GPT-5.1
     if (!response.model || response.model !== gpt5Model) {
@@ -416,9 +458,10 @@ export async function call_gpt5_strict(prompt: string, kwargs: any = {}): Promis
 
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_SUCCESS(response.model));
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Re-throw with clear error message indicating no fallback
-    throw new Error(`GPT-5.1 call failed — no fallback allowed. ${error.message}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`GPT-5.1 call failed — no fallback allowed. ${errorMessage}`);
   }
 }
 
