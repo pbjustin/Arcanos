@@ -2,13 +2,10 @@ import type { IncomingMessage, Server } from 'http';
 import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from '../utils/structuredLogging.js';
+import { isBridgeEnabled } from '../utils/bridgeEnv.js';
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
 const bridgeClients = new Set<WebSocket>();
-
-function isBridgeEnabled(): boolean {
-  return process.env.BRIDGE_ENABLED === 'true';
-}
 
 function resolvePath(url?: string): string {
   if (!url) return '/';
