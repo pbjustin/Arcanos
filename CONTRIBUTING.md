@@ -1,324 +1,275 @@
-# Contributing to Arcanos Backend
+# Contributing to ARCANOS
 
-> **Last Updated:** 2024-09-27 | **Version:** 1.2.0 | **Contributor Guidelines**
-
-Welcome to the Arcanos project! We appreciate your interest in contributing to this AI-controlled TypeScript backend. This guide will help you get started with development and ensure your contributions align with our project standards.
-
-## 📋 Contributor Self-Check
-
-Before submitting contributions, verify:
-- [x] Code follows TypeScript strict mode standards
-- [x] All tests pass (`npm test`)
-- [x] Linting passes (`npm run lint`)
-- [x] Documentation is updated for new features
-- [x] Environment variables are documented in `.env.example`
-- [x] API changes include confirmation gate documentation
-- [x] Changes are tested with OpenAI SDK v6.15.0
-- [x] Railway deployment compatibility verified
+Thank you for your interest in contributing to ARCANOS! This document provides guidelines and instructions for contributing.
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- **Node.js 18+** (check with `node --version`)
-- **npm 8+** (check with `npm --version`)
-- **PostgreSQL** (optional - system uses in-memory fallback)
-- **OpenAI API Key** (for AI functionality testing)
-- **Git** for version control
+- Windows 10/11
+- Python 3.11+
+- Node.js 18+
+- Git
+- VS Code (recommended)
 
 ### Development Setup
 
-1. **Fork and clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/Arcanos.git
-   cd Arcanos
-   ```
-
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration (see Environment Variables section)
-   ```
-
-4. **Build and test**
-   ```bash
-   npm run build
-   npm test
-   npm run lint
-   ```
-
-5. **Start development server**
-   ```bash
-   npm run dev
-   ```
-
-## 🏗️ Development Workflow
-
-### Code Style & Standards
-
-#### TypeScript Guidelines
-- Use **strict TypeScript** - no `any` types without justification
-- Implement proper **error handling** with try-catch blocks
-- Use **async/await** over promises where possible
-- Follow **interface-first** design for type definitions
-- Add **JSDoc comments** for public functions and complex logic
-
-#### Code Organization
-- Place **route handlers** in `src/routes/`
-- Put **business logic** in `src/services/`
-- Keep **AI reasoning** in `src/logic/`
-- Store **utilities** in `src/utils/`
-- Define **types** in `src/types/`
-
-#### Naming Conventions
-- Use **camelCase** for variables and functions
-- Use **PascalCase** for classes and interfaces
-- Use **kebab-case** for file names
-- Use **UPPER_SNAKE_CASE** for environment variables
-
-### Testing Requirements
-
-#### Unit Tests
-- Write tests for all new services and utilities
-- Place tests in `tests/` directory
-- Use descriptive test names: `should return valid response when API key is provided`
-- Test both success and failure cases
-- Mock external dependencies (OpenAI, databases)
-
-#### Integration Tests
-- Test API endpoints with actual HTTP requests
-- Verify middleware functionality (validation, confirmation gates)
-- Test memory system operations
-- Ensure worker system initialization
-
-#### Running Tests
+1. **Fork and clone**:
 ```bash
-npm test                 # Run all tests
-npm run test:unit        # Unit tests only
-npm run test:integration # Integration tests only
-npm run type-check       # TypeScript compilation check
+git clone https://github.com/yourusername/arcanos-hybrid.git
+cd arcanos-hybrid
 ```
 
-### Git Workflow
-
-#### Branch Naming
-- `feature/description` - New features
-- `fix/description` - Bug fixes  
-- `docs/description` - Documentation updates
-- `refactor/description` - Code improvements
-
-#### Commit Messages
-Follow conventional commits format:
-```
-type(scope): description
-
-Examples:
-feat(api): add HRC endpoint for hallucination resistance
-fix(memory): resolve PostgreSQL connection timeout
-docs(readme): update API endpoint documentation
-refactor(services): simplify OpenAI client initialization
-```
-
-#### Pull Request Process
-1. Create feature branch from `main`
-2. Make changes with tests
-3. Run full test suite and linting
-4. Update documentation if needed
-5. Submit PR with descriptive title and details
-6. Address review feedback promptly
-
-## 🧠 AI System Architecture
-
-### Core Concepts
-
-#### Fine-tuned Model Integration
-- System uses `REDACTED_FINE_TUNED_MODEL_ID` as primary model
-- Fallback to GPT-4-turbo for complex operations
-- Mock responses in development when API key unavailable
-
-#### Memory System
-- **Primary**: PostgreSQL with automatic schema management
-- **Fallback**: In-memory storage for development
-- **Types**: Context, facts, preferences, decisions, patterns
-- **Session Management**: Dual-mode conversation storage
-
-#### Worker System
-- **AI-Controlled**: CRON jobs managed by AI decisions
-- **Dynamic Loading**: Workers loaded from filesystem at startup
-- **Health Monitoring**: Automatic status reporting and recovery
-
-### Adding New Features
-
-#### API Endpoints
-1. Create route handler in `src/routes/`
-2. Add validation middleware if needed
-3. Implement confirmation gate for sensitive operations
-4. Register route in `src/routes/register.ts`
-5. Add tests and documentation
-
-#### AI Services
-1. Implement in `src/services/` with proper error handling
-2. Use circuit breaker pattern for external API calls
-3. Add memory-aware context when applicable
-4. Include mock responses for development
-5. Test with and without OpenAI API key
-
-#### Workers
-1. Create worker file following established patterns
-2. Include proper error handling and logging
-3. Implement health check functionality
-4. Add to worker initialization system
-5. Test scheduling and execution
-
-## 📝 Documentation Standards & Enforceability
-
-### Code Documentation (CI-Enforced)
-- **JSDoc** for all public functions - *Enforced by ESLint rules*
-- **Inline comments** for complex logic - *Manual review required*
-- **Type annotations** for all parameters and returns - *Enforced by TypeScript compiler*
-- **Error documentation** for possible exceptions - *Enforced by custom lint rules*
-
-### API Documentation (CI-Enforced)
-- Update README.md for new endpoints - *Validated by documentation audit script*
-- Include request/response examples - *Tested by integration tests*
-- Document required headers (confirmation, etc.) - *Validated in API tests*
-- Specify authentication requirements - *Enforced by middleware tests*
-
-### Changelog Updates (Required for All PRs)
-- Add entries for all user-facing changes - *Enforced by PR template checklist*
-- Follow semantic versioning principles - *Validated by release automation*
-- Include migration notes for breaking changes - *Required for major version bumps*
-- Reference issue/PR numbers - *Enforced by GitHub Actions*
-
-### Documentation Audit Requirements
-All contributions must pass:
+2. **Python daemon setup**:
 ```bash
-npm run audit:full                 # Comprehensive audit including documentation
-scripts/doc_audit.sh              # Documentation-specific validation
-npm run test:doc-workflow          # Documentation workflow testing
+cd daemon-python
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
-### Self-Check Procedures for Contributors
-Before submitting PRs, run:
-1. **Code Quality**: `npm run lint && npm run type-check`
-2. **Test Coverage**: `npm run test:all`
-3. **Documentation**: `scripts/doc_audit.sh`
-4. **Railway Compatibility**: `npm run validate:railway`
-
-## 🔧 Environment Variables
-
-### Required for Development
+3. **TypeScript backend setup**:
 ```bash
-OPENAI_API_KEY=your-key-here  # Essential for AI functionality
-NODE_ENV=development          # Enables dev features
-PORT=8080                     # Development server port
+cd backend-typescript
+npm install
 ```
 
-### Optional but Recommended
+4. **Create `.env` file**:
 ```bash
-DATABASE_URL=postgresql://...  # For persistent storage testing
-RUN_WORKERS=true              # Enable background worker testing
-ARC_LOG_PATH=/tmp/arc/log     # Custom log directory
+cp daemon-python/.env.example daemon-python/.env
+# Add your OPENAI_API_KEY
 ```
 
-### Testing Configuration
+## 🏗️ Project Structure
+
+```
+arcanos-hybrid/
+├── daemon-python/          # Main Python daemon
+│   ├── cli.py              # CLI interface
+│   ├── gpt_client.py       # OpenAI integration
+│   ├── vision.py           # Screen/camera capture
+│   ├── audio.py            # Speech recognition/TTS
+│   ├── terminal.py         # Command execution
+│   ├── push_to_talk.py     # PTT system
+│   ├── config.py           # Configuration
+│   ├── schema.py           # Data models
+│   ├── error_handler.py    # Error handling
+│   ├── rate_limiter.py     # Rate limiting
+│   └── ...
+├── backend-typescript/     # Express backend
+│   ├── src/
+│   │   ├── index.ts        # Server entry
+│   │   ├── database.ts     # PostgreSQL
+│   │   ├── auth.ts         # JWT auth
+│   │   └── routes/         # API routes
+│   └── package.json
+├── tests/                  # Test suites
+├── scripts/                # Build/deploy scripts
+└── docs/                   # Documentation
+```
+
+## 🧪 Testing
+
+### Run Python tests:
 ```bash
-# Use different values for testing
-PORT=3000
-NODE_ENV=test
-DATABASE_URL=postgresql://test_user:test_pass@localhost:5432/arcanos_test
+cd daemon-python
+pytest tests/ -v --cov
 ```
 
-## 🐛 Bug Reports & Issues
-
-### Before Submitting
-1. Check existing issues for duplicates
-2. Test with latest `main` branch
-3. Gather relevant logs and error messages
-4. Include reproduction steps
-
-### Issue Template
+### Run TypeScript tests:
+```bash
+cd backend-typescript
+npm test
 ```
-**Bug Description**
-Clear description of the issue
 
-**Steps to Reproduce**
-1. Step one
-2. Step two
-3. Expected vs actual behavior
+### Write new tests:
+- Python: Add to `tests/test_*.py`
+- TypeScript: Add to `src/__tests__/*.test.ts`
+
+## 💻 Code Style
+
+### Python
+- **Formatter**: Black
+- **Linter**: Flake8
+- **Type hints**: Required for all functions
+
+```bash
+black daemon-python/
+flake8 daemon-python/
+mypy daemon-python/
+```
+
+### TypeScript
+- **Formatter**: Prettier
+- **Linter**: ESLint
+- **Style**: Airbnb config
+
+```bash
+npm run format
+npm run lint
+```
+
+## 📝 Commit Guidelines
+
+Use conventional commits:
+
+```
+feat: add voice activity detection to PTT
+fix: resolve crash when API key missing
+docs: update installation instructions
+test: add unit tests for rate limiter
+refactor: simplify error handling logic
+style: format code with black
+chore: update dependencies
+```
+
+## 🔀 Pull Request Process
+
+1. **Create feature branch**:
+```bash
+git checkout -b feature/your-feature-name
+```
+
+2. **Make changes**:
+   - Write code
+   - Add tests
+   - Update documentation
+
+3. **Run quality checks**:
+```bash
+# Python
+black daemon-python/
+flake8 daemon-python/
+pytest tests/ -v
+
+# TypeScript
+npm run lint
+npm run format
+npm test
+```
+
+4. **Commit and push**:
+```bash
+git add .
+git commit -m "feat: your feature description"
+git push origin feature/your-feature-name
+```
+
+5. **Create Pull Request**:
+   - Fill out PR template
+   - Link related issues
+   - Request review
+
+### PR Requirements
+- ✅ All tests passing
+- ✅ Code formatted
+- ✅ No linter errors
+- ✅ Documentation updated
+- ✅ Changelog entry added
+
+## 🐛 Bug Reports
+
+Use GitHub Issues with the bug report template:
+
+```markdown
+**Describe the bug**
+A clear description of the bug.
+
+**To Reproduce**
+Steps to reproduce:
+1. Run command '...'
+2. Click on '...'
+3. See error
+
+**Expected behavior**
+What should happen.
+
+**Screenshots**
+If applicable.
 
 **Environment**
-- Node.js version:
-- npm version:
-- Operating system:
-- Branch/commit:
-
-**Logs**
-```
-Relevant log output
-```
+- OS: Windows 11
+- Python: 3.11.5
+- ARCANOS: v1.0.0
 ```
 
-## 🚀 Feature Requests
+## ✨ Feature Requests
 
-### Proposal Format
-- **Problem**: What issue does this solve?
-- **Solution**: Proposed implementation approach
-- **Impact**: Who benefits and how?
-- **Complexity**: Development effort estimate
-- **Alternatives**: Other approaches considered
+Use GitHub Issues with the feature request template:
 
-### Implementation Guidelines
-- Start with GitHub issue for discussion
-- Consider backward compatibility
-- Plan testing strategy
-- Update documentation
-- Consider performance implications
+```markdown
+**Is your feature request related to a problem?**
+Clear description of the problem.
 
-## 💡 Best Practices
+**Describe the solution**
+What you'd like to happen.
 
-### Security
-- **Never commit** API keys or secrets
-- **Validate all inputs** from external sources
-- **Use confirmation gates** for destructive operations
-- **Sanitize outputs** before returning to clients
-- **Implement rate limiting** for public endpoints
+**Alternatives considered**
+Other solutions you've considered.
 
-### Performance
-- **Cache responses** when appropriate
-- **Use circuit breakers** for external API calls
-- **Implement connection pooling** for databases
-- **Monitor memory usage** in long-running processes
-- **Optimize TypeScript compilation** for production
+**Additional context**
+Any other context or screenshots.
+```
 
-### AI Integration
-- **Handle API failures** gracefully with fallbacks
-- **Implement retry logic** with exponential backoff
-- **Use memory context** for conversation continuity
-- **Respect rate limits** and usage guidelines
-- **Test with mock responses** during development
+## 📚 Documentation
 
-## 📞 Getting Help
+Update documentation when:
+- Adding new features
+- Changing APIs
+- Modifying configuration
+- Adding dependencies
 
-### Community Support
-- **GitHub Discussions** for general questions
-- **GitHub Issues** for bugs and feature requests
-- **Code Reviews** for implementation feedback
+Documentation locations:
+- `README.md`: User-facing docs
+- `docs/`: Detailed guides
+- Docstrings: Code documentation
+- `CONTRIBUTING.md`: This file
 
-### Development Resources
-- **TypeScript Documentation**: https://www.typescriptlang.org/docs/
-- **Express.js Guide**: https://expressjs.com/en/guide/
-- **OpenAI API Reference**: https://platform.openai.com/docs/api-reference
-- **Railway Deployment**: https://docs.railway.app/
+## 🔐 Security
 
-## 📄 License
+Report security vulnerabilities privately:
+- Email: security@arcanos.example.com
+- Do NOT create public issues
 
-By contributing to Arcanos, you agree that your contributions will be licensed under the MIT License.
+## 🎯 Areas to Contribute
+
+### High Priority
+- [ ] Auto-start on Windows login
+- [ ] Settings UI (web dashboard)
+- [ ] Plugin system
+- [ ] Multi-language support
+- [ ] Performance optimizations
+
+### Good First Issues
+- [ ] Add more unit tests
+- [ ] Improve error messages
+- [ ] Add logging to modules
+- [ ] Update documentation
+- [ ] Fix typos
+
+### Advanced
+- [ ] WebSocket support
+- [ ] Custom model integration
+- [ ] Browser extension
+- [ ] Mobile app companion
+
+## 🏆 Recognition
+
+Contributors will be:
+- Listed in `README.md`
+- Mentioned in release notes
+- Invited to contributor Discord
+
+## 📞 Questions?
+
+- **Discord**: [Join our server](https://discord.gg/arcanos)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/arcanos-hybrid/discussions)
+- **Email**: contributors@arcanos.example.com
+
+## 📜 Code of Conduct
+
+Be respectful, inclusive, and professional. We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
 
 ---
 
-Thank you for contributing to Arcanos! Together we're building an advanced AI-controlled backend system. 🤖✨
+Thank you for contributing to ARCANOS! 🌌

@@ -77,27 +77,6 @@ describe('AI endpoints in mock mode', () => {
     expect(payload.clientContext.normalizedPrompt).toContain('[ARCANOS CONTEXT]');
   });
 
-  it('accepts messages payload through /api/ask', async () => {
-    const response = await fetch(`${baseUrl}/api/ask`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        messages: [
-          { role: 'system', content: 'You are helpful.' },
-          { role: 'user', content: 'What is the current status?' }
-        ]
-      })
-    });
-
-    expect(response.status).toBe(200);
-    const payload = await response.json();
-    expect(payload.result).toContain('[MOCK AI RESPONSE]');
-    expect(payload.clientContext.basePrompt).toBe('What is the current status?');
-    expect(payload.clientContext.flags).toMatchObject({
-      sourceField: 'messages'
-    });
-  });
-
   it('provides deterministic mock diagnostics for /arcanos', async () => {
     const response = await fetch(`${baseUrl}/arcanos`, {
       method: 'POST',

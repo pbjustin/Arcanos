@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "created_at": "2026-01-18T00:00:00.000Z",
+  "updated_at": "2026-01-18T00:00:00.000Z",
+  "user": {
+    "name": null,
+    "preferences": {
+      "theme": "dark",
+      "notifications": true,
+      "auto_save": true
+    }
+  },
+  "conversations": [],
+  "statistics": {
+    "total_requests": 0,
+    "total_tokens": 0,
+    "total_cost": 0.0,
+    "vision_requests": 0,
+    "voice_requests": 0,
+    "terminal_commands": 0
+  },
+  "settings": {
+    "telemetry_consent": null,
+    "windows_integration_installed": false,
+    "first_run": true,
+    "onboarding_completed": false,
+    "version": "1.0.0"
+  },
+  "_template_info": {
+    "description": "Bootstrap template for ARCANOS memory initialization",
+    "usage": "This file is used when memories.json doesn't exist or is corrupted",
+    "do_not_modify": "This is a template - actual memories.json will be created from this"
+  }
+}
