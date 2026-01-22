@@ -117,6 +117,16 @@ async function createWorkspaceConfig() {
 }
 
 async function main() {
+  // Check if this script file itself exists (if not, we're in Docker before scripts are copied)
+  const scriptPath = path.join(ROOT, 'scripts', 'setup-auto-sync.js');
+  try {
+    await fs.access(scriptPath);
+  } catch {
+    // Script doesn't exist yet (Docker build phase) - exit gracefully
+    console.log('ℹ️  Sync setup script not found yet (Docker build phase) - skipping setup\n');
+    return; // Don't fail the build
+  }
+  
   // In Docker/CI environments, setup might not be needed - fail gracefully
   const isDocker = process.env.NODE_ENV === 'production' && !process.env.CI;
   const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
