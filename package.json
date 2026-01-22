@@ -38,7 +38,7 @@
     "sync:fix": "node scripts/cross-codebase-sync.js --fix",
     "sync:auto": "node scripts/auto-sync-watcher.js",
     "sync:setup": "node scripts/setup-auto-sync.js",
-    "postinstall": "node -e \"try { const fs = require('fs'); if (fs.existsSync('./scripts/setup-auto-sync.js')) { require('./scripts/setup-auto-sync.js'); } else { console.log('ℹ️  Sync setup script not found - skipping (normal in Docker/CI)'); } } catch(e) { console.log('ℹ️  Skipping sync setup:', e.message); }\" || true"
+    "postinstall": "node -e \"const fs = require('fs'); const path = require('path'); const scriptPath = path.join(__dirname, 'scripts', 'setup-auto-sync.js'); if (fs.existsSync(scriptPath)) { try { require(scriptPath); } catch(e) { console.log('ℹ️  Sync setup skipped:', e.message); } } else { console.log('ℹ️  Sync setup script not found - skipping (normal in Docker/CI)'); }\" || true"
   },
   "keywords": [
     "ai",
