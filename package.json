@@ -38,7 +38,7 @@
     "sync:fix": "node scripts/cross-codebase-sync.js --fix",
     "sync:auto": "node scripts/auto-sync-watcher.js",
     "sync:setup": "node scripts/setup-auto-sync.js",
-    "postinstall": "npm run sync:setup"
+    "postinstall": "npm run sync:setup || true"
   },
   "keywords": [
     "ai",
