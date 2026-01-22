@@ -1,5 +1,6 @@
 import express from 'express';
 import { createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
+import { isBridgeEnabled } from '../utils/bridgeEnv.js';
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ const BRIDGE_PATHS = [
 ];
 
 router.all(BRIDGE_PATHS, (_req, res) => {
-  const enabled = process.env.BRIDGE_ENABLED === 'true';
+  const enabled = isBridgeEnabled();
   res.json({
     status: enabled ? 'active' : 'disabled',
     bridgeEnabled: enabled,
