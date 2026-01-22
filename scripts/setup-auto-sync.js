@@ -25,7 +25,8 @@ async function setupGitHooks() {
     // Check if .git/hooks exists
     await fs.access(hooksDir);
   } catch {
-    console.log('⚠️  .git/hooks directory not found. Skipping Git hooks setup.');
+    // In Docker/CI environments, .git might not exist - that's okay
+    console.log('ℹ️  .git/hooks directory not found. Skipping Git hooks setup (normal in Docker/CI).');
     return;
   }
   
@@ -116,29 +117,65 @@ async function createWorkspaceConfig() {
 }
 
 async function main() {
+  // In Docker/CI environments, setup might not be needed - fail gracefully
+  const isDocker = process.env.NODE_ENV === 'production' && !process.env.CI;
+  const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  
+  if (isDocker || isCI) {
+    // In Docker/CI, just verify scripts exist, don't set up hooks
+    console.log('🚀 ARCANOS Auto-Sync Setup (Docker/CI mode)\n');
+    console.log('ℹ️  Skipping Git hooks and VS Code setup (not needed in Docker/CI)\n');
+    
+    // Just verify the sync script exists
+    const syncScript = path.join(ROOT, 'scripts', 'cross-codebase-sync.js');
+    try {
+      await fs.access(syncScript);
+      console.log('✅ Sync scripts are available\n');
+      return; // Success, exit early
+    } catch {
+      console.log('⚠️  Sync scripts not found, but continuing...\n');
+      return; // Don't fail the build
+    }
+  }
+  
   console.log('🚀 ARCANOS Auto-Sync Setup\n');
   console.log('='.repeat(60) + '\n');
   console.log('Setting up automatic sync checks for any coding agent...\n');
   
-  await setupGitHooks();
-  await setupVSCodeTasks();
-  await createWorkspaceConfig();
-  
-  console.log('\n' + '='.repeat(60));
-  console.log('\n✅ Auto-sync setup complete!\n');
-  console.log('The sync system will now run automatically:');
-  console.log('  • Before Git commits (pre-commit hook)');
-  console.log('  • After Git merges (post-merge hook)');
-  console.log('  • When VS Code opens workspace');
-  console.log('  • When files are saved (if watcher is running)');
-  console.log('\nTo start file watcher:');
-  console.log('  npm run sync:watch');
-  console.log('\nTo run manual check:');
-  console.log('  npm run sync:check');
-  console.log('');
+  try {
+    await setupGitHooks();
+    await setupVSCodeTasks();
+    await createWorkspaceConfig();
+    
+    console.log('\n' + '='.repeat(60));
+    console.log('\n✅ Auto-sync setup complete!\n');
+    console.log('The sync system will now run automatically:');
+    console.log('  • Before Git commits (pre-commit hook)');
+    console.log('  • After Git merges (post-merge hook)');
+    console.log('  • When VS Code opens workspace');
+    console.log('  • When files are saved (if watcher is running)');
+    console.log('\nTo start file watcher:');
+    console.log('  npm run sync:watch');
+    console.log('\nTo run manual check:');
+    console.log('  npm run sync:check');
+    console.log('');
+  } catch (error) {
+    // Don't fail the build if setup has issues
+    console.warn('⚠️  Setup encountered issues (non-fatal):', error.message);
+    console.log('ℹ️  Continuing with installation...\n');
+  }
 }
 
 main().catch(error => {
-  console.error('❌ Setup failed:', error);
-  process.exit(1);
+  // In Docker/CI, don't fail the build
+  const isDocker = process.env.NODE_ENV === 'production';
+  const isCI = process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true';
+  
+  if (isDocker || isCI) {
+    console.warn('⚠️  Setup script encountered issues (non-fatal in Docker/CI):', error.message);
+    process.exit(0); // Don't fail the build
+  } else {
+    console.error('❌ Setup failed:', error);
+    process.exit(1);
+  }
 });
