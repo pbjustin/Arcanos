@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:workers": "tsc",
+    "build:workers": "tsc --project tsconfig.json",
     "start:openai": "node dist/workers/openai-worker.js",
     "start:memory": "node dist/workers/memory-worker.js",
     "start:memorySync": "node dist/workers/memorySync-worker.js"
