@@ -1,7 +1,59 @@
 import { generateRequestId } from '../../utils/idGenerator.js';
 import { MOCK_RESPONSE_CONSTANTS, MOCK_RESPONSE_MESSAGES, truncateInput } from '../../config/mockResponseConfig.js';
 
-export const generateMockResponse = (input: string, endpoint: string = 'ask'): any => {
+/**
+ * Mock response structure for OpenAI API calls
+ * @confidence 1.0 - Well-defined mock structure
+ */
+export interface MockResponse {
+  meta: {
+    id: string;
+    created: number;
+    tokens: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
+  };
+  activeModel: string;
+  fallbackFlag: boolean;
+  gpt5Used: boolean;
+  routingStages: string[];
+  auditSafe: {
+    mode: boolean;
+    overrideUsed: boolean;
+    overrideReason?: string;
+    auditFlags: string[];
+    processedSafely: boolean;
+  };
+  memoryContext: {
+    entriesAccessed: number;
+    contextSummary: string;
+    memoryEnhanced: boolean;
+  };
+  taskLineage: {
+    requestId: string;
+    logged: boolean;
+  };
+  error: string;
+  result?: string;
+  componentStatus?: string;
+  suggestedFixes?: string;
+  coreLogicTrace?: string;
+  gpt5Delegation?: {
+    used: boolean;
+    reason: string;
+    delegatedQuery: string;
+  };
+  module?: string;
+  endpoint?: string;
+}
+
+/**
+ * Generate a mock OpenAI response for testing/fallback scenarios
+ * @confidence 1.0 - Type-safe mock response generation
+ */
+export const generateMockResponse = (input: string, endpoint: string = 'ask'): MockResponse => {
   const mockId = generateRequestId('mock');
   const timestamp = Math.floor(Date.now() / 1000);
   const inputPreview = truncateInput(input);

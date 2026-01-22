@@ -58,20 +58,23 @@ const DEFAULTS = {
   BATCH_WINDOW_MS: parseInt(process.env.OPENAI_BATCH_WINDOW_MS || '150', 10),
 };
 
+import type OpenAI from 'openai';
+import type { ChatCompletionCreateParams, ChatCompletion } from '../services/openai/types.js';
+
 interface Logger {
-  log?: (message: string, metadata?: any) => void;
+  log?: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
 interface CacheEntry {
   timestamp: number;
-  data: any;
+  data: ChatCompletion;
 }
 
 interface QueuedRequest {
   key: string;
-  payload: any;
-  resolve: (data: any) => void;
-  reject: (err: any) => void;
+  payload: ChatCompletionCreateParams;
+  resolve: (data: ChatCompletion) => void;
+  reject: (err: Error) => void;
 }
 
 interface IdleStats {
@@ -83,16 +86,16 @@ interface IdleStats {
 interface OpenAIWrapper {
   chat: {
     completions: {
-      create: (payload: any) => Promise<any>;
+      create: (payload: ChatCompletionCreateParams) => Promise<ChatCompletion>;
     };
   };
   destroy: () => void;
 }
 
 export interface IdleManager {
-  noteTraffic: (meta?: any) => void;
+  noteTraffic: (meta?: Record<string, unknown>) => void;
   isIdle: () => boolean;
-  wrapOpenAI: (openai: any) => OpenAIWrapper;
+  wrapOpenAI: (openai: OpenAI) => OpenAIWrapper;
   getStats: () => IdleStats;
   destroy: () => void;
 }
@@ -113,7 +116,11 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
   let batchInterval: NodeJS.Timeout | null = null;
 
   // --- Traffic tracking ---
-  function noteTraffic(meta: any = {}) {
+  /**
+   * Track traffic patterns for idle management
+   * @confidence 1.0 - Type-safe metadata tracking
+   */
+  function noteTraffic(meta: Record<string, unknown> = {}): void {
     const now = Date.now();
     const dt = (now - lastRequestTime) / 1000;
     lastRequestTime = now;
@@ -163,8 +170,8 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
   // --- OpenAI wrapper (memoization + batching) ---
   // Note: All wrapper instances share the same batch queue and cache.
   // This enables request deduplication across multiple wrapper instances.
-  function wrapOpenAI(openai: any): OpenAIWrapper {
-    async function batchedChat(payload: any): Promise<any> {
+  function wrapOpenAI(openai: OpenAI): OpenAIWrapper {
+    async function batchedChat(payload: ChatCompletionCreateParams): Promise<ChatCompletion> {
       // Use hash-based cache key for better performance and consistency
       const key = createCacheKey(payload.model, payload.messages);
       const now = Date.now();

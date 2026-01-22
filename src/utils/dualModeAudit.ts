@@ -19,7 +19,7 @@ export interface DualModeAuditBaseResult {
   fallback_used: boolean;
   interference: boolean;
   error?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -64,9 +64,10 @@ export async function dualModeAudit(
         };
       }
 
-      let data: any = {};
+      let data: Record<string, unknown> = {};
       try {
-        data = await res.json();
+        const parsed = await res.json();
+        data = typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {};
       } catch {
         console.warn('Failed to parse JSON response, using empty object');
       }
@@ -78,7 +79,7 @@ export async function dualModeAudit(
         fallback_used: false,
         interference: false
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         timestamp,
         mode: 'backend',

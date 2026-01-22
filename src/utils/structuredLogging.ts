@@ -19,7 +19,7 @@ export interface LogContext {
   sessionId?: string;
   module?: string;
   operation?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface LogEntry {
@@ -27,7 +27,7 @@ export interface LogEntry {
   level: LogLevel;
   message: string;
   context?: LogContext;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
   duration?: number;
   error?: {
     name: string;

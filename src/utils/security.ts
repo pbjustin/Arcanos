@@ -42,15 +42,25 @@ export function sanitizeInput(input: string): string {
 }
 
 /**
- * Validates and sanitizes input according to schema
+ * Validated and sanitized input result
+ * @confidence 1.0 - Type-safe validation result
  */
-export function validateInput(data: any, schema: ValidationSchema): { 
-  isValid: boolean; 
-  errors: string[]; 
-  sanitized: any 
-} {
+export interface ValidationResult<T = Record<string, unknown>> {
+  isValid: boolean;
+  errors: string[];
+  sanitized: T;
+}
+
+/**
+ * Validates and sanitizes input according to schema
+ * @confidence 0.9 - Dynamic validation requires runtime type checking
+ */
+export function validateInput<T extends Record<string, unknown> | unknown[]>(
+  data: T, 
+  schema: ValidationSchema
+): ValidationResult<T> {
   const errors: string[] = [];
-  const sanitized: any = Array.isArray(data) ? [] : {};
+  const sanitized = (Array.isArray(data) ? [] : {}) as T;
 
   for (const [field, rule] of Object.entries(schema)) {
     const value = data[field];
@@ -120,8 +130,14 @@ export function validateInput(data: any, schema: ValidationSchema): {
 /**
  * Express middleware for input validation
  */
+/**
+ * Express middleware type for validation
+ * @confidence 1.0 - Standard Express middleware signature
+ */
+import type { Request, NextFunction } from 'express';
+
 export function createValidationMiddleware(schema: ValidationSchema) {
-  return (req: any, res: Response, next: any) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const validation = validateInput(req.body, schema);
     
     if (!validation.isValid) {
@@ -144,7 +160,7 @@ export function createRateLimitMiddleware(
   maxRequests: number = 100,
   windowMs: number = 15 * 60 * 1000 // 15 minutes
 ) {
-  return (req: any, res: Response, next: any) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const ip = req.ip || req.connection.remoteAddress || 'unknown';
     const now = Date.now();
     
@@ -187,8 +203,9 @@ export function createRateLimitMiddleware(
 
 /**
  * Security headers middleware
+ * @confidence 1.0 - Standard Express middleware
  */
-export function securityHeaders(req: any, res: Response, next: any) {
+export function securityHeaders(req: Request, res: Response, next: NextFunction): void {
   res.set({
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',

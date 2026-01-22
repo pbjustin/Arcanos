@@ -27,7 +27,7 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   if (candidates.length === 0 && openai && process.env.OPENAI_API_KEY) {
     const queryVector = await createEmbedding(nlQuery, openai);
 
-    let bestMatch: any = null;
+    let bestMatch: typeof sessions[0] | null = null;
     let bestScore = -Infinity;
 
     for (const sess of sessions) {
@@ -36,7 +36,7 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
         sess.metadata?.topic,
         ...(sess.metadata?.tags || []),
         ...(Array.isArray(sess.conversations_core)
-          ? sess.conversations_core.map((m: any) => m.content || '')
+          ? sess.conversations_core.map((m: { content?: string }) => m.content || '')
           : [])
       ].filter(Boolean);
       const metaVector = await createEmbedding(metaPieces.join(' '), openai);

@@ -130,7 +130,9 @@ function registerProcessHandlers(server: Server, actualPort: number, onShutdown?
   process.on('SIGINT', () => logAndShutdown('SIGINT'));
 
   process.on('beforeExit', (code) => {
-    const handles = (process as any)._getActiveHandles?.() || [];
+    // REVIEW: _getActiveHandles is a Node.js internal API, not in types
+    // Confidence: 0.8 - Internal API, may change in future Node versions
+    const handles = (process as NodeJS.Process & { _getActiveHandles?: () => unknown[] })._getActiveHandles?.() || [];
     serverLogger.info('beforeExit event', { code, openHandles: handles.length });
   });
 
