@@ -1,0 +1,176 @@
+{
+  "version": "1.0.0",
+  "description": "ARCANOS Cross-Codebase Sync Configuration",
+  "sourceOfTruth": "server",
+  "architecture": {
+    "server": {
+      "type": "source_of_truth",
+      "path": "src/",
+      "description": "TypeScript server (GitHub repo) - Source of Truth"
+    },
+    "daemon": {
+      "type": "extension",
+      "path": "daemon-python/",
+      "description": "Python daemon - Extension that follows server",
+      "follows": "server"
+    }
+  },
+  "sharedDependencies": {
+    "openai": {
+      "python": "openai>=1.12.0",
+      "node": "openai@^6.16.0",
+      "description": "OpenAI SDK - must stay compatible",
+      "critical": true,
+      "versionAlignment": "major"
+    },
+    "requests": {
+      "python": "requests>=2.31.0",
+      "node": "axios@^1.11.0",
+      "description": "HTTP client libraries",
+      "critical": false,
+      "versionAlignment": "none"
+    }
+  },
+  "apiContracts": {
+    "/api/ask": {
+      "serverRoute": "src/routes/api-ask.ts",
+      "clientMethod": "request_chat_completion",
+      "clientFile": "daemon-python/backend_client.py",
+      "requestFields": {
+        "messages": { "type": "array", "required": true },
+        "temperature": { "type": "number", "required": false },
+        "model": { "type": "string", "required": false },
+        "stream": { "type": "boolean", "required": false }
+      },
+      "responseFields": {
+        "response": { "type": "string", "required": true },
+        "tokens": { "type": "number", "required": true },
+        "cost": { "type": "number", "required": true },
+        "model": { "type": "string", "required": true }
+      }
+    },
+    "/api/vision": {
+      "serverRoute": "src/routes/image.ts",
+      "clientMethod": "request_vision_analysis",
+      "clientFile": "daemon-python/backend_client.py",
+      "requestFields": {
+        "imageBase64": { "type": "string", "required": true },
+        "prompt": { "type": "string", "required": false },
+        "temperature": { "type": "number", "required": false },
+        "model": { "type": "string", "required": false },
+        "maxTokens": { "type": "number", "required": false }
+      },
+      "responseFields": {
+        "response": { "type": "string", "required": true },
+        "tokens": { "type": "number", "required": true },
+        "cost": { "type": "number", "required": true },
+        "model": { "type": "string", "required": true }
+      }
+    },
+    "/api/transcribe": {
+      "serverRoute": "src/routes/*.ts",
+      "clientMethod": "request_transcription",
+      "clientFile": "daemon-python/backend_client.py",
+      "requestFields": {
+        "audioBase64": { "type": "string", "required": true },
+        "filename": { "type": "string", "required": false },
+        "model": { "type": "string", "required": false },
+        "language": { "type": "string", "required": false }
+      },
+      "responseFields": {
+        "text": { "type": "string", "required": true },
+        "model": { "type": "string", "required": true }
+      }
+    },
+    "/api/update": {
+      "serverRoute": "src/routes/*.ts",
+      "clientMethod": "submit_update_event",
+      "clientFile": "daemon-python/backend_client.py",
+      "requestFields": {
+        "updateType": { "type": "string", "required": true },
+        "data": { "type": "object", "required": true }
+      },
+      "responseFields": {
+        "success": { "type": "boolean", "required": true }
+      }
+    },
+    "/api/auth/login": {
+      "serverRoute": "src/routes/*.ts",
+      "clientMethod": "request_backend_login",
+      "clientFile": "daemon-python/backend_auth_client.py",
+      "requestFields": {
+        "email": { "type": "string", "required": true },
+        "password": { "type": "string", "required": true }
+      },
+      "responseFields": {
+        "token": { "type": "string", "required": true },
+        "userId": { "type": "string", "required": true },
+        "expiresAt": { "type": "number", "required": false }
+      }
+    }
+  },
+  "sharedEnvVars": {
+    "OPENAI_API_KEY": {
+      "required": true,
+      "sync": false,
+      "description": "OpenAI API key - don't sync values"
+    },
+    "OPENAI_MODEL": {
+      "required": false,
+      "sync": true,
+      "default": "gpt-4o-mini",
+      "description": "Default OpenAI model"
+    },
+    "OPENAI_VISION_MODEL": {
+      "required": false,
+      "sync": true,
+      "default": "gpt-4o",
+      "description": "Model for vision analysis"
+    },
+    "TEMPERATURE": {
+      "required": false,
+      "sync": true,
+      "default": "0.7",
+      "description": "AI temperature setting"
+    },
+    "MAX_TOKENS": {
+      "required": false,
+      "sync": true,
+      "default": "500",
+      "description": "Maximum tokens per request"
+    },
+    "LOG_LEVEL": {
+      "required": false,
+      "sync": true,
+      "default": "info",
+      "description": "Logging verbosity level"
+    }
+  },
+  "versionFiles": {
+    "node": "package.json",
+    "python": "daemon-python/config.py",
+    "versionPattern": {
+      "node": "\"version\":\\s*\"([^\"]+)\"",
+      "python": "VERSION\\s*[:=]\\s*[\"']([^\"']+)[\"']"
+    }
+  },
+  "watchPaths": {
+    "python": [
+      "daemon-python/**/*.py",
+      "daemon-python/requirements.txt",
+      "daemon-python/config.py"
+    ],
+    "node": [
+      "src/**/*.ts",
+      "package.json",
+      ".env.example"
+    ]
+  },
+  "ignorePaths": [
+    "node_modules/**",
+    "dist/**",
+    "venv/**",
+    "__pycache__/**",
+    ".git/**"
+  ]
+}

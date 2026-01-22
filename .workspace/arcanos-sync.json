@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "name": "ARCANOS Cross-Codebase Sync",
+  "description": "Automatic sync configuration for any coding agent",
+  "autoRun": {
+    "enabled": true,
+    "triggers": [
+      "onFileSave",
+      "onFileChange",
+      "onFolderOpen",
+      "beforeCommit",
+      "afterMerge",
+      "onPull"
+    ]
+  },
+  "sourceOfTruth": {
+    "type": "server",
+    "path": "src/",
+    "description": "TypeScript server is source of truth"
+  },
+  "extension": {
+    "type": "daemon",
+    "path": "daemon-python/",
+    "description": "Python daemon follows server",
+    "follows": "server"
+  },
+  "watchPaths": {
+    "server": [
+      "src/routes/**/*.ts",
+      "src/services/**/*.ts",
+      "package.json"
+    ],
+    "daemon": [
+      "daemon-python/**/*.py",
+      "daemon-python/requirements.txt",
+      "daemon-python/config.py"
+    ]
+  },
+  "commands": {
+    "syncCheck": "npm run sync:check",
+    "syncWatch": "npm run sync:watch",
+    "syncHelper": "node scripts/sync-helper.js"
+  },
+  "rules": {
+    "serverIsSourceOfTruth": true,
+    "daemonMustFollowServer": true,
+    "autoDetectChanges": true,
+    "suggestFixes": true,
+    "prioritizeServerChanges": true
+  }
+}
