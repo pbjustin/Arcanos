@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 import { tagRequest } from './tagRequest.js';
 import { broadcastBridgeEvent } from '../services/bridgeSocket.js';
+import { isBridgeEnabled } from './bridgeEnv.js';
 
 type RequestWithBridgeContext = Request & {
   requestId?: string;
@@ -46,7 +47,7 @@ export async function routeBridgeRequest(
   req: RequestWithBridgeContext,
   context: BridgeRouteContext
 ): Promise<void> {
-  if (process.env.BRIDGE_ENABLED !== 'true') {
+  if (!isBridgeEnabled()) {
     return;
   }
 
