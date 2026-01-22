@@ -32,7 +32,6 @@ import reinforcementRouter from './reinforcement.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import devopsRouter from './devops.js';
-import bridgeRouter from './bridge.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -64,7 +63,6 @@ export function registerRoutes(app: Express): void {
   });
 
   app.use('/', healthRouter);
-  app.use('/', bridgeRouter);
   app.use('/', askRouter);
   app.use('/', apiAskRouter);
   app.use('/', arcanosRouter);

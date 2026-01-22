@@ -1,7 +1,6 @@
 import express from 'express';
 import modulesRouter from './modules.js';
 import gptModuleMapPromise from '../config/gptRouterConfig.js';
-import { routeBridgeRequest } from '../utils/bridgeRelay.js';
 
 const router = express.Router();
 
@@ -18,16 +17,6 @@ router.use('/:gptId', async (req, res, next) => {
     if (!req.body) {
       req.body = {};
     }
-
-    void routeBridgeRequest(req, {
-      endpoint: 'gpt-router',
-      gptId: req.params.gptId,
-      payload: {
-        module: entry.module,
-        route: entry.route,
-        body: req.body
-      }
-    });
 
     req.url = `/modules/${entry.route}`;
     req.body.module = entry.module;

@@ -16,7 +16,6 @@ import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, 
 import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
 import { createIdleStateService } from './services/idleStateService.js';
-import { setupBridgeSocket } from './services/bridgeSocket.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -169,8 +168,6 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       const instance = app.listen(actualPort, host, () => resolve(instance));
       instance.on('error', reject);
     });
-
-    setupBridgeSocket(server);
 
     logBootSummary(actualPort, workerResults);
 
