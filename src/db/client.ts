@@ -127,8 +127,12 @@ export async function initializeDatabase(workerId = ''): Promise<boolean> {
     pool.on('error', (err: Error) => {
       console.error('[🔌 DB] Unexpected error on idle client', err);
       isConnected = false;
+      connectionError = err;
       // Clean up broken pool and attempt reinitialization after short delay
-      pool?.end().catch(() => {});
+      //audit: Attempting to close a potentially broken pool; log failures to avoid silent cleanup errors.
+      pool?.end().catch(closeError => {
+        console.error('[🔌 DB] Failed to close pool after error:', closeError);
+      });
       pool = null;
       setTimeout(() => {
         initializeDatabase(workerId).catch(reconnectErr =>
@@ -139,6 +143,7 @@ export async function initializeDatabase(workerId = ''): Promise<boolean> {
 
     await pool.query('SELECT 1');
     isConnected = true;
+    connectionError = null;
     console.log('DB connection successful');
 
     return true;
