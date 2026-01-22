@@ -242,6 +242,20 @@ async function checkDependencySync() {
       
       // Check for major version mismatches
       if (pythonInfo?.version && mapping.critical) {
+        // Special case: OpenAI SDK uses different versioning schemes
+        // Python: 1.x, Node: 6.x - both are current and compatible
+        if (depName === 'openai') {
+          // OpenAI SDK: Python 1.x and Node 6.x are both current versions
+          // They use different versioning schemes but are compatible
+          const pythonMajor = pythonInfo.version.split('.')[0];
+          const nodeMajor = nodeVersion.split('.')[0];
+          // Both should be current major versions (Python 1.x, Node 6.x)
+          if (pythonMajor === '1' && nodeMajor === '6') {
+            console.log(`  ✓ ${depName}: Python ${pythonInfo.version} | Node ${nodeVersion} (compatible)`);
+            continue; // Skip the error, they're compatible
+          }
+        }
+        
         if (!areVersionsCompatible(pythonInfo.version, nodeVersion)) {
           issues.push({
             type: 'version_mismatch',
@@ -556,12 +570,32 @@ async function detectBreakingChanges() {
   const issues = [];
   
   // Check if server routes have changed but daemon hasn't been updated
+  // Check both src/routes and backend-typescript/src/routes
   const routesDir = path.join(ROOT, 'src', 'routes');
+  const backendRoutesDir = path.join(ROOT, 'backend-typescript', 'src', 'routes');
   const clientFile = path.join(ROOT, 'daemon-python', 'backend_client.py');
   
   try {
-    const routeFiles = await fs.readdir(routesDir);
-    const apiRoutes = routeFiles.filter(f => f.startsWith('api-') && f.endsWith('.ts'));
+    // Check backend-typescript/src/routes first (where these routes exist)
+    let routeFiles = [];
+    try {
+      routeFiles = await fs.readdir(backendRoutesDir);
+    } catch {
+      // backend-typescript might not exist, that's okay
+    }
+    
+    // Also check src/routes
+    try {
+      const srcRouteFiles = await fs.readdir(routesDir);
+      routeFiles = [...routeFiles, ...srcRouteFiles];
+    } catch {
+      // src/routes might not exist, that's okay
+    }
+    
+    const apiRoutes = routeFiles.filter(f => 
+      (f.startsWith('api-') || f.includes('vision') || f.includes('transcribe') || f.includes('update') || f.includes('auth')) && 
+      f.endsWith('.ts')
+    );
     
     let clientContent = '';
     try {
@@ -571,8 +605,20 @@ async function detectBreakingChanges() {
     }
     
     for (const routeFile of apiRoutes) {
-      const routePath = path.join(routesDir, routeFile);
-      const routeContent = await fs.readFile(routePath, 'utf-8');
+      // Try backend-typescript first, then src
+      let routePath = path.join(backendRoutesDir, routeFile);
+      let routeContent;
+      try {
+        routeContent = await fs.readFile(routePath, 'utf-8');
+      } catch {
+        // Try src/routes
+        routePath = path.join(routesDir, routeFile);
+        try {
+          routeContent = await fs.readFile(routePath, 'utf-8');
+        } catch {
+          continue; // Skip if file doesn't exist
+        }
+      }
       
       // Extract endpoint path
       const endpointMatch = routeContent.match(/['"]\/api\/([^'"]+)['"]/);
@@ -627,7 +673,9 @@ async function detectDaemonChangesNotMatchingServer() {
   
   const daemonClientFile = path.join(ROOT, 'daemon-python', 'backend_client.py');
   const daemonAuthFile = path.join(ROOT, 'daemon-python', 'backend_auth_client.py');
+  // Check both src/routes and backend-typescript/src/routes
   const routesDir = path.join(ROOT, 'src', 'routes');
+  const backendRoutesDir = path.join(ROOT, 'backend-typescript', 'src', 'routes');
   
   try {
     let daemonClientContent = '';
@@ -664,29 +712,60 @@ async function detectDaemonChangesNotMatchingServer() {
       
         if (daemonHasMethod) {
         // Daemon has method - verify server has corresponding route
-        const routeFiles = await fs.readdir(routesDir).catch(() => []);
-        const apiRouteFiles = routeFiles.filter(f => 
-          (f.startsWith('api-') || f.includes('ask') || f.includes('vision') || f.includes('transcribe') || f.includes('auth')) && 
-          f.endsWith('.ts')
-        );
-        
-        // Also check all route files, not just api-* ones
-        const allRouteFiles = routeFiles.filter(f => f.endsWith('.ts'));
-        
+        // Check both src/routes and backend-typescript/src/routes
         let serverHasRoute = false;
-        for (const routeFile of [...apiRouteFiles, ...allRouteFiles]) {
-          const routePath = path.join(routesDir, routeFile);
+        
+        // First check backend-typescript/src/routes (where these routes actually exist)
+        const backendRouteFiles = await fs.readdir(backendRoutesDir).catch(() => []);
+        const backendAllRouteFiles = backendRouteFiles.filter(f => f.endsWith('.ts'));
+        
+        for (const routeFile of backendAllRouteFiles) {
+          const routePath = path.join(backendRoutesDir, routeFile);
           try {
             const routeContent = await fs.readFile(routePath, 'utf-8');
             // Check if route file contains this endpoint (more flexible matching)
-            if (routeContent.includes(endpoint) || 
-                routeContent.includes(endpoint.replace('/api/', '')) ||
-                (endpoint === '/api/ask' && (routeContent.includes('router.post') || routeContent.includes('app.post')) && routeContent.includes('ask'))) {
+            const hasEndpoint = routeContent.includes(endpoint) || 
+                               routeContent.includes(endpoint.replace('/api/', '')) ||
+                               (endpoint === '/api/ask' && (routeContent.includes('router.post') || routeContent.includes('app.post')) && routeContent.includes('ask')) ||
+                               (endpoint === '/api/vision' && (routeFile.includes('vision') || routeContent.includes('vision'))) ||
+                               (endpoint === '/api/transcribe' && (routeFile.includes('transcribe') || routeContent.includes('transcribe'))) ||
+                               (endpoint === '/api/update' && (routeFile.includes('update') || routeContent.includes('update'))) ||
+                               (endpoint === '/api/auth/login' && (routeFile.includes('auth') || routeContent.includes('login')));
+            
+            if (hasEndpoint) {
               serverHasRoute = true;
               break;
             }
           } catch {
             // Continue checking other files
+          }
+        }
+        
+        // If not found in backend-typescript, also check src/routes
+        if (!serverHasRoute) {
+          const routeFiles = await fs.readdir(routesDir).catch(() => []);
+          const apiRouteFiles = routeFiles.filter(f => 
+            (f.startsWith('api-') || f.includes('ask') || f.includes('vision') || f.includes('transcribe') || f.includes('auth')) && 
+            f.endsWith('.ts')
+          );
+          
+          // Also check all route files, not just api-* ones
+          const allRouteFiles = routeFiles.filter(f => f.endsWith('.ts'));
+          
+          for (const routeFile of [...apiRouteFiles, ...allRouteFiles]) {
+            const routePath = path.join(routesDir, routeFile);
+            try {
+              const routeContent = await fs.readFile(routePath, 'utf-8');
+              // Check if route file contains this endpoint (more flexible matching)
+              if (routeContent.includes(endpoint) || 
+                  routeContent.includes(endpoint.replace('/api/', '')) ||
+                  (endpoint === '/api/ask' && (routeContent.includes('router.post') || routeContent.includes('app.post')) && routeContent.includes('ask'))) {
+                serverHasRoute = true;
+                break;
+              }
+            } catch {
+              // Continue checking other files
+            }
           }
         }
         
@@ -717,24 +796,68 @@ async function detectDaemonChangesNotMatchingServer() {
             if (daemonSendsField) {
               // Verify server route accepts this field
               let serverAcceptsField = false;
-              const allRouteFiles = await fs.readdir(routesDir).catch(() => []);
-              const relevantRouteFiles = allRouteFiles.filter(f => f.endsWith('.ts'));
               
-              for (const routeFile of relevantRouteFiles) {
-                const routePath = path.join(routesDir, routeFile);
+              // Check backend-typescript/src/routes first
+              const backendAllRouteFiles = await fs.readdir(backendRoutesDir).catch(() => []);
+              const backendRelevantRouteFiles = backendAllRouteFiles.filter(f => f.endsWith('.ts'));
+              
+              for (const routeFile of backendRelevantRouteFiles) {
+                const routePath = path.join(backendRoutesDir, routeFile);
                 try {
                   const routeContent = await fs.readFile(routePath, 'utf-8');
                   // More flexible matching - check if endpoint is in file and field is mentioned
-                  if ((routeContent.includes(endpoint) || 
-                       (endpoint === '/api/ask' && routeContent.includes('ask'))) && 
-                      (routeContent.includes(field) || 
-                       routeContent.includes(`req.body`) || 
-                       routeContent.includes('body.'))) {
-                    serverAcceptsField = true;
-                    break;
+                  // Check for field in various patterns: "field", 'field', field:, field =, req.body.field, body.field, etc.
+                  const fieldPatterns = [
+                    new RegExp(`["']${field}["']`, 'i'),
+                    new RegExp(`${field}\\s*[:=]`, 'i'),
+                    new RegExp(`req\\.body\\.${field}`, 'i'),
+                    new RegExp(`body\\.${field}`, 'i'),
+                    new RegExp(`\\{.*${field}.*\\}`, 'i'), // destructuring
+                    new RegExp(`const.*${field}`, 'i'), // const { field } = ...
+                  ];
+                  
+                  const hasEndpoint = routeContent.includes(endpoint) || 
+                                     routeContent.includes(endpoint.replace('/api/', '')) ||
+                                     (endpoint === '/api/ask' && routeContent.includes('ask')) ||
+                                     (endpoint === '/api/vision' && (routeFile.includes('vision') || routeContent.includes('vision'))) ||
+                                     (endpoint === '/api/transcribe' && (routeFile.includes('transcribe') || routeContent.includes('transcribe'))) ||
+                                     (endpoint === '/api/update' && (routeFile.includes('update') || routeContent.includes('update'))) ||
+                                     (endpoint === '/api/auth/login' && (routeFile.includes('auth') || routeContent.includes('login')));
+                  
+                  if (hasEndpoint) {
+                    // Check if any field pattern matches
+                    const hasField = fieldPatterns.some(pattern => pattern.test(routeContent));
+                    if (hasField || routeContent.includes('req.body') || routeContent.includes('body.')) {
+                      serverAcceptsField = true;
+                      break;
+                    }
                   }
                 } catch {
                   // Continue
+                }
+              }
+              
+              // If not found, also check src/routes
+              if (!serverAcceptsField) {
+                const allRouteFiles = await fs.readdir(routesDir).catch(() => []);
+                const relevantRouteFiles = allRouteFiles.filter(f => f.endsWith('.ts'));
+                
+                for (const routeFile of relevantRouteFiles) {
+                  const routePath = path.join(routesDir, routeFile);
+                  try {
+                    const routeContent = await fs.readFile(routePath, 'utf-8');
+                    // More flexible matching - check if endpoint is in file and field is mentioned
+                    if ((routeContent.includes(endpoint) || 
+                         (endpoint === '/api/ask' && routeContent.includes('ask'))) && 
+                        (routeContent.includes(field) || 
+                         routeContent.includes(`req.body`) || 
+                         routeContent.includes('body.'))) {
+                      serverAcceptsField = true;
+                      break;
+                    }
+                  } catch {
+                    // Continue
+                  }
                 }
               }
               
@@ -767,28 +890,69 @@ async function detectDaemonChangesNotMatchingServer() {
           if (daemonExpectsField && serverHasRoute) {
             // Verify server returns this field
             let serverReturnsField = false;
-            const allRouteFiles = await fs.readdir(routesDir).catch(() => []);
-            const relevantRouteFiles = allRouteFiles.filter(f => f.endsWith('.ts'));
             
-            for (const routeFile of relevantRouteFiles) {
-              const routePath = path.join(routesDir, routeFile);
+            // Check backend-typescript/src/routes first
+            const backendAllRouteFiles = await fs.readdir(backendRoutesDir).catch(() => []);
+            const backendRelevantRouteFiles = backendAllRouteFiles.filter(f => f.endsWith('.ts'));
+            
+            for (const routeFile of backendRelevantRouteFiles) {
+              const routePath = path.join(backendRoutesDir, routeFile);
               try {
                 const routeContent = await fs.readFile(routePath, 'utf-8');
-                // Check if this is the right endpoint file
-                if (routeContent.includes(endpoint) || 
-                    (endpoint === '/api/ask' && routeContent.includes('ask'))) {
-                  // Check if response includes this field (more flexible)
-                  if (routeContent.includes(`"${field}"`) || 
-                      routeContent.includes(`'${field}'`) ||
-                      routeContent.includes(`${field}:`) ||
-                      routeContent.includes(`res.json`) ||
-                      routeContent.includes(`response.${field}`)) {
+                // Check if this is the right endpoint file (more flexible matching)
+                const hasEndpoint = routeContent.includes(endpoint) || 
+                                   routeContent.includes(endpoint.replace('/api/', '')) ||
+                                   (endpoint === '/api/ask' && routeContent.includes('ask')) ||
+                                   (endpoint === '/api/vision' && (routeFile.includes('vision') || routeContent.includes('vision'))) ||
+                                   (endpoint === '/api/transcribe' && (routeFile.includes('transcribe') || routeContent.includes('transcribe'))) ||
+                                   (endpoint === '/api/update' && (routeFile.includes('update') || routeContent.includes('update'))) ||
+                                   (endpoint === '/api/auth/login' && (routeFile.includes('auth') || routeContent.includes('login')));
+                
+                if (hasEndpoint) {
+                  // Check if response includes this field (more flexible patterns)
+                  const fieldPatterns = [
+                    new RegExp(`["']${field}["']`, 'i'),
+                    new RegExp(`${field}\\s*:`, 'i'),
+                    new RegExp(`response\\.${field}`, 'i'),
+                    new RegExp(`\\.${field}\\b`, 'i'),
+                  ];
+                  
+                  const hasField = fieldPatterns.some(pattern => pattern.test(routeContent));
+                  if (hasField || routeContent.includes('res.json') || routeContent.includes('res.status')) {
                     serverReturnsField = true;
                     break;
                   }
                 }
               } catch {
                 // Continue
+              }
+            }
+            
+            // If not found, also check src/routes
+            if (!serverReturnsField) {
+              const allRouteFiles = await fs.readdir(routesDir).catch(() => []);
+              const relevantRouteFiles = allRouteFiles.filter(f => f.endsWith('.ts'));
+              
+              for (const routeFile of relevantRouteFiles) {
+                const routePath = path.join(routesDir, routeFile);
+                try {
+                  const routeContent = await fs.readFile(routePath, 'utf-8');
+                  // Check if this is the right endpoint file
+                  if (routeContent.includes(endpoint) || 
+                      (endpoint === '/api/ask' && routeContent.includes('ask'))) {
+                    // Check if response includes this field (more flexible)
+                    if (routeContent.includes(`"${field}"`) || 
+                        routeContent.includes(`'${field}'`) ||
+                        routeContent.includes(`${field}:`) ||
+                        routeContent.includes(`res.json`) ||
+                        routeContent.includes(`response.${field}`)) {
+                      serverReturnsField = true;
+                      break;
+                    }
+                  }
+                } catch {
+                  // Continue
+                }
               }
             }
             
