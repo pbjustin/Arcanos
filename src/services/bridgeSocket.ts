@@ -46,18 +46,22 @@ function rejectUpgrade(socket: Duplex, status: number, message: string): void {
 }
 
 export function setupBridgeSocket(server: Server): void {
+  const wss = new WebSocketServer({ noServer: true });
   if (!isBridgeEnabled()) {
     bridgeLogger.info('Bridge IPC disabled (BRIDGE_ENABLED not set to true).');
-    return;
   }
-
-  const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const pathname = resolvePath(req.url);
     if (!isAllowedPath(pathname)) {
       bridgeLogger.warn('Bridge IPC upgrade rejected (path not allowed).', { path: pathname });
       rejectUpgrade(socket, 404, 'Not Found');
+      return;
+    }
+
+    if (!isBridgeEnabled()) {
+      bridgeLogger.warn('Bridge IPC upgrade rejected (bridge disabled).', { path: pathname });
+      rejectUpgrade(socket, 503, 'Service Unavailable');
       return;
     }
 
