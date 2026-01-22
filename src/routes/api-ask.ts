@@ -83,16 +83,15 @@ function extractPromptFromMessages(messages: unknown): string | undefined {
       continue;
     }
 
-    const content = normalizeMessageContent((message as { content?: unknown }).content);
-    if (!content) {
+    const normalizedContent = normalizeMessageContent((message as { content?: unknown }).content);
+    if (!normalizedContent) {
       continue;
     }
 
-    const role = typeof (message as { role?: unknown }).role === 'string'
-      ? (message as { role?: string }).role
-      : 'user';
+    const rawRole = (message as { role?: unknown }).role;
+    const role = typeof rawRole === 'string' ? rawRole : 'user';
 
-    normalized.push({ role, content });
+    normalized.push({ role, content: normalizedContent });
   }
 
   if (normalized.length === 0) {
