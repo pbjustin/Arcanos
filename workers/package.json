@@ -10,10 +10,12 @@
     "start:memorySync": "node dist/workers/memorySync-worker.js"
   },
   "dependencies": {
-    "openai": "^6.15.0"
+    "openai": "^6.15.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@types/ws": "^8.5.13",
     "typescript": "^5.9.2"
   }
 }
