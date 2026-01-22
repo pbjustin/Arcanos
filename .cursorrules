@@ -1,0 +1,205 @@
+# ARCANOS Cross-Codebase Sync Rules for AI Assistants
+
+## Architecture & Source of Truth
+- **TypeScript Server (src/)** = SOURCE OF TRUTH (GitHub repository)
+- **Python Daemon (daemon-python/)** = EXTENSION (follows server)
+
+## Core Principle
+- **Server changes** → Daemon MUST be updated to follow
+- **Daemon changes** → Check if server needs updates (less common)
+- When working on server, automatically suggest/update daemon
+- When working on daemon, ensure it follows server
+
+## When Working on TypeScript Server (src/) - SOURCE OF TRUTH
+
+### Priority: Update Daemon to Follow Server
+- **Server is source of truth** - daemon must follow server changes
+- If you add/modify API routes, **daemon MUST be updated**
+- If you change request/response schemas, **daemon MUST be updated**
+- If you add environment variables, **daemon should follow**
+- Run `npm run sync:check` to see what daemon needs updating
+
+### API Route Changes
+- When you modify `src/routes/api-*.ts`, **automatically suggest daemon updates**
+- When you add new endpoints, **daemon must get corresponding methods**
+- When you change schemas, **daemon must be updated to match**
+- Priority: HIGH - daemon cannot work without matching server
+
+### Dependency Changes
+- If you update server dependencies, check if daemon needs equivalent
+- Critical shared dependencies must stay aligned
+
+### Environment Variables
+- If you add server env vars, daemon should follow if relevant
+- Server defaults should be source of truth
+
+## When Working on Python Daemon (daemon-python/) - EXTENSION
+
+### Dependency Changes
+- If you add/update a dependency in `requirements.txt`, check if it needs a corresponding Node.js package
+- Critical shared dependencies (OpenAI SDK) must stay aligned on major versions
+- Run `npm run sync:check` after dependency changes
+
+### API Client Changes
+- **Remember: Server is source of truth** - daemon follows server
+- If you modify `backend_client.py`, ensure it matches server routes
+- If server has changed, daemon MUST be updated to match
+- Check that all required fields from server API contract are included
+- If daemon needs new features, consider if server should provide them first
+
+### Configuration Changes
+- If you add environment variables to `config.py`, check if server needs them too
+- Shared config values (OPENAI_MODEL, TEMPERATURE, etc.) should match defaults
+- Update `.env.example` files in both codebases
+
+### Version Changes
+- If you update `VERSION` in `config.py`, also update `version` in `package.json`
+- Keep version numbers identical across both codebases
+
+## When Working on TypeScript Server (src/)
+
+### API Route Changes
+- If you modify API routes (`src/routes/api-*.ts`), ensure Python client matches
+- If you change request/response schemas, update `backend_client.py`
+- Check that Python client can parse all response fields
+
+### Dependency Changes
+- If you add/update a dependency in `package.json`, check if Python needs equivalent
+- Critical shared dependencies must stay aligned
+- Run `npm run sync:check` after dependency changes
+
+### Environment Variables
+- If you add new env vars, check if Python daemon needs them
+- Shared variables should have matching defaults
+
+### Error Handling
+- If you add new error types, ensure Python client can handle them
+- Keep error codes/messages consistent
+
+## Shared Dependencies to Keep in Sync
+
+### Critical (Must Match Major Versions)
+- **OpenAI SDK**: 
+  - Python: `openai>=1.12.0`
+  - Node: `openai@^6.16.0`
+  - Must stay on same major version
+
+### Related (Should Align)
+- **HTTP Clients**:
+  - Python: `requests>=2.31.0`
+  - Node: `axios@^1.11.0`
+
+## API Contract Rules
+
+### /api/ask
+- **Server**: `src/routes/api-ask.ts`
+- **Client**: `backend_client.py::request_chat_completion()`
+- **Required Fields**: `messages` (array)
+- **Optional Fields**: `temperature`, `model`, `stream`
+- **Response**: `response`, `tokens`, `cost`, `model`
+
+### /api/vision
+- **Server**: `src/routes/image.ts` or similar
+- **Client**: `backend_client.py::request_vision_analysis()`
+- **Required Fields**: `imageBase64`
+- **Optional Fields**: `prompt`, `temperature`, `model`, `maxTokens`
+- **Response**: `response`, `tokens`, `cost`, `model`
+
+### /api/transcribe
+- **Server**: Check for transcription endpoint
+- **Client**: `backend_client.py::request_transcription()`
+- **Required Fields**: `audioBase64`
+- **Optional Fields**: `filename`, `model`, `language`
+- **Response**: `text`, `model`
+
+### /api/update
+- **Server**: Check for update endpoint
+- **Client**: `backend_client.py::submit_update_event()`
+- **Required Fields**: `updateType`, `data`
+- **Response**: `success`
+
+### /api/auth/login
+- **Server**: Check for auth endpoint
+- **Client**: `backend_auth_client.py::request_backend_login()`
+- **Required Fields**: `email`, `password`
+- **Response**: `token`, `userId`, `expiresAt?`
+
+## Before Committing
+
+1. **Run Sync Check**: `npm run sync:check`
+2. **Fix All Errors**: Address any critical sync issues
+3. **Review Warnings**: Consider fixing warnings for better alignment
+4. **Test Both Sides**: Ensure both codebases can communicate
+5. **Update Documentation**: If APIs change, update docs
+
+## Auto-Sync Suggestions
+
+When you detect a change in one codebase:
+
+1. **Check the other codebase** for corresponding code
+2. **Identify what needs updating** (dependencies, APIs, config, etc.)
+3. **Suggest specific fixes** with code examples
+4. **Run sync check** to validate changes
+5. **Provide migration path** if breaking changes exist
+
+## Breaking Change Protocol
+
+If you introduce a breaking change:
+
+1. **Detect breaking changes** automatically
+2. **Identify affected code** in both codebases
+3. **Suggest migration steps** for both sides
+4. **Update version numbers** if major breaking change
+5. **Document changes** in CHANGELOG.md
+
+## Version Synchronization
+
+- Keep `package.json` version and `config.py` VERSION identical
+- Update both when releasing new versions
+- Use semantic versioning consistently
+
+## Environment Variable Sync
+
+### Shared Variables (Should Match)
+- `OPENAI_MODEL` - Default model for AI requests
+- `OPENAI_VISION_MODEL` - Model for vision analysis
+- `TEMPERATURE` - AI temperature setting
+- `MAX_TOKENS` - Maximum tokens per request
+- `LOG_LEVEL` - Logging verbosity
+
+### Client-Only Variables
+- `BACKEND_URL` - Server URL (Python only)
+- `BACKEND_TOKEN` - Auth token (Python only)
+
+### Server-Only Variables
+- `DATABASE_URL` - Database connection (Server only)
+- `PORT` - Server port (Server only)
+
+## Test Coverage Alignment
+
+- If you add tests for API endpoints in TypeScript, consider Python client tests
+- If you add tests for client methods in Python, ensure server has corresponding tests
+- Keep test coverage balanced across both codebases
+
+## Code Pattern Matching
+
+When you see similar patterns in one codebase:
+- Check if the other codebase should have the same pattern
+- Suggest implementing matching patterns for consistency
+- Examples: error handling, logging, validation, rate limiting
+
+## Error Handling Sync
+
+- Keep error types consistent (BackendAuthError, BackendRequestError, etc.)
+- Ensure error messages are parseable by both sides
+- Maintain error code mappings
+
+## Logging Format Sync
+
+- Use consistent log formats across both codebases
+- Include same metadata (timestamp, level, context)
+- Ensure logs are parseable by both systems
+
+---
+
+**Remember**: The goal is seamless integration. When one side changes, the other should adapt automatically or be flagged for manual review.
