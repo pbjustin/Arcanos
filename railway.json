@@ -35,7 +35,8 @@
         "RAILWAY_ENVIRONMENT": "production",
         "RUN_WORKERS": "false",
         "WORKER_API_TIMEOUT_MS": "60000",
-        "ARC_LOG_PATH": "/tmp/arc/log"
+        "ARC_LOG_PATH": "/tmp/arc/log",
+        "BRIDGE_ENABLED": "true"
       }
     },
     "development": {
