@@ -214,7 +214,7 @@ function serializeForLog(data: unknown): string {
       }
       return value;
     });
-  } catch {
+  } catch (error) {
     //audit: Serialization failed; fall back to a safe sentinel string to avoid breaking responses.
     return '"[Unserializable]"';
   }

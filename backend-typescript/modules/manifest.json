@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "id": "core",
+      "name": "core",
+      "path": "core.json",
+      "enabled": true
+    }
+  ]
+}

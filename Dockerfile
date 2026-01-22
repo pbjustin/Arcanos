@@ -18,13 +18,17 @@ COPY package*.json package-lock.json ./
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --only=production --no-audit --no-fund
 
-# Copy source code, workers, and build configuration
+# Copy source code, workers, scripts, and build configuration
 COPY src/ ./src/
 COPY workers/ ./workers/
+COPY scripts/ ./scripts/
 COPY tsconfig.json ./
 
 # Install dev dependencies (override NODE_ENV) and build
-RUN npm install --include=dev --no-audit --no-fund && npm run build
+RUN npm install --include=dev --no-audit --no-fund && \
+    cd workers && npm install --no-audit --no-fund && cd .. && \
+    npm run build:workers && \
+    npm run build
 
 # Clean up dev dependencies after build
 RUN npm prune --production
