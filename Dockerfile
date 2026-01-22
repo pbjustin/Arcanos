@@ -25,7 +25,9 @@ COPY scripts/ ./scripts/
 COPY tsconfig.json ./
 
 # Install dev dependencies (override NODE_ENV) and build
-RUN npm install --include=dev --no-audit --no-fund && npm run build
+RUN npm install --include=dev --no-audit --no-fund && \
+    cd workers && npm install --no-audit --no-fund && cd .. && \
+    npm run build
 
 # Clean up dev dependencies after build
 RUN npm prune --production
