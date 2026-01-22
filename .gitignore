@@ -126,3 +126,76 @@ deprecated/*
 !deprecated/modules/.gitkeep
 !deprecated/scripts/.gitkeep
 !deprecated/utils/.gitkeep
+# Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+# Node
+# Environment
+.env
+.env.production
+# IDEs
+# OS
+# ARCANOS specific
+daemon-python/memories.json
+daemon-python/logs/
+backend-typescript/logs/
+logs/
+daemon-python/crash_reports/
+daemon-python/telemetry/
+daemon-python/backups/
+daemon-python/screenshots/
+*.db
+# Sensitive runtime artifacts
+daemon-python/.env
+backend-typescript/.env
+**/*.local
+**/.env.production
+**/secrets/
+**/private_keys/
+daemon-python/cert.pfx
+daemon-python/*.pem
+daemon-python/*.key
+# User data (except templates)
+daemon-python/memories_*.json
+daemon-python/user_*.json
+!daemon-python/memory/bootstrap_template.json
+daemon-python/temp/
+daemon-python/cache/
+**/__pycache__/
+**/.pytest_cache/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+# Build artifacts
+*.exe
+*.msi
+*.dmg
+*.deb
+*.rpm
+daemon-python/dist/
+daemon-python/build/
+backend-typescript/dist/
+# IDE and OS
+.vscode/settings.json
+.vscode/launch.json
+# Testing
+.coverage
+htmlcov/
+.tox/
+# Certificates
+*.pfx
+*.p12
+*.pem
+*.key
+!public.key

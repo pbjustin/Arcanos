@@ -20,6 +20,8 @@ export type CoreServiceReadiness = {
   isReady: boolean;
 };
 
+export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
+
 /**
  * Determine database readiness based on connectivity and configuration.
  * Inputs: database status and optional database URL override.
@@ -57,4 +59,15 @@ export function assessCoreServiceReadiness(
     isOpenAIReady,
     isReady
   };
+}
+
+/**
+ * Map readiness flags to a health status label.
+ * Inputs: readiness flags for core services.
+ * Outputs: a HealthStatus string for service health responses.
+ * Edge cases: Non-ready states are labeled "degraded" unless an explicit error path sets "unhealthy".
+ */
+export function mapReadinessToHealthStatus(readiness: CoreServiceReadiness): HealthStatus {
+  //audit Assumption: readiness false should downgrade to degraded; risk: overstating severity; invariant: only error paths mark unhealthy; handling: map readiness to healthy/degraded.
+  return readiness.isReady ? 'healthy' : 'degraded';
 }

@@ -14,23 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.4] - 2026-01-21
-
-### Added
-- IPC WebSocket bridge endpoints for daemon handshake and bridge payload broadcasts.
-
-### Fixed
-- Prevented IPC handshake 404s by mounting `/bridge` and `/ipc` status/handshake routes.
-
-## [1.0.3] - 2026-01-21
-
-### Added
-- Daemon IPC bridge scaffold with GPT ID tagging relay wired into `/ask` and `/gpt/:gptId`.
-- Bridge environment defaults for optional activation.
-
-### Changed
-- Windows daemon bundle updated (ARCANOS.exe repacked in release zip).
-
 ### Added - Continuous Audit & Refinement Implementation
 - **Continuous Audit Script**: Automated codebase auditing script (`scripts/continuous-audit.js`)
   - Phase 1: Dependency pruning and security vulnerability detection
