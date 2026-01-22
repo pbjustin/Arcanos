@@ -9,6 +9,10 @@ HTTP APIs, and persists state to disk or PostgreSQL. The server boots from
 `src/start-server.ts`, registers routes in `src/routes/register.ts`, and initializes the
 OpenAI client via `src/services/openai.ts` and `src/services/openai/*`.
 
+This repository also includes a **Python daemon client** (`daemon-python/`) that provides
+a local Windows terminal interface for interacting with the backend. The daemon can work
+standalone or connect to this backend server for cloud sync and shared services.
+
 ## Prerequisites
 
 - Node.js 18+ and npm 8+ (see `package.json` engines).
@@ -61,6 +65,25 @@ curl http://localhost:8080/health
 curl http://localhost:8080/healthz
 curl http://localhost:8080/readyz
 ```
+
+## Python Daemon Client
+
+The repository includes a Python daemon (`daemon-python/`) that provides a local Windows
+terminal interface. The daemon can work standalone or connect to this backend server.
+
+To use the daemon:
+
+```bash
+cd daemon-python
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+cp .env.example .env
+# Add your OPENAI_API_KEY and optionally BACKEND_URL
+python cli.py
+```
+
+See `QUICKSTART.md` for detailed daemon setup instructions.
 
 ## Deploy (Railway)
 
