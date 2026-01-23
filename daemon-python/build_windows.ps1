@@ -24,20 +24,21 @@ if (Test-Path "build") {
 }
 
 # Build using the spec file (handles dependencies better)
-Write-Host "Building executables using arcanos.spec..." -ForegroundColor Cyan
+Write-Host "Building daemon.exe using arcanos.spec..." -ForegroundColor Cyan
 pyinstaller --clean arcanos.spec
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Failed to build executables" -ForegroundColor Red
+    Write-Host "Failed to build daemon.exe" -ForegroundColor Red
     exit 1
 }
 
-# The spec file creates ARCANOS.exe, rename/copy as needed
-if (Test-Path "dist\ARCANOS.exe") {
-    # Copy ARCANOS.exe to both daemon.exe and cli.exe
-    Copy-Item "dist\ARCANOS.exe" "dist\daemon.exe" -Force
-    Copy-Item "dist\ARCANOS.exe" "dist\cli.exe" -Force
-    Write-Host "Created daemon.exe and cli.exe from ARCANOS.exe" -ForegroundColor Green
+# The spec file creates daemon.exe, also create cli.exe (same executable)
+if (Test-Path "dist\daemon.exe") {
+    Copy-Item "dist\daemon.exe" "dist\cli.exe" -Force
+    Write-Host "Created cli.exe from daemon.exe" -ForegroundColor Green
+} else {
+    Write-Host "daemon.exe not found after build" -ForegroundColor Red
+    exit 1
 }
 
 if ($LASTEXITCODE -ne 0) {
