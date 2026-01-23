@@ -78,7 +78,7 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): M
       overrideReason: input.toLowerCase().includes('override')
         ? MOCK_RESPONSE_MESSAGES.OVERRIDE_DETECTED
         : undefined,
-      auditFlags: MOCK_RESPONSE_CONSTANTS.AUDIT_FLAGS,
+      auditFlags: [...MOCK_RESPONSE_CONSTANTS.AUDIT_FLAGS],
       processedSafely: true
     },
     memoryContext: {

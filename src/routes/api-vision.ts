@@ -93,8 +93,7 @@ router.post('/api/vision', visionValidation, async (req: Request<{}, VisionRespo
       aiLogger.warn('OpenAI client not available for vision request');
       return res.status(503).json({
         error: 'Service Unavailable',
-        message: 'OpenAI service is not configured',
-        timestamp: new Date().toISOString()
+        details: 'OpenAI service is not configured'
       });
     }
 

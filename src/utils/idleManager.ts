@@ -226,7 +226,8 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
               batchSize: group.length,
             });
           } catch (err) {
-            for (const r of group) r.reject(err);
+            const error = err instanceof Error ? err : new Error(String(err));
+            for (const r of group) r.reject(error);
           }
         }
       }, DEFAULTS.BATCH_WINDOW_MS);
