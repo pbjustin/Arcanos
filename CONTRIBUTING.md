@@ -30,8 +30,8 @@ python -m pip install -r requirements-dev.txt
 
 3. **TypeScript backend setup**:
 ```bash
-cd backend-typescript
 npm install
+npm run build
 ```
 
 4. **Create `.env` file**:
@@ -56,13 +56,14 @@ arcanos-hybrid/
 │   ├── error_handler.py    # Error handling
 │   ├── rate_limiter.py     # Rate limiting
 │   └── ...
-├── backend-typescript/     # Express backend
-│   ├── src/
-│   │   ├── index.ts        # Server entry
-│   │   ├── database.ts     # PostgreSQL
-│   │   ├── auth.ts         # JWT auth
-│   │   └── routes/         # API routes
-│   └── package.json
+├── src/                    # Express backend (source of truth)
+│   ├── start-server.ts    # Server entry
+│   ├── routes/            # API routes
+│   │   ├── api-ask.ts     # Chat endpoint
+│   │   ├── api-vision.ts  # Vision endpoint
+│   │   ├── api-transcribe.ts # Transcription endpoint
+│   │   └── api-update.ts  # Update endpoint
+│   └── services/          # OpenAI services
 ├── tests/                  # Test suites
 ├── scripts/                # Build/deploy scripts
 └── docs/                   # Documentation
@@ -78,7 +79,6 @@ pytest tests/ -v --cov
 
 ### Run TypeScript tests:
 ```bash
-cd backend-typescript
 npm test
 ```
 

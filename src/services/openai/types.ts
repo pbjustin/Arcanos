@@ -3,6 +3,8 @@ import OpenAI from 'openai';
 export type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type ChatCompletionResponseFormat =
   OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format'];
+export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion;
+export type ChatCompletionCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParams;
 
 export type ImageSize =
   | '256x256'
@@ -26,8 +28,12 @@ export interface CallOpenAIOptions {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * OpenAI ChatCompletion response wrapper with typed response
+ * @confidence 1.0 - Full type safety from OpenAI SDK
+ */
 export interface CallOpenAICacheEntry {
-  response: any;
+  response: ChatCompletion;
   output: string;
   model: string;
 }

@@ -43,20 +43,16 @@ arcanos-hybrid/
 │   ├── arcanos.spec            # PyInstaller build config
 │   └── assets/                 # Icons and resources
 │
-├── backend-typescript/         # Express backend (cloud)
-│   ├── src/
-│   │   ├── index.ts            # Main server ⭐
-│   │   ├── database.ts         # PostgreSQL connection
-│   │   ├── auth.ts             # JWT authentication
-│   │   ├── logger.ts           # Winston logging
-│   │   └── routes/             # API endpoints
-│   │       ├── ask.ts          # Conversation endpoint
-│   │       ├── update.ts       # Memory updates
-│   │       ├── health.ts       # Health check
-│   │       └── audit.ts        # Audit logs
-│   ├── package.json            # Node dependencies
-│   ├── tsconfig.json           # TypeScript config
-│   └── .env.example            # Backend config template
+├── src/                        # Express backend (source of truth, Railway-deployed)
+│   ├── start-server.ts        # Main server entry ⭐
+│   ├── routes/                # API endpoints
+│   │   ├── api-ask.ts         # Chat endpoint
+│   │   ├── api-vision.ts      # Vision endpoint
+│   │   ├── api-transcribe.ts  # Transcription endpoint
+│   │   ├── api-update.ts      # Update endpoint
+│   │   └── register.ts        # Route registration
+│   ├── services/              # OpenAI services
+│   └── ...
 │
 ├── tests/                      # Test suites
 │   └── test_daemon.py          # Python unit tests

@@ -42,18 +42,28 @@ export function sanitizeInput(input: string): string {
 }
 
 /**
- * Validates and sanitizes input according to schema
+ * Validated and sanitized input result
+ * @confidence 1.0 - Type-safe validation result
  */
-export function validateInput(data: any, schema: ValidationSchema): { 
-  isValid: boolean; 
-  errors: string[]; 
-  sanitized: any 
-} {
+export interface ValidationResult<T = Record<string, unknown>> {
+  isValid: boolean;
+  errors: string[];
+  sanitized: T;
+}
+
+/**
+ * Validates and sanitizes input according to schema
+ * @confidence 0.9 - Dynamic validation requires runtime type checking
+ */
+export function validateInput<T extends Record<string, unknown> | unknown[]>(
+  data: T, 
+  schema: ValidationSchema
+): ValidationResult<T> {
   const errors: string[] = [];
-  const sanitized: any = Array.isArray(data) ? [] : {};
+  const sanitized = (Array.isArray(data) ? [] : {}) as T;
 
   for (const [field, rule] of Object.entries(schema)) {
-    const value = data[field];
+    const value = (data as Record<string, unknown>)[field];
     
     // Check required fields
     if (rule.required && (value === undefined || value === null || value === '')) {
@@ -92,16 +102,16 @@ export function validateInput(data: any, schema: ValidationSchema): {
       }
       
       // Apply sanitization
-      sanitized[field] = rule.sanitize ? sanitizeInput(value) : value;
+      (sanitized as Record<string, unknown>)[field] = rule.sanitize ? sanitizeInput(value) : value;
     } else if (rule.type === 'array' && Array.isArray(value)) {
       // Array validation
-      sanitized[field] = value;
+      (sanitized as Record<string, unknown>)[field] = value;
     } else if (rule.type === 'object' && typeof value === 'object' && value !== null) {
       // Object validation
-      sanitized[field] = value;
+      (sanitized as Record<string, unknown>)[field] = value;
     } else {
       // Other types (number, boolean)
-      sanitized[field] = value;
+      (sanitized as Record<string, unknown>)[field] = value;
     }
     
     // Allowed values validation
@@ -120,13 +130,20 @@ export function validateInput(data: any, schema: ValidationSchema): {
 /**
  * Express middleware for input validation
  */
+/**
+ * Express middleware type for validation
+ * @confidence 1.0 - Standard Express middleware signature
+ */
+import type { Request, NextFunction } from 'express';
+
 export function createValidationMiddleware(schema: ValidationSchema) {
-  return (req: any, res: Response, next: any) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const validation = validateInput(req.body, schema);
     
     if (!validation.isValid) {
       //audit Assumption: validation errors map directly to client payload; risk: leaking schema details; invariant: only include validation errors; handling: standardized payload.
-      return res.status(400).json(buildValidationErrorResponse(validation.errors));
+      res.status(400).json(buildValidationErrorResponse(validation.errors));
+      return;
     }
     
     // Replace request body with sanitized version
@@ -143,8 +160,8 @@ const requestCounts = new Map<string, { count: number; resetTime: number }>();
 export function createRateLimitMiddleware(
   maxRequests: number = 100,
   windowMs: number = 15 * 60 * 1000 // 15 minutes
-) {
-  return (req: any, res: Response, next: any) => {
+): (req: Request, res: Response, next: NextFunction) => void {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const ip = req.ip || req.connection.remoteAddress || 'unknown';
     const now = Date.now();
     
@@ -167,11 +184,12 @@ export function createRateLimitMiddleware(
     requestCounts.set(ip, current);
     
     if (current.count > maxRequests) {
-      return res.status(429).json({
+      void res.status(429).json({
         error: 'Rate limit exceeded',
         message: `Too many requests from ${ip}. Try again later.`,
         retryAfter: Math.ceil((current.resetTime - now) / 1000)
       });
+      return;
     }
     
     // Add rate limit headers
@@ -187,8 +205,9 @@ export function createRateLimitMiddleware(
 
 /**
  * Security headers middleware
+ * @confidence 1.0 - Standard Express middleware
  */
-export function securityHeaders(req: any, res: Response, next: any) {
+export function securityHeaders(req: Request, res: Response, next: NextFunction): void {
   res.set({
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',

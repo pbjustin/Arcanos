@@ -60,11 +60,11 @@ async function runTutorPipeline(
   if (!client || testMode) {
     const mock = generateMockResponse(prompt, 'ask');
     return {
-      tutor_response: mock.result,
+      tutor_response: mock.result || '',
       pipeline_trace: {
         intake: '[MOCK] Intake step not executed',
         reasoning: '[MOCK] Reasoning step not executed',
-        finalized: mock.result
+        finalized: mock.result || ''
       },
       model: {
         intake: 'mock',
@@ -137,11 +137,11 @@ async function runTutorPipeline(
     console.error('Tutor pipeline execution error:', error);
     const mock = generateMockResponse(prompt, 'ask');
     return {
-      tutor_response: mock.result,
+      tutor_response: mock.result || '',
       pipeline_trace: {
         intake: '[MOCK] Intake step not executed',
         reasoning: '[MOCK] Reasoning step not executed',
-        finalized: mock.result
+        finalized: mock.result || ''
       },
       model: {
         intake: 'mock',
