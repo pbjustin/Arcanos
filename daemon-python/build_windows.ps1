@@ -23,43 +23,22 @@ if (Test-Path "build") {
     Remove-Item -Recurse -Force build
 }
 
-# Build daemon.exe
-Write-Host "Building daemon.exe..." -ForegroundColor Cyan
-pyinstaller --name daemon --onefile --console --specpath . --distpath dist --workpath build `
-    --add-data "memory;memory" `
-    --add-data "assets;assets" `
-    --hidden-import=config `
-    --hidden-import=backend_client `
-    --hidden-import=backend_auth_client `
-    --hidden-import=daemon_service `
-    --hidden-import=env_store `
-    --hidden-import=schema `
-    cli.py
+# Build using the spec file (handles dependencies better)
+Write-Host "Building executables using arcanos.spec..." -ForegroundColor Cyan
+pyinstaller --clean arcanos.spec
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Failed to build daemon.exe" -ForegroundColor Red
+    Write-Host "Failed to build executables" -ForegroundColor Red
     exit 1
 }
 
-# Rename to daemon.exe if needed (PyInstaller creates cli.exe from cli.py)
-if (Test-Path "dist\cli.exe") {
-    if (Test-Path "dist\daemon.exe") {
-        Remove-Item "dist\daemon.exe"
-    }
-    Rename-Item "dist\cli.exe" "daemon.exe"
+# The spec file creates ARCANOS.exe, rename/copy as needed
+if (Test-Path "dist\ARCANOS.exe") {
+    # Copy ARCANOS.exe to both daemon.exe and cli.exe
+    Copy-Item "dist\ARCANOS.exe" "dist\daemon.exe" -Force
+    Copy-Item "dist\ARCANOS.exe" "dist\cli.exe" -Force
+    Write-Host "Created daemon.exe and cli.exe from ARCANOS.exe" -ForegroundColor Green
 }
-
-# Build cli.exe (if needed separately)
-Write-Host "Building cli.exe..." -ForegroundColor Cyan
-pyinstaller --name cli --onefile --console --specpath . --distpath dist --workpath build `
-    --add-data "memory;memory" `
-    --add-data "assets;assets" `
-    --hidden-import=config `
-    --hidden-import=backend_client `
-    --hidden-import=backend_auth_client `
-    --hidden-import=env_store `
-    --hidden-import=schema `
-    cli.py
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to build cli.exe" -ForegroundColor Red
