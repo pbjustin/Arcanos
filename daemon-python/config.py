@@ -75,6 +75,11 @@ class Config:
     BACKEND_HISTORY_LIMIT: int = int(os.getenv("BACKEND_HISTORY_LIMIT", "8"))
     BACKEND_VISION_ENABLED: bool = os.getenv("BACKEND_VISION_ENABLED", "false").lower() == "true"
     BACKEND_TRANSCRIBE_ENABLED: bool = os.getenv("BACKEND_TRANSCRIBE_ENABLED", "false").lower() == "true"
+    BACKEND_WS_URL: Optional[str] = os.getenv("BACKEND_WS_URL") or None
+    BACKEND_WS_PATH: str = os.getenv("BACKEND_WS_PATH", "/ws/daemon")
+    IPC_HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("IPC_HEARTBEAT_INTERVAL_SECONDS", "30"))
+    IPC_RECONNECT_MAX_SECONDS: int = int(os.getenv("IPC_RECONNECT_MAX_SECONDS", "60"))
+    IPC_ENABLED: bool = os.getenv("IPC_ENABLED", "false").lower() == "true"  # Default to HTTP-only mode
 
     # ============================================
     # Rate Limiting
@@ -179,6 +184,14 @@ class Config:
             errors.append("MAX_TOKENS must be at least 10")
         if cls.REQUEST_TIMEOUT < 5:
             errors.append("REQUEST_TIMEOUT must be at least 5 seconds")
+
+        # Validate IPC settings
+        if cls.IPC_HEARTBEAT_INTERVAL_SECONDS < 5:
+            # //audit assumption: heartbeat interval positive; risk: tight loop; invariant: >=5; strategy: add error.
+            errors.append("IPC_HEARTBEAT_INTERVAL_SECONDS must be at least 5 seconds")
+        if cls.IPC_RECONNECT_MAX_SECONDS < 5:
+            # //audit assumption: reconnect max positive; risk: tight loop; invariant: >=5; strategy: add error.
+            errors.append("IPC_RECONNECT_MAX_SECONDS must be at least 5 seconds")
 
         # Create directories
         for directory in [cls.LOG_DIR, cls.SCREENSHOT_DIR, cls.CRASH_REPORTS_DIR, cls.TELEMETRY_DIR]:
