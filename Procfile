@@ -1,1 +1,1 @@
-web: npm --prefix backend-typescript start
+web: node dist/start-server.js

@@ -115,6 +115,128 @@ jobs:
           
           echo "Release artifacts created"
 
+  build-daemon-exe:
+    name: Build Daemon Executable
+    runs-on: windows-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd daemon-python
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: 🔨 Build executable
+        run: |
+          cd daemon-python
+          pyinstaller arcanos.spec
+
+      - name: 🔏 Sign executable (if certificate available)
+        if: secrets.CODE_SIGNING_CERT != ''
+        run: |
+          # Decode certificate from base64
+          $cert = [System.Convert]::FromBase64String("${{ secrets.CODE_SIGNING_CERT }}")
+          [System.IO.File]::WriteAllBytes("cert.pfx", $cert)
+          
+          # Sign executable
+          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign `
+            /f cert.pfx `
+            /p "${{ secrets.CERT_PASSWORD }}" `
+            /tr http://timestamp.digicert.com `
+            /td sha256 `
+            /fd sha256 `
+            daemon-python\dist\ARCANOS.exe
+          
+          # Remove certificate file
+          Remove-Item cert.pfx
+
+      - name: 📤 Upload daemon executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARCANOS-Windows
+          path: daemon-python/dist/ARCANOS.exe
+          retention-days: 90
+
+  create-github-release:
+    name: Create GitHub Release
+    needs: [arcanos-release, build-daemon-exe]
+    runs-on: ubuntu-latest
+    if: needs.arcanos-release.outputs.approved == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - name: 📥 Download daemon executable
+        uses: actions/download-artifact@v4
+        with:
+          name: ARCANOS-Windows
+          path: .
+
+      - name: 📥 Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: arcanos-release-${{ inputs.tag_name }}
+          path: .
+
+      - name: 📋 Read release notes
+        id: release-notes
+        run: |
+          if [ -f release_notes.md ]; then
+            echo "notes<<EOF" >> $GITHUB_OUTPUT
+            cat release_notes.md >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "notes=# 🚀 ARCANOS Release ${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 🚀 Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: ARCANOS ${{ inputs.tag_name }}
+          body: ${{ steps.release-notes.outputs.notes }}
+          files: ARCANOS.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📝 Create Release Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            try {
+              const releaseNotes = fs.readFileSync('release_notes.md', 'utf8');
+              
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🚀 Release ${{ inputs.tag_name }} - ARCANOS Analysis`,
+                body: releaseNotes,
+                labels: ['arcanos', 'release', 'documentation']
+              });
+              
+              console.log('Created release documentation issue');
+            } catch (error) {
+              console.log('Error creating release issue:', error.message);
+            }
+
       - name: 🔐 Security Scan
         run: |
           echo "Running security scan..."
@@ -161,14 +283,16 @@ jobs:
             echo "RELEASE_APPROVED=true" >> $GITHUB_ENV
           fi
 
-      - name: 📦 Publish Release (if approved)
-        if: env.RELEASE_APPROVED == 'true'
+      - name: Set release approval output
+        id: release-status
         run: |
-          echo "Publishing release ${{ inputs.tag_name }}..."
-          
-          # In a real scenario, this would publish to npm, Docker registry, etc.
-          echo "🔄 Simulating release publication..."
-          echo "✅ Release published successfully"
+          if [ "$RELEASE_APPROVED" = "true" ]; then
+            echo "approved=true" >> $GITHUB_OUTPUT
+          else
+            echo "approved=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          RELEASE_APPROVED: ${{ env.RELEASE_APPROVED }}
 
       - name: 💾 Upload Release Artifacts
         if: always()
@@ -181,44 +305,12 @@ jobs:
             release_notes.md
             arcanos-${{ inputs.tag_name }}.tar.gz
           retention-days: 365
-
-      - name: 📝 Create Release Issue
-        if: env.RELEASE_APPROVED == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            
-            try {
-              const releaseNotes = fs.readFileSync('release_notes.md', 'utf8');
-              
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `🚀 Release ${{ inputs.tag_name }} - ARCANOS Analysis`,
-                body: releaseNotes,
-                labels: ['arcanos', 'release', 'documentation']
-              });
-              
-              console.log('Created release documentation issue');
-            } catch (error) {
-              console.log('Error creating release issue:', error.message);
-            }
+      
+    outputs:
+      approved: ${{ steps.release-status.outputs.approved }}
 
       - name: ❌ Block Release
-        if: env.RELEASE_APPROVED == 'false'
+        if: needs.arcanos-release.outputs.approved == 'false'
         run: |
           echo "❌ Release ${{ inputs.tag_name }} blocked due to security concerns"
-          
-          # Create security report
-          echo "## ❌ ARCANOS Release Blocked" > security_report.md
-          echo "**Tag:** ${{ inputs.tag_name }}" >> security_report.md
-          echo "**Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> security_report.md
-          echo "**Status:** ❌ Blocked by ARCANOS security analysis" >> security_report.md
-          echo "" >> security_report.md
-          echo "### Security Analysis Results" >> security_report.md
-          echo '```json' >> security_report.md
-          cat security_analysis.json >> security_report.md
-          echo '```' >> security_report.md
-          
           exit 1

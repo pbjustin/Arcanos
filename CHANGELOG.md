@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed - Backend Consolidation
+- **Removed `backend-typescript/`**: Consolidated all API endpoints into `src/` backend (source of truth)
+  - All endpoints (`/api/ask`, `/api/vision`, `/api/transcribe`, `/api/update`) now in `src/routes/`
+  - Single backend for Railway deployment (`dist/start-server.js`)
+  - Updated Procfile to use `node dist/start-server.js`
+  - Migration: If you were using `backend-typescript/`, all APIs are now in `src/` with same endpoints (no JWT required unless added later)
+
+### Added - New API Endpoints
+- **`/api/vision`**: Image analysis endpoint using OpenAI vision models
+- **`/api/transcribe`**: Audio transcription endpoint using Whisper
+- **`/api/update`**: Update event endpoint for daemon synchronization
+- **Bridge router**: Mounted bridge routes (`/bridge-status`, `/bridge`, `/bridge/handshake`)
+
 ### Added - Continuous Audit & Refinement Implementation
 - **Continuous Audit Script**: Automated codebase auditing script (`scripts/continuous-audit.js`)
   - Phase 1: Dependency pruning and security vulnerability detection

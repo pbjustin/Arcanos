@@ -140,8 +140,7 @@ The backend is **optional** but provides:
 # 1. Login to Railway
 railway login
 
-# 2. Link your project
-cd backend-typescript
+# 2. Link your project (from root directory)
 railway init
 
 # 3. Deploy
@@ -227,8 +226,7 @@ Before distributing, test thoroughly:
 cd daemon-python
 pytest ..\tests\test_daemon.py -v
 
-# TypeScript tests (if backend deployed)
-cd ..\backend-typescript
+# TypeScript tests
 npm test
 ```
 

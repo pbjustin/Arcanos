@@ -45,6 +45,10 @@ const response = await createCentralizedCompletion([
 
 ### 1. RESTful API Structure
 ```
+/api/ask         - Chat completions
+/api/vision      - Image analysis
+/api/transcribe  - Audio transcription
+/api/update      - Update events
 /api/arcanos     - Core ARCANOS functionality
 /api/memory      - Memory management with JSON responses
 /api/sim         - Simulation scenarios
@@ -82,10 +86,12 @@ This:
 
 ### 4. Start Process
 
-Railway start command:
+Railway start command (configured in `railway.json` and `Procfile`):
 ```bash
 node --max-old-space-size=7168 dist/start-server.js
 ```
+
+**Note:** The backend is now consolidated in `src/` (source of truth). All API endpoints (`/api/ask`, `/api/vision`, `/api/transcribe`, `/api/update`) are available from the single backend.
 
 Memory configuration:
 - `7168MB` max old space for Railway production environment
