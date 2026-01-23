@@ -196,3 +196,11 @@ htmlcov/
 *.pem
 *.key
 !public.key
+
+# Personal notes and temporary files with hardcoded paths
+GITHUB_SYNC_INSTRUCTIONS.md
+PR_DRAFT*.md
+REFACTORING_COMMIT_MESSAGE.md
+REFACTORING_GITHUB_CONFIRMATION.md
+REFACTORING_ROLLBACK.md
+PR_BODY.md
