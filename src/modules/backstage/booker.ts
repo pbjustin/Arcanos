@@ -37,10 +37,26 @@ export interface RealResult extends MatchResultBase {
   probability: Record<string, string>;
 }
 
+/**
+ * Event data structure for backstage booking
+ * @confidence 1.0 - Well-defined event structure
+ */
+interface EventData {
+  [key: string]: unknown;
+}
+
+/**
+ * Storyline structure for wrestling narratives
+ * @confidence 0.9 - Dynamic storyline structure
+ */
+interface Storyline {
+  [key: string]: unknown;
+}
+
 // Internal in-memory stores
-const events: Array<{ id: string; data: any }> = [];
+const events: Array<{ id: string; data: EventData }> = [];
 let roster: Wrestler[] = [];
-const storylines: Array<any> = [];
+const storylines: Array<Storyline> = [];
 
 function formatJsonSnippet(value: unknown, maxLength = 220): string {
   if (value === null || value === undefined) {
@@ -164,8 +180,9 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
 
 /**
  * Books an event by storing the payload and returning an id.
+ * @confidence 1.0 - Type-safe event booking
  */
-export async function bookEvent(data: any): Promise<string> {
+export async function bookEvent(data: EventData): Promise<string> {
   const id = randomUUID();
   try {
     await query(
@@ -226,8 +243,9 @@ export async function updateRoster(wrestlers: Wrestler[]): Promise<Wrestler[]> {
 
 /**
  * Tracks storyline information by appending to the internal array.
+ * @confidence 1.0 - Type-safe storyline tracking
  */
-export async function trackStoryline(data: any): Promise<any[]> {
+export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
   try {
     await query('INSERT INTO backstage_story_beats (data, created_at) VALUES ($1, NOW())', [data]);
     const result = await query(

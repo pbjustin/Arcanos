@@ -350,14 +350,18 @@ router.post('/test-job', confirmGate, async (_, res) => {
     };
 
     // Update job status if database is available
-    try {
-      const { updateJob } = await import('../db.js');
-      jobRecord = await updateJob(jobRecord.id, 'completed', result);
-    } catch {
-      // Update mock record
-      jobRecord.status = 'completed';
-      (jobRecord as any).output = JSON.stringify(result);
-      (jobRecord as any).completed_at = new Date().toISOString();
+    if (jobRecord) {
+      try {
+        const { updateJob } = await import('../db.js');
+        jobRecord = await updateJob(jobRecord.id, 'completed', result);
+      } catch {
+        // Update mock record
+        if (jobRecord) {
+          jobRecord.status = 'completed';
+          jobRecord.output = JSON.stringify(result);
+          jobRecord.completed_at = new Date().toISOString();
+        }
+      }
     }
 
     await logExecution('sdk-interface', 'info', 'Test job completed via SDK', { jobRecord, result });
@@ -470,9 +474,41 @@ router.post('/init-all', confirmGate, async (_, res) => {
 /**
  * Full ARCANOS SDK system test according to problem statement
  */
+/**
+ * System test results structure
+ * @confidence 1.0 - Well-defined test structure
+ */
+interface SystemTestResults {
+  workers: unknown;
+  routes: Array<{
+    name: string;
+    active: boolean;
+    handler: string;
+    metadata: Record<string, unknown>;
+  }>;
+  scheduler: {
+    jobs: Array<{
+      name: string;
+      schedule: string;
+      route: string;
+    }>;
+  };
+  job?: {
+    id: string;
+    worker_id: string;
+    job_type: string;
+    job_data: Record<string, unknown>;
+  };
+  [key: string]: unknown;
+}
+
 router.post('/system-test', confirmGate, async (_, res) => {
   try {
-    const results: any = {};
+    const results: SystemTestResults = {
+      workers: null,
+      routes: [],
+      scheduler: { jobs: [] }
+    };
 
     // 1. Initialize 4 workers with specified environment
     const workerBootstrap = startWorkers();
@@ -534,13 +570,17 @@ router.post('/system-test', confirmGate, async (_, res) => {
     };
 
     // Update job status
-    try {
-      const { updateJob } = await import('../db.js');
-      jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
-    } catch {
-      jobRecord.status = 'completed';
-      (jobRecord as any).output = JSON.stringify(taskResult);
-      (jobRecord as any).completed_at = new Date().toISOString();
+    if (jobRecord) {
+      try {
+        const { updateJob } = await import('../db.js');
+        jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
+      } catch {
+        if (jobRecord) {
+          jobRecord.status = 'completed';
+          jobRecord.output = JSON.stringify(taskResult);
+          jobRecord.completed_at = new Date().toISOString();
+        }
+      }
     }
 
     // Verify expected result

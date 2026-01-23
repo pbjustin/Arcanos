@@ -231,12 +231,23 @@ function getSystemPrompt(): string {
 }
 
 /**
+ * System health status structure
+ * @confidence 0.9 - Health status may vary by component
+ */
+interface SystemHealth {
+  status?: string;
+  components?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
  * Enhanced system prompt that includes memory context and audit-safe constraints
+ * @confidence 1.0 - Type-safe prompt generation
  */
 function createEnhancedSystemPrompt(
   memoryContext: MemoryContext,
   auditConfig: AuditSafeConfig,
-  health: any
+  health: SystemHealth
 ): string {
   const systemPrompt = getSystemPrompt();
   const basePrompt = `${systemPrompt}
@@ -326,7 +337,7 @@ export async function runARCANOS(
   }
   
   // Create enhanced system prompt with memory context and audit-safe constraints
-  const enhancedSystemPrompt = createEnhancedSystemPrompt(memoryContext, auditConfig, health);
+  const enhancedSystemPrompt = createEnhancedSystemPrompt(memoryContext, auditConfig, health as unknown as SystemHealth);
   
   // Apply audit-safe constraints to user input
   const { userPrompt: auditSafeUserPrompt, auditFlags } = applyAuditSafeConstraints(

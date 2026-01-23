@@ -67,18 +67,47 @@ export function sendValidationError(
 }
 
 /**
+ * Standard error response payload structure
+ * @confidence 1.0 - Standardized error format
+ */
+export interface StandardErrorPayload {
+  error: string;
+  details?: string[];
+  timestamp: string;
+}
+
+/**
+ * Not found error response payload
+ * @confidence 1.0 - Standardized error format
+ */
+export interface NotFoundErrorPayload {
+  error: string;
+  timestamp: string;
+}
+
+/**
+ * Unauthorized error response payload
+ * @confidence 1.0 - Standardized error format
+ */
+export interface UnauthorizedErrorPayload {
+  error: string;
+  timestamp: string;
+}
+
+/**
  * Send a standardized server error response
  * 
  * @param res - Express response object
  * @param message - Error message
  * @param error - Optional error object for details
+ * @confidence 1.0 - Type-safe error response
  */
 export function sendServerError(
   res: Response,
   message: string,
   error?: Error
 ): void {
-  const response: any = {
+  const response: StandardErrorPayload = {
     error: message,
     details: error ? [error.message] : undefined,
     timestamp: new Date().toISOString()
@@ -92,12 +121,13 @@ export function sendServerError(
  * 
  * @param res - Express response object
  * @param resource - Name of the resource that was not found
+ * @confidence 1.0 - Type-safe error response
  */
 export function sendNotFoundError(
   res: Response,
   resource: string
 ): void {
-  const response: any = {
+  const response: NotFoundErrorPayload = {
     error: `${resource} not found`,
     timestamp: new Date().toISOString()
   };
@@ -110,12 +140,13 @@ export function sendNotFoundError(
  * 
  * @param res - Express response object
  * @param message - Optional custom message
+ * @confidence 1.0 - Type-safe error response
  */
 export function sendUnauthorizedError(
   res: Response,
   message: string = 'Unauthorized'
 ): void {
-  const response: any = {
+  const response: UnauthorizedErrorPayload = {
     error: message,
     timestamp: new Date().toISOString()
   };

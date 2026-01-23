@@ -149,7 +149,6 @@ wheels/
 # ARCANOS specific
 daemon-python/memories.json
 daemon-python/logs/
-backend-typescript/logs/
 logs/
 daemon-python/crash_reports/
 daemon-python/telemetry/
@@ -158,7 +157,6 @@ daemon-python/screenshots/
 *.db
 # Sensitive runtime artifacts
 daemon-python/.env
-backend-typescript/.env
 **/*.local
 **/.env.production
 **/secrets/
@@ -185,7 +183,6 @@ daemon-python/cache/
 *.rpm
 daemon-python/dist/
 daemon-python/build/
-backend-typescript/dist/
 # IDE and OS
 .vscode/settings.json
 .vscode/launch.json
@@ -199,3 +196,11 @@ htmlcov/
 *.pem
 *.key
 !public.key
+
+# Personal notes and temporary files with hardcoded paths
+GITHUB_SYNC_INSTRUCTIONS.md
+PR_DRAFT*.md
+REFACTORING_COMMIT_MESSAGE.md
+REFACTORING_GITHUB_CONFIRMATION.md
+REFACTORING_ROLLBACK.md
+PR_BODY.md
