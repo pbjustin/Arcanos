@@ -148,7 +148,7 @@ router.post(
   requireDaemonAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const { commandIds } = req.body;
-    const token = (req as any).daemonToken;
+    const token = req.daemonToken!;
     const instanceId = req.body.instanceId as string | undefined;
 
     if (!Array.isArray(commandIds) || commandIds.length === 0) {
