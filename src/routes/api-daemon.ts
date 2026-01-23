@@ -37,7 +37,7 @@ function requireDaemonAuth(req: Request, res: Response, next: NextFunction): voi
   }
 
   // Store token in request for later use
-  (req as any).daemonToken = token;
+  req.daemonToken = token;
   next();
 }
 
@@ -94,7 +94,7 @@ router.post(
     };
 
     // Use token + instanceId as key to support multiple daemons with same token
-    const token = (req as any).daemonToken;
+    const token = req.daemonToken!;
     const key = `${token}:${instanceId}`;
     daemonHeartbeats.set(key, heartbeat);
 
@@ -113,7 +113,7 @@ router.get(
   '/api/daemon/commands',
   requireDaemonAuth,
   asyncHandler(async (req: Request, res: Response) => {
-    const token = (req as any).daemonToken;
+    const token = req.daemonToken!;
     const instanceId = req.query.instance_id as string | undefined;
 
     if (!instanceId) {
@@ -170,8 +170,10 @@ router.post(
     const commands = daemonCommands.get(key) || [];
     let acknowledgedCount = 0;
 
+    // Use Map for O(1) lookups instead of O(N*M) with find()
+    const commandMap = new Map(commands.map(c => [c.id, c]));
     for (const cmdId of commandIds) {
-      const cmd = commands.find(c => c.id === cmdId);
+      const cmd = commandMap.get(cmdId);
       if (cmd && !cmd.acknowledged) {
         cmd.acknowledged = true;
         acknowledgedCount++;
@@ -247,7 +249,7 @@ router.post(
 
     // Store update event (in production, this should be persisted to database)
     // For now, we just acknowledge receipt
-    const token = (req as any).daemonToken;
+    const token = req.daemonToken!;
     const instanceId = (req.body.metadata?.instanceId as string) || 'unknown';
 
     // Log the update event

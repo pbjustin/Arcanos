@@ -83,7 +83,7 @@ The daemon detects user intent from natural language input:
 - **Purpose**: Maintain presence, report status, replace `ping`/`get_status`/`get_stats`
 
 ### Command Polling
-- **Interval**: 10 seconds (configurable)
+- **Interval**: 10 seconds (hardcoded, not configurable via environment variable)
 - **Flow**: Poll `GET /api/daemon/commands` → process commands → `POST /api/daemon/commands/ack`
 - **Commands**: Reuse existing `_handle_ipc_command` logic (ping, get_status, get_stats, notify)
 

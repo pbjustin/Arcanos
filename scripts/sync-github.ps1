@@ -50,11 +50,12 @@ while ($true) {
             Write-Output "($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) Already up-to-date."
         } elseif ($local -eq $base) {
             Write-Output "($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) New changes detected. Pulling from remote..."
-            git pull origin $Branch 2>&1 | Out-Null
+            $pullResult = git pull origin $Branch 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Output "($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) Sync complete."
             } else {
                 Write-Warning "($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) Pull failed. Check for conflicts or local changes."
+                Write-Warning "Git Output: $pullResult"
             }
         } else {
             Write-Warning "($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) Local and remote have diverged. Manual intervention required."
