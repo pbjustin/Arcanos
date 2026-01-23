@@ -160,7 +160,7 @@ const requestCounts = new Map<string, { count: number; resetTime: number }>();
 export function createRateLimitMiddleware(
   maxRequests: number = 100,
   windowMs: number = 15 * 60 * 1000 // 15 minutes
-) {
+): (req: Request, res: Response, next: NextFunction) => void {
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = req.ip || req.connection.remoteAddress || 'unknown';
     const now = Date.now();
@@ -184,7 +184,7 @@ export function createRateLimitMiddleware(
     requestCounts.set(ip, current);
     
     if (current.count > maxRequests) {
-      res.status(429).json({
+      void res.status(429).json({
         error: 'Rate limit exceeded',
         message: `Too many requests from ${ip}. Try again later.`,
         retryAfter: Math.ceil((current.resetTime - now) / 1000)
