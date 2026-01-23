@@ -1,7 +1,6 @@
 # Arcanos Backend
 
 > **Last Updated:** 2026-01-23 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
-> **Test PR**: Testing PR workflow fixes
 
 ## Overview
 
