@@ -73,8 +73,7 @@ router.post('/api/transcribe', transcribeValidation, async (req: Request<{}, Tra
       aiLogger.warn('OpenAI client not available for transcription request');
       return res.status(503).json({
         error: 'Service Unavailable',
-        message: 'OpenAI service is not configured',
-        timestamp: new Date().toISOString()
+        details: 'OpenAI service is not configured'
       });
     }
 
@@ -127,8 +126,7 @@ router.post('/api/transcribe', transcribeValidation, async (req: Request<{}, Tra
 
     return res.status(500).json({
       error: 'Internal Server Error',
-      message: 'Failed to process transcription request',
-      timestamp: new Date().toISOString()
+      details: 'Failed to process transcription request'
     });
   }
 });

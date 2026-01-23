@@ -318,14 +318,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
     };
 
     // Create job record in database
-    let jobRecord: {
-      id: string;
-      worker_id: string;
-      job_type: string;
-      status?: string;
-      input?: string;
-      created_at?: string;
-    } | null = null;
+    let jobRecord: any = null;
     try {
       jobRecord = await createJob('worker-1', 'test_job', jobData);
     } catch {
@@ -357,14 +350,18 @@ router.post('/test-job', confirmGate, async (_, res) => {
     };
 
     // Update job status if database is available
-    try {
-      const { updateJob } = await import('../db.js');
-      jobRecord = await updateJob(jobRecord.id, 'completed', result);
-    } catch {
-      // Update mock record
-      jobRecord.status = 'completed';
-      (jobRecord as any).output = JSON.stringify(result);
-      (jobRecord as any).completed_at = new Date().toISOString();
+    if (jobRecord) {
+      try {
+        const { updateJob } = await import('../db.js');
+        jobRecord = await updateJob(jobRecord.id, 'completed', result);
+      } catch {
+        // Update mock record
+        if (jobRecord) {
+          jobRecord.status = 'completed';
+          jobRecord.output = JSON.stringify(result);
+          jobRecord.completed_at = new Date().toISOString();
+        }
+      }
     }
 
     await logExecution('sdk-interface', 'info', 'Test job completed via SDK', { jobRecord, result });
@@ -540,12 +537,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     };
 
     // Create job record
-    let jobRecord: {
-      id: string;
-      worker_id: string;
-      job_type: string;
-      job_data: Record<string, unknown>;
-    } | null = null;
+    let jobRecord: any = null;
     try {
       const { createJob } = await import('../db.js');
       jobRecord = await createJob('worker-1', 'test_job', testJobData);
@@ -578,13 +570,17 @@ router.post('/system-test', confirmGate, async (_, res) => {
     };
 
     // Update job status
-    try {
-      const { updateJob } = await import('../db.js');
-      jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
-    } catch {
-      jobRecord.status = 'completed';
-      (jobRecord as any).output = JSON.stringify(taskResult);
-      (jobRecord as any).completed_at = new Date().toISOString();
+    if (jobRecord) {
+      try {
+        const { updateJob } = await import('../db.js');
+        jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
+      } catch {
+        if (jobRecord) {
+          jobRecord.status = 'completed';
+          jobRecord.output = JSON.stringify(taskResult);
+          jobRecord.completed_at = new Date().toISOString();
+        }
+      }
     }
 
     // Verify expected result

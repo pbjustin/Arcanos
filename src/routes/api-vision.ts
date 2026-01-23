@@ -169,8 +169,7 @@ router.post('/api/vision', visionValidation, async (req: Request<{}, VisionRespo
 
     return res.status(500).json({
       error: 'Internal Server Error',
-      message: 'Failed to process vision request',
-      timestamp: new Date().toISOString()
+      details: 'Failed to process vision request'
     });
   }
 });

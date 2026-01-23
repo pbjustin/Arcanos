@@ -20,7 +20,7 @@ export const buildResponseRequestPayload = ({
 }) => {
   const basePayload = prepareGPT5Request({
     model,
-    input: mapMessagesToResponseInput(messages),
+    messages: mapMessagesToResponseInput(messages) as any,
     ...tokenParams,
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options.top_p !== undefined ? { top_p: options.top_p } : {}),

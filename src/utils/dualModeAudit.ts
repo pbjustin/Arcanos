@@ -87,7 +87,7 @@ export async function dualModeAudit(
         exists: false,
         fallback_used: false,
         interference: false,
-        error: err?.message || String(err)
+        error: err instanceof Error ? err.message : String(err)
       };
     }
   }

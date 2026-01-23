@@ -131,7 +131,8 @@ export async function callOpenAI(
         index: 0,
         message: {
           role: 'assistant',
-          content: mockResult
+          content: mockResult,
+          refusal: null
         },
         finish_reason: 'stop'
       }],
@@ -247,18 +248,24 @@ async function makeOpenAIRequest(
 
       const tokenParams = getTokenParameter(model, tokenLimit);
       const requestPayload = buildCompletionRequestPayload(model, messages, tokenParams, options);
+      
+      // Ensure stream is explicitly false for non-streaming requests
+      const nonStreamingPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+        ...requestPayload,
+        stream: false
+      };
 
       logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(attempt, maxRetries, model));
 
       // REVIEW: OpenAI SDK types may not include custom headers in types, but runtime supports them
       // Confidence: 0.9 - SDK types are conservative, runtime accepts headers
-      const response = await client.chat.completions.create(requestPayload, {
+      const response = await client.chat.completions.create(nonStreamingPayload, {
         signal: controller.signal,
         // Add request ID for tracing
         headers: {
           [REQUEST_ID_HEADER]: crypto.randomUUID()
         }
-      } as ChatCompletionCreateParams);
+      });
 
       clearTimeout(timeout);
       const output = response.choices?.[0]?.message?.content?.trim() || NO_RESPONSE_CONTENT_FALLBACK;
@@ -441,15 +448,17 @@ export async function call_gpt5_strict(
 
     const messages = buildSystemPromptMessages(prompt, STRICT_ASSISTANT_PROMPT);
 
-    const requestPayload: ChatCompletionCreateParams = {
+    const requestPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
       model: gpt5Model,
       messages,
+      stream: false,
       ...kwargs
     };
 
     const response = await client.chat.completions.create(requestPayload);
 
     // Validate that the response actually came from GPT-5.1
+    // Response is guaranteed to be ChatCompletion (not Stream) because stream: false
     if (!response.model || response.model !== gpt5Model) {
       throw new Error(
         `GPT-5.1 call failed — no fallback allowed. Expected model '${gpt5Model}' but got '${response.model || 'undefined'}'.`

@@ -58,8 +58,7 @@ router.post('/api/update', updateValidation, async (req: Request<{}, UpdateRespo
     if (dataSize > MAX_DATA_SIZE) {
       return res.status(413).json({
         error: 'Payload Too Large',
-        message: `data exceeds maximum size of ${MAX_DATA_SIZE} bytes`,
-        timestamp: new Date().toISOString()
+        details: `data exceeds maximum size of ${MAX_DATA_SIZE} bytes`
       });
     }
 
@@ -90,8 +89,7 @@ router.post('/api/update', updateValidation, async (req: Request<{}, UpdateRespo
 
     return res.status(500).json({
       error: 'Internal Server Error',
-      message: 'Failed to process update request',
-      timestamp: new Date().toISOString()
+      details: 'Failed to process update request'
     });
   }
 });
