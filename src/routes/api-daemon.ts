@@ -203,7 +203,7 @@ export function queueDaemonCommand(
 ): string {
   const key = `${token}:${instanceId}`;
   const commands = daemonCommands.get(key) || [];
-  const commandId = `cmd_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const commandId = randomUUID();
   
   const command: DaemonCommand = {
     id: commandId,
