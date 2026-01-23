@@ -105,12 +105,38 @@ class BackendApiClient:
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
 
+    def request_ask_with_domain(
+        self,
+        message: str,
+        domain: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None
+    ) -> BackendResponse[BackendChatResult]:
+        """
+        Purpose: Call backend /api/ask with domain hint for natural language routing.
+        Inputs/Outputs: message, optional domain, optional metadata; returns BackendChatResult.
+        Edge cases: Returns structured error on auth, network, or parsing failures.
+        """
+        payload: dict[str, Any] = {
+            "message": message
+        }
+        if domain:
+            payload["domain"] = domain
+        if metadata:
+            payload["metadata"] = dict(metadata)
+
+        response = self._request_json("post", "/api/ask", payload)
+        if not response.ok or not response.value:
+            return BackendResponse(ok=False, error=response.error)
+
+        return self._parse_chat_response(response.value)
+
     def request_chat_completion(
         self,
         messages: Sequence[Mapping[str, str]],
         temperature: Optional[float] = None,
         model: Optional[str] = None,
-        stream: bool = False
+        stream: bool = False,
+        metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendChatResult]:
         """
         Purpose: Call backend /api/ask with conversation messages.
@@ -127,6 +153,9 @@ class BackendApiClient:
         if model:
             # //audit assumption: model override optional; risk: invalid model; invariant: include when provided; strategy: conditional field.
             payload["model"] = model
+        if metadata:
+            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
+            payload["metadata"] = dict(metadata)
 
         response = self._request_json("post", "/api/ask", payload)
         if not response.ok or not response.value:
@@ -141,7 +170,8 @@ class BackendApiClient:
         prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         model: Optional[str] = None,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendVisionResult]:
         """
         Purpose: Call backend /api/vision to analyze an image.
@@ -163,6 +193,9 @@ class BackendApiClient:
         if max_tokens is not None:
             # //audit assumption: max tokens optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
             payload["maxTokens"] = max_tokens
+        if metadata:
+            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
+            payload["metadata"] = dict(metadata)
 
         response = self._request_json("post", "/api/vision", payload)
         if not response.ok or not response.value:
@@ -176,7 +209,8 @@ class BackendApiClient:
         audio_base64: str,
         filename: Optional[str] = None,
         model: Optional[str] = None,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendTranscriptionResult]:
         """
         Purpose: Call backend /api/transcribe to transcribe audio.
@@ -195,6 +229,9 @@ class BackendApiClient:
         if language:
             # //audit assumption: language optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
             payload["language"] = language
+        if metadata:
+            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
+            payload["metadata"] = dict(metadata)
 
         response = self._request_json("post", "/api/transcribe", payload)
         if not response.ok or not response.value:
@@ -206,17 +243,21 @@ class BackendApiClient:
     def submit_update_event(
         self,
         update_type: str,
-        data: Mapping[str, Any]
+        data: Mapping[str, Any],
+        metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[bool]:
         """
         Purpose: Call backend /api/update to record a structured update event.
         Inputs/Outputs: update_type string and data mapping; returns bool success.
         Edge cases: Returns structured error on auth, network, or parsing failures.
         """
-        payload = {
+        payload: dict[str, Any] = {
             "updateType": update_type,
             "data": dict(data)
         }
+        if metadata:
+            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
+            payload["metadata"] = dict(metadata)
 
         response = self._request_json("post", "/api/update", payload)
         if not response.ok or not response.value:

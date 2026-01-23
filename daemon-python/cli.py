@@ -5,6 +5,7 @@ Human-like AI assistant with rich terminal UI.
 
 import sys
 import base64
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional, Any, Mapping
@@ -25,8 +26,10 @@ from vision import VisionSystem
 from audio import AudioSystem
 from terminal import TerminalController
 from rate_limiter import RateLimiter
-from error_handler import handle_errors, ErrorHandler
+from error_handler import handle_errors, ErrorHandler, logger as error_logger
 from windows_integration import WindowsIntegration
+from ipc_client import IpcClient, IpcClientInitError, IpcCommandRequest, IpcCommandResponse
+from daemon_service import DaemonService, DaemonCommand
 
 try:
     from push_to_talk import AdvancedPushToTalkManager
@@ -56,16 +59,21 @@ class ArcanosCLI:
     def __init__(self):
         # Initialize console
         self.console = Console()
+        self.start_time = time.time()
 
         # Initialize components
         self.memory = Memory()
         self.rate_limiter = RateLimiter()
 
+        # Generate or retrieve persistent instance ID
+        self.instance_id = self._get_or_create_instance_id()
+        self.client_id = "arcanos-daemon"  # Static client identifier
+
         try:
             self.gpt_client = GPTClient()
         except ValueError as e:
             self.console.print(f"[red]❌ {e}[/red]")
-            self.console.print("\n[yellow]💡 Add your API key to daemon-python/.env[/yellow]")
+            self.console.print(f"\n[yellow]💡 Add your API key to {Config.ENV_PATH}[/yellow]")
             sys.exit(1)
 
         self.vision = VisionSystem(self.gpt_client)
@@ -82,6 +90,39 @@ class ArcanosCLI:
                 timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
             )
 
+        self.ipc_client: Optional[IpcClient] = None
+        if Config.BACKEND_URL and Config.IPC_ENABLED:
+            # //audit assumption: IPC enabled when backend URL present; risk: missing dependencies; invariant: IPC client started; strategy: init with guard.
+            try:
+                self.ipc_client = IpcClient(
+                    base_url=Config.BACKEND_URL,
+                    token_provider=lambda: Config.BACKEND_TOKEN,
+                    ws_path=Config.BACKEND_WS_PATH,
+                    heartbeat_interval_seconds=Config.IPC_HEARTBEAT_INTERVAL_SECONDS,
+                    reconnect_max_seconds=Config.IPC_RECONNECT_MAX_SECONDS,
+                    command_handler=self._handle_ipc_command,
+                    ws_url=Config.BACKEND_WS_URL,
+                    logger_instance=error_logger
+                )
+                self.ipc_client.start()
+            except IpcClientInitError as exc:
+                # //audit assumption: IPC can fail to init; risk: missing bridge; invariant: CLI continues; strategy: warn and continue.
+                self.console.print(f"[yellow]IPC disabled: {exc}[/yellow]")
+
+        # Daemon service for HTTP-based heartbeat and command polling (default mode)
+        self.daemon_service: Optional[DaemonService] = None
+        if Config.BACKEND_URL and self.backend_client:
+            # Start daemon service for HTTP mode (always when backend is configured)
+            self.daemon_service = DaemonService(
+                backend_client=self.backend_client,
+                instance_id=self.instance_id,
+                client_id=self.client_id,
+                command_handler=self._handle_daemon_command,
+                start_time=self.start_time
+            )
+            self.daemon_service.start()
+            self.console.print(f"[green]✓[/green] Daemon service started (HTTP mode)")
+
         # PTT Manager
         self.ptt_manager = None
         if PTT_AVAILABLE:
@@ -94,6 +135,16 @@ class ArcanosCLI:
         self.system_prompt = """You are ARCANOS, a helpful and friendly AI assistant with a warm personality.
 You can see screens, hear voice, execute terminal commands, and have natural conversations.
 Keep responses concise but friendly. Use emojis occasionally. Be helpful and proactive."""
+
+    def _get_or_create_instance_id(self) -> str:
+        """Get or create persistent instance ID for this daemon installation"""
+        instance_id = self.memory.get_setting("instance_id")
+        if not instance_id:
+            # Generate new UUID
+            instance_id = str(uuid.uuid4())
+            self.memory.set_setting("instance_id", instance_id)
+            self.console.print(f"[green]✓[/green] Generated daemon instance ID: {instance_id[:8]}...")
+        return instance_id
 
     def show_welcome(self) -> None:
         """Display welcome message"""
@@ -192,6 +243,85 @@ Type **help** for available commands or just start chatting naturally.
 
         return response
 
+    def _handle_daemon_command(self, command: DaemonCommand) -> None:
+        """
+        Handle daemon command from HTTP polling.
+        Adapts DaemonCommand to IpcCommandRequest format and reuses existing handler.
+        """
+        # Convert DaemonCommand to IpcCommandRequest format
+        request = IpcCommandRequest(
+            command_id=command.id,
+            name=command.name,
+            payload=command.payload,
+            issued_at=command.issuedAt
+        )
+        # Process using existing IPC command handler
+        response = self._handle_ipc_command(request)
+        # Note: DaemonService handles acknowledgment automatically
+
+    def _handle_ipc_command(self, request: IpcCommandRequest) -> IpcCommandResponse:
+        """
+        Purpose: Handle IPC commands from backend.
+        Inputs/Outputs: IpcCommandRequest; returns IpcCommandResponse with optional payload.
+        Edge cases: Unsupported commands return ok=False with error message.
+        """
+        if request.name == "ping":
+            # //audit assumption: ping should always succeed; risk: none; invariant: ok response; strategy: return pong payload.
+            return IpcCommandResponse(ok=True, payload={"message": "pong"})
+
+        if request.name == "get_status":
+            # //audit assumption: status can be shared; risk: information leakage; invariant: summary only; strategy: return minimal status.
+            uptime_seconds = int(time.time() - self.start_time)
+            return IpcCommandResponse(
+                ok=True,
+                payload={
+                    "version": Config.VERSION,
+                    "appName": Config.APP_NAME,
+                    "routingMode": Config.BACKEND_ROUTING_MODE,
+                    "uptimeSeconds": uptime_seconds
+                }
+            )
+
+        if request.name == "get_stats":
+            # //audit assumption: stats can be shared; risk: sensitive data leakage; invariant: summary only; strategy: return stats.
+            return IpcCommandResponse(
+                ok=True,
+                payload={
+                    "memory": self.memory.get_statistics(),
+                    "rate": self.rate_limiter.get_usage_stats()
+                }
+            )
+
+        if request.name == "notify":
+            # //audit assumption: notify payload may include message; risk: invalid payload; invariant: string message; strategy: validate.
+            message = None
+            if request.payload and isinstance(request.payload.get("message"), str):
+                message = request.payload.get("message")
+            if message:
+                self.console.print(f"[cyan]Backend message:[/cyan] {message}")
+                return IpcCommandResponse(ok=True)
+            return IpcCommandResponse(ok=False, error="notify command missing message")
+
+        # //audit assumption: unsupported commands should be rejected; risk: unexpected behavior; invariant: error returned; strategy: reject.
+        return IpcCommandResponse(ok=False, error=f"Unsupported command: {request.name}")
+
+    def _stop_daemon_service(self) -> None:
+        """Stop daemon service threads"""
+        if self.daemon_service:
+            self.daemon_service.stop()
+            self.daemon_service = None
+
+    def _stop_ipc_client(self) -> None:
+        """
+        Purpose: Stop IPC client gracefully.
+        Inputs/Outputs: none; stops IPC background thread if running.
+        Edge cases: Safe to call when IPC client is not configured.
+        """
+        if not self.ipc_client:
+            # //audit assumption: IPC client optional; risk: None access; invariant: no-op when missing; strategy: return.
+            return
+        self.ipc_client.stop()
+
     def _perform_local_conversation(self, message: str) -> Optional[_ConversationResult]:
         history = self.memory.get_recent_conversations(limit=5)
         response, tokens, cost = self.gpt_client.ask(
@@ -212,7 +342,7 @@ Type **help** for available commands or just start chatting naturally.
             source="local"
         )
 
-    def _perform_backend_conversation(self, message: str) -> Optional[_ConversationResult]:
+    def _perform_backend_conversation(self, message: str, domain: Optional[str] = None) -> Optional[_ConversationResult]:
         if not self.backend_client:
             # //audit assumption: backend client optional; risk: missing backend; invariant: return None; strategy: warn and return None.
             self.console.print("[yellow]Backend is not configured.[/yellow]")
@@ -229,14 +359,45 @@ Type **help** for available commands or just start chatting naturally.
             max_history=history_limit
         )
 
-        response = self._request_with_auth_retry(
-            lambda: self.backend_client.request_chat_completion(
-                messages=messages,
-                temperature=Config.TEMPERATURE,
-                model=Config.BACKEND_CHAT_MODEL or None
-            ),
-            "chat"
-        )
+        # Include daemon metadata
+        metadata = {
+            "source": "daemon",
+            "client": self.client_id,
+            "instanceId": self.instance_id
+        }
+
+        # Use /api/ask endpoint with domain hint for natural language routing
+        # The backend dispatcher will route to modules based on domain
+        if domain:
+            # Call /api/ask with domain hint for module routing
+            response = self._request_with_auth_retry(
+                lambda: self.backend_client.request_ask_with_domain(
+                    message=message,
+                    domain=domain,
+                    metadata=metadata
+                ),
+                "chat"
+            )
+            if response.ok and response.value:
+                return _ConversationResult(
+                    response_text=response.value.response_text,
+                    tokens_used=response.value.tokens_used,
+                    cost_usd=response.value.cost_usd,
+                    model=response.value.model,
+                    source="backend"
+                )
+            return None
+        else:
+            # Standard chat completion (no domain routing)
+            response = self._request_with_auth_retry(
+                lambda: self.backend_client.request_chat_completion(
+                    messages=messages,
+                    temperature=Config.TEMPERATURE,
+                    model=Config.BACKEND_CHAT_MODEL or None,
+                    metadata=metadata
+                ),
+                "chat"
+            )
 
         if not response.ok or not response.value:
             # //audit assumption: backend response required; risk: backend failure; invariant: response ok; strategy: return None.
@@ -272,11 +433,19 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: base64 required; risk: missing audio; invariant: base64 available; strategy: return None.
             return None
 
+        # Include daemon metadata
+        metadata = {
+            "source": "daemon",
+            "client": self.client_id,
+            "instanceId": self.instance_id
+        }
+
         response = self._request_with_auth_retry(
             lambda: self.backend_client.request_transcription(
                 audio_base64=audio_base64,
                 filename="speech.wav",
-                model=Config.BACKEND_TRANSCRIBE_MODEL or None
+                model=Config.BACKEND_TRANSCRIBE_MODEL or None,
+                metadata=metadata
             ),
             "transcription"
         )
@@ -309,12 +478,20 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: image capture required; risk: missing image; invariant: base64 available; strategy: return None.
             return None
 
+        # Include daemon metadata
+        metadata = {
+            "source": "daemon",
+            "client": self.client_id,
+            "instanceId": self.instance_id
+        }
+
         response = self._request_with_auth_retry(
             lambda: self.backend_client.request_vision_analysis(
                 image_base64=image_base64,
                 prompt=default_prompt,
                 temperature=Config.TEMPERATURE,
                 model=Config.BACKEND_VISION_MODEL or None,
+                metadata=metadata,
                 max_tokens=Config.MAX_TOKENS
             ),
             f"vision ({mode_label})"
@@ -340,13 +517,62 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: backend client optional; risk: missing backend; invariant: skip update; strategy: return.
             return
 
+        # Include daemon metadata
+        metadata = {
+            "source": "daemon",
+            "client": self.client_id,
+            "instanceId": self.instance_id
+        }
+
+        # When IPC is disabled (default), always use REST
+        # When IPC is enabled, try IPC first but fall back to REST
+        if Config.IPC_ENABLED and self.ipc_client and self.ipc_client.is_connected():
+            # //audit assumption: IPC preferred when enabled and connected; risk: IPC failure; invariant: fall back to REST; strategy: try IPC first.
+            ipc_sent = self.ipc_client.send_event(
+                update_type,
+                {"data": dict(data)},
+                source="daemon"
+            )
+            if ipc_sent:
+                return
+
+        # Use REST for updates (always when IPC disabled, fallback when IPC enabled)
         response = self._request_with_auth_retry(
-            lambda: self.backend_client.submit_update_event(update_type, data),
+            lambda: self.backend_client.submit_update_event(
+                update_type=update_type,
+                data=data,
+                metadata=metadata
+            ),
             "update"
         )
         if response.ok:
             # //audit assumption: update succeeded; risk: none; invariant: no action needed; strategy: return.
             return
+
+    def _detect_domain_intent(self, message: str) -> Optional[str]:
+        """
+        Detect domain intent from user message for module routing.
+        Returns domain hint (e.g., "backstage:booker") or None for general conversation.
+        """
+        message_lower = message.lower()
+
+        # Simple keyword-based intent detection
+        # Can be enhanced with AI-based classification later
+        domain_keywords = {
+            "backstage:booker": ["book", "booking", "match", "wrestling", "wwe", "aew", "wrestler", "storyline", "event"],
+            "backstage": ["book", "booking", "match", "wrestling", "wwe", "aew"],
+            "tutor": ["tutor", "teach", "learn", "lesson", "education", "study"],
+            "arcanos:tutor": ["tutor", "teach", "learn", "lesson"],
+            "gaming": ["game", "gaming", "play", "player"],
+            "arcanos:gaming": ["game", "gaming"],
+            "research": ["research", "study", "analyze", "investigate"]
+        }
+
+        for domain, keywords in domain_keywords.items():
+            if any(keyword in message_lower for keyword in keywords):
+                return domain
+
+        return None
 
     @handle_errors("processing user input")
     def handle_ask(self, message: str, route_override: Optional[str] = None) -> None:
@@ -375,13 +601,16 @@ Type **help** for available commands or just start chatting naturally.
                 used_prefix=None
             )
 
+        # Detect domain intent for natural language routing
+        domain = self._detect_domain_intent(message) if route_decision.route == "backend" else None
+
         result: Optional[_ConversationResult] = None
 
         # Show thinking indicator
         with self.console.status("Thinking...", spinner="dots"):
             if route_decision.route == "backend":
                 # //audit assumption: backend route requested; risk: backend unavailable; invariant: backend attempt; strategy: call backend.
-                result = self._perform_backend_conversation(route_decision.normalized_message)
+                result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain)
                 if result is None and Config.BACKEND_FALLBACK_TO_LOCAL:
                     # //audit assumption: fallback allowed; risk: user expects backend; invariant: local fallback; strategy: retry locally.
                     self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
@@ -709,57 +938,62 @@ You: ptt
     def run(self) -> None:
         """Main CLI loop"""
         self.show_welcome()
+        try:
 
-        while True:
-            try:
-                # Get user input
-                user_input = input("\n💬 You: ").strip()
+            while True:
+                try:
+                    # Get user input
+                    user_input = input("\n💬 You: ").strip()
 
-                if not user_input:
-                    continue
+                    if not user_input:
+                        continue
 
-                # Parse command
-                parts = user_input.split(maxsplit=1)
-                command = parts[0].lower()
-                args = parts[1] if len(parts) > 1 else ""
+                    # Parse command
+                    parts = user_input.split(maxsplit=1)
+                    command = parts[0].lower()
+                    args = parts[1] if len(parts) > 1 else ""
 
-                # Handle commands
-                if command in ["exit", "quit", "bye"]:
-                    self.console.print("[cyan]👋 Goodbye![/cyan]")
-                    break
-                elif command == "help":
-                    self.handle_help()
-                elif command in ["deep", "backend"]:
-                    # //audit assumption: deep command signals backend routing; risk: missing prompt; invariant: args present; strategy: validate args.
-                    if not args:
-                        self.console.print("[red]No prompt provided for backend request.[/red]")
+                    # Handle commands
+                    if command in ["exit", "quit", "bye"]:
+                        self.console.print("[cyan]👋 Goodbye![/cyan]")
+                        break
+                    elif command == "help":
+                        self.handle_help()
+                    elif command in ["deep", "backend"]:
+                        # //audit assumption: deep command signals backend routing; risk: missing prompt; invariant: args present; strategy: validate args.
+                        if not args:
+                            self.console.print("[red]No prompt provided for backend request.[/red]")
+                        else:
+                            self.handle_ask(args, route_override="backend")
+                    elif command == "see":
+                        self.handle_see(args.split())
+                    elif command == "voice":
+                        self.handle_voice(args.split())
+                    elif command == "ptt":
+                        self.handle_ptt()
+                    elif command == "run":
+                        self.handle_run(args)
+                    elif command == "stats":
+                        self.handle_stats()
+                    elif command == "clear":
+                        self.handle_clear()
+                    elif command == "reset":
+                        self.handle_reset()
                     else:
-                        self.handle_ask(args, route_override="backend")
-                elif command == "see":
-                    self.handle_see(args.split())
-                elif command == "voice":
-                    self.handle_voice(args.split())
-                elif command == "ptt":
-                    self.handle_ptt()
-                elif command == "run":
-                    self.handle_run(args)
-                elif command == "stats":
-                    self.handle_stats()
-                elif command == "clear":
-                    self.handle_clear()
-                elif command == "reset":
-                    self.handle_reset()
-                else:
-                    # Natural conversation
-                    self.handle_ask(user_input)
+                        # Natural conversation
+                        self.handle_ask(user_input)
 
-            except KeyboardInterrupt:
-                self.console.print("\n[cyan]👋 Goodbye![/cyan]")
-                break
-            except Exception as e:
-                error_msg = ErrorHandler.handle_exception(e, "main loop")
-                self.console.print(f"[red]{error_msg}[/red]")
+                except KeyboardInterrupt:
+                    self.console.print("\n[cyan]👋 Goodbye![/cyan]")
+                    break
+                except Exception as e:
+                    error_msg = ErrorHandler.handle_exception(e, "main loop")
+                    self.console.print(f"[red]{error_msg}[/red]")
 
+
+        finally:
+            self._stop_daemon_service()
+            self._stop_ipc_client()
 
 # //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.
 if __name__ == "__main__":
