@@ -92,6 +92,97 @@ Response:
 }
 ```
 
+### `POST /api/ask`
+Standard chat completion endpoint. No confirmation required.
+
+**Request**
+```json
+{
+  "messages": [
+    { "role": "user", "content": "Hello, how are you?" }
+  ],
+  "temperature": 0.7,
+  "model": "gpt-4o",
+  "stream": false
+}
+```
+
+**Response**
+```json
+{
+  "response": "I'm doing well, thank you!",
+  "tokens": 15,
+  "cost": 0.000045,
+  "model": "gpt-4o"
+}
+```
+
+### `POST /api/vision`
+Image analysis endpoint using OpenAI vision models. No confirmation required.
+
+**Request**
+```json
+{
+  "imageBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "prompt": "What is in this image?",
+  "temperature": 0.7,
+  "model": "gpt-4o",
+  "maxTokens": 300
+}
+```
+
+**Response**
+```json
+{
+  "response": "This image contains...",
+  "tokens": 245,
+  "cost": 0.001225,
+  "model": "gpt-4o"
+}
+```
+
+### `POST /api/transcribe`
+Audio transcription endpoint using Whisper. No confirmation required.
+
+**Request**
+```json
+{
+  "audioBase64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=",
+  "filename": "audio.wav",
+  "model": "whisper-1",
+  "language": "en"
+}
+```
+
+**Response**
+```json
+{
+  "text": "Transcribed text from the audio",
+  "model": "whisper-1"
+}
+```
+
+### `POST /api/update`
+Update event endpoint for daemon synchronization. No confirmation required.
+
+**Request**
+```json
+{
+  "updateType": "preference",
+  "data": {
+    "setting": "value",
+    "timestamp": "2024-01-15T12:00:00Z"
+  }
+}
+```
+
+**Response**
+```json
+{
+  "success": true
+}
+```
+
 ### `POST /arcanos-pipeline`
 Executes the four-stage pipeline (ARCANOS → GPT‑3.5 sub-agent → GPT‑5 →
 ARCANOS). Requires confirmation.

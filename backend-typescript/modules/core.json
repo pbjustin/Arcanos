@@ -1,9 +1,0 @@
-{
-  "id": "core",
-  "name": "ARCANOS Core",
-  "version": "1.0.0",
-  "description": "Base module definitions for the ARCANOS backend.",
-  "entry": "core",
-  "permissions": [],
-  "enabled": true
-}

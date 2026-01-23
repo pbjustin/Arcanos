@@ -212,7 +212,6 @@ pytest ..\tests\test_daemon.py -v
 
 ### TypeScript tests:
 ```powershell
-cd backend-typescript
 npm test
 ```
 

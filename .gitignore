@@ -149,7 +149,6 @@ wheels/
 # ARCANOS specific
 daemon-python/memories.json
 daemon-python/logs/
-backend-typescript/logs/
 logs/
 daemon-python/crash_reports/
 daemon-python/telemetry/
@@ -158,7 +157,6 @@ daemon-python/screenshots/
 *.db
 # Sensitive runtime artifacts
 daemon-python/.env
-backend-typescript/.env
 **/*.local
 **/.env.production
 **/secrets/
@@ -185,7 +183,6 @@ daemon-python/cache/
 *.rpm
 daemon-python/dist/
 daemon-python/build/
-backend-typescript/dist/
 # IDE and OS
 .vscode/settings.json
 .vscode/launch.json

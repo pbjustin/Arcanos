@@ -927,27 +927,7 @@ async function auditWorkspace(root) {
     }
   }
 
-  const backendTsconfig = path.join(root, 'backend-typescript', 'tsconfig.json');
-  const backendTsconfigExists = await fs
-    .access(backendTsconfig)
-    .then(() => true)
-    .catch(() => false);
-
-  //audit Assumption: backend-typescript is a secondary project; risk: missing tsconfig; invariant: run when present; handling: check exists.
-  if (backendTsconfigExists) {
-    const backendUnused = runTscUnused(root, backendTsconfig);
-    unusedFindings.push(...backendUnused.findings);
-    if (backendUnused.blocked) {
-      unusedBlocked = true;
-      findings.push({
-        category: 'unused-check',
-        file: normalizeRelativePath(path.relative(root, backendTsconfig)),
-        line: 1,
-        message: 'Unused analysis blocked: tsc failed before reporting unused symbols.',
-        action: 'verify'
-      });
-    }
-  }
+  // backend-typescript removed - only check src/ (source of truth)
 
   findings.push(...unusedFindings);
 
@@ -995,18 +975,8 @@ async function auditWorkspace(root) {
   }
 
   const rootOpenAi = await getOpenAiMajor(path.join(root, 'package.json'));
-  const backendOpenAi = await getOpenAiMajor(path.join(root, 'backend-typescript', 'package.json'));
 
-  //audit Assumption: lower major version indicates legacy; risk: intentional divergence; invariant: log for review; handling: flag mismatch.
-  if (rootOpenAi !== null && backendOpenAi !== null && backendOpenAi < rootOpenAi) {
-    findings.push({
-      category: 'legacy-version',
-      file: 'backend-typescript/package.json',
-      line: 1,
-      message: `backend-typescript uses OpenAI v${backendOpenAi}, root uses v${rootOpenAi}.`,
-      action: 'verify'
-    });
-  }
+  // backend-typescript removed - only check root package.json (source of truth)
 
   //audit Assumption: daemon-python contains application logic; risk: missing source; invariant: log missing source; handling: record if no .py files.
   const daemonPythonPath = path.join(root, 'daemon-python');
