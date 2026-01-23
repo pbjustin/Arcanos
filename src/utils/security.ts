@@ -63,7 +63,7 @@ export function validateInput<T extends Record<string, unknown> | unknown[]>(
   const sanitized = (Array.isArray(data) ? [] : {}) as T;
 
   for (const [field, rule] of Object.entries(schema)) {
-    const value = data[field];
+    const value = (data as Record<string, unknown>)[field];
     
     // Check required fields
     if (rule.required && (value === undefined || value === null || value === '')) {
@@ -102,16 +102,16 @@ export function validateInput<T extends Record<string, unknown> | unknown[]>(
       }
       
       // Apply sanitization
-      sanitized[field] = rule.sanitize ? sanitizeInput(value) : value;
+      (sanitized as Record<string, unknown>)[field] = rule.sanitize ? sanitizeInput(value) : value;
     } else if (rule.type === 'array' && Array.isArray(value)) {
       // Array validation
-      sanitized[field] = value;
+      (sanitized as Record<string, unknown>)[field] = value;
     } else if (rule.type === 'object' && typeof value === 'object' && value !== null) {
       // Object validation
-      sanitized[field] = value;
+      (sanitized as Record<string, unknown>)[field] = value;
     } else {
       // Other types (number, boolean)
-      sanitized[field] = value;
+      (sanitized as Record<string, unknown>)[field] = value;
     }
     
     // Allowed values validation
@@ -142,7 +142,8 @@ export function createValidationMiddleware(schema: ValidationSchema) {
     
     if (!validation.isValid) {
       //audit Assumption: validation errors map directly to client payload; risk: leaking schema details; invariant: only include validation errors; handling: standardized payload.
-      return res.status(400).json(buildValidationErrorResponse(validation.errors));
+      res.status(400).json(buildValidationErrorResponse(validation.errors));
+      return;
     }
     
     // Replace request body with sanitized version
@@ -183,11 +184,12 @@ export function createRateLimitMiddleware(
     requestCounts.set(ip, current);
     
     if (current.count > maxRequests) {
-      return res.status(429).json({
+      res.status(429).json({
         error: 'Rate limit exceeded',
         message: `Too many requests from ${ip}. Try again later.`,
         retryAfter: Math.ceil((current.resetTime - now) / 1000)
       });
+      return;
     }
     
     // Add rate limit headers

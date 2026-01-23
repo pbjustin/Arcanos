@@ -9,16 +9,17 @@ import type { ChatCompletionCreateParams } from './types.js';
  */
 export function prepareGPT5Request(payload: ChatCompletionCreateParams): ChatCompletionCreateParams {
   if (payload.model && typeof payload.model === 'string' && payload.model.includes('gpt-5')) {
+    const gpt5Payload = payload as any;
     if (payload.max_tokens) {
-      payload.max_output_tokens = payload.max_tokens;
+      gpt5Payload.max_output_tokens = payload.max_tokens;
       delete payload.max_tokens;
     }
     if (payload.max_completion_tokens) {
-      payload.max_output_tokens = payload.max_completion_tokens;
+      gpt5Payload.max_output_tokens = payload.max_completion_tokens;
       delete payload.max_completion_tokens;
     }
-    if (!payload.max_output_tokens) {
-      payload.max_output_tokens = RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
+    if (!gpt5Payload.max_output_tokens) {
+      gpt5Payload.max_output_tokens = RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
     }
   }
   return payload;
@@ -34,13 +35,11 @@ export function buildReasoningRequestPayload(
 
   return prepareGPT5Request({
     model,
-    input: [
+    messages: [
       { role: 'system' as const, content: REASONING_SYSTEM_PROMPT },
       { role: 'user' as const, content: buildReasoningPrompt(originalPrompt, arcanosResult, context) }
     ],
-    text: { verbosity: 'medium' as const },
-    reasoning: { effort: 'low' as const },
-    ...tokenParams,
+    ...(tokenParams as any),
     temperature: REASONING_TEMPERATURE
-  });
+  } as any);
 }

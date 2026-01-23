@@ -213,10 +213,13 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
         for (const [key, group] of grouped.entries()) {
           try {
             const payload = group[0].payload;
-            const data = await openai.chat.completions.create(payload);
+            const data = await openai.chat.completions.create({
+              ...payload,
+              stream: false
+            } as any);
             responseCache.set(key, { timestamp: Date.now(), data });
 
-            for (const r of group) r.resolve(data);
+            for (const r of group) r.resolve(data as any);
 
             auditLogger.log?.("[AUDIT] Batched OpenAI call", {
               key,

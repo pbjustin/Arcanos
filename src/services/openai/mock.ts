@@ -71,7 +71,7 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): M
     activeModel: MOCK_RESPONSE_CONSTANTS.MODEL_NAME,
     fallbackFlag: false,
     gpt5Used: true,
-    routingStages: MOCK_RESPONSE_CONSTANTS.ROUTING_STAGES,
+    routingStages: [...MOCK_RESPONSE_CONSTANTS.ROUTING_STAGES],
     auditSafe: {
       mode: true,
       overrideUsed: input.toLowerCase().includes('override'),
