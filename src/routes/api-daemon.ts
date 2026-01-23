@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import { createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
