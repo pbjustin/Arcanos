@@ -23,6 +23,8 @@ datas = [
 ]
 
 # Hidden imports (packages not auto-detected)
+# Note: webrtcvad is optional and handled gracefully in code, so we don't include it here
+# to avoid build failures when it's not installed
 hiddenimports = [
     'openai',
     'requests',
@@ -37,7 +39,6 @@ hiddenimports = [
     'pyaudio',
     'pyttsx3',
     'pynput',
-    'webrtcvad',
     'win32com.client',
     'winshell',
     'pystray',
@@ -62,6 +63,7 @@ a = Analysis(
         'scipy',
         'IPython',
         'notebook',
+        'webrtcvad',  # Optional dependency, exclude to avoid hook processing issues
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
