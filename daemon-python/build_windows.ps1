@@ -25,7 +25,7 @@ if (Test-Path "build") {
 
 # Build using the spec file (handles dependencies better)
 Write-Host "Building daemon.exe using arcanos.spec..." -ForegroundColor Cyan
-pyinstaller --clean arcanos.spec
+python -m PyInstaller --clean arcanos.spec
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to build daemon.exe" -ForegroundColor Red
@@ -50,17 +50,19 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "`nVerifying build outputs..." -ForegroundColor Cyan
 if (Test-Path "dist\daemon.exe") {
     $size = (Get-Item "dist\daemon.exe").Length / 1MB
-    Write-Host "✓ daemon.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
+    $sizeRounded = [math]::Round($size, 2)
+    Write-Host "daemon.exe built successfully ($sizeRounded MB)" -ForegroundColor Green
 } else {
-    Write-Host "✗ daemon.exe not found" -ForegroundColor Red
+    Write-Host "daemon.exe not found" -ForegroundColor Red
     exit 1
 }
 
 if (Test-Path "dist\cli.exe") {
     $size = (Get-Item "dist\cli.exe").Length / 1MB
-    Write-Host "✓ cli.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
+    $sizeRounded = [math]::Round($size, 2)
+    Write-Host "cli.exe built successfully ($sizeRounded MB)" -ForegroundColor Green
 } else {
-    Write-Host "✗ cli.exe not found" -ForegroundColor Red
+    Write-Host "cli.exe not found" -ForegroundColor Red
     exit 1
 }
 
