@@ -8,7 +8,7 @@ The ARCANOS daemon uses an HTTP-based connection model that provides GPT-like in
 
 ### GPT-like Surface
 - **Same intake**: Uses `/api/ask`, `/api/vision`, `/api/transcribe` endpoints (same as Custom GPTs)
-- **HTTP-only**: No WebSocket by default (`IPC_ENABLED=false`)
+- **HTTP-only**: All communication via HTTP REST requests
 - **Same request shape**: Compatible with Custom GPT action format
 
 ### Elevated Privileges
@@ -18,15 +18,10 @@ The ARCANOS daemon uses an HTTP-based connection model that provides GPT-like in
 
 ## Connection Model
 
-### HTTP-Only (Default)
-- **Default mode**: `IPC_ENABLED=false`
+### HTTP-Only Architecture
 - **All communication**: HTTP REST requests
-- **Benefits**: Works everywhere, no WebSocket proxy issues, Railway-compatible
-
-### Optional IPC Mode
-- **Opt-in**: Set `IPC_ENABLED=true` for WebSocket IPC
-- **Use case**: Local development or environments where WebSocket works reliably
-- **Fallback**: Updates still fall back to REST if IPC fails
+- **Benefits**: Works everywhere, no WebSocket proxy issues, Railway-compatible, simpler codebase
+- **No WebSocket**: WebSocket IPC has been removed in favor of HTTP-only architecture
 
 ## Daemon Identification
 
@@ -78,14 +73,14 @@ The daemon detects user intent from natural language input:
 ## Heartbeat & Commands
 
 ### Heartbeat Loop
-- **Interval**: Configurable (default: 30 seconds, via `IPC_HEARTBEAT_INTERVAL_SECONDS`)
+- **Interval**: Configurable (default: 30 seconds, via `DAEMON_HEARTBEAT_INTERVAL_SECONDS`)
 - **Payload**: `clientId`, `instanceId`, `version`, `uptime`, `routingMode`, `stats`
 - **Purpose**: Maintain presence, report status, replace `ping`/`get_status`/`get_stats`
 
 ### Command Polling
 - **Interval**: 10 seconds (hardcoded, not configurable via environment variable)
 - **Flow**: Poll `GET /api/daemon/commands` → process commands → `POST /api/daemon/commands/ack`
-- **Commands**: Reuse existing `_handle_ipc_command` logic (ping, get_status, get_stats, notify)
+- **Commands**: Handles ping, get_status, get_stats, notify commands
 
 ## Authentication
 
@@ -121,8 +116,7 @@ This metadata is included in:
 ### Environment Variables
 - `BACKEND_URL` - Backend server URL (required for daemon service)
 - `BACKEND_TOKEN` - Bearer token for authentication (required)
-- `IPC_ENABLED` - Enable WebSocket IPC (default: `false`)
-- `IPC_HEARTBEAT_INTERVAL_SECONDS` - Heartbeat interval (default: `30`)
+- `DAEMON_HEARTBEAT_INTERVAL_SECONDS` - Heartbeat interval in seconds (default: `30`)
 
 ### Daemon Settings
 - Instance ID stored in daemon memory (persistent across restarts)
@@ -140,14 +134,15 @@ This metadata is included in:
 - Backend deployed on Railway
 - Daemon connects to Railway-deployed backend via HTTP
 
-## Benefits Over WebSocket IPC
+## Benefits of HTTP-Only Architecture
 
-| Feature | WebSocket IPC | HTTP REST |
-|---------|---------------|-----------|
-| **Reliability** | Proxy issues on Railway | Works everywhere |
-| **Simplicity** | Complex connection management | Simple request/response |
-| **Debugging** | Hard to debug | Standard HTTP debugging |
-| **Compatibility** | Requires WebSocket support | Universal HTTP support |
+| Feature | HTTP REST |
+|---------|-----------|
+| **Reliability** | Works everywhere, including Railway |
+| **Simplicity** | Simple request/response model |
+| **Debugging** | Standard HTTP debugging tools |
+| **Compatibility** | Universal HTTP support |
+| **Maintenance** | Single communication method, simpler codebase |
 
 ## Future Enhancements
 

@@ -28,7 +28,6 @@ from terminal import TerminalController
 from rate_limiter import RateLimiter
 from error_handler import handle_errors, ErrorHandler, logger as error_logger
 from windows_integration import WindowsIntegration
-from ipc_client import IpcClient, IpcClientInitError, IpcCommandRequest, IpcCommandResponse
 from daemon_service import DaemonService, DaemonCommand
 
 try:
@@ -90,26 +89,7 @@ class ArcanosCLI:
                 timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
             )
 
-        self.ipc_client: Optional[IpcClient] = None
-        if Config.BACKEND_URL and Config.IPC_ENABLED:
-            # //audit assumption: IPC enabled when backend URL present; risk: missing dependencies; invariant: IPC client started; strategy: init with guard.
-            try:
-                self.ipc_client = IpcClient(
-                    base_url=Config.BACKEND_URL,
-                    token_provider=lambda: Config.BACKEND_TOKEN,
-                    ws_path=Config.BACKEND_WS_PATH,
-                    heartbeat_interval_seconds=Config.IPC_HEARTBEAT_INTERVAL_SECONDS,
-                    reconnect_max_seconds=Config.IPC_RECONNECT_MAX_SECONDS,
-                    command_handler=self._handle_ipc_command,
-                    ws_url=Config.BACKEND_WS_URL,
-                    logger_instance=error_logger
-                )
-                self.ipc_client.start()
-            except IpcClientInitError as exc:
-                # //audit assumption: IPC can fail to init; risk: missing bridge; invariant: CLI continues; strategy: warn and continue.
-                self.console.print(f"[yellow]IPC disabled: {exc}[/yellow]")
-
-        # Daemon service for HTTP-based heartbeat and command polling (default mode)
+        # Daemon service for HTTP-based heartbeat and command polling
         self.daemon_service: Optional[DaemonService] = None
         if Config.BACKEND_URL and self.backend_client:
             # Start daemon service for HTTP mode (always when backend is configured)
@@ -246,81 +226,44 @@ Type **help** for available commands or just start chatting naturally.
     def _handle_daemon_command(self, command: DaemonCommand) -> None:
         """
         Handle daemon command from HTTP polling.
-        Adapts DaemonCommand to IpcCommandRequest format and reuses existing handler.
+        Processes commands from the backend (ping, get_status, get_stats, notify).
+        Note: DaemonService handles acknowledgment automatically.
         """
-        # Convert DaemonCommand to IpcCommandRequest format
-        request = IpcCommandRequest(
-            command_id=command.id,
-            name=command.name,
-            payload=command.payload,
-            issued_at=command.issuedAt
-        )
-        # Process using existing IPC command handler
-        response = self._handle_ipc_command(request)
-        # Note: DaemonService handles acknowledgment automatically
+        command_name = command.name
+        command_payload = command.payload or {}
 
-    def _handle_ipc_command(self, request: IpcCommandRequest) -> IpcCommandResponse:
-        """
-        Purpose: Handle IPC commands from backend.
-        Inputs/Outputs: IpcCommandRequest; returns IpcCommandResponse with optional payload.
-        Edge cases: Unsupported commands return ok=False with error message.
-        """
-        if request.name == "ping":
+        if command_name == "ping":
             # //audit assumption: ping should always succeed; risk: none; invariant: ok response; strategy: return pong payload.
-            return IpcCommandResponse(ok=True, payload={"message": "pong"})
+            # Ping commands are handled silently (no response needed)
+            pass
 
-        if request.name == "get_status":
+        elif command_name == "get_status":
             # //audit assumption: status can be shared; risk: information leakage; invariant: summary only; strategy: return minimal status.
-            uptime_seconds = int(time.time() - self.start_time)
-            return IpcCommandResponse(
-                ok=True,
-                payload={
-                    "version": Config.VERSION,
-                    "appName": Config.APP_NAME,
-                    "routingMode": Config.BACKEND_ROUTING_MODE,
-                    "uptimeSeconds": uptime_seconds
-                }
-            )
+            # Status is included in heartbeat, no action needed here
+            pass
 
-        if request.name == "get_stats":
+        elif command_name == "get_stats":
             # //audit assumption: stats can be shared; risk: sensitive data leakage; invariant: summary only; strategy: return stats.
-            return IpcCommandResponse(
-                ok=True,
-                payload={
-                    "memory": self.memory.get_statistics(),
-                    "rate": self.rate_limiter.get_usage_stats()
-                }
-            )
+            # Stats are included in heartbeat, no action needed here
+            pass
 
-        if request.name == "notify":
+        elif command_name == "notify":
             # //audit assumption: notify payload may include message; risk: invalid payload; invariant: string message; strategy: validate.
-            message = None
-            if request.payload and isinstance(request.payload.get("message"), str):
-                message = request.payload.get("message")
-            if message:
+            message = command_payload.get("message") if isinstance(command_payload, dict) else None
+            if message and isinstance(message, str):
                 self.console.print(f"[cyan]Backend message:[/cyan] {message}")
-                return IpcCommandResponse(ok=True)
-            return IpcCommandResponse(ok=False, error="notify command missing message")
+            else:
+                self.console.print("[yellow]Notify command missing message[/yellow]")
 
-        # //audit assumption: unsupported commands should be rejected; risk: unexpected behavior; invariant: error returned; strategy: reject.
-        return IpcCommandResponse(ok=False, error=f"Unsupported command: {request.name}")
+        else:
+            # //audit assumption: unsupported commands should be logged; risk: unexpected behavior; invariant: error logged; strategy: warn.
+            self.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
 
     def _stop_daemon_service(self) -> None:
         """Stop daemon service threads"""
         if self.daemon_service:
             self.daemon_service.stop()
             self.daemon_service = None
-
-    def _stop_ipc_client(self) -> None:
-        """
-        Purpose: Stop IPC client gracefully.
-        Inputs/Outputs: none; stops IPC background thread if running.
-        Edge cases: Safe to call when IPC client is not configured.
-        """
-        if not self.ipc_client:
-            # //audit assumption: IPC client optional; risk: None access; invariant: no-op when missing; strategy: return.
-            return
-        self.ipc_client.stop()
 
     def _perform_local_conversation(self, message: str) -> Optional[_ConversationResult]:
         history = self.memory.get_recent_conversations(limit=5)
@@ -524,19 +467,7 @@ Type **help** for available commands or just start chatting naturally.
             "instanceId": self.instance_id
         }
 
-        # When IPC is disabled (default), always use REST
-        # When IPC is enabled, try IPC first but fall back to REST
-        if Config.IPC_ENABLED and self.ipc_client and self.ipc_client.is_connected():
-            # //audit assumption: IPC preferred when enabled and connected; risk: IPC failure; invariant: fall back to REST; strategy: try IPC first.
-            ipc_sent = self.ipc_client.send_event(
-                update_type,
-                {"data": dict(data)},
-                source="daemon"
-            )
-            if ipc_sent:
-                return
-
-        # Use REST for updates (always when IPC disabled, fallback when IPC enabled)
+        # Use REST API for updates
         response = self._request_with_auth_retry(
             lambda: self.backend_client.submit_update_event(
                 update_type=update_type,
@@ -993,7 +924,6 @@ You: ptt
 
         finally:
             self._stop_daemon_service()
-            self._stop_ipc_client()
 
 # //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.
 if __name__ == "__main__":

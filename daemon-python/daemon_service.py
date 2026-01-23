@@ -1,8 +1,9 @@
 """
 Daemon service for HTTP-based heartbeat and command polling.
-Replaces WebSocket IPC with REST-based equivalents.
+Provides HTTP-only communication with the backend for daemon management.
 """
 
+import os
 import time
 import threading
 from typing import Optional, Callable, Any, Mapping
@@ -67,7 +68,7 @@ class DaemonService:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._command_poll_thread: Optional[threading.Thread] = None
         self._running = False
-        self._heartbeat_interval = Config.IPC_HEARTBEAT_INTERVAL_SECONDS
+        self._heartbeat_interval = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "30"))
         self._command_poll_interval = 10  # Poll commands every 10 seconds
 
     def start(self) -> None:
