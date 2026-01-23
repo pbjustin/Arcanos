@@ -337,7 +337,7 @@ export async function runARCANOS(
   }
   
   // Create enhanced system prompt with memory context and audit-safe constraints
-  const enhancedSystemPrompt = createEnhancedSystemPrompt(memoryContext, auditConfig, health as SystemHealth);
+  const enhancedSystemPrompt = createEnhancedSystemPrompt(memoryContext, auditConfig, health as unknown as SystemHealth);
   
   // Apply audit-safe constraints to user input
   const { userPrompt: auditSafeUserPrompt, auditFlags } = applyAuditSafeConstraints(

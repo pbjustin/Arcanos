@@ -36,7 +36,10 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
         sess.metadata?.topic,
         ...(sess.metadata?.tags || []),
         ...(Array.isArray(sess.conversations_core)
-          ? sess.conversations_core.map((m: { content?: string }) => m.content || '')
+          ? sess.conversations_core.map((m: unknown) => {
+              const msg = m as { content?: string };
+              return msg.content || '';
+            })
           : [])
       ].filter(Boolean);
       const metaVector = await createEmbedding(metaPieces.join(' '), openai);

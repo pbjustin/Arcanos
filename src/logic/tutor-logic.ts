@@ -64,7 +64,7 @@ async function runTutorPipeline(
       pipeline_trace: {
         intake: '[MOCK] Intake step not executed',
         reasoning: '[MOCK] Reasoning step not executed',
-        finalized: mock.result
+        finalized: mock.result || ''
       },
       model: {
         intake: 'mock',
@@ -141,7 +141,7 @@ async function runTutorPipeline(
       pipeline_trace: {
         intake: '[MOCK] Intake step not executed',
         reasoning: '[MOCK] Reasoning step not executed',
-        finalized: mock.result
+        finalized: mock.result || ''
       },
       model: {
         intake: 'mock',

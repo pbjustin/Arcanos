@@ -134,7 +134,8 @@ export async function callOpenAI(
           content: mockResult,
           refusal: null
         },
-        finish_reason: 'stop'
+        finish_reason: 'stop',
+        logprobs: null
       }],
       usage: {
         prompt_tokens: mock.meta.tokens.prompt_tokens,
@@ -452,7 +453,9 @@ export async function call_gpt5_strict(
       model: gpt5Model,
       messages,
       stream: false,
-      ...kwargs
+      ...(kwargs && typeof kwargs === 'object' ? Object.fromEntries(
+        Object.entries(kwargs).filter(([key]) => key !== 'stream')
+      ) : {})
     };
 
     const response = await client.chat.completions.create(requestPayload);
