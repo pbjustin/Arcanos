@@ -211,7 +211,7 @@ class Config:
     # ============================================
     # Version & Update checker
     # ============================================
-    VERSION: str = "1.1.2"
+    VERSION: str = "1.1.3"
     APP_NAME: str = "ARCANOS"
     # GitHub "owner/repo" for releases. If set, the app checks for updates on startup.
     GITHUB_RELEASES_REPO: Optional[str] = os.getenv("GITHUB_RELEASES_REPO") or None
