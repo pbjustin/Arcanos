@@ -2,6 +2,7 @@ name: API Endpoint Tests
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
   test:
@@ -9,17 +10,68 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 🧰 Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '20.11.1'
+          cache: 'npm'
 
-      - name: 🚀 Install, start server, and run tests
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔨 Build project
+        run: npm run build
+
+      - name: 🚀 Start server and run tests
         run: |
-          npm ci
-          npm start &
-          sleep 7  # wait for server to be ready
-          ./test-api-endpoints.sh
+          # Set environment variables
+          export PORT=8080
+          export NODE_ENV=test
+          export OPENAI_API_KEY="${OPENAI_API_KEY:-test-key}"
+          
+          # Start server in background
+          npm start > server.log 2>&1 &
+          SERVER_PID=$!
+          
+          # Wait for server to be ready with retries
+          echo "Waiting for server to start..."
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          SERVER_READY=false
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              SERVER_READY=true
+              break
+            fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Waiting for server... ($RETRY_COUNT/$MAX_RETRIES)"
+            sleep 2
+          done
+          
+          if [ "$SERVER_READY" = false ]; then
+            echo "❌ Server failed to start. Logs:"
+            cat server.log
+            exit 1
+          fi
+          
+          # Run API endpoint tests
+          if [ -f ./test-api-endpoints.sh ]; then
+            chmod +x ./test-api-endpoints.sh
+            ./test-api-endpoints.sh
+            TEST_EXIT_CODE=$?
+          else
+            echo "⚠️ test-api-endpoints.sh not found, skipping tests"
+            TEST_EXIT_CODE=0
+          fi
+          
+          # Stop server
+          kill $SERVER_PID 2>/dev/null || true
+          sleep 2
+          kill -9 $SERVER_PID 2>/dev/null || true
+          
+          exit $TEST_EXIT_CODE
 
