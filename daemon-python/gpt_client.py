@@ -11,6 +11,38 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from config import Config
 
 
+def _is_mock_api_key(api_key: str) -> bool:
+    normalized = api_key.strip().lower()
+    return normalized in {"mock", "mock-api-key", "test", "test-key", "fake"} or normalized.startswith("mock-")
+
+
+def _mock_return_for(kind: str):
+    """Return the appropriate mock value for ask/ask_stream/ask_with_vision/transcribe_audio when is_mock."""
+    if kind == "chat":
+        return ("Mock response: API key is in mock mode.", 0, 0.0)
+    if kind == "stream":
+        def _gen():
+            for c in ["Mock ", "response: ", "API key ", "is in ", "mock mode."]:
+                yield c
+        return _gen()
+    if kind == "vision":
+        return ("Mock vision response: API key is in mock mode.", 0, 0.0)
+    if kind == "transcribe":
+        return "Mock transcription: API key is in mock mode."
+    raise ValueError(f"Unknown mock kind: {kind}")
+
+
+def _no_network_if_mock(kind: str):
+    """Decorator: if self.is_mock, return mock value and skip network; else call the real method."""
+    def decorator(f):
+        def wrapper(self, *args, **kwargs):
+            if self.is_mock:
+                return _mock_return_for(kind)
+            return f(self, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
 class GPTClient:
     """OpenAI API client with built-in rate limiting and error handling"""
 
@@ -19,7 +51,8 @@ class GPTClient:
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
 
-        self.client = OpenAI(api_key=self.api_key)
+        self.is_mock = _is_mock_api_key(self.api_key)
+        self.client = None if self.is_mock else OpenAI(api_key=self.api_key)
         self._request_cache: Dict[str, tuple[str, float]] = {}
         self._cache_ttl = 300  # 5 minutes
 
@@ -28,6 +61,7 @@ class GPTClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10)
     )
+    @_no_network_if_mock("chat")
     def ask(
         self,
         user_message: str,
@@ -107,6 +141,7 @@ class GPTClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10)
     )
+    @_no_network_if_mock("stream")
     def ask_stream(
         self,
         user_message: str,
@@ -167,6 +202,7 @@ class GPTClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10)
     )
+    @_no_network_if_mock("vision")
     def ask_with_vision(
         self,
         user_message: str,
@@ -239,6 +275,7 @@ class GPTClient:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10)
     )
+    @_no_network_if_mock("transcribe")
     def transcribe_audio(self, audio_bytes: bytes, filename: str = "speech.wav") -> str:
         """
         Transcribe audio bytes using OpenAI

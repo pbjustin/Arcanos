@@ -157,19 +157,128 @@ def apply_runtime_env_updates(updates: Mapping[str, str]) -> None:
             setattr(Config, key, value)
 
 
-def persist_credentials(env_path: Path, updates: Mapping[str, str]) -> None:
+def _init_bootstrap_trace_path() -> Optional[Path]:
     """
-    Purpose: Persist credential updates to .env and runtime.
-    Inputs/Outputs: env_path and updates mapping; writes .env and sets runtime env.
-    Edge cases: Raises CredentialBootstrapError on write failure.
+    Purpose: Prepare a trace log path for bootstrap diagnostics.
+    Inputs/Outputs: None; returns log path if directory is available.
+    Edge cases: Returns None if directory creation fails.
     """
     try:
+        trace_dir = Config.CRASH_REPORTS_DIR
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        return trace_dir / f"credential_bootstrap_trace_{timestamp}.log"
+    except OSError:
+        # //audit assumption: trace setup can fail; risk: no trace; invariant: best-effort; strategy: return None.
+        return None
+
+
+def _write_bootstrap_trace(trace_path: Optional[Path], message: str) -> None:
+    """
+    Purpose: Append a line to the bootstrap trace log.
+    Inputs/Outputs: trace path and message; appends line with timestamp.
+    Edge cases: Best-effort write; ignores failures.
+    """
+    if not trace_path:
+        return
+
+    try:
+        with trace_path.open("a", encoding="utf-8") as handle:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            handle.write(f"[{timestamp}] {message}\n")
+    except OSError:
+        # //audit assumption: trace write can fail; risk: missing diagnostics; invariant: best-effort logging; strategy: ignore.
+        pass
+
+
+def ensure_env_parent_dir(env_path: Path) -> None:
+    """
+    Purpose: Ensure parent directory for env file exists.
+    Inputs/Outputs: env path; creates parent directory if needed.
+    Edge cases: Raises EnvFileError on mkdir failures.
+    """
+    try:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # //audit assumption: directory creation can fail; risk: no env persistence; invariant: error surfaced; strategy: raise EnvFileError.
+        raise EnvFileError(f"Failed to create env directory at {env_path.parent}: {exc}") from exc
+
+
+def write_bootstrap_crash_report(
+    error_message: str,
+    primary_env_path: Path,
+    fallback_env_path: Optional[Path]
+) -> Optional[Path]:
+    """
+    Purpose: Write a crash report when credential persistence fails.
+    Inputs/Outputs: error message and env paths; returns report path if written.
+    Edge cases: Best-effort write; returns None on failure.
+    """
+    try:
+        report_dir = Config.CRASH_REPORTS_DIR
+        report_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        report_path = report_dir / f"credential_bootstrap_{timestamp}.log"
+        report_lines = [
+            "Credential bootstrap persistence failure",
+            f"Primary env path: {primary_env_path}",
+            f"Fallback env path: {fallback_env_path or 'None'}",
+            f"Error: {error_message}",
+            f"Timestamp: {timestamp}"
+        ]
+        report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+        return report_path
+    except OSError:
+        # //audit assumption: crash report write can fail; risk: missing diagnostics; invariant: best-effort logging; strategy: return None.
+        return None
+
+
+def persist_credentials(
+    env_path: Path,
+    updates: Mapping[str, str],
+    fallback_env_path: Optional[Path] = None,
+    trace_path: Optional[Path] = None
+) -> Path:
+    """
+    Purpose: Persist credential updates to .env and runtime.
+    Inputs/Outputs: env_path, updates, fallback path; writes .env and sets runtime env.
+    Edge cases: Falls back to user-writable path or raises CredentialBootstrapError.
+    """
+    try:
+        _write_bootstrap_trace(trace_path, f"Persisting credentials to {env_path}")
+        ensure_env_parent_dir(env_path)
         upsert_env_values(env_path, updates)
     except EnvFileError as exc:
-        # //audit assumption: env write can fail; risk: credentials not saved; invariant: error surfaced; strategy: raise.
-        raise CredentialBootstrapError(str(exc)) from exc
+        # //audit assumption: env write can fail; risk: credentials not saved; invariant: error surfaced; strategy: attempt fallback.
+        _write_bootstrap_trace(trace_path, f"Primary env write failed: {exc}")
+        report_path = write_bootstrap_crash_report(str(exc), env_path, fallback_env_path)
+        if not fallback_env_path:
+            raise CredentialBootstrapError(str(exc)) from exc
+
+        try:
+            _write_bootstrap_trace(trace_path, f"Persisting credentials to fallback {fallback_env_path}")
+            ensure_env_parent_dir(fallback_env_path)
+            upsert_env_values(fallback_env_path, updates)
+        except EnvFileError as fallback_exc:
+            # //audit assumption: fallback can fail; risk: no persistence; invariant: error surfaced; strategy: raise with details.
+            _write_bootstrap_trace(trace_path, f"Fallback env write failed: {fallback_exc}")
+            write_bootstrap_crash_report(
+                f"Primary error: {exc}\nFallback error: {fallback_exc}",
+                env_path,
+                fallback_env_path
+            )
+            raise CredentialBootstrapError(
+                f"Failed to write env file at {env_path} and fallback {fallback_env_path}: {fallback_exc}"
+            ) from fallback_exc
+        else:
+            if report_path:
+                print(f"Saved crash report to: {report_path}")
+            print(f"Saved credentials to fallback env file: {fallback_env_path}")
+            env_path = fallback_env_path
 
     apply_runtime_env_updates(updates)
+    _write_bootstrap_trace(trace_path, f"Credentials persisted successfully to {env_path}")
+    return env_path
 
 
 def bootstrap_credentials(
@@ -184,10 +293,15 @@ def bootstrap_credentials(
     Inputs/Outputs: Optional env_path and injected I/O dependencies; returns bootstrap result.
     Edge cases: Backend login is skipped if BACKEND_URL is unset.
     """
-    resolved_env_path = env_path or (Path(__file__).parent / ".env")
+    resolved_env_path = env_path or Config.ENV_PATH
     openai_api_key = Config.OPENAI_API_KEY or ""
     backend_token = Config.BACKEND_TOKEN or None
     backend_login_email = Config.BACKEND_LOGIN_EMAIL or None
+    fallback_env_path = getattr(Config, "FALLBACK_ENV_PATH", None)
+    trace_path = _init_bootstrap_trace_path()
+    _write_bootstrap_trace(trace_path, "Bootstrap start")
+    _write_bootstrap_trace(trace_path, f"OpenAI key present: {bool(openai_api_key)}")
+    _write_bootstrap_trace(trace_path, f"Backend URL present: {bool(Config.BACKEND_URL)}")
 
     if not openai_api_key:
         # //audit assumption: OpenAI key required; risk: GPT client init fails; invariant: non-empty key; strategy: prompt and persist.
@@ -195,12 +309,19 @@ def bootstrap_credentials(
             "OpenAI API key: ",
             input_provider
         )
-        persist_credentials(resolved_env_path, {"OPENAI_API_KEY": openai_api_key})
+        _write_bootstrap_trace(trace_path, "Received OpenAI key input; persisting.")
+        persist_credentials(
+            resolved_env_path,
+            {"OPENAI_API_KEY": openai_api_key},
+            fallback_env_path,
+            trace_path
+        )
 
     backend_url = Config.BACKEND_URL or ""
     if backend_url:
         # //audit assumption: backend login required when URL set; risk: unauthenticated backend calls; invariant: token available; strategy: ensure token.
         token_is_valid = bool(backend_token) and not is_jwt_expired(backend_token, now_seconds())
+        _write_bootstrap_trace(trace_path, f"Backend token valid: {token_is_valid}")
 
         if not token_is_valid:
             # //audit assumption: login needed when token missing/expired; risk: auth failures; invariant: fresh token; strategy: prompt and login.
@@ -214,17 +335,23 @@ def bootstrap_credentials(
                 password_provider
             )
             try:
+                _write_bootstrap_trace(trace_path, "Attempting backend login")
                 login_result = login_requester(backend_url, backend_login_email, backend_password)
             except BackendAuthError as exc:
                 # //audit assumption: login can fail; risk: blocked startup; invariant: error surfaced; strategy: raise CredentialBootstrapError.
+                _write_bootstrap_trace(trace_path, f"Backend login failed: {exc}")
                 raise CredentialBootstrapError(str(exc)) from exc
 
             backend_token = login_result.token
+            _write_bootstrap_trace(trace_path, "Backend login succeeded; persisting token")
             persist_credentials(
                 resolved_env_path,
-                {"BACKEND_TOKEN": backend_token, "BACKEND_LOGIN_EMAIL": backend_login_email}
+                {"BACKEND_TOKEN": backend_token, "BACKEND_LOGIN_EMAIL": backend_login_email},
+                fallback_env_path,
+                trace_path
             )
 
+    _write_bootstrap_trace(trace_path, "Bootstrap complete")
     return CredentialBootstrapResult(
         openai_api_key=openai_api_key,
         backend_token=backend_token,

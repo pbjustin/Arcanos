@@ -985,6 +985,7 @@ if __name__ == "__main__":
     except CredentialBootstrapError as e:
         # //audit assumption: bootstrap can fail; risk: unusable CLI; invariant: error shown; strategy: exit with message.
         print(f"Credential setup failed: {e}")
+        print(f"Crash reports are saved to: {Config.CRASH_REPORTS_DIR}")
         sys.exit(1)
 
     cli = ArcanosCLI()
