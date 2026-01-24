@@ -3,6 +3,7 @@
  * Consolidates common error handling, validation, and response patterns
  */
 
+import OpenAI from 'openai';
 import { Request, Response } from 'express';
 import fs from 'fs';
 import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
@@ -17,6 +18,7 @@ import {
  * Extract input text from various possible field names in request body
  */
 export function extractInput(body: AIRequestDTO): string | null {
+  //audit Assumption: known fields cover all input variants; Handling: first match
   return body.prompt || body.userInput || body.content || body.text || body.query || null;
 }
 
@@ -28,12 +30,13 @@ export function validateAIRequest(
   req: Request<{}, AIResponseDTO | ErrorResponseDTO, AIRequestDTO>,
   res: Response<AIResponseDTO | ErrorResponseDTO>,
   endpointName: string
-): { client: any; input: string; body: AIRequestDTO } | null {
+): { client: OpenAI; input: string; body: AIRequestDTO } | null {
   console.log(`📨 /${endpointName} received`);
 
   const clientContext = (req.body as AIRequestDTO).clientContext;
 
   const parsed = aiRequestSchema.safeParse(req.body);
+  //audit Assumption: schema failure should return 400; Handling: error response
   if (!parsed.success) {
     const details = parsed.error.errors.map(err => `${err.path.join('.') || 'body'}: ${err.message}`);
     res.status(400).json({
@@ -45,6 +48,7 @@ export function validateAIRequest(
 
   const input = extractInput(parsed.data);
 
+  //audit Assumption: input must be a non-empty string; Handling: validation fail
   if (!input || typeof input !== 'string') {
     res.status(400).json({
       error: `Missing or invalid input in request body. Use 'prompt', 'userInput', 'content', 'text', or 'query' field.`
@@ -53,6 +57,7 @@ export function validateAIRequest(
   }
 
   // Check if we have a valid API key
+  //audit Assumption: missing API key should trigger mock path; Handling: fallback
   if (!hasValidAPIKey()) {
     console.log(`🤖 Returning mock response for /${endpointName} (no API key)`);
     const mockResponse = generateMockResponse(input, endpointName);
@@ -61,6 +66,7 @@ export function validateAIRequest(
   }
 
   const openai = getOpenAIClient();
+  //audit Assumption: client init failure should return mock response; Handling: fallback
   if (!openai) {
     console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);
     const mockResponse = generateMockResponse(input, endpointName);
@@ -82,10 +88,12 @@ export function handleAIError(
   endpointName: string,
   res: Response<AIResponseDTO | ErrorResponseDTO>
 ): void {
+  //audit Assumption: error message should be safely derived; Handling: stringify
   const errorMessage = err instanceof Error ? err.message : String(err);
   console.error(`❌ ${endpointName} processing error:`, errorMessage);
   
   // Return mock response as fallback
+  //audit Assumption: mock response is acceptable fallback; Handling: include error
   console.log(`🤖 Returning mock response for /${endpointName} (processing failed)`);
   const mockResponse = generateMockResponse(input, endpointName);
   res.json({
@@ -105,8 +113,8 @@ export function logRequestFeedback(input: string, endpointName: string): void {
       prompt: input.substring(0, 500) // Limit length for privacy
     };
     fs.writeFileSync('/tmp/last-gpt-request', JSON.stringify(feedbackData));
-  } catch (error) {
-    // Silently fail - feedback logging is not critical
+  } catch (error: unknown) {
+    //audit Assumption: feedback logging failures should not break request; Handling: log only
     console.log('Could not write feedback file:', error instanceof Error ? error.message : 'Unknown error');
   }
 }

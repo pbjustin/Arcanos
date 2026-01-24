@@ -107,10 +107,12 @@ export async function sendClearFeedback(payload: ClearFeedbackPayload): Promise<
     //audit failure risk: delivery exceptions could go unnoticed
     //audit expected invariant: errors are logged with endpoint context
     //audit handling strategy: log warning and return failure metadata
-    aiLogger.warn('Failed to deliver CLEAR feedback', {
-      operation: 'clearClient:deliver',
-      endpoint
-    }, error instanceof Error ? error : undefined);
+    aiLogger.warn(
+      'Failed to deliver CLEAR feedback',
+      { operation: 'clearClient:deliver' },
+      { endpoint },
+      error instanceof Error ? error : undefined
+    );
 
     return {
       delivered: false,

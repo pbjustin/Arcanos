@@ -9,7 +9,7 @@ export interface AssistantInfo {
   id: string;
   name: string | null;
   instructions: string | null;
-  tools: any[] | null;
+  tools: OpenAI.Beta.Assistants.Assistant['tools'] | null;
   model?: string | null;
 }
 
@@ -20,6 +20,7 @@ export interface AssistantRecord extends AssistantInfo {
 export type AssistantRegistry = Record<string, AssistantRecord>;
 
 type AssistantListPage = Awaited<ReturnType<OpenAI['beta']['assistants']['list']>>;
+type AssistantEntry = AssistantListPage['data'][number];
 
 const LOG_CONTEXT = { module: 'assistant-sync' } as const;
 const REGISTRY_PATH = config.assistantSync.registryPath;
@@ -36,7 +37,7 @@ export async function getAllAssistants(): Promise<AssistantInfo[]> {
 
   while (true) {
     const resp: AssistantListPage = await client.beta.assistants.list({ limit: 20, after: cursor });
-    resp.data.forEach((a: any) => {
+    resp.data.forEach((a: AssistantEntry) => {
       assistants.push({
         id: a.id,
         name: a.name ?? null,
@@ -47,7 +48,9 @@ export async function getAllAssistants(): Promise<AssistantInfo[]> {
     });
 
     if (!resp.has_more) break;
-    cursor = (resp as any).last_id || undefined;
+    cursor = typeof (resp as { last_id?: unknown }).last_id === 'string'
+      ? (resp as { last_id?: string }).last_id
+      : undefined;
   }
 
   return assistants;
@@ -98,8 +101,8 @@ export async function loadAssistantRegistry(): Promise<AssistantRegistry> {
     });
     await saveAssistantRegistry({});
     return {};
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+  } catch (error: unknown) {
+    if (!isNodeError(error) || error.code !== 'ENOENT') {
       aiLogger.warn('[AI-ASSISTANT-SYNC] Failed to read assistant registry', LOG_CONTEXT, {
         path: REGISTRY_PATH,
         message: error instanceof Error ? error.message : String(error)
@@ -169,8 +172,9 @@ export async function syncAssistantRegistry(): Promise<AssistantRegistry> {
       names: Object.keys(registry)
     });
     return registry;
-  } catch (error) {
-    aiLogger.error('[AI-ASSISTANT-SYNC] Failed to sync assistants', context, undefined, error as Error);
+  } catch (error: unknown) {
+    //audit Assumption: sync failure should fall back to stored registry
+    aiLogger.error('[AI-ASSISTANT-SYNC] Failed to sync assistants', context, undefined, error instanceof Error ? error : undefined);
     return loadAssistantRegistry();
   } finally {
     endTimer();
@@ -182,6 +186,7 @@ export async function syncAssistantRegistry(): Promise<AssistantRegistry> {
  */
 export async function callAssistantByName(name: string, message: string) {
   const client = getOpenAIClient();
+  //audit Assumption: OpenAI client required to call assistant
   if (!client) throw new Error('OpenAI client not initialized');
 
   const normalized = normalizeAssistantName(name);
@@ -226,9 +231,11 @@ export async function callAssistantByName(name: string, message: string) {
     throw new Error(`Assistant '${name}' not found.`);
   }
 
-  return (client as any).beta.threads.create({
-    assistant_id: assistantId,
+  const thread = await client.beta.threads.create({
     messages: [{ role: 'user', content: message }]
+  });
+  return client.beta.threads.runs.create(thread.id, {
+    assistant_id: assistantId
   });
 }
 
@@ -244,3 +251,7 @@ export const openAIAssistantsService = {
 };
 
 export default openAIAssistantsService;
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === 'object' && error !== null && 'code' in error;
+}

@@ -189,7 +189,7 @@ export const getPromptsConfig = (): PromptsConfig => loadPromptsConfig();
  */
 export const getPrompt = (category: keyof PromptsConfig, key: string, replacements?: Record<string, string>): string => {
   const config = loadPromptsConfig();
-  const categoryConfig = config[category] as any;
+  const categoryConfig = config[category] as Record<string, string> | undefined;
   
   if (!categoryConfig || !categoryConfig[key]) {
     logger.warn('Prompt not found', {

@@ -21,14 +21,12 @@ export async function getUniverseRoster(databaseId: string): Promise<UniverseRos
   try {
     const response = await notion.databases.query({ database_id: databaseId });
 
-    const roster = response.results.map((page: any) => {
-      const nameProp = page.properties?.Name?.title;
-      return nameProp?.length > 0 ? nameProp[0].plain_text : 'Unnamed Entry';
-    });
+    const roster = response.results.map(page => getNotionTitle(page));
 
     return { count: roster.length, roster };
-  } catch (error: any) {
-    console.error('[NotionSync] Error fetching Universe Roster:', error.message);
+  } catch (error: unknown) {
+    //audit Assumption: Notion query failures should surface
+    console.error('[NotionSync] Error fetching Universe Roster:', error instanceof Error ? error.message : error);
     throw error;
   }
 }
@@ -38,6 +36,7 @@ export async function getUniverseRoster(databaseId: string): Promise<UniverseRos
  */
 export async function analyzeRoster(roster: string[]): Promise<string> {
   const client = getOpenAIClient();
+  //audit Assumption: OpenAI client required for analysis
   if (!client) {
     throw new Error('OpenAI client not initialized');
   }
@@ -50,4 +49,16 @@ export async function analyzeRoster(roster: string[]): Promise<string> {
   });
 
   return completion.choices[0]?.message?.content ?? '';
+}
+
+function getNotionTitle(page: unknown): string {
+  if (!page || typeof page !== 'object') {
+    return 'Unnamed Entry';
+  }
+  const record = page as Record<string, unknown>;
+  const properties = record.properties as Record<string, unknown> | undefined;
+  const name = properties?.Name as Record<string, unknown> | undefined;
+  const title = Array.isArray(name?.title) ? name?.title : [];
+  const first = title[0] as Record<string, unknown> | undefined;
+  return typeof first?.plain_text === 'string' ? first.plain_text : 'Unnamed Entry';
 }

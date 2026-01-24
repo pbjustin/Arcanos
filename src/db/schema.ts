@@ -12,7 +12,7 @@ import { getPool } from './client.js';
 export const MemoryEntrySchema = z.object({
   id: z.number(),
   key: z.string(),
-  value: z.any(),
+  value: z.unknown(),
   created_at: z.date(),
   updated_at: z.date()
 });
@@ -23,7 +23,7 @@ export const ExecutionLogSchema = z.object({
   timestamp: z.date(),
   level: z.string(),
   message: z.string(),
-  metadata: z.any()
+  metadata: z.unknown()
 });
 
 export const JobDataSchema = z.object({
@@ -31,8 +31,8 @@ export const JobDataSchema = z.object({
   worker_id: z.string(),
   job_type: z.string(),
   status: z.string(),
-  input: z.any(),
-  output: z.any().optional(),
+  input: z.unknown(),
+  output: z.unknown().optional(),
   error_message: z.string().optional(),
   created_at: z.date(),
   updated_at: z.date(),
@@ -44,7 +44,7 @@ export const ReasoningLogSchema = z.object({
   timestamp: z.date(),
   input: z.string(),
   output: z.string(),
-  metadata: z.any()
+  metadata: z.unknown()
 });
 
 export const RagDocSchema = z.object({
@@ -69,6 +69,7 @@ export type RagDoc = z.infer<typeof RagDocSchema>;
  */
 export async function refreshDatabaseCollation(): Promise<void> {
   const pool = getPool();
+  //audit Assumption: no pool means DB unavailable; Handling: exit
   if (!pool) return;
 
   try {
@@ -82,12 +83,14 @@ export async function refreshDatabaseCollation(): Promise<void> {
        WHERE datname = current_database()`
     );
 
+    //audit Assumption: missing database row means no current DB; Handling: exit
     if (!dbRows.length) {
       return;
     }
 
     const { name, datcollate, datcollversion } = dbRows[0];
 
+    //audit Assumption: missing collation version means no refresh required
     if (!datcollversion) {
       return;
     }
@@ -101,12 +104,14 @@ export async function refreshDatabaseCollation(): Promise<void> {
       [datcollate]
     );
 
+    //audit Assumption: missing collation info means no refresh required
     if (!collationRows.length) {
       return;
     }
 
     const latestCollationVersion = collationRows[0].collversion;
 
+    //audit Assumption: unchanged versions need no action; Handling: exit
     if (!latestCollationVersion || latestCollationVersion === datcollversion) {
       return;
     }
@@ -120,14 +125,16 @@ export async function refreshDatabaseCollation(): Promise<void> {
     try {
       await pool.query(`REINDEX DATABASE "${safeName}"`);
       console.log('[🔌 DB] Database reindexed successfully prior to collation refresh');
-    } catch (reindexError) {
-      console.warn('[🔌 DB] Database reindex skipped:', (reindexError as Error).message);
+    } catch (reindexError: unknown) {
+      //audit Assumption: reindex failure should not block refresh; Handling: warn
+      console.warn('[🔌 DB] Database reindex skipped:', getErrorMessage(reindexError));
     }
 
     await pool.query(`ALTER DATABASE "${safeName}" REFRESH COLLATION VERSION`);
     console.log('[🔌 DB] Collation version refreshed successfully');
-  } catch (error) {
-    console.warn('[🔌 DB] Collation refresh skipped:', (error as Error).message);
+  } catch (error: unknown) {
+    //audit Assumption: refresh failure should be non-fatal; Handling: warn
+    console.warn('[🔌 DB] Collation refresh skipped:', getErrorMessage(error));
   }
 }
 
@@ -136,6 +143,7 @@ export async function refreshDatabaseCollation(): Promise<void> {
  */
 export async function initializeTables(): Promise<void> {
   const pool = getPool();
+  //audit Assumption: no pool means DB unavailable; Handling: exit
   if (!pool) return;
 
   const queries = [
@@ -269,8 +277,22 @@ export async function initializeTables(): Promise<void> {
       await pool.query(query);
     }
     console.log('[🔌 DB] ✅ Database tables initialized successfully');
-  } catch (error) {
-    console.error('[🔌 DB] ❌ Failed to initialize tables:', (error as Error).message);
+  } catch (error: unknown) {
+    //audit Assumption: initialization errors should surface; Handling: log + throw
+    console.error('[🔌 DB] ❌ Failed to initialize tables:', getErrorMessage(error));
     throw error;
   }
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') {
+      return message;
+    }
+  }
+  return 'Unknown error';
 }

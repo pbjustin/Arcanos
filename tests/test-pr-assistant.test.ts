@@ -2,10 +2,17 @@
  * Tests for ARCANOS PR Assistant
  */
 
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { PRAssistant } from '../src/services/prAssistant.js';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import fs from 'fs/promises';
 import path from 'path';
+
+const runCommandMock = jest.fn();
+
+jest.unstable_mockModule('../src/services/prAssistant/commandUtils.js', () => ({
+  runCommand: runCommandMock
+}));
+
+const { PRAssistant } = await import('../src/services/prAssistant.js');
 
 // Mock test data
 const mockPRDiff = `
@@ -81,6 +88,8 @@ describe('ARCANOS PR Assistant', () => {
       'PORT=8080\nOPENAI_API_KEY=your_key_here\n'
     );
 
+    runCommandMock.mockResolvedValue({ stdout: 'PASS', stderr: '' });
+
     prAssistant = new PRAssistant(tempDir);
   });
 
@@ -91,6 +100,7 @@ describe('ARCANOS PR Assistant', () => {
     } catch (error) {
       // Ignore cleanup errors
     }
+    runCommandMock.mockReset();
   });
 
   describe('Dead Code Removal Check', () => {

@@ -81,7 +81,9 @@ function createIdleManagerLogger() {
   return {
     log: (message: string, metadata?: unknown) => {
       //audit Assumption: idle manager audit logs are informational; risk: noisy logging; invariant: message remains intact; handling: log via structured logger.
-      logger.info(message, { module: 'idle-manager' }, metadata);
+      const metaRecord =
+        metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : undefined;
+      logger.info(message, { module: 'idle-manager' }, metaRecord);
     }
   };
 }

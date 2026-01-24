@@ -18,6 +18,7 @@ export async function performStartup(): Promise<void> {
   printValidationResults(railwayValidation);
   checkEphemeralFS();
 
+  //audit Assumption: Railway API config controls probe behavior
   if (isRailwayApiConfigured()) {
     const probeResult = await probeRailwayApi();
     if (!probeResult.ok) {
@@ -39,6 +40,7 @@ export async function performStartup(): Promise<void> {
   const envValidation = validateEnvironment();
   printValidationResults(envValidation);
 
+  //audit Assumption: invalid env should halt startup
   if (!envValidation.isValid) {
     logger.error('Environment validation failed - exiting');
     process.exit(1);
@@ -52,8 +54,10 @@ export async function performStartup(): Promise<void> {
     if (!dbConnected) {
       logger.warn('⚠️ DB CHECK - Database not available - continuing with in-memory fallback');
     }
-  } catch (err: any) {
-    logger.error('❌ DB CHECK - Database initialization failed', { error: err?.message || err });
+  } catch (err: unknown) {
+    //audit Assumption: DB init errors should log and fallback
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    logger.error('❌ DB CHECK - Database initialization failed', { error: errorMessage });
     logger.warn('⚠️ DB CHECK - Continuing with in-memory fallback');
   }
 

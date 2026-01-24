@@ -6,6 +6,7 @@
 import express, { Request, Response } from 'express';
 import { arcanosQuery } from '../services/arcanosQuery.js';
 import { requireField } from '../utils/validation.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
 
@@ -38,17 +39,18 @@ const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> 
       module: 'ArcanosQuery'
     });
 
-  } catch (error: any) {
-    console.error('[ARCANOS-QUERY] Error:', error);
+  } catch (error: unknown) {
+    //audit Assumption: failures should return 500 with safe message
+    console.error('[ARCANOS-QUERY] Error:', error instanceof Error ? error.message : error);
     res.status(500).json({
       error: 'ARCANOS query processing failed',
-      message: error.message,
+      message: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
     });
   }
 };
 
 // Register the route
-router.post('/arcanos-query', arcanosQueryEndpoint);
+router.post('/arcanos-query', asyncHandler(arcanosQueryEndpoint));
 
 export default router;

@@ -3,6 +3,7 @@
  * Provides comprehensive logging with context and metadata for better observability
  */
 
+import { type NextFunction, type Request, type Response } from 'express';
 import { generateRequestId } from './idGenerator.js';
 import { recordLogEvent, recordTraceEvent } from './telemetry.js';
 
@@ -61,7 +62,7 @@ class StructuredLogger {
     level: LogLevel,
     message: string,
     context?: LogContext,
-    metadata?: any,
+    metadata?: Record<string, unknown>,
     duration?: number,
     error?: Error
   ): LogEntry {
@@ -74,6 +75,7 @@ class StructuredLogger {
       duration
     };
 
+    //audit Assumption: error details should be captured when provided
     if (error) {
       entry.error = {
         name: error.name,
@@ -88,6 +90,7 @@ class StructuredLogger {
   private log(entry: LogEntry): void {
     const isProduction = process.env.NODE_ENV === 'production';
 
+    //audit Assumption: production logs should be structured JSON
     if (isProduction) {
       // In production, output structured JSON for log aggregation
       console.log(JSON.stringify(entry));
@@ -99,11 +102,13 @@ class StructuredLogger {
 
       console.log(`[${entry.timestamp}] ${entry.level.toUpperCase()}${contextStr}: ${entry.message}${durationStr}${metadataStr}`);
 
+      //audit Assumption: error stacks are useful in dev; Handling: log if present
       if (entry.error && entry.error.stack) {
         console.log(entry.error.stack);
       }
     }
 
+    //audit Assumption: telemetry records should mirror log entries
     recordLogEvent({
       timestamp: entry.timestamp,
       level: entry.level,
@@ -117,28 +122,28 @@ class StructuredLogger {
   /**
    * Logs a debug-level message with optional context and metadata.
    */
-  debug(message: string, context?: LogContext, metadata?: any): void {
+  debug(message: string, context?: LogContext, metadata?: Record<string, unknown>): void {
     this.log(this.createLogEntry(LogLevel.DEBUG, message, context, metadata));
   }
 
   /**
    * Logs an info-level message with optional context and metadata.
    */
-  info(message: string, context?: LogContext, metadata?: any): void {
+  info(message: string, context?: LogContext, metadata?: Record<string, unknown>): void {
     this.log(this.createLogEntry(LogLevel.INFO, message, context, metadata));
   }
 
   /**
    * Logs a warning-level message with optional context, metadata, and error.
    */
-  warn(message: string, context?: LogContext, metadata?: any, error?: Error): void {
+  warn(message: string, context?: LogContext, metadata?: Record<string, unknown>, error?: Error): void {
     this.log(this.createLogEntry(LogLevel.WARN, message, context, metadata, undefined, error));
   }
 
   /**
    * Logs an error-level message with optional context, metadata, and error.
    */
-  error(message: string, context?: LogContext, metadata?: any, error?: Error): void {
+  error(message: string, context?: LogContext, metadata?: Record<string, unknown>, error?: Error): void {
     this.log(this.createLogEntry(LogLevel.ERROR, message, context, metadata, undefined, error));
   }
 
@@ -149,7 +154,7 @@ class StructuredLogger {
     message: string,
     duration: number,
     context?: LogContext,
-    metadata?: any,
+    metadata?: Record<string, unknown>,
     level: LogLevel = LogLevel.INFO
   ): void {
     this.log(this.createLogEntry(level, message, context, metadata, duration));
@@ -184,10 +189,11 @@ export const aiLogger = new StructuredLogger({ module: 'openai' });
 export const workerLogger = new StructuredLogger({ module: 'worker' });
 
 // Helper to sanitize potentially sensitive fields before logging
-function sanitize(obj: Record<string, any>): Record<string, any> {
+function sanitize(obj: Record<string, unknown>): Record<string, unknown> {
   const SENSITIVE_KEYS = ['authorization', 'cookie', 'token', 'password'];
-  const sanitized: Record<string, any> = {};
+  const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
+    //audit Assumption: sensitive keys should be redacted; Handling: replace with token
     sanitized[key] = SENSITIVE_KEYS.includes(key.toLowerCase()) ? '[REDACTED]' : value;
   }
   return sanitized;
@@ -232,25 +238,38 @@ function getSerializedSizeBytes(data: unknown): number {
 /**
  * Express middleware for request logging
  */
-export function requestLoggingMiddleware(req: any, res: any, next: any) {
-  const requestId = req.headers['x-request-id'] || generateRequestId('req');
+type RequestWithLogger = Request & {
+  requestId?: string;
+  logger?: StructuredLogger;
+};
+
+export function requestLoggingMiddleware(req: RequestWithLogger, res: Response, next: NextFunction) {
+  const rawRequestId = req.headers['x-request-id'];
+  const requestId =
+    typeof rawRequestId === 'string'
+      ? rawRequestId
+      : Array.isArray(rawRequestId)
+        ? rawRequestId[0]
+        : generateRequestId('req');
   const startTime = Date.now();
   
   // Add request ID to request object
   req.requestId = requestId;
   
   // Create request-scoped logger
-  req.logger = apiLogger.child({
+  const requestLogger = apiLogger.child({
     requestId,
     method: req.method,
     path: req.path,
     userAgent: req.get('User-Agent')
   });
+  req.logger = requestLogger;
 
   // Log request start
-  req.logger.info('Request started', {
+  //audit Assumption: request metadata should avoid sensitive data; Handling: sanitize
+  requestLogger.info('Request started', {
     ip: req.ip,
-    query: Object.keys(req.query).length > 0 ? sanitize(req.query) : undefined,
+    query: Object.keys(req.query).length > 0 ? sanitizeRecord(req.query) : undefined,
     headers: sanitize({
       authorization: req.headers['authorization'],
       cookie: req.headers['cookie']
@@ -259,11 +278,12 @@ export function requestLoggingMiddleware(req: any, res: any, next: any) {
 
   // Override res.json to log response
   const originalJson = res.json;
-  res.json = function(data: any) {
+  res.json = function(data: unknown) {
     const duration = Date.now() - startTime;
     const statusCode = res.statusCode;
     
-    req.logger.timed(
+    //audit Assumption: response size helps diagnostics; Handling: compute safely
+    requestLogger.timed(
       `Request completed`,
       duration,
       { statusCode },
@@ -284,12 +304,12 @@ export function requestLoggingMiddleware(req: any, res: any, next: any) {
  * Health metrics collection
  */
 class HealthMetrics {
-  private metrics: Map<string, any> = new Map();
+  private metrics: Map<string, { value: unknown; timestamp: number }> = new Map();
 
   /**
    * Records a health metric value with the current timestamp.
    */
-  record(key: string, value: any): void {
+  record(key: string, value: unknown): void {
     this.metrics.set(key, {
       value,
       timestamp: Date.now()
@@ -300,15 +320,16 @@ class HealthMetrics {
    * Increments a numeric metric value by the provided amount.
    */
   increment(key: string, amount: number = 1): void {
-    const current = this.metrics.get(key)?.value || 0;
+    const currentValue = this.metrics.get(key)?.value;
+    const current = typeof currentValue === 'number' ? currentValue : 0;
     this.record(key, current + amount);
   }
 
   /**
    * Returns a raw metrics map suitable for internal inspection.
    */
-  getMetrics(): Record<string, any> {
-    const result: Record<string, any> = {};
+  getMetrics(): Record<string, { value: unknown; timestamp: number }> {
+    const result: Record<string, { value: unknown; timestamp: number }> = {};
     for (const [key, metric] of this.metrics.entries()) {
       result[key] = metric;
     }
@@ -318,7 +339,7 @@ class HealthMetrics {
   /**
    * Returns a snapshot including process uptime and memory usage.
    */
-  getSnapshot(): Record<string, any> {
+  getSnapshot(): Record<string, unknown> {
     return {
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
@@ -326,6 +347,14 @@ class HealthMetrics {
       metrics: this.getMetrics()
     };
   }
+}
+
+function sanitizeRecord(value: unknown): Record<string, unknown> | undefined {
+  //audit Assumption: only objects can be sanitized; Handling: return undefined otherwise
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  return sanitize(value as Record<string, unknown>);
 }
 
 export const healthMetrics = new HealthMetrics();

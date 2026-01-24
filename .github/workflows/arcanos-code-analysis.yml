@@ -56,10 +56,10 @@ jobs:
           echo "Commit SHA: $COMMIT_SHA"
           echo "Trigger source: $TRIGGER_SOURCE"
           
-          # Set environment variables
+          # Set environment variables (use mock key for CI when secret not set; app returns mock responses)
           export PORT=8080
           export NODE_ENV=production
-          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
           
           # Start ARCANOS backend for analysis
           npm start > server.log 2>&1 &
@@ -88,16 +88,11 @@ jobs:
             exit 1
           fi
           
-          # Perform code analysis via ARCANOS API
+          # Perform code analysis via ARCANOS API (/api/ask expects prompt, not messages)
+          PROMPT="Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: $COMMIT_SHA"
           HTTP_CODE=$(curl -X POST http://localhost:8080/api/ask \
             -H "Content-Type: application/json" \
-            -d "{
-              \"messages\": [{
-                \"role\": \"user\",
-                \"content\": \"Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: $COMMIT_SHA\"
-              }],
-              \"context\": \"code_analysis\"
-            }" \
+            -d "$(jq -nc --arg p "$PROMPT" '{prompt: $p, context: "code_analysis"}')" \
             -w "%{http_code}" \
             -o analysis_result.json \
             -s)

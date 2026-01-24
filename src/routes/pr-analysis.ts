@@ -80,12 +80,18 @@ router.post('/webhook', async (req: Request, res: Response) => {
  */
 router.post('/analyze', validateCustom((data) => {
   const errors: string[] = [];
+  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+
+  if (!record) {
+    errors.push('Request body must be an object');
+    return { valid: false, errors };
+  }
   
-  if (!data.prDiff || typeof data.prDiff !== 'string') {
+  if (!record.prDiff || typeof record.prDiff !== 'string') {
     errors.push('prDiff must be a non-empty string');
   }
   
-  if (!Array.isArray(data.prFiles)) {
+  if (!Array.isArray(record.prFiles)) {
     errors.push('prFiles must be an array of strings');
   }
   

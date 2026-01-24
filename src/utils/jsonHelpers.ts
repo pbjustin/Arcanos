@@ -5,7 +5,7 @@
 
 import { logger } from './structuredLogging.js';
 
-export interface JSONParseResult<T = any> {
+export interface JSONParseResult<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
@@ -22,11 +22,12 @@ export interface SchemaValidationResult {
  * @param context - Optional context for logging
  * @returns Parse result with success flag and data or error
  */
-export function safeJSONParse<T = any>(input: string, context?: string): JSONParseResult<T> {
+export function safeJSONParse<T = unknown>(input: string, context?: string): JSONParseResult<T> {
   try {
     const data = JSON.parse(input);
     return { success: true, data };
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: parse errors should not bubble; Handling: log + safe result
     const errorMsg = error instanceof Error ? error.message : 'Unknown parsing error';
     
     logger.warn('JSON parsing failed', {
@@ -50,10 +51,11 @@ export function safeJSONParse<T = any>(input: string, context?: string): JSONPar
  * @param context - Optional context for logging
  * @returns Stringified JSON or null on error
  */
-export function safeJSONStringify(data: any, context?: string): string | null {
+export function safeJSONStringify(data: unknown, context?: string): string | null {
   try {
     return JSON.stringify(data);
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: stringify errors should not crash; Handling: log + null
     const errorMsg = error instanceof Error ? error.message : 'Unknown stringify error';
     
     logger.warn('JSON stringification failed', {
@@ -74,7 +76,7 @@ export function safeJSONStringify(data: any, context?: string): string | null {
  * @param schema - Simple schema definition
  * @returns Validation result
  */
-export function validateSchema(data: any, schema: {
+export function validateSchema(data: unknown, schema: {
   required?: string[];
   types?: Record<string, string>;
   minLength?: Record<string, number>;
@@ -82,41 +84,47 @@ export function validateSchema(data: any, schema: {
 }): SchemaValidationResult {
   const errors: string[] = [];
 
+  //audit Assumption: schema validation expects object inputs; Handling: reject others
   if (!data || typeof data !== 'object') {
     return { isValid: false, errors: ['Data must be an object'] };
   }
+  const record = data as Record<string, unknown>;
 
   // Check required fields
+  //audit Assumption: missing required fields invalidate payload; Handling: add errors
   if (schema.required) {
     for (const field of schema.required) {
-      if (!(field in data) || data[field] === null || data[field] === undefined) {
+      if (!(field in record) || record[field] === null || record[field] === undefined) {
         errors.push(`Required field missing: ${field}`);
       }
     }
   }
 
   // Check field types
+  //audit Assumption: typeof checks are sufficient for schema types
   if (schema.types) {
     for (const [field, expectedType] of Object.entries(schema.types)) {
-      if (field in data && typeof data[field] !== expectedType) {
-        errors.push(`Field ${field} must be of type ${expectedType}, got ${typeof data[field]}`);
+      if (field in record && typeof record[field] !== expectedType) {
+        errors.push(`Field ${field} must be of type ${expectedType}, got ${typeof record[field]}`);
       }
     }
   }
 
   // Check minimum lengths
+  //audit Assumption: string length validation applies only to strings
   if (schema.minLength) {
     for (const [field, minLen] of Object.entries(schema.minLength)) {
-      if (field in data && typeof data[field] === 'string' && data[field].length < minLen) {
+      if (field in record && typeof record[field] === 'string' && record[field].length < minLen) {
         errors.push(`Field ${field} must be at least ${minLen} characters long`);
       }
     }
   }
 
   // Check maximum lengths
+  //audit Assumption: string length validation applies only to strings
   if (schema.maxLength) {
     for (const [field, maxLen] of Object.entries(schema.maxLength)) {
-      if (field in data && typeof data[field] === 'string' && data[field].length > maxLen) {
+      if (field in record && typeof record[field] === 'string' && record[field].length > maxLen) {
         errors.push(`Field ${field} must be no more than ${maxLen} characters long`);
       }
     }

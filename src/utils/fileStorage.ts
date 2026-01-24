@@ -17,8 +17,13 @@ export async function writeJsonFile<T>(filePath: string, data: T, options: JsonW
   try {
     await ensureDirectoryForFile(filePath);
     await fs.writeFile(filePath, serialized);
-  } catch (error) {
-    logger.error('Failed to write JSON file', { module: 'fileStorage', operation: 'writeJsonFile', filePath }, error as Error);
+  } catch (error: unknown) {
+    logger.error(
+      'Failed to write JSON file',
+      { module: 'fileStorage', operation: 'writeJsonFile', filePath },
+      { error: error instanceof Error ? error.message : String(error) },
+      error instanceof Error ? error : undefined
+    );
     throw error;
   }
 }

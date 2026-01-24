@@ -1,11 +1,16 @@
 import { TokenParameterResult } from '../../utils/tokenParameterHelper.js';
 import { prepareGPT5Request } from './requestTransforms.js';
-import { ChatCompletionMessageParam, CallOpenAIOptions } from './types.js';
+import type { ChatCompletion, ChatCompletionCreateParams, ChatCompletionMessageParam, CallOpenAIOptions } from './types.js';
 
 const FALLBACK_TEXT_SELECTOR = '[No text output]';
 
-const mapMessagesToResponseInput = (messages: ChatCompletionMessageParam[]) =>
-  messages.map(({ role, content }) => ({ role, content }));
+const mapMessagesToResponseInput = (
+  messages: ChatCompletionMessageParam[]
+): ChatCompletionMessageParam[] => messages;
+
+type GPT5Payload = ChatCompletionCreateParams & {
+  max_output_tokens?: number;
+};
 
 export const buildResponseRequestPayload = ({
   model,
@@ -17,10 +22,10 @@ export const buildResponseRequestPayload = ({
   messages: ChatCompletionMessageParam[];
   tokenParams: TokenParameterResult;
   options: CallOpenAIOptions;
-}) => {
+}): GPT5Payload => {
   const basePayload = prepareGPT5Request({
     model,
-    messages: mapMessagesToResponseInput(messages) as any,
+    messages: mapMessagesToResponseInput(messages),
     ...tokenParams,
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options.top_p !== undefined ? { top_p: options.top_p } : {}),
@@ -30,19 +35,22 @@ export const buildResponseRequestPayload = ({
     ...(options.user !== undefined ? { user: options.user } : {})
   });
 
-  if (
-    basePayload &&
-    typeof basePayload === 'object' &&
-    !('max_output_tokens' in basePayload) &&
-    'max_tokens' in basePayload
-  ) {
-    Object.assign(basePayload, { max_output_tokens: (basePayload as any).max_tokens });
+  const payload: GPT5Payload = { ...basePayload };
+  //audit Assumption: GPT-5 variants accept max_output_tokens; Handling: mirror
+  if (payload.max_output_tokens === undefined && typeof payload.max_tokens === 'number') {
+    payload.max_output_tokens = payload.max_tokens;
   }
 
-  return basePayload;
+  return payload;
 };
 
-export const extractResponseOutput = (response: any): string => {
+type ResponseOutput = ChatCompletion & {
+  output_text?: string;
+  output?: Array<{ content?: Array<{ text?: string }> }>;
+};
+
+export const extractResponseOutput = (response: ResponseOutput): string => {
+  //audit Assumption: response may carry output_text/output/choices; Handling: fallback
   const rawOutput =
     response?.output_text ||
     response?.output?.[0]?.content?.[0]?.text ||

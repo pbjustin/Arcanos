@@ -40,7 +40,7 @@ export interface PatchSet {
   metadata: {
     generated: string;
     useMemory: boolean;
-    systemState?: any;
+    systemState?: unknown;
     modelUsed?: string;
     cached?: boolean;
     configuration?: {
@@ -65,11 +65,11 @@ async function persistSelfReflection(patch: PatchSet): Promise<void> {
       improvements: patch.improvements,
       metadata: patch.metadata
     });
-  } catch (error) {
+  } catch (error: unknown) {
     //audit Assumption: persistence failure should not stop execution; risk: losing audit trail; invariant: caller receives patch; handling: log warning and continue.
     console.warn(
       '[🧠 Reflections] Failed to persist self-reflection:',
-      (error as Error).message
+      getErrorMessage(error)
     );
   }
 }
@@ -195,9 +195,10 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
 
     return patch;
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     //audit Assumption: AI call failures are recoverable; risk: missing AI insight; invariant: returns fallback patch; handling: log and return fallback.
-    console.error('❌ Error generating patch set:', error.message);
+    const errorMessage = getErrorMessage(error);
+    console.error('❌ Error generating patch set:', errorMessage);
 
     // Fallback patch set
     const fallbackTimestamp = new Date().toISOString();
@@ -217,7 +218,7 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
         useMemory,
         //audit Assumption: reuse existing systemState when available; risk: losing error context; invariant: systemState always defined; handling: fallback object.
         systemState: systemState || {
-          error: error.message,
+          error: errorMessage,
           fallbackMode: true,
           aiModelUsed: reflectionModel
         },
@@ -256,6 +257,13 @@ export async function generateComponentReflection(
     ...options,
     category: `component-${component}`
   });
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return typeof error === 'string' ? error : 'Unknown error';
 }
 
 /**

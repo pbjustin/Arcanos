@@ -39,7 +39,7 @@ export async function executeWithResilience<T>(operation: () => Promise<T>): Pro
         state: circuitBreaker.getState()
       });
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       markOperation('openai.failure');
       recordTraceEvent('openai.resilience.failure', {
         state: circuitBreaker.getState(),
@@ -50,9 +50,10 @@ export async function executeWithResilience<T>(operation: () => Promise<T>): Pro
   });
 }
 
-export function calculateRetryDelay(attempt: number, error: any): number {
+export function calculateRetryDelay(attempt: number, error: unknown): number {
   const delay = backoffStrategy.calculateDelay(attempt);
-  if (error?.status === 429) {
+  //audit Assumption: 429 indicates rate limiting; Handling: add jitter
+  if (getErrorStatus(error) === 429) {
     const jitter = Math.random() * RESILIENCE_CONSTANTS.RATE_LIMIT_JITTER_MAX_MS;
     return delay + jitter;
   }
@@ -66,6 +67,14 @@ export function getCircuitBreakerSnapshot() {
     state: circuitBreaker.getState(),
     constants: RESILIENCE_CONSTANTS
   };
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' ? status : undefined;
 }
 
 export function getCircuitBreakerState() {
