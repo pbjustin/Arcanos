@@ -5,6 +5,7 @@ Human-like AI assistant with rich terminal UI.
 
 import os
 import sys
+import tempfile
 import threading
 import base64
 import time
@@ -130,8 +131,8 @@ Keep responses concise but friendly. Use emojis occasionally. Be helpful and pro
                     if info:
                         self._update_info = info
                         self.console.print(f"[yellow]Update available: {info['tag']}. Run 'update' to download and install.[/yellow]")
-                except Exception:
-                    pass
+                except Exception as e:
+                    error_logger.debug("Update check failed: %s", e)
             threading.Thread(target=_check, daemon=True).start()
 
     def _get_or_create_instance_id(self) -> str:
@@ -900,12 +901,13 @@ You: ptt
         if not url:
             self.console.print("[red]No download URL in release.[/red]")
             return
-        tmp = os.environ.get("TEMP", os.environ.get("TMP", "."))
+        tmp = tempfile.gettempdir()
         safe = "".join(c if c.isalnum() or c in ".-_" else "-" for c in tag)
         path = os.path.join(tmp, f"ARCANOS-Setup-{safe}.exe")
         try:
             self.console.print(f"[cyan]Downloading {tag}...[/cyan]")
-            urllib.request.urlretrieve(url, path)
+            with urllib.request.urlopen(url) as response, open(path, "wb") as out_file:
+                out_file.write(response.read())
             if hasattr(os, "startfile"):
                 os.startfile(path)
                 self.console.print("[green]Installer started. Complete the setup to finish.[/green]")
