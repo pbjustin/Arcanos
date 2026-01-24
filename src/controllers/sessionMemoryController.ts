@@ -37,9 +37,6 @@ function validateSaveRequest(req: Request, res: Response): { sessionId: string; 
   if (!requireField(res, sessionId, 'sessionId') || !requireField(res, message, 'message')) {
     return null;
   }
-  if (!sessionId || !message) {
-    return null;
-  }
 
   return { sessionId, message };
 }
