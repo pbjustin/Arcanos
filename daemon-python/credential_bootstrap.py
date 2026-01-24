@@ -157,23 +157,6 @@ def apply_runtime_env_updates(updates: Mapping[str, str]) -> None:
             setattr(Config, key, value)
 
 
-def resolve_fallback_env_path() -> Optional[Path]:
-    """
-    Purpose: Resolve a user-writable fallback .env path on Windows.
-    Inputs/Outputs: None; returns fallback path or None if unavailable.
-    Edge cases: Missing APPDATA/USERPROFILE returns None.
-    """
-    appdata = os.getenv("APPDATA")
-    if appdata:
-        return Path(appdata) / "ARCANOS" / ".env"
-
-    userprofile = os.getenv("USERPROFILE")
-    if userprofile:
-        return Path(userprofile) / ".arcanos" / ".env"
-
-    return None
-
-
 def _init_bootstrap_trace_path() -> Optional[Path]:
     """
     Purpose: Prepare a trace log path for bootstrap diagnostics.
@@ -314,7 +297,7 @@ def bootstrap_credentials(
     openai_api_key = Config.OPENAI_API_KEY or ""
     backend_token = Config.BACKEND_TOKEN or None
     backend_login_email = Config.BACKEND_LOGIN_EMAIL or None
-    fallback_env_path = getattr(Config, "FALLBACK_ENV_PATH", None) or resolve_fallback_env_path()
+    fallback_env_path = getattr(Config, "FALLBACK_ENV_PATH", None)
     trace_path = _init_bootstrap_trace_path()
     _write_bootstrap_trace(trace_path, "Bootstrap start")
     _write_bootstrap_trace(trace_path, f"OpenAI key present: {bool(openai_api_key)}")

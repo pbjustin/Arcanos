@@ -22,22 +22,28 @@ _frozen = getattr(sys, "frozen", False)
 def _get_user_data_dir() -> Optional[Path]:
     """
     Purpose: Resolve a user-writable base dir for .env, logs, crash_reports when running as frozen EXE.
-    Inputs/Outputs: None; returns LOCALAPPDATA/ARCANOS or APPDATA/ARCANOS, or None on failure.
-    Edge cases: Creates the directory; returns None if env vars missing or mkdir fails.
+    Inputs/Outputs: None; returns a platform-specific user data directory, or None on failure.
+    Edge cases: Creates the directory; returns None if home directory cannot be found or mkdir fails.
     """
     try:
-        root = (
-            os.environ.get("LOCALAPPDATA")
-            or os.environ.get("APPDATA")
-            or os.environ.get("USERPROFILE")
-            or ""
-        )
-        if not root:
-            return None
-        p = Path(root) / "ARCANOS"
+        if sys.platform == "win32":
+            root = (
+                os.environ.get("LOCALAPPDATA")
+                or os.environ.get("APPDATA")
+                or os.environ.get("USERPROFILE")
+                or ""
+            )
+            if not root:
+                return None
+            p = Path(root) / "ARCANOS"
+        elif sys.platform == "darwin":  # macOS
+            p = Path.home() / "Library" / "Application Support" / "ARCANOS"
+        else:  # Linux and other Unix-like
+            p = Path.home() / ".local" / "share" / "ARCANOS"
+
         p.mkdir(parents=True, exist_ok=True)
         return p
-    except OSError:
+    except (OSError, RuntimeError):  # RuntimeError for Path.home() if no home dir
         return None
 
 
