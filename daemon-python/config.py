@@ -1,9 +1,12 @@
 """
 ARCANOS Configuration Manager
 Loads and validates environment variables with sensible defaults.
+When run as a PyInstaller frozen EXE (installer), uses a user-writable data dir
+to avoid writing under Program Files or a read-only extract dir.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +14,45 @@ try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
     load_dotenv = None
+
+# //audit assumption: PyInstaller sets sys.frozen; risk: other freezers differ; invariant: avoid _MEIPASS for writes; strategy: use user data dir when frozen.
+_frozen = getattr(sys, "frozen", False)
+
+
+def _get_user_data_dir() -> Optional[Path]:
+    """
+    Purpose: Resolve a user-writable base dir for .env, logs, crash_reports when running as frozen EXE.
+    Inputs/Outputs: None; returns a platform-specific user data directory, or None on failure.
+    Edge cases: Creates the directory; returns None if home directory cannot be found or mkdir fails.
+    """
+    try:
+        if sys.platform == "win32":
+            root = (
+                os.environ.get("LOCALAPPDATA")
+                or os.environ.get("APPDATA")
+                or os.environ.get("USERPROFILE")
+                or ""
+            )
+            if not root:
+                return None
+            p = Path(root) / "ARCANOS"
+        elif sys.platform == "darwin":  # macOS
+            p = Path.home() / "Library" / "Application Support" / "ARCANOS"
+        else:  # Linux and other Unix-like
+            p = Path.home() / ".local" / "share" / "ARCANOS"
+
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    except (OSError, RuntimeError):  # RuntimeError for Path.home() if no home dir
+        return None
+
+
+_user_data_dir = _get_user_data_dir() if _frozen else None
+# When frozen, base must be user-writable; else use package dir.
+BASE_DIR: Path = (
+    _user_data_dir if (_frozen and _user_data_dir) else Path(__file__).parent
+)
+
 
 def _load_dotenv_fallback(path: Path) -> None:
     try:
@@ -37,16 +79,46 @@ def _load_dotenv_fallback(path: Path) -> None:
     except OSError:
         print("Warning: Failed to read .env file; environment variables may be missing.")
 
+def _get_primary_env_path() -> Path:
+    return BASE_DIR / ".env"
+
+
+def _get_fallback_env_path() -> Optional[Path]:
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        return Path(appdata) / "ARCANOS" / ".env"
+
+    userprofile = os.getenv("USERPROFILE")
+    if userprofile:
+        return Path(userprofile) / ".arcanos" / ".env"
+
+    return None
+
+
 # Load .env file if python-dotenv is available.
-ENV_PATH = Path(__file__).parent / ".env"
+PRIMARY_ENV_PATH = _get_primary_env_path()
+FALLBACK_ENV_PATH = _get_fallback_env_path()
+ENV_PATHS = [PRIMARY_ENV_PATH] + (
+    [FALLBACK_ENV_PATH]
+    if FALLBACK_ENV_PATH and FALLBACK_ENV_PATH != PRIMARY_ENV_PATH
+    else []
+)
+ENV_PATH = PRIMARY_ENV_PATH
+
 if load_dotenv is not None:
-    load_dotenv(dotenv_path=ENV_PATH)
+    for env_path in ENV_PATHS:
+        load_dotenv(dotenv_path=env_path)
 else:
-    _load_dotenv_fallback(ENV_PATH)
+    for env_path in ENV_PATHS:
+        _load_dotenv_fallback(env_path)
 
 
 class Config:
     """Central configuration for ARCANOS daemon"""
+
+    ENV_PATH: Path = ENV_PATH
+    FALLBACK_ENV_PATH: Optional[Path] = FALLBACK_ENV_PATH
+    ENV_PATHS: list[Path] = ENV_PATHS
 
     # ============================================
     # Required Settings
@@ -105,7 +177,7 @@ class Config:
     # ============================================
     # Storage Paths
     # ============================================
-    BASE_DIR: Path = Path(__file__).parent
+    BASE_DIR: Path = BASE_DIR  # module-level: user data dir when frozen, else Path(__file__).parent
     MEMORY_FILE: Path = BASE_DIR / os.getenv("MEMORY_FILE", "memories.json")
     LOG_DIR: Path = BASE_DIR / os.getenv("LOG_DIR", "logs")
     SCREENSHOT_DIR: Path = BASE_DIR / os.getenv("SCREENSHOT_DIR", "screenshots")
@@ -139,7 +211,7 @@ class Config:
     # ============================================
     # Version & Update checker
     # ============================================
-    VERSION: str = "1.1.1"
+    VERSION: str = "1.1.2"
     APP_NAME: str = "ARCANOS"
     # GitHub "owner/repo" for releases. If set, the app checks for updates on startup.
     GITHUB_RELEASES_REPO: Optional[str] = os.getenv("GITHUB_RELEASES_REPO") or None
