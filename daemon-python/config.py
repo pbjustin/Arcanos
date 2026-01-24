@@ -137,10 +137,12 @@ class Config:
     SHOW_STATS: bool = os.getenv("SHOW_STATS", "true").lower() == "true"
 
     # ============================================
-    # Version
+    # Version & Update checker
     # ============================================
     VERSION: str = "1.1.1"
     APP_NAME: str = "ARCANOS"
+    # GitHub "owner/repo" for releases. If set, the app checks for updates on startup.
+    GITHUB_RELEASES_REPO: Optional[str] = os.getenv("GITHUB_RELEASES_REPO") or None
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:
