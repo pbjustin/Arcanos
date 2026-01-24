@@ -82,7 +82,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='daemon',
+    name='ARCANOS',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
