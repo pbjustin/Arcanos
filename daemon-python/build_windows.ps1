@@ -24,44 +24,39 @@ if (Test-Path "build") {
 }
 
 # Build using the spec file (handles dependencies better)
-Write-Host "Building daemon.exe using arcanos.spec..." -ForegroundColor Cyan
+Write-Host "Building ARCANOS.exe using arcanos.spec..." -ForegroundColor Cyan
 pyinstaller --clean arcanos.spec
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Failed to build daemon.exe" -ForegroundColor Red
+    Write-Host "Failed to build ARCANOS.exe" -ForegroundColor Red
     exit 1
 }
 
-# The spec file creates daemon.exe, also create cli.exe (same executable)
-if (Test-Path "dist\daemon.exe") {
-    Copy-Item "dist\daemon.exe" "dist\cli.exe" -Force
-    Write-Host "Created cli.exe from daemon.exe" -ForegroundColor Green
+# The spec creates ARCANOS.exe; copy to daemon.exe and cli.exe for dev/CLI use
+if (Test-Path "dist\ARCANOS.exe") {
+    Copy-Item "dist\ARCANOS.exe" "dist\daemon.exe" -Force
+    Copy-Item "dist\ARCANOS.exe" "dist\cli.exe" -Force
+    Write-Host "Created daemon.exe and cli.exe from ARCANOS.exe" -ForegroundColor Green
 } else {
-    Write-Host "daemon.exe not found after build" -ForegroundColor Red
-    exit 1
-}
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Failed to build cli.exe" -ForegroundColor Red
+    Write-Host "ARCANOS.exe not found after build" -ForegroundColor Red
     exit 1
 }
 
 # Verify outputs
 Write-Host "`nVerifying build outputs..." -ForegroundColor Cyan
-if (Test-Path "dist\daemon.exe") {
-    $size = (Get-Item "dist\daemon.exe").Length / 1MB
-    Write-Host "✓ daemon.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
+if (Test-Path "dist\ARCANOS.exe") {
+    $size = (Get-Item "dist\ARCANOS.exe").Length / 1MB
+    Write-Host "✓ ARCANOS.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
 } else {
-    Write-Host "✗ daemon.exe not found" -ForegroundColor Red
+    Write-Host "✗ ARCANOS.exe not found" -ForegroundColor Red
     exit 1
 }
 
+if (Test-Path "dist\daemon.exe") {
+    Write-Host "✓ daemon.exe" -ForegroundColor Green
+}
 if (Test-Path "dist\cli.exe") {
-    $size = (Get-Item "dist\cli.exe").Length / 1MB
-    Write-Host "✓ cli.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
-} else {
-    Write-Host "✗ cli.exe not found" -ForegroundColor Red
-    exit 1
+    Write-Host "✓ cli.exe" -ForegroundColor Green
 }
 
 Write-Host "`nBuild complete! Executables are in the dist/ directory." -ForegroundColor Green

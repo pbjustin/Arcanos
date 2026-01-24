@@ -3,12 +3,16 @@ ARCANOS CLI - Main Command Line Interface
 Human-like AI assistant with rich terminal UI.
 """
 
+import os
 import sys
+import threading
 import base64
 import time
+import urllib.request
 import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional, Any, Mapping
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -29,6 +33,7 @@ from rate_limiter import RateLimiter
 from error_handler import handle_errors, ErrorHandler, logger as error_logger
 from windows_integration import WindowsIntegration
 from daemon_service import DaemonService, DaemonCommand
+from update_checker import check_for_updates
 
 try:
     from push_to_talk import AdvancedPushToTalkManager
@@ -115,6 +120,19 @@ class ArcanosCLI:
         self.system_prompt = """You are ARCANOS, a helpful and friendly AI assistant with a warm personality.
 You can see screens, hear voice, execute terminal commands, and have natural conversations.
 Keep responses concise but friendly. Use emojis occasionally. Be helpful and proactive."""
+
+        # Update checker (background); set GITHUB_RELEASES_REPO to enable
+        self._update_info: Optional[dict] = None
+        if Config.GITHUB_RELEASES_REPO:
+            def _check() -> None:
+                try:
+                    info = check_for_updates(Config.VERSION, Config.GITHUB_RELEASES_REPO or "")
+                    if info:
+                        self._update_info = info
+                        self.console.print(f"[yellow]Update available: {info['tag']}. Run 'update' to download and install.[/yellow]")
+                except Exception:
+                    pass
+            threading.Thread(target=_check, daemon=True).start()
 
     def _get_or_create_instance_id(self) -> str:
         """Get or create persistent instance ID for this daemon installation"""
@@ -837,6 +855,7 @@ Type **help** for available commands or just start chatting naturally.
 - **stats** - Show usage statistics
 - **clear** - Clear conversation history
 - **reset** - Reset statistics
+- **update** - Check for updates and download installer (if GITHUB_RELEASES_REPO is set)
 
 ### Examples
 ```
@@ -865,6 +884,35 @@ You: ptt
         if confirm == 'y':
             self.memory.reset_statistics()
             self.console.print("[green]✅ Statistics reset[/green]")
+
+    def handle_update(self) -> None:
+        """Check for updates and optionally download and run ARCANOS-Setup.exe"""
+        repo = Config.GITHUB_RELEASES_REPO or ""
+        if not repo.strip():
+            self.console.print("[yellow]Set GITHUB_RELEASES_REPO (owner/repo) to enable update checks.[/yellow]")
+            return
+        info = self._update_info or check_for_updates(Config.VERSION, repo)
+        if not info:
+            self.console.print("[green]You're up to date.[/green]")
+            return
+        url = info.get("download_url") or ""
+        tag = info.get("tag", "latest")
+        if not url:
+            self.console.print("[red]No download URL in release.[/red]")
+            return
+        tmp = os.environ.get("TEMP", os.environ.get("TMP", "."))
+        safe = "".join(c if c.isalnum() or c in ".-_" else "-" for c in tag)
+        path = os.path.join(tmp, f"ARCANOS-Setup-{safe}.exe")
+        try:
+            self.console.print(f"[cyan]Downloading {tag}...[/cyan]")
+            urllib.request.urlretrieve(url, path)
+            if hasattr(os, "startfile"):
+                os.startfile(path)
+                self.console.print("[green]Installer started. Complete the setup to finish.[/green]")
+            else:
+                self.console.print(f"[green]Downloaded to: {path}[/green]")
+        except Exception as e:
+            self.console.print(f"[red]Download failed: {e}[/red]")
 
     def run(self) -> None:
         """Main CLI loop"""
@@ -910,6 +958,8 @@ You: ptt
                         self.handle_clear()
                     elif command == "reset":
                         self.handle_reset()
+                    elif command == "update":
+                        self.handle_update()
                     else:
                         # Natural conversation
                         self.handle_ask(user_input)
