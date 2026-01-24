@@ -11,6 +11,11 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from config import Config
 
 
+def _is_mock_api_key(api_key: str) -> bool:
+    normalized = api_key.strip().lower()
+    return normalized in {"mock", "mock-api-key", "test", "test-key", "fake"} or normalized.startswith("mock-")
+
+
 class GPTClient:
     """OpenAI API client with built-in rate limiting and error handling"""
 
@@ -19,7 +24,8 @@ class GPTClient:
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
 
-        self.client = OpenAI(api_key=self.api_key)
+        self.is_mock = _is_mock_api_key(self.api_key)
+        self.client = None if self.is_mock else OpenAI(api_key=self.api_key)
         self._request_cache: Dict[str, tuple[str, float]] = {}
         self._cache_ttl = 300  # 5 minutes
 
@@ -40,6 +46,11 @@ class GPTClient:
         Send a message to GPT and get response
         Returns: (response_text, tokens_used, cost)
         """
+        if self.is_mock:
+            # //audit assumption: mock keys should avoid network calls; risk: unexpected live calls; invariant: return mock response; strategy: short-circuit.
+            response_text = "Mock response: API key is in mock mode."
+            return response_text, 0, 0.0
+
         try:
             # Build messages
             messages = []
@@ -118,6 +129,12 @@ class GPTClient:
         """
         Stream a response from GPT, yielding text chunks.
         """
+        if self.is_mock:
+            # //audit assumption: mock keys should avoid streaming network calls; risk: network usage; invariant: yield mock chunks; strategy: short-circuit.
+            for chunk in ["Mock ", "response: ", "API key ", "is in ", "mock mode."]:
+                yield chunk
+            return
+
         try:
             messages = []
 
@@ -178,6 +195,11 @@ class GPTClient:
         Send a message with an image to GPT-4o Vision
         Returns: (response_text, tokens_used, cost)
         """
+        if self.is_mock:
+            # //audit assumption: mock keys should avoid vision calls; risk: network usage; invariant: return mock response; strategy: short-circuit.
+            response_text = "Mock vision response: API key is in mock mode."
+            return response_text, 0, 0.0
+
         try:
             messages = [
                 {
@@ -244,6 +266,10 @@ class GPTClient:
         Transcribe audio bytes using OpenAI
         Returns: transcribed text
         """
+        if self.is_mock:
+            # //audit assumption: mock keys should avoid transcription calls; risk: network usage; invariant: return mock text; strategy: short-circuit.
+            return "Mock transcription: API key is in mock mode."
+
         try:
             audio_file = BytesIO(audio_bytes)
             audio_file.name = filename

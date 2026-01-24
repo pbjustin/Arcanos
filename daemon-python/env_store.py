@@ -29,7 +29,7 @@ def load_env_lines(env_path: Path) -> list[str]:
         return []
     except OSError as exc:
         # //audit assumption: I/O can fail; risk: inability to persist creds; invariant: error surfaced; strategy: raise EnvFileError.
-        raise EnvFileError(f"Failed to read env file at {env_path}") from exc
+        raise EnvFileError(f"Failed to read env file at {env_path}: {exc}") from exc
 
 
 def sanitize_env_value(raw_value: str) -> str:
@@ -99,7 +99,7 @@ def write_env_lines(env_path: Path, lines: Sequence[str]) -> None:
         except OSError:
             # //audit assumption: cleanup can fail; risk: leftover temp file; invariant: continue raising root error; strategy: ignore cleanup error.
             pass
-        raise EnvFileError(f"Failed to write env file at {env_path}") from exc
+        raise EnvFileError(f"Failed to write env file at {env_path}: {exc}") from exc
 
 
 def upsert_env_values(env_path: Path, updates: Mapping[str, str]) -> None:
