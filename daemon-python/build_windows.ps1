@@ -42,15 +42,10 @@ if (Test-Path "dist\ARCANOS.exe") {
     exit 1
 }
 
-# Verify outputs
+# Verify outputs (ARCANOS.exe already verified above; else is unreachable)
 Write-Host "`nVerifying build outputs..." -ForegroundColor Cyan
-if (Test-Path "dist\ARCANOS.exe") {
-    $size = (Get-Item "dist\ARCANOS.exe").Length / 1MB
-    Write-Host "✓ ARCANOS.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
-} else {
-    Write-Host "✗ ARCANOS.exe not found" -ForegroundColor Red
-    exit 1
-}
+$size = (Get-Item "dist\ARCANOS.exe").Length / 1MB
+Write-Host "✓ ARCANOS.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
 
 if (Test-Path "dist\daemon.exe") {
     Write-Host "✓ daemon.exe" -ForegroundColor Green

@@ -5,11 +5,11 @@ Checks GitHub Releases for a newer version and returns download info for ARCANOS
 
 from __future__ import annotations
 
-import json
 import logging
-import re
-import urllib.request
 from typing import Any
+
+import requests
+from packaging.version import parse as parse_version
 
 logger = logging.getLogger(__name__)
 
@@ -17,24 +17,9 @@ RELEASES_API = "https://api.github.com/repos/{repo}/releases/latest"
 RELEASES_LIST = "https://api.github.com/repos/{repo}/releases"
 
 
-def _parse_version(s: str) -> tuple[int, ...]:
-    """Parse 'v1.2.3' or '1.2.3' into (1, 2, 3). Non-numeric parts are treated as 0."""
-    s = s.strip().lstrip("vV")
-    parts = re.split(r"[\\.-]", s)
-    out = []
-    for p in parts[:4]:  # limit to major.minor.patch
-        try:
-            out.append(int(re.sub(r"[^0-9].*", "", p) or "0"))
-        except ValueError:
-            out.append(0)
-    return tuple(out)
-
-
 def _is_newer(latest: str, current: str) -> bool:
     """True if latest > current."""
-    a = _parse_version(latest)
-    b = _parse_version(current)
-    return a > b
+    return parse_version(latest) > parse_version(current)
 
 
 def _find_installer_url(assets: list[dict[str, Any]]) -> str | None:
@@ -67,12 +52,14 @@ def check_for_updates(
         return None
     url = RELEASES_API.format(repo=repo.strip())
     try:
-        req = urllib.request.Request(url)
-        req.add_header("Accept", "application/vnd.github+json")
-        req.add_header("X-GitHub-Api-Version", "2022-11-28")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-    except Exception as e:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as e:
         logger.debug("Update check failed: %s", e)
         return None
 

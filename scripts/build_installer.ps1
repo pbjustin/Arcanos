@@ -49,12 +49,21 @@ if (-not (Test-Path $installerScript)) {
 }
 
 if (-not $SkipBuild) {
-    # //audit assumption: daemon exe must be built first; risk: missing artifact; invariant: build runs; strategy: call build.ps1.
-    & (Join-Path $projectRoot "scripts\build.ps1")
-    if ($LASTEXITCODE -ne 0) {
-        # //audit assumption: build failures are fatal; risk: installer invalid; invariant: exit on failure; strategy: stop.
-        Write-Host "Daemon build failed. Aborting installer build." -ForegroundColor Red
-        exit $LASTEXITCODE
+    # //audit assumption: daemon exe must be built first; risk: missing artifact; invariant: build runs; strategy: call daemon-python/build_windows.ps1.
+    $daemonBuild = Join-Path $projectRoot "daemon-python\build_windows.ps1"
+    if (-not (Test-Path $daemonBuild)) {
+        Write-Host "Daemon build script not found: $daemonBuild" -ForegroundColor Red
+        exit 1
+    }
+    Push-Location (Join-Path $projectRoot "daemon-python")
+    try {
+        & .\build_windows.ps1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Daemon build failed. Aborting installer build." -ForegroundColor Red
+            exit $LASTEXITCODE
+        }
+    } finally {
+        Pop-Location
     }
 }
 
