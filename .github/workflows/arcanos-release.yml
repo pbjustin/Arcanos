@@ -233,6 +233,14 @@ jobs:
           name: ARCANOS-Setup
           path: .
 
+      - name: 📎 Prepare EXE assets at root
+        run: |
+          # Artifacts may preserve paths (daemon-python/dist, installer/dist) or flatten to root. Copy from subdirs when present.
+          [ -f daemon-python/dist/ARCANOS.exe ] && cp daemon-python/dist/ARCANOS.exe ./ARCANOS.exe
+          [ -f installer/dist/ARCANOS-Setup.exe ] && cp installer/dist/ARCANOS-Setup.exe ./ARCANOS-Setup.exe
+          [ -f ARCANOS.exe ] && [ -f ARCANOS-Setup.exe ] || { echo "EXE(s) missing. Find:"; find . -name "*.exe"; exit 1; }
+          ls -la ARCANOS.exe ARCANOS-Setup.exe
+
       - name: 📥 Download release notes
         if: ${{ inputs.patch_only != true }}
         uses: actions/download-artifact@v4
