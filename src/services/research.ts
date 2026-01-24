@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import OpenAI from 'openai';
 import { fetchAndClean } from './webFetcher.js';
 import {
   createCentralizedCompletion,
@@ -56,7 +57,7 @@ async function runResearchCompletion(
     model
   });
 
-  return (response as any)?.choices?.[0]?.message?.content?.trim() || '';
+  return extractCompletionText(response);
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -82,6 +83,7 @@ function createMockResult(topic: string, urls: string[]): ResearchResult {
 }
 
 export async function researchTopic(topic: string, urls: string[] = []): Promise<ResearchResult> {
+  //audit Assumption: topic must be present for research
   if (!topic || !topic.trim()) {
     throw new Error('Topic is required for research');
   }
@@ -91,6 +93,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   const useMock = !client || process.env.OPENAI_API_KEY === 'test_key_for_mocking';
   const researchModel = resolveResearchModel();
 
+  //audit Assumption: mock mode when client missing or test key
   if (useMock) {
     const mockResult = createMockResult(topic, urls);
     await persistResearch(topic, mockResult);
@@ -120,8 +123,9 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
       } else {
         failedUrls.push(url);
       }
-    } catch (error) {
-      console.error(`Failed to process research source ${url}:`, error);
+    } catch (error: unknown) {
+      //audit Assumption: source failures should be tracked, not fatal
+      console.error(`Failed to process research source ${url}:`, error instanceof Error ? error.message : error);
       failedUrls.push(url);
     }
   }
@@ -156,6 +160,17 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   await persistResearch(topic, result);
 
   return result;
+}
+
+function extractCompletionText(
+  response: Awaited<ReturnType<typeof createCentralizedCompletion>>
+): string {
+  //audit Assumption: non-stream responses contain choices[0].message.content
+  if (response && typeof response === 'object' && 'choices' in response) {
+    const completion = response as OpenAI.Chat.Completions.ChatCompletion;
+    return completion.choices?.[0]?.message?.content?.trim() || '';
+  }
+  return '';
 }
 
 async function persistResearch(topic: string, result: ResearchResult): Promise<void> {

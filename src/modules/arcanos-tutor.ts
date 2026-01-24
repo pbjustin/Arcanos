@@ -1,4 +1,4 @@
-import tutorLogic from '../logic/tutor-logic.js';
+import tutorLogic, { type TutorQuery } from '../logic/tutor-logic.js';
 
 export const ArcanosTutor = {
   name: 'ARCANOS:TUTOR',
@@ -6,7 +6,7 @@ export const ArcanosTutor = {
     'Professional tutoring kernel with dynamic schema binding, modular instruction, audit traceability, and feedback loops.',
   gptIds: ['arcanos-tutor', 'tutor'],
   actions: {
-    async query(payload: any) {
+    async query(payload: TutorQuery) {
       return tutorLogic.dispatch(payload);
     },
   },

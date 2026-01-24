@@ -16,7 +16,7 @@ interface WorkerDiagnostics {
   count: number;
   healthy: boolean;
   reason?: string;
-  details?: any[];
+  details?: Array<Record<string, unknown>>;
   expected?: number;
   error?: string;
   runtime?: WorkerRuntimeStatus;
@@ -44,7 +44,7 @@ interface RouteStatus {
   reason?: string;
 }
 
-interface SystemDiagnostics {
+export interface SystemDiagnostics {
   workers: WorkerDiagnostics;
   scheduler: SchedulerDiagnostics;
   routes: RouteStatus[];
@@ -54,8 +54,35 @@ interface SystemDiagnostics {
     connected: boolean;
     error?: string | null;
   };
-  job_data_entry?: any;
+  job_data_entry?: JobDataEntry;
   system_error?: string;
+}
+
+interface JobDataEntry {
+  id?: string;
+  worker_id?: string;
+  job_type?: string;
+  status?: string;
+  input?: unknown;
+  output?: unknown;
+  created_at?: string;
+  completed_at?: string;
+}
+
+interface JobExecutionRow {
+  worker_id: string;
+  executions: number;
+  last_run: string;
+}
+
+interface RouteActivityRow {
+  worker_id: string;
+  requests: number;
+}
+
+interface ErrorStatsRow {
+  error_count: string | number;
+  total_count: string | number;
 }
 
 type DiagnosticJob = (typeof DIAGNOSTIC_JOBS)[number];
@@ -71,6 +98,7 @@ function getWorkerIdForRoute(route: DiagnosticRoute): string | undefined {
 async function getWorkerDiagnostics(): Promise<WorkerDiagnostics> {
   const dbStatus = getStatus();
   
+  //audit Assumption: without DB, worker diagnostics are unavailable
   if (!dbStatus.connected) {
     return {
       count: 0,
@@ -87,6 +115,7 @@ async function getWorkerDiagnostics(): Promise<WorkerDiagnostics> {
     const activeWorkers = workerActivity.rows.length;
     const expectedWorkers = 4; // init-workers spawns 4 workers
     
+    //audit Assumption: activeWorkers >= expected implies healthy
     return {
       count: activeWorkers,
       healthy: activeWorkers >= expectedWorkers,
@@ -94,11 +123,12 @@ async function getWorkerDiagnostics(): Promise<WorkerDiagnostics> {
       expected: expectedWorkers,
       runtime: getWorkerRuntimeStatus()
     };
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: query failures should be surfaced in diagnostics
     return {
       count: 0,
       healthy: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: getErrorMessage(error),
       runtime: getWorkerRuntimeStatus()
     };
   }
@@ -111,6 +141,7 @@ async function getSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
   const dbStatus = getStatus();
   const jobs: DiagnosticJob[] = [...DIAGNOSTIC_JOBS];
 
+  //audit Assumption: DB disconnect makes scheduler status unknown
   if (!dbStatus.connected) {
     return {
       jobs: jobs.map(job => ({ ...job, status: 'unknown', reason: 'Database not connected' })) as ScheduledJob[]
@@ -122,7 +153,8 @@ async function getSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
     const jobExecutions = await query(DIAGNOSTIC_QUERIES.JOB_EXECUTIONS_LAST_DAY, []);
 
     const executionMap: Record<string, { executions: number; lastRun: string }> = {};
-    jobExecutions.rows.forEach((row: any) => {
+    (jobExecutions.rows as JobExecutionRow[]).forEach(row => {
+      //audit Assumption: worker_id maps to route; Handling: aggregate counts
       executionMap[row.worker_id] = {
         executions: row.executions,
         lastRun: row.last_run
@@ -142,12 +174,13 @@ async function getSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
         };
       })
     };
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: query failures should set error status on jobs
     return {
       jobs: jobs.map(job => ({ 
         ...job, 
         status: 'error', 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+        error: getErrorMessage(error)
       })) as ScheduledJob[]
     };
   }
@@ -163,6 +196,7 @@ async function getRouteDiagnostics(): Promise<RouteStatus[]> {
 
   const dbStatus = getStatus();
   
+  //audit Assumption: DB disconnect means routes considered inactive
   if (!dbStatus.connected) {
     return routes.map(route => ({ ...route, active: false, reason: 'Database not connected' }));
   }
@@ -172,7 +206,8 @@ async function getRouteDiagnostics(): Promise<RouteStatus[]> {
     const routeActivity = await query(DIAGNOSTIC_QUERIES.ROUTE_ACTIVITY_LAST_HOUR, []);
 
     const activityMap: Record<string, number> = {};
-    routeActivity.rows.forEach((row: any) => {
+    (routeActivity.rows as RouteActivityRow[]).forEach(row => {
+      //audit Assumption: requests count maps to worker_id; Handling: aggregate
       activityMap[row.worker_id] = row.requests;
     });
 
@@ -185,11 +220,12 @@ async function getRouteDiagnostics(): Promise<RouteStatus[]> {
         requests1h: workerId ? activityMap[workerId] || 0 : 0
       };
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: query failures mark routes inactive with error reason
     return routes.map(route => ({ 
       ...route, 
       active: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+      error: getErrorMessage(error)
     }));
   }
 }
@@ -200,6 +236,7 @@ async function getRouteDiagnostics(): Promise<RouteStatus[]> {
 async function getErrorRate(): Promise<number> {
   const dbStatus = getStatus();
   
+  //audit Assumption: error rate is 0 when DB disconnected
   if (!dbStatus.connected) {
     return 0.0;
   }
@@ -214,17 +251,19 @@ async function getErrorRate(): Promise<number> {
       []
     );
 
-    const row = errorStats.rows[0];
-    const errorCount = parseInt(row.error_count) || 0;
-    const totalCount = parseInt(row.total_count) || 0;
+    const row = errorStats.rows[0] as ErrorStatsRow | undefined;
+    const errorCount = toNumber(row?.error_count);
+    const totalCount = toNumber(row?.total_count);
 
+    //audit Assumption: zero total implies zero error rate; Handling: return 0
     if (totalCount === 0) {
       return 0.0;
     }
 
     return parseFloat((errorCount / totalCount).toFixed(4));
-  } catch (error) {
-    console.error('Error calculating error rate:', error);
+  } catch (error: unknown) {
+    //audit Assumption: calculation failure implies degraded state; Handling: 1.0
+    console.error('Error calculating error rate:', getErrorMessage(error));
     return 1.0; // Assume high error rate if we can't calculate
   }
 }
@@ -242,12 +281,20 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
     ]);
 
     // Get latest job record if database is connected
-    let latestJob = null;
+    let latestJob: JobDataEntry | null = null;
     try {
       const { getLatestJob } = await import('../db.js');
-      latestJob = await getLatestJob();
-    } catch {
-      // Database not connected or function not available
+      const rawJob = await getLatestJob();
+      if (rawJob) {
+        latestJob = {
+          ...rawJob,
+          created_at: rawJob.created_at instanceof Date ? rawJob.created_at.toISOString() : rawJob.created_at,
+          completed_at: rawJob.completed_at instanceof Date ? rawJob.completed_at.toISOString() : rawJob.completed_at
+        };
+      }
+    } catch (error: unknown) {
+      //audit Assumption: missing job data is non-fatal; Handling: ignore
+      void error;
     }
 
     const diagnostics: SystemDiagnostics = {
@@ -263,14 +310,16 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
     };
 
     // Include latest job if available
+    //audit Assumption: include job data only if available
     if (latestJob) {
       diagnostics.job_data_entry = latestJob;
     }
 
     return diagnostics;
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: diagnostics failure should return minimal snapshot
     return {
-      workers: { count: 0, healthy: false, error: error instanceof Error ? error.message : 'Unknown error' },
+      workers: { count: 0, healthy: false, error: getErrorMessage(error) },
       scheduler: { jobs: [] },
       routes: [],
       error_rate: 1.0,
@@ -279,9 +328,23 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
         connected: getStatus().connected,
         error: getStatus().error
       },
-      system_error: error instanceof Error ? error.message : 'Unknown error'
+      system_error: getErrorMessage(error)
     };
   }
+}
+
+function toNumber(value: string | number | undefined): number {
+  //audit Assumption: numeric strings parse with base 10; Handling: parse + fallback
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
 }
 
 /**
@@ -294,6 +357,7 @@ export function formatDiagnosticsAsYAML(diagnostics: SystemDiagnostics): string 
   yamlLines.push('workers:');
   yamlLines.push(`  count: ${diagnostics.workers.count}`);
   yamlLines.push(`  healthy: ${diagnostics.workers.healthy}`);
+  //audit Assumption: include worker error when present
   if (diagnostics.workers.error) {
     yamlLines.push(`  error: "${diagnostics.workers.error}"`);
   }
@@ -306,6 +370,7 @@ export function formatDiagnosticsAsYAML(diagnostics: SystemDiagnostics): string 
     yamlLines.push(`      schedule: "${job.schedule}"`);
     yamlLines.push(`      route: "${job.route}"`);
     yamlLines.push(`      status: "${job.status}"`);
+    //audit Assumption: lastRun is optional; Handling: include when present
     if (job.lastRun) {
       yamlLines.push(`      last_run: "${job.lastRun}"`);
     }
@@ -316,12 +381,14 @@ export function formatDiagnosticsAsYAML(diagnostics: SystemDiagnostics): string 
   diagnostics.routes.forEach((route: RouteStatus) => {
     yamlLines.push(`  - name: "${route.name}"`);
     yamlLines.push(`    active: ${route.active}`);
+    //audit Assumption: requests1h may be absent; Handling: include when present
     if (route.requests1h !== undefined) {
       yamlLines.push(`    requests_1h: ${route.requests1h}`);
     }
   });
   
   // Job data entry
+  //audit Assumption: job data entry is optional; Handling: include when present
   if (diagnostics.job_data_entry) {
     yamlLines.push('job_data_entry:');
     yamlLines.push(`  id: "${diagnostics.job_data_entry.id || 'unknown'}"`);
@@ -355,6 +422,7 @@ export function formatDiagnosticsAsYAML(diagnostics: SystemDiagnostics): string 
   yamlLines.push(`timestamp: "${diagnostics.timestamp}"`);
   yamlLines.push('database:');
   yamlLines.push(`  connected: ${diagnostics.database.connected}`);
+  //audit Assumption: include database error when present
   if (diagnostics.database.error) {
     yamlLines.push(`  error: "${diagnostics.database.error}"`);
   }
@@ -369,6 +437,7 @@ export async function runSystemDiagnostics() {
   const diagnostics = await generateSystemDiagnostics();
   const yaml = formatDiagnosticsAsYAML(diagnostics);
   
+  //audit Assumption: always return success true; Handling: errors folded in diagnostics
   return {
     diagnostics,
     yaml,
@@ -381,3 +450,16 @@ export default {
   formatDiagnosticsAsYAML,
   runSystemDiagnostics
 };
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') {
+      return message;
+    }
+  }
+  return 'Unknown error';
+}

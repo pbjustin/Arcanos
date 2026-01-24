@@ -9,7 +9,7 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 export interface PROptions {
-  patch?: any;
+  patch?: unknown;
   branchName?: string;
   commitMessage?: string;
   forcePush?: boolean;
@@ -45,11 +45,12 @@ async function executeGitCommand(command: string, workingDir?: string): Promise<
       output: stdout.trim(),
       error: stderr.trim() || undefined
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    //audit Assumption: command failures should return error text
     return {
       success: false,
       output: '',
-      error: error.message || 'Unknown git command error'
+      error: error instanceof Error ? error.message : 'Unknown git command error'
     };
   }
 }
@@ -204,11 +205,11 @@ export async function executePRWorkflow(
       commitHash
     };
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     return {
       success: false,
       message: `Failed at step: ${currentStep}`,
-      error: error.message
+      error: error instanceof Error ? error.message : 'Unknown error'
     };
   }
 }

@@ -192,10 +192,12 @@ async function attemptClearFeedbackDelivery(
     //audit failure risk: silent delivery failures
     //audit expected invariant: errors are logged and propagated as messages
     //audit handling strategy: log warning and return failure message
-    aiLogger.warn('Failed to deliver CLEAR feedback to external service', {
-      operation: 'audit:transport',
-      errorMessage: error instanceof Error ? error.message : 'Unknown transport error'
-    }, error instanceof Error ? error : undefined);
+    aiLogger.warn(
+      'Failed to deliver CLEAR feedback to external service',
+      { operation: 'audit:transport' },
+      { errorMessage: error instanceof Error ? error.message : 'Unknown transport error' },
+      error instanceof Error ? error : undefined
+    );
     return {
       delivered: false,
       deliveryMessage: error instanceof Error ? error.message : 'Unknown transport error'

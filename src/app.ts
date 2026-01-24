@@ -32,18 +32,20 @@ export function createApp(): Express {
   app.use(createFallbackMiddleware());
 
   // Global error handler
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const errorRecord = err && typeof err === 'object' ? (err as Record<string, unknown>) : {};
+    const message = typeof errorRecord.message === 'string' ? errorRecord.message : 'Unknown error';
+    const status = typeof errorRecord.status === 'number' ? errorRecord.status : 500;
     logger.error('Unhandled application error', {
       module: 'app',
       operation: 'error-handler',
-      error: err.message || 'Unknown error',
-      status: err.status || 500,
-      stack: config.server.environment === 'development' ? err.stack : undefined
+      error: message,
+      status,
+      stack: config.server.environment === 'development' ? errorRecord.stack : undefined
     });
-    const status = typeof err.status === 'number' ? err.status : 500;
     res.status(status).json({
       error: 'Internal server error',
-      message: config.server.environment === 'development' ? err.message : 'Something went wrong'
+      message: config.server.environment === 'development' ? message : 'Something went wrong'
     });
   });
 

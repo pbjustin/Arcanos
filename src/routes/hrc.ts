@@ -17,7 +17,7 @@ interface HRCRequest {
 }
 
 router.post('/api/ask-hrc', createValidationMiddleware(hrcSchema), async (
-  req: Request<{}, any, HRCRequest>,
+  req: Request<{}, { success: boolean; result?: unknown; error?: string }, HRCRequest>,
   res: Response
 ) => {
   const { message } = req.body;
@@ -25,9 +25,10 @@ router.post('/api/ask-hrc', createValidationMiddleware(hrcSchema), async (
   try {
     const result = await hrcCore.evaluate(message);
     res.json({ success: true, result });
-  } catch (err: any) {
-    console.error('HRC evaluation failed:', err);
-    res.status(500).json({ success: false, error: err.message || 'HRC evaluation failed' });
+  } catch (err: unknown) {
+    //audit Assumption: evaluation failures should return 500
+    console.error('HRC evaluation failed:', err instanceof Error ? err.message : err);
+    res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'HRC evaluation failed' });
   }
 });
 

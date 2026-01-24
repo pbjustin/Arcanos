@@ -5,9 +5,11 @@ JSON-based persistent storage for conversations and user preferences.
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union, Dict, List
 from datetime import datetime
 from config import Config
+
+JsonValue = Union[str, int, float, bool, None, List["JsonValue"], Dict[str, "JsonValue"]]
 
 
 class Memory:
@@ -100,21 +102,21 @@ class Memory:
             self.data["statistics"][stat_name] += amount
             self.save()
 
-    def set_user_preference(self, key: str, value: Any) -> None:
+    def set_user_preference(self, key: str, value: "JsonValue") -> None:
         """Set a user preference"""
         self.data["user"]["preferences"][key] = value
         self.save()
 
-    def get_user_preference(self, key: str, default: Any = None) -> Any:
+    def get_user_preference(self, key: str, default: Optional["JsonValue"] = None) -> Optional["JsonValue"]:
         """Get a user preference"""
         return self.data["user"]["preferences"].get(key, default)
 
-    def set_setting(self, key: str, value: Any) -> None:
+    def set_setting(self, key: str, value: "JsonValue") -> None:
         """Set a system setting"""
         self.data["settings"][key] = value
         self.save()
 
-    def get_setting(self, key: str, default: Any = None) -> Any:
+    def get_setting(self, key: str, default: Optional["JsonValue"] = None) -> Optional["JsonValue"]:
         """Get a system setting"""
         return self.data["settings"].get(key, default)
 

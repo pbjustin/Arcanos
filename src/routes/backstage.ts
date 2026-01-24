@@ -20,8 +20,9 @@ router.post('/book-event', confirmGate, async (req: Request, res: Response) => {
   try {
     const eventID = await BackstageBooker.bookEvent(req.body);
     res.status(200).json({ success: true, eventID });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    //audit Assumption: booking failures should return 500
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
@@ -35,8 +36,9 @@ router.post('/book-gpt', confirmGate, async (req: Request, res: Response) => {
     const storyline = await BackstageBooker.generateBooking(prompt);
     await BackstageBooker.saveStoryline(key || randomUUID(), storyline);
     res.status(200).json({ success: true, storyline });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    //audit Assumption: booking failures should return 500
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
@@ -46,8 +48,9 @@ router.post('/simulate-match', confirmGate, async (req: Request, res: Response) 
     const { match, rosters, winProbModifier }: { match: MatchInput; rosters?: Wrestler[]; winProbModifier?: number } = req.body;
     const result = await BackstageBooker.simulateMatch(match, rosters ?? [], winProbModifier || 0);
     res.status(200).json({ success: true, result });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    //audit Assumption: simulation failures should return 500
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
@@ -56,8 +59,9 @@ router.post('/update-roster', confirmGate, async (req: Request, res: Response) =
   try {
     const roster = await BackstageBooker.updateRoster(req.body as Wrestler[]);
     res.status(200).json({ success: true, roster });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    //audit Assumption: roster update failures should return 500
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
@@ -66,8 +70,9 @@ router.post('/track-storyline', confirmGate, async (req: Request, res: Response)
   try {
     const storyline = await BackstageBooker.trackStoryline(req.body);
     res.status(200).json({ success: true, storyline });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+  } catch (error: unknown) {
+    //audit Assumption: storyline failures should return 500
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

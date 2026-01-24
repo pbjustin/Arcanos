@@ -44,12 +44,14 @@ export function getTokenParameter(
   options: TokenParameterOptions = {}
 ): TokenParameterResult {
   // Safety: Validate token limit is a number and within safe bounds
+  //audit Assumption: invalid limits should fall back; Risk: unintended model usage
   if (typeof tokenLimit !== 'number' || !isFinite(tokenLimit) || tokenLimit <= 0) {
     console.warn(`[🔒 TOKEN-SAFETY] Invalid token limit: ${tokenLimit}, using default 1000`);
     tokenLimit = 1000;
   }
   
   // Safety: Cap token limit to reasonable maximum (8000 for most models)
+  //audit Assumption: cap prevents excessive usage; Handling: clamp to max
   const maxSafeTokens = 8000;
   if (tokenLimit > maxSafeTokens) {
     console.warn(`[🔒 TOKEN-SAFETY] Token limit ${tokenLimit} exceeds safe maximum ${maxSafeTokens}, capping`);
@@ -57,6 +59,7 @@ export function getTokenParameter(
   }
 
   // Check for forced parameter override
+  //audit Assumption: forced parameter is authoritative; Risk: API mismatch
   if (options.forceParameter) {
     const parameterUsed = options.forceParameter;
     console.log(`[📊 TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterUsed} (forced), Tokens: ${tokenLimit}`);
@@ -66,6 +69,7 @@ export function getTokenParameter(
   }
 
   // Check cache first
+  //audit Assumption: cached capability remains valid; Risk: model behavior changes
   const cachedParameter = modelCapabilityCache.get(modelName);
   if (cachedParameter) {
     console.log(`[📊 TOKEN-AUDIT] Model: ${modelName}, Parameter: ${cachedParameter} (cached), Tokens: ${tokenLimit}`);
@@ -75,9 +79,11 @@ export function getTokenParameter(
   }
 
   // Determine parameter based on model name patterns and known limitations
+  //audit Assumption: naming conventions map to capability; Risk: mis-detection
   const parameterToUse = determineTokenParameter(modelName);
   
   // Cache the result for future calls
+  //audit Assumption: storing capability improves consistency; Handling: cache set
   modelCapabilityCache.set(modelName, parameterToUse);
 
   // Log for audit tracking
@@ -95,6 +101,7 @@ export function getTokenParameter(
  */
 function determineTokenParameter(modelName: string): 'max_tokens' | 'max_completion_tokens' {
   // Check explicit list first
+  //audit Assumption: explicit list overrides heuristics; Handling: direct return
   if (MAX_COMPLETION_TOKENS_MODELS.has(modelName)) {
     return 'max_completion_tokens';
   }
@@ -103,21 +110,25 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
   const lowerModelName = modelName.toLowerCase();
 
   // Fine-tuned models typically use max_tokens
+  //audit Assumption: fine-tuned models follow max_tokens; Risk: vendor variation
   if (lowerModelName.startsWith('ft:')) {
     return 'max_tokens';
   }
 
   // GPT-4 variants typically use max_tokens
+  //audit Assumption: GPT-4 uses max_tokens; Handling: return max_tokens
   if (lowerModelName.includes('gpt-4')) {
     return 'max_tokens';
   }
 
   // GPT-3.5 variants typically use max_tokens
+  //audit Assumption: GPT-3.5 uses max_tokens; Handling: return max_tokens
   if (lowerModelName.includes('gpt-3.5')) {
     return 'max_tokens';
   }
 
   // GPT-5.1 models require max_completion_tokens
+  //audit Assumption: GPT-5 requires max_completion_tokens; Handling: switch param
   if (lowerModelName.includes('gpt-5')) {
     return 'max_completion_tokens';
   }
@@ -154,9 +165,10 @@ export async function testModelTokenParameter(
     console.log(`[✅ TOKEN-TEST] Model ${modelName} supports max_tokens`);
     return 'max_tokens';
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Check if the error is specifically about the token parameter
-    const errorMessage = error?.message?.toLowerCase() || '';
+    //audit Assumption: error message indicates unsupported param; Handling: fallback
+    const errorMessage = getErrorMessage(error).toLowerCase();
     if (errorMessage.includes('max_tokens') || errorMessage.includes('unrecognized')) {
       
       // Try max_completion_tokens as fallback
@@ -173,18 +185,36 @@ export async function testModelTokenParameter(
         console.log(`[✅ TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
         return 'max_completion_tokens';
         
-      } catch {
-        console.warn(`[⚠️ TOKEN-TEST] Model ${modelName} failed both token parameters, defaulting to max_tokens`);
+      } catch (fallbackError: unknown) {
+        //audit Assumption: both params failed; Handling: default to max_tokens
+        console.warn(
+          `[⚠️ TOKEN-TEST] Model ${modelName} failed both token parameters, defaulting to max_tokens: ${getErrorMessage(fallbackError)}`
+        );
         modelCapabilityCache.set(modelName, 'max_tokens');
         return 'max_tokens';
       }
     } else {
       // Error not related to token parameters, assume max_tokens works
+      //audit Assumption: non-token error implies max_tokens support; Risk: false
       console.log(`[✅ TOKEN-TEST] Model ${modelName} error unrelated to tokens, assuming max_tokens support`);
       modelCapabilityCache.set(modelName, 'max_tokens');
       return 'max_tokens';
     }
   }
+}
+
+function getErrorMessage(error: unknown): string {
+  //audit Assumption: extract message for diagnostics; Handling: safe fallbacks
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') {
+      return message;
+    }
+  }
+  return '';
 }
 
 /**
@@ -200,6 +230,7 @@ export function createChatCompletionParams(
   tokenLimit: number
 ): OpenAI.Chat.Completions.ChatCompletionCreateParams {
   
+  //audit Assumption: helper returns valid token param; Handling: spread into payload
   const tokenParams = getTokenParameter(modelName, tokenLimit);
   
   return {
@@ -213,6 +244,7 @@ export function createChatCompletionParams(
  * Clear the model capability cache (useful for testing or when model capabilities change)
  */
 export function clearModelCapabilityCache(): void {
+  //audit Assumption: cache invalidation is intentional; Handling: clear map
   modelCapabilityCache.clear();
   console.log(`[🔄 TOKEN-CACHE] Model capability cache cleared`);
 }
@@ -229,6 +261,7 @@ export function getModelCapabilityCacheStatus(): {
     parameter
   }));
   
+  //audit Assumption: expose cache state for diagnostics; Handling: return snapshot
   return {
     size: modelCapabilityCache.size,
     entries

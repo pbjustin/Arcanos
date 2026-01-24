@@ -11,7 +11,12 @@ import { query } from '../query.js';
 /**
  * Create a new job
  */
-export async function createJob(workerId: string, jobType: string, input: any, status: string = 'pending'): Promise<JobData> {
+export async function createJob(
+  workerId: string,
+  jobType: string,
+  input: unknown,
+  status: string = 'pending'
+): Promise<JobData> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -27,7 +32,12 @@ export async function createJob(workerId: string, jobType: string, input: any, s
 /**
  * Update job status and output
  */
-export async function updateJob(jobId: string, status: string, output: any = null, errorMessage: string | null = null): Promise<JobData> {
+export async function updateJob(
+  jobId: string,
+  status: string,
+  output: unknown = null,
+  errorMessage: string | null = null
+): Promise<JobData> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -58,8 +68,9 @@ export async function getLatestJob(): Promise<JobData | null> {
     );
     
     return result.rows[0] || null;
-  } catch (error) {
-    console.error('Error fetching latest job:', error);
+  } catch (error: unknown) {
+    //audit Assumption: failures return null
+    console.error('Error fetching latest job:', error instanceof Error ? error.message : error);
     return null;
   }
 }

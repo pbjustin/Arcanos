@@ -7,6 +7,7 @@ import { recordTraceEvent } from '../utils/telemetry.js';
 import { toFile } from 'openai/uploads';
 import path from 'path';
 import type { ErrorResponseDTO } from '../types/dto.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
 
@@ -51,9 +52,9 @@ function resolveTranscribeModel(override?: string): string {
   return process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
 }
 
-router.post('/api/transcribe', transcribeValidation, async (req: Request<{}, TranscribeResponse | ErrorResponseDTO, TranscribeRequest>, res: Response<TranscribeResponse | ErrorResponseDTO>) => {
-  try {
+router.post('/api/transcribe', transcribeValidation, asyncHandler(async (req: Request<{}, TranscribeResponse | ErrorResponseDTO, TranscribeRequest>, res: Response<TranscribeResponse | ErrorResponseDTO>) => {
     const { audioBase64, filename, model, language } = req.body;
+    try {
 
     if (!audioBase64 || typeof audioBase64 !== 'string' || audioBase64.trim().length === 0) {
       return res.status(400).json(
@@ -118,8 +119,8 @@ router.post('/api/transcribe', transcribeValidation, async (req: Request<{}, Tra
       text,
       model: transcribeModel
     });
-  } catch (error) {
-    aiLogger.error('Transcription request failed', { operation: 'transcribe' }, undefined, error as Error);
+  } catch (error: unknown) {
+    aiLogger.error('Transcription request failed', { operation: 'transcribe' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('openai.transcribe.error', {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
@@ -129,6 +130,6 @@ router.post('/api/transcribe', transcribeValidation, async (req: Request<{}, Tra
       details: 'Failed to process transcription request'
     });
   }
-});
+}));
 
 export default router;

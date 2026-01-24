@@ -148,13 +148,14 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
       logs
     };
 
-  } catch (error: any) {
-    const errorMessage = `❌ Error during orchestration reset: ${error.message || 'Unknown error'}`;
+  } catch (error: unknown) {
+    //audit Assumption: reset failures should be logged and returned
+    const errorMessage = `❌ Error during orchestration reset: ${error instanceof Error ? error.message : 'Unknown error'}`;
     logs.push(errorMessage);
-    console.error(errorMessage, error);
+    console.error(errorMessage, error instanceof Error ? error.message : error);
 
     // Update audit log with error
-    auditEntry.outputSummary = `Orchestration shell reset failed: ${error.message}`;
+    auditEntry.outputSummary = `Orchestration shell reset failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     auditEntry.auditFlags.push('RESET_ERROR');
     logAITaskLineage(auditEntry);
 

@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import OpenAI from 'openai';
 import { createCentralizedCompletion } from '../services/openai.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
@@ -21,7 +22,7 @@ interface AskBody {
 
 interface AskResponse {
   success: boolean;
-  result?: any;
+  result?: unknown;
   error?: string;
   metadata?: {
     service?: string;
@@ -98,7 +99,7 @@ router.post('/ask', confirmGate, createValidationMiddleware(arcanosSchema), asyn
       });
 
       // Stream ARCANOS results
-      for await (const chunk of response as AsyncIterable<any>) {
+      for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
           res.write(`data: ${JSON.stringify({ success: true, content, type: 'chunk' })}\n\n`);
@@ -116,24 +117,26 @@ router.post('/ask', confirmGate, createValidationMiddleware(arcanosSchema), asyn
       max_tokens: options.max_tokens || 2048
     });
 
-    const completion = response as any;
-    const result = completion.choices[0]?.message?.content || '';
+    if (!isChatCompletion(response)) {
+      throw new Error('Unexpected streaming response');
+    }
+    const result = response.choices[0]?.message?.content || '';
 
     return res.json({ 
       success: true, 
       result,
       metadata: {
-        model: completion.model,
-        tokensUsed: completion.usage?.total_tokens || 0,
+        model: response.model,
+        tokensUsed: response.usage?.total_tokens || 0,
         timestamp: new Date().toISOString(),
         arcanosRouting: true
       }
     });
-  } catch (err: any) {
-    console.error('ARCANOS API error:', err);
+  } catch (err: unknown) {
+    console.error('ARCANOS API error:', err instanceof Error ? err.message : err);
     
     // Enhanced error handling for network reachability and other issues
-    const errorMessage = err.message || 'Unknown error occurred';
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
     
     // Check for common network/API related errors
     if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
@@ -163,3 +166,9 @@ router.post('/ask', confirmGate, createValidationMiddleware(arcanosSchema), asyn
 }));
 
 export default router;
+
+function isChatCompletion(
+  response: Awaited<ReturnType<typeof createCentralizedCompletion>>
+): response is OpenAI.Chat.Completions.ChatCompletion {
+  return !!response && typeof response === 'object' && 'choices' in response;
+}

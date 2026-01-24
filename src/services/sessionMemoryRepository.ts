@@ -4,9 +4,10 @@ import { loadMemory, saveMemory } from '../db.js';
 import { logger } from '../utils/structuredLogging.js';
 
 type ChannelName = string;
+type SessionMessage = Record<string, unknown> | string;
 
 interface FallbackEntry {
-  messages: any[];
+  messages: SessionMessage[];
   expiresAt: number;
 }
 
@@ -32,7 +33,7 @@ function cloneMessages<T>(messages: T[]): T[] {
   return messages.map(item => cloneMessage(item));
 }
 
-function deriveMetadataFromMessage(message: any): SessionMetadata | undefined {
+function deriveMetadataFromMessage(message: unknown): SessionMetadata | undefined {
   if (!message || typeof message !== 'object') {
     return undefined;
   }
@@ -68,7 +69,7 @@ class SessionMemoryRepository {
     this.fallbackTtlMs = Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_FALLBACK_TTL_MS;
   }
 
-  async appendMessage(sessionId: string, channel: ChannelName, message: any): Promise<void> {
+  async appendMessage(sessionId: string, channel: ChannelName, message: SessionMessage): Promise<void> {
     const key = this.makeKey(sessionId, channel);
     const history = await this.getChannel(sessionId, channel);
     const nextHistory = [...history, cloneMessage(message)];
@@ -76,25 +77,27 @@ class SessionMemoryRepository {
     try {
       await saveMemory(key, nextHistory);
       this.fallback.delete(key);
-    } catch (error) {
+    } catch (error: unknown) {
+      //audit Assumption: persistence failures should fall back to cache
       this.setFallback(key, nextHistory);
       logger.warn('Falling back to in-process cache for session channel', {
         module: 'sessionMemoryRepository',
         operation: 'appendMessage',
         sessionId,
         channel,
-        error: (error as Error).message
+        error: error instanceof Error ? error.message : String(error)
       });
     }
 
     this.updateProcessCache(sessionId, channel, nextHistory, message);
   }
 
-  async getChannel(sessionId: string, channel: ChannelName): Promise<any[]> {
+  async getChannel(sessionId: string, channel: ChannelName): Promise<SessionMessage[]> {
     const key = this.makeKey(sessionId, channel);
 
     try {
       const stored = await loadMemory(key);
+      //audit Assumption: stored value may be an array or array-like
       if (Array.isArray(stored)) {
         this.fallback.delete(key);
         return cloneMessages(stored);
@@ -103,12 +106,12 @@ class SessionMemoryRepository {
         this.fallback.delete(key);
         return [];
       }
-      if (typeof stored === 'object' && 'length' in (stored as any)) {
-        const arrayLike = Array.from(stored as any);
+      if (isArrayLike(stored)) {
+        const arrayLike = Array.from(stored);
         this.fallback.delete(key);
         return cloneMessages(arrayLike);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       const cached = this.getFallback(key);
       if (cached) {
         logger.warn('Using fallback cache for session channel', {
@@ -116,7 +119,7 @@ class SessionMemoryRepository {
           operation: 'getChannel',
           sessionId,
           channel,
-          error: (error as Error).message
+          error: error instanceof Error ? error.message : String(error)
         });
         return cloneMessages(cached);
       }
@@ -137,14 +140,14 @@ class SessionMemoryRepository {
     return [];
   }
 
-  async getConversation(sessionId: string): Promise<any[]> {
+  async getConversation(sessionId: string): Promise<Array<Record<string, unknown>>> {
     const [core, meta] = await Promise.all([
       this.getChannel(sessionId, 'conversations_core'),
       this.getChannel(sessionId, 'system_meta')
     ]);
 
     return core.map((message, index) => ({
-      ...message,
+      ...(typeof message === 'object' && message ? message : { value: message }),
       meta: meta[index] || {}
     }));
   }
@@ -157,7 +160,7 @@ class SessionMemoryRepository {
     return `session:${sessionId}:${channel}`;
   }
 
-  private getFallback(key: string): any[] | null {
+  private getFallback(key: string): SessionMessage[] | null {
     const cached = this.fallback.get(key);
     if (!cached) {
       return null;
@@ -171,26 +174,26 @@ class SessionMemoryRepository {
     return cloneMessages(cached.messages);
   }
 
-  private setFallback(key: string, messages: any[]): void {
+  private setFallback(key: string, messages: SessionMessage[]): void {
     this.fallback.set(key, {
       messages: cloneMessages(messages),
       expiresAt: Date.now() + this.fallbackTtlMs
     });
   }
 
-  private getProcessCache(sessionId: string, channel: ChannelName): any[] | null {
+  private getProcessCache(sessionId: string, channel: ChannelName): SessionMessage[] | null {
     const session = memoryStore.getSession(sessionId);
     if (!session) {
       return null;
     }
 
     if (channel === 'conversations_core' && Array.isArray(session.conversations_core)) {
-      return session.conversations_core;
+      return session.conversations_core as SessionMessage[];
     }
 
     if (channel === 'system_meta') {
       if (Array.isArray(session.metadata)) {
-        return session.metadata as any[];
+        return session.metadata as SessionMessage[];
       }
 
       if (session.metadata) {
@@ -201,7 +204,7 @@ class SessionMemoryRepository {
     return null;
   }
 
-  private updateProcessCache(sessionId: string, channel: ChannelName, history: any[], message: any): void {
+  private updateProcessCache(sessionId: string, channel: ChannelName, history: SessionMessage[], message: SessionMessage): void {
     const metadata = channel === 'system_meta' ? deriveMetadataFromMessage(message) : undefined;
 
     memoryStore.saveSession({
@@ -210,6 +213,10 @@ class SessionMemoryRepository {
       metadata
     });
   }
+}
+
+function isArrayLike(value: unknown): value is ArrayLike<SessionMessage> {
+  return typeof value === 'object' && value !== null && 'length' in value && typeof (value as { length?: unknown }).length === 'number';
 }
 
 const sessionMemoryRepository = new SessionMemoryRepository();

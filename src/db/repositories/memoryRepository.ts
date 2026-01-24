@@ -4,15 +4,14 @@
  * Handles memory storage and retrieval operations.
  */
 
-import type { QueryResult } from 'pg';
-import { getPool, isDatabaseConnected } from '../client.js';
+import { isDatabaseConnected } from '../client.js';
 import type { MemoryEntry } from '../schema.js';
 import { query } from '../query.js';
 
 /**
  * Save or update memory entry
  */
-export async function saveMemory(key: string, value: any): Promise<MemoryEntry> {
+export async function saveMemory(key: string, value: unknown): Promise<MemoryEntry> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -32,7 +31,7 @@ export async function saveMemory(key: string, value: any): Promise<MemoryEntry> 
 /**
  * Load memory entry by key
  */
-export async function loadMemory(key: string): Promise<any | null> {
+export async function loadMemory(key: string): Promise<unknown | null> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }

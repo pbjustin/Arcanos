@@ -5,7 +5,7 @@ Backend authentication client for obtaining JWT tokens.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Mapping
 
 import requests
 
@@ -51,7 +51,7 @@ def build_login_payload(email: str, password: str) -> dict[str, str]:
     return {"email": email, "password": password}
 
 
-def parse_login_response(response_json: Any) -> BackendLoginResult:
+def parse_login_response(response_json: Mapping[str, object]) -> BackendLoginResult:
     """
     Purpose: Parse backend login response JSON into a result.
     Inputs/Outputs: response_json object; returns BackendLoginResult.

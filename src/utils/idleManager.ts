@@ -100,6 +100,9 @@ export interface IdleManager {
   destroy: () => void;
 }
 
+/**
+ * Create an idle manager with optional audit logging.
+ */
 export function createIdleManager(auditLogger: Logger = console as Logger): IdleManager {
   // --- Internal state ---
   let lastMemory = process.memoryUsage().heapUsed;
@@ -129,11 +132,14 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
     trafficRate = DEFAULTS.EWMA_DECAY * trafficRate + (1 - DEFAULTS.EWMA_DECAY) * instantRate;
 
     // Adjust idle timeout based on live traffic
+    //audit Assumption: high traffic should increase idle timeout
     if (trafficRate > 0.5)
       idleTimeoutMs = Math.min(DEFAULTS.MAX_IDLE_TIMEOUT_MS, idleTimeoutMs * 1.5);
+    //audit Assumption: low traffic should decrease idle timeout
     else if (trafficRate < 0.05)
       idleTimeoutMs = Math.max(DEFAULTS.MIN_IDLE_TIMEOUT_MS, idleTimeoutMs * 0.8);
 
+    //audit Assumption: traffic logs are helpful for idle decisions
     auditLogger.log?.("[AUDIT] Traffic noted", {
       meta,
       idleTimeoutMs,
@@ -146,17 +152,20 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
     const mem = process.memoryUsage();
     const now = Date.now();
 
+    //audit Assumption: memory growth check runs on fixed interval
     if (now - lastMemoryCheck > DEFAULTS.MEMORY_GROWTH_WINDOW_MS) {
       memoryIsGrowing = mem.heapUsed > lastMemory * 1.1;
       lastMemory = mem.heapUsed;
       lastMemoryCheck = now;
     }
 
+    //audit Assumption: RSS threshold indicates memory pressure
     const overThreshold = mem.rss / 1024 / 1024 > DEFAULTS.IDLE_MEMORY_THRESHOLD_MB;
 
     const idle =
       !memoryIsGrowing && !overThreshold && now - lastRequestTime > idleTimeoutMs;
 
+    //audit Assumption: idle decision should be auditable
     auditLogger.log?.("[AUDIT] Idle check", {
       idle,
       memoryIsGrowing,
@@ -178,6 +187,7 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
 
       // Serve from cache
       const cached = responseCache.get(key);
+      //audit Assumption: cached entries are valid within TTL
       if (cached) {
         const { timestamp, data } = cached;
         if (now - timestamp < DEFAULTS.CACHE_TTL_MS) {
@@ -196,6 +206,7 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
     // This ensures all requests are batched together efficiently
     if (batchInterval === null) {
       batchInterval = setInterval(async () => {
+        //audit Assumption: empty queue should skip processing
         if (requestQueue.length === 0) return;
 
         const grouped = new Map<string, QueuedRequest[]>();
@@ -212,20 +223,22 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
 
         for (const [key, group] of grouped.entries()) {
           try {
+            //audit Assumption: first payload is representative for batch
             const payload = group[0].payload;
             const data = await openai.chat.completions.create({
               ...payload,
               stream: false
-            } as any);
+            });
             responseCache.set(key, { timestamp: Date.now(), data });
 
-            for (const r of group) r.resolve(data as any);
+            for (const r of group) r.resolve(data);
 
             auditLogger.log?.("[AUDIT] Batched OpenAI call", {
               key,
               batchSize: group.length,
             });
-          } catch (err) {
+          } catch (err: unknown) {
+            //audit Assumption: OpenAI errors should reject all batch entries
             const error = err instanceof Error ? err : new Error(String(err));
             for (const r of group) r.reject(error);
           }
@@ -250,6 +263,7 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
 
   // --- Cleanup function ---
   function destroy() {
+    //audit Assumption: cleanup should stop batching and clear caches
     if (batchInterval !== null) {
       clearInterval(batchInterval);
       batchInterval = null;

@@ -12,7 +12,7 @@ export interface SystemState {
   status: string;
   version: string;
   lastSync: string | null;
-  [key: string]: any; // Allow additional properties
+  [key: string]: unknown; // Allow additional properties
 }
 
 /**
@@ -20,12 +20,14 @@ export interface SystemState {
  */
 export function loadState(): SystemState {
   try {
+    //audit Assumption: state file presence indicates persisted state
     if (fs.existsSync(STATE_FILE)) {
       const data = fs.readFileSync(STATE_FILE, 'utf8');
       return JSON.parse(data);
     }
-  } catch (error) {
-    console.error('[STATE] Error loading state file:', error);
+  } catch (error: unknown) {
+    //audit Assumption: load failure should fall back to default state
+    console.error('[STATE] Error loading state file:', error instanceof Error ? error.message : error);
   }
   
   // Return default state
@@ -50,8 +52,9 @@ export function updateState(newData: Partial<SystemState>): SystemState {
     
     fs.writeFileSync(STATE_FILE, JSON.stringify(updatedState, null, 2));
     return updatedState;
-  } catch (error) {
-    console.error('[STATE] Error updating state file:', error);
+  } catch (error: unknown) {
+    //audit Assumption: write failure should surface to caller
+    console.error('[STATE] Error updating state file:', error instanceof Error ? error.message : error);
     throw error;
   }
 }
@@ -81,8 +84,9 @@ export async function getBackendState(port: number = config.server.port): Promis
   try {
     const statusUrl = buildStatusUrl(port);
     return await webFetcher<SystemState>(statusUrl);
-  } catch (error) {
-    console.error('[STATE] Error fetching backend state:', error);
+  } catch (error: unknown) {
+    //audit Assumption: fetch failure should fall back to file state
+    console.error('[STATE] Error fetching backend state:', error instanceof Error ? error.message : error);
     // Fallback to file-based state
     return loadState();
   }

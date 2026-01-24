@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import OpenAI from 'openai';
 import { createCentralizedCompletion } from '../services/openai.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
@@ -111,7 +112,7 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
       });
 
       // Stream simulation results
-      for await (const chunk of response as AsyncIterable<any>) {
+      for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
           res.write(`data: ${JSON.stringify({ content, type: 'chunk' })}\n\n`);
@@ -124,8 +125,10 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
     }
 
     // Handle regular response
-    const completion = response as any;
-    const simulationResult = completion.choices[0]?.message?.content || '';
+    if (!isChatCompletion(response)) {
+      throw new Error('Unexpected streaming response');
+    }
+    const simulationResult = response.choices[0]?.message?.content || '';
 
     res.json(buildTimestampedPayload({
       status: 'success',
@@ -134,16 +137,16 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
         scenario,
         result: simulationResult,
         metadata: {
-          model: completion.model,
-          tokensUsed: completion.usage?.total_tokens || 0,
+          model: response.model,
+          tokensUsed: response.usage?.total_tokens || 0,
           timestamp: new Date().toISOString(),
           simulationId: generateRequestId('sim')
         }
       }
     }));
 
-  } catch (error) {
-    console.error('Simulation error:', error);
+  } catch (error: unknown) {
+    console.error('Simulation error:', error instanceof Error ? error.message : error);
 
     //audit Assumption: simulation errors should return 500; risk: leaking internal details; invariant: response includes timestamp; handling: sanitize error message.
     res.status(500).json(buildTimestampedPayload({
@@ -155,3 +158,9 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
 }));
 
 export default router;
+
+function isChatCompletion(
+  response: Awaited<ReturnType<typeof createCentralizedCompletion>>
+): response is OpenAI.Chat.Completions.ChatCompletion {
+  return !!response && typeof response === 'object' && 'choices' in response;
+}

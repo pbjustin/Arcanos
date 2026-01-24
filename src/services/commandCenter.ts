@@ -113,8 +113,10 @@ const commandHandlers: Record<CommandName, CommandHandler> = {
         result: null,
         streaming: true
       });
-    } catch (error: any) {
-      return buildResult('ai:prompt', false, error?.message || 'Failed to execute AI command.');
+    } catch (error: unknown) {
+      //audit Assumption: prompt failures should return a failure result
+      const errorMessage = error instanceof Error ? error.message : 'Failed to execute AI command.';
+      return buildResult('ai:prompt', false, errorMessage);
     }
   }
 };
@@ -139,10 +141,11 @@ function buildResult(
 
 export async function executeCommand(
   command: CommandName,
-  payload: Record<string, any> = {}
+  payload: Record<string, unknown> = {}
 ): Promise<CommandExecutionResult> {
   const handler = commandHandlers[command];
 
+  //audit Assumption: unsupported command should return failure result
   if (!handler) {
     return buildResult(command, false, 'Unsupported command.');
   }

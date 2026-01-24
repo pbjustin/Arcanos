@@ -11,7 +11,7 @@ import { query } from '../query.js';
 /**
  * Parse JSON field with fallback
  */
-function parseJsonField<T>(value: any, fallback: T): T {
+function parseJsonField<T>(value: unknown, fallback: T): T {
   if (value === null || value === undefined) {
     return fallback;
   }

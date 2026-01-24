@@ -4,6 +4,7 @@ import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders 
 import { inferHttpMethodIntent } from '../utils/httpMethodIntent.js';
 import { buildValidationErrorResponse } from '../utils/errorResponse.js';
 import type { ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ interface ChatGPTActionBody {
   metadata?: Record<string, unknown>;
 }
 
-router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorResponseDTO, ChatGPTActionBody>, res: Response<AskResponse | ErrorResponseDTO>) => {
+router.post('/api/ask', apiAskValidation, asyncHandler((req: Request<{}, AskResponse | ErrorResponseDTO, ChatGPTActionBody>, res: Response<AskResponse | ErrorResponseDTO>) => {
   const { domain, useRAG, useHRC, sessionId, overrideAuditSafe, metadata } = req.body;
 
   const sourceField =
@@ -128,6 +129,6 @@ router.post('/api/ask', apiAskValidation, (req: Request<{}, AskResponse | ErrorR
   typedRequest.body = normalizedRequest;
 
   return handleAIRequest(typedRequest, res, 'ask');
-});
+}));
 
 export default router;

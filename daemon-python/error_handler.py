@@ -5,7 +5,9 @@ Centralized error handling with user-friendly messages and optional telemetry.
 
 import sys
 import logging
-from typing import Callable, Any
+from typing import Callable, Any, Optional, TypeVar
+T = TypeVar("T")
+
 from functools import wraps
 from config import Config
 
@@ -108,9 +110,9 @@ def handle_errors(context: str = ""):
     Decorator to handle errors in functions
     Usage: @handle_errors("doing something")
     """
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., T]) -> Callable[..., Optional[T]]:
         @wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
+        def wrapper(*args, **kwargs) -> Optional[T]:
             try:
                 return func(*args, **kwargs)
             except KeyboardInterrupt:

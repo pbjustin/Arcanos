@@ -9,29 +9,45 @@ const formatErrorMessage = (error: unknown): string =>
 
 const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 
-const getTokensFromParams = (params: any): number =>
+type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'> & {
+  model?: string;
+  max_completion_tokens?: number;
+};
+
+type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
+
+interface ChatCompletionWithFallback extends ChatCompletionResponse {
+  activeModel: string;
+  fallbackFlag: boolean;
+  retryUsed?: boolean;
+  fallbackReason?: string;
+  gpt5Used?: boolean;
+}
+
+const getTokensFromParams = (params: ChatCompletionParams): number =>
   params.max_tokens || params.max_completion_tokens || RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
 
 async function attemptModelCall(
   client: OpenAI,
-  params: any,
+  params: ChatCompletionParams,
   model: string,
   logPrefix: string,
-): Promise<{ response: any; model: string }> {
+): Promise<{ response: ChatCompletionResponse; model: string }> {
   console.log(`${logPrefix} Attempting with model: ${model}`);
   const response = await client.chat.completions.create({
     ...params,
     model,
-  });
+    stream: false,
+  }) as ChatCompletionResponse;
   console.log(`✅ ${logPrefix} Success with ${model}`);
   return { response, model };
 }
 
 async function attemptGPT5Call(
   client: OpenAI,
-  params: any,
+  params: ChatCompletionParams,
   gpt5Model: string,
-): Promise<{ response: any; model: string }> {
+): Promise<{ response: ChatCompletionResponse; model: string }> {
   console.log(`🚀 [GPT-5.1 FALLBACK] Attempting with GPT-5.1: ${gpt5Model}`);
 
   const tokenParams = getTokenParameter(gpt5Model, getTokensFromParams(params));
@@ -41,14 +57,18 @@ async function attemptGPT5Call(
     ...tokenParams,
   });
 
-  const response = await client.chat.completions.create(gpt5Payload);
+  const response = await client.chat.completions.create({
+    ...gpt5Payload,
+    stream: false,
+  }) as ChatCompletionResponse;
   console.log(`✅ [GPT-5.1 FALLBACK] Success with ${gpt5Model}`);
   return { response, model: gpt5Model };
 }
 
-const ensureModelMatchesExpectation = (response: any, expectedModel: string): string => {
+const ensureModelMatchesExpectation = (response: ChatCompletionResponse, expectedModel: string): string => {
   const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
 
+  //audit Assumption: response must include model identifier
   if (!actualModel) {
     throw new Error(`GPT-5.1 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
   }
@@ -61,6 +81,7 @@ const ensureModelMatchesExpectation = (response: any, expectedModel: string): st
     normalizedActual.startsWith(`${normalizedExpected}-`) ||
     normalizedActual.startsWith(`${normalizedExpected}.`);
 
+  //audit Assumption: model should match expected prefix
   if (!matchesExpected) {
     throw new Error(
       `GPT-5.1 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`,
@@ -70,7 +91,7 @@ const ensureModelMatchesExpectation = (response: any, expectedModel: string): st
   return actualModel;
 };
 
-type ModelAttemptResult = { response: any; model: string };
+type ModelAttemptResult = { response: ChatCompletionResponse; model: string };
 type ModelAttemptTransformer<T> = (result: ModelAttemptResult) => T;
 
 const executeModelFallbacks = async <T>(
@@ -87,7 +108,8 @@ const executeModelFallbacks = async <T>(
     try {
       const result = await executor();
       return transform(result);
-    } catch (error) {
+    } catch (error: unknown) {
+      //audit Assumption: failed attempts should continue to next fallback
       lastError = error;
       console.warn(`⚠️ ${label} Failed: ${formatErrorMessage(error)}`);
     }
@@ -102,8 +124,8 @@ const executeModelFallbacks = async <T>(
 
 export const createChatCompletionWithFallback = async (
   client: OpenAI,
-  params: any,
-): Promise<any> => {
+  params: ChatCompletionParams,
+): Promise<ChatCompletionWithFallback> => {
   const primaryModel = getDefaultModel();
   const gpt5Model = getGPT5Model();
   const finalFallbackModel = getFallbackModel();

@@ -14,8 +14,9 @@ function extractPrompt(input: DecideInput): string {
   const messages = (input as Record<string, unknown>).messages as unknown;
   if (Array.isArray(messages)) {
     const last = messages[messages.length - 1];
-    if (last && typeof last === 'object' && typeof (last as any).content === 'string') {
-      return (last as any).content;
+    const lastContent = getMessageContent(last);
+    if (lastContent) {
+      return lastContent;
     }
   }
 
@@ -24,6 +25,14 @@ function extractPrompt(input: DecideInput): string {
   } catch {
     return '[unavailable prompt]';
   }
+}
+
+function getMessageContent(message: unknown): string | undefined {
+  if (!message || typeof message !== 'object') {
+    return undefined;
+  }
+  const record = message as Record<string, unknown>;
+  return typeof record.content === 'string' ? record.content : undefined;
 }
 
 async function executeModelRoute(

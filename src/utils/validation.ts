@@ -8,7 +8,8 @@ import { Response } from 'express';
  * @param name Name of the field for error messaging
  * @returns true if the field is present, false otherwise
  */
-export function requireField(res: Response, value: any, name: string): boolean {
+export function requireField(res: Response, value: unknown, name: string): boolean {
+  //audit Assumption: missing/blank values should short-circuit request handling
   if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) {
     res.status(400).json({ error: `${name} is required` });
     return false;
