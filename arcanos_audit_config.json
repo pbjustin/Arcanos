@@ -1,1 +1,5 @@
-{ "module": "auto_audit_0432", "cycle": "4WEEK", "target": "github.com/pbjustin/Arcanos" }
+{
+  "module": "auto_audit_0432",
+  "cycle": "4WEEK",
+  "target": "github.com/pbjustin/Arcanos"
+}

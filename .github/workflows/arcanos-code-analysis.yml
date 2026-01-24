@@ -1,11 +1,13 @@
 name: ARCANOS Code Analysis
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       commit_sha:
         description: 'Commit SHA to analyze'
-        required: true
+        required: false
         type: string
       trigger_source:
         description: 'Source that triggered this workflow'
@@ -30,7 +32,7 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}
           fetch-depth: 0
 
       - name: 🧰 Set up Node.js
@@ -48,70 +50,178 @@ jobs:
       - name: 🤖 Run ARCANOS Analysis
         run: |
           echo "Starting ARCANOS code analysis..."
-          echo "Commit SHA: ${{ inputs.commit_sha }}"
-          echo "Trigger source: ${{ inputs.trigger_source }}"
+          COMMIT_SHA="${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}"
+          TRIGGER_SOURCE="${{ github.event_name == 'pull_request' && 'pull_request' || inputs.trigger_source || 'manual' }}"
+          
+          echo "Commit SHA: $COMMIT_SHA"
+          echo "Trigger source: $TRIGGER_SOURCE"
+          
+          # Set environment variables
+          export PORT=8080
+          export NODE_ENV=production
+          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
           
           # Start ARCANOS backend for analysis
-          npm start &
+          npm start > server.log 2>&1 &
           SERVER_PID=$!
           
-          # Wait for server to be ready
-          sleep 10
+          # Wait for server to be ready with retries
+          echo "Waiting for server to start..."
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          SERVER_READY=false
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready!"
+              SERVER_READY=true
+              break
+            fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "Waiting for server... ($RETRY_COUNT/$MAX_RETRIES)"
+            sleep 2
+          done
+          
+          if [ "$SERVER_READY" = false ]; then
+            echo "❌ Server failed to start. Logs:"
+            cat server.log
+            exit 1
+          fi
           
           # Perform code analysis via ARCANOS API
-          curl -X POST http://localhost:8080/ask \
+          HTTP_CODE=$(curl -X POST http://localhost:8080/api/ask \
             -H "Content-Type: application/json" \
-            -d '{
-              "prompt": "Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: ${{ inputs.commit_sha }}",
-              "context": "code_analysis"
-            }' \
-            -o analysis_result.json
+            -d "{
+              \"messages\": [{
+                \"role\": \"user\",
+                \"content\": \"Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: $COMMIT_SHA\"
+              }],
+              \"context\": \"code_analysis\"
+            }" \
+            -w "%{http_code}" \
+            -o analysis_result.json \
+            -s)
           
           # Stop the server
-          kill $SERVER_PID || true
+          kill $SERVER_PID 2>/dev/null || true
+          sleep 2
+          kill -9 $SERVER_PID 2>/dev/null || true
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Analysis failed with HTTP code: $HTTP_CODE"
+            echo "Response:"
+            cat analysis_result.json || echo "No response body"
+            exit 1
+          fi
           
           echo "Analysis completed. Results saved to analysis_result.json"
 
       - name: 📊 Process Analysis Results
         run: |
+          COMMIT_SHA="${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}"
+          TRIGGER_SOURCE="${{ github.event_name == 'pull_request' && 'pull_request' || inputs.trigger_source || 'manual' }}"
+          
           if [ -f analysis_result.json ]; then
             echo "ARCANOS Analysis Results:"
             cat analysis_result.json
             
             # Extract key insights and create summary
             echo "## ARCANOS Code Analysis Report" > analysis_summary.md
-            echo "**Commit:** ${{ inputs.commit_sha }}" >> analysis_summary.md
-            echo "**Triggered by:** ${{ inputs.trigger_source }}" >> analysis_summary.md
+            echo "**Commit:** $COMMIT_SHA" >> analysis_summary.md
+            echo "**Triggered by:** $TRIGGER_SOURCE" >> analysis_summary.md
             echo "**Timestamp:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> analysis_summary.md
             echo "" >> analysis_summary.md
             echo "### Analysis Results" >> analysis_summary.md
             
-            # Add analysis content (this would be enhanced with proper JSON parsing)
-            echo '```json' >> analysis_summary.md
-            cat analysis_result.json >> analysis_summary.md
-            echo '```' >> analysis_summary.md
+            # Try to extract response from JSON
+            if command -v jq &> /dev/null; then
+              RESPONSE=$(jq -r '.response // .content // .' analysis_result.json 2>/dev/null || cat analysis_result.json)
+              echo "$RESPONSE" >> analysis_summary.md
+            else
+              echo '```json' >> analysis_summary.md
+              cat analysis_result.json >> analysis_summary.md
+              echo '```' >> analysis_summary.md
+            fi
           else
             echo "No analysis results found"
             exit 1
           fi
 
       - name: 💾 Upload Analysis Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: arcanos-analysis-${{ inputs.commit_sha }}
+          name: arcanos-analysis-${{ github.event.pull_request.head.sha || inputs.commit_sha || github.sha }}
           path: |
             analysis_result.json
             analysis_summary.md
+            server.log
+          if-no-files-found: ignore
           retention-days: 30
 
-      - name: 📝 Create Issue for Critical Findings
-        if: success()
+      - name: 📝 Post PR Comment (if PR)
+        if: always() && github.event_name == 'pull_request' && steps['🤖 Run ARCANOS Analysis'].outcome == 'success'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             
             try {
+              if (!fs.existsSync('analysis_summary.md')) {
+                console.log('No analysis summary found, skipping comment');
+                return;
+              }
+              
+              const summary = fs.readFileSync('analysis_summary.md', 'utf8');
+              const prNumber = context.payload.pull_request.number;
+              
+              // Check if we already have an ARCANOS comment
+              const comments = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber
+              });
+              
+              const existingComment = comments.data.find(comment => 
+                comment.body.includes('ARCANOS Code Analysis Report')
+              );
+              
+              const commentBody = `${summary}\n\n---\n*Analysis triggered by: ${context.actor}*\n*Workflow run: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
+              
+              if (existingComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existingComment.id,
+                  body: commentBody
+                });
+                console.log('Updated existing ARCANOS analysis comment');
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: commentBody
+                });
+                console.log('Created new ARCANOS analysis comment');
+              }
+            } catch (error) {
+              console.error('Error posting PR comment:', error);
+            }
+
+      - name: 📝 Create Issue for Critical Findings
+        if: always() && steps['🤖 Run ARCANOS Analysis'].outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            try {
+              if (!fs.existsSync('analysis_result.json')) {
+                console.log('No analysis results found, skipping issue creation');
+                return;
+              }
+              
               const analysisData = fs.readFileSync('analysis_result.json', 'utf8');
               const analysis = JSON.parse(analysisData);
               
@@ -122,13 +232,20 @@ jobs:
                   analysisText.toLowerCase().includes('security') ||
                   analysisText.toLowerCase().includes('vulnerability')) {
                 
-                const summary = fs.readFileSync('analysis_summary.md', 'utf8');
+                const summary = fs.existsSync('analysis_summary.md') 
+                  ? fs.readFileSync('analysis_summary.md', 'utf8')
+                  : 'See analysis artifacts for details';
+                
+                const commitSha = context.sha.substring(0, 7);
+                const prLink = context.payload.pull_request 
+                  ? `[PR #${context.payload.pull_request.number}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${context.payload.pull_request.number})`
+                  : `Commit ${commitSha}`;
                 
                 await github.rest.issues.create({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  title: `🤖 ARCANOS: Critical Code Analysis Findings - ${context.sha.substring(0, 7)}`,
-                  body: summary,
+                  title: `🤖 ARCANOS: Critical Code Analysis Findings - ${commitSha}`,
+                  body: `${summary}\n\n---\nRelated: ${prLink}`,
                   labels: ['arcanos', 'code-analysis', 'needs-review']
                 });
                 
