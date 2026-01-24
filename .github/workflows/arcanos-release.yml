@@ -12,6 +12,11 @@ on:
         required: false
         default: 'manual'
         type: string
+      patch_only:
+        description: 'Only update binaries (patch/hotfix); skip AI analysis and append to existing body'
+        required: false
+        default: false
+        type: boolean
 
 env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -20,12 +25,14 @@ env:
 jobs:
   arcanos-release:
     runs-on: ubuntu-latest
+    outputs:
+      approved: ${{ steps.approve.outputs.approved }}
     permissions:
       contents: write
       actions: write
       issues: read
       pull-requests: write
-      
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -33,18 +40,22 @@ jobs:
           ref: ${{ inputs.tag_name }}
 
       - name: 🧰 Set up Node.js
+        if: ${{ inputs.patch_only != true }}
         uses: actions/setup-node@v4
         with:
           node-version: '20.11.1'
           cache: 'npm'
 
       - name: 📦 Install dependencies
+        if: ${{ inputs.patch_only != true }}
         run: npm ci
 
       - name: 🔧 Build project
+        if: ${{ inputs.patch_only != true }}
         run: npm run build
 
       - name: 🤖 ARCANOS Release Analysis
+        if: ${{ inputs.patch_only != true }}
         run: |
           echo "Running ARCANOS release analysis..."
           
@@ -70,6 +81,7 @@ jobs:
           echo "Release analysis completed"
 
       - name: 📋 Generate Release Documentation
+        if: ${{ inputs.patch_only != true }}
         run: |
           if [ -f release_analysis.json ]; then
             echo "ARCANOS Release Analysis:"
@@ -95,6 +107,7 @@ jobs:
           fi
 
       - name: 🏗️ Build Release Artifacts
+        if: ${{ inputs.patch_only != true }}
         run: |
           echo "Building release artifacts..."
           
@@ -114,6 +127,21 @@ jobs:
           cd ..
           
           echo "Release artifacts created"
+
+      - name: 📤 Upload release artifacts
+        if: ${{ inputs.patch_only != true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: arcanos-release-${{ inputs.tag_name }}
+          path: |
+            release_notes.md
+            release_analysis.json
+            arcanos-${{ inputs.tag_name }}.tar.gz
+          retention-days: 90
+
+      - name: Set approval for release
+        id: approve
+        run: echo "approved=true" >> $GITHUB_OUTPUT
 
   build-daemon-exe:
     name: Build Daemon Executable
@@ -167,6 +195,19 @@ jobs:
           path: daemon-python/dist/ARCANOS.exe
           retention-days: 90
 
+      - name: 📦 Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: 🏗️ Build installer
+        run: & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\ARCANOS.iss"
+
+      - name: 📤 Upload ARCANOS-Setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARCANOS-Setup
+          path: installer/dist/ARCANOS-Setup.exe
+          retention-days: 90
+
   create-github-release:
     name: Create GitHub Release
     needs: [arcanos-release, build-daemon-exe]
@@ -186,7 +227,14 @@ jobs:
           name: ARCANOS-Windows
           path: .
 
+      - name: 📥 Download ARCANOS-Setup
+        uses: actions/download-artifact@v4
+        with:
+          name: ARCANOS-Setup
+          path: .
+
       - name: 📥 Download release notes
+        if: ${{ inputs.patch_only != true }}
         uses: actions/download-artifact@v4
         with:
           name: arcanos-release-${{ inputs.tag_name }}
@@ -194,13 +242,28 @@ jobs:
 
       - name: 📋 Read release notes
         id: release-notes
+        env:
+          PATCH_ONLY: ${{ inputs.patch_only }}
         run: |
-          if [ -f release_notes.md ]; then
-            echo "notes<<EOF" >> $GITHUB_OUTPUT
-            cat release_notes.md >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+          if [ "$PATCH_ONLY" = "true" ]; then
+            { echo 'notes<<PATCHEOF'; echo "### Patch ($(date -u +%Y-%m-%d))"; echo "- Updated daemon binary."; echo 'PATCHEOF'; } >> $GITHUB_OUTPUT
           else
-            echo "notes=# 🚀 ARCANOS Release ${{ inputs.tag_name }}" >> $GITHUB_OUTPUT
+            { echo '## Application / Downloads';
+            echo '';
+            echo '- **ARCANOS-Setup.exe** — Installer (recommended; creates desktop shortcut)';
+            echo '- **ARCANOS.exe** — Portable executable';
+            echo '';
+            echo '## Source code';
+            echo '';
+            echo 'Source for this release is available via **Source code (zip)** and **Source code (tar.gz)** at the top of this release.';
+            echo '';
+            echo '---';
+            echo ''; } > body_part1.txt
+            if [ -f release_notes.md ]; then
+              { echo 'notes<<RELEASE_BODY_END'; cat body_part1.txt; echo '## Release notes'; echo ''; cat release_notes.md; echo 'RELEASE_BODY_END'; } >> $GITHUB_OUTPUT
+            else
+              { echo 'notes<<RELEASE_BODY_END'; cat body_part1.txt; echo '## Release notes'; echo ''; echo "# 🚀 ARCANOS Release ${{ inputs.tag_name }}"; echo 'RELEASE_BODY_END'; } >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: 🚀 Create GitHub Release
@@ -209,13 +272,17 @@ jobs:
           tag_name: ${{ inputs.tag_name }}
           name: ARCANOS ${{ inputs.tag_name }}
           body: ${{ steps.release-notes.outputs.notes }}
-          files: ARCANOS.exe
+          append_body: ${{ inputs.patch_only }}
+          files: |
+            ARCANOS.exe
+            ARCANOS-Setup.exe
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 📝 Create Release Issue
+        if: ${{ inputs.patch_only != true }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -238,6 +305,7 @@ jobs:
             }
 
       - name: 🔐 Security Scan
+        if: ${{ inputs.patch_only != true }}
         run: |
           echo "Running security scan..."
           
@@ -263,6 +331,7 @@ jobs:
           echo "Security analysis completed"
 
       - name: 📊 Release Quality Gate
+        if: ${{ inputs.patch_only != true }}
         run: |
           SECURITY_ISSUES=false
           
@@ -284,6 +353,7 @@ jobs:
           fi
 
       - name: Set release approval output
+        if: ${{ inputs.patch_only != true }}
         id: release-status
         run: |
           if [ "$RELEASE_APPROVED" = "true" ]; then
@@ -295,7 +365,7 @@ jobs:
           RELEASE_APPROVED: ${{ env.RELEASE_APPROVED }}
 
       - name: 💾 Upload Release Artifacts
-        if: always()
+        if: ${{ inputs.patch_only != true }}
         uses: actions/upload-artifact@v4
         with:
           name: arcanos-release-${{ inputs.tag_name }}
@@ -305,9 +375,6 @@ jobs:
             release_notes.md
             arcanos-${{ inputs.tag_name }}.tar.gz
           retention-days: 365
-      
-    outputs:
-      approved: ${{ steps.release-status.outputs.approved }}
 
       - name: ❌ Block Release
         if: needs.arcanos-release.outputs.approved == 'false'
