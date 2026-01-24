@@ -354,7 +354,7 @@ Type **help** for available commands or just start chatting naturally.
             source="backend"
         )
 
-    def _encode_audio_base64(self, audio_data: Any) -> Optional[str]:
+    def _encode_audio_base64(self, audio_data: bytes | bytearray) -> Optional[str]:
         try:
             audio_bytes = self.audio.extract_audio_bytes(audio_data)
         except RuntimeError as exc:
@@ -365,7 +365,7 @@ Type **help** for available commands or just start chatting naturally.
         # //audit assumption: base64 encoding is safe; risk: invalid bytes; invariant: ascii output; strategy: encode to base64.
         return base64.b64encode(audio_bytes).decode("ascii")
 
-    def _perform_backend_transcription(self, audio_data: Any) -> Optional[str]:
+    def _perform_backend_transcription(self, audio_data: bytes | bytearray) -> Optional[str]:
         if not self.backend_client:
             # //audit assumption: backend client optional; risk: missing backend; invariant: return None; strategy: warn and return None.
             self.console.print("[yellow]Backend is not configured.[/yellow]")

@@ -71,9 +71,9 @@ async function kernelSafeWrite(trx: AuditStoreTransaction, moduleName: string, p
 export async function logAuditEvent(event: string, payload: Record<string, unknown>) {
   try {
     await requireAuditStore().insertAuditLog(event, payload, Date.now());
-  } catch (err: any) {
+  } catch (err: unknown) {
     //audit assumption: audit failures are critical; risk: missing compliance record; invariant: error is surfaced.
-    console.error('⚠️ Audit log failed:', err.message);
+    console.error('⚠️ Audit log failed:', getErrorMessage(err));
     throw new Error('Critical audit logging failure.');
   }
 }
@@ -148,7 +148,9 @@ export function getAuditSafeMode() {
  * Output: resolves true when persisted.
  * Edge cases: throws on validation failures or persistence errors.
  */
-export async function saveWithAuditCheck(moduleName: string, data: any, validator: (d: any) => boolean) {
+type AuditValidator = (data: unknown) => boolean;
+
+export async function saveWithAuditCheck(moduleName: string, data: unknown, validator: AuditValidator) {
   const { auditSafeMode, rootOverrideActive } = getAuditSafeMode();
   //audit assumption: data is JSON-serializable; risk: stringify throws; invariant: payload string created.
   const payload = JSON.stringify(data);
@@ -186,9 +188,9 @@ export async function saveWithAuditCheck(moduleName: string, data: any, validato
         return true;
       }
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     //audit assumption: failures must trigger rollback logging; risk: missing audit trail; invariant: rollback event recorded.
-    await runRollback(moduleName, data, err.message);
+    await runRollback(moduleName, data, getErrorMessage(err));
     throw err;
   }
 }
@@ -202,7 +204,7 @@ export async function saveWithAuditCheck(moduleName: string, data: any, validato
  * Output: resolves once rollback event is logged.
  * Edge cases: throws if audit logging fails.
  */
-async function runRollback(moduleName: string, failedData: any, errorMsg: string) {
+async function runRollback(moduleName: string, failedData: unknown, errorMsg: string) {
   await logAuditEvent('ROLLBACK_TRIGGERED', {
     module: moduleName,
     failedData,
@@ -219,12 +221,12 @@ async function runRollback(moduleName: string, failedData: any, errorMsg: string
  * Output: boolean indicating validity.
  * Edge cases: returns false when validator throws.
  */
-async function isValid(validator: (d: any) => boolean, data: any) {
+async function isValid(validator: AuditValidator, data: unknown) {
   try {
     return validator(data);
-  } catch (err: any) {
+  } catch (err: unknown) {
     //audit assumption: validator exceptions are non-fatal; risk: missing validation; invariant: exception is logged.
-    await logAuditEvent('VALIDATOR_EXCEPTION', { error: err.message, data });
+    await logAuditEvent('VALIDATOR_EXCEPTION', { error: getErrorMessage(err), data });
     return false;
   }
 }
@@ -255,9 +257,16 @@ export async function verifySchema() {
       }
     }
     console.log('✅ Schema verified.');
-  } catch (error: any) {
+  } catch (error: unknown) {
     //audit assumption: verification failure is recoverable; risk: degraded persistence; invariant: warning logged.
-    console.error('❌ Schema verification failed:', error.message);
+    console.error('❌ Schema verification failed:', getErrorMessage(error));
     console.log('⚠️ Continuing with in-memory fallback');
   }
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return typeof error === 'string' ? error : 'Unknown error';
 }

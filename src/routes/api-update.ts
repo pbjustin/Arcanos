@@ -4,6 +4,7 @@ import { buildValidationErrorResponse } from '../utils/errorResponse.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import type { ErrorResponseDTO } from '../types/dto.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
 
@@ -28,9 +29,9 @@ interface UpdateResponse {
   success: boolean;
 }
 
-router.post('/api/update', updateValidation, async (req: Request<{}, UpdateResponse | ErrorResponseDTO, UpdateRequest>, res: Response<UpdateResponse | ErrorResponseDTO>) => {
-  try {
+router.post('/api/update', updateValidation, asyncHandler(async (req: Request<{}, UpdateResponse | ErrorResponseDTO, UpdateRequest>, res: Response<UpdateResponse | ErrorResponseDTO>) => {
     const { updateType, data } = req.body;
+    try {
 
     if (!updateType || typeof updateType !== 'string' || updateType.trim().length === 0) {
       return res.status(400).json(
@@ -49,7 +50,7 @@ router.post('/api/update', updateValidation, async (req: Request<{}, UpdateRespo
     try {
       const serialized = JSON.stringify(data);
       dataSize = serialized.length;
-    } catch (error) {
+    } catch {
       return res.status(400).json(
         buildValidationErrorResponse(['data must be JSON-serializable'])
       );
@@ -81,8 +82,8 @@ router.post('/api/update', updateValidation, async (req: Request<{}, UpdateRespo
     return res.json({
       success: true
     });
-  } catch (error) {
-    aiLogger.error('Update request failed', { operation: 'update' }, undefined, error as Error);
+  } catch (error: unknown) {
+    aiLogger.error('Update request failed', { operation: 'update' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('update.error', {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
@@ -92,6 +93,6 @@ router.post('/api/update', updateValidation, async (req: Request<{}, UpdateRespo
       details: 'Failed to process update request'
     });
   }
-});
+}));
 
 export default router;

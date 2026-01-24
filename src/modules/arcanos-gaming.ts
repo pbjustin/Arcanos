@@ -6,16 +6,20 @@ export const ArcanosGaming = {
   description: 'Nintendo-style hotline advisor for game strategies, hints, and walkthroughs.',
   gptIds: ['arcanos-gaming', 'gaming'],
   actions: {
-    async query(payload: any) {
+    async query(payload: unknown) {
       const prompt = extractTextPrompt(payload);
 
+      //audit Assumption: query requires prompt text
       if (!prompt) {
         throw new Error('ARCANOS:GAMING query requires a text prompt.');
       }
 
-      const guideUrl = typeof payload?.url === 'string' && payload.url.trim() ? payload.url.trim() : undefined;
+      const guideUrl = getPayloadString(payload, 'url');
 
-      const normalizedGuides = normalizeStringList(payload?.urls, payload?.guideUrls);
+      const normalizedGuides = normalizeStringList(
+        getPayloadValue(payload, 'urls'),
+        getPayloadValue(payload, 'guideUrls')
+      );
 
       return runGaming(prompt, guideUrl, normalizedGuides);
     },
@@ -23,3 +27,15 @@ export const ArcanosGaming = {
 };
 
 export default ArcanosGaming;
+
+function getPayloadValue(payload: unknown, key: string): unknown {
+  if (!payload || typeof payload !== 'object') {
+    return undefined;
+  }
+  return (payload as Record<string, unknown>)[key];
+}
+
+function getPayloadString(payload: unknown, key: string): string | undefined {
+  const value = getPayloadValue(payload, key);
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}

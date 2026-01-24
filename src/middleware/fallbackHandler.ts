@@ -16,7 +16,7 @@ import { FALLBACK_LOG_MESSAGES, FALLBACK_LOG_REASON } from '../config/fallbackLo
 export interface DegradedResponse {
   status: 'degraded';
   message: string;
-  data: any;
+  data: unknown;
   fallbackMode: 'cache' | 'mock' | 'minimal';
   timestamp: string;
 }
@@ -65,7 +65,10 @@ function getEndpointFromRequest(req: Request): string {
 }
 
 function extractPromptFromRequest(req: Request, defaultPrompt: string = FALLBACK_RESPONSE_MESSAGES.defaultPrompt): string {
-  return req.body?.prompt || req.body?.scenario || req.body?.query || defaultPrompt;
+  //audit Assumption: prompt may be in body; Handling: use default when absent
+  const body = req.body as Record<string, unknown> | undefined;
+  const promptCandidate = body?.prompt ?? body?.scenario ?? body?.query;
+  return typeof promptCandidate === 'string' ? promptCandidate : defaultPrompt;
 }
 
 function logFallbackEvent(
@@ -86,15 +89,17 @@ function logFallbackEvent(
  * Fallback middleware that intercepts errors and provides degraded responses
  */
 export function createFallbackMiddleware() {
-  return (err: any, req: Request, res: Response, next: NextFunction) => {
+  return (err: unknown, req: Request, res: Response, next: NextFunction) => {
+    const errorRecord = err && typeof err === 'object' ? (err as Record<string, unknown>) : {};
+    const errorMessage = typeof errorRecord.message === 'string' ? errorRecord.message : '';
     // Check if this is an AI service error
     const isAIServiceError = (
-      err.message?.includes('OpenAI') ||
-      err.message?.includes('API key') ||
-      err.message?.includes('ECONNREFUSED') ||
-      err.message?.includes('timeout') ||
-      err.status === 503 ||
-      err.status === 504
+      errorMessage.includes('OpenAI') ||
+      errorMessage.includes('API key') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('timeout') ||
+      errorRecord.status === 503 ||
+      errorRecord.status === 504
     );
 
     if (!isAIServiceError) {
@@ -105,7 +110,7 @@ export function createFallbackMiddleware() {
     const endpoint = getEndpointFromRequest(req);
     const prompt = extractPromptFromRequest(req);
 
-    logFallbackEvent('degraded', endpoint, err.message || FALLBACK_LOG_REASON.unknown);
+    logFallbackEvent('degraded', endpoint, errorMessage || FALLBACK_LOG_REASON.unknown);
 
     const degradedResponse = generateDegradedResponse(prompt, endpoint);
 
@@ -120,7 +125,7 @@ export function createFallbackMiddleware() {
 export function getFallbackSystemHealth() {
   const client = getOpenAIClient();
   const cacheStats = {
-    size: (responseCache as any).size || 0,
+    size: getCacheSize(responseCache),
     hitRate: 0 // Cache doesn't expose hit rate directly
   };
   
@@ -147,6 +152,14 @@ export function getFallbackSystemHealth() {
     },
     lastHealthCheck: new Date().toISOString()
   };
+}
+
+function getCacheSize(cache: unknown): number {
+  if (!cache || typeof cache !== 'object') {
+    return 0;
+  }
+  const size = (cache as { size?: unknown }).size;
+  return typeof size === 'number' ? size : 0;
 }
 
 /**

@@ -46,34 +46,35 @@ const SUPPRESSION_LOG_FILE = join(MEMORY_DIR, 'suppressed.log');
 /**
  * Sanitize a raw memory entry to match current schema
  */
-function sanitizeMemoryEntry(raw: any): MemoryEntry | null {
+function sanitizeMemoryEntry(raw: unknown): MemoryEntry | null {
   if (!raw || typeof raw !== 'object') return null;
 
+  const record = raw as Record<string, unknown>;
   const entry: MemoryEntry = {
-    id: typeof raw.id === 'string' ? raw.id : generateRequestId('mem'),
-    timestamp: typeof raw.timestamp === 'string' ? raw.timestamp : new Date().toISOString(),
-    key: typeof raw.key === 'string' ? raw.key : '',
-    value: typeof raw.value === 'string' ? raw.value : '',
-    type: raw.type === 'fact' || raw.type === 'preference' || raw.type === 'decision' || raw.type === 'pattern'
-      ? raw.type
+    id: typeof record.id === 'string' ? record.id : generateRequestId('mem'),
+    timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
+    key: typeof record.key === 'string' ? record.key : '',
+    value: typeof record.value === 'string' ? record.value : '',
+    type: record.type === 'fact' || record.type === 'preference' || record.type === 'decision' || record.type === 'pattern'
+      ? record.type
       : 'context',
-    relevanceScore: raw.relevanceScore,
-    accessCount: typeof raw.accessCount === 'number' ? raw.accessCount : 0,
-    lastAccessed: typeof raw.lastAccessed === 'string' ? raw.lastAccessed : new Date().toISOString(),
+    relevanceScore: record.relevanceScore as number | undefined,
+    accessCount: typeof record.accessCount === 'number' ? record.accessCount : 0,
+    lastAccessed: typeof record.lastAccessed === 'string' ? record.lastAccessed : new Date().toISOString(),
     metadata: {
-      source: raw.metadata?.source || 'arcanos',
-      tags: Array.isArray(raw.metadata?.tags) ? raw.metadata.tags : [],
-      sessionId: raw.metadata?.sessionId,
-      userId: raw.metadata?.userId,
-      moduleId: raw.metadata?.moduleId,
-      loopState: raw.metadata?.loopState,
+      source: getMetadataString(record.metadata, 'source') || 'arcanos',
+      tags: getMetadataTags(record.metadata),
+      sessionId: getMetadataString(record.metadata, 'sessionId'),
+      userId: getMetadataString(record.metadata, 'userId'),
+      moduleId: getMetadataString(record.metadata, 'moduleId'),
+      loopState: getMetadataLoopState(record.metadata),
     },
   };
 
   return isValidMemoryEntry(entry) ? entry : null;
 }
 
-function sanitizeMemoryIndex(rawEntries: any[]): MemoryEntry[] {
+function sanitizeMemoryIndex(rawEntries: unknown[]): MemoryEntry[] {
   const sanitized: MemoryEntry[] = [];
   for (const raw of rawEntries) {
     const entry = sanitizeMemoryEntry(raw);
@@ -104,7 +105,8 @@ function initializeMemory() {
     }
 
     memoryLoaded = true;
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: init failures should fall back to empty state
     console.error('❌ Failed to initialize memory:', error instanceof Error ? error.message : 'Unknown error');
     memoryIndex = [];
     memoryLoaded = true;
@@ -117,7 +119,7 @@ function initializeMemory() {
 function saveMemoryIndex() {
   try {
     writeFileSync(MEMORY_INDEX_FILE, JSON.stringify(memoryIndex, null, 2));
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('❌ Failed to save memory index:', error instanceof Error ? error.message : 'Unknown error');
   }
 }
@@ -126,7 +128,9 @@ function saveMemoryIndex() {
  * Validate memory entry before committing to storage
  */
 function isValidMemoryEntry(entry: MemoryEntry): boolean {
+  //audit Assumption: valid entries require key/value/moduleId
   if (!entry.key || !entry.value || !entry.metadata.moduleId) return false;
+  //audit Assumption: incomplete loop states should be suppressed
   if (entry.metadata.loopState && entry.metadata.loopState !== 'complete') return false;
   return true;
 }
@@ -169,6 +173,7 @@ export function storeMemory(
     }
   };
 
+  //audit Assumption: invalid entries should not be stored
   if (!isValidMemoryEntry(entry)) {
     logSuppressionEvent(entry.metadata.moduleId || 'unknown', `INVALID_ENTRY:${key}`);
     return null;
@@ -176,6 +181,7 @@ export function storeMemory(
 
   // Check if key already exists and update instead
   const existingIndex = memoryIndex.findIndex(m => m.key === key);
+  //audit Assumption: existing key should be updated in place
   if (existingIndex >= 0) {
     memoryIndex[existingIndex] = { ...entry, accessCount: memoryIndex[existingIndex].accessCount };
   } else {
@@ -259,6 +265,7 @@ export function getMemoryContext(
     }
   }
 
+  //audit Assumption: scoring updates should persist if any entries found
   if (scoredEntries.length > 0) {
     saveMemoryIndex();
   }
@@ -357,7 +364,7 @@ function logMemoryAccess(operation: string, key: string, entryId: string) {
   try {
     const logEntry = `${new Date().toISOString()} | ${operation} | ${key} | ${entryId}\n`;
     appendFileSync(MEMORY_LOG_FILE, logEntry);
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('❌ Failed to log memory access:', error instanceof Error ? error.message : 'Unknown error');
   }
 }
@@ -468,4 +475,35 @@ export async function clearMemoryState(context: string = 'orchestration'): Promi
   }
   
   return removed;
+}
+
+function getMetadataString(metadata: unknown, key: string): string | undefined {
+  if (!metadata || typeof metadata !== 'object') {
+    return undefined;
+  }
+  const record = metadata as Record<string, unknown>;
+  return typeof record[key] === 'string' ? record[key] : undefined;
+}
+
+function getMetadataTags(metadata: unknown): string[] {
+  if (!metadata || typeof metadata !== 'object') {
+    return [];
+  }
+  const record = metadata as Record<string, unknown>;
+  const tags = record.tags;
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+  return tags.filter(tag => typeof tag === 'string');
+}
+
+function getMetadataLoopState(metadata: unknown): MemoryEntry['metadata']['loopState'] {
+  if (!metadata || typeof metadata !== 'object') {
+    return undefined;
+  }
+  const record = metadata as Record<string, unknown>;
+  const loopState = record.loopState;
+  return loopState === 'init' || loopState === 'active' || loopState === 'complete'
+    ? loopState
+    : undefined;
 }

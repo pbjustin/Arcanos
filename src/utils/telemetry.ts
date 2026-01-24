@@ -59,6 +59,7 @@ interface TelemetryState {
 
 function parseLimit(envValue: string | undefined, defaultValue: number): number {
   const parsed = parseInt(envValue ?? '', 10);
+  //audit Assumption: invalid env values should fall back to defaults
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return defaultValue;
   }
@@ -94,6 +95,7 @@ const telemetryState: TelemetryState = {
  * @param maxSize - Maximum allowed size
  */
 function clampBuffer<T>(buffer: T[], maxSize: number): void {
+  //audit Assumption: buffer size should stay bounded; Handling: drop oldest
   while (buffer.length > maxSize) {
     buffer.shift();
   }
@@ -113,6 +115,7 @@ export function recordLogEvent(entry: Omit<TelemetryLogEvent, 'id'>): TelemetryL
   };
 
   telemetryState.metrics.totalLogs += 1;
+  //audit Assumption: telemetry level exists; Handling: guard before increment
   if (telemetryState.metrics.logsByLevel[event.level] !== undefined) {
     telemetryState.metrics.logsByLevel[event.level] += 1;
   }
@@ -120,6 +123,7 @@ export function recordLogEvent(entry: Omit<TelemetryLogEvent, 'id'>): TelemetryL
   telemetryState.recentLogs.push(event);
   clampBuffer(telemetryState.recentLogs, RECENT_LOG_BUFFER_LIMIT);
 
+  //audit Assumption: emitting events enables external monitoring
   telemetryEmitter.emit('log', event);
   return event;
 }
@@ -141,6 +145,7 @@ export function recordTraceEvent(name: string, attributes: Record<string, unknow
 
   telemetryState.traceEvents.push(event);
   clampBuffer(telemetryState.traceEvents, TRACE_EVENT_BUFFER_LIMIT);
+  //audit Assumption: trace events should be observable; Handling: emit
   telemetryEmitter.emit('trace', event);
   return event;
 }
@@ -154,6 +159,7 @@ export function recordTraceEvent(name: string, attributes: Record<string, unknow
 export function markOperation(name: string): void {
   const now = new Date().toISOString();
   const existing = telemetryState.metrics.operations[name];
+  //audit Assumption: increment operation counts for usage tracking
   telemetryState.metrics.operations[name] = {
     count: existing ? existing.count + 1 : 1,
     lastTimestamp: now
@@ -168,6 +174,7 @@ export function markOperation(name: string): void {
  * @returns Telemetry snapshot with timestamp
  */
 export function getTelemetrySnapshot() {
+  //audit Assumption: snapshot should be safe to serialize; Handling: shallow copies
   return {
     generatedAt: new Date().toISOString(),
     metrics: telemetryState.metrics,
@@ -185,8 +192,14 @@ export function getTelemetrySnapshot() {
  * @param event - Event type to listen for ('log' or 'trace')
  * @param listener - Callback invoked when events are emitted
  */
-export function onTelemetry(event: 'log' | 'trace', listener: (payload: TelemetryLogEvent | TelemetryTraceEvent) => void) {
-  telemetryEmitter.on(event, listener as any);
+export function onTelemetry(event: 'log', listener: (payload: TelemetryLogEvent) => void): void;
+export function onTelemetry(event: 'trace', listener: (payload: TelemetryTraceEvent) => void): void;
+export function onTelemetry(
+  event: 'log' | 'trace',
+  listener: ((payload: TelemetryLogEvent) => void) | ((payload: TelemetryTraceEvent) => void)
+): void {
+  //audit Assumption: listeners can handle real-time events; Handling: register
+  telemetryEmitter.on(event, listener as (payload: TelemetryLogEvent | TelemetryTraceEvent) => void);
 }
 
 /**
@@ -194,6 +207,7 @@ export function onTelemetry(event: 'log' | 'trace', listener: (payload: Telemetr
  * Primarily used for testing or manual maintenance operations.
  */
 export function resetTelemetry(): void {
+  //audit Assumption: reset is safe only for maintenance/testing; Handling: clear state
   telemetryState.metrics.totalLogs = 0;
   telemetryState.metrics.logsByLevel = { debug: 0, info: 0, warn: 0, error: 0 };
   telemetryState.metrics.operations = {};

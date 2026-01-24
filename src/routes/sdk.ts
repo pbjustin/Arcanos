@@ -5,8 +5,8 @@
  */
 
 import express from 'express';
-import { runSystemDiagnostics } from '../utils/systemDiagnostics.js';
-import { logExecution } from '../db.js';
+import { runSystemDiagnostics, type SystemDiagnostics } from '../utils/systemDiagnostics.js';
+import { logExecution, type JobData } from '../db.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import {
   dispatchArcanosTask,
@@ -20,6 +20,23 @@ import { buildValidationErrorResponse } from '../utils/errorResponse.js';
 
 const router = express.Router();
 const sdkResearchBridge = connectResearchBridge('SDK:RESEARCH');
+
+type DiagnosticsSummary = Record<string, unknown> | SystemDiagnostics | null;
+
+type JobRecord = Omit<JobData, 'created_at' | 'updated_at' | 'completed_at'> & {
+  created_at?: string | Date;
+  updated_at?: string | Date;
+  completed_at?: string | Date;
+  output?: unknown;
+  status?: string;
+};
+
+interface InitAllResults {
+  workers: WorkerBootstrapSummary;
+  routes: { registered: string[]; status: string } | null;
+  scheduler: { activated: boolean; jobs: Array<{ name: string; schedule: string }> } | null;
+  diagnostics: DiagnosticsSummary;
+}
 
 const researchSchema = {
   topic: {
@@ -42,6 +59,7 @@ router.post(
   async (req, res) => {
     const { topic, urls = [] } = req.body as { topic: string; urls?: string[] };
 
+    //audit Assumption: urls must be string array; Handling: reject invalid values
     if (!Array.isArray(urls) || urls.some(url => typeof url !== 'string')) {
       //audit Assumption: urls must be string array; risk: rejecting valid payloads; invariant: only strings allowed; handling: standardized validation error.
       return res
@@ -65,7 +83,7 @@ router.post('/workers/init', confirmGate, async (_, res) => {
   try {
     const results: WorkerBootstrapSummary = startWorkers();
 
-    await logExecution('sdk-interface', 'info', 'Workers initialized via SDK', results);
+    await logExecution('sdk-interface', 'info', 'Workers initialized via SDK', { results });
 
     res.json({
       success: true,
@@ -73,7 +91,8 @@ router.post('/workers/init', confirmGate, async (_, res) => {
       results,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: init failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Worker initialization failed via SDK', { error: errorMessage });
     
@@ -121,7 +140,13 @@ router.post('/routes/register', confirmGate, async (_, res) => {
     ];
 
     // Verify that all route handlers exist and are loadable
-    const registrationResults = [];
+    const registrationResults: Array<{
+      route: string;
+      success: boolean;
+      metadata: Record<string, unknown>;
+      module?: string;
+      error?: string;
+    }> = [];
     
     for (const route of routes) {
       try {
@@ -132,7 +157,7 @@ router.post('/routes/register', confirmGate, async (_, res) => {
           metadata: route.metadata,
           module: `Mock handler for ${route.name}`
         });
-      } catch (error) {
+      } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         registrationResults.push({
           route: route.name,
@@ -151,7 +176,8 @@ router.post('/routes/register', confirmGate, async (_, res) => {
       routes: registrationResults,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: registration failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Route registration failed via SDK', { error: errorMessage });
     
@@ -201,7 +227,8 @@ router.post('/scheduler/activate', confirmGate, async (_, res) => {
       missedJobRecovery: true,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: scheduler activation failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Scheduler activation failed via SDK', { error: errorMessage });
     
@@ -222,6 +249,7 @@ router.get('/diagnostics', async (req, res) => {
     
     const diagnosticsResult = await runSystemDiagnostics();
     
+    //audit Assumption: yaml format requested explicitly
     if (format === 'yaml') {
       res.type('text/yaml');
       res.send(diagnosticsResult.yaml);
@@ -233,7 +261,8 @@ router.get('/diagnostics', async (req, res) => {
         timestamp: new Date().toISOString()
       });
     }
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: diagnostic failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Diagnostics failed via SDK', { error: errorMessage });
     
@@ -250,8 +279,13 @@ router.get('/diagnostics', async (req, res) => {
  */
 router.post('/jobs/dispatch', confirmGate, async (req, res) => {
   try {
-    const { workerId, jobType, jobData } = req.body;
+    const { workerId, jobType, jobData } = req.body as {
+      workerId?: string;
+      jobType?: string;
+      jobData?: unknown;
+    };
 
+    //audit Assumption: workerId and jobType are required
     if (!workerId || !jobType) {
       return res.status(400).json({
         success: false,
@@ -260,10 +294,18 @@ router.post('/jobs/dispatch', confirmGate, async (req, res) => {
       });
     }
 
+    const jobDataRecord =
+      jobData && typeof jobData === 'object' ? (jobData as Record<string, unknown>) : undefined;
     const normalizedInput =
       typeof jobData === 'string'
         ? jobData
-        : jobData?.input || jobData?.prompt || jobData?.text || JSON.stringify(jobData);
+        : typeof jobDataRecord?.input === 'string'
+          ? jobDataRecord.input
+          : typeof jobDataRecord?.prompt === 'string'
+            ? jobDataRecord.prompt
+            : typeof jobDataRecord?.text === 'string'
+              ? jobDataRecord.text
+              : JSON.stringify(jobData ?? {});
 
     const dispatchResults = await dispatchArcanosTask(normalizedInput);
     const primaryResult = dispatchResults[0];
@@ -288,7 +330,8 @@ router.post('/jobs/dispatch', confirmGate, async (req, res) => {
       result,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: dispatch failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Job dispatch failed via SDK', { 
       error: errorMessage, 
@@ -318,10 +361,12 @@ router.post('/test-job', confirmGate, async (_, res) => {
     };
 
     // Create job record in database
-    let jobRecord: any = null;
+    let jobRecord: JobRecord | null = null;
     try {
       jobRecord = await createJob('worker-1', 'test_job', jobData);
-    } catch {
+    } catch (error: unknown) {
+      //audit Assumption: DB may be unavailable; Handling: mock record
+      void error;
       // If database not available, create mock job record
       jobRecord = {
         id: `test-job-${Date.now()}`,
@@ -350,11 +395,14 @@ router.post('/test-job', confirmGate, async (_, res) => {
     };
 
     // Update job status if database is available
+    //audit Assumption: update job if record exists
     if (jobRecord) {
       try {
         const { updateJob } = await import('../db.js');
         jobRecord = await updateJob(jobRecord.id, 'completed', result);
-      } catch {
+      } catch (error: unknown) {
+        //audit Assumption: update failure should not block response
+        void error;
         // Update mock record
         if (jobRecord) {
           jobRecord.status = 'completed';
@@ -373,7 +421,8 @@ router.post('/test-job', confirmGate, async (_, res) => {
       jobRecord,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: test job failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Test job failed via SDK', { error: errorMessage });
     
@@ -397,7 +446,8 @@ router.get('/workers/status', async (_, res) => {
       status,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: status failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Worker status check failed via SDK', { error: errorMessage });
     
@@ -414,12 +464,7 @@ router.get('/workers/status', async (_, res) => {
  */
 router.post('/init-all', confirmGate, async (_, res) => {
   try {
-    const results: {
-      workers: WorkerBootstrapSummary;
-      routes: any;
-      scheduler: any;
-      diagnostics: any;
-    } = {
+    const results: InitAllResults = {
       workers: startWorkers(),
       routes: null,
       scheduler: null,
@@ -446,12 +491,13 @@ router.post('/init-all', confirmGate, async (_, res) => {
     try {
       const diagnosticsResult = await runSystemDiagnostics();
       results.diagnostics = diagnosticsResult.diagnostics;
-    } catch (error) {
+    } catch (error: unknown) {
+      //audit Assumption: diagnostics failure should still return init results
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       results.diagnostics = { error: errorMessage };
     }
 
-    await logExecution('sdk-interface', 'info', 'Full SDK initialization completed', results);
+    await logExecution('sdk-interface', 'info', 'Full SDK initialization completed', { results });
 
     res.json({
       success: true,
@@ -459,7 +505,8 @@ router.post('/init-all', confirmGate, async (_, res) => {
       results,
       timestamp: new Date().toISOString()
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: init-all failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'Full SDK initialization failed', { error: errorMessage });
     
@@ -537,11 +584,13 @@ router.post('/system-test', confirmGate, async (_, res) => {
     };
 
     // Create job record
-    let jobRecord: any = null;
+    let jobRecord: JobRecord | null = null;
     try {
       const { createJob } = await import('../db.js');
       jobRecord = await createJob('worker-1', 'test_job', testJobData);
-    } catch {
+    } catch (error: unknown) {
+      //audit Assumption: DB may be unavailable; Handling: mock record
+      void error;
       jobRecord = {
         id: `test-job-${Date.now()}`,
         worker_id: 'worker-1',
@@ -570,11 +619,14 @@ router.post('/system-test', confirmGate, async (_, res) => {
     };
 
     // Update job status
+    //audit Assumption: update job if record exists
     if (jobRecord) {
       try {
         const { updateJob } = await import('../db.js');
         jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
-      } catch {
+      } catch (error: unknown) {
+        //audit Assumption: update failure should not block response
+        void error;
         if (jobRecord) {
           jobRecord.status = 'completed';
           jobRecord.output = JSON.stringify(taskResult);
@@ -584,6 +636,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     }
 
     // Verify expected result
+    //audit Assumption: task must succeed for system test
     if (!taskResult.success) {
       return res.status(500).json({
         success: false,
@@ -632,7 +685,8 @@ job_data_entry:
 
     res.type('text/yaml');
     res.send(yamlOutput);
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: system test failures should return 500
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     await logExecution('sdk-interface', 'error', 'System test failed', { error: errorMessage });
     

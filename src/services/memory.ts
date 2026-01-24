@@ -33,13 +33,14 @@ export async function setMemory(key: string, value: unknown): Promise<void> {
   await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf-8');
 }
 
-export async function getMemory<T = any>(key: string): Promise<T | null> {
+export async function getMemory<T = unknown>(key: string): Promise<T | null> {
   const filePath = resolveMemoryPath(key);
   try {
     const raw = await fs.readFile(filePath, 'utf-8');
     return JSON.parse(raw) as T;
-  } catch (error: any) {
-    if (error.code === 'ENOENT') {
+  } catch (error: unknown) {
+    //audit Assumption: missing files indicate no memory entry
+    if (isNodeError(error) && error.code === 'ENOENT') {
       return null;
     }
     throw error;
@@ -50,9 +51,14 @@ export async function deleteMemory(key: string): Promise<void> {
   const filePath = resolveMemoryPath(key);
   try {
     await fs.unlink(filePath);
-  } catch (error: any) {
-    if (error.code !== 'ENOENT') {
+  } catch (error: unknown) {
+    //audit Assumption: missing file deletions are safe to ignore
+    if (!isNodeError(error) || error.code !== 'ENOENT') {
       throw error;
     }
   }
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === 'object' && error !== null && 'code' in error;
 }

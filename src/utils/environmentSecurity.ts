@@ -61,10 +61,16 @@ const policyEnvelope: PolicyEnvelope = {
 
 let latestSecurityState: EnvironmentSecurityState | null = null;
 
+/**
+ * Return the active environment security policy configuration.
+ */
 export function getPolicyEnvelope(): PolicyEnvelope {
   return policyEnvelope;
 }
 
+/**
+ * Collect the current runtime fingerprint for environment trust evaluation.
+ */
 export function collectEnvironmentFingerprint(): EnvironmentFingerprint {
   const platform = os.platform();
   const release = os.release();
@@ -88,29 +94,37 @@ export function collectEnvironmentFingerprint(): EnvironmentFingerprint {
   };
 }
 
+/**
+ * Match a fingerprint against known trusted records.
+ */
 export function matchFingerprint(
   fingerprint: EnvironmentFingerprint,
   knownFingerprints: EnvironmentFingerprintRecord[] = KNOWN_ENVIRONMENT_FINGERPRINTS
 ): EnvironmentFingerprintRecord | undefined {
   return knownFingerprints.find(record => {
+    //audit Assumption: platform mismatch indicates untrusted; Handling: reject
     if (record.platform && record.platform !== fingerprint.platform) {
       return false;
     }
 
+    //audit Assumption: arch mismatch indicates untrusted; Handling: reject
     if (record.arch && record.arch !== fingerprint.arch) {
       return false;
     }
 
+    //audit Assumption: node major mismatch indicates untrusted; Handling: reject
     if (record.nodeMajors && !record.nodeMajors.includes(fingerprint.nodeMajor)) {
       return false;
     }
 
+    //audit Assumption: package version mismatch indicates untrusted; Handling: reject
     if (record.packageVersions && record.packageVersions.length > 0) {
       if (!record.packageVersions.includes(fingerprint.packageVersion)) {
         return false;
       }
     }
 
+    //audit Assumption: release prefix mismatch indicates untrusted; Handling: reject
     if (record.releasePrefixes && record.releasePrefixes.length > 0) {
       const matchesPrefix = record.releasePrefixes.some(prefix => fingerprint.release.startsWith(prefix));
       if (!matchesPrefix) {
@@ -122,7 +136,11 @@ export function matchFingerprint(
   });
 }
 
+/**
+ * Build a human-readable fingerprint summary for logs and diagnostics.
+ */
 export function summarizeFingerprint(fingerprint: EnvironmentFingerprint): string {
+  //audit Assumption: summary strings are safe for logs; Handling: include short hash
   return [
     fingerprint.platform,
     fingerprint.arch,
@@ -132,6 +150,9 @@ export function summarizeFingerprint(fingerprint: EnvironmentFingerprint): strin
   ].join(' | ');
 }
 
+/**
+ * Execute a script in a restricted child process sandbox.
+ */
 export async function executeInSandbox(
   script: string,
   timeoutMs = DEFAULT_SANDBOX_TIMEOUT_MS
@@ -150,6 +171,7 @@ export async function executeInSandbox(
     let timedOut = false;
 
     const finish = (result: SandboxExecutionResult) => {
+      //audit Assumption: finish should resolve once; Handling: guard with resolved flag
       if (!resolved) {
         resolved = true;
         resolve(result);
@@ -157,6 +179,7 @@ export async function executeInSandbox(
     };
 
     const timeoutHandle = setTimeout(() => {
+      //audit Assumption: sandbox timeout enforces safety; Handling: kill process
       timedOut = true;
       child.kill('SIGKILL');
       finish({
@@ -177,6 +200,7 @@ export async function executeInSandbox(
     });
 
     child.on('error', err => {
+      //audit Assumption: child errors should fail closed; Handling: mark failure
       clearTimeout(timeoutHandle);
       finish({
         success: false,
@@ -190,6 +214,7 @@ export async function executeInSandbox(
 
     child.on('close', code => {
       clearTimeout(timeoutHandle);
+      //audit Assumption: exit code 0 is success; Handling: mark failure otherwise
       const success = !timedOut && code === 0;
       finish({
         success,
@@ -210,6 +235,7 @@ async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxE
 
   const issues: string[] = [];
 
+  //audit Assumption: failed sandbox means unknown runtime; Handling: report issue
   if (!sandbox.success) {
     issues.push('Sandboxed runtime probe failed');
     return { issues, sandbox };
@@ -217,14 +243,17 @@ async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxE
 
   try {
     const parsed = JSON.parse(sandbox.stdout.trim() || '{}');
+    //audit Assumption: runtime must expose fetch; Handling: flag missing capability
     if (!parsed.hasFetch) {
       issues.push('Fetch API not available in runtime');
     }
+    //audit Assumption: runtime must expose Intl; Handling: flag missing capability
     if (!parsed.hasIntl) {
       issues.push('Intl API not available in runtime');
     }
-  } catch (error: any) {
-    issues.push(`Failed to parse sandbox response: ${error?.message || 'unknown error'}`);
+  } catch (error: unknown) {
+    //audit Assumption: parse failure indicates unreliable runtime; Handling: report
+    issues.push(`Failed to parse sandbox response: ${getErrorMessage(error) || 'unknown error'}`);
   }
 
   return { issues, sandbox };
@@ -233,15 +262,17 @@ async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxE
 async function enforceSafeMode(): Promise<void> {
   process.env[policyEnvelope.safeModeEnvFlag] = 'true';
 
+  //audit Assumption: no DB means no persistence required; Handling: early return
   if (!process.env.DATABASE_URL) {
     return;
   }
 
   try {
     await setAuditSafeMode('true');
-  } catch (error: any) {
+  } catch (error: unknown) {
+    //audit Assumption: persistence failure should not crash; Handling: warn log
     logger.warn('Failed to persist audit-safe mode while enforcing policy', {
-      error: error?.message || error
+      error: getErrorMessage(error) || error
     });
   }
 }
@@ -250,16 +281,23 @@ function disableSafeModeFlag(): void {
   process.env[policyEnvelope.safeModeEnvFlag] = 'false';
 }
 
+/**
+ * Return the most recent environment security state snapshot.
+ */
 export function getEnvironmentSecurityState(): EnvironmentSecurityState | null {
   return latestSecurityState;
 }
 
+/**
+ * Evaluate environment security and apply safe-mode policy if needed.
+ */
 export async function initializeEnvironmentSecurity(): Promise<EnvironmentSecurityState> {
   const fingerprint = collectEnvironmentFingerprint();
   const matchedFingerprint = matchFingerprint(fingerprint);
   const { issues: probeIssues, sandbox } = await probeRuntimeApis();
 
   const issues: string[] = [];
+  //audit Assumption: unknown fingerprint is risky; Handling: flag issue
   if (!matchedFingerprint) {
     issues.push('Unknown environment fingerprint detected');
   }
@@ -268,16 +306,19 @@ export async function initializeEnvironmentSecurity(): Promise<EnvironmentSecuri
   let safeMode = false;
   let policyApplied: 'trusted' | 'safe-mode' = 'trusted';
 
+  //audit Assumption: unknown environment triggers safe mode; Handling: set policy
   if (!matchedFingerprint && policyEnvelope.onUnknownEnvironment === 'safe-mode') {
     safeMode = true;
     policyApplied = 'safe-mode';
   }
 
+  //audit Assumption: sandbox issues trigger safe mode; Handling: set policy
   if (probeIssues.length > 0 && policyEnvelope.onSandboxFailure === 'safe-mode') {
     safeMode = true;
     policyApplied = 'safe-mode';
   }
 
+  //audit Assumption: safe mode applies protective configuration; Handling: enforce
   if (safeMode) {
     await enforceSafeMode();
     logger.warn('Environment security policy applied: safe mode enabled', {
@@ -285,6 +326,7 @@ export async function initializeEnvironmentSecurity(): Promise<EnvironmentSecuri
       issues
     });
   } else {
+    //audit Assumption: trusted environment allows normal operation; Handling: log
     disableSafeModeFlag();
     logger.info('Trusted environment fingerprint confirmed', {
       fingerprint: summarizeFingerprint(fingerprint),
@@ -307,11 +349,15 @@ export async function initializeEnvironmentSecurity(): Promise<EnvironmentSecuri
   return state;
 }
 
+/**
+ * Return a summary view of the current security state for reporting.
+ */
 export function getEnvironmentSecuritySummary(): EnvironmentSecuritySummary | null {
   if (!latestSecurityState) {
     return null;
   }
 
+  //audit Assumption: summary omits sensitive details; Handling: return safe fields
   return {
     trusted: latestSecurityState.isTrusted,
     safeMode: latestSecurityState.safeMode,
@@ -319,4 +365,21 @@ export function getEnvironmentSecuritySummary(): EnvironmentSecuritySummary | nu
     matchedFingerprint: latestSecurityState.matchedFingerprint?.id,
     issues: latestSecurityState.issues
   };
+}
+
+function getErrorMessage(error: unknown): string | undefined {
+  //audit Assumption: extract a usable error string; Handling: layered checks
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error;
+  }
+  return undefined;
 }

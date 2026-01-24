@@ -6,7 +6,7 @@
 import { Request, Response, NextFunction } from 'express';
 
 // JSON Schema definitions for different endpoints
-export const schemas = {
+export const schemas: Record<string, JsonSchema> = {
   aiRequest: {
     type: 'object',
     properties: {
@@ -111,13 +111,28 @@ export interface ValidationErrorResponse {
   error: string;
   details: {
     field?: string;
-    value?: any;
+    value?: unknown;
     expected?: string;
     code: string;
   };
   timestamp: string;
   endpoint: string;
 }
+
+type JsonSchema = {
+  type?: 'object' | 'string' | 'number' | 'array' | 'boolean';
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  anyOf?: JsonSchema[];
+  additionalProperties?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  items?: JsonSchema;
+};
 
 /**
  * Simple JSON schema validator (basic implementation)
@@ -126,10 +141,11 @@ class JSONSchemaValidator {
   /**
    * Validate an object against a schema
    */
-  static validate(data: any, schema: any): { valid: boolean; errors: string[] } {
+  static validate(data: unknown, schema: JsonSchema): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
 
     // Type validation
+    //audit Assumption: top-level type must match schema
     if (schema.type && typeof data !== schema.type) {
       errors.push(`Expected type ${schema.type}, got ${typeof data}`);
       return { valid: false, errors };
@@ -139,7 +155,7 @@ class JSONSchemaValidator {
       // Required properties
       if (schema.required) {
         for (const required of schema.required) {
-          if (!(required in data)) {
+          if (!(required in (data as Record<string, unknown>))) {
             errors.push(`Missing required property: ${required}`);
           }
         }
@@ -147,9 +163,9 @@ class JSONSchemaValidator {
 
       // anyOf validation
       if (schema.anyOf) {
-        const anyOfValid = schema.anyOf.some((subSchema: any) => {
+        const anyOfValid = schema.anyOf.some((subSchema) => {
           if (subSchema.required) {
-            return subSchema.required.every((prop: string) => prop in data);
+            return subSchema.required.every((prop: string) => prop in (data as Record<string, unknown>));
           }
           return true;
         });
@@ -161,7 +177,7 @@ class JSONSchemaValidator {
 
       // Property validation
       if (schema.properties) {
-        for (const [key, value] of Object.entries(data)) {
+        for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
           const propSchema = schema.properties[key];
           if (propSchema) {
             const propValidation = this.validateProperty(value, propSchema, key);
@@ -179,11 +195,17 @@ class JSONSchemaValidator {
   /**
    * Validate a single property
    */
-  private static validateProperty(value: any, schema: any, propertyName: string): { valid: boolean; errors: string[] } {
+  private static validateProperty(value: unknown, schema: JsonSchema, propertyName: string): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
 
     // Type check
-    if (schema.type && typeof value !== schema.type) {
+    //audit Assumption: property type must match schema
+    if (schema.type === 'array') {
+      if (!Array.isArray(value)) {
+        errors.push(`Property ${propertyName}: expected array`);
+        return { valid: false, errors };
+      }
+    } else if (schema.type && typeof value !== schema.type) {
       errors.push(`Property ${propertyName}: expected ${schema.type}, got ${typeof value}`);
       return { valid: false, errors };
     }
@@ -217,8 +239,9 @@ class JSONSchemaValidator {
     // Array validations
     if (schema.type === 'array' && Array.isArray(value)) {
       if (schema.items) {
+        const itemSchema = schema.items;
         value.forEach((item, index) => {
-          const itemValidation = JSONSchemaValidator.validate(item, schema.items);
+          const itemValidation = JSONSchemaValidator.validate(item, itemSchema);
           errors.push(...itemValidation.errors.map(err => `Property ${propertyName}[${index}]: ${err}`));
         });
       }
@@ -234,6 +257,7 @@ class JSONSchemaValidator {
 export function validateSchema(schemaName: keyof typeof schemas) {
   return (req: Request, res: Response, next: NextFunction) => {
     const schema = schemas[schemaName];
+    //audit Assumption: schema name must exist
     if (!schema) {
       return res.status(500).json({
         error: 'Internal validation error',
@@ -269,7 +293,7 @@ export function validateSchema(schemaName: keyof typeof schemas) {
 /**
  * Generic validation middleware for custom validation functions
  */
-export function validateCustom(validator: (data: any) => { valid: boolean; errors: string[] }) {
+export function validateCustom(validator: (data: unknown) => { valid: boolean; errors: string[] }) {
   return (req: Request, res: Response, next: NextFunction) => {
     const validation = validator(req.body);
     

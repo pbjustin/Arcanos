@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { runHealthCheck } from '../utils/diagnostics.js';
+import { runHealthCheck, type HealthCheckReport } from '../utils/diagnostics.js';
 import { call_gpt5_strict, getGPT5Model } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
@@ -74,6 +74,11 @@ interface ArcanosResult {
   };
 }
 
+type GPT5StrictResponse = OpenAI.Chat.Completions.ChatCompletion & {
+  output_text?: string;
+  output?: Array<{ content?: Array<{ text?: string }> }>;
+};
+
 /**
  * Detect if secure reasoning delegation is needed based on user input
  * Secure reasoning is used for deep analysis while ARCANOS remains the governing brain
@@ -108,6 +113,7 @@ function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: b
   
   // Check for deep logic needs
   for (const keyword of deepLogicKeywords) {
+    //audit Assumption: keyword match implies deeper reasoning need
     if (lowercaseInput.includes(keyword)) {
       return { 
         shouldDelegate: true, 
@@ -118,6 +124,7 @@ function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: b
   
   // Check for code refactoring needs
   for (const keyword of codeRefactoringKeywords) {
+    //audit Assumption: refactor keywords imply structured analysis
     if (lowercaseInput.includes(keyword)) {
       return { 
         shouldDelegate: true, 
@@ -128,6 +135,7 @@ function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: b
   
   // Check for long-context reasoning needs
   for (const keyword of longContextKeywords) {
+    //audit Assumption: long-context keywords require structured reasoning
     if (lowercaseInput.includes(keyword)) {
       return { 
         shouldDelegate: true, 
@@ -138,6 +146,7 @@ function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: b
   
   // Check for security-sensitive content
   for (const keyword of securityKeywords) {
+    //audit Assumption: security keywords require compliant reasoning
     if (lowercaseInput.includes(keyword)) {
       return { 
         shouldDelegate: true, 
@@ -147,6 +156,7 @@ function shouldDelegateToSecureReasoning(userInput: string): { shouldDelegate: b
   }
   
   // Check input length - very long inputs may benefit from structured reasoning
+  //audit Assumption: long inputs benefit from delegation
   if (userInput.length > APPLICATION_CONSTANTS.MAX_INPUT_LENGTH) {
     return { 
       shouldDelegate: true, 
@@ -173,6 +183,7 @@ async function delegateToSecureReasoning(client: OpenAI, userInput: string, reas
     // Validate input for security compliance first
     const validation = validateSecureReasoningRequest(userInput);
     
+    //audit Assumption: invalid inputs should be sanitized before processing
     if (!validation.valid) {
       logger.warn('Input validation issues detected', {
         module: 'arcanos',
@@ -185,6 +196,7 @@ async function delegateToSecureReasoning(client: OpenAI, userInput: string, reas
     }
     
     // Execute secure reasoning analysis
+    //audit Assumption: secure reasoning returns structured analysis
     const reasoningResult = await executeSecureReasoning(client, {
       userInput,
       sessionId,
@@ -217,9 +229,11 @@ async function delegateToSecureReasoning(client: OpenAI, userInput: string, reas
     );
 
     return arcanosProcessingPrompt;
-  } catch (error) {
-    console.warn(`[❌ SECURE_REASONING] Analysis delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    throw new Error(`Secure reasoning delegation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  } catch (error: unknown) {
+    //audit Assumption: delegation failure should bubble with safe message
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.warn(`[❌ SECURE_REASONING] Analysis delegation failed: ${errorMessage}`);
+    throw new Error(`Secure reasoning delegation failed: ${errorMessage}`);
   }
 }
 
@@ -231,23 +245,13 @@ function getSystemPrompt(): string {
 }
 
 /**
- * System health status structure
- * @confidence 0.9 - Health status may vary by component
- */
-interface SystemHealth {
-  status?: string;
-  components?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-/**
  * Enhanced system prompt that includes memory context and audit-safe constraints
  * @confidence 1.0 - Type-safe prompt generation
  */
 function createEnhancedSystemPrompt(
   memoryContext: MemoryContext,
   auditConfig: AuditSafeConfig,
-  health: SystemHealth
+  health: HealthCheckReport
 ): string {
   const systemPrompt = getSystemPrompt();
   const basePrompt = `${systemPrompt}
@@ -263,6 +267,7 @@ CURRENT SYSTEM STATUS:
 ${memoryContext.memoryPrompt}`;
 
   // Apply audit-safe constraints
+  //audit Assumption: audit-safe constraints must be applied before sending
   const { systemPrompt: auditSafePrompt } = applyAuditSafeConstraints(
     basePrompt,
     '', // User prompt handled separately
@@ -310,6 +315,7 @@ export async function runARCANOS(
   let reasoningDelegation: { used: boolean; reason?: string; delegatedQuery?: string } = { used: false };
   let processedInput = userInput;
   
+  //audit Assumption: delegation should only occur when flagged
   if (delegationCheck.shouldDelegate) {
     const reason = delegationCheck.reason ?? 'unspecified reason';
     console.log(`[🧠 ARCANOS] Secure reasoning delegation required: ${reason}`);
@@ -330,16 +336,19 @@ export async function runARCANOS(
         `Input: ${userInput.substring(0, 100)}...`,
         sessionId
       );
-    } catch (error) {
-      console.warn(`[⚠️ ARCANOS] Secure reasoning delegation failed, proceeding with native processing: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } catch (error: unknown) {
+      //audit Assumption: delegation failure should continue with original input
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.warn(`[⚠️ ARCANOS] Secure reasoning delegation failed, proceeding with native processing: ${errorMessage}`);
       // Continue with original input if delegation fails
     }
   }
   
   // Create enhanced system prompt with memory context and audit-safe constraints
-  const enhancedSystemPrompt = createEnhancedSystemPrompt(memoryContext, auditConfig, health as unknown as SystemHealth);
+  const enhancedSystemPrompt = createEnhancedSystemPrompt(memoryContext, auditConfig, health);
   
   // Apply audit-safe constraints to user input
+  //audit Assumption: audit-safe constraints must be applied to user prompt
   const { userPrompt: auditSafeUserPrompt, auditFlags } = applyAuditSafeConstraints(
     '', // System prompt already enhanced
     processedInput,
@@ -352,7 +361,7 @@ export async function runARCANOS(
   // Use strict GPT-5.1 calls only - no fallback allowed
   const gpt5Model = getGPT5Model();
   let finalResult: string;
-  let response: any;
+  let response: GPT5StrictResponse | null = null;
   
   try {
     // Use strict GPT-5.1 call with no fallback
@@ -375,15 +384,21 @@ export async function runARCANOS(
       '';
     console.log(`[🔬 ARCANOS] Diagnosis complete using strict GPT-5.1: ${gpt5Model}`);
     
-  } catch (err) {
+  } catch (err: unknown) {
     // No fallback - throw error immediately
+    //audit Assumption: strict GPT-5 errors should be fatal
     const errorMessage = `GPT-5.1 strict call failed — no fallback allowed: ${err instanceof Error ? err.message : 'Unknown error'}`;
     console.error(`❌ [ARCANOS] ${errorMessage}`);
     throw new Error(errorMessage);
   }
   
+  if (!response) {
+    throw new Error('GPT-5.1 strict call returned no response');
+  }
+
   // Validate audit-safe output
   const processedSafely = validateAuditSafeOutput(finalResult, auditConfig);
+  //audit Assumption: failed validation should add audit flag
   if (!processedSafely) {
     auditFlags.push('OUTPUT_VALIDATION_FAILED');
   }
@@ -404,6 +419,7 @@ export async function runARCANOS(
   
   // Store successful patterns for learning
   if (processedSafely) {
+    //audit Assumption: successful outputs should be stored for learning
     storePattern(
       'Successful ARCANOS diagnosis with strict GPT-5.1',
       [`Input pattern: ${userInput.substring(0, 50)}...`, `Output pattern: ${finalResult.substring(0, 50)}...`],
@@ -459,17 +475,20 @@ function parseArcanosResponse(
   let coreLogicTrace = coreLogicTraceMatch ? coreLogicTraceMatch[1].trim() : 'Logic trace not available';
   
   // Add secure reasoning delegation info to logic trace if used
+  //audit Assumption: include delegation context for auditability
   if (reasoningDelegation?.used) {
     coreLogicTrace = `Secure Reasoning Delegation: ${reasoningDelegation.reason}\nOriginal Query: ${reasoningDelegation.delegatedQuery}\n\n${coreLogicTrace}`;
   }
   
   // Add memory context info to logic trace
+  //audit Assumption: include memory context when used
   if (memoryContext && memoryContext.relevantEntries.length > 0) {
     coreLogicTrace = `Memory Context: ${memoryContext.contextSummary}\nMemory Accessed: [${memoryContext.accessLog.join(', ')}]\n\n${coreLogicTrace}`;
   }
 
   // Apply security compliance to the final result
   const securityCheck = applySecurityCompliance(fullResult);
+  //audit Assumption: non-compliant output must be redacted
   if (securityCheck.complianceStatus !== 'COMPLIANT') {
     console.warn(`[🔒 SECURITY] Compliance issue detected: ${securityCheck.complianceStatus}`);
     // Use the redacted content

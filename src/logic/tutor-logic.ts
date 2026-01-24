@@ -21,7 +21,7 @@ export interface TutorQuery {
   intent?: string;
   domain?: string;
   module?: string;
-  payload?: any;
+  payload?: TutorPayload;
 }
 
 export interface TutorPipelineTrace {
@@ -41,7 +41,15 @@ export interface TutorPipelineOutput {
 }
 
 export interface TutorModuleResult extends TutorPipelineOutput {
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TutorPayload {
+  topic?: string;
+  entry?: string;
+  flow?: string;
+  tokenLimit?: number;
+  [key: string]: unknown;
 }
 
 async function runTutorPipeline(
@@ -57,6 +65,7 @@ async function runTutorPipeline(
   const client = getOpenAIClient();
   const testMode = process.env.OPENAI_API_KEY === 'test_key_for_mocking';
 
+  //audit Assumption: missing client or test mode uses mock pipeline
   if (!client || testMode) {
     const mock = generateMockResponse(prompt, 'ask');
     return {
@@ -78,6 +87,7 @@ async function runTutorPipeline(
     const intakeModel = getDefaultModel();
     const reasoningModel = getGPT5Model();
     const auditModel = getDefaultModel();
+    //audit Assumption: token limit is required; Handling: default if absent
     const tokenLimit = options.tokenLimit ?? DEFAULT_TOKEN_LIMIT;
 
     const intakeResponse = await client.chat.completions.create({
@@ -133,8 +143,9 @@ async function runTutorPipeline(
         audit: auditModel
       }
     };
-  } catch (error) {
-    console.error('Tutor pipeline execution error:', error);
+  } catch (error: unknown) {
+    //audit Assumption: pipeline failure should fallback to mock
+    console.error('Tutor pipeline execution error:', error instanceof Error ? error.message : error);
     const mock = generateMockResponse(prompt, 'ask');
     return {
       tutor_response: mock.result || '',
@@ -152,16 +163,16 @@ async function runTutorPipeline(
   }
 }
 
-const patterns: Record<string, { id: string; modules: Record<string, (payload: any) => Promise<TutorModuleResult> > }> = {
+const patterns: Record<string, { id: string; modules: Record<string, (payload: TutorPayload) => Promise<TutorModuleResult> > }> = {
   memory: {
     id: 'pattern_1756454042132',
     modules: {
       explain: async (payload) => {
-        const pipeline = await runTutorPipeline(`Explain memory logic for: ${payload.topic}`);
+        const pipeline = await runTutorPipeline(`Explain memory logic for: ${payload.topic ?? ''}`);
         return { ...pipeline };
       },
       audit: async (payload) => {
-        const pipeline = await runTutorPipeline(`Audit memory entry: ${payload.entry}`);
+        const pipeline = await runTutorPipeline(`Audit memory entry: ${payload.entry ?? ''}`);
         return { ...pipeline };
       }
     }
@@ -170,7 +181,7 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
     id: 'pattern_1756454042135',
     modules: {
       findSources: async (payload) => {
-        const topic = (payload?.topic as string) || '';
+        const topic = payload.topic ?? '';
         const sources = await searchScholarly(topic);
 
         const pipeline = await runTutorPipeline(
@@ -178,7 +189,7 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
             ? buildResearchBriefPrompt(topic, sources)
             : buildResearchFallbackPrompt(topic),
           {
-            tokenLimit: payload?.tokenLimit ?? DEFAULT_TOKEN_LIMIT,
+            tokenLimit: payload.tokenLimit ?? DEFAULT_TOKEN_LIMIT,
             reasoningPrompt: RESEARCH_REASONING_PROMPT,
             temperature: 0.25
           }
@@ -198,7 +209,7 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
     id: 'pattern_1756453493854',
     modules: {
       clarify: async (payload) => {
-        const pipeline = await runTutorPipeline(`Clarify logic flow: ${payload.flow}`);
+        const pipeline = await runTutorPipeline(`Clarify logic flow: ${payload.flow ?? ''}`);
         return { ...pipeline };
       }
     }
@@ -214,6 +225,9 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: a
   }
 };
 
+/**
+ * Route tutor queries through the appropriate domain/module pipeline.
+ */
 export async function handleTutorQuery(query: TutorQuery) {
   const audit = {
     received_at: new Date().toISOString(),
@@ -224,6 +238,7 @@ export async function handleTutorQuery(query: TutorQuery) {
     fallback_invoked: false
   };
 
+  //audit Assumption: unknown domains fall back to default
   const domain = patterns[query.domain ?? ''] ? (query.domain as string) : 'default';
   audit.domain_bound = domain;
 
@@ -236,9 +251,11 @@ export async function handleTutorQuery(query: TutorQuery) {
   let result: TutorModuleResult;
 
   try {
+    //audit Assumption: payload is optional; Handling: default to empty
     result = await moduleFn(query.payload || {});
-  } catch (error) {
-    console.error('Tutor module error:', error);
+  } catch (error: unknown) {
+    //audit Assumption: module failure triggers fallback
+    console.error('Tutor module error:', error instanceof Error ? error.message : error);
     const pipeline = await runTutorPipeline('Fallback tutoring response: summarize the learning request and recommend next steps.');
     result = {
       ...pipeline,
@@ -260,6 +277,9 @@ export async function handleTutorQuery(query: TutorQuery) {
   };
 }
 
+/**
+ * Dispatch tutor queries (compatibility wrapper).
+ */
 export async function dispatch(payload: TutorQuery) {
   return handleTutorQuery(payload);
 }

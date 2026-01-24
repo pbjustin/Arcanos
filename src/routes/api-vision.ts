@@ -5,6 +5,7 @@ import { getOpenAIClient } from '../services/openai/clientFactory.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import type { ErrorResponseDTO } from '../types/dto.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
 
@@ -65,9 +66,9 @@ function calculateVisionCost(inputTokens: number, outputTokens: number): number 
   return (safeInputTokens * inputRate + safeOutputTokens * outputRate) / 1_000_000;
 }
 
-router.post('/api/vision', visionValidation, async (req: Request<{}, VisionResponse | ErrorResponseDTO, VisionRequest>, res: Response<VisionResponse | ErrorResponseDTO>) => {
-  try {
+router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}, VisionResponse | ErrorResponseDTO, VisionRequest>, res: Response<VisionResponse | ErrorResponseDTO>) => {
     const { imageBase64, prompt, temperature, model, maxTokens } = req.body;
+    try {
 
     if (!imageBase64 || typeof imageBase64 !== 'string' || imageBase64.trim().length === 0) {
       return res.status(400).json(
@@ -160,8 +161,8 @@ router.post('/api/vision', visionValidation, async (req: Request<{}, VisionRespo
       cost,
       model: visionModel
     });
-  } catch (error) {
-    aiLogger.error('Vision request failed', { operation: 'vision' }, undefined, error as Error);
+  } catch (error: unknown) {
+    aiLogger.error('Vision request failed', { operation: 'vision' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('openai.vision.error', {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
@@ -171,6 +172,6 @@ router.post('/api/vision', visionValidation, async (req: Request<{}, VisionRespo
       details: 'Failed to process vision request'
     });
   }
-});
+}));
 
 export default router;

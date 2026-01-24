@@ -4,19 +4,27 @@ import { logger } from '../utils/structuredLogging.js';
 
 const sessionMemoryLogger = logger.child({ module: 'sessionMemory' });
 
-export async function saveMessage(sessionId: string, channel: string, message: any): Promise<void> {
+export type SessionMessage = Record<string, unknown> | string;
+
+export async function saveMessage(sessionId: string, channel: string, message: SessionMessage): Promise<void> {
   await sessionMemoryRepository.appendMessage(sessionId, channel, message);
 
+  //audit Assumption: only core conversations should be mirrored to RAG
   if (channel === 'conversations_core') {
     const content = typeof message === 'string' ? message : message?.content;
+    //audit Assumption: message content must be non-empty string
     if (typeof content !== 'string' || !content.trim()) {
       return;
     }
 
-    const role = typeof message === 'object' && typeof message.role === 'string' ? message.role : 'user';
-    const timestamp = typeof message === 'object' && typeof message.timestamp === 'number'
-      ? message.timestamp
-      : Date.now();
+    const role =
+      typeof message === 'object' && message && typeof message.role === 'string'
+        ? message.role
+        : 'user';
+    const timestamp =
+      typeof message === 'object' && message && typeof message.timestamp === 'number'
+        ? message.timestamp
+        : Date.now();
 
     const snippetMetadata: Record<string, unknown> = { channel };
     if (typeof message === 'object' && message) {
@@ -41,7 +49,8 @@ export async function saveMessage(sessionId: string, channel: string, message: a
         channel,
         metadata: snippetMetadata,
       });
-    } catch (error) {
+    } catch (error: unknown) {
+      //audit Assumption: RAG mirror failures should not interrupt flow
       sessionMemoryLogger.warn('Failed to mirror conversation message into RAG', {
         operation: 'saveMessage',
         sessionId,
@@ -51,11 +60,11 @@ export async function saveMessage(sessionId: string, channel: string, message: a
   }
 }
 
-export async function getChannel(sessionId: string, channel: string): Promise<any[]> {
+export async function getChannel(sessionId: string, channel: string): Promise<SessionMessage[]> {
   return sessionMemoryRepository.getChannel(sessionId, channel);
 }
 
-export async function getConversation(sessionId: string): Promise<any[]> {
+export async function getConversation(sessionId: string): Promise<SessionMessage[]> {
   return sessionMemoryRepository.getConversation(sessionId);
 }
 

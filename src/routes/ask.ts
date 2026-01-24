@@ -5,6 +5,7 @@ import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware, securityHeaders, validateInput } from '../utils/security.js';
 import { buildValidationErrorResponse } from '../utils/errorResponse.js';
 import type { AIRequestDTO, AIResponseDTO, ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
 
@@ -135,11 +136,11 @@ export const handleAIRequest = async (
 };
 
 // Primary ask endpoint routed through the Trinity brain (no confirmation required)
-router.post('/ask', askValidationMiddleware, (req, res) => handleAIRequest(req, res, 'ask'));
-router.get('/ask', askValidationMiddleware, (req, res) => handleAIRequest(req, res, 'ask'));
+router.post('/ask', askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
+router.get('/ask', askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 
 // Brain endpoint (alias for ask with same functionality) still requires confirmation
-router.post('/brain', askValidationMiddleware, confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
-router.get('/brain', askValidationMiddleware, confirmGate, (req, res) => handleAIRequest(req, res, 'brain'));
+router.post('/brain', askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.get('/brain', askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
 
 export default router;

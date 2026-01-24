@@ -15,9 +15,10 @@ router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
     }
 
     res.json({ result: pipelineResult.result, stages: pipelineResult.stages });
-  } catch (err: any) {
-    console.error('Pipeline error:', err);
-    res.status(500).json({ error: 'Pipeline failed', details: err?.message || 'Unknown error' });
+  } catch (err: unknown) {
+    //audit Assumption: pipeline errors should return 500
+    console.error('Pipeline error:', err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'Pipeline failed', details: err instanceof Error ? err.message : 'Unknown error' });
   }
 });
 

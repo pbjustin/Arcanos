@@ -27,8 +27,9 @@ function readJsonFile(filePath: string): Record<string, unknown> | undefined {
     }
     const raw = fs.readFileSync(filePath, 'utf8');
     return raw ? (JSON.parse(raw) as Record<string, unknown>) : undefined;
-  } catch (error) {
-    console.error(`[DAILY-SUMMARY] Failed to read ${filePath}`, error);
+  } catch (error: unknown) {
+    //audit Assumption: read failures should fall back to undefined
+    console.error(`[DAILY-SUMMARY] Failed to read ${filePath}`, error instanceof Error ? error.message : error);
     return undefined;
   }
 }
@@ -44,8 +45,9 @@ function collectLogsPreview(): string[] {
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
       previews.push(`${file}: ${raw.slice(0, 400)}`);
-    } catch (error) {
-      console.error('[DAILY-SUMMARY] Failed to read log file', filePath, error);
+    } catch (error: unknown) {
+      //audit Assumption: log read failures should be skipped
+      console.error('[DAILY-SUMMARY] Failed to read log file', filePath, error instanceof Error ? error.message : error);
     }
   }
   return previews.slice(0, 5);
@@ -104,7 +106,7 @@ export async function generateDailySummary(triggeredBy: string = 'cli'): Promise
     parsed = {
       summary: 'Daily summary fallback',
       highlights: [
-        `Self tests recorded: ${Array.isArray((sources.healthHistory as any)?.history) ? (sources.healthHistory as any).history.length : 0}`
+        `Self tests recorded: ${getHealthHistoryLength(sources.healthHistory)}`
       ],
       risks: ['Unable to reach OpenAI - verify API key'],
       nextSteps: ['Retry summary generation once connectivity is restored']
@@ -144,4 +146,13 @@ export async function generateDailySummary(triggeredBy: string = 'cli'): Promise
     generatedAt,
     triggeredBy
   };
+}
+
+function getHealthHistoryLength(healthHistory: unknown): number {
+  if (!healthHistory || typeof healthHistory !== 'object') {
+    return 0;
+  }
+  const record = healthHistory as Record<string, unknown>;
+  const history = record.history;
+  return Array.isArray(history) ? history.length : 0;
 }

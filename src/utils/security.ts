@@ -14,7 +14,7 @@ export interface ValidationRule {
   maxLength?: number;
   pattern?: RegExp;
   sanitize?: boolean;
-  allowedValues?: any[];
+  allowedValues?: Array<string | number | boolean>;
 }
 
 export interface ValidationSchema {
@@ -25,8 +25,10 @@ export interface ValidationSchema {
  * Sanitizes potentially dangerous input content
  */
 export function sanitizeInput(input: string): string {
+  //audit Assumption: non-string inputs are unsafe; Handling: return empty string
   if (typeof input !== 'string') return '';
   
+  //audit Assumption: sanitization removes dangerous patterns; Risk: over-sanitization
   return input
     // Remove potential script injections
     .replace(/<script[^>]*>.*?<\/script>/gi, '')
@@ -66,17 +68,20 @@ export function validateInput<T extends Record<string, unknown> | unknown[]>(
     const value = (data as Record<string, unknown>)[field];
     
     // Check required fields
+    //audit Assumption: missing required values invalidate payload; Handling: error
     if (rule.required && (value === undefined || value === null || value === '')) {
       errors.push(`Field '${field}' is required`);
       continue;
     }
     
     // Skip validation for optional missing fields
+    //audit Assumption: optional missing fields can be ignored; Handling: continue
     if (!rule.required && (value === undefined || value === null)) {
       continue;
     }
     
     // Type validation
+    //audit Assumption: runtime type checks match schema intent; Handling: error
     if (rule.type) {
       if (rule.type === 'array' && !Array.isArray(value)) {
         errors.push(`Field '${field}' must be an array`);
@@ -89,6 +94,7 @@ export function validateInput<T extends Record<string, unknown> | unknown[]>(
     
     // String-specific validations
     if (rule.type === 'string' && typeof value === 'string') {
+      //audit Assumption: length/pattern checks protect input constraints
       if (rule.minLength && value.length < rule.minLength) {
         errors.push(`Field '${field}' must be at least ${rule.minLength} characters`);
       }
@@ -102,20 +108,29 @@ export function validateInput<T extends Record<string, unknown> | unknown[]>(
       }
       
       // Apply sanitization
+      //audit Assumption: sanitization is safe; Handling: sanitize if enabled
       (sanitized as Record<string, unknown>)[field] = rule.sanitize ? sanitizeInput(value) : value;
     } else if (rule.type === 'array' && Array.isArray(value)) {
       // Array validation
+      //audit Assumption: arrays pass through unchanged; Handling: assign
       (sanitized as Record<string, unknown>)[field] = value;
     } else if (rule.type === 'object' && typeof value === 'object' && value !== null) {
       // Object validation
+      //audit Assumption: object shape validated elsewhere; Handling: assign
       (sanitized as Record<string, unknown>)[field] = value;
     } else {
       // Other types (number, boolean)
+      //audit Assumption: scalar values are safe to store; Handling: assign
       (sanitized as Record<string, unknown>)[field] = value;
     }
     
     // Allowed values validation
-    if (rule.allowedValues && !rule.allowedValues.includes(value)) {
+    //audit Assumption: allowedValues list is authoritative; Handling: error
+    if (
+      rule.allowedValues &&
+      (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') &&
+      !rule.allowedValues.includes(value)
+    ) {
       errors.push(`Field '${field}' must be one of: ${rule.allowedValues.join(', ')}`);
     }
   }
@@ -166,6 +181,7 @@ export function createRateLimitMiddleware(
     const now = Date.now();
     
     // Clean up old entries
+    //audit Assumption: stale entries should be cleared to prevent memory bloat
     for (const [key, value] of requestCounts.entries()) {
       if (now > value.resetTime) {
         requestCounts.delete(key);
@@ -174,6 +190,7 @@ export function createRateLimitMiddleware(
     
     const current = requestCounts.get(ip) || { count: 0, resetTime: now + windowMs };
     
+    //audit Assumption: reset window when elapsed; Handling: reset counters
     if (now > current.resetTime) {
       current.count = 1;
       current.resetTime = now + windowMs;
@@ -183,6 +200,7 @@ export function createRateLimitMiddleware(
     
     requestCounts.set(ip, current);
     
+    //audit Assumption: enforce rate limit threshold; Handling: 429 response
     if (current.count > maxRequests) {
       void res.status(429).json({
         error: 'Rate limit exceeded',
@@ -193,6 +211,7 @@ export function createRateLimitMiddleware(
     }
     
     // Add rate limit headers
+    //audit Assumption: headers help clients back off; Handling: include limits
     res.set({
       'X-RateLimit-Limit': maxRequests.toString(),
       'X-RateLimit-Remaining': Math.max(0, maxRequests - current.count).toString(),
@@ -208,6 +227,7 @@ export function createRateLimitMiddleware(
  * @confidence 1.0 - Standard Express middleware
  */
 export function securityHeaders(req: Request, res: Response, next: NextFunction): void {
+  //audit Assumption: static security headers mitigate common attacks
   res.set({
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 export interface ModuleDef {
   name: string;
   description?: string;
-  actions: Record<string, (payload: any) => Promise<any>>;
+  actions: Record<string, (payload: unknown) => Promise<unknown>>;
   gptIds?: string[];
 }
 
@@ -21,6 +21,7 @@ function normalizeRouteFromFilename(fileName: string): string {
 }
 
 function shouldIncludeFile(fileName: string): boolean {
+  //audit Assumption: only .ts/.js module files should load
   if (!/\.(ts|js)$/i.test(fileName)) return false;
   if (/\.d\.ts$/i.test(fileName)) return false;
   if (/moduleLoader\.(ts|js)$/i.test(fileName)) return false;
@@ -51,8 +52,9 @@ export async function loadModuleDefinitions(): Promise<LoadedModule[]> {
       if (mod && mod.actions) {
         loaded.push({ route, definition: mod });
       }
-    } catch (err) {
-      console.error(`Failed to load module ${file.name}:`, err);
+    } catch (err: unknown) {
+      //audit Assumption: module load failure should not halt loading
+      console.error(`Failed to load module ${file.name}:`, err instanceof Error ? err.message : err);
     }
   }
 

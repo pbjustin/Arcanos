@@ -122,8 +122,8 @@ router.post('/orchestration/reset', confirmGate, async (
       });
     }
 
-  } catch (error: any) {
-    console.error('❌ [ORCHESTRATION] Reset failed:', error);
+  } catch (error: unknown) {
+    console.error('❌ [ORCHESTRATION] Reset failed:', error instanceof Error ? error.message : error);
     handleAIError(error, 'orchestration reset request', 'orchestration-reset', res);
   }
 });
@@ -178,8 +178,8 @@ router.get('/orchestration/status', async (
 
     res.status(200).json(response);
 
-  } catch (error: any) {
-    console.error('❌ [ORCHESTRATION] Status check failed:', error);
+  } catch (error: unknown) {
+    console.error('❌ [ORCHESTRATION] Status check failed:', error instanceof Error ? error.message : error);
     handleAIError(error, 'orchestration status request', 'orchestration-status', res);
   }
 });
@@ -253,8 +253,8 @@ router.post('/orchestration/purge', confirmGate, async (
       });
     }
 
-  } catch (error: any) {
-    console.error('❌ [ORCHESTRATION] Purge failed:', error);
+  } catch (error: unknown) {
+    console.error('❌ [ORCHESTRATION] Purge failed:', error instanceof Error ? error.message : error);
     handleAIError(error, 'orchestration purge request', 'orchestration-purge', res);
   }
 });

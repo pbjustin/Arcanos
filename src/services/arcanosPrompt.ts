@@ -11,6 +11,7 @@ import { mapErrorToFriendlyMessage } from '../utils/errorMessageMapper.js';
  * @returns AI response object
  */
 export async function handleArcanosPrompt(prompt: string) {
+  //audit Assumption: prompt must be a non-empty string
   if (!prompt || typeof prompt !== 'string') {
     throw new Error('Invalid prompt');
   }
@@ -18,6 +19,7 @@ export async function handleArcanosPrompt(prompt: string) {
   const client = getOpenAIClient();
 
   // When no OpenAI API key is configured we return a mock response
+  //audit Assumption: missing client triggers mock response
   if (!client) {
     return generateMockResponse(prompt, 'ask');
   }
@@ -26,7 +28,8 @@ export async function handleArcanosPrompt(prompt: string) {
     // Route the prompt through the main Trinity brain processing
     const output = await runThroughBrain(client, prompt);
     return output;
-  } catch (error: any) {
+  } catch (error: unknown) {
+    //audit Assumption: map errors to friendly message when possible
     const friendlyMessage = mapErrorToFriendlyMessage(error);
     if (friendlyMessage) {
       throw new Error(friendlyMessage);

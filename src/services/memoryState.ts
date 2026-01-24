@@ -29,12 +29,13 @@ export async function syncMemoryState(
  */
 export async function getMemoryState(
   entryKey: string
-): Promise<{ entry_data: any; state_version: string } | null> {
+): Promise<{ entry_data: unknown; state_version: string } | null> {
   const result = await query(
     `SELECT entry_data, state_version FROM memory_states WHERE entry_key = $1`,
     [entryKey]
   );
 
+  //audit Assumption: missing rows indicate no entry
   if (result.rows.length === 0) {
     console.log(`⚠️ No entry found for ${entryKey}`);
     return null;
@@ -50,10 +51,11 @@ export async function getMemoryState(
  */
 export async function validateMemory(
   entryKey: string,
-  entryData: any,
+  entryData: unknown,
   stateVersion: string
 ): Promise<string> {
   const client = getOpenAIClient();
+  //audit Assumption: missing client returns mock validation
   if (!client) {
     console.warn('⚠️ OpenAI client not available - returning mock validation');
     return 'OpenAI client unavailable';

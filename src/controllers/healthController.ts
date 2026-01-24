@@ -14,24 +14,75 @@ import {
   type DatabaseStatusLike,
   type HealthStatus
 } from '../utils/healthChecks.js';
+import { RESILIENCE_CONSTANTS } from '../services/openai/resilience.js';
+import { CircuitBreakerState } from '../utils/circuitBreaker.js';
 
 interface HealthResponse {
   status: HealthStatus;
   timestamp: string;
   services: {
-    openai: any;
-    database: any;
-    environment: any;
+    openai: OpenAIServiceHealth;
+    database: DatabaseHealth;
+    environment: EnvironmentInfo;
   };
   version: string;
   uptime: number;
   error?: string;
 }
 
+type OpenAIServiceHealth = ReturnType<typeof getOpenAIServiceHealth>;
+type EnvironmentInfo = ReturnType<typeof getEnvironmentInfo>;
+
+interface DatabaseHealth {
+  connected: boolean;
+  error: string | null;
+  url: string;
+}
+
+function buildFallbackOpenAIHealth(): OpenAIServiceHealth {
+  try {
+    return getOpenAIServiceHealth();
+  } catch {
+    return {
+      apiKey: {
+        configured: false,
+        status: 'unknown',
+        source: null
+      },
+      client: {
+        initialized: false,
+        model: 'unknown',
+        timeout: 0,
+        baseURL: undefined
+      },
+      circuitBreaker: {
+        state: CircuitBreakerState.OPEN,
+        failureCount: 0,
+        lastFailureTime: 0,
+        successCount: 0,
+        constants: RESILIENCE_CONSTANTS,
+        healthy: false
+      },
+      cache: {
+        totalEntries: 0,
+        expiredEntries: 0,
+        activeEntries: 0,
+        averageAccessCount: 0,
+        memoryUsage: 0,
+        enabled: false
+      },
+      lastHealthCheck: new Date().toISOString(),
+      defaults: {
+        maxTokens: RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
+      }
+    };
+  }
+}
+
 function buildHealthResponsePayload(
   status: HealthStatus,
-  openaiHealth: unknown,
-  envInfo: unknown,
+  openaiHealth: OpenAIServiceHealth,
+  envInfo: EnvironmentInfo,
   dbStatus: DatabaseStatusLike,
   databaseUrl: string | undefined
 ): HealthResponse {
@@ -90,17 +141,20 @@ export class HealthController {
       //audit Assumption: degraded state should still be 200; risk: incorrect status code for degraded; invariant: unhealthy should be 503; handling: map status to HTTP code.
       const httpStatus = status === 'unhealthy' ? 503 : 200;
       res.status(httpStatus).json(healthResponse);
-    } catch (error) {
+    } catch (error: unknown) {
       //audit Assumption: failure to compute health implies unhealthy; risk: hiding root cause; invariant: health endpoint signals failure; handling: return minimal unhealthy payload.
       //audit Assumption: error may not be an Error instance; risk: losing details; invariant: response includes a message string; handling: normalize to safe string.
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const fallbackOpenAI = buildFallbackOpenAIHealth();
+      const fallbackEnv = getEnvironmentInfo();
+      const fallbackDbStatus: DatabaseStatusLike = { connected: false, error: 'Service check failed' };
       res.status(503).json({
         //audit Assumption: spreading response payload is safe; risk: overriding fields; invariant: unhealthy response includes error message; handling: append error after payload.
         ...buildHealthResponsePayload(
           'unhealthy',
-          { error: 'Service check failed' },
-          { error: 'Service check failed' },
-          { connected: false, error: 'Service check failed' },
+          fallbackOpenAI,
+          fallbackEnv,
+          fallbackDbStatus,
           env.DATABASE_URL
         ),
         error: errorMessage

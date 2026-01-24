@@ -4,7 +4,7 @@
  * Provides enhanced query execution with caching and retry logic.
  */
 
-import type { QueryResult } from 'pg';
+import type { PoolClient, QueryResult } from 'pg';
 import { getPool, isDatabaseConnected } from './client.js';
 import { queryCache } from '../utils/cache.js';
 import crypto from 'crypto';
@@ -12,7 +12,7 @@ import crypto from 'crypto';
 /**
  * Creates a cache key for database queries
  */
-function createQueryCacheKey(text: string, params: any[]): string {
+function createQueryCacheKey(text: string, params: unknown[]): string {
   const content = `${text}:${JSON.stringify(params)}`;
   return crypto.createHash('sha256').update(content).digest('hex');
 }
@@ -20,7 +20,7 @@ function createQueryCacheKey(text: string, params: any[]): string {
 /**
  * Enhanced query helper with caching and optimization
  */
-export async function query(text: string, params: any[] = [], attempt = 1, useCache = false): Promise<QueryResult> {
+export async function query(text: string, params: unknown[] = [], attempt = 1, useCache = false): Promise<QueryResult> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured or not connected');
   }
@@ -74,7 +74,7 @@ export async function query(text: string, params: any[] = [], attempt = 1, useCa
 /**
  * Transaction helper function
  */
-export async function transaction<T>(callback: (client: any) => Promise<T>): Promise<T> {
+export async function transaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured or not connected');
   }

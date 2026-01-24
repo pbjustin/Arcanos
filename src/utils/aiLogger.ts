@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 
 // Type for the Chat Completions API parameters (non-streaming)
 type ChatCompletionCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParams & { stream?: false };
+type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 /**
  * Enhanced logging for ARCANOS routing stages
@@ -46,12 +47,17 @@ export async function createResponseWithLogging(
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const { model, messages } = params;
   const logInput = messages
-    .map((m: any) => `[${m.role}] ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+    //audit Assumption: log input for diagnostics; Handling: stringify non-string content
+    .map((m: ChatCompletionMessageParam) => {
+      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      return `[${m.role}] ${content}`;
+    })
     .join(' | ');
 
   console.log(`📝 AI Request => model: ${model} | input: ${logInput}`);
 
-  const response = await client.chat.completions.create({ ...params, stream: false }) as OpenAI.Chat.Completions.ChatCompletion;
+  const response: OpenAI.Chat.Completions.ChatCompletion =
+    await client.chat.completions.create({ ...params, stream: false });
   const output = response.choices[0]?.message?.content || '';
   const tokens = response.usage?.total_tokens ?? 0;
 

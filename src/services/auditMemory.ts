@@ -5,9 +5,10 @@
 
 import { getOpenAIClient } from './openai.js';
 
-export async function auditMemory(state: any): Promise<boolean> {
+export async function auditMemory(state: unknown): Promise<boolean> {
   try {
     const client = getOpenAIClient();
+    //audit Assumption: missing client returns mock success
     if (!client) {
       console.warn('⚠️ OpenAI client not available for audit memory - returning mock success');
       return true; // Return success in mock mode to not block operations
@@ -26,7 +27,8 @@ export async function auditMemory(state: any): Promise<boolean> {
       console.warn('⚠️ Audit memory validation failed - invalid state structure');
       return false;
     }
-  } catch (error) {
+  } catch (error: unknown) {
+    //audit Assumption: audit failures should return false
     console.error('❌ Audit memory error:', error instanceof Error ? error.message : 'Unknown error');
     return false;
   }

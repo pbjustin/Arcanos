@@ -1,4 +1,5 @@
-export default function auditOverride(state?: any) {
+export default function auditOverride(state?: unknown) {
+  //audit Assumption: env override should take precedence
   if (process.env.AUDIT_OVERRIDE) {
     return process.env.AUDIT_OVERRIDE;
   }

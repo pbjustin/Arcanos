@@ -33,8 +33,8 @@ class Uninstaller:
         if winshell is not None:
             try:
                 return Path(winshell.desktop())
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ Failed to resolve desktop path via winshell: {e}")
 
         user_profile = os.getenv("USERPROFILE")
         candidates = []
@@ -55,8 +55,8 @@ class Uninstaller:
         if winshell is not None:
             try:
                 return Path(winshell.start_menu())
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ Failed to resolve start menu path via winshell: {e}")
 
         appdata = os.getenv("APPDATA")
         if appdata:
@@ -70,8 +70,8 @@ class Uninstaller:
         if winshell is not None:
             try:
                 return Path(winshell.startup())
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ Failed to resolve startup path via winshell: {e}")
         return self._get_start_menu_programs_path() / "Startup"
 
     def remove_shortcuts(self) -> None:
