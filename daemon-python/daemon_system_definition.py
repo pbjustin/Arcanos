@@ -95,26 +95,16 @@ def format_registry_for_prompt(registry: Mapping[str, Any]) -> str:
     daemon_tools = registry.get("daemonTools")
     core_systems = registry.get("core")
 
-    # //audit assumption: registry lists may be missing; risk: empty sections; invariant: default to empty lists; strategy: coerce to list.
-    endpoints_list: list[Any] = []
-    if isinstance(endpoints, Sequence) and not isinstance(endpoints, (str, bytes)):
-        # //audit assumption: endpoints list is iterable; risk: non-list sequence; invariant: list copy; strategy: list() cast.
-        endpoints_list = list(endpoints)
+    def _to_list(value: Any) -> list[Any]:
+        """Safely convert a value to a list, handling None and non-sequence types."""
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return list(value)
+        return []
 
-    modules_list: list[Any] = []
-    if isinstance(modules, Sequence) and not isinstance(modules, (str, bytes)):
-        # //audit assumption: modules list is iterable; risk: non-list sequence; invariant: list copy; strategy: list() cast.
-        modules_list = list(modules)
-
-    tools_list: list[Any] = []
-    if isinstance(daemon_tools, Sequence) and not isinstance(daemon_tools, (str, bytes)):
-        # //audit assumption: daemon tools list is iterable; risk: non-list sequence; invariant: list copy; strategy: list() cast.
-        tools_list = list(daemon_tools)
-
-    core_list: list[Any] = []
-    if isinstance(core_systems, Sequence) and not isinstance(core_systems, (str, bytes)):
-        # //audit assumption: core systems list is iterable; risk: non-list sequence; invariant: list copy; strategy: list() cast.
-        core_list = list(core_systems)
+    endpoints_list = _to_list(registry.get("endpoints"))
+    modules_list = _to_list(registry.get("modules"))
+    tools_list = _to_list(registry.get("daemonTools"))
+    core_list = _to_list(registry.get("core"))
 
     lines: list[str] = [
         "## BACKEND",
