@@ -22,7 +22,7 @@ export interface ReusableCodeGenerationResult {
   raw: string;
 }
 
-const SUPPORTED_TARGETS: ReusableCodeTarget[] = ['asyncHandler', 'errorResponse', 'idGenerator'];
+export const SUPPORTED_TARGETS: ReusableCodeTarget[] = ['asyncHandler', 'errorResponse', 'idGenerator'];
 
 /**
  * Resolve the requested targets for code generation.
