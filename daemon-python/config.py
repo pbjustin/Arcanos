@@ -149,6 +149,7 @@ class Config:
     BACKEND_TRANSCRIBE_ENABLED: bool = os.getenv("BACKEND_TRANSCRIBE_ENABLED", "false").lower() == "true"
     # When backend would be chosen, route to backend only if confidence >= threshold; else local. 0.0=always local, 1.0=always backend when otherwise chosen.
     BACKEND_CONFIDENCE_THRESHOLD: float = float(os.getenv("BACKEND_CONFIDENCE_THRESHOLD", "0.5"))
+    REGISTRY_CACHE_TTL_MINUTES: int = int(os.getenv("REGISTRY_CACHE_TTL_MINUTES", "10"))
 
     # ============================================
     # Rate Limiting
@@ -192,6 +193,8 @@ class Config:
     # ============================================
     # Run PowerShell/CMD with elevation (Start-Process -Verb RunAs) so admin-required tasks work. UAC prompt per run when True.
     RUN_ELEVATED: bool = os.getenv("RUN_ELEVATED", "false").lower() == "true"
+    # Prompt "Do you confirm this action?" before sensitive daemon commands (run, mouse, keyboard, etc.). Set false to skip.
+    CONFIRM_SENSITIVE_ACTIONS: bool = os.getenv("CONFIRM_SENSITIVE_ACTIONS", "true").strip().lower() in ("true", "1", "yes")
     ALLOW_DANGEROUS_COMMANDS: bool = os.getenv("ALLOW_DANGEROUS_COMMANDS", "false").lower() == "true"
     COMMAND_WHITELIST: list[str] = [
         cmd.strip() for cmd in os.getenv("COMMAND_WHITELIST", "").split(",") if cmd.strip()
@@ -252,6 +255,9 @@ class Config:
             errors.append("BACKEND_HISTORY_LIMIT must be 0 or greater")
         if not (0.0 <= cls.BACKEND_CONFIDENCE_THRESHOLD <= 1.0):
             errors.append("BACKEND_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0")
+        if cls.REGISTRY_CACHE_TTL_MINUTES < 1:
+            # //audit assumption: registry TTL must be positive; risk: excessive fetches; invariant: >=1; strategy: add error.
+            errors.append("REGISTRY_CACHE_TTL_MINUTES must be at least 1")
 
         # Validate AI settings
         if not (0.0 <= cls.TEMPERATURE <= 2.0):
