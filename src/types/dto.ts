@@ -73,7 +73,8 @@ export const aiRequestSchema = z
       .trim()
       .max(50, 'Override token cannot exceed 50 characters')
       .optional(),
-    clientContext: clientContextSchema.optional()
+    clientContext: clientContextSchema.optional(),
+    metadata: z.record(z.unknown()).optional()
   })
   .refine(
     data =>

@@ -157,7 +157,10 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
   const host = options.host ?? config.server.host;
   const preferredPort = options.port ?? config.server.port;
 
-  const portResult = await getAvailablePort(preferredPort, host);
+  //audit Assumption: PORT set implies managed runtime (Railway) requires strict binding; risk: binding wrong port breaks routing; invariant: when PORT is set, use it or fail; handling: disable auto-select.
+  const portFromEnv = typeof process.env.PORT === 'string' && process.env.PORT.trim() !== '';
+  const enableAutoSelect = !portFromEnv;
+  const portResult = await getAvailablePort(preferredPort, host, enableAutoSelect);
 
   logPortAvailabilityWarnings(portResult, preferredPort, host);
 

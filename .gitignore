@@ -183,6 +183,11 @@ daemon-python/cache/
 *.rpm
 daemon-python/dist/
 daemon-python/build/
+daemon-python/build_pyi/
+daemon-python/dist_new/
+installer/dist_new/
+build_pyi/
+dist_new/
 # IDE and OS
 .vscode/settings.json
 .vscode/launch.json

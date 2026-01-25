@@ -10,11 +10,9 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from getpass import getpass
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
-from backend_auth_client import BackendAuthError, BackendLoginResult, request_backend_login
 from config import Config
 from env_store import EnvFileError, upsert_env_values
 
@@ -117,29 +115,6 @@ def prompt_for_value(
             continue
 
     raise CredentialBootstrapError("Maximum input attempts exceeded")
-
-
-def prompt_for_password(
-    prompt_text: str,
-    password_provider: Callable[[str], str],
-    max_attempts: int = 3
-) -> str:
-    """
-    Purpose: Prompt user for a non-empty password without echoing.
-    Inputs/Outputs: prompt text, password provider, attempts; returns password.
-    Edge cases: Raises CredentialBootstrapError after max attempts.
-    """
-    for attempt in range(max_attempts):
-        value = password_provider(prompt_text).strip()
-        if value:
-            # //audit assumption: non-empty password required; risk: empty password; invariant: trimmed non-empty; strategy: accept.
-            return value
-
-        # //audit assumption: retry is acceptable; risk: endless loop; invariant: bounded attempts; strategy: continue.
-        if attempt < max_attempts - 1:
-            continue
-
-    raise CredentialBootstrapError("Maximum password attempts exceeded")
 
 
 def apply_runtime_env_updates(updates: Mapping[str, str]) -> None:
@@ -284,8 +259,6 @@ def persist_credentials(
 def bootstrap_credentials(
     env_path: Optional[Path] = None,
     input_provider: Callable[[str], str] = input,
-    password_provider: Callable[[str], str] = getpass,
-    login_requester: Callable[..., BackendLoginResult] = request_backend_login,
     now_seconds: Callable[[], float] = time.time
 ) -> CredentialBootstrapResult:
     """
@@ -319,37 +292,9 @@ def bootstrap_credentials(
 
     backend_url = Config.BACKEND_URL or ""
     if backend_url:
-        # //audit assumption: backend login required when URL set; risk: unauthenticated backend calls; invariant: token available; strategy: ensure token.
+        # Backend is optional: do not prompt for login. Use BACKEND_TOKEN from env if set.
         token_is_valid = bool(backend_token) and not is_jwt_expired(backend_token, now_seconds())
         _write_bootstrap_trace(trace_path, f"Backend token valid: {token_is_valid}")
-
-        if not token_is_valid:
-            # //audit assumption: login needed when token missing/expired; risk: auth failures; invariant: fresh token; strategy: prompt and login.
-            backend_login_email = prompt_for_value(
-                "Backend login email: ",
-                input_provider,
-                default_value=backend_login_email
-            )
-            backend_password = prompt_for_password(
-                "Backend password: ",
-                password_provider
-            )
-            try:
-                _write_bootstrap_trace(trace_path, "Attempting backend login")
-                login_result = login_requester(backend_url, backend_login_email, backend_password)
-            except BackendAuthError as exc:
-                # //audit assumption: login can fail; risk: blocked startup; invariant: error surfaced; strategy: raise CredentialBootstrapError.
-                _write_bootstrap_trace(trace_path, f"Backend login failed: {exc}")
-                raise CredentialBootstrapError(str(exc)) from exc
-
-            backend_token = login_result.token
-            _write_bootstrap_trace(trace_path, "Backend login succeeded; persisting token")
-            persist_credentials(
-                resolved_env_path,
-                {"BACKEND_TOKEN": backend_token, "BACKEND_LOGIN_EMAIL": backend_login_email},
-                fallback_env_path,
-                trace_path
-            )
 
     _write_bootstrap_trace(trace_path, "Bootstrap complete")
     return CredentialBootstrapResult(
