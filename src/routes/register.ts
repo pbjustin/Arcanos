@@ -33,6 +33,7 @@ import apiVisionRouter from './api-vision.js';
 import apiTranscribeRouter from './api-transcribe.js';
 import apiUpdateRouter from './api-update.js';
 import bridgeRouter from './bridge.js';
+import reusableCodeRouter from './api-reusable-code.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import devopsRouter from './devops.js';
@@ -95,6 +96,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', apiTranscribeRouter);
   app.use('/', apiUpdateRouter);
   app.use('/', bridgeRouter);
+  app.use('/', reusableCodeRouter);
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);

@@ -105,19 +105,6 @@ const API_CONTRACTS = {
       success: 'boolean'
     },
     clientMethod: 'submit_update_event'
-  },
-  '/api/auth/login': {
-    method: 'POST',
-    request: {
-      email: 'string',
-      password: 'string'
-    },
-    response: {
-      token: 'string',
-      userId: 'string',
-      expiresAt: 'number?'
-    },
-    clientMethod: 'request_backend_login'
   }
 };
 
@@ -362,8 +349,7 @@ async function checkAPIContracts() {
     { endpoint: '/api/ask', clientFile: 'backend_client.py' },
     { endpoint: '/api/vision', clientFile: 'backend_client.py' },
     { endpoint: '/api/transcribe', clientFile: 'backend_client.py' },
-    { endpoint: '/api/update', clientFile: 'backend_client.py' },
-    { endpoint: '/api/auth/login', clientFile: 'backend_auth_client.py' }
+    { endpoint: '/api/update', clientFile: 'backend_client.py' }
   ];
 
   const allIssues = [];
