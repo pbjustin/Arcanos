@@ -5,9 +5,15 @@ import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/r
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware, securityHeaders, validateInput } from '../utils/security.js';
 import { buildValidationErrorResponse } from '../utils/errorResponse.js';
-import type { AIRequestDTO, AIResponseDTO, ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
+import type {
+  AIRequestDTO,
+  AIResponseDTO,
+  ClientContextDTO,
+  ConfirmationRequiredResponseDTO,
+  ErrorResponseDTO
+} from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { queueDaemonCommandForInstance } from './api-daemon.js';
+import { createPendingDaemonActions, queueDaemonCommandForInstance } from './api-daemon.js';
 import { getDefaultModel } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 
@@ -18,6 +24,7 @@ router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
 
 const ASK_TEXT_FIELDS = ['prompt', 'userInput', 'content', 'text', 'query'] as const;
+const CONFIRM_SENSITIVE_DAEMON_ACTIONS = process.env.CONFIRM_SENSITIVE_DAEMON_ACTIONS !== 'false';
 
 // Enhanced validation schema for ask requests that accepts multiple text field aliases
 const askValidationSchema = {
@@ -119,7 +126,7 @@ const DAEMON_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'run_command',
-      description: 'Run a command on the user machine via the connected daemon.',
+      description: 'Run a command on the user machine via the connected daemon. The user may ask in natural or vague language; infer intent and build the appropriate command.',
       parameters: {
         type: 'object',
         properties: {
@@ -133,7 +140,7 @@ const DAEMON_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'capture_screen',
-      description: 'Capture and analyze the user screen or camera via the connected daemon.',
+      description: 'Capture and analyze the user screen or camera via the connected daemon. The user may ask in natural or vague language (e.g. look at my screen, what do you see, show the camera); infer intent.',
       parameters: {
         type: 'object',
         properties: {
@@ -144,11 +151,25 @@ const DAEMON_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   }
 ];
 
+type PendingDaemonAction = {
+  daemon: string;
+  payload: Record<string, unknown>;
+  summary: string;
+};
+
+type ConfirmationRequiredResponse = {
+  confirmation_required: true;
+  confirmation_token: string;
+  pending_actions: PendingDaemonAction[];
+};
+
 const DAEMON_TOOL_SYSTEM_PROMPT = [
-  'A daemon is connected to the user machine.',
-  'When the user asks to run a command, call run_command with the command string.',
-  'When the user asks to see the screen or camera, call capture_screen with use_camera true for camera, false otherwise.',
-  'If neither is requested, respond normally without tool calls.'
+  'You are ARCANOS in daemon mode. You may use run_command and capture_screen when the user asks; run_command is sensitive and will require user confirmation.',
+  'A daemon is connected to the user machine. Accept natural or vague language for all daemon actions; infer intent.',
+  'When the user says "take control", "you drive", "handle it", or similar, treat it as permission to use daemon tools and to chain multiple tool calls in one turn. You may emit multiple tool calls in one response when the task requires several actions.',
+  'For run_command: when the user wants to run a command, open a file, execute something, or perform an action on their machine, call run_command with the appropriate command string.',
+  'For capture_screen: when the user wants to see the screen or camera (e.g. look at my screen, what do you see, show the camera), call capture_screen with use_camera true for camera, false for screen.',
+  'If none of the above applies, respond normally without tool calls.'
 ].join(' ');
 
 function extractDaemonMetadata(metadata?: Record<string, unknown>): DaemonMetadata {
@@ -166,7 +187,7 @@ async function tryDispatchDaemonTools(
   client: OpenAI,
   prompt: string,
   metadata?: Record<string, unknown>
-): Promise<AskResponse | null> {
+): Promise<AskResponse | ConfirmationRequiredResponse | null> {
   const { source, instanceId } = extractDaemonMetadata(metadata);
 
   if (source !== 'daemon' || !instanceId) {
@@ -195,6 +216,7 @@ async function tryDispatchDaemonTools(
   }
 
   const queuedIds: string[] = [];
+  const pendingActions: PendingDaemonAction[] = [];
   let toolErrors = 0;
 
   for (const call of toolCalls) {
@@ -222,13 +244,23 @@ async function tryDispatchDaemonTools(
         toolErrors += 1;
         continue;
       }
-      const commandId = queueDaemonCommandForInstance(instanceId, 'run', { command });
-      if (!commandId) {
-        //audit Assumption: missing token prevents queueing; risk: orphan instanceId; invariant: skip; handling: count error.
-        toolErrors += 1;
-        continue;
+      if (CONFIRM_SENSITIVE_DAEMON_ACTIONS) {
+        //audit Assumption: sensitive commands require confirmation; risk: auto-execution; invariant: pending action created; handling: defer.
+        pendingActions.push({
+          daemon: 'run',
+          payload: { command },
+          summary: `run: ${command}`
+        });
+      } else {
+        //audit Assumption: confirmation disabled; risk: unsafe execution; invariant: queue immediately; handling: enqueue.
+        const commandId = queueDaemonCommandForInstance(instanceId, 'run', { command });
+        if (!commandId) {
+          //audit Assumption: missing token prevents queueing; risk: orphan instanceId; invariant: skip; handling: count error.
+          toolErrors += 1;
+          continue;
+        }
+        queuedIds.push(commandId);
       }
-      queuedIds.push(commandId);
       continue;
     }
 
@@ -246,6 +278,16 @@ async function tryDispatchDaemonTools(
 
     //audit Assumption: unknown tool names should be ignored; risk: unsupported calls; invariant: skip; handling: count error.
     toolErrors += 1;
+  }
+
+  if (pendingActions.length > 0) {
+    //audit Assumption: pending actions require confirmation; risk: missing pending token; invariant: confirmation token returned; handling: create pending store.
+    const confirmationToken = createPendingDaemonActions(instanceId, pendingActions);
+    return {
+      confirmation_required: true,
+      confirmation_token: confirmationToken,
+      pending_actions: pendingActions
+    };
   }
 
   let resultText = '';
@@ -290,8 +332,8 @@ async function tryDispatchDaemonTools(
  * Handles AI request processing with standardized error handling and validation
  */
 export const handleAIRequest = async (
-  req: Request<{}, AskResponse | ErrorResponseDTO, AskRequest>,
-  res: Response<AskResponse | ErrorResponseDTO>,
+  req: Request<{}, AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO, AskRequest>,
+  res: Response<AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO>,
   endpointName: string
 ) => {
   const { sessionId, overrideAuditSafe, metadata } = req.body;
@@ -310,6 +352,14 @@ export const handleAIRequest = async (
   try {
     const daemonToolResponse = await tryDispatchDaemonTools(openai, prompt, metadata);
     if (daemonToolResponse) {
+      if ('confirmation_required' in daemonToolResponse) {
+        //audit Assumption: confirmation required should block response; risk: sensitive execution; invariant: 403 returned; handling: return challenge.
+        return res.status(403).json({
+          code: 'CONFIRMATION_REQUIRED',
+          confirmationChallenge: { id: daemonToolResponse.confirmation_token },
+          pending_actions: daemonToolResponse.pending_actions
+        });
+      }
       //audit Assumption: daemon tool response is terminal; risk: skipping trinity; invariant: tool actions queued; handling: return early.
       return res.json({ ...daemonToolResponse, clientContext: req.body.clientContext });
     }
