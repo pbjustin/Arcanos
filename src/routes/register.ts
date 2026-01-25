@@ -32,6 +32,7 @@ import reinforcementRouter from './reinforcement.js';
 import apiVisionRouter from './api-vision.js';
 import apiTranscribeRouter from './api-transcribe.js';
 import apiUpdateRouter from './api-update.js';
+import apiDaemonRouter from './api-daemon.js';
 import bridgeRouter from './bridge.js';
 import reusableCodeRouter from './api-reusable-code.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
@@ -95,6 +96,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', apiVisionRouter);
   app.use('/', apiTranscribeRouter);
   app.use('/', apiUpdateRouter);
+  app.use('/', apiDaemonRouter);
   app.use('/', bridgeRouter);
   app.use('/', reusableCodeRouter);
   app.use('/', hrcRouter);
