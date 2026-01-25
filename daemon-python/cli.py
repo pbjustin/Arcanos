@@ -251,10 +251,6 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: response ok; risk: none; invariant: return response; strategy: short-circuit.
             return response
 
-        if response.error and response.error.kind == "confirmation":
-            # //audit assumption: confirmation requires user input; risk: auto-fallback; invariant: caller handles; strategy: return early.
-            return response
-
         if response.error and response.error.kind == "auth":
             # //audit assumption: auth errors are recoverable; risk: stale token; invariant: refresh attempted; strategy: refresh and retry.
             if self._refresh_backend_credentials():
