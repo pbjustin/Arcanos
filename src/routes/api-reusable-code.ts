@@ -5,7 +5,8 @@ import { sendServerError } from '../utils/errorResponse.js';
 import {
   generateReusableCodeSnippets,
   ReusableCodeGenerationRequest,
-  ReusableCodeTarget
+  ReusableCodeTarget,
+  SUPPORTED_TARGETS
 } from '../services/reusableCodeGeneration.js';
 import { getOpenAIClient } from '../services/openai/clientFactory.js';
 

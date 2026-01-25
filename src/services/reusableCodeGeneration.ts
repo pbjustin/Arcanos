@@ -86,6 +86,11 @@ export function parseReusableCodeResponse(raw: string): ReusableCodeSnippet[] {
     throw new Error('OpenAI response was not valid JSON.');
   }
 
+  //audit Assumption: parsed payload is an object; risk: null or primitive payload; invariant: non-null object; handling: throw descriptive error.
+  if (typeof payload !== 'object' || payload === null) {
+    throw new Error('OpenAI response was not a valid JSON object.');
+  }
+
   const snippets = (payload as { snippets?: ReusableCodeSnippet[] }).snippets;
   //audit Assumption: snippets array exists; risk: unexpected schema; invariant: array required; handling: throw error.
   if (!Array.isArray(snippets)) {
