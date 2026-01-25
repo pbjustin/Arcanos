@@ -67,13 +67,20 @@ if (-not $SkipBuild) {
     }
 }
 
-Write-Host "Building installer with Inno Setup..." -ForegroundColor Cyan
-& $resolvedInnoPath $installerScript
+# Build Inno output to %TEMP% to avoid AV locking installer\dist (EndUpdateResource 5)
+$issOutDir = Join-Path $env:TEMP "arcanos_installer"
+New-Item -ItemType Directory -Force -Path $issOutDir | Out-Null
+
+Write-Host "Building installer with Inno Setup (output: $issOutDir)..." -ForegroundColor Cyan
+& $resolvedInnoPath $installerScript "/DOutputDirName=$issOutDir"
 if ($LASTEXITCODE -ne 0) {
-    # //audit assumption: installer compile failures are fatal; risk: incomplete release; invariant: exit on failure; strategy: stop.
     Write-Host "Installer build failed." -ForegroundColor Red
     exit $LASTEXITCODE
 }
 
-$outputPath = Join-Path $projectRoot "installer\dist\ARCANOS-Setup.exe"
+$outputPath = Join-Path $issOutDir "ARCANOS-Setup.exe"
 Write-Host "Installer created: $outputPath" -ForegroundColor Green
+# Run the installer to update the installed app
+Write-Host "Launching installer to update ARCANOS..." -ForegroundColor Cyan
+Start-Process -FilePath $outputPath -Verb RunAs
+Write-Host "Installer launched. Complete the setup to finish updating ARCANOS." -ForegroundColor Green

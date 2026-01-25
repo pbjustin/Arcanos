@@ -3,55 +3,54 @@
 
 Write-Host "Building ARCANOS daemon Windows executables..." -ForegroundColor Cyan
 
-# Check if PyInstaller is installed
-$pyinstallerInstalled = pip show pyinstaller 2>&1
+# Check if PyInstaller is installed; use python -m for reliability when pyinstaller not on PATH
+$pyinstallerInstalled = python -m pip show pyinstaller 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing PyInstaller..." -ForegroundColor Yellow
-    pip install pyinstaller
+    python -m pip install pyinstaller
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Failed to install PyInstaller" -ForegroundColor Red
         exit 1
     }
 }
 
-# Clean previous builds
-if (Test-Path "dist") {
-    Write-Host "Cleaning previous build..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force dist
-}
-if (Test-Path "build") {
-    Remove-Item -Recurse -Force build
+# Build in %TEMP% to avoid AV locking files in the project (WinError 5 on os.remove)
+$daemonRoot = (Get-Location).Path
+$tmpBuild = Join-Path $env:TEMP "arcanos_pyinstall_$([guid]::NewGuid().ToString('N').Substring(0,8))"
+Write-Host "Building in temp: $tmpBuild" -ForegroundColor Yellow
+New-Item -ItemType Directory -Force -Path $tmpBuild | Out-Null
+# Copy source (exclude previous build dirs to speed up)
+$exclude = @('dist','dist_new','build','build_pyi')
+Get-ChildItem -Path $daemonRoot -Force | Where-Object { $_.Name -notin $exclude } | Copy-Item -Destination $tmpBuild -Recurse -Force -ErrorAction SilentlyContinue
+
+Push-Location $tmpBuild
+try {
+    Write-Host "Building ARCANOS.exe using arcanos.spec..." -ForegroundColor Cyan
+    python -m PyInstaller arcanos.spec --workpath=build_pyi --distpath=dist_new
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Failed to build ARCANOS.exe" -ForegroundColor Red
+        exit 1
+    }
+} finally {
+    Pop-Location
 }
 
-# Build using the spec file (handles dependencies better)
-Write-Host "Building ARCANOS.exe using arcanos.spec..." -ForegroundColor Cyan
-pyinstaller --clean arcanos.spec
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Failed to build ARCANOS.exe" -ForegroundColor Red
-    exit 1
-}
-
-# The spec creates ARCANOS.exe; copy to daemon.exe and cli.exe for dev/CLI use
-if (Test-Path "dist\ARCANOS.exe") {
-    Copy-Item "dist\ARCANOS.exe" "dist\daemon.exe" -Force
-    Copy-Item "dist\ARCANOS.exe" "dist\cli.exe" -Force
-    Write-Host "Created daemon.exe and cli.exe from ARCANOS.exe" -ForegroundColor Green
+# Copy result back to project
+$tmpDist = Join-Path $tmpBuild "dist_new"
+if (Test-Path (Join-Path $tmpDist "ARCANOS.exe")) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $daemonRoot "dist_new") | Out-Null
+    Copy-Item -Path (Join-Path $tmpDist "*") -Destination (Join-Path $daemonRoot "dist_new") -Recurse -Force
+    Copy-Item (Join-Path $daemonRoot "dist_new\ARCANOS.exe") (Join-Path $daemonRoot "dist_new\daemon.exe") -Force
+    Copy-Item (Join-Path $daemonRoot "dist_new\ARCANOS.exe") (Join-Path $daemonRoot "dist_new\cli.exe") -Force
 } else {
     Write-Host "ARCANOS.exe not found after build" -ForegroundColor Red
+    Remove-Item -Recurse -Force $tmpBuild -ErrorAction SilentlyContinue
     exit 1
 }
+Remove-Item -Recurse -Force $tmpBuild -ErrorAction SilentlyContinue
 
-# Verify outputs (ARCANOS.exe already verified above; else is unreachable)
+# Verify
 Write-Host "`nVerifying build outputs..." -ForegroundColor Cyan
-$size = (Get-Item "dist\ARCANOS.exe").Length / 1MB
-Write-Host "✓ ARCANOS.exe built successfully ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
-
-if (Test-Path "dist\daemon.exe") {
-    Write-Host "✓ daemon.exe" -ForegroundColor Green
-}
-if (Test-Path "dist\cli.exe") {
-    Write-Host "✓ cli.exe" -ForegroundColor Green
-}
-
-Write-Host "`nBuild complete! Executables are in the dist/ directory." -ForegroundColor Green
+$size = (Get-Item (Join-Path $daemonRoot "dist_new\ARCANOS.exe")).Length / 1MB
+Write-Host ("OK ARCANOS.exe built successfully (" + [math]::Round($size, 2) + " MB)") -ForegroundColor Green
+Write-Host "`nBuild complete! Executables are in dist_new/." -ForegroundColor Green

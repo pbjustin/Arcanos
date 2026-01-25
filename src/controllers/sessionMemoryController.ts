@@ -37,8 +37,8 @@ function validateSaveRequest(req: Request, res: Response): { sessionId: string; 
   if (!requireField(res, sessionId, 'sessionId') || !requireField(res, message, 'message')) {
     return null;
   }
-
-  return { sessionId, message };
+  // requireField ensures truthy; TS doesn't narrow from it
+  return { sessionId: sessionId!, message: message! };
 }
 
 export const sessionMemoryController = {

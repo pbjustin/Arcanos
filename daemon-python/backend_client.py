@@ -15,7 +15,7 @@ T = TypeVar("T")
 
 
 @dataclass(frozen=True)
-class BackendRequestError:
+class BackendRequestError(RuntimeError):
     """
     Purpose: Structured error for backend request failures.
     Inputs/Outputs: kind, message, optional status code, optional details.
@@ -26,6 +26,10 @@ class BackendRequestError:
     message: str
     status_code: Optional[int] = None
     details: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        # //audit assumption: exception message should be initialized; risk: missing error context; invariant: message stored; strategy: init base class.
+        super().__init__(self.message)
 
 
 @dataclass(frozen=True)
@@ -104,6 +108,47 @@ class BackendApiClient:
         self._token_provider = token_provider
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
+
+    def _make_request(
+        self,
+        method: str,
+        path: str,
+        json: Optional[Mapping[str, Any]] = None
+    ) -> requests.Response:
+        """
+        Purpose: Perform a raw backend request and return the Response.
+        Inputs/Outputs: method, path, optional json payload; returns requests.Response.
+        Edge cases: Raises BackendRequestError for missing config, auth, or network failures.
+        """
+        if not self._base_url:
+            # //audit assumption: base_url configured; risk: no target; invariant: base_url set; strategy: raise configuration error.
+            raise BackendRequestError(kind="configuration", message="Backend URL is not configured")
+
+        token = self._token_provider()
+        if not token:
+            # //audit assumption: auth token required; risk: unauthorized request; invariant: token present; strategy: raise auth error.
+            raise BackendRequestError(kind="auth", message="Backend token is missing")
+
+        url = f"{self._base_url}{path}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            return self._request_sender(
+                method,
+                url,
+                headers=headers,
+                json=json,
+                timeout=self._timeout_seconds
+            )
+        except requests.Timeout as exc:
+            # //audit assumption: network timeouts can happen; risk: request failure; invariant: error raised; strategy: raise timeout error.
+            raise BackendRequestError(kind="timeout", message="Backend request timed out", details=str(exc))
+        except requests.RequestException as exc:
+            # //audit assumption: network errors can happen; risk: request failure; invariant: error raised; strategy: raise network error.
+            raise BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
 
     def request_ask_with_domain(
         self,

@@ -1,4 +1,9 @@
 ; ARCANOS Inno Setup installer script
+; Pass /DOutputDirName="path" to ISCC to override (e.g. %TEMP% to avoid AV locking installer\dist)
+
+#ifndef OutputDirName
+#define OutputDirName "dist"
+#endif
 
 #define AppName "ARCANOS"
 #define AppVersion "1.0.1"
@@ -13,7 +18,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-OutputDir=dist
+OutputDir={#OutputDirName}
 OutputBaseFilename=ARCANOS-Setup
 Compression=lzma
 SolidCompression=yes
@@ -24,7 +29,7 @@ UninstallDisplayIcon={app}\{#AppExeName}
 WizardStyle=modern
 
 [Files]
-Source: "..\daemon-python\dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\daemon-python\dist_new\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\daemon-python\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\daemon-python\.env.example"; DestDir: "{app}"; Flags: ignoreversion
 
