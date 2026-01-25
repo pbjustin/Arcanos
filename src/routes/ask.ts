@@ -5,7 +5,13 @@ import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/r
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware, securityHeaders, validateInput } from '../utils/security.js';
 import { buildValidationErrorResponse } from '../utils/errorResponse.js';
-import type { AIRequestDTO, AIResponseDTO, ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
+import type {
+  AIRequestDTO,
+  AIResponseDTO,
+  ClientContextDTO,
+  ConfirmationRequiredResponseDTO,
+  ErrorResponseDTO
+} from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { createPendingDaemonActions, queueDaemonCommandForInstance } from './api-daemon.js';
 import { getDefaultModel } from '../services/openai.js';
@@ -326,8 +332,8 @@ async function tryDispatchDaemonTools(
  * Handles AI request processing with standardized error handling and validation
  */
 export const handleAIRequest = async (
-  req: Request<{}, AskResponse | ErrorResponseDTO, AskRequest>,
-  res: Response<AskResponse | ErrorResponseDTO>,
+  req: Request<{}, AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO, AskRequest>,
+  res: Response<AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO>,
   endpointName: string
 ) => {
   const { sessionId, overrideAuditSafe, metadata } = req.body;
