@@ -93,20 +93,6 @@
       "responseFields": {
         "success": { "type": "boolean", "required": true }
       }
-    },
-    "/api/auth/login": {
-      "serverRoute": "src/routes/*.ts",
-      "clientMethod": "request_backend_login",
-      "clientFile": "daemon-python/backend_auth_client.py",
-      "requestFields": {
-        "email": { "type": "string", "required": true },
-        "password": { "type": "string", "required": true }
-      },
-      "responseFields": {
-        "token": { "type": "string", "required": true },
-        "userId": { "type": "string", "required": true },
-        "expiresAt": { "type": "number", "required": false }
-      }
     }
   },
   "sharedEnvVars": {

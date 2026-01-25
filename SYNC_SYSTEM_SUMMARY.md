@@ -178,7 +178,6 @@ The `.cursorrules` file tells AI assistants to:
 - ✅ `/api/vision` ↔ `request_vision_analysis()`
 - ✅ `/api/transcribe` ↔ `request_transcription()`
 - ✅ `/api/update` ↔ `submit_update_event()`
-- ✅ `/api/auth/login` ↔ `request_backend_login()`
 
 ### Versions
 - ✅ `package.json` version
