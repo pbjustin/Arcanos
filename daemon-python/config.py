@@ -147,6 +147,8 @@ class Config:
     BACKEND_HISTORY_LIMIT: int = int(os.getenv("BACKEND_HISTORY_LIMIT", "8"))
     BACKEND_VISION_ENABLED: bool = os.getenv("BACKEND_VISION_ENABLED", "false").lower() == "true"
     BACKEND_TRANSCRIBE_ENABLED: bool = os.getenv("BACKEND_TRANSCRIBE_ENABLED", "false").lower() == "true"
+    # When backend would be chosen, route to backend only if confidence >= threshold; else local. 0.0=always local, 1.0=always backend when otherwise chosen.
+    BACKEND_CONFIDENCE_THRESHOLD: float = float(os.getenv("BACKEND_CONFIDENCE_THRESHOLD", "0.5"))
 
     # ============================================
     # Rate Limiting
@@ -163,6 +165,7 @@ class Config:
     AUTO_START: bool = os.getenv("AUTO_START", "false").lower() == "true"
     VOICE_ENABLED: bool = os.getenv("VOICE_ENABLED", "true").lower() == "true"
     VISION_ENABLED: bool = os.getenv("VISION_ENABLED", "true").lower() == "true"
+    SPEAK_RESPONSES: bool = os.getenv("SPEAK_RESPONSES", "false").lower() == "true"
 
     # ============================================
     # AI Model Settings
@@ -187,6 +190,8 @@ class Config:
     # ============================================
     # Security Settings
     # ============================================
+    # Run PowerShell/CMD with elevation (Start-Process -Verb RunAs) so admin-required tasks work. UAC prompt per run when True.
+    RUN_ELEVATED: bool = os.getenv("RUN_ELEVATED", "false").lower() == "true"
     ALLOW_DANGEROUS_COMMANDS: bool = os.getenv("ALLOW_DANGEROUS_COMMANDS", "false").lower() == "true"
     COMMAND_WHITELIST: list[str] = [
         cmd.strip() for cmd in os.getenv("COMMAND_WHITELIST", "").split(",") if cmd.strip()
@@ -245,6 +250,8 @@ class Config:
         if cls.BACKEND_HISTORY_LIMIT < 0:
             # //audit assumption: history limit non-negative; risk: invalid limit; invariant: >=0; strategy: add error.
             errors.append("BACKEND_HISTORY_LIMIT must be 0 or greater")
+        if not (0.0 <= cls.BACKEND_CONFIDENCE_THRESHOLD <= 1.0):
+            errors.append("BACKEND_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0")
 
         # Validate AI settings
         if not (0.0 <= cls.TEMPERATURE <= 2.0):

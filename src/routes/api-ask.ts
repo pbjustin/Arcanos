@@ -122,7 +122,8 @@ router.post('/api/ask', apiAskValidation, asyncHandler((req: Request<{}, AskResp
     prompt: normalizedPrompt,
     sessionId,
     overrideAuditSafe,
-    clientContext
+    clientContext,
+    metadata
   };
 
   const typedRequest = req as unknown as Request<{}, AskResponse | ErrorResponseDTO, AskRequest>;

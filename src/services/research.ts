@@ -33,11 +33,19 @@ function resolveResearchModel(): string {
 }
 
 function sanitizeSegment(segment: string): string {
-  return segment
+  const cleaned = segment
+    .replace(/[\u0000-\u001f\u007f]/g, '')
     .replace(/\.\.+/g, '')
     .replace(/[<>:"|?*]/g, '')
-    .replace(/[\\]/g, '-')
-    .trim() || 'topic';
+    .replace(/[\\/]/g, '-')
+    .trim();
+
+  //audit Assumption: empty or dot paths are unsafe; risk: path traversal or empty directories; invariant: safe folder name; handling: fallback.
+  if (!cleaned || cleaned === '.' || cleaned === '..') {
+    return 'topic';
+  }
+
+  return cleaned;
 }
 
 function resolveSourcesDir(topic: string): string {

@@ -4,6 +4,7 @@ Human-like AI assistant with rich terminal UI.
 """
 
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -12,7 +13,7 @@ import time
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from typing import Callable, Optional, Any, Mapping
+from typing import Callable, Optional, Any, Mapping, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -22,7 +23,12 @@ from rich import print as rprint
 
 from config import Config
 from backend_client import BackendApiClient, BackendResponse, BackendRequestError
-from conversation_routing import determine_conversation_route, build_conversation_messages, ConversationRouteDecision
+from conversation_routing import (
+    compute_backend_confidence,
+    determine_conversation_route,
+    build_conversation_messages,
+    ConversationRouteDecision,
+)
 from media_routing import parse_vision_route_args, parse_voice_route_args
 from credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
 from schema import Memory
@@ -85,6 +91,7 @@ class ArcanosCLI:
         self.audio = AudioSystem(self.gpt_client)
         self.terminal = TerminalController()
         self.windows_integration = WindowsIntegration()
+        self._last_response: Optional[str] = None
 
         self.backend_client: Optional[BackendApiClient] = None
         if Config.BACKEND_URL:
@@ -265,6 +272,22 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: stats can be shared; risk: sensitive data leakage; invariant: summary only; strategy: return stats.
             # Stats are included in heartbeat, no action needed here
             pass
+
+        elif command_name == "run":
+            # //audit assumption: run commands require explicit payload; risk: unsafe execution; invariant: command string required; strategy: validate and run.
+            command_text = command_payload.get("command") if isinstance(command_payload, dict) else None
+            if isinstance(command_text, str) and command_text.strip():
+                self.handle_run(command_text.strip())
+            else:
+                # //audit assumption: missing command is invalid; risk: no-op; invariant: warning shown; strategy: notify.
+                self.console.print("[yellow]Run command missing 'command' payload[/yellow]")
+
+        elif command_name == "see":
+            # //audit assumption: see payload optional; risk: invalid payload; invariant: default to screen; strategy: parse use_camera flag.
+            use_camera = False
+            if isinstance(command_payload, dict):
+                use_camera = bool(command_payload.get("use_camera", False))
+            self.handle_see(["camera"] if use_camera else [])
 
         elif command_name == "notify":
             # //audit assumption: notify payload may include message; risk: invalid payload; invariant: string message; strategy: validate.
@@ -524,11 +547,86 @@ Type **help** for available commands or just start chatting naturally.
 
         return None
 
+    def _truncate_for_tts(self, text: str, max_chars: int = 600) -> str:
+        """
+        Purpose: Trim text for TTS playback to avoid overly long responses.
+        Inputs/Outputs: text and max_chars; returns a shortened string.
+        Edge cases: Returns empty string for blank input; uses sentence boundary when possible.
+        """
+        normalized = (text or "").strip()
+        if not normalized:
+            # //audit assumption: empty text should not be spoken; risk: confusing output; invariant: empty string; strategy: return empty.
+            return ""
+
+        if len(normalized) <= max_chars:
+            # //audit assumption: short text safe for TTS; risk: none; invariant: original text; strategy: return original.
+            return normalized
+
+        snippet = normalized[:max_chars]
+        last_sentence = max(snippet.rfind("."), snippet.rfind("!"), snippet.rfind("?"))
+        if last_sentence > 0:
+            # //audit assumption: sentence boundary improves clarity; risk: mid-sentence cut; invariant: end at punctuation; strategy: trim to boundary.
+            snippet = snippet[: last_sentence + 1].strip()
+        else:
+            # //audit assumption: no sentence boundary; risk: abrupt cut; invariant: trimmed length; strategy: keep max_chars slice.
+            snippet = snippet.strip()
+
+        if snippet.endswith("..."):
+            return snippet
+        return f"{snippet}..."
+
+    def _detect_run_see_intent(self, text: str) -> Optional[Tuple[str, Optional[str]]]:
+        """
+        Purpose: Detect run/see intents from natural language input.
+        Inputs/Outputs: raw text; returns ("run", command), ("see_screen", None), ("see_camera", None), or None.
+        Edge cases: Returns None for empty or unsupported inputs.
+        """
+        normalized = (text or "").strip()
+        if not normalized:
+            # //audit assumption: empty input has no intent; risk: false positives; invariant: None; strategy: return None.
+            return None
+
+        run_patterns = [
+            r"^\s*(run|execute)\s+(.+)$",
+            r"^\s*(can you|could you|please)\s+run\s+(.+)$",
+            r"^\s*(run|execute)\s+the\s+command\s+(.+)$"
+        ]
+
+        for pattern in run_patterns:
+            match = re.search(pattern, normalized, re.IGNORECASE)
+            if match:
+                # //audit assumption: regex groups contain command; risk: missing command; invariant: command extracted; strategy: use last group.
+                command = (match.groups()[-1] or "").strip()
+                command = re.sub(r"\s+(for me|please)$", "", command, flags=re.IGNORECASE).strip()
+                if command:
+                    # //audit assumption: command is non-empty; risk: accidental empty run; invariant: return run intent; strategy: return tuple.
+                    return ("run", command)
+
+        camera_pattern = r"\b(see\s+(my\s+)?camera|look\s+at\s+(my\s+)?camera|webcam|take\s+a\s+(photo|picture))\b"
+        if re.search(camera_pattern, normalized, re.IGNORECASE):
+            # //audit assumption: camera keywords imply camera intent; risk: false match; invariant: camera route; strategy: return camera intent.
+            return ("see_camera", None)
+
+        screen_pattern = (
+            r"\b(see\s+(my\s+)?screen|look\s+at\s+(my\s+)?screen|what('?s| is)\s+on\s+(my\s+)?screen|show\s+(me\s+)?my\s+screen|"
+            r"screenshot|take\s+a\s+screenshot|capture\s+(my\s+)?screen|analyze\s+(my\s+)?screen)\b"
+        )
+        if re.search(screen_pattern, normalized, re.IGNORECASE):
+            # //audit assumption: screen keywords imply screen intent; risk: false match; invariant: screen route; strategy: return screen intent.
+            return ("see_screen", None)
+
+        return None
+
     @handle_errors("processing user input")
-    def handle_ask(self, message: str, route_override: Optional[str] = None) -> None:
+    def handle_ask(
+        self,
+        message: str,
+        route_override: Optional[str] = None,
+        speak_response: bool = False
+    ) -> None:
         """
         Purpose: Route and handle a conversation request locally or via backend.
-        Inputs/Outputs: message text, optional route_override; prints response and updates local state.
+        Inputs/Outputs: message text, optional route_override, speak_response flag; prints response and updates local state.
         Edge cases: Falls back to local when backend fails if configured.
         """
         # Check rate limits
@@ -550,6 +648,16 @@ Type **help** for available commands or just start chatting naturally.
                 normalized_message=message.strip() or message,
                 used_prefix=None
             )
+
+        # //audit: when route would be backend, apply confidence threshold; if below, keep local so “simple” stays on daemon.
+        if route_decision.route == "backend":
+            conf = compute_backend_confidence(route_decision.normalized_message)
+            if conf < Config.BACKEND_CONFIDENCE_THRESHOLD:
+                route_decision = ConversationRouteDecision(
+                    route="local",
+                    normalized_message=route_decision.normalized_message,
+                    used_prefix=None,
+                )
 
         # Detect domain intent for natural language routing
         domain = self._detect_domain_intent(message) if route_decision.route == "backend" else None
@@ -576,6 +684,15 @@ Type **help** for available commands or just start chatting naturally.
 
         # Display response
         self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
+        self._last_response = result.response_text
+
+        should_speak = speak_response or Config.SPEAK_RESPONSES
+        if should_speak:
+            # //audit assumption: TTS optional; risk: noisy output; invariant: speak only when enabled; strategy: gate on flag.
+            truncated = self._truncate_for_tts(result.response_text)
+            if truncated:
+                # //audit assumption: truncated text may be empty; risk: silence; invariant: speak non-empty; strategy: guard.
+                self.audio.speak(truncated, wait=True)
 
         # Record request locally
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
@@ -655,6 +772,14 @@ Type **help** for available commands or just start chatting naturally.
             return
 
         self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
+        self._last_response = result.response_text
+
+        if Config.SPEAK_RESPONSES:
+            # //audit assumption: SPEAK_RESPONSES enables TTS; risk: noisy output; invariant: speak when enabled; strategy: gate on flag.
+            truncated = self._truncate_for_tts(result.response_text)
+            if truncated:
+                # //audit assumption: truncated text may be empty; risk: silence; invariant: speak non-empty; strategy: guard.
+                self.audio.speak(truncated, wait=True)
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
         self.memory.increment_stat("vision_requests")
 
@@ -716,7 +841,7 @@ Type **help** for available commands or just start chatting naturally.
 
         if text:
             self.console.print(f"[green]You said:[/green] {text}\n")
-            self.handle_ask(text)
+            self.handle_ask(text, speak_response=True)
             self.memory.increment_stat("voice_requests")
 
             update_payload = {
@@ -772,11 +897,16 @@ Type **help** for available commands or just start chatting naturally.
                 response, tokens, cost = self.vision.analyze_image(img_base64, text)
                 if response:
                     self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {response}\n")
+                    self._last_response = response
                     self.rate_limiter.record_request(tokens, cost)
                     self.memory.increment_stat("vision_requests")
+                    truncated = self._truncate_for_tts(response)
+                    if truncated:
+                        # //audit assumption: PTT expects spoken response; risk: noisy output; invariant: speak response; strategy: TTS when available.
+                        self.audio.speak(truncated, wait=True)
         else:
             # Regular conversation
-            self.handle_ask(text)
+            self.handle_ask(text, speak_response=True)
 
     @handle_errors("executing terminal command")
     def handle_run(self, command: str) -> None:
@@ -788,7 +918,9 @@ Type **help** for available commands or just start chatting naturally.
         self.console.print(f"[cyan]💻 Running:[/cyan] {command}")
 
         # Execute command
-        stdout, stderr, return_code = self.terminal.execute_powershell(command)
+        stdout, stderr, return_code = self.terminal.execute_powershell(
+            command, elevated=Config.RUN_ELEVATED
+        )
 
         # Display output
         if stdout:
@@ -802,6 +934,26 @@ Type **help** for available commands or just start chatting naturally.
             self.console.print(f"[dim red]❌ Exit code: {return_code}[/dim red]")
 
         self.memory.increment_stat("terminal_commands")
+
+    @handle_errors("speaking response")
+    def handle_speak(self) -> None:
+        """
+        Purpose: Replay the last response via TTS.
+        Inputs/Outputs: None; speaks the last response if available.
+        Edge cases: No prior response or TTS unavailable.
+        """
+        if not self._last_response:
+            # //audit assumption: no response captured yet; risk: confusion; invariant: warning shown; strategy: notify user.
+            self.console.print("[yellow]Nothing to speak yet.[/yellow]")
+            return
+
+        truncated = self._truncate_for_tts(self._last_response)
+        if not truncated:
+            # //audit assumption: empty truncated text should not be spoken; risk: silence; invariant: warning; strategy: notify user.
+            self.console.print("[yellow]Nothing to speak yet.[/yellow]")
+            return
+
+        self.audio.speak(truncated, wait=True)
 
     def handle_stats(self) -> None:
         """Display usage statistics"""
@@ -847,6 +999,7 @@ Type **help** for available commands or just start chatting naturally.
 - **voice** - Use voice input (one-time)
 - **voice backend** - Use backend transcription
 - **ptt** - Start push-to-talk mode (hold SPACEBAR)
+- **speak** - Replay the last response (TTS)
 
 ### Terminal
 - **run <command>** - Execute PowerShell command
@@ -954,6 +1107,8 @@ You: ptt
                         self.handle_ptt()
                     elif command == "run":
                         self.handle_run(args)
+                    elif command == "speak":
+                        self.handle_speak()
                     elif command == "stats":
                         self.handle_stats()
                     elif command == "clear":
@@ -964,7 +1119,24 @@ You: ptt
                         self.handle_update()
                     else:
                         # Natural conversation
-                        self.handle_ask(user_input)
+                        intent = self._detect_run_see_intent(user_input)
+                        if intent:
+                            # //audit assumption: detected intent should override chat; risk: misclassification; invariant: run/see handled; strategy: route to handlers.
+                            intent_name, intent_payload = intent
+                            if intent_name == "run" and intent_payload:
+                                # //audit assumption: run intent has command; risk: empty command; invariant: command executed; strategy: call handle_run.
+                                self.handle_run(intent_payload)
+                            elif intent_name == "see_screen":
+                                # //audit assumption: screen intent should capture screen; risk: wrong mode; invariant: screen capture; strategy: call handle_see.
+                                self.handle_see([])
+                            elif intent_name == "see_camera":
+                                # //audit assumption: camera intent should capture camera; risk: wrong mode; invariant: camera capture; strategy: call handle_see with camera.
+                                self.handle_see(["camera"])
+                            else:
+                                # //audit assumption: unknown intent should fallback to chat; risk: missed handling; invariant: chat path; strategy: call handle_ask.
+                                self.handle_ask(user_input)
+                        else:
+                            self.handle_ask(user_input)
 
                 except KeyboardInterrupt:
                     self.console.print("\n[cyan]👋 Goodbye![/cyan]")

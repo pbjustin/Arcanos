@@ -87,12 +87,34 @@ router.post('/analyze', validateCustom((data) => {
     return { valid: false, errors };
   }
   
-  if (!record.prDiff || typeof record.prDiff !== 'string') {
+  if (!record.prDiff || typeof record.prDiff !== 'string' || record.prDiff.trim().length === 0) {
     errors.push('prDiff must be a non-empty string');
   }
   
   if (!Array.isArray(record.prFiles)) {
     errors.push('prFiles must be an array of strings');
+  } else {
+    const invalidFiles = record.prFiles.filter(item => typeof item !== 'string' || item.trim().length === 0);
+    if (invalidFiles.length > 0) {
+      errors.push('prFiles must contain non-empty strings');
+    }
+  }
+
+  if (record.metadata !== undefined) {
+    if (!record.metadata || typeof record.metadata !== 'object' || Array.isArray(record.metadata)) {
+      errors.push('metadata must be an object when provided');
+    } else {
+      const metadata = record.metadata as Record<string, unknown>;
+      if (metadata.prNumber !== undefined && typeof metadata.prNumber !== 'number') {
+        errors.push('metadata.prNumber must be a number');
+      }
+      if (metadata.prTitle !== undefined && typeof metadata.prTitle !== 'string') {
+        errors.push('metadata.prTitle must be a string');
+      }
+      if (metadata.repository !== undefined && typeof metadata.repository !== 'string') {
+        errors.push('metadata.repository must be a string');
+      }
+    }
   }
   
   return { valid: errors.length === 0, errors };
@@ -191,14 +213,34 @@ router.get('/schema', (req: Request, res: Response) => {
         result: {
           type: 'object',
           properties: {
-            status: { enum: ['✅', '❌'] },
+            status: { enum: ['✅', '⚠️', '❌'] },
             summary: { type: 'string' },
-            checks: { type: 'object' },
+            checks: {
+              type: 'object',
+              additionalProperties: {
+                type: 'object',
+                properties: {
+                  status: { enum: ['✅', '⚠️', '❌'] },
+                  message: { type: 'string' },
+                  details: { type: 'array', items: { type: 'string' } }
+                }
+              }
+            },
             reasoning: { type: 'string' },
-            recommendations: { type: 'array' }
+            recommendations: { type: 'array', items: { type: 'string' } }
           }
         },
-        markdown: { type: 'string' }
+        markdown: { type: 'string' },
+        metadata: {
+          type: 'object',
+          properties: {
+            timestamp: { type: 'string' },
+            prNumber: { type: 'number' },
+            prTitle: { type: 'string' },
+            repository: { type: 'string' }
+          },
+          additionalProperties: true
+        }
       }
     }
   });

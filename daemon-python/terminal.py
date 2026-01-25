@@ -1,11 +1,16 @@
 """
 Terminal Control for ARCANOS
 Execute PowerShell/CMD commands with security checks.
+When RUN_ELEVATED=true, PowerShell runs via Start-Process -Verb RunAs (UAC) on Windows.
 """
 
+import base64
+import os
 import subprocess
-import shlex
+import sys
+import tempfile
 from typing import Optional, Tuple
+
 from config import Config
 from error_handler import handle_errors
 
@@ -38,21 +43,77 @@ class TerminalController:
 
         return True, None
 
+    def _execute_elevated_powershell(self, command: str, timeout: int) -> Tuple[Optional[str], Optional[str], int]:
+        """
+        Run PowerShell elevated via Start-Process -Verb RunAs on Windows.
+        Uses temp files for stdout, stderr, and exit code. UAC prompt when RunAs.
+        """
+        fd_out, p_out = tempfile.mkstemp(suffix=".txt", prefix="arcanos_out_")
+        os.close(fd_out)
+        fd_err, p_err = tempfile.mkstemp(suffix=".txt", prefix="arcanos_err_")
+        os.close(fd_err)
+        fd_rc, p_rc = tempfile.mkstemp(suffix=".txt", prefix="arcanos_rc_")
+        os.close(fd_rc)
+        try:
+            b64 = base64.b64encode(command.encode("utf-8")).decode("ascii")
+            # Escape single quotes for PowerShell: ' -> ''
+            def q(s: str) -> str:
+                return s.replace("'", "''")
+            ps_script = f"""
+& {{
+  $out = '{q(p_out)}'
+  $err = '{q(p_err)}'
+  $rc  = '{q(p_rc)}'
+  $b64 = '{q(b64)}'
+  $cmd = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))
+  $p = Start-Process powershell -ArgumentList '-NoProfile','-NonInteractive','-Command',$cmd -Verb RunAs -Wait -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+  $p.ExitCode | Set-Content -Path $rc
+}}
+"""
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                capture_output=True,
+                timeout=timeout,
+                encoding="utf-8",
+                errors="replace",
+                cwd=os.getcwd(),
+            )
+            with open(p_out, "r", encoding="utf-8", errors="replace") as f:
+                stdout = f.read().strip()
+            with open(p_err, "r", encoding="utf-8", errors="replace") as f:
+                stderr = f.read().strip()
+            with open(p_rc, "r", encoding="utf-8", errors="replace") as f:
+                rc_s = f.read().strip()
+            return_code = int(rc_s) if (rc_s and rc_s.strip().isdigit()) else 1
+            return (stdout or None, stderr or None, return_code)
+        except subprocess.TimeoutExpired:
+            raise TimeoutError(f"Command timed out after {timeout} seconds")
+        except Exception as e:
+            raise RuntimeError(f"Elevated run failed: {e}")
+        finally:
+            for p in (p_out, p_err, p_rc):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
     @handle_errors("executing command")
     def execute(
         self,
         command: str,
         shell: str = "powershell",
         timeout: int = 30,
-        check_safety: bool = True
+        check_safety: bool = True,
+        elevated: bool = False,
     ) -> Tuple[Optional[str], Optional[str], int]:
         """
-        Execute a terminal command
+        Execute a terminal command.
         Args:
             command: Command to execute
             shell: Shell to use ('powershell' or 'cmd')
             timeout: Command timeout in seconds
             check_safety: Whether to check command safety
+            elevated: If True and Windows+PowerShell, run via Start-Process -Verb RunAs (UAC)
         Returns:
             (stdout, stderr, return_code)
         """
@@ -61,6 +122,10 @@ class TerminalController:
             is_safe, reason = self.is_command_safe(command)
             if not is_safe:
                 raise ValueError(reason)
+
+        # Elevated path: Windows + PowerShell only
+        if elevated and sys.platform == "win32" and shell.lower() == "powershell":
+            return self._execute_elevated_powershell(command, timeout)
 
         # Prepare command based on shell
         if shell.lower() == "powershell":
@@ -77,25 +142,24 @@ class TerminalController:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                encoding='utf-8',
-                errors='replace'
+                encoding="utf-8",
+                errors="replace",
             )
-
             stdout = result.stdout.strip()
             stderr = result.stderr.strip()
             return_code = result.returncode
-
             return stdout, stderr, return_code
-
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"Command timed out after {timeout} seconds")
         except Exception as e:
             raise RuntimeError(f"Failed to execute command: {str(e)}")
 
     @handle_errors("executing PowerShell")
-    def execute_powershell(self, command: str, timeout: int = 30) -> Tuple[Optional[str], Optional[str], int]:
-        """Execute PowerShell command (convenience wrapper)"""
-        return self.execute(command, shell="powershell", timeout=timeout)
+    def execute_powershell(
+        self, command: str, timeout: int = 30, elevated: bool = False
+    ) -> Tuple[Optional[str], Optional[str], int]:
+        """Execute PowerShell command (convenience wrapper)."""
+        return self.execute(command, shell="powershell", timeout=timeout, elevated=elevated)
 
     @handle_errors("executing CMD")
     def execute_cmd(self, command: str, timeout: int = 30) -> Tuple[Optional[str], Optional[str], int]:

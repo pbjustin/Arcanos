@@ -4,6 +4,7 @@ Conversation routing and message building helpers for ARCANOS.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence
 
@@ -19,6 +20,46 @@ class ConversationRouteDecision:
     route: str
     normalized_message: str
     used_prefix: Optional[str]
+
+
+def compute_backend_confidence(message: str) -> float:
+    """
+    Compute confidence (0.0–1.0) that the request should use the backend.
+    Used with BACKEND_CONFIDENCE_THRESHOLD: when route would be backend,
+    we override to local if confidence < threshold.
+    """
+    msg = (message or "").strip()
+    if not msg:
+        return 0.0
+
+    # //audit: run/see-like intents are handled locally; invariant: avoid backend for these.
+    if re.search(r"^\s*(run|execute)\s+", msg, re.I):
+        return 0.0
+    if re.search(
+        r"\b(see\s+(my\s+)?(screen|camera)|screenshot|look\s+at\s+(my\s+)?screen|capture\s+(my\s+)?screen|analyze\s+(my\s+)?screen|webcam)\b",
+        msg,
+        re.I,
+    ):
+        return 0.0
+
+    score = 0.5
+
+    # Domain keywords that suggest backend modules (booker, tutor, gaming, research, etc.)
+    domain_keywords = [
+        "book", "booking", "match", "wrestling", "wwe", "aew", "wrestler", "storyline", "event",
+        "tutor", "teach", "learn", "lesson", "education", "study",
+        "game", "gaming", "play", "player", "walkthrough", "hotline",
+        "research", "analyze", "investigate", "synthesize",
+    ]
+    if any(kw in msg.lower() for kw in domain_keywords):
+        score += 0.3
+
+    # Complexity: long or planning/reasoning verbs
+    complexity_words = ["analyze", "research", "compare", "orchestrate", "plan", "brainstorm", "deep dive", "synthesize"]
+    if len(msg) > 200 or any(w in msg.lower() for w in complexity_words):
+        score += 0.2
+
+    return min(1.0, max(0.0, score))
 
 
 def determine_conversation_route(

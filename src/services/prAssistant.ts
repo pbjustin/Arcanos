@@ -56,7 +56,11 @@ export class PRAssistant {
   }
 
   /**
-   * Main entry point for PR analysis
+   * Main entry point for PR analysis.
+   * Purpose: Evaluate a PR diff and file list against ARCANOS quality checks.
+   * Inputs/Outputs: prDiff (unified diff string), prFiles (array of changed paths),
+   * returns PRAnalysisResult with status, summary, checks, reasoning, recommendations.
+   * Edge cases: Empty diffs still run checks; results rely on check fallbacks.
    */
   async analyzePR(prDiff: string, prFiles: string[]): Promise<PRAnalysisResult> {
     logger.info('ARCANOS PR Assistant - Starting comprehensive analysis', {
@@ -78,6 +82,7 @@ export class PRAssistant {
     const allChecksPass = Object.values(checks).every(check => check.status === '✅');
     const hasWarnings = Object.values(checks).some(check => check.status === '⚠️');
 
+    //audit Assumption: check statuses are limited to ✅/⚠️/❌; risk: unknown status; invariant: status derived from checks; handling: map to worst-case.
     const status: '✅' | '❌' | '⚠️' = allChecksPass ? '✅' : (hasWarnings ? '⚠️' : '❌');
     const summary = generateSummary(checks, allChecksPass, hasWarnings);
     const reasoning = generateReasoning(checks);

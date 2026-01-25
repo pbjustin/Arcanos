@@ -64,6 +64,7 @@ interface DaemonCommand {
 
 const daemonHeartbeats = new Map<string, DaemonHeartbeat>();
 const daemonCommands = new Map<string, DaemonCommand[]>();
+const daemonTokensByInstanceId = new Map<string, string>();
 
 /**
  * POST /api/daemon/heartbeat
@@ -97,6 +98,8 @@ router.post(
     const token = req.daemonToken!;
     const key = `${token}:${instanceId}`;
     daemonHeartbeats.set(key, heartbeat);
+    //audit Assumption: instanceId uniquely identifies daemon; risk: stale token mapping; invariant: latest token wins; handling: overwrite mapping.
+    daemonTokensByInstanceId.set(instanceId, token);
 
     res.json({
       pong: true,
@@ -221,6 +224,28 @@ export function queueDaemonCommand(
   daemonCommands.set(key, commands);
 
   return commandId;
+}
+
+export function getDaemonTokenForInstance(instanceId: string): string | null {
+  const token = daemonTokensByInstanceId.get(instanceId);
+  if (!token) {
+    //audit Assumption: missing token means daemon not linked; risk: orphan instanceId; invariant: null returned; handling: return null.
+    return null;
+  }
+  return token;
+}
+
+export function queueDaemonCommandForInstance(
+  instanceId: string,
+  name: string,
+  payload: Record<string, unknown>
+): string | null {
+  const token = getDaemonTokenForInstance(instanceId);
+  if (!token) {
+    //audit Assumption: daemon token required for queueing; risk: orphan instanceId; invariant: null returned; handling: return null.
+    return null;
+  }
+  return queueDaemonCommand(token, instanceId, name, payload);
 }
 
 /**
