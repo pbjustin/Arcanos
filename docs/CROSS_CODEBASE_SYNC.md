@@ -54,7 +54,6 @@ Ensures Python client methods match TypeScript server routes.
 - `/api/vision` - Image analysis
 - `/api/transcribe` - Audio transcription
 - `/api/update` - Event updates
-- `/api/auth/login` - Authentication
 
 **Check Specific Endpoint:**
 ```bash
