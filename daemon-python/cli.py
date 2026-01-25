@@ -23,6 +23,11 @@ from rich import print as rprint
 
 from config import Config
 from backend_client import BackendApiClient, BackendResponse, BackendRequestError
+from daemon_system_definition import (
+    build_daemon_system_prompt,
+    DEFAULT_BACKEND_BLOCK,
+    format_registry_for_prompt,
+)
 from conversation_routing import (
     compute_backend_confidence,
     determine_conversation_route,
@@ -102,6 +107,16 @@ class ArcanosCLI:
                 timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
             )
 
+        self._registry_cache: Optional[dict[str, Any]] = None
+        self._registry_cache_updated_at: Optional[float] = None
+        self._registry_cache_warning_logged = False
+        self._registry_cache_ttl_seconds = max(1, Config.REGISTRY_CACHE_TTL_MINUTES) * 60
+        self._last_confirmation_handled = False
+
+        if self.backend_client:
+            # //audit assumption: backend registry fetch is best-effort; risk: startup delay; invariant: fallback prompt; strategy: attempt fetch.
+            self._refresh_registry_cache()
+
         # Daemon service for HTTP-based heartbeat and command polling
         self.daemon_service: Optional[DaemonService] = None
         if Config.BACKEND_URL and self.backend_client:
@@ -124,10 +139,8 @@ class ArcanosCLI:
                 self.handle_ptt_speech
             )
 
-        # System prompt for AI personality
-        self.system_prompt = """You are ARCANOS, a helpful and friendly AI assistant with a warm personality.
-You can see screens, hear voice, execute terminal commands, and have natural conversations.
-Keep responses concise but friendly. Use emojis occasionally. Be helpful and proactive."""
+        # System prompt for AI personality and daemon capabilities
+        self.system_prompt = self._build_system_prompt()
 
         # Update checker (background); set GITHUB_RELEASES_REPO to enable
         self._update_info: Optional[dict] = None
@@ -238,16 +251,198 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: response ok; risk: none; invariant: return response; strategy: short-circuit.
             return response
 
+        if response.error and response.error.kind == "confirmation":
+            # //audit assumption: confirmation requires user input; risk: auto-fallback; invariant: caller handles; strategy: return early.
+            return response
+
         if response.error and response.error.kind == "auth":
             # //audit assumption: auth errors are recoverable; risk: stale token; invariant: refresh attempted; strategy: refresh and retry.
             if self._refresh_backend_credentials():
                 response = request_func()
+
+        if response.error and response.error.kind == "confirmation":
+            # //audit assumption: confirmation requires user input; risk: auto-fallback; invariant: caller handles; strategy: return early.
+            return response
 
         if not response.ok:
             # //audit assumption: response still failed; risk: backend unavailable; invariant: error reported; strategy: report.
             self._report_backend_error(action_label, response.error)
 
         return response
+
+    def _registry_cache_is_valid(self) -> bool:
+        """
+        Purpose: Determine whether the backend registry cache is present and fresh.
+        Inputs/Outputs: None; returns True when cache exists and TTL not expired.
+        Edge cases: Returns False when cache is missing or timestamp is unset.
+        """
+        if not self._registry_cache:
+            # //audit assumption: cache may be empty; risk: stale prompt; invariant: treat as invalid; strategy: return False.
+            return False
+        if self._registry_cache_updated_at is None:
+            # //audit assumption: timestamp required for cache validity; risk: stale cache; invariant: invalid; strategy: return False.
+            return False
+        age_seconds = time.time() - self._registry_cache_updated_at
+        # //audit assumption: age calculation is accurate; risk: clock drift; invariant: age >= 0; strategy: compare to TTL.
+        return age_seconds <= self._registry_cache_ttl_seconds
+
+    def _refresh_registry_cache(self) -> None:
+        """
+        Purpose: Fetch backend registry and update cache state.
+        Inputs/Outputs: None; updates cache and timestamp on success.
+        Edge cases: Leaves cache unchanged on backend errors.
+        """
+        if not self.backend_client:
+            # //audit assumption: backend client required; risk: no registry; invariant: skip fetch; strategy: return.
+            return
+
+        response = self.backend_client.request_registry()
+        if response.ok and response.value:
+            # //audit assumption: registry payload valid; risk: stale data; invariant: cache refreshed; strategy: store and timestamp.
+            self._registry_cache = response.value
+            self._registry_cache_updated_at = time.time()
+            return
+
+        if not self._registry_cache and not self._registry_cache_warning_logged:
+            # //audit assumption: registry fetch can fail; risk: missing backend info; invariant: fallback prompt; strategy: warn once.
+            self.console.print("[yellow]Backend registry unavailable; using built-in backend prompt.[/yellow]")
+            self._registry_cache_warning_logged = True
+
+    def _refresh_registry_cache_if_stale(self) -> None:
+        """
+        Purpose: Refresh the registry cache when stale and rebuild the system prompt.
+        Inputs/Outputs: None; updates system_prompt on successful refresh.
+        Edge cases: No-op when backend is not configured or cache remains invalid.
+        """
+        if not self.backend_client:
+            # //audit assumption: backend client required; risk: no registry; invariant: skip; strategy: return.
+            return
+        if self._registry_cache_is_valid():
+            # //audit assumption: cache still fresh; risk: unnecessary fetch; invariant: no refresh; strategy: return.
+            return
+
+        self._refresh_registry_cache()
+        if self._registry_cache_is_valid():
+            # //audit assumption: refreshed cache should update prompt; risk: stale prompt; invariant: prompt rebuilt; strategy: rebuild.
+            self.system_prompt = self._build_system_prompt()
+
+    def _get_backend_block(self) -> str:
+        """
+        Purpose: Resolve the backend block for the system prompt.
+        Inputs/Outputs: None; returns backend block string.
+        Edge cases: Falls back to default block when registry is unavailable or invalid.
+        """
+        if self.backend_client and self._registry_cache_is_valid():
+            # //audit assumption: registry cache valid; risk: formatting errors; invariant: block built; strategy: format registry.
+            try:
+                registry_block = format_registry_for_prompt(self._registry_cache or {})
+            except Exception as exc:
+                # //audit assumption: format failures should not crash; risk: prompt missing; invariant: fallback used; strategy: log and fallback.
+                self.console.print(f"[red]Failed to format backend registry: {exc}[/red]")
+                return DEFAULT_BACKEND_BLOCK
+            if registry_block.strip():
+                # //audit assumption: registry block is non-empty; risk: empty prompt section; invariant: use registry block; strategy: return block.
+                return registry_block
+
+        # //audit assumption: fallback block needed; risk: stale registry; invariant: default block returned; strategy: return fallback.
+        return DEFAULT_BACKEND_BLOCK
+
+    def _build_system_prompt(self) -> str:
+        """
+        Purpose: Build the daemon system prompt with a registry-aware backend block.
+        Inputs/Outputs: None; returns system prompt string.
+        Edge cases: Falls back to default backend block when registry is missing.
+        """
+        backend_block = self._get_backend_block()
+        return build_daemon_system_prompt(backend_block)
+
+    def _confirm_pending_actions(self, confirmation_token: str) -> Optional[_ConversationResult]:
+        """
+        Purpose: Confirm pending daemon actions with the backend and return a summary result.
+        Inputs/Outputs: confirmation_token string; returns ConversationResult or None.
+        Edge cases: Returns None when backend rejects the token or is unavailable.
+        """
+        if not self.backend_client:
+            # //audit assumption: backend client required; risk: cannot confirm; invariant: return None; strategy: return.
+            return None
+
+        response = self._request_with_auth_retry(
+            lambda: self.backend_client.request_confirm_daemon_actions(confirmation_token, self.instance_id),
+            "confirm actions"
+        )
+        if not response.ok or not response.value:
+            # //audit assumption: backend confirm failed; risk: actions not queued; invariant: return None; strategy: stop.
+            return None
+
+        queued_value = response.value.get("queued")
+        queued_count = 0
+        if isinstance(queued_value, int):
+            # //audit assumption: queued count numeric; risk: wrong type; invariant: int count; strategy: accept int value.
+            queued_count = queued_value
+        else:
+            # //audit assumption: queued count missing; risk: misreporting; invariant: default to zero; strategy: set default.
+            queued_count = 0
+
+        if queued_count == 1:
+            # //audit assumption: singular count; risk: grammar mismatch; invariant: singular noun; strategy: use "action".
+            plural = "action"
+        else:
+            # //audit assumption: non-singular count; risk: grammar mismatch; invariant: plural noun; strategy: use "actions".
+            plural = "actions"
+        response_text = f"Queued {queued_count} {plural}."
+
+        return _ConversationResult(
+            response_text=response_text,
+            tokens_used=0,
+            cost_usd=0.0,
+            model=Config.BACKEND_CHAT_MODEL or "backend",
+            source="backend"
+        )
+
+    def _handle_confirmation_required(
+        self,
+        error: BackendRequestError
+    ) -> Optional[_ConversationResult]:
+        """
+        Purpose: Prompt the user (or auto-confirm) for sensitive backend actions.
+        Inputs/Outputs: BackendRequestError with confirmation payload; returns ConversationResult or None.
+        Edge cases: Non-TTY input or missing confirmation fields rejects the action.
+        """
+        confirmation_id = error.confirmation_challenge_id
+        pending_actions = error.pending_actions
+
+        if not confirmation_id or not isinstance(pending_actions, list):
+            # //audit assumption: confirmation fields required; risk: invalid state; invariant: return None; strategy: abort.
+            return None
+
+        if Config.CONFIRM_SENSITIVE_ACTIONS:
+            # //audit assumption: confirmation enabled; risk: blocking in non-tty; invariant: prompt user; strategy: check TTY.
+            if not sys.stdin.isatty():
+                # //audit assumption: no TTY prevents prompt; risk: unintended execution; invariant: reject; strategy: return None.
+                self.console.print("[red]Action rejected.[/red]")
+                return None
+
+            self.console.print("[yellow]ARCANOS: The following action needs your confirmation:[/yellow]")
+            for action in pending_actions:
+                summary = None
+                if isinstance(action, Mapping):
+                    # //audit assumption: pending action is mapping; risk: missing summary; invariant: attempt summary; strategy: read field.
+                    summary = action.get("summary")
+                if not isinstance(summary, str) or not summary:
+                    # //audit assumption: summary missing; risk: unclear prompt; invariant: fallback to raw; strategy: stringify.
+                    summary = str(action)
+                self.console.print(f"  [dim]{summary}[/dim]")
+
+            response = self.console.input("Confirm? [y/N]: ").strip().lower()
+            if response not in ("y", "yes"):
+                # //audit assumption: non-yes is rejection; risk: missed confirmation; invariant: reject; strategy: return None.
+                self.console.print("[red]Action rejected.[/red]")
+                return None
+        else:
+            # //audit assumption: confirmation disabled; risk: auto-execution; invariant: auto-confirm; strategy: proceed.
+            pass
+
+        return self._confirm_pending_actions(confirmation_id)
 
     def _handle_daemon_command(self, command: DaemonCommand) -> None:
         """
@@ -333,6 +528,9 @@ Type **help** for available commands or just start chatting naturally.
             self.console.print("[yellow]Backend is not configured.[/yellow]")
             return None
 
+        self._last_confirmation_handled = False
+        self._refresh_registry_cache_if_stale()
+
         # //audit assumption: history limit non-negative; risk: negative value; invariant: >=0; strategy: clamp to zero.
         history_limit = max(0, Config.BACKEND_HISTORY_LIMIT)
         # //audit assumption: history optional; risk: empty context; invariant: safe default; strategy: empty list when limit is zero.
@@ -363,15 +561,6 @@ Type **help** for available commands or just start chatting naturally.
                 ),
                 "chat"
             )
-            if response.ok and response.value:
-                return _ConversationResult(
-                    response_text=response.value.response_text,
-                    tokens_used=response.value.tokens_used,
-                    cost_usd=response.value.cost_usd,
-                    model=response.value.model,
-                    source="backend"
-                )
-            return None
         else:
             # Standard chat completion (no domain routing)
             response = self._request_with_auth_retry(
@@ -384,17 +573,23 @@ Type **help** for available commands or just start chatting naturally.
                 "chat"
             )
 
-        if not response.ok or not response.value:
-            # //audit assumption: backend response required; risk: backend failure; invariant: response ok; strategy: return None.
-            return None
+        if response.ok and response.value:
+            # //audit assumption: backend response ok; risk: missing payload; invariant: response value present; strategy: return result.
+            return _ConversationResult(
+                response_text=response.value.response_text,
+                tokens_used=response.value.tokens_used,
+                cost_usd=response.value.cost_usd,
+                model=response.value.model,
+                source="backend"
+            )
 
-        return _ConversationResult(
-            response_text=response.value.response_text,
-            tokens_used=response.value.tokens_used,
-            cost_usd=response.value.cost_usd,
-            model=response.value.model,
-            source="backend"
-        )
+        if response.error and response.error.kind == "confirmation":
+            # //audit assumption: backend requires confirmation; risk: bypassing prompt; invariant: confirmation handled; strategy: prompt or auto-confirm.
+            self._last_confirmation_handled = True
+            return self._handle_confirmation_required(response.error)
+
+        # //audit assumption: backend response required; risk: backend failure; invariant: response ok; strategy: return None.
+        return None
 
     def _encode_audio_base64(self, audio_data: bytes | bytearray) -> Optional[str]:
         try:
@@ -669,8 +864,8 @@ Type **help** for available commands or just start chatting naturally.
             if route_decision.route == "backend":
                 # //audit assumption: backend route requested; risk: backend unavailable; invariant: backend attempt; strategy: call backend.
                 result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain)
-                if result is None and Config.BACKEND_FALLBACK_TO_LOCAL:
-                    # //audit assumption: fallback allowed; risk: user expects backend; invariant: local fallback; strategy: retry locally.
+                if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
+                    # //audit assumption: fallback allowed when backend fails; risk: unwanted fallback on confirmation; invariant: skip when confirmation handled; strategy: gate on flag.
                     self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
                     result = self._perform_local_conversation(route_decision.normalized_message)
             else:

@@ -34,11 +34,36 @@ function createHandler(mod: ModuleDef) {
   };
 }
 
+/**
+ * Purpose: Register a module definition and mount its handler route.
+ * Inputs/Outputs: route string and ModuleDef; mounts handler and caches module metadata.
+ * Edge cases: Overwrites existing module entries with the same route or name.
+ */
 export function registerModule(route: string, mod: ModuleDef) {
   registryByRoute.set(route, mod);
   registryByName.set(mod.name, mod);
   moduleRoutes.set(mod.name, route);
   router.post(`/modules/${route}`, createHandler(mod));
+}
+
+/**
+ * Purpose: Build a safe module registry snapshot for daemon prompts.
+ * Inputs/Outputs: None; returns list of module metadata without gptIds.
+ * Edge cases: Returns empty list when no modules are loaded.
+ */
+export function getModulesForRegistry(): Array<{
+  id: string;
+  description: string | null;
+  route: string | null;
+  actions: string[];
+}> {
+  //audit Assumption: registryByName holds current modules; risk: stale data; invariant: map values used; handling: map to safe shape.
+  return Array.from(registryByName.values()).map(mod => ({
+    id: mod.name,
+    description: mod.description ?? null,
+    route: moduleRoutes.get(mod.name) ?? null,
+    actions: Object.keys(mod.actions)
+  }));
 }
 
 const loadedModules = await loadModuleDefinitions();

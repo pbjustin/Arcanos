@@ -18,14 +18,16 @@ T = TypeVar("T")
 class BackendRequestError(RuntimeError):
     """
     Purpose: Structured error for backend request failures.
-    Inputs/Outputs: kind, message, optional status code, optional details.
-    Edge cases: details may be None for network or parsing errors.
+    Inputs/Outputs: kind, message, optional status code/details, optional confirmation fields.
+    Edge cases: details may be None for network or parsing errors; confirmation fields optional.
     """
 
     kind: str
     message: str
     status_code: Optional[int] = None
     details: Optional[str] = None
+    confirmation_challenge_id: Optional[str] = None
+    pending_actions: Optional[list[Mapping[str, Any]]] = None
 
     def __post_init__(self) -> None:
         # //audit assumption: exception message should be initialized; risk: missing error context; invariant: message stored; strategy: init base class.
@@ -368,8 +370,51 @@ class BackendApiClient:
                 error=BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
             )
 
-        if response.status_code in (401, 403):
+        if response.status_code == 401:
             # //audit assumption: auth errors should be surfaced; risk: unauthorized usage; invariant: auth error returned; strategy: return auth error.
+            return BackendResponse(
+                ok=False,
+                error=BackendRequestError(
+                    kind="auth",
+                    message="Backend authorization failed",
+                    status_code=response.status_code,
+                    details=response.text
+                )
+            )
+
+        if response.status_code == 403:
+            # //audit assumption: 403 may be confirmation or auth; risk: misclassification; invariant: inspect payload; strategy: parse JSON.
+            parsed: Any = None
+            try:
+                parsed = response.json()
+            except ValueError:
+                # //audit assumption: confirmation payload may not be JSON; risk: losing confirmation; invariant: fallback to auth error; strategy: return auth error.
+                parsed = None
+
+            if isinstance(parsed, dict):
+                # //audit assumption: confirmation payload is JSON object; risk: schema mismatch; invariant: dict parsed; strategy: inspect fields.
+                code = parsed.get("code")
+                challenge = parsed.get("confirmationChallenge")
+                pending = parsed.get("pending_actions")
+                if (
+                    code == "CONFIRMATION_REQUIRED"
+                    and isinstance(challenge, dict)
+                    and isinstance(challenge.get("id"), str)
+                    and isinstance(pending, list)
+                ):
+                    # //audit assumption: confirmation payload is well-formed; risk: malformed pending actions; invariant: confirmation fields stored; strategy: return confirmation error.
+                    return BackendResponse(
+                        ok=False,
+                        error=BackendRequestError(
+                            kind="confirmation",
+                            message="Backend confirmation required",
+                            status_code=response.status_code,
+                            confirmation_challenge_id=challenge["id"],
+                            pending_actions=pending
+                        )
+                    )
+
+            # //audit assumption: 403 without confirmation is auth failure; risk: misclassified error; invariant: auth error returned; strategy: return auth error.
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
@@ -418,6 +463,41 @@ class BackendApiClient:
             )
 
         return BackendResponse(ok=True, value=parsed)
+
+    def request_confirm_daemon_actions(
+        self,
+        confirmation_token: str,
+        instance_id: str
+    ) -> BackendResponse[dict[str, Any]]:
+        """
+        Purpose: Confirm and queue sensitive daemon actions via backend.
+        Inputs/Outputs: confirmation_token and instance_id; returns backend payload.
+        Edge cases: Returns structured error on auth, network, or invalid confirmation token.
+        """
+        payload: dict[str, Any] = {
+            "confirmation_token": confirmation_token,
+            "instanceId": instance_id
+        }
+
+        response = self._request_json("post", "/api/daemon/confirm-actions", payload)
+        if not response.ok or not response.value:
+            # //audit assumption: response must be ok; risk: backend failure; invariant: error returned; strategy: return error.
+            return BackendResponse(ok=False, error=response.error)
+
+        return BackendResponse(ok=True, value=response.value)
+
+    def request_registry(self) -> BackendResponse[dict[str, Any]]:
+        """
+        Purpose: Fetch backend daemon registry for prompt construction.
+        Inputs/Outputs: None; returns registry JSON.
+        Edge cases: Returns structured error on auth, network, or parsing failures.
+        """
+        response = self._request_json("get", "/api/daemon/registry", None)
+        if not response.ok or not response.value:
+            # //audit assumption: response must be ok; risk: backend failure; invariant: error returned; strategy: return error.
+            return BackendResponse(ok=False, error=response.error)
+
+        return BackendResponse(ok=True, value=response.value)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
         response_text = response_json.get("response")
