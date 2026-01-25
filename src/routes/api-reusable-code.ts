@@ -15,7 +15,7 @@ const reusableCodeRequestSchema = {
   target: {
     required: false,
     type: 'string',
-    allowedValues: ['all', 'asyncHandler', 'errorResponse', 'idGenerator']
+    allowedValues: ['all', ...SUPPORTED_TARGETS]
   },
   includeDocs: {
     required: false,
