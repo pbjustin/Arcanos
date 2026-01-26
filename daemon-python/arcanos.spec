@@ -44,6 +44,7 @@ hiddenimports = [
     'pystray',
     'rich',
     'psycopg2',
+    'debug_server',
 ]
 
 # Analysis

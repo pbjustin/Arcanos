@@ -90,11 +90,6 @@ def format_registry_for_prompt(registry: Mapping[str, Any]) -> str:
     Inputs/Outputs: registry mapping; returns a Markdown string.
     Edge cases: Missing registry fields produce empty sections.
     """
-    endpoints = registry.get("endpoints")
-    modules = registry.get("modules")
-    daemon_tools = registry.get("daemonTools")
-    core_systems = registry.get("core")
-
     def _to_list(value: Any) -> list[Any]:
         """Safely convert a value to a list, handling None and non-sequence types."""
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):

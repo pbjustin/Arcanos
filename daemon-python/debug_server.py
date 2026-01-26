@@ -1,0 +1,247 @@
+"""
+Debug HTTP server for the ARCANOS daemon.
+Localhost-only API for IDE agents and scripts to inspect status, logs, audit, and run commands.
+"""
+
+import dataclasses
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from urllib.parse import parse_qs, urlparse
+
+if TYPE_CHECKING:
+    from cli import ArcanosCLI
+
+from config import Config
+
+
+def _parse_query_int(
+    params: Dict[str, List[str]], key: str, default: int, min_val: int = 1, max_val: int = 1000
+) -> int:
+    """
+    Purpose: Parse and clamp an integer query parameter from parse_qs output.
+    Inputs/Outputs: params dict, key, default, min/max; returns clamped int.
+    Edge cases: Invalid or missing values return default; result clamped to [min_val, max_val].
+    """
+    vals = params.get(key, [str(default)])
+    try:
+        v = int(vals[0]) if vals else default
+        return max(min_val, min(max_val, v))
+    except (ValueError, TypeError, IndexError):
+        return default
+
+
+class DebugAPIHandler(BaseHTTPRequestHandler):
+    cli_instance: "ArcanosCLI"
+
+    def _send_response(
+        self,
+        status_code: int,
+        data: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        error: Optional[str] = None,
+    ):
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        response: Dict[str, Any] = {"ok": status_code >= 200 and status_code < 300}
+        if error:
+            response["error"] = error
+        if data is not None:
+            response.update(data if isinstance(data, dict) else {"data": data})
+
+        self.wfile.write(json.dumps(response, indent=2).encode("utf-8"))
+
+    def _read_body(self) -> Optional[Dict[str, Any]]:
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if not content_length:
+                return None
+            body_raw = self.rfile.read(content_length)
+            return json.loads(body_raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def _parse_query(self) -> Dict[str, List[str]]:
+        """Parse query string via urllib to avoid ValueError on malformed params."""
+        if "?" not in self.path:
+            return {}
+        try:
+            parsed = urlparse(self.path)
+            return parse_qs(parsed.query, keep_blank_values=False)
+        except Exception:
+            return {}
+
+    def do_GET(self):
+        try:
+            if self.path == "/debug/status":
+                self.get_status()
+            elif self.path == "/debug/instance-id":
+                self.get_instance_id()
+            elif self.path == "/debug/chat-log":
+                self.get_chat_log()
+            elif self.path.startswith("/debug/logs"):
+                self.get_logs()
+            elif self.path == "/debug/log-files":
+                self.get_log_files()
+            elif self.path.startswith("/debug/audit"):
+                self.get_audit()
+            elif self.path == "/debug/crash-reports":
+                self.get_crash_reports()
+            else:
+                self._send_response(404, error="Not Found")
+        except Exception as e:
+            self._send_response(500, error=f"Internal Server Error: {e}")
+
+    def do_POST(self):
+        try:
+            body = self._read_body()
+            if body is None and self.path in ("/debug/ask", "/debug/run"):  # see can have empty body
+                self._send_response(400, error="Invalid or missing JSON body")
+                return
+
+            if self.path == "/debug/ask":
+                self.post_ask(body)
+            elif self.path == "/debug/run":
+                self.post_run(body)
+            elif self.path == "/debug/see":
+                self.post_see(body or {})
+            else:
+                self._send_response(404, error="Not Found")
+        except Exception as e:
+            self._send_response(500, error=f"Internal Server Error: {e}")
+
+    def get_status(self):
+        uptime = time.time() - self.cli_instance.start_time
+        status_data = {
+            "instanceId": self.cli_instance.daemon_service.instance_id if self.cli_instance.daemon_service else None,
+            "clientId": self.cli_instance.daemon_service.client_id if self.cli_instance.daemon_service else None,
+            "uptime": int(uptime),
+            "backend_configured": bool(Config.BACKEND_URL),
+            "version": Config.VERSION,
+            "last_error": getattr(self.cli_instance, "_last_error", None),
+        }
+        self._send_response(200, status_data)
+
+    def get_instance_id(self):
+        instance_id = self.cli_instance.daemon_service.instance_id if self.cli_instance.daemon_service else None
+        self._send_response(200, {"instanceId": instance_id})
+
+    def get_chat_log(self):
+        memory = self.cli_instance.memory
+        raw_conversations = memory.get_recent_conversations(limit=10)
+        chat_log = []
+        for c in raw_conversations:
+            chat_log.append({"role": "user", "message": c.get("user"), "timestamp": c.get("timestamp")})
+            chat_log.append({"role": "assistant", "message": c.get("ai"), "timestamp": c.get("timestamp")})
+
+        self._send_response(200, {
+            "chat_log": chat_log,
+            "last_error": getattr(self.cli_instance, "_last_error", None),
+        })
+
+    def get_logs(self):
+        params = self._parse_query()
+        tail = _parse_query_int(params, "tail", 50, min_val=1, max_val=2000)
+
+        log_file = Config.LOG_DIR / "errors.log"
+        if not log_file.exists():
+            self._send_response(200, {"path": str(log_file), "lines": [], "error": "Log file not found."})
+            return
+
+        with open(log_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        self._send_response(200, {"path": str(log_file), "lines": lines[-tail:]})
+
+    def get_log_files(self):
+        log_dir = Config.LOG_DIR
+        files = []
+        if log_dir.exists():
+            for f in log_dir.iterdir():
+                if f.is_file():
+                    stat = f.stat()
+                    files.append({"name": f.name, "mtime": stat.st_mtime, "size": stat.st_size})
+        self._send_response(200, {"log_dir": str(log_dir), "files": files})
+
+    def get_audit(self):
+        params = self._parse_query()
+        limit = _parse_query_int(params, "limit", 50, min_val=1, max_val=500)
+
+        with self.cli_instance._activity_lock:
+            entries = list(self.cli_instance._activity)[:limit]
+
+        self._send_response(200, {"entries": entries})
+
+    def get_crash_reports(self):
+        crash_dir = Config.CRASH_REPORTS_DIR
+        files = []
+        latest_content = None
+        latest_file = None
+
+        if crash_dir.exists():
+            sorted_files = sorted(crash_dir.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
+            for f in sorted_files:
+                if f.is_file():
+                    stat = f.stat()
+                    files.append({"name": f.name, "mtime": stat.st_mtime, "size": stat.st_size})
+            if sorted_files:
+                latest_file = sorted_files[0]
+                with open(latest_file, "r", encoding="utf-8") as f:
+                    latest_content = f.read()
+
+        self._send_response(200, {"files": files, "latest_content": latest_content})
+
+    def post_ask(self, body):
+        message = body.get("message")
+        if not message:
+            self._send_response(400, error="Missing 'message' in request body")
+            return
+
+        route_override = body.get("route_override")
+        result = self.cli_instance.handle_ask(message, route_override=route_override, return_result=True, from_debug=True)
+
+        if result:
+            # _ConversationResult is a dataclass; use asdict (not _asdict)
+            self._send_response(200, dataclasses.asdict(result))
+        else:
+            self._send_response(500, error="Failed to handle 'ask' command.")
+
+    def post_run(self, body: Dict[str, Any]):
+        command = body.get("command")
+        if not command:
+            self._send_response(400, error="Missing 'command' in request body")
+            return
+
+        result = self.cli_instance.handle_run(command, return_result=True)
+        self._send_response(200, result)
+
+    def post_see(self, body: Dict[str, Any]):
+        use_camera = body.get("use_camera", False)
+        args = ["camera"] if use_camera else []
+        result = self.cli_instance.handle_see(args, return_result=True)
+        if result:
+            self._send_response(200, result)
+        else:
+            self._send_response(500, error="Failed to handle 'see' command.")
+
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    pass
+
+
+def start_debug_server(cli: "ArcanosCLI", port: int):
+    """Starts the debug HTTP server in a daemon thread."""
+
+    def handler(*args, **kwargs):
+        handler_class = DebugAPIHandler
+        handler_class.cli_instance = cli
+        return handler_class(*args, **kwargs)
+
+    server_address = ("127.0.0.1", port)
+    httpd = ThreadingHTTPServer(server_address, handler)
+
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
