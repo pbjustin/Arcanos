@@ -98,7 +98,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         self._send_response(200, {"instanceId": instance_id})
 
     def get_chat_log(self):
-        memory = Memory(self.cli_instance.memory_file)
+        memory = self.cli_instance.memory
         # Assuming get_recent_conversations exists and returns a list of dicts
         raw_conversations = memory.get_recent_conversations(limit=10)
         chat_log = []
