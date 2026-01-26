@@ -119,8 +119,20 @@ def handle_errors(context: str = ""):
                 print("\n👋 Goodbye!")
                 sys.exit(0)
             except Exception as e:
+                error_string = str(e) or type(e).__name__
+                
+                # If the first arg is a class instance (like 'self'), try to set _last_error
+                if args and hasattr(args[0], '_last_error'):
+                    setattr(args[0], '_last_error', error_string)
+                
+                # Also log to activity buffer if available
+                if args and hasattr(args[0], '_append_activity'):
+                    getattr(args[0], '_append_activity')("error", error_string)
+
                 error_msg = ErrorHandler.handle_exception(e, context or func.__name__)
-                print(error_msg)
+                # Avoid printing for now as the main loop also prints.
+                # This could be configurable if needed.
+                # print(error_msg) 
                 ErrorHandler.log_error(e, context or func.__name__)
                 return None
         return wrapper
