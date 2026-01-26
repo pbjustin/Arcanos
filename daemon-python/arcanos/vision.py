@@ -15,8 +15,8 @@ try:
     from PIL import Image
 except ModuleNotFoundError:
     Image = None
-from config import Config
-from error_handler import handle_errors
+from .config import Config
+from .error_handler import handle_errors
 
 try:
     import pyautogui
@@ -231,3 +231,4 @@ class VisionSystem:
         print("👁️  Analyzing with GPT-4o Vision...")
         default_prompt = "What do you see in this image? Describe it in detail."
         return self.analyze_image(img_base64, prompt or default_prompt)
+

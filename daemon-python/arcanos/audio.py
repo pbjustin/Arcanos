@@ -16,9 +16,9 @@ try:
     import pyttsx3
 except ModuleNotFoundError:
     pyttsx3 = None
-from config import Config
-from error_handler import handle_errors
-from gpt_client import GPTClient
+from .config import Config
+from .error_handler import handle_errors
+from .gpt_client import GPTClient
 
 AudioInput = Union["sr.AudioData", bytes, bytearray]
 
@@ -220,3 +220,4 @@ class AudioSystem:
             return True
         except Exception:
             return False
+

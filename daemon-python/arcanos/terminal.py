@@ -11,8 +11,8 @@ import sys
 import tempfile
 from typing import Optional, Tuple
 
-from config import Config
-from error_handler import handle_errors
+from .config import Config
+from .error_handler import handle_errors
 
 
 class TerminalController:
@@ -174,3 +174,4 @@ class TerminalController:
         """Add command to blacklist"""
         if command not in self.dangerous_commands:
             self.dangerous_commands.append(command)
+

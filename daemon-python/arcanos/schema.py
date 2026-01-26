@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional, Union, Dict, List
 from datetime import datetime
-from config import Config
+from .config import Config
 
 JsonValue = Union[str, int, float, bool, None, List["JsonValue"], Dict[str, "JsonValue"]]
 
@@ -148,3 +148,4 @@ class Memory:
             return True
         except (json.JSONDecodeError, IOError):
             return False
+

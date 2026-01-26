@@ -8,7 +8,7 @@ from io import BytesIO
 from typing import Optional, Dict, Any
 from openai import OpenAI, OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError, NotFoundError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from config import Config
+from .config import Config
 
 
 def _is_mock_api_key(api_key: str) -> bool:
@@ -311,3 +311,4 @@ class GPTClient:
             raise RuntimeError(f"OpenAI error: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"Unexpected error in transcription: {str(e)}")
+

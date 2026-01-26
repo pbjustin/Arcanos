@@ -111,3 +111,4 @@ def upsert_env_values(env_path: Path, updates: Mapping[str, str]) -> None:
     existing_lines = load_env_lines(env_path)
     updated_lines = update_env_lines(existing_lines, updates)
     write_env_lines(env_path, updated_lines)
+

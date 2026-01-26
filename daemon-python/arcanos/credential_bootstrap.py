@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
-from config import Config
-from env_store import EnvFileError, upsert_env_values
+from .config import Config
+from .env_store import EnvFileError, upsert_env_values
 
 
 class CredentialBootstrapError(RuntimeError):
@@ -302,3 +302,4 @@ def bootstrap_credentials(
         backend_token=backend_token,
         backend_login_email=backend_login_email
     )
+

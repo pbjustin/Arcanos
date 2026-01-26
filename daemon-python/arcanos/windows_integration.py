@@ -17,8 +17,8 @@ try:
 except ModuleNotFoundError:
     Dispatch = None
 
-from config import Config
-from error_handler import handle_errors
+from .config import Config
+from .error_handler import handle_errors
 
 
 class WindowsIntegration:
@@ -314,3 +314,4 @@ class WindowsIntegration:
         else:
             print("⚠️  Some integrations failed")
             return False
+
