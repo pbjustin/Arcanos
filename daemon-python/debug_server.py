@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from cli import ArcanosCLI
 
 from config import Config
-from memory import Memory
+from schema import Memory
 
 class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
