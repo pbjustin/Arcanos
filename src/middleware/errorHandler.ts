@@ -6,7 +6,7 @@ function isAppError(err: Error): err is AppError {
   return err instanceof AppError;
 }
 
-const errorHandler = (err: Error, req: Request, res: Response, next: NextFunction) => {
+const errorHandler = (err: Error, _req: Request, res: Response, _next: NextFunction) => {
   if (isAppError(err)) {
     logger.error(err.name, {
       message: err.message,
