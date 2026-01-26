@@ -64,4 +64,6 @@ Here are the available commands. Run them from your project's root directory.
 
 ## Security
 
-The debug server is designed for local use only and binds exclusively to `127.0.0.1`. It is not accessible from the network. However, be aware that any user or process on the local machine with knowledge of the port can access this debugging interface. Do not enable it in untrusted environments.
+The debug server is designed for local use only and binds exclusively to `127.0.0.1`. This **does not** by itself make it safe to expose powerful operations like `run`, `see`, or log/crash-report access: modern web browsers can still issue cross-origin requests to `http://127.0.0.1:<port>`, so a malicious website opened in your browser could trigger debug operations on your machine if the server is enabled without additional protection.
+
+For this reason, you must protect the debug server with an unguessable secret (for example, via an environment variable such as `DAEMON_DEBUG_TOKEN` that the client must send with each request) and/or with strict `Origin`/`Host` header checks to reject browser-driven cross-site requests. Treat the debug API as a high-privilege local interface: assume that any user or process on the machine, as well as any website running in your browser, can attempt to connect to it. Do not enable the debug server without such protections, and never enable it on machines or user accounts that may run untrusted code or browse untrusted websites.
