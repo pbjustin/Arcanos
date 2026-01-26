@@ -516,7 +516,7 @@ Type **help** for available commands or just start chatting naturally.
 
                 if response.status_code != 200:
                     # Log error but continue
-                    print(f"[DAEMON] Heartbeat failed: {response.status_code}")
+                    error_logger.error(f"[DAEMON] Heartbeat failed: {response.status_code}")
 
             except Exception as e:
                 # Log error but continue
