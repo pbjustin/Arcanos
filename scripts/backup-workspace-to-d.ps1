@@ -1,7 +1,8 @@
 # Backup ARCANOS workspace from C: to D:
 # Run: powershell -ExecutionPolicy Bypass -File C:\arcanos-hybrid\scripts\backup-workspace-to-d.ps1
 
-$dest = "D:\arcanos-workspace-backup-20250124"
+$timestamp = Get-Date -Format "yyyyMMdd"
+$dest = "D:\arcanos-workspace-backup-$timestamp"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Write-Host "Backing up to $dest" -ForegroundColor Cyan
 

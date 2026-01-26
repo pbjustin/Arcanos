@@ -1,5 +1,9 @@
 # ARCANOS Cross-Codebase Sync Rules for AI Assistants
 
+## Debugging the live daemon (installed .exe)
+- When helping debug the running ARCANOS daemon, use `scripts/daemon-debug.ps1` with `status`, **`logs`** (see your logs), **`audit`** (what's happening), **`chat-log`** (conversation), `log-files`, `see` (screen/camera), `crash-reports`, `ask`, `run`.
+- Ensure the daemon is started with `IDE_AGENT_DEBUG=1` (in `%LOCALAPPDATA%\ARCANOS\.env`) or `DAEMON_DEBUG_PORT` set. See `docs/daemon-debugging.md`.
+
 ## Architecture & Source of Truth
 - **TypeScript Server (src/)** = SOURCE OF TRUTH (GitHub repository)
 - **Python Daemon (daemon-python/)** = EXTENSION (follows server)

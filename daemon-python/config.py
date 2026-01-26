@@ -224,6 +224,12 @@ class Config:
     # GitHub "owner/repo" for releases. If set, the app checks for updates on startup.
     GITHUB_RELEASES_REPO: Optional[str] = os.getenv("GITHUB_RELEASES_REPO") or None
 
+    # ============================================
+    # Developer/Debug Settings
+    # ============================================
+    IDE_AGENT_DEBUG: bool = os.getenv("IDE_AGENT_DEBUG","").lower() in ("1","true","yes")
+    DAEMON_DEBUG_PORT: int = int(os.getenv("DAEMON_DEBUG_PORT", "0"))
+
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:
         """
