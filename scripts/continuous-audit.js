@@ -6,10 +6,12 @@
  */
 
 import fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import readline from 'readline';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,6 +22,8 @@ const STATE_FILE_NAME = 'continuous-audit-state.json';
 const LATEST_FILE_NAME = 'continuous-audit-latest.json';
 const MAX_MODULE_LINES = 300;
 const COMMENT_AGE_DAYS = 14;
+const HASH_ALGORITHM = 'sha256';
+const DUPLICATE_SAMPLE_BYTES = 128;
 
 const CODE_EXTENSIONS = new Set(['.ts', '.js', '.tsx', '.jsx', '.mjs', '.cjs', '.py']);
 const TEST_FILE_REGEX = /\.test\./i;
@@ -140,6 +144,203 @@ function normalizeRelativePath(relativePath) {
   }
 
   return normalized;
+}
+
+/**
+ * Create a stable fingerprint for a file used in duplicate detection.
+ * Purpose: Provide a secondary verification for hash matches.
+ * Inputs: file size in bytes, head sample, tail sample.
+ * Outputs: object containing size and samples.
+ * Edge cases: files smaller than sample size.
+ */
+function buildFileFingerprint(sizeBytes, headSampleBase64, tailSampleBase64) {
+  return {
+    sizeBytes,
+    headSampleBase64,
+    tailSampleBase64
+  };
+}
+
+/**
+ * Build a compact signature for a file fingerprint.
+ * Purpose: Create stable grouping keys without logging raw samples.
+ * Inputs: file fingerprint object.
+ * Outputs: SHA-256 hex signature.
+ * Edge cases: empty samples still produce a signature.
+ */
+function buildFingerprintSignature(fingerprint) {
+  const signatureSource = `${fingerprint.sizeBytes}:${fingerprint.headSampleBase64}:${fingerprint.tailSampleBase64}`;
+  return crypto.createHash('sha256').update(signatureSource).digest('hex');
+}
+
+/**
+ * Track file hash entries with size-aware buckets.
+ * Purpose: Group files by hash and size for duplicate verification.
+ * Inputs: file hash map, hash string, size, relative path, fingerprint.
+ * Outputs: none (mutates map).
+ * Edge cases: repeated file paths.
+ */
+function registerFileHashEntry(fileHashes, hash, sizeBytes, relativePath, fingerprint) {
+  //audit Assumption: hash and size uniquely bucket file content; risk: collisions; invariant: size bucket holds same hash; handling: group by hash+size.
+  if (!fileHashes.has(hash)) {
+    fileHashes.set(hash, new Map());
+  }
+
+  const sizeBuckets = fileHashes.get(hash);
+  //audit Assumption: size bucket created when missing; risk: missing bucket throws; invariant: size bucket exists; handling: initialize bucket.
+  if (!sizeBuckets.has(sizeBytes)) {
+    sizeBuckets.set(sizeBytes, { files: new Set(), fingerprints: new Map() });
+  }
+
+  const bucket = sizeBuckets.get(sizeBytes);
+  //audit Assumption: file paths are unique identifiers; risk: duplicate path entries; invariant: set prevents duplicates; handling: use Set.
+  bucket.files.add(relativePath);
+  bucket.fingerprints.set(relativePath, fingerprint);
+}
+
+/**
+ * Build a stream-based hash for a file while capturing samples.
+ * Purpose: Hash file content and capture size/head/tail samples.
+ * Inputs: file path and dependency bag.
+ * Outputs: object with ok flag, hash, size, samples, or error.
+ * Edge cases: unreadable files, stream errors.
+ */
+async function buildStreamHashWithSamples(filePath, dependencies) {
+  const { createReadStream, crypto, sampleBytes } = dependencies;
+  const hasher = crypto.createHash(HASH_ALGORITHM);
+  let sizeBytes = 0;
+  let headSample = Buffer.alloc(0);
+  let tailSample = Buffer.alloc(0);
+  let resolved = false;
+
+  const stream = createReadStream(filePath);
+
+  //audit Assumption: stream errors are recoverable per-file; risk: missing hash; invariant: caller receives error info; handling: reject with error.
+  return await new Promise((resolve) => {
+    const resolveOnce = (payload) => {
+      //audit Assumption: stream resolves once; risk: double resolve; invariant: single resolve; handling: guard with flag.
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      resolve(payload);
+    };
+
+    stream.on('data', chunk => {
+      hasher.update(chunk);
+      sizeBytes += chunk.length;
+
+      //audit Assumption: head sample captures initial bytes; risk: empty file; invariant: head sample <= sampleBytes; handling: slice as needed.
+      if (headSample.length < sampleBytes) {
+        const remaining = sampleBytes - headSample.length;
+        headSample = Buffer.concat([headSample, chunk.slice(0, remaining)]);
+      }
+
+      //audit Assumption: tail sample captures final bytes; risk: very small files; invariant: tail sample <= sampleBytes; handling: keep rolling buffer.
+      if (chunk.length >= sampleBytes) {
+        tailSample = chunk.slice(-sampleBytes);
+      } else {
+        tailSample = Buffer.concat([tailSample, chunk]).slice(-sampleBytes);
+      }
+    });
+
+    stream.on('error', error => {
+      resolveOnce({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unknown stream error'
+      });
+    });
+
+    stream.on('end', () => {
+      resolveOnce({
+        ok: true,
+        hash: hasher.digest('hex'),
+        sizeBytes,
+        headSampleBase64: headSample.toString('base64'),
+        tailSampleBase64: tailSample.toString('base64')
+      });
+    });
+  });
+}
+
+/**
+ * Scan a file's content line-by-line for signals while hashing the content.
+ * Purpose: Extract findings without loading full content into memory.
+ * Inputs: root path, file path, dependency bag.
+ * Outputs: object with scan data or error info.
+ * Edge cases: unreadable files or stream errors.
+ */
+async function scanFileWithStream(root, filePath, dependencies) {
+  const { readline, exportPatterns, createReadStream } = dependencies;
+  const relativePath = normalizeRelativePath(path.relative(root, filePath));
+  const commentedLines = [];
+  const legacyMatches = [];
+  const exportMatches = [];
+  let lineCount = 0;
+
+  const hashResult = await buildStreamHashWithSamples(filePath, dependencies);
+
+  //audit Assumption: hash result must be ok to proceed; risk: incomplete scan; invariant: return error when hash fails; handling: short-circuit on error.
+  if (!hashResult.ok) {
+    return {
+      ok: false,
+      error: hashResult.error,
+      relativePath
+    };
+  }
+
+  const stream = createReadStream(filePath, { encoding: 'utf8' });
+  const lineReader = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+  try {
+    //audit Assumption: line reader emits each line; risk: encoding issues; invariant: line count increments per line; handling: best-effort line parse.
+    for await (const lineText of lineReader) {
+      lineCount += 1;
+
+      //audit Assumption: commented code matches heuristic; risk: false positives; invariant: logged for verification; handling: record line.
+      if (COMMENTED_CODE_PATTERN.test(lineText)) {
+        commentedLines.push({ file: relativePath, line: lineCount, message: lineText.trim() });
+      }
+
+      //audit Assumption: legacy patterns are detectable per line; risk: missing multi-line patterns; invariant: line-based scan; handling: test per line.
+      for (const pattern of LEGACY_PATTERNS) {
+        if (pattern.regex.test(lineText)) {
+          legacyMatches.push({
+            file: relativePath,
+            line: lineCount,
+            message: `${pattern.name} detected.`
+          });
+        }
+      }
+
+      //audit Assumption: export regexes cover main symbols; risk: missing other exports; invariant: baseline export mapping; handling: scan patterns.
+      for (const pattern of exportPatterns) {
+        for (const match of lineText.matchAll(pattern)) {
+          const name = match[1];
+          exportMatches.push({ name, file: relativePath, line: lineCount });
+        }
+      }
+    }
+  } catch (error) {
+    //audit Assumption: reader cleanup prevents leaks; risk: dangling stream; invariant: reader closed on error; handling: close reader.
+    lineReader.close();
+    //audit Assumption: stream parsing errors are recoverable per-file; risk: incomplete scan; invariant: error returned; handling: return scan error.
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown scan error',
+      relativePath
+    };
+  }
+
+  return {
+    ok: true,
+    relativePath,
+    lineCount,
+    commentedLines,
+    legacyMatches,
+    exportMatches,
+    hashResult
+  };
 }
 
 /**
@@ -437,7 +638,7 @@ function getLineAgeDays(root, relativeFile, lineNumber) {
  * Scan code files for content signals.
  * Purpose: Gather line counts, commented code, legacy patterns, exports, and hashes.
  * Inputs: root path and file list.
- * Outputs: structured scan results.
+ * Outputs: structured scan results including read errors.
  * Edge cases: unreadable files.
  */
 async function scanFiles(root, files) {
@@ -446,21 +647,38 @@ async function scanFiles(root, files) {
   const legacyMatches = [];
   const exportMap = new Map();
   const fileHashes = new Map();
+  const fileReadErrors = [];
+
+  const exportPatterns = [
+    /export\s+(?:async\s+)?function\s+(\w+)/g,
+    /export\s+class\s+(\w+)/g,
+    /export\s+const\s+(\w+)/g
+  ];
+
+  const scanDependencies = {
+    createReadStream,
+    crypto,
+    readline,
+    exportPatterns,
+    sampleBytes: DUPLICATE_SAMPLE_BYTES
+  };
 
   //audit Assumption: files list is complete; risk: missing content; invariant: scan each file; handling: iterate all files.
   for (const filePath of files) {
-    let content = '';
+    const scanResult = await scanFileWithStream(root, filePath, scanDependencies);
 
-    //audit Assumption: read errors should not stop scan; risk: missing file data; invariant: best-effort scan; handling: skip unreadable files.
-    try {
-      content = await fs.readFile(filePath, 'utf8');
-    } catch (error) {
+    //audit Assumption: failed scans should be reported; risk: silent omissions; invariant: errors logged; handling: collect error findings.
+    if (!scanResult.ok) {
+      fileReadErrors.push({
+        file: scanResult.relativePath,
+        line: 1,
+        message: `Failed to scan file: ${scanResult.error}`
+      });
       continue;
     }
 
-    const relativePath = normalizeRelativePath(path.relative(root, filePath));
-    const lines = content.split(/\r?\n/);
-    const lineCount = lines.length;
+    const relativePath = scanResult.relativePath;
+    const lineCount = scanResult.lineCount;
 
     //audit Assumption: line count threshold is 300; risk: misclassifying files; invariant: consistent threshold; handling: compare to MAX_MODULE_LINES.
     if (lineCount > MAX_MODULE_LINES) {
@@ -471,57 +689,34 @@ async function scanFiles(root, files) {
       });
     }
 
-    //audit Assumption: line scanning can detect patterns; risk: regex misses matches; invariant: scan all lines; handling: loop through lines.
-    for (let index = 0; index < lines.length; index += 1) {
-      const lineText = lines[index];
-      const lineNumber = index + 1;
+    commentedLines.push(...scanResult.commentedLines);
+    legacyMatches.push(...scanResult.legacyMatches);
 
-      //audit Assumption: commented code matches heuristic; risk: false positives; invariant: logged for verification; handling: record line.
-      if (COMMENTED_CODE_PATTERN.test(lineText)) {
-        commentedLines.push({ file: relativePath, line: lineNumber, message: lineText.trim() });
+    for (const exportMatch of scanResult.exportMatches) {
+      //audit Assumption: export names should aggregate entries; risk: missing map entry; invariant: map entry exists; handling: initialize when missing.
+      if (!exportMap.has(exportMatch.name)) {
+        exportMap.set(exportMatch.name, []);
       }
-
-      //audit Assumption: legacy patterns are detectable per line; risk: missing multi-line patterns; invariant: line-based scan; handling: test per line.
-      for (const pattern of LEGACY_PATTERNS) {
-        if (pattern.regex.test(lineText)) {
-          legacyMatches.push({
-            file: relativePath,
-            line: lineNumber,
-            message: `${pattern.name} detected.`
-          });
-        }
-      }
+      exportMap.get(exportMatch.name).push({ file: exportMatch.file, line: exportMatch.line });
     }
 
-    const exportPatterns = [
-      /export\s+(?:async\s+)?function\s+(\w+)/g,
-      /export\s+class\s+(\w+)/g,
-      /export\s+const\s+(\w+)/g
-    ];
+    const fingerprint = buildFileFingerprint(
+      scanResult.hashResult.sizeBytes,
+      scanResult.hashResult.headSampleBase64,
+      scanResult.hashResult.tailSampleBase64
+    );
 
-    //audit Assumption: export regexes cover main symbols; risk: missing other exports; invariant: baseline export mapping; handling: scan patterns.
-    for (const pattern of exportPatterns) {
-      for (const match of content.matchAll(pattern)) {
-        const name = match[1];
-        const beforeMatch = content.slice(0, match.index || 0);
-        const lineNumber = beforeMatch.split(/\r?\n/).length;
-
-        if (!exportMap.has(name)) {
-          exportMap.set(name, []);
-        }
-        exportMap.get(name).push({ file: relativePath, line: lineNumber });
-      }
-    }
-
-    //audit Assumption: file hashes help detect duplicates; risk: hash collisions; invariant: hash computed for each file; handling: store by hash.
-    const hash = crypto.createHash('sha1').update(content).digest('hex');
-    if (!fileHashes.has(hash)) {
-      fileHashes.set(hash, []);
-    }
-    fileHashes.get(hash).push(relativePath);
+    //audit Assumption: file hashes help detect duplicates; risk: hash collisions; invariant: hash computed for each file; handling: store by hash+size.
+    registerFileHashEntry(
+      fileHashes,
+      scanResult.hashResult.hash,
+      scanResult.hashResult.sizeBytes,
+      relativePath,
+      fingerprint
+    );
   }
 
-  return { largeFiles, commentedLines, legacyMatches, exportMap, fileHashes };
+  return { largeFiles, commentedLines, legacyMatches, exportMap, fileHashes, fileReadErrors };
 }
 
 /**
@@ -630,28 +825,60 @@ function buildDuplicateExportFindings(exportMap) {
 
 /**
  * Build findings from duplicate file hashes.
- * Purpose: Detect exact duplicate logic files.
- * Inputs: file hash map.
+ * Purpose: Detect exact duplicate logic files with secondary fingerprint verification.
+ * Inputs: file hash map keyed by hash and size.
  * Outputs: array of findings.
  * Edge cases: small files with boilerplate.
  */
 function buildDuplicateFileFindings(fileHashes) {
   const findings = [];
 
-  //audit Assumption: identical hashes indicate duplicate content; risk: boilerplate matches; invariant: duplicates flagged for review; handling: mark verify.
-  for (const [hash, files] of fileHashes.entries()) {
-    if (files.length < 2) {
-      continue;
-    }
+  //audit Assumption: identical hashes require verification; risk: collisions; invariant: confirm via fingerprint; handling: group by size+samples.
+  for (const [hash, sizeBuckets] of fileHashes.entries()) {
+    for (const [sizeBytes, bucket] of sizeBuckets.entries()) {
+      //audit Assumption: duplicate detection needs multiple files; risk: false positives; invariant: only evaluate groups with 2+ files; handling: skip singletons.
+      if (bucket.files.size < 2) {
+        continue;
+      }
 
-    for (const file of files) {
-      findings.push({
-        category: 'duplicate',
-        file,
-        line: 1,
-        message: `Duplicate file content (hash ${hash}) shared by ${files.join(', ')}`,
-        action: 'verify'
-      });
+      const fingerprintGroups = new Map();
+      for (const file of bucket.files) {
+        const fingerprint = bucket.fingerprints.get(file);
+        //audit Assumption: fingerprint exists for every file; risk: incomplete scan data; invariant: fingerprint required for verification; handling: emit warning and skip.
+        if (!fingerprint) {
+          findings.push({
+            category: 'duplicate',
+            file,
+            line: 1,
+            message: `Missing fingerprint for duplicate verification (hash ${hash}, size ${sizeBytes}b).`,
+            action: 'verify'
+          });
+          continue;
+        }
+        const fingerprintKey = buildFingerprintSignature(fingerprint);
+
+        if (!fingerprintGroups.has(fingerprintKey)) {
+          fingerprintGroups.set(fingerprintKey, []);
+        }
+        fingerprintGroups.get(fingerprintKey).push(file);
+      }
+
+      for (const [fingerprintKey, files] of fingerprintGroups.entries()) {
+        //audit Assumption: verified duplicates require matching fingerprints; risk: collisions; invariant: only emit duplicates when 2+ files share fingerprint; handling: skip singletons.
+        if (files.length < 2) {
+          continue;
+        }
+
+        for (const file of files) {
+          findings.push({
+            category: 'duplicate',
+            file,
+            line: 1,
+            message: `Duplicate file content (hash ${hash}, size ${sizeBytes}b, fingerprint ${fingerprintKey}) shared by ${files.join(', ')}`,
+            action: 'verify'
+          });
+        }
+      }
     }
   }
 
@@ -862,6 +1089,16 @@ async function auditWorkspace(root) {
     file => TEST_FILE_REGEX.test(path.basename(file)) || file.includes(`${path.sep}tests${path.sep}`)
   );
   const scanResults = await scanFiles(root, codeFiles);
+
+  for (const item of scanResults.fileReadErrors) {
+    findings.push({
+      category: 'scan-error',
+      file: item.file,
+      line: item.line,
+      message: item.message,
+      action: 'verify'
+    });
+  }
 
   for (const item of scanResults.largeFiles) {
     findings.push({
@@ -1097,4 +1334,3 @@ async function main() {
 }
 
 main();
-
