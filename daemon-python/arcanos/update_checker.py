@@ -79,3 +79,4 @@ def check_for_updates(
         "download_url": download_url,
         "body": (data.get("body") or "").strip() or None,
     }
+

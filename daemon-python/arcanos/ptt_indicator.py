@@ -7,7 +7,7 @@ import threading
 from typing import Optional
 import pystray
 from PIL import Image, ImageDraw
-from error_handler import handle_errors
+from .error_handler import handle_errors
 
 
 class PTTIndicator:
@@ -99,3 +99,4 @@ class PTTIndicator:
             else:
                 status = "Idle"
             self.icon.title = f"ARCANOS PTT ({status})"
+

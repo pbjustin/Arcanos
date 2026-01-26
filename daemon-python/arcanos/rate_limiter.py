@@ -6,7 +6,7 @@ Tracks and enforces request, token, and cost limits.
 import time
 from datetime import datetime, timedelta
 from typing import Optional
-from config import Config
+from .config import Config
 
 
 class RateLimiter:
@@ -84,3 +84,4 @@ class RateLimiter:
             f"   Tokens: {stats['tokens_today']:,}/{Config.MAX_TOKENS_PER_DAY:,} today\n"
             f"   Cost: ${stats['cost_today']:.4f}/${Config.MAX_COST_PER_DAY:.2f} today"
         )
+

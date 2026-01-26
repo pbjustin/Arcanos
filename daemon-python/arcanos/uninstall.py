@@ -12,7 +12,7 @@ try:
 except ModuleNotFoundError:
     winshell = None
 
-from config import Config
+from .config import Config
 
 
 class Uninstaller:
@@ -86,7 +86,7 @@ class Uninstaller:
         """Remove Windows Terminal profile"""
         try:
             import json
-            from windows_integration import WindowsIntegration
+            from .windows_integration import WindowsIntegration
 
             integration = WindowsIntegration()
             settings_path = integration.settings_path
@@ -226,3 +226,4 @@ class Uninstaller:
 if __name__ == "__main__":
     uninstaller = Uninstaller()
     uninstaller.uninstall(backup=True)
+

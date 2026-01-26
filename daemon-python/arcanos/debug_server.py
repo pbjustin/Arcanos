@@ -1,16 +1,38 @@
+"""
+Debug HTTP server for the ARCANOS daemon.
+Localhost-only API for IDE agents and scripts to inspect status, logs, audit, and run commands.
+"""
 
+import dataclasses
 import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
-    from cli import ArcanosCLI
+    from .cli import ArcanosCLI
 
-from config import Config
-from schema import Memory
+from .config import Config
+
+
+def _parse_query_int(
+    params: Dict[str, List[str]], key: str, default: int, min_val: int = 1, max_val: int = 1000
+) -> int:
+    """
+    Purpose: Parse and clamp an integer query parameter from parse_qs output.
+    Inputs/Outputs: params dict, key, default, min/max; returns clamped int.
+    Edge cases: Invalid or missing values return default; result clamped to [min_val, max_val].
+    """
+    vals = params.get(key, [str(default)])
+    try:
+        v = int(vals[0]) if vals else default
+        return max(min_val, min(max_val, v))
+    except (ValueError, TypeError, IndexError):
+        return default
+
 
 class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
@@ -42,6 +64,16 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, TypeError):
             return None
 
+    def _parse_query(self) -> Dict[str, List[str]]:
+        """Parse query string via urllib to avoid ValueError on malformed params."""
+        if "?" not in self.path:
+            return {}
+        try:
+            parsed = urlparse(self.path)
+            return parse_qs(parsed.query, keep_blank_values=False)
+        except Exception:
+            return {}
+
     def do_GET(self):
         try:
             if self.path == "/debug/status":
@@ -66,7 +98,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             body = self._read_body()
-            if body is None and self.path in ("/debug/ask", "/debug/run"): # see can have empty body
+            if body is None and self.path in ("/debug/ask", "/debug/run"):  # see can have empty body
                 self._send_response(400, error="Invalid or missing JSON body")
                 return
 
@@ -84,8 +116,8 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
     def get_status(self):
         uptime = time.time() - self.cli_instance.start_time
         status_data = {
-            "instanceId": self.cli_instance.daemon_service.instance_id if self.cli_instance.daemon_service else None,
-            "clientId": self.cli_instance.daemon_service.client_id if self.cli_instance.daemon_service else None,
+            "instanceId": getattr(self.cli_instance, "instance_id", None),
+            "clientId": getattr(self.cli_instance, "client_id", None),
             "uptime": int(uptime),
             "backend_configured": bool(Config.BACKEND_URL),
             "version": Config.VERSION,
@@ -94,29 +126,25 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         self._send_response(200, status_data)
 
     def get_instance_id(self):
-        instance_id = self.cli_instance.daemon_service.instance_id if self.cli_instance.daemon_service else None
+        instance_id = getattr(self.cli_instance, "instance_id", None)
         self._send_response(200, {"instanceId": instance_id})
 
     def get_chat_log(self):
         memory = self.cli_instance.memory
-        # Assuming get_recent_conversations exists and returns a list of dicts
         raw_conversations = memory.get_recent_conversations(limit=10)
         chat_log = []
         for c in raw_conversations:
             chat_log.append({"role": "user", "message": c.get("user"), "timestamp": c.get("timestamp")})
             chat_log.append({"role": "assistant", "message": c.get("ai"), "timestamp": c.get("timestamp")})
-        
+
         self._send_response(200, {
             "chat_log": chat_log,
             "last_error": getattr(self.cli_instance, "_last_error", None),
         })
 
     def get_logs(self):
-        tail = 50
-        if "?" in self.path:
-            query = self.path.split("?", 1)[1]
-            params = dict(p.split("=") for p in query.split("&"))
-            tail = int(params.get("tail", 50))
+        params = self._parse_query()
+        tail = _parse_query_int(params, "tail", 50, min_val=1, max_val=2000)
 
         log_file = Config.LOG_DIR / "errors.log"
         if not log_file.exists():
@@ -125,7 +153,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
 
         with open(log_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
-        
+
         self._send_response(200, {"path": str(log_file), "lines": lines[-tail:]})
 
     def get_log_files(self):
@@ -139,14 +167,15 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         self._send_response(200, {"log_dir": str(log_dir), "files": files})
 
     def get_audit(self):
-        limit = 50
-        if "?" in self.path:
-            query = self.path.split("?", 1)[1]
-            params = dict(p.split("=") for p in query.split("&"))
-            limit = int(params.get("limit", 50))
-        
-        with self.cli_instance._activity_lock:
-            entries = list(self.cli_instance._activity)[:limit]
+        params = self._parse_query()
+        limit = _parse_query_int(params, "limit", 50, min_val=1, max_val=500)
+
+        entries = []
+        lock = getattr(self.cli_instance, "_activity_lock", None)
+        activity = getattr(self.cli_instance, "_activity", None)
+        if lock and activity is not None:
+            with lock:
+                entries = list(activity)[:limit]
 
         self._send_response(200, {"entries": entries})
 
@@ -179,7 +208,8 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         result = self.cli_instance.handle_ask(message, route_override=route_override, return_result=True, from_debug=True)
 
         if result:
-            self._send_response(200, result._asdict())
+            # _ConversationResult is a dataclass; use asdict (not _asdict)
+            self._send_response(200, dataclasses.asdict(result))
         else:
             self._send_response(500, error="Failed to handle 'ask' command.")
 
@@ -205,12 +235,11 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     pass
 
+
 def start_debug_server(cli: "ArcanosCLI", port: int):
     """Starts the debug HTTP server in a daemon thread."""
 
     def handler(*args, **kwargs):
-        # We need to pass the CLI instance to the handler.
-        # This is a bit of a hack, but it's the cleanest way with http.server.
         handler_class = DebugAPIHandler
         handler_class.cli_instance = cli
         return handler_class(*args, **kwargs)
@@ -220,3 +249,4 @@ def start_debug_server(cli: "ArcanosCLI", port: int):
 
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
+

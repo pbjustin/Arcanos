@@ -13,3 +13,4 @@ def normalize_backend_url(base_url: str) -> str:
     """
     # //audit assumption: URL is a string; risk: trailing slash duplication; invariant: no trailing slash; strategy: rstrip.
     return base_url.strip().rstrip("/")
+
