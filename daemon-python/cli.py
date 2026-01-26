@@ -88,7 +88,7 @@ class ArcanosCLI:
     def _append_activity(self, kind: str, detail: str):
         with self._activity_lock:
             self._activity.appendleft({
-                "ts": time.isoformat(time.gmtime()),
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "kind": kind,
                 "detail": detail
             })
