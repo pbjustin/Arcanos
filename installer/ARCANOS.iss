@@ -24,13 +24,13 @@ Compression=lzma
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=admin
-SetupIconFile=..\daemon-python\assets\icon.ico
+SetupIconFile=..\daemon-python\arcanos\assets\icon.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 WizardStyle=modern
 
 [Files]
 Source: "..\daemon-python\dist_new\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\daemon-python\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\daemon-python\arcanos\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\daemon-python\.env.example"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

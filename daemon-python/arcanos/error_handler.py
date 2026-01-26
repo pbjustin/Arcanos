@@ -9,7 +9,7 @@ from typing import Callable, Any, Optional, TypeVar
 T = TypeVar("T")
 
 from functools import wraps
-from config import Config
+from .config import Config
 
 # Optional Sentry integration
 try:

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional, Union, Dict, List
 from datetime import datetime
-from config import Config
+from .config import Config
 
 JsonValue = Union[str, int, float, bool, None, List["JsonValue"], Dict[str, "JsonValue"]]
 
@@ -50,7 +50,6 @@ class Memory:
             },
             "settings": {
                 "telemetry_consent": None,  # None = not asked, True/False = consent
-                "windows_integration_installed": False,
                 "first_run": True,
                 "instance_id": None  # Persistent daemon instance ID
             }

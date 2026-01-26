@@ -283,7 +283,13 @@ async function checkAPIContract(clientFile, endpoint) {
   try {
     content = await fs.readFile(filePath, 'utf-8');
   } catch {
-    return { type: 'file_not_found', file: clientFile, severity: 'error' };
+    return {
+      type: 'file_not_found',
+      file: clientFile,
+      severity: 'error',
+      message: `Client file not found: ${clientFile}`,
+      fix: `Ensure ${path.join('daemon-python', clientFile)} exists`
+    };
   }
 
   const issues = [];
@@ -346,10 +352,10 @@ async function checkAPIContracts() {
   console.log('\n🔍 Checking API contract alignment...\n');
   
   const contractChecks = [
-    { endpoint: '/api/ask', clientFile: 'backend_client.py' },
-    { endpoint: '/api/vision', clientFile: 'backend_client.py' },
-    { endpoint: '/api/transcribe', clientFile: 'backend_client.py' },
-    { endpoint: '/api/update', clientFile: 'backend_client.py' }
+    { endpoint: '/api/ask', clientFile: path.join('arcanos', 'backend_client.py') },
+    { endpoint: '/api/vision', clientFile: path.join('arcanos', 'backend_client.py') },
+    { endpoint: '/api/transcribe', clientFile: path.join('arcanos', 'backend_client.py') },
+    { endpoint: '/api/update', clientFile: path.join('arcanos', 'backend_client.py') }
   ];
 
   const allIssues = [];
@@ -383,7 +389,7 @@ async function checkVersionSync() {
     const nodeVersion = packageJson.version;
     
     // Check Python version in config.py
-    const configPath = path.join(ROOT, 'daemon-python', 'config.py');
+    const configPath = path.join(ROOT, 'daemon-python', 'arcanos', 'config.py');
     const configContent = await fs.readFile(configPath, 'utf-8');
     const pythonVersionMatch = configContent.match(/VERSION\s*[:=]\s*["']([^"']+)["']/);
     const pythonVersion = pythonVersionMatch ? pythonVersionMatch[1] : null;
@@ -558,7 +564,7 @@ async function detectBreakingChanges() {
   // Check if server routes have changed but daemon hasn't been updated
   // Check src/routes (source of truth)
   const routesDir = path.join(ROOT, 'src', 'routes');
-  const clientFile = path.join(ROOT, 'daemon-python', 'backend_client.py');
+  const clientFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_client.py');
   
   try {
     // Check src/routes (source of truth)
@@ -642,8 +648,8 @@ async function detectDaemonChangesNotMatchingServer() {
   
   const issues = [];
   
-  const daemonClientFile = path.join(ROOT, 'daemon-python', 'backend_client.py');
-  const daemonAuthFile = path.join(ROOT, 'daemon-python', 'backend_auth_client.py');
+  const daemonClientFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_client.py');
+  const daemonAuthFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_auth_client.py');
   // Check src/routes (source of truth)
   const routesDir = path.join(ROOT, 'src', 'routes');
   
@@ -658,7 +664,7 @@ async function detectDaemonChangesNotMatchingServer() {
         type: 'daemon_file_missing',
         severity: 'error',
         message: 'Daemon client file not found',
-        fix: 'Ensure daemon-python/backend_client.py exists'
+        fix: 'Ensure daemon-python/arcanos/backend_client.py exists'
       });
       return issues;
     }
@@ -875,7 +881,7 @@ async function detectServerChangesRequiringDaemonUpdates() {
   
   // Check API routes in server
   const routesDir = path.join(ROOT, 'src', 'routes');
-  const daemonClientFile = path.join(ROOT, 'daemon-python', 'backend_client.py');
+  const daemonClientFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_client.py');
   
   try {
     const routeFiles = await fs.readdir(routesDir);
@@ -889,7 +895,7 @@ async function detectServerChangesRequiringDaemonUpdates() {
         type: 'daemon_file_missing',
         severity: 'error',
         message: 'Daemon client file not found - daemon cannot follow server',
-        fix: 'Ensure daemon-python/backend_client.py exists'
+        fix: 'Ensure daemon-python/arcanos/backend_client.py exists'
       });
       return issues;
     }
@@ -918,7 +924,7 @@ async function detectServerChangesRequiringDaemonUpdates() {
               source: 'server',
               target: 'daemon',
               message: `🔴 SERVER (source of truth) defines ${endpoint}, but DAEMON (extension) is missing '${contract.clientMethod}()'`,
-              fix: `Update daemon: Add ${contract.clientMethod}() method to daemon-python/backend_client.py`,
+              fix: `Update daemon: Add ${contract.clientMethod}() method to daemon-python/arcanos/backend_client.py`,
               priority: 'high',
               action: 'daemon_must_follow_server'
             });

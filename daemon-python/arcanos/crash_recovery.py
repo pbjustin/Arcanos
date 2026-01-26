@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
-from config import Config
+from .config import Config
 
 
 class CrashRecovery:

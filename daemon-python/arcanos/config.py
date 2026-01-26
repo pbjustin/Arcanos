@@ -47,11 +47,35 @@ def _get_user_data_dir() -> Optional[Path]:
         return None
 
 
-_user_data_dir = _get_user_data_dir() if _frozen else None
-# When frozen, base must be user-writable; else use package dir.
-BASE_DIR: Path = (
-    _user_data_dir if (_frozen and _user_data_dir) else Path(__file__).parent
-)
+def _resolve_base_dir() -> Path:
+    """
+    Purpose: Resolve the base directory for data, logs, and .env resolution.
+    Inputs/Outputs: None; returns a writable Path.
+    Edge cases: Falls back to package directory if user data dir cannot be created.
+    """
+    package_dir = Path(__file__).resolve().parent
+    project_root = package_dir.parent
+
+    if _frozen:
+        user_dir = _get_user_data_dir()
+        if user_dir:
+            # //audit assumption: frozen apps must write to user dir; risk: permissions; invariant: user dir used; strategy: prefer user dir.
+            return user_dir
+
+    # //audit assumption: dev installs keep config at daemon-python root; risk: missing files; invariant: use project root when markers exist.
+    if (project_root / ".env.example").exists() or (project_root / "requirements.txt").exists():
+        return project_root
+
+    user_dir = _get_user_data_dir()
+    if user_dir:
+        # //audit assumption: user dir available; risk: permission errors; invariant: user dir used; strategy: fallback to user dir.
+        return user_dir
+
+    # //audit assumption: fallback to package dir; risk: read-only install; invariant: best-effort; strategy: use package dir.
+    return package_dir
+
+
+BASE_DIR: Path = _resolve_base_dir()
 
 
 def _load_dotenv_fallback(path: Path) -> None:
@@ -84,13 +108,15 @@ def _get_primary_env_path() -> Path:
 
 
 def _get_fallback_env_path() -> Optional[Path]:
-    appdata = os.getenv("APPDATA")
-    if appdata:
-        return Path(appdata) / "ARCANOS" / ".env"
-
-    userprofile = os.getenv("USERPROFILE")
-    if userprofile:
-        return Path(userprofile) / ".arcanos" / ".env"
+    """
+    Purpose: Resolve a cross-platform fallback .env path.
+    Inputs/Outputs: None; returns a candidate Path or None.
+    Edge cases: Returns None when user data dir unavailable.
+    """
+    user_data_dir = _get_user_data_dir()
+    if user_data_dir:
+        # //audit assumption: user data dir available; risk: permission issues; invariant: fallback path derived; strategy: return .env under data dir.
+        return user_data_dir / ".env"
 
     return None
 
@@ -181,7 +207,7 @@ class Config:
     # ============================================
     # Storage Paths
     # ============================================
-    BASE_DIR: Path = BASE_DIR  # module-level: user data dir when frozen, else Path(__file__).parent
+    BASE_DIR: Path = BASE_DIR  # module-level resolved base dir (frozen/user data or project root fallback)
     MEMORY_FILE: Path = BASE_DIR / os.getenv("MEMORY_FILE", "memories.json")
     LOG_DIR: Path = BASE_DIR / os.getenv("LOG_DIR", "logs")
     SCREENSHOT_DIR: Path = BASE_DIR / os.getenv("SCREENSHOT_DIR", "screenshots")
@@ -191,7 +217,7 @@ class Config:
     # ============================================
     # Security Settings
     # ============================================
-    # Run PowerShell/CMD with elevation (Start-Process -Verb RunAs) so admin-required tasks work. UAC prompt per run when True.
+    # Run shell commands with elevation (UAC on Windows, sudo on Unix) so admin-required tasks work. Prompt per run when True.
     RUN_ELEVATED: bool = os.getenv("RUN_ELEVATED", "false").lower() == "true"
     # Prompt "Do you confirm this action?" before sensitive daemon commands (run, mouse, keyboard, etc.). Set false to skip.
     CONFIRM_SENSITIVE_ACTIONS: bool = os.getenv("CONFIRM_SENSITIVE_ACTIONS", "true").strip().lower() in ("true", "1", "yes")

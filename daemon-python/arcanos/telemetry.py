@@ -8,7 +8,7 @@ import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
-from config import Config
+from .config import Config
 
 try:
     import sentry_sdk

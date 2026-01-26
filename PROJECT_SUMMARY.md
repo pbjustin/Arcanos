@@ -8,7 +8,7 @@
 
 ## 📋 Project Overview
 
-ARCANOS is a production-ready AI assistant daemon that integrates with Windows Terminal, providing:
+ARCANOS is a production-ready AI assistant daemon that provides a cross-platform terminal CLI, including:
 - GPT-4o Mini conversation with natural personality
 - Vision analysis (screen + camera capture)
 - Voice commands with advanced push-to-talk
@@ -21,27 +21,30 @@ ARCANOS is a production-ready AI assistant daemon that integrates with Windows T
 
 ```
 arcanos-hybrid/
-├── daemon-python/              # Main Python daemon (local)
-│   ├── cli.py                  # Main CLI interface ⭐
-│   ├── gpt_client.py           # OpenAI SDK integration
-│   ├── vision.py               # Screen/camera capture + GPT-4o Vision
-│   ├── audio.py                # Speech recognition + TTS
-│   ├── terminal.py             # PowerShell/CMD execution
-│   ├── push_to_talk.py         # Advanced PTT with VAD
-│   ├── ptt_indicator.py        # System tray indicator
-│   ├── vad_processor.py        # Voice Activity Detection
-│   ├── config.py               # Configuration management
-│   ├── schema.py               # Memory/data persistence
-│   ├── rate_limiter.py         # Request/token/cost limits
-│   ├── error_handler.py        # Centralized error handling
-│   ├── crash_recovery.py       # Auto-restart on crash
-│   ├── telemetry.py            # Opt-in analytics
-│   ├── uninstall.py            # Complete removal tool
-│   ├── windows_integration.py  # Terminal profile + shortcuts
+├── daemon-python/              # Python CLI daemon (cross-platform)
+│   ├── pyproject.toml          # Package metadata + entrypoint
 │   ├── requirements.txt        # Python dependencies
 │   ├── .env.example            # Configuration template
 │   ├── arcanos.spec            # PyInstaller build config
-│   └── assets/                 # Icons and resources
+│   └── arcanos/                # Python package
+│       ├── __init__.py         # Package metadata
+│       ├── cli.py              # Main CLI interface ⭐
+│       ├── gpt_client.py       # OpenAI SDK integration
+│       ├── vision.py           # Screen/camera capture + GPT-4o Vision
+│       ├── audio.py            # Speech recognition + TTS
+│       ├── terminal.py         # Cross-platform shell execution
+│       ├── push_to_talk.py     # Advanced PTT with VAD
+│       ├── ptt_indicator.py    # System tray indicator
+│       ├── vad_processor.py    # Voice Activity Detection
+│       ├── config.py           # Configuration management
+│       ├── schema.py           # Memory/data persistence
+│       ├── rate_limiter.py     # Request/token/cost limits
+│       ├── error_handler.py    # Centralized error handling
+│       ├── crash_recovery.py   # Auto-restart on crash
+│       ├── telemetry.py        # Opt-in analytics
+│       ├── uninstall.py        # Complete removal tool
+│       ├── memory/             # Bootstrap data
+│       └── assets/             # Icons and resources
 │
 ├── src/                        # Express backend (source of truth, Railway-deployed)
 │   ├── start-server.ts        # Main server entry ⭐
@@ -188,7 +191,7 @@ arcanos-hybrid/
 ```powershell
 cd daemon-python
 .\venv\Scripts\Activate.ps1
-python cli.py
+python -m arcanos.cli
 ```
 
 ### Build .exe
@@ -372,7 +375,7 @@ SHOW_STATS=true
 ### For Local Use (Ready Now):
 1. Run `.\setup.ps1`
 2. Add OpenAI API key
-3. Start using: `python cli.py`
+3. Start using: `python -m arcanos.cli`
 
 ### For Distribution:
 1. Create icon assets in `daemon-python/assets/`

@@ -8,17 +8,17 @@ import time
 import speech_recognition as sr
 from typing import Optional, Callable
 from pynput import keyboard
-from audio import AudioSystem
-from error_handler import handle_errors
+from .audio import AudioSystem
+from .error_handler import handle_errors
 
 try:
-    from vad_processor import VADProcessor
+    from .vad_processor import VADProcessor
     VAD_AVAILABLE = True
 except ImportError:
     VAD_AVAILABLE = False
 
 try:
-    from ptt_indicator import PTTIndicator
+    from .ptt_indicator import PTTIndicator
     INDICATOR_AVAILABLE = True
 except ImportError:
     INDICATOR_AVAILABLE = False

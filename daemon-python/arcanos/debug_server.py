@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 if TYPE_CHECKING:
     from cli import ArcanosCLI
 
-from config import Config
-from schema import Memory
+from .config import Config
+from .schema import Memory
 
 class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
@@ -84,8 +84,8 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
     def get_status(self):
         uptime = time.time() - self.cli_instance.start_time
         status_data = {
-            "instanceId": self.cli_instance.daemon_service.instance_id if self.cli_instance.daemon_service else None,
-            "clientId": self.cli_instance.daemon_service.client_id if self.cli_instance.daemon_service else None,
+            "instanceId": getattr(self.cli_instance, "instance_id", None),
+            "clientId": getattr(self.cli_instance, "client_id", None),
             "uptime": int(uptime),
             "backend_configured": bool(Config.BACKEND_URL),
             "version": Config.VERSION,
@@ -94,7 +94,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         self._send_response(200, status_data)
 
     def get_instance_id(self):
-        instance_id = self.cli_instance.daemon_service.instance_id if self.cli_instance.daemon_service else None
+        instance_id = getattr(self.cli_instance, "instance_id", None)
         self._send_response(200, {"instanceId": instance_id})
 
     def get_chat_log(self):

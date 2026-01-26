@@ -86,7 +86,7 @@ api_key = "sk-proj-abc123..."
    ```powershell
    # Set temporarily
    $env:OPENAI_API_KEY="sk-..."
-   python cli.py
+   python -m arcanos.cli
    
    # Or use .env file (recommended)
    ```

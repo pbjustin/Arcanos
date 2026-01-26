@@ -22,37 +22,44 @@ from rich.markdown import Markdown
 from rich import print as rprint
 from collections import deque
 
-from config import Config
-from backend_client import BackendApiClient, BackendResponse, BackendRequestError
-from daemon_system_definition import (
+from .config import Config
+from .backend_client import BackendApiClient, BackendResponse, BackendRequestError
+from .daemon_system_definition import (
     build_daemon_system_prompt,
     DEFAULT_BACKEND_BLOCK,
     format_registry_for_prompt,
 )
-from conversation_routing import (
+from .conversation_routing import (
     compute_backend_confidence,
     determine_conversation_route,
     build_conversation_messages,
     ConversationRouteDecision,
 )
-from media_routing import parse_vision_route_args, parse_voice_route_args
-from credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
-from schema import Memory
-from gpt_client import GPTClient
-from vision import VisionSystem
-from audio import AudioSystem
-from terminal import TerminalController
-from rate_limiter import RateLimiter
-from error_handler import handle_errors, ErrorHandler, logger as error_logger
-from windows_integration import WindowsIntegration
-from daemon_service import DaemonService, DaemonCommand
-from update_checker import check_for_updates
+from .media_routing import parse_vision_route_args, parse_voice_route_args
+from .credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
+from .schema import Memory
+from .gpt_client import GPTClient
+from .vision import VisionSystem
+from .audio import AudioSystem
+from .terminal import TerminalController
+from .rate_limiter import RateLimiter
+from .error_handler import handle_errors, ErrorHandler, logger as error_logger
+from .update_checker import check_for_updates
 
 try:
-    from push_to_talk import AdvancedPushToTalkManager
+    from .push_to_talk import AdvancedPushToTalkManager
     PTT_AVAILABLE = True
 except ImportError:
     PTT_AVAILABLE = False
+
+
+@dataclass
+class DaemonCommand:
+    """Represents a command from the backend"""
+    id: str
+    name: str
+    payload: Mapping[str, Any]
+    issuedAt: str
 
 
 @dataclass(frozen=True)
@@ -96,7 +103,14 @@ class ArcanosCLI:
 
         # Generate or retrieve persistent instance ID
         self.instance_id = self._get_or_create_instance_id()
-        self.client_id = "arcanos-daemon"  # Static client identifier
+        self.client_id = "arcanos-cli"  # Client identifier for CLI application
+
+        # Daemon thread management (integrated from daemon_service.py)
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._command_poll_thread: Optional[threading.Thread] = None
+        self._daemon_running = False
+        self._heartbeat_interval = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "30"))
+        self._command_poll_interval = 10  # Poll commands every 10 seconds
 
         try:
             self.gpt_client = GPTClient()
@@ -108,7 +122,6 @@ class ArcanosCLI:
         self.vision = VisionSystem(self.gpt_client)
         self.audio = AudioSystem(self.gpt_client)
         self.terminal = TerminalController()
-        self.windows_integration = WindowsIntegration()
         self._last_response: Optional[str] = None
 
         self.backend_client: Optional[BackendApiClient] = None
@@ -130,19 +143,10 @@ class ArcanosCLI:
             # //audit assumption: backend registry fetch is best-effort; risk: startup delay; invariant: fallback prompt; strategy: attempt fetch.
             self._refresh_registry_cache()
 
-        # Daemon service for HTTP-based heartbeat and command polling
-        self.daemon_service: Optional[DaemonService] = None
+        # Start daemon threads for HTTP-based heartbeat and command polling
         if Config.BACKEND_URL and self.backend_client:
-            # Start daemon service for HTTP mode (always when backend is configured)
-            self.daemon_service = DaemonService(
-                backend_client=self.backend_client,
-                instance_id=self.instance_id,
-                client_id=self.client_id,
-                command_handler=self._handle_daemon_command,
-                start_time=self.start_time
-            )
-            self.daemon_service.start()
-            self.console.print(f"[green]✓[/green] Daemon service started (HTTP mode)")
+            self._start_daemon_threads()
+            self.console.print(f"[green]✓[/green] Backend connection active (heartbeat + command polling)")
 
         # PTT Manager
         self.ptt_manager = None
@@ -173,7 +177,7 @@ class ArcanosCLI:
             try:
                 port = Config.DAEMON_DEBUG_PORT if (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0) else 9999
                 # Late import to avoid loading when not in use
-                from debug_server import start_debug_server
+                from .debug_server import start_debug_server
                 start_debug_server(self, port)
                 self.console.print(f"[green]✓[/green] IDE agent debug server on 127.0.0.1:{port}")
             except Exception as e:
@@ -234,16 +238,6 @@ Type **help** for available commands or just start chatting naturally.
                 self.console.print("[green]✅ Telemetry enabled[/green]")
             else:
                 self.console.print("[green]✅ Telemetry disabled[/green]")
-
-        # Windows integration
-        if not self.memory.get_setting("windows_integration_installed", False):
-            self.console.print("\n[yellow]🪟 Windows Integration[/yellow]")
-            self.console.print("Install Windows Terminal profile and desktop shortcuts?")
-
-            install = input("\nInstall now? (y/n): ").lower().strip()
-            if install == 'y':
-                success = self.windows_integration.install_all()
-                self.memory.set_setting("windows_integration_installed", success)
 
         self.memory.set_setting("first_run", False)
 
@@ -471,11 +465,139 @@ Type **help** for available commands or just start chatting naturally.
 
         return self._confirm_pending_actions(confirmation_id)
 
+    def _start_daemon_threads(self) -> None:
+        """Start heartbeat and command polling threads"""
+        if self._daemon_running:
+            return
+        
+        if not self.backend_client:
+            return
+
+        self._daemon_running = True
+
+        # Start heartbeat thread
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name="daemon-heartbeat"
+        )
+        self._heartbeat_thread.start()
+
+        # Start command polling thread
+        self._command_poll_thread = threading.Thread(
+            target=self._command_poll_loop,
+            daemon=True,
+            name="daemon-command-poll"
+        )
+        self._command_poll_thread.start()
+
+    def _heartbeat_loop(self) -> None:
+        """Background thread that sends periodic heartbeats"""
+        while self._daemon_running:
+            try:
+                if not self.backend_client:
+                    break
+                    
+                uptime = time.time() - self.start_time
+                
+                # Send heartbeat via backend client
+                response = self.backend_client._make_request(
+                    "POST",
+                    "/api/daemon/heartbeat",
+                    json={
+                        "clientId": self.client_id,
+                        "instanceId": self.instance_id,
+                        "version": Config.VERSION,
+                        "uptime": uptime,
+                        "routingMode": "http",
+                        "stats": {}
+                    }
+                )
+
+                if response.status_code != 200:
+                    # Log error but continue
+                    print(f"[DAEMON] Heartbeat failed: {response.status_code}")
+
+            except Exception as e:
+                # Log error but continue
+                print(f"[DAEMON] Heartbeat error: {e}")
+
+            # Wait for next heartbeat
+            time.sleep(self._heartbeat_interval)
+
+    def _command_poll_loop(self) -> None:
+        """Background thread that polls for commands"""
+        while self._daemon_running:
+            try:
+                if not self.backend_client:
+                    break
+                    
+                # Poll for commands
+                response = self.backend_client._make_request(
+                    "GET",
+                    f"/api/daemon/commands?instance_id={self.instance_id}"
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    commands = data.get("commands", [])
+
+                    if commands:
+                        # Process each command
+                        command_ids = []
+                        for cmd_data in commands:
+                            try:
+                                command = DaemonCommand(
+                                    id=cmd_data["id"],
+                                    name=cmd_data["name"],
+                                    payload=cmd_data["payload"],
+                                    issuedAt=cmd_data["issuedAt"]
+                                )
+                                # Call handler
+                                self._handle_daemon_command(command)
+                                command_ids.append(command.id)
+                            except Exception as e:
+                                print(f"[DAEMON] Error handling command {cmd_data.get('id')}: {e}")
+
+                        # Acknowledge processed commands
+                        if command_ids:
+                            try:
+                                ack_response = self.backend_client._make_request(
+                                    "POST",
+                                    "/api/daemon/commands/ack",
+                                    json={
+                                        "commandIds": command_ids,
+                                        "instanceId": self.instance_id
+                                    }
+                                )
+                                if ack_response.status_code != 200:
+                                    print(f"[DAEMON] Command ack failed: {ack_response.status_code}")
+                            except Exception as e:
+                                print(f"[DAEMON] Command ack error: {e}")
+
+                elif response.status_code == 401:
+                    # Authentication failed, stop polling
+                    print("[DAEMON] Authentication failed, stopping command polling")
+                    break
+                else:
+                    # Log error but continue
+                    print(f"[DAEMON] Command poll failed: {response.status_code}")
+
+            except BackendRequestError as e:
+                # Network/request error, log and continue
+                print(f"[DAEMON] Command poll request error: {e}")
+            except Exception as e:
+                # Unexpected error, log and continue
+                print(f"[DAEMON] Command poll error: {e}")
+
+            # Wait before next poll
+            time.sleep(self._command_poll_interval)
+
     def _handle_daemon_command(self, command: DaemonCommand) -> None:
         """
         Handle daemon command from HTTP polling.
         Processes commands from the backend (ping, get_status, get_stats, notify).
-        Note: DaemonService handles acknowledgment automatically.
+        Commands are automatically acknowledged after processing.
         """
         command_name = command.name
         command_payload = command.payload or {}
@@ -525,10 +647,12 @@ Type **help** for available commands or just start chatting naturally.
             self.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
 
     def _stop_daemon_service(self) -> None:
-        """Stop daemon service threads"""
-        if self.daemon_service:
-            self.daemon_service.stop()
-            self.daemon_service = None
+        """Stop daemon threads"""
+        self._daemon_running = False
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=5.0)
+        if self._command_poll_thread:
+            self._command_poll_thread.join(timeout=5.0)
 
     def _perform_local_conversation(self, message: str) -> Optional[_ConversationResult]:
         history = self.memory.get_recent_conversations(limit=5)
@@ -1156,7 +1280,7 @@ Type **help** for available commands or just start chatting naturally.
             self.console.print(f"[cyan]💻 Running:[/cyan] {command}")
 
         # Execute command
-        stdout, stderr, return_code = self.terminal.execute_powershell(
+        stdout, stderr, return_code = self.terminal.execute(
             command, elevated=Config.RUN_ELEVATED
         )
 
@@ -1250,8 +1374,8 @@ Type **help** for available commands or just start chatting naturally.
 - **speak** - Replay the last response (TTS)
 
 ### Terminal
-- **run <command>** - Execute PowerShell command
-  Example: `run Get-Process`
+- **run <command>** - Execute shell command (PowerShell on Windows, bash/sh on macOS/Linux)
+  Examples: `run Get-Process` (Windows), `run ls -la` (macOS/Linux)
 
 ### System
 - **stats** - Show usage statistics
@@ -1463,8 +1587,12 @@ You: ptt
                 self.handle_ask(user_input)
 
 
-# //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.
-if __name__ == "__main__":
+def main() -> None:
+    """
+    Purpose: Console script entry point for ARCANOS CLI.
+    Inputs/Outputs: None; runs the CLI loop and exits on fatal errors.
+    Edge cases: Exits with status 1 when credential bootstrap fails.
+    """
     # //audit assumption: bootstrap runs before CLI; risk: missing credentials; invariant: credentials ready; strategy: bootstrap then run.
     try:
         bootstrap_credentials()
@@ -1474,6 +1602,12 @@ if __name__ == "__main__":
         print(f"Crash reports are saved to: {Config.CRASH_REPORTS_DIR}")
         sys.exit(1)
 
+    # //audit assumption: debug flag toggles mode; risk: unexpected behavior; invariant: boolean flag; strategy: parse argv.
     debug_mode = "--debug-mode" in sys.argv
     cli = ArcanosCLI()
     cli.run(debug_mode=debug_mode)
+
+
+# //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.
+if __name__ == "__main__":
+    main()

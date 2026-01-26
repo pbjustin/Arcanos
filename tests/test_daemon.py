@@ -7,13 +7,20 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 import json
+import sys
+
+# Ensure daemon-python package root is on sys.path for tests
+DAEMON_ROOT = Path(__file__).resolve().parents[1] / "daemon-python"
+if str(DAEMON_ROOT) not in sys.path:
+    # //audit assumption: tests run from repo root; risk: missing package path; invariant: sys.path includes daemon root; strategy: insert path.
+    sys.path.insert(0, str(DAEMON_ROOT))
 
 # Import modules to test
-from daemon-python.config import Config
-from daemon-python.schema import Memory
-from daemon-python.gpt_client import GPTClient
-from daemon-python.rate_limiter import RateLimiter
-from daemon-python.terminal import TerminalController
+from arcanos.config import Config
+from arcanos.schema import Memory
+from arcanos.gpt_client import GPTClient
+from arcanos.rate_limiter import RateLimiter
+from arcanos.terminal import TerminalController
 
 
 class TestConfig:
@@ -135,8 +142,8 @@ class TestTerminalController:
         """Test executing safe command"""
         controller = TerminalController()
 
-        # Execute simple PowerShell command
-        stdout, stderr, return_code = controller.execute_powershell("Write-Output 'test'")
+        # Execute simple cross-platform shell command
+        stdout, stderr, return_code = controller.execute_powershell("echo test")
 
         assert stdout is not None or stderr is not None
         assert isinstance(return_code, int)
@@ -145,13 +152,20 @@ class TestTerminalController:
 class TestGPTClient:
     """Test GPT client (mocked)"""
 
-    @patch('daemon-python.gpt_client.OpenAI')
+    @patch('arcanos.gpt_client.OpenAI')
     def test_gpt_client_initialization(self, mock_openai):
         """Test GPT client initialization"""
-        with pytest.raises(ValueError):
-            GPTClient(api_key="")
+        original_key = Config.OPENAI_API_KEY
+        try:
+            Config.OPENAI_API_KEY = ""
+            with pytest.raises(ValueError):
+                GPTClient(api_key="")
+            with pytest.raises(ValueError):
+                GPTClient()
+        finally:
+            Config.OPENAI_API_KEY = original_key
 
-    @patch('daemon-python.gpt_client.OpenAI')
+    @patch('arcanos.gpt_client.OpenAI')
     def test_ask_method(self, mock_openai):
         """Test ask method with mock"""
         mock_client = MagicMock()
@@ -162,7 +176,7 @@ class TestGPTClient:
 
         mock_openai.return_value = mock_client
 
-        client = GPTClient(api_key="test-key")
+        client = GPTClient(api_key="live-key")
         client.client = mock_client
 
         response, tokens, cost = client.ask("Hello")

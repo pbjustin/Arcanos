@@ -35,7 +35,7 @@
     "/api/ask": {
       "serverRoute": "src/routes/api-ask.ts",
       "clientMethod": "request_chat_completion",
-      "clientFile": "daemon-python/backend_client.py",
+      "clientFile": "daemon-python/arcanos/backend_client.py",
       "requestFields": {
         "messages": { "type": "array", "required": true },
         "temperature": { "type": "number", "required": false },
@@ -52,7 +52,7 @@
     "/api/vision": {
       "serverRoute": "src/routes/image.ts",
       "clientMethod": "request_vision_analysis",
-      "clientFile": "daemon-python/backend_client.py",
+      "clientFile": "daemon-python/arcanos/backend_client.py",
       "requestFields": {
         "imageBase64": { "type": "string", "required": true },
         "prompt": { "type": "string", "required": false },
@@ -70,7 +70,7 @@
     "/api/transcribe": {
       "serverRoute": "src/routes/*.ts",
       "clientMethod": "request_transcription",
-      "clientFile": "daemon-python/backend_client.py",
+      "clientFile": "daemon-python/arcanos/backend_client.py",
       "requestFields": {
         "audioBase64": { "type": "string", "required": true },
         "filename": { "type": "string", "required": false },
@@ -85,7 +85,7 @@
     "/api/update": {
       "serverRoute": "src/routes/*.ts",
       "clientMethod": "submit_update_event",
-      "clientFile": "daemon-python/backend_client.py",
+      "clientFile": "daemon-python/arcanos/backend_client.py",
       "requestFields": {
         "updateType": { "type": "string", "required": true },
         "data": { "type": "object", "required": true }
@@ -134,7 +134,7 @@
   },
   "versionFiles": {
     "node": "package.json",
-    "python": "daemon-python/config.py",
+    "python": "daemon-python/arcanos/config.py",
     "versionPattern": {
       "node": "\"version\":\\s*\"([^\"]+)\"",
       "python": "VERSION\\s*[:=]\\s*[\"']([^\"']+)[\"']"
@@ -144,7 +144,7 @@
     "python": [
       "daemon-python/**/*.py",
       "daemon-python/requirements.txt",
-      "daemon-python/config.py"
+      "daemon-python/arcanos/config.py"
     ],
     "node": [
       "src/**/*.ts",

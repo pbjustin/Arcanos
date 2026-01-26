@@ -312,13 +312,13 @@ Create a demo video showing:
 Make ARCANOS your own:
 
 ### 1. Change AI Personality
-Edit `daemon-python/cli.py`, line ~40:
+Edit `daemon-python/arcanos/cli.py`, line ~40:
 ```python
 self.system_prompt = """You are ARCANOS, a [YOUR PERSONALITY HERE]..."""
 ```
 
 ### 2. Add Custom Commands
-Edit `daemon-python/cli.py`, `run()` method, add:
+Edit `daemon-python/arcanos/cli.py`, `run()` method, add:
 ```python
 elif command == "yourcommand":
     self.handle_yourcommand()

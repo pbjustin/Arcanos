@@ -15,8 +15,8 @@ try:
     from PIL import Image
 except ModuleNotFoundError:
     Image = None
-from config import Config
-from error_handler import handle_errors
+from .config import Config
+from .error_handler import handle_errors
 
 try:
     import pyautogui

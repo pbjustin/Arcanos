@@ -9,7 +9,7 @@ from typing import Any, Callable, Generic, Mapping, Optional, Sequence, TypeVar
 
 import requests
 
-from backend_auth_client import normalize_backend_url
+from .backend_auth_client import normalize_backend_url
 
 T = TypeVar("T")
 

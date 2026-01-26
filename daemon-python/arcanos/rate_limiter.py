@@ -6,7 +6,7 @@ Tracks and enforces request, token, and cost limits.
 import time
 from datetime import datetime, timedelta
 from typing import Optional
-from config import Config
+from .config import Config
 
 
 class RateLimiter:
