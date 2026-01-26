@@ -327,7 +327,7 @@ async function scanFileWithStream(root, filePath, dependencies) {
     //audit Assumption: stream parsing errors are recoverable per-file; risk: incomplete scan; invariant: error returned; handling: return scan error.
     return {
       ok: false,
-      error: error instanceof Error ? error.message : 'Unknown scan error',
+      error: error instanceof Error ? error.message : String(error),
       relativePath
     };
   }
