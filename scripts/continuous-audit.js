@@ -216,7 +216,7 @@ async function buildStreamHashWithSamples(filePath, dependencies) {
   const stream = createReadStream(filePath);
 
   //audit Assumption: stream errors are recoverable per-file; risk: missing hash; invariant: caller receives error info; handling: reject with error.
-  return await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const resolveOnce = (payload) => {
       //audit Assumption: stream resolves once; risk: double resolve; invariant: single resolve; handling: guard with flag.
       if (resolved) {
