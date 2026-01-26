@@ -247,7 +247,7 @@ async function buildStreamHashWithSamples(filePath, dependencies) {
     stream.on('error', error => {
       resolveOnce({
         ok: false,
-        error: error instanceof Error ? error.message : 'Unknown stream error'
+        error: error instanceof Error ? error.message : String(error)
       });
     });
 
