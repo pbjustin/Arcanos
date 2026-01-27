@@ -517,7 +517,7 @@ Type **help** for available commands or just start chatting naturally.
         """Background thread that sends periodic heartbeats"""
         # #region agent log
         import json
-        log_path = r"c:\Users\pbjus\.cursor\debug.log"
+        log_path = Config.LOG_DIR / "debug_agent.log"
         # #endregion
         last_request_time = time.time()
         consecutive_429_count = 0
