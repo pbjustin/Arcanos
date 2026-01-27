@@ -91,15 +91,6 @@ class ArcanosCLI:
         # Initialize components
         self.memory = Memory()
         self.rate_limiter = RateLimiter()
-    
-    def _append_activity(self, kind: str, detail: str):
-        with self._activity_lock:
-            self._activity.appendleft({
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "kind": kind,
-                "detail": detail
-            })
-
 
         # Generate or retrieve persistent instance ID
         self.instance_id = self._get_or_create_instance_id()
@@ -109,8 +100,8 @@ class ArcanosCLI:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._command_poll_thread: Optional[threading.Thread] = None
         self._daemon_running = False
-        self._heartbeat_interval = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "30"))
-        self._command_poll_interval = 10  # Poll commands every 10 seconds
+        self._heartbeat_interval = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "60"))  # Default: 60s to reduce backend load
+        self._command_poll_interval = int(os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", "30"))  # Default: 30s (was 10s) to reduce backend load
 
         try:
             self.gpt_client = GPTClient()
@@ -173,16 +164,47 @@ class ArcanosCLI:
             threading.Thread(target=_check, daemon=True).start()
 
         # Start debug server if enabled
-        if Config.IDE_AGENT_DEBUG or (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0):
+        debug_enabled = (
+            Config.DEBUG_SERVER_ENABLED
+            or Config.IDE_AGENT_DEBUG
+            or (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0)
+        )
+        if debug_enabled:
             try:
-                port = Config.DAEMON_DEBUG_PORT if (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0) else 9999
+                # Prefer new config, fallback to legacy
+                port = (
+                    Config.DEBUG_SERVER_PORT
+                    if Config.DEBUG_SERVER_PORT > 0
+                    else (Config.DAEMON_DEBUG_PORT if (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0) else 9999)
+                )
                 # Late import to avoid loading when not in use
                 from .debug_server import start_debug_server
+                from .debug_logging import get_debug_logger
+                
                 start_debug_server(self, port)
-                self.console.print(f"[green]?[/green] IDE agent debug server on 127.0.0.1:{port}")
+                logger = get_debug_logger()
+                logger.info(
+                    "Debug server started",
+                    extra={
+                        "port": port,
+                        "metrics_enabled": Config.DEBUG_SERVER_METRICS_ENABLED,
+                        "log_level": Config.DEBUG_SERVER_LOG_LEVEL,
+                    },
+                )
+                self.console.print(f"[green]✓[/green] IDE agent debug server on 127.0.0.1:{port}")
             except Exception as e:
+                from .debug_logging import get_debug_logger
+                logger = get_debug_logger()
+                logger.exception("Debug server startup failed", extra={"error": str(e)})
                 self.console.print(f"[yellow]Debug server failed to start: {e}[/yellow]")
 
+    def _append_activity(self, kind: str, detail: str):
+        with self._activity_lock:
+            self._activity.appendleft({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "kind": kind,
+                "detail": detail
+            })
 
     def _get_or_create_instance_id(self) -> str:
         """Get or create persistent instance ID for this daemon installation"""
@@ -493,12 +515,30 @@ Type **help** for available commands or just start chatting naturally.
 
     def _heartbeat_loop(self) -> None:
         """Background thread that sends periodic heartbeats"""
+        # #region agent log
+        import json
+        from .config import Config
+        log_path = Config.LOG_DIR / "debug_agent.log"
+        # #endregion
+        last_request_time = time.time()
+        consecutive_429_count = 0
+        
         while self._daemon_running:
             try:
                 if not self.backend_client:
                     break
                     
                 uptime = time.time() - self.start_time
+                request_start = time.time()
+                time_since_last = request_start - last_request_time
+                
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        json.dump({"id":f"hb_{int(time.time()*1000)}","timestamp":int(time.time()*1000),"location":"cli.py:502","message":"Heartbeat request start","data":{"instanceId":self.instance_id[:8],"interval":self._heartbeat_interval,"timeSinceLast":round(time_since_last,2),"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}, f)
+                        f.write("\n")
+                except: pass
+                # #endregion
                 
                 # Send heartbeat via backend client
                 response = self.backend_client._make_request(
@@ -513,13 +553,61 @@ Type **help** for available commands or just start chatting naturally.
                         "stats": {}
                     }
                 )
+                
+                request_duration = time.time() - request_start
+                last_request_time = time.time()
+                status_code = response.status_code
+                retry_after = response.headers.get("Retry-After")
+                
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        json.dump({"id":f"hb_{int(time.time()*1000)}_resp","timestamp":int(time.time()*1000),"location":"cli.py:515","message":"Heartbeat response","data":{"statusCode":status_code,"duration":round(request_duration,3),"retryAfter":retry_after,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
+                        f.write("\n")
+                except: pass
+                # #endregion
 
-                if response.status_code != 200:
-                    # Log error but continue
+                if status_code == 429:
+                    consecutive_429_count += 1
+                    # #region agent log
+                    try:
+                        with open(log_path, "a", encoding="utf-8") as f:
+                            json.dump({"id":f"hb_{int(time.time()*1000)}_429","timestamp":int(time.time()*1000),"location":"cli.py:530","message":"Heartbeat 429 detected","data":{"consecutive429":consecutive_429_count,"retryAfter":retry_after,"willBackoff":True},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
+                            f.write("\n")
+                    except: pass
+                    # #endregion
                     error_logger.error(f"[DAEMON] Heartbeat failed: {response.status_code}")
+                    # Apply exponential backoff for 429 errors
+                    backoff_time = min(60, self._heartbeat_interval * (2 ** min(consecutive_429_count, 3)))
+                    if retry_after:
+                        try:
+                            backoff_time = max(backoff_time, int(retry_after))
+                        except ValueError:
+                            pass
+                    # #region agent log
+                    try:
+                        with open(log_path, "a", encoding="utf-8") as f:
+                            json.dump({"id":f"hb_{int(time.time()*1000)}_backoff","timestamp":int(time.time()*1000),"location":"cli.py:540","message":"Heartbeat backoff applied","data":{"backoffSeconds":backoff_time,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
+                            f.write("\n")
+                    except: pass
+                    # #endregion
+                    time.sleep(backoff_time)
+                    continue
+                elif status_code != 200:
+                    consecutive_429_count = 0
+                    error_logger.error(f"[DAEMON] Heartbeat failed: {response.status_code}")
+                else:
+                    consecutive_429_count = 0
 
             except Exception as e:
-                # Log error but continue
+                consecutive_429_count = 0
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        json.dump({"id":f"hb_{int(time.time()*1000)}_exc","timestamp":int(time.time()*1000),"location":"cli.py:550","message":"Heartbeat exception","data":{"error":str(e)[:100]},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}, f)
+                        f.write("\n")
+                except: pass
+                # #endregion
                 error_logger.error(f"[DAEMON] Heartbeat error: {e}")
 
             # Wait for next heartbeat
@@ -527,18 +615,51 @@ Type **help** for available commands or just start chatting naturally.
 
     def _command_poll_loop(self) -> None:
         """Background thread that polls for commands"""
+        # #region agent log
+        import json
+        from .config import Config
+        log_path = Config.LOG_DIR / "debug_agent.log"
+        # #endregion
+        last_request_time = time.time()
+        consecutive_429_count = 0
+        
         while self._daemon_running:
             try:
                 if not self.backend_client:
                     break
+                    
+                request_start = time.time()
+                time_since_last = request_start - last_request_time
+                
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        json.dump({"id":f"poll_{int(time.time()*1000)}","timestamp":int(time.time()*1000),"location":"cli.py:534","message":"Command poll request start","data":{"instanceId":self.instance_id[:8],"interval":self._command_poll_interval,"timeSinceLast":round(time_since_last,2),"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}, f)
+                        f.write("\n")
+                except: pass
+                # #endregion
                     
                 # Poll for commands
                 response = self.backend_client._make_request(
                     "GET",
                     f"/api/daemon/commands?instance_id={self.instance_id}"
                 )
+                
+                request_duration = time.time() - request_start
+                last_request_time = time.time()
+                status_code = response.status_code
+                retry_after = response.headers.get("Retry-After")
+                
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        json.dump({"id":f"poll_{int(time.time()*1000)}_resp","timestamp":int(time.time()*1000),"location":"cli.py:560","message":"Command poll response","data":{"statusCode":status_code,"duration":round(request_duration,3),"retryAfter":retry_after,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
+                        f.write("\n")
+                except: pass
+                # #endregion
 
-                if response.status_code == 200:
+                if status_code == 200:
+                    consecutive_429_count = 0
                     data = response.json()
                     commands = data.get("commands", [])
 
@@ -575,18 +696,62 @@ Type **help** for available commands or just start chatting naturally.
                             except Exception as e:
                                 error_logger.error(f"[DAEMON] Command ack error: {e}")
 
-                elif response.status_code == 401:
+                elif status_code == 401:
+                    consecutive_429_count = 0
                     # Authentication failed, stop polling
                     error_logger.warning("[DAEMON] Authentication failed, stopping command polling")
                     break
+                elif status_code == 429:
+                    consecutive_429_count += 1
+                    # #region agent log
+                    try:
+                        with open(log_path, "a", encoding="utf-8") as f:
+                            json.dump({"id":f"poll_{int(time.time()*1000)}_429","timestamp":int(time.time()*1000),"location":"cli.py:610","message":"Command poll 429 detected","data":{"consecutive429":consecutive_429_count,"retryAfter":retry_after,"willBackoff":True},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
+                            f.write("\n")
+                    except: pass
+                    # #endregion
+                    error_logger.error(f"[DAEMON] Command poll failed: {response.status_code}")
+                    # Apply exponential backoff for 429 errors
+                    backoff_time = min(60, self._command_poll_interval * (2 ** min(consecutive_429_count, 3)))
+                    if retry_after:
+                        try:
+                            backoff_time = max(backoff_time, int(retry_after))
+                        except ValueError:
+                            pass
+                    # #region agent log
+                    try:
+                        with open(log_path, "a", encoding="utf-8") as f:
+                            json.dump({"id":f"poll_{int(time.time()*1000)}_backoff","timestamp":int(time.time()*1000),"location":"cli.py:620","message":"Command poll backoff applied","data":{"backoffSeconds":backoff_time,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
+                            f.write("\n")
+                    except: pass
+                    # #endregion
+                    time.sleep(backoff_time)
+                    continue
                 else:
+                    consecutive_429_count = 0
                     # Log error but continue
                     error_logger.error(f"[DAEMON] Command poll failed: {response.status_code}")
 
             except BackendRequestError as e:
+                consecutive_429_count = 0
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        json.dump({"id":f"poll_{int(time.time()*1000)}_exc","timestamp":int(time.time()*1000),"location":"cli.py:630","message":"Command poll BackendRequestError","data":{"error":str(e)[:100]},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}, f)
+                        f.write("\n")
+                except: pass
+                # #endregion
                 # Network/request error, log and continue
                 error_logger.error(f"[DAEMON] Command poll request error: {e}")
             except Exception as e:
+                consecutive_429_count = 0
+                # #region agent log
+                try:
+                    with open(log_path, "a", encoding="utf-8") as f:
+                        json.dump({"id":f"poll_{int(time.time()*1000)}_exc2","timestamp":int(time.time()*1000),"location":"cli.py:640","message":"Command poll exception","data":{"error":str(e)[:100]},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}, f)
+                        f.write("\n")
+                except: pass
+                # #endregion
                 # Unexpected error, log and continue
                 error_logger.error(f"[DAEMON] Command poll error: {e}")
 

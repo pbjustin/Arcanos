@@ -4,16 +4,21 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
     from cli import ArcanosCLI
 
 from .config import Config
-from .schema import Memory
+from .debug_health import liveness, readiness
+from .debug_middleware import handle_request
+
 
 class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
+    _last_status_code: int = 200
+    _request_id: Optional[str] = None
 
     def _send_response(
         self,
@@ -21,6 +26,9 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         data: Optional[Union[Dict[str, Any], List[Any]]] = None,
         error: Optional[str] = None,
     ):
+        # Track last status code for middleware/metrics
+        self._last_status_code = status_code
+
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -42,44 +50,68 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, TypeError):
             return None
 
-    def do_GET(self):
+    def _path_without_query(self) -> str:
+        if "?" not in self.path:
+            return self.path
+        return self.path.split("?", 1)[0]
+
+    def _query_params(self) -> Dict[str, List[str]]:
         try:
-            if self.path == "/debug/status":
+            parsed = urlparse(self.path)
+            return parse_qs(parsed.query, keep_blank_values=False)
+        except Exception:
+            return {}
+
+    def do_GET(self):
+        path = self._path_without_query()
+
+        def _inner() -> None:
+            if path == "/debug/status":
                 self.get_status()
-            elif self.path == "/debug/instance-id":
+            elif path == "/debug/instance-id":
                 self.get_instance_id()
-            elif self.path == "/debug/chat-log":
+            elif path == "/debug/chat-log":
                 self.get_chat_log()
-            elif self.path.startswith("/debug/logs"):
+            elif path == "/debug/help":
+                self.get_help()
+            elif path.startswith("/debug/logs"):
                 self.get_logs()
-            elif self.path == "/debug/log-files":
+            elif path == "/debug/log-files":
                 self.get_log_files()
-            elif self.path.startswith("/debug/audit"):
+            elif path.startswith("/debug/audit"):
                 self.get_audit()
-            elif self.path == "/debug/crash-reports":
+            elif path == "/debug/crash-reports":
                 self.get_crash_reports()
+            elif path == "/debug/health":
+                self._get_health()
+            elif path == "/debug/ready":
+                self._get_ready()
+            elif path == "/debug/metrics":
+                self._get_metrics()
             else:
                 self._send_response(404, error="Not Found")
-        except Exception as e:
-            self._send_response(500, error=f"Internal Server Error: {e}")
+
+        handle_request(self, path, _inner)
 
     def do_POST(self):
-        try:
+        path = self._path_without_query()
+
+        def _inner() -> None:
             body = self._read_body()
-            if body is None and self.path in ("/debug/ask", "/debug/run"): # see can have empty body
+            if body is None and path in ("/debug/ask", "/debug/run"):  # see can have empty body
                 self._send_response(400, error="Invalid or missing JSON body")
                 return
 
-            if self.path == "/debug/ask":
+            if path == "/debug/ask":
                 self.post_ask(body)
-            elif self.path == "/debug/run":
+            elif path == "/debug/run":
                 self.post_run(body)
-            elif self.path == "/debug/see":
+            elif path == "/debug/see":
                 self.post_see(body or {})
             else:
                 self._send_response(404, error="Not Found")
-        except Exception as e:
-            self._send_response(500, error=f"Internal Server Error: {e}")
+
+        handle_request(self, path, _inner)
 
     def get_status(self):
         uptime = time.time() - self.cli_instance.start_time
@@ -111,22 +143,72 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
             "last_error": getattr(self.cli_instance, "_last_error", None),
         })
 
+    def get_help(self):
+        """Return help text as JSON"""
+        help_text = """
+# ARCANOS Commands
+
+### Conversation
+- Just type naturally to chat with ARCANOS
+- **help** - Show this help message
+- **exit** / **quit** - Exit ARCANOS
+- **deep <prompt>** / **backend <prompt>** - Force backend routing
+- **deep:** / **backend:** - Prefix for backend routing in hybrid mode
+
+### Vision
+- **see** - Analyze screenshot
+- **see camera** - Analyze webcam image
+- **see backend** - Analyze screenshot via backend
+- **see camera backend** - Analyze webcam image via backend
+
+### Voice
+- **voice** - Use voice input (one-time)
+- **voice backend** - Use backend transcription
+- **ptt** - Start push-to-talk mode (hold SPACEBAR)
+- **speak** - Replay the last response (TTS)
+
+### Terminal
+- **run <command>** - Execute shell command (PowerShell on Windows, bash/sh on macOS/Linux)
+  Examples: `run Get-Process` (Windows), `run ls -la` (macOS/Linux)
+
+### System
+- **stats** - Show usage statistics
+- **clear** - Clear conversation history
+- **reset** - Reset statistics
+- **update** - Check for updates and download installer (if GITHUB_RELEASES_REPO is set)
+
+### Examples
+```
+You: hey arcanos, what's the weather like today?
+You: see
+You: run Get-Date
+You: voice
+You: ptt
+```
+        """
+        self._send_response(200, {"help_text": help_text.strip()})
+
     def get_logs(self):
+        params = self._query_params()
         tail = 50
-        if "?" in self.path:
-            query = self.path.split("?", 1)[1]
-            params = dict(p.split("=") for p in query.split("&"))
-            tail = int(params.get("tail", 50))
+        if "tail" in params:
+            try:
+                tail = max(1, min(1000, int(params["tail"][0])))
+            except (ValueError, IndexError):
+                pass
 
         log_file = Config.LOG_DIR / "errors.log"
         if not log_file.exists():
-            self._send_response(200, {"path": str(log_file), "lines": [], "error": "Log file not found."})
+            self._send_response(200, {"path": str(log_file), "lines": [], "total": 0, "error": "Log file not found."})
             return
 
         with open(log_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+            all_lines = f.readlines()
         
-        self._send_response(200, {"path": str(log_file), "lines": lines[-tail:]})
+        total = len(all_lines)
+        lines = all_lines[-tail:] if tail < total else all_lines
+        
+        self._send_response(200, {"path": str(log_file), "lines": lines, "total": total, "returned": len(lines)})
 
     def get_log_files(self):
         log_dir = Config.LOG_DIR
@@ -139,16 +221,38 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         self._send_response(200, {"log_dir": str(log_dir), "files": files})
 
     def get_audit(self):
+        params = self._query_params()
         limit = 50
-        if "?" in self.path:
-            query = self.path.split("?", 1)[1]
-            params = dict(p.split("=") for p in query.split("&"))
-            limit = int(params.get("limit", 50))
+        if "limit" in params:
+            try:
+                limit = max(1, min(500, int(params["limit"][0])))
+            except (ValueError, IndexError):
+                pass
+        
+        # Filtering by kind
+        filter_kind = None
+        if "filter" in params and params["filter"]:
+            filter_kind = params["filter"][0].lower()
         
         with self.cli_instance._activity_lock:
-            entries = list(self.cli_instance._activity)[:limit]
+            all_entries = list(self.cli_instance._activity)
+        
+        # Apply filter
+        if filter_kind:
+            all_entries = [e for e in all_entries if e.get("kind", "").lower() == filter_kind]
+        
+        # Sorting (default: newest first via deque order, but allow reverse)
+        sort_order = "desc"
+        if "order" in params and params["order"]:
+            sort_order = params["order"][0].lower()
+        
+        if sort_order == "asc":
+            all_entries = list(reversed(all_entries))
+        
+        total = len(all_entries)
+        entries = all_entries[:limit]
 
-        self._send_response(200, {"entries": entries})
+        self._send_response(200, {"entries": entries, "total": total, "returned": len(entries), "limit": limit})
 
     def get_crash_reports(self):
         crash_dir = Config.CRASH_REPORTS_DIR
@@ -201,6 +305,26 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         else:
             self._send_response(500, error="Failed to handle 'see' command.")
 
+    def _get_health(self) -> None:
+        data = liveness()
+        self._send_response(200, data)
+
+    def _get_ready(self) -> None:
+        data = readiness(self.cli_instance)
+        status = 200 if data.get("ok") else 503
+        self._send_response(status, data)
+
+    def _get_metrics(self) -> None:
+        # Text response, not JSON
+        from .debug_metrics import get_metrics  # local import to avoid cycles
+
+        payload = get_metrics().to_prometheus()
+        self._last_status_code = 200
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=0.0.4")
+        self.end_headers()
+        self.wfile.write(payload.encode("utf-8"))
+
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     pass
@@ -208,15 +332,13 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 def start_debug_server(cli: "ArcanosCLI", port: int):
     """Starts the debug HTTP server in a daemon thread."""
 
-    def handler(*args, **kwargs):
-        # We need to pass the CLI instance to the handler.
-        # This is a bit of a hack, but it's the cleanest way with http.server.
-        handler_class = DebugAPIHandler
-        handler_class.cli_instance = cli
-        return handler_class(*args, **kwargs)
+    class BoundDebugAPIHandler(DebugAPIHandler):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.cli_instance = cli
+            super().__init__(*args, **kwargs)
 
     server_address = ("127.0.0.1", port)
-    httpd = ThreadingHTTPServer(server_address, handler)
+    httpd = ThreadingHTTPServer(server_address, BoundDebugAPIHandler)
 
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
