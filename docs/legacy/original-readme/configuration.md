@@ -36,10 +36,7 @@ TUTOR_DEFAULT_TOKEN_LIMIT=200  # Default token limit for tutor queries
 ```
 
 ## Notion Integration (Optional)
-```bash
-NOTION_API_KEY=your-notion-api-key-here
-WWE_DATABASE_ID=your-notion-wwe-database-id
-```
+Removed. The Notion sync module is no longer part of the backend.
 
 ## Railway Deployment
 ```bash
