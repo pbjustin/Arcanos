@@ -44,6 +44,8 @@ export class Environment {
     }
     const parsed = parseInt(value, 10);
     if (isNaN(parsed)) {
+      // If a default is provided, fall back to it for invalid values
+      if (defaultValue !== undefined) return defaultValue;
       throw new Error(`Environment variable ${key} is not a valid number: ${value}`);
     }
     return parsed;
@@ -60,6 +62,8 @@ export class Environment {
     }
     const parsed = parseFloat(value);
     if (isNaN(parsed)) {
+      // If a default is provided, fall back to it for invalid values
+      if (defaultValue !== undefined) return defaultValue;
       throw new Error(`Environment variable ${key} is not a valid float: ${value}`);
     }
     return parsed;
