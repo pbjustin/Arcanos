@@ -250,7 +250,7 @@ async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxE
   if (skipProbe) {
     const sandbox: SandboxExecutionResult = {
       success: true,
-      stdout: '{"hasFetch":true,"hasIntl":true}',
+      stdout: JSON.stringify({ nodeVersion: process.version, hasFetch: true, hasIntl: true }),
       stderr: '',
       timedOut: false,
       exitCode: 0
