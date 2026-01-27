@@ -265,6 +265,8 @@ class Config:
     DEBUG_SERVER_LOG_LEVEL: str = os.getenv("DEBUG_SERVER_LOG_LEVEL", "INFO")
     DEBUG_SERVER_RATE_LIMIT: int = int(os.getenv("DEBUG_SERVER_RATE_LIMIT", "60"))
     DEBUG_SERVER_METRICS_ENABLED: bool = os.getenv("DEBUG_SERVER_METRICS_ENABLED", "true").lower() in ("1", "true", "yes")
+    # WARNING: Enabling CORS on unauthenticated debug server is a security risk.
+    # Only enable if you have implemented authentication or are in a secure development environment.
     DEBUG_SERVER_CORS_ENABLED: bool = os.getenv("DEBUG_SERVER_CORS_ENABLED", "false").lower() in ("1", "true", "yes")
     DEBUG_SERVER_LOG_RETENTION_DAYS: int = int(os.getenv("DEBUG_SERVER_LOG_RETENTION_DAYS", "7"))
 

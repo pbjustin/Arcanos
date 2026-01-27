@@ -30,12 +30,8 @@ def _log_dir_writable() -> bool:
 
 def _memory_ok(threshold_mb: int = 100) -> bool:
     if psutil is None:
-        # Fallback: use shutil and os if available
-        try:
-            total, used, free = shutil.disk_usage(os.getcwd())
-            return free >= threshold_mb * 1024 * 1024
-        except OSError:
-            return True
+        # Cannot check memory without psutil; assume OK to avoid false negatives
+        return True
     try:
         mem = psutil.virtual_memory()
         return mem.available >= threshold_mb * 1024 * 1024
