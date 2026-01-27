@@ -9,7 +9,7 @@ To enable the debug server, you need to set one of the following environment var
 - **`IDE_AGENT_DEBUG=1`**: Enables the debug server on the default port (9999).
 - **`DAEMON_DEBUG_PORT=<port>`**: Enables the debug server on a specific port. For example, `DAEMON_DEBUG_PORT=9999`.
 
-### For the Installed .exe
+### For Installed Application
 
 1.  Open or create the `.env` file in your user's local application data directory for ARCANOS. The path is typically:
     - **Windows**: `%LOCALAPPDATA%\ARCANOS\.env`
@@ -36,31 +36,58 @@ To enable the debug server, you need to set one of the following environment var
     ```
 3.  Run the daemon as usual (`python -m arcanos.cli`).
 
-## Using the `daemon-debug.ps1` CLI
+## Using the Debug Server API
 
-The easiest way to interact with the debug server is by using the `scripts/daemon-debug.ps1` PowerShell script.
+You can interact with the debug server using HTTP requests or curl commands.
 
 ### Port Configuration
 
-The script will automatically connect to the port specified in the `DAEMON_DEBUG_PORT` environment variable. If that variable is not set, it defaults to `9999`.
+The debug server uses the port specified in the `DAEMON_DEBUG_PORT` or `DEBUG_SERVER_PORT` environment variable. If that variable is not set, it defaults to `9999`.
 
-### Commands
+### Available Endpoints
 
-Here are the available commands. Run them from your project's root directory.
+Here are the available endpoints. The debug server runs on `http://127.0.0.1:9999` by default.
 
--   **`scripts\daemon-debug.ps1 status`**: Shows the current status of the daemon, including instance ID, uptime, and the last recorded error.
--   **`scripts\daemon-debug.ps1 instance-id`**: Retrieves just the instance ID.
--   **`scripts\daemon-debug.ps1 chat-log`**: Displays the recent conversation history (the "chat log").
--   **`scripts\daemon-debug.ps1 logs`**: Shows the tail of the main daemon log file (`errors.log`). This is useful to **see your logs**.
-    -   `--tail <number>`: Specify the number of lines to show (e.g., `--tail 100`).
--   **`scripts\daemon-debug.ps1 log-files`**: Lists all files in the log directory.
--   **`scripts\daemon-debug.ps1 audit`**: Displays the in-memory activity trail (ask, see, run, voice, commands, errors). This helps you see **what's happening**.
-    -   `--limit <number>`: Specify the number of entries to show (e.g., `--limit 100`).
--   **`scripts\daemon-debug.ps1 see`**: Captures the screen and returns the AI's description.
-    -   `--camera`: Use the webcam instead of the screen.
--   **`scripts\daemon-debug.ps1 crash-reports`**: Lists crash report files and displays the content of the most recent one.
--   **`scripts\daemon-debug.ps1 ask "your message"`**: Sends a conversational prompt to the daemon.
--   **`scripts\daemon-debug.ps1 run "your command"`**: Executes a shell command through the daemon's `run` handler.
+**GET Endpoints:**
+-   **`GET /debug/status`**: Shows the current status of the daemon, including instance ID, uptime, and the last recorded error.
+-   **`GET /debug/instance-id`**: Retrieves just the instance ID.
+-   **`GET /debug/chat-log`**: Displays the recent conversation history (the "chat log").
+-   **`GET /debug/logs?tail=50`**: Shows the tail of the main daemon log file (`errors.log`). This is useful to **see your logs**.
+    -   Query param: `tail` (number of lines, default: 50, max: 1000).
+-   **`GET /debug/log-files`**: Lists all files in the log directory.
+-   **`GET /debug/audit?limit=50`**: Displays the in-memory activity trail (ask, see, run, voice, commands, errors). This helps you see **what's happening**.
+    -   Query params: `limit` (number of entries, default: 50, max: 500), `filter` (optional), `order` (optional).
+-   **`GET /debug/crash-reports`**: Lists crash report files and displays the content of the most recent one.
+
+**POST Endpoints:**
+-   **`POST /debug/ask`**: Sends a conversational prompt to the daemon.
+    -   Body: `{"message": "your message", "route_override": "backend" (optional)}`
+-   **`POST /debug/run`**: Executes a shell command through the daemon's `run` handler.
+    -   Body: `{"command": "your command"}`
+-   **`POST /debug/see`**: Captures the screen and returns the AI's description.
+    -   Body: `{"use_camera": false}` (optional, default: false)
+
+### Example Usage with curl
+
+```bash
+# Get status
+curl http://127.0.0.1:9999/debug/status
+
+# Get logs
+curl http://127.0.0.1:9999/debug/logs?tail=100
+
+# Send a message
+curl -X POST http://127.0.0.1:9999/debug/ask \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is your status?"}'
+
+# Execute a command
+curl -X POST http://127.0.0.1:9999/debug/run \
+  -H "Content-Type: application/json" \
+  -d '{"command": "echo hello"}'
+```
+
+**Note:** On Windows, you can use PowerShell's `Invoke-WebRequest` or `Invoke-RestMethod` if curl is not available.
 
 ## Security
 

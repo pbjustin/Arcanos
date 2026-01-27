@@ -9,8 +9,9 @@ This script validates:
 PREREQUISITES:
 - Backend API must be running and accessible at BACKEND_URL (default: http://localhost:8080)
 - CLI agent must be running with debug server enabled
-  - Start with: .\start_cli_debug.ps1
-  - Or manually: $env:IDE_AGENT_DEBUG="true"; python -m arcanos.cli
+  - Set environment variables: IDE_AGENT_DEBUG=true and DAEMON_DEBUG_PORT=9999
+  - Or add to .env file: IDE_AGENT_DEBUG=true and DAEMON_DEBUG_PORT=9999
+  - Then run: python -m arcanos.cli
   - Debug server should be on http://127.0.0.1:9999
 
 See DEBUG_SERVER_README.md for detailed instructions.

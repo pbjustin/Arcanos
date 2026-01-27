@@ -1,1 +1,1 @@
-web: node dist/start-server.js
+web: node --max-old-space-size=7168 dist/start-server.js

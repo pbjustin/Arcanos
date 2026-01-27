@@ -6,15 +6,30 @@ This document explains how to start the ARCANOS CLI with debug server enabled fo
 
 ### Starting the CLI Agent with Debug Server
 
-**Option 1: Using the PowerShell script (Recommended)**
-```powershell
-cd C:\Users\pbjus\Arcanos\daemon-python
-.\start_cli_debug.ps1
+**Option 1: Using environment variables (Cross-platform)**
+```bash
+cd daemon-python
+export IDE_AGENT_DEBUG=true
+export DAEMON_DEBUG_PORT=9999
+python -m arcanos.cli
 ```
 
-**Option 2: Manual PowerShell command**
+**Option 2: Using .env file**
+Add to `daemon-python/.env`:
+```
+IDE_AGENT_DEBUG=true
+DAEMON_DEBUG_PORT=9999
+```
+
+Then run:
+```bash
+cd daemon-python
+python -m arcanos.cli
+```
+
+**Option 3: Windows PowerShell (if using PowerShell)**
 ```powershell
-cd C:\Users\pbjus\Arcanos\daemon-python
+cd daemon-python
 $env:IDE_AGENT_DEBUG = "true"
 $env:DAEMON_DEBUG_PORT = "9999"
 python -m arcanos.cli
@@ -27,10 +42,10 @@ The debug server will start on `http://127.0.0.1:9999` and you should see a mess
 
 ### Running Validation
 
-Once the CLI agent is running with debug server enabled, open a **new PowerShell window** and run:
+Once the CLI agent is running with debug server enabled, open a **new terminal window** and run:
 
-```powershell
-cd C:\Users\pbjus\Arcanos\daemon-python
+```bash
+cd daemon-python
 python validate_backend_cli.py
 ```
 
@@ -126,7 +141,7 @@ To reduce backend load (especially if the backend is rate-limited by GitHub or o
 - Commands from the backend may take longer to be received
 - Backend may consider the CLI agent "offline" if heartbeat interval is too long
 
-The startup script (`start_cli_debug.ps1`) sets conservative defaults (60s heartbeat, 30s poll) to reduce backend load.
+You can set these environment variables in your `.env` file or export them before starting the CLI to reduce backend load.
 
 ## Expected Behavior
 
@@ -155,14 +170,21 @@ The validation script expects:
 
 **Solutions**:
 1. Verify environment variables are set:
-   ```powershell
-   $env:IDE_AGENT_DEBUG
-   $env:DAEMON_DEBUG_PORT
+   ```bash
+   # On macOS/Linux:
+   echo $IDE_AGENT_DEBUG
+   echo $DAEMON_DEBUG_PORT
+   # On Windows (PowerShell):
+   # $env:IDE_AGENT_DEBUG
+   # $env:DAEMON_DEBUG_PORT
    ```
 2. Check that the CLI process started successfully (no errors in console)
 3. Verify port 9999 is not already in use:
-   ```powershell
-   netstat -an | findstr :9999
+   ```bash
+   # On macOS/Linux:
+   lsof -i :9999
+   # On Windows:
+   # netstat -an | findstr :9999
    ```
 
 ### Connection Refused
@@ -170,7 +192,7 @@ The validation script expects:
 **Problem**: Validation script reports "connection refused" on `http://127.0.0.1:9999`
 
 **Solutions**:
-1. Ensure the CLI agent is running (check the PowerShell window where you started it)
+1. Ensure the CLI agent is running (check the terminal window where you started it)
 2. Verify the debug server started (look for the success message)
 3. Check if another process is using port 9999
 4. Try a different port by setting `DAEMON_DEBUG_PORT` to a different value
@@ -182,14 +204,17 @@ The validation script expects:
 **Solutions**:
 1. Check the CLI agent console for errors
 2. Verify the debug server endpoints are accessible:
-   ```powershell
-   Invoke-WebRequest -Uri "http://127.0.0.1:9999/debug/status" -Method GET
+   ```bash
+   # Using curl (cross-platform):
+   curl http://127.0.0.1:9999/debug/status
+   # On Windows PowerShell:
+   # Invoke-WebRequest -Uri "http://127.0.0.1:9999/debug/status" -Method GET
    ```
 3. Review the validation results JSON file for detailed error messages
 
 ## Notes
 
 - The debug server is **localhost-only** (127.0.0.1) for security
-- Environment variables set in PowerShell are **session-only** and won't persist after closing the terminal
+- Environment variables set in the terminal are **session-only** and won't persist after closing the terminal (use `.env` file for persistence)
 - The CLI agent must remain running for the debug server to be accessible
 - Use Ctrl+C in the CLI agent window to stop it (this also stops the debug server)

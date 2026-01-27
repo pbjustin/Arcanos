@@ -120,6 +120,21 @@ function parseCycleCount(argv) {
 }
 
 /**
+ * Parse command-line flags from argv.
+ * Purpose: Extract boolean flags for audit behavior.
+ * Inputs: argv array.
+ * Outputs: object with flag values.
+ */
+function parseFlags(argv) {
+  return {
+    recursive: argv.includes('--recursive'),
+    autoFix: argv.includes('--auto-fix'),
+    railwayCheck: argv.includes('--railway-check'),
+    maxDepth: 10 // Maximum recursive depth
+  };
+}
+
+/**
  * Determine if a path should be ignored.
  * Purpose: Skip generated or vendor directories.
  * Inputs: relative path string.

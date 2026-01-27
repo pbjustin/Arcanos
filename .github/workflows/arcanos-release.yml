@@ -143,74 +143,12 @@ jobs:
         id: approve
         run: echo "approved=true" >> $GITHUB_OUTPUT
 
-  build-daemon-exe:
-    name: Build Daemon Executable
-    runs-on: windows-latest
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag_name }}
-
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: 📦 Install dependencies
-        run: |
-          cd daemon-python
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: 🔨 Build executable
-        run: |
-          cd daemon-python
-          pyinstaller arcanos.spec
-
-      - name: 🔏 Sign executable (if certificate available)
-        if: secrets.CODE_SIGNING_CERT != ''
-        run: |
-          # Decode certificate from base64
-          $cert = [System.Convert]::FromBase64String("${{ secrets.CODE_SIGNING_CERT }}")
-          [System.IO.File]::WriteAllBytes("cert.pfx", $cert)
-          
-          # Sign executable
-          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign `
-            /f cert.pfx `
-            /p "${{ secrets.CERT_PASSWORD }}" `
-            /tr http://timestamp.digicert.com `
-            /td sha256 `
-            /fd sha256 `
-            daemon-python\dist\ARCANOS.exe
-          
-          # Remove certificate file
-          Remove-Item cert.pfx
-
-      - name: 📤 Upload daemon executable artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ARCANOS-Windows
-          path: daemon-python/dist/ARCANOS.exe
-          retention-days: 90
-
-      - name: 📦 Install Inno Setup
-        run: choco install innosetup -y
-
-      - name: 🏗️ Build installer
-        run: & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\ARCANOS.iss"
-
-      - name: 📤 Upload ARCANOS-Setup
-        uses: actions/upload-artifact@v4
-        with:
-          name: ARCANOS-Setup
-          path: installer/dist/ARCANOS-Setup.exe
-          retention-days: 90
+  # Windows executable build job removed - Windows builds deprecated
+  # CLI agent now runs as Python application
 
   create-github-release:
     name: Create GitHub Release
-    needs: [arcanos-release, build-daemon-exe]
+    needs: [arcanos-release]
     runs-on: ubuntu-latest
     if: needs.arcanos-release.outputs.approved == 'true'
     permissions:
@@ -221,25 +159,7 @@ jobs:
         with:
           ref: ${{ inputs.tag_name }}
 
-      - name: 📥 Download daemon executable
-        uses: actions/download-artifact@v4
-        with:
-          name: ARCANOS-Windows
-          path: .
-
-      - name: 📥 Download ARCANOS-Setup
-        uses: actions/download-artifact@v4
-        with:
-          name: ARCANOS-Setup
-          path: .
-
-      - name: 📎 Prepare EXE assets at root
-        run: |
-          # Artifacts may preserve paths (daemon-python/dist, installer/dist) or flatten to root. Copy from subdirs when present.
-          [ -f daemon-python/dist/ARCANOS.exe ] && cp daemon-python/dist/ARCANOS.exe ./ARCANOS.exe
-          [ -f installer/dist/ARCANOS-Setup.exe ] && cp installer/dist/ARCANOS-Setup.exe ./ARCANOS-Setup.exe
-          [ -f ARCANOS.exe ] && [ -f ARCANOS-Setup.exe ] || { echo "EXE(s) missing. Find:"; find . -name "*.exe"; exit 1; }
-          ls -la ARCANOS.exe ARCANOS-Setup.exe
+      # Windows executable downloads removed - Windows builds deprecated
 
       - name: 📥 Download release notes
         if: ${{ inputs.patch_only != true }}
@@ -258,8 +178,8 @@ jobs:
           else
             { echo '## Application / Downloads';
             echo '';
-            echo '- **ARCANOS-Setup.exe** — Installer (recommended; creates desktop shortcut)';
-            echo '- **ARCANOS.exe** — Portable executable';
+            echo '- **Source code** — Install via: `pip install arcanos` or `python -m arcanos.cli`';
+            echo '- **Python package** — Cross-platform CLI agent';
             echo '';
             echo '## Source code';
             echo '';
@@ -282,8 +202,7 @@ jobs:
           body: ${{ steps.release-notes.outputs.notes }}
           append_body: ${{ inputs.patch_only }}
           files: |
-            ARCANOS.exe
-            ARCANOS-Setup.exe
+            # Windows executables removed - CLI agent runs as Python application
           draft: false
           prerelease: false
         env:
