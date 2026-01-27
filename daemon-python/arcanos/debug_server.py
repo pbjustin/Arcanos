@@ -1,5 +1,6 @@
 
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -62,10 +63,62 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def _check_authentication(self, require_auth: bool = True) -> bool:
+        """
+        Check if request is authenticated.
+        
+        Args:
+            require_auth: If True, authentication is required. If False, only check if token is valid when provided.
+        
+        Returns:
+            True if authenticated or auth not required, False otherwise.
+        """
+        # Health and ready endpoints are read-only and don't require auth
+        path = self._path_without_query()
+        if path in ("/debug/health", "/debug/ready", "/debug/metrics"):
+            return True
+        
+        # If no token is configured, require explicit opt-in via environment variable
+        if not Config.DEBUG_SERVER_TOKEN:
+            # Allow unauthenticated access only if explicitly disabled (for development)
+            allow_unauth = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
+            if not allow_unauth:
+                self._send_response(401, error="DEBUG_SERVER_TOKEN not configured. Set DEBUG_SERVER_TOKEN environment variable for security.")
+                return False
+            return True
+        
+        # Check Authorization header (Bearer token)
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            if token == Config.DEBUG_SERVER_TOKEN:
+                return True
+        
+        # Check X-Debug-Token header (alternative)
+        token_header = self.headers.get("X-Debug-Token", "").strip()
+        if token_header == Config.DEBUG_SERVER_TOKEN:
+            return True
+        
+        # Check query parameter (less secure, but convenient for curl)
+        params = self._query_params()
+        if "token" in params and params["token"]:
+            if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
+                return True
+        
+        if require_auth:
+            self._send_response(401, error="Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header, X-Debug-Token header, or ?token=<token> query parameter.")
+            return False
+        
+        return True
+
     def do_GET(self):
         path = self._path_without_query()
 
         def _inner() -> None:
+            # Check authentication for non-read-only endpoints
+            if not self._check_authentication(require_auth=True):
+                return  # Response already sent by _check_authentication
+            
             if path == "/debug/status":
                 self.get_status()
             elif path == "/debug/instance-id":
@@ -97,6 +150,10 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
+            # POST endpoints require authentication (they can execute commands)
+            if not self._check_authentication(require_auth=True):
+                return  # Response already sent by _check_authentication
+            
             body = self._read_body()
             if body is None and path in ("/debug/ask", "/debug/run"):  # see can have empty body
                 self._send_response(400, error="Invalid or missing JSON body")

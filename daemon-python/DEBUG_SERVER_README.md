@@ -57,6 +57,8 @@ The validation script will:
 
 ## Debug Server Endpoints
 
+**Security Note:** All endpoints except `/debug/health`, `/debug/ready`, and `/debug/metrics` require authentication via `DEBUG_SERVER_TOKEN`. See the Configuration section below for details.
+
 The debug server exposes the following endpoints:
 
 ### GET Endpoints
@@ -127,6 +129,8 @@ The debug server is enabled when **any** of these conditions is met:
 - **`DEBUG_SERVER_METRICS_ENABLED`** - Enable Prometheus metrics (default: true)
 - **`DEBUG_SERVER_CORS_ENABLED`** - Enable CORS headers (default: false)
 - **`DEBUG_SERVER_LOG_RETENTION_DAYS`** - Days to keep log files (default: 7)
+- **`DEBUG_SERVER_TOKEN`** - **REQUIRED for security** - Authentication token for debug server endpoints. Generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Without this, the server will reject requests to prevent RCE vulnerabilities.
+- **`DEBUG_SERVER_ALLOW_UNAUTHENTICATED`** - **NOT RECOMMENDED** - Allow unauthenticated access (default: false). Only enable in secure development environments. Setting this to true disables authentication and exposes the server to RCE attacks.
 
 If `DEBUG_SERVER_PORT` is not set, falls back to `DAEMON_DEBUG_PORT`, or defaults to **9999**.
 
@@ -197,20 +201,57 @@ The validation script expects:
 3. Check if another process is using port 9999
 4. Try a different port by setting `DAEMON_DEBUG_PORT` to a different value
 
+### Authentication Errors
+
+**Problem**: Requests return 401 "Authentication required" errors
+
+**Solutions**:
+1. **Set DEBUG_SERVER_TOKEN environment variable:**
+   ```bash
+   # Generate a secure token:
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   
+   # Set it (macOS/Linux):
+   export DEBUG_SERVER_TOKEN="your-generated-token-here"
+   
+   # Or add to .env file:
+   echo "DEBUG_SERVER_TOKEN=your-generated-token-here" >> daemon-python/.env
+   ```
+
+2. **Use the token in requests:**
+   ```bash
+   # Via Authorization header (recommended):
+   curl -H "Authorization: Bearer $DEBUG_SERVER_TOKEN" http://127.0.0.1:9999/debug/status
+   
+   # Via X-Debug-Token header:
+   curl -H "X-Debug-Token: $DEBUG_SERVER_TOKEN" http://127.0.0.1:9999/debug/status
+   
+   # Via query parameter (less secure):
+   curl "http://127.0.0.1:9999/debug/status?token=$DEBUG_SERVER_TOKEN"
+   ```
+
+3. **For development only** (NOT RECOMMENDED for production):
+   ```bash
+   # Only use in isolated development environments:
+   export DEBUG_SERVER_ALLOW_UNAUTHENTICATED=true
+   ```
+
 ### Commands Failing
 
 **Problem**: Validation shows command execution failures
 
 **Solutions**:
 1. Check the CLI agent console for errors
-2. Verify the debug server endpoints are accessible:
+2. Verify authentication is configured (see "Authentication Errors" above)
+3. Verify the debug server endpoints are accessible:
    ```bash
-   # Using curl (cross-platform):
-   curl http://127.0.0.1:9999/debug/status
+   # Using curl with authentication (cross-platform):
+   curl -H "Authorization: Bearer $DEBUG_SERVER_TOKEN" http://127.0.0.1:9999/debug/status
    # On Windows PowerShell:
-   # Invoke-WebRequest -Uri "http://127.0.0.1:9999/debug/status" -Method GET
+   # $headers = @{"Authorization" = "Bearer $env:DEBUG_SERVER_TOKEN"}
+   # Invoke-WebRequest -Uri "http://127.0.0.1:9999/debug/status" -Headers $headers
    ```
-3. Review the validation results JSON file for detailed error messages
+4. Review the validation results JSON file for detailed error messages
 
 ## Notes
 

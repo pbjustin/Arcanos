@@ -91,6 +91,33 @@ curl -X POST http://127.0.0.1:9999/debug/run \
 
 ## Security
 
-The debug server is designed for local use only and binds exclusively to `127.0.0.1`. This **does not** by itself make it safe to expose powerful operations like `run`, `see`, or log/crash-report access: modern web browsers can still issue cross-origin requests to `http://127.0.0.1:<port>`, so a malicious website opened in your browser could trigger debug operations on your machine if the server is enabled without additional protection.
+**CRITICAL:** The debug server exposes endpoints that can execute arbitrary commands and interact with AI services. Authentication is **REQUIRED** to prevent Remote Code Execution (RCE) vulnerabilities via DNS rebinding or other local attacks.
 
-For this reason, you must protect the debug server with an unguessable secret (for example, via an environment variable such as `DAEMON_DEBUG_TOKEN` that the client must send with each request) and/or with strict `Origin`/`Host` header checks to reject browser-driven cross-site requests. Treat the debug API as a high-privilege local interface: assume that any user or process on the machine, as well as any website running in your browser, can attempt to connect to it. Do not enable the debug server without such protections, and never enable it on machines or user accounts that may run untrusted code or browse untrusted websites.
+### Authentication
+
+The debug server requires a `DEBUG_SERVER_TOKEN` environment variable to be set. Without this token, the server will reject all requests (except read-only health endpoints).
+
+**Generate a secure token:**
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**Set the token:**
+```bash
+export DEBUG_SERVER_TOKEN="your-generated-token-here"
+```
+
+**Use the token in requests:**
+- Via `Authorization: Bearer <token>` header (recommended)
+- Via `X-Debug-Token: <token>` header
+- Via `?token=<token>` query parameter (less secure, but convenient)
+
+### Security Best Practices
+
+1. **Always set `DEBUG_SERVER_TOKEN`** - Never run the debug server without authentication in production or on untrusted networks.
+2. **Use strong tokens** - Generate tokens with at least 32 bytes of entropy (use `secrets.token_urlsafe(32)`).
+3. **Bind to localhost only** - The server binds to `127.0.0.1` by default, which helps but doesn't fully protect against DNS rebinding attacks.
+4. **Don't enable CORS** - Keep `DEBUG_SERVER_CORS_ENABLED=false` unless you have implemented additional security measures.
+5. **Don't disable authentication** - Never set `DEBUG_SERVER_ALLOW_UNAUTHENTICATED=true` except in isolated development environments.
+
+The debug server is a high-privilege local interface. Treat it as such and protect it accordingly.

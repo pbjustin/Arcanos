@@ -267,6 +267,9 @@ class Config:
     # Only enable if you have implemented authentication or are in a secure development environment.
     DEBUG_SERVER_CORS_ENABLED: bool = os.getenv("DEBUG_SERVER_CORS_ENABLED", "false").lower() in ("1", "true", "yes")
     DEBUG_SERVER_LOG_RETENTION_DAYS: int = int(os.getenv("DEBUG_SERVER_LOG_RETENTION_DAYS", "7"))
+    # Security: Authentication token for debug server (required for non-read-only endpoints)
+    # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    DEBUG_SERVER_TOKEN: Optional[str] = os.getenv("DEBUG_SERVER_TOKEN") or None
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:

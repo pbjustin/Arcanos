@@ -17,6 +17,14 @@ Write-Host "  IDE_AGENT_DEBUG=$env:IDE_AGENT_DEBUG" -ForegroundColor Cyan
 Write-Host "  DAEMON_DEBUG_PORT=$env:DAEMON_DEBUG_PORT" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Debug server will be available at: http://127.0.0.1:$env:DAEMON_DEBUG_PORT" -ForegroundColor Yellow
+Write-Host ""
+if (-not $env:DEBUG_SERVER_TOKEN) {
+    Write-Host "WARNING: DEBUG_SERVER_TOKEN not set!" -ForegroundColor Red
+    Write-Host "  The debug server requires authentication for security." -ForegroundColor Yellow
+    Write-Host "  Generate a token: python -c 'import secrets; print(secrets.token_urlsafe(32))'" -ForegroundColor Yellow
+    Write-Host "  Set it: `$env:DEBUG_SERVER_TOKEN = 'your-token-here'" -ForegroundColor Yellow
+    Write-Host ""
+}
 Write-Host "Press Ctrl+C to stop the CLI agent" -ForegroundColor Yellow
 Write-Host ""
 

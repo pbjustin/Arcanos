@@ -45,6 +45,14 @@ results: Dict[str, Any] = {
 }
 
 
+def get_debug_auth_headers() -> Dict[str, str]:
+    """Get authentication headers for debug server requests"""
+    headers = {}
+    if Config.DEBUG_SERVER_TOKEN:
+        headers["Authorization"] = f"Bearer {Config.DEBUG_SERVER_TOKEN}"
+    return headers
+
+
 def log_result(category: str, key: str, value: Any, error: Optional[str] = None):
     """Log a test result"""
     if category not in results:
@@ -117,8 +125,13 @@ def test_cli_agent_availability() -> bool:
     
     print(f"Checking debug server at {DEBUG_SERVER_URL}...")
     
+    # Check if authentication is required
+    if not Config.DEBUG_SERVER_TOKEN:
+        print("[WARN] DEBUG_SERVER_TOKEN not set. Authentication may be required.")
+        print("       Set DEBUG_SERVER_TOKEN environment variable for secure access.")
+    
     try:
-        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", timeout=5)
+        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", headers=get_debug_auth_headers(), timeout=5)
         
         if response.status_code == 200:
             log_result("cli_agent", "debug_server", True)
@@ -156,7 +169,7 @@ def test_help_command() -> bool:
     
     try:
         # Use debug API to get help via dedicated help endpoint
-        response = requests.get(f"{DEBUG_SERVER_URL}/debug/help", timeout=5)
+        response = requests.get(f"{DEBUG_SERVER_URL}/debug/help", headers=get_debug_auth_headers(), timeout=5)
         
         if response.status_code == 200:
             data = response.json()
@@ -195,7 +208,7 @@ def test_status_command() -> bool:
     print("="*60)
     
     try:
-        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", timeout=5)
+        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", headers=get_debug_auth_headers(), timeout=5)
         
         if response.status_code == 200:
             data = response.json()
@@ -237,7 +250,7 @@ def test_version_command() -> bool:
     
     try:
         # Version is included in status endpoint
-        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", timeout=5)
+        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", headers=get_debug_auth_headers(), timeout=5)
         
         if response.status_code == 200:
             data = response.json()
@@ -282,6 +295,7 @@ def test_health_endpoint() -> bool:
     print("="*60)
     
     try:
+        # Health endpoint doesn't require authentication (read-only)
         response = requests.get(f"{DEBUG_SERVER_URL}/debug/health", timeout=5)
         
         if response.status_code == 200:
@@ -315,6 +329,7 @@ def test_ready_endpoint() -> bool:
     print("="*60)
     
     try:
+        # Ready endpoint doesn't require authentication (read-only)
         response = requests.get(f"{DEBUG_SERVER_URL}/debug/ready", timeout=5)
         
         status_ok = response.status_code in (200, 503)  # Both are valid
@@ -348,6 +363,7 @@ def test_metrics_endpoint() -> bool:
     print("="*60)
     
     try:
+        # Metrics endpoint doesn't require authentication (read-only)
         response = requests.get(f"{DEBUG_SERVER_URL}/debug/metrics", timeout=5)
         
         if response.status_code == 200:
@@ -393,7 +409,7 @@ def test_error_handling() -> bool:
     
     # Test 404
     try:
-        response = requests.get(f"{DEBUG_SERVER_URL}/debug/nonexistent", timeout=5)
+        response = requests.get(f"{DEBUG_SERVER_URL}/debug/nonexistent", headers=get_debug_auth_headers(), timeout=5)
         if response.status_code == 404:
             print("[OK] 404 handling works")
             tests_passed += 1
@@ -404,7 +420,7 @@ def test_error_handling() -> bool:
     
     # Test invalid POST body
     try:
-        response = requests.post(f"{DEBUG_SERVER_URL}/debug/ask", data="invalid json", timeout=5)
+        response = requests.post(f"{DEBUG_SERVER_URL}/debug/ask", headers=get_debug_auth_headers(), data="invalid json", timeout=5)
         if response.status_code == 400:
             print("[OK] Invalid JSON handling works")
             tests_passed += 1
