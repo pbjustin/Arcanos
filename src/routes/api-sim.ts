@@ -5,7 +5,7 @@ import { generateRequestId } from '../utils/idGenerator.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { buildTimestampedPayload } from '../utils/responseHelpers.js';
-import { resolveErrorMessage } from '../utils/errorHandling.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 
