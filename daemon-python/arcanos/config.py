@@ -259,6 +259,14 @@ class Config:
     # ============================================
     IDE_AGENT_DEBUG: bool = os.getenv("IDE_AGENT_DEBUG","").lower() in ("1","true","yes")
     DAEMON_DEBUG_PORT: int = int(os.getenv("DAEMON_DEBUG_PORT", "0"))
+    # New debug server config (prefer these over legacy envs when set)
+    DEBUG_SERVER_ENABLED: bool = os.getenv("DEBUG_SERVER_ENABLED", "").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_PORT: int = int(os.getenv("DEBUG_SERVER_PORT", "9999"))
+    DEBUG_SERVER_LOG_LEVEL: str = os.getenv("DEBUG_SERVER_LOG_LEVEL", "INFO")
+    DEBUG_SERVER_RATE_LIMIT: int = int(os.getenv("DEBUG_SERVER_RATE_LIMIT", "60"))
+    DEBUG_SERVER_METRICS_ENABLED: bool = os.getenv("DEBUG_SERVER_METRICS_ENABLED", "true").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_CORS_ENABLED: bool = os.getenv("DEBUG_SERVER_CORS_ENABLED", "false").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_LOG_RETENTION_DAYS: int = int(os.getenv("DEBUG_SERVER_LOG_RETENTION_DAYS", "7"))
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:
