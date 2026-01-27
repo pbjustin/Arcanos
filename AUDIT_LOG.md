@@ -125,7 +125,7 @@
 | --- | --- | --- |
 | Removed `src/services/notionSync.ts` | Notion sync was unused and unreferenced in runtime code. | `rg "notionSync" src` (no matches) |
 | Removed `@notionhq/client` dependency | Only used by removed Notion sync module. | `npm uninstall @notionhq/client` |
-| Removed `utils/tagRequest.js` | Legacy JS duplicate; TypeScript version is used in `src/utils`. | `rg "utils/tagRequest\\.js"` (no matches) |
+| Removed `utils/tagRequest.js` | Legacy JS duplicate; TypeScript version is used in `src/utils`. | `rg "utils/tagRequest\\.js"` (no matches); `rg "tagRequest" src/utils` (TS helper remains) |
 | Moved `@jest/globals` to `devDependencies` | Test-only dependency should not ship in production. | `npm install --save-dev @jest/globals` |
 | Updated Notion env documentation in `.env.example`, overview, and legacy docs | Avoid stale configuration references after module removal. | Manual review of updated files |
 
