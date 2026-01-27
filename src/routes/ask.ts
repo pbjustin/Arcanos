@@ -4,7 +4,7 @@ import { runThroughBrain } from '../logic/trinity.js';
 import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware, securityHeaders, validateInput } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
 import type {
   AIRequestDTO,
   AIResponseDTO,

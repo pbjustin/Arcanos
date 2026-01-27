@@ -4,7 +4,7 @@
  */
 
 import { Response } from 'express';
-import { buildValidationErrorResponse } from './errorResponse.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
 
 // Input validation schemas
 export interface ValidationRule {

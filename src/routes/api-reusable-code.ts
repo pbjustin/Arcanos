@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { createValidationMiddleware, ValidationSchema } from '../utils/security.js';
-import { sendServerError } from '../utils/errorResponse.js';
+import { sendServerError } from '../lib/errors/index.js';
 import {
   generateReusableCodeSnippets,
   ReusableCodeGenerationRequest,

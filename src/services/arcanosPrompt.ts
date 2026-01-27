@@ -1,6 +1,6 @@
 import { getOpenAIClient, generateMockResponse } from './openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
-import { mapErrorToFriendlyMessage } from '../utils/errorMessageMapper.js';
+import { mapErrorToFriendlyMessage } from '../lib/errors/index.js';
 
 /**
  * Handles a basic ARCANOS prompt by routing it through the Trinity brain.
