@@ -62,9 +62,13 @@ def _resolve_base_dir() -> Path:
             # //audit assumption: frozen apps must write to user dir; risk: permissions; invariant: user dir used; strategy: prefer user dir.
             return user_dir
 
-    # //audit assumption: dev installs keep config at daemon-python root; risk: missing files; invariant: use project root when markers exist.
+    # //audit assumption: dev installs keep config at daemon-python root or package dir; risk: missing files; invariant: use project root when markers exist; strategy: check both locations.
     if (project_root / ".env.example").exists() or (project_root / "requirements.txt").exists():
         return project_root
+    # Also check package directory (arcanos) for markers
+    package_dir = project_root / "arcanos"
+    if package_dir.exists() and ((package_dir / ".env.example").exists() or (package_dir / "requirements.txt").exists()):
+        return package_dir.parent if package_dir.name == "arcanos" else package_dir
 
     user_dir = _get_user_data_dir()
     if user_dir:

@@ -1,4 +1,4 @@
-﻿"""
+"""
 ARCANOS CLI - Main Command Line Interface
 Human-like AI assistant with rich terminal UI.
 """
@@ -115,8 +115,8 @@ class ArcanosCLI:
         try:
             self.gpt_client = GPTClient()
         except ValueError as e:
-            self.console.print(f"[red]? {e}[/red]")
-            self.console.print(f"\n[yellow]?? Add your API key to {Config.ENV_PATH}[/yellow]")
+            self.console.print(f"[red]⚠️  Error: {e}[/red]")
+            self.console.print(f"\n[yellow]💡 Add your API key to {Config.ENV_PATH}[/yellow]")
             sys.exit(1)
 
         self.vision = VisionSystem(self.gpt_client)
@@ -1254,11 +1254,11 @@ Type **help** for available commands or just start chatting naturally.
         self._append_activity("run", command)
         if not command:
             if not return_result:
-                self.console.print("[red]? No command specified[/red]")
+                self.console.print("[red]⚠️  No command specified[/red]")
             return {"ok": False, "error": "No command specified"} if return_result else None
 
         if not return_result:
-            self.console.print(f"[cyan]?? Running:[/cyan] {command}")
+            self.console.print(f"[cyan]▶️  Running:[/cyan] {command}")
 
         # Execute command
         stdout, stderr, return_code = self.terminal.execute(
