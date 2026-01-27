@@ -106,7 +106,7 @@ still validated server-side. The `aiCron` module performs:
 - Memory syncs between PostgreSQL, filesystem snapshots, and cached state.
 - Assistant synchronization so OpenAI organization assistants stay aligned with
   project configuration.
-- Health polling for external services referenced in `config/` (Notion, research
+- Health polling for external services referenced in `config/` (research
   fetchers, etc.).
 
 Workers inherit the same OpenAI client helpers, so model selection and failover
