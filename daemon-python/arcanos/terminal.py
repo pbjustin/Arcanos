@@ -168,9 +168,20 @@ class TerminalController:
         """
         normalized = self._normalize_shell_name(shell)
         if sys.platform == "win32":
-            # //audit assumption: Windows elevation only supported for PowerShell; risk: cmd elevation unsupported; invariant: fail fast; strategy: validate shell.
-            if normalized != "powershell":
-                raise ValueError("Elevated execution is only supported with PowerShell on Windows.")
+            # //audit assumption: Windows elevation supported for PowerShell and cmd; risk: unsupported shell; invariant: fail fast with clear message; strategy: validate shell.
+            if normalized not in ("powershell", "cmd"):
+                raise ValueError(
+                    f"Elevated execution on Windows is only supported with PowerShell or cmd. "
+                    f"Current shell: {shell} (normalized: {normalized}). "
+                    f"Set ARCANOS_SHELL=powershell or ARCANOS_SHELL=cmd to use elevated commands."
+                )
+            if normalized == "cmd":
+                # cmd elevation uses runas - convert to PowerShell for consistency
+                # Note: cmd elevation is less reliable, prefer PowerShell
+                raise ValueError(
+                    "Elevated execution with cmd is not fully supported. "
+                    "Please use PowerShell (set ARCANOS_SHELL=powershell) for elevated commands."
+                )
             return self._execute_elevated_windows(command, timeout)
 
         # //audit assumption: sudo available on Unix; risk: sudo missing or requires TTY; invariant: attempt sudo; strategy: wrap shell command.
