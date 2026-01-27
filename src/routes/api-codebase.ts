@@ -3,7 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { createRateLimitMiddleware } from '../utils/security.js';
 import { listDirectory, readRepositoryFile } from '../services/codebaseAccess.js';
 import { buildTimestampedPayload } from '../utils/responseHelpers.js';
-import { resolveErrorMessage } from '../utils/errorHandling.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 

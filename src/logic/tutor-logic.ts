@@ -14,8 +14,9 @@ import {
   buildResearchBriefPrompt,
   buildResearchFallbackPrompt
 } from '../config/tutorPrompts.js';
+import { env } from '../utils/env.js';
 
-const DEFAULT_TOKEN_LIMIT = parseInt(process.env.TUTOR_DEFAULT_TOKEN_LIMIT ?? '200', 10);
+const DEFAULT_TOKEN_LIMIT = env.TUTOR_DEFAULT_TOKEN_LIMIT;
 
 export interface TutorQuery {
   intent?: string;

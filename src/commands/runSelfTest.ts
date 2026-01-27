@@ -1,9 +1,10 @@
 import { runSelfTestPipeline } from '../services/selfTestPipeline.js';
+import { env } from '../utils/env.js';
 
 async function main() {
   try {
     const summary = await runSelfTestPipeline({
-      baseUrl: process.env.SELF_TEST_BASE_URL,
+      baseUrl: env.SELF_TEST_BASE_URL,
       triggeredBy: 'cli'
     });
 
