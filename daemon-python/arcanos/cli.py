@@ -520,7 +520,7 @@ Type **help** for available commands or just start chatting naturally.
 
             except Exception as e:
                 # Log error but continue
-                print(f"[DAEMON] Heartbeat error: {e}")
+                error_logger.error(f"[DAEMON] Heartbeat error: {e}")
 
             # Wait for next heartbeat
             time.sleep(self._heartbeat_interval)
@@ -557,7 +557,7 @@ Type **help** for available commands or just start chatting naturally.
                                 self._handle_daemon_command(command)
                                 command_ids.append(command.id)
                             except Exception as e:
-                                print(f"[DAEMON] Error handling command {cmd_data.get('id')}: {e}")
+                                error_logger.error(f"[DAEMON] Error handling command {cmd_data.get('id')}: {e}")
 
                         # Acknowledge processed commands
                         if command_ids:
@@ -571,24 +571,24 @@ Type **help** for available commands or just start chatting naturally.
                                     }
                                 )
                                 if ack_response.status_code != 200:
-                                    print(f"[DAEMON] Command ack failed: {ack_response.status_code}")
+                                    error_logger.error(f"[DAEMON] Command ack failed: {ack_response.status_code}")
                             except Exception as e:
-                                print(f"[DAEMON] Command ack error: {e}")
+                                error_logger.error(f"[DAEMON] Command ack error: {e}")
 
                 elif response.status_code == 401:
                     # Authentication failed, stop polling
-                    print("[DAEMON] Authentication failed, stopping command polling")
+                    error_logger.warning("[DAEMON] Authentication failed, stopping command polling")
                     break
                 else:
                     # Log error but continue
-                    print(f"[DAEMON] Command poll failed: {response.status_code}")
+                    error_logger.error(f"[DAEMON] Command poll failed: {response.status_code}")
 
             except BackendRequestError as e:
                 # Network/request error, log and continue
-                print(f"[DAEMON] Command poll request error: {e}")
+                error_logger.error(f"[DAEMON] Command poll request error: {e}")
             except Exception as e:
                 # Unexpected error, log and continue
-                print(f"[DAEMON] Command poll error: {e}")
+                error_logger.error(f"[DAEMON] Command poll error: {e}")
 
             # Wait before next poll
             time.sleep(self._command_poll_interval)
