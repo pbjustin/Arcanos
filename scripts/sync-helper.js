@@ -75,7 +75,7 @@ async function syncVersion(version) {
     console.log(`  ✓ Updated package.json to ${version}`);
     
     // Update config.py
-    const configPath = path.join(ROOT, 'daemon-python', 'config.py');
+    const configPath = path.join(ROOT, 'daemon-python', 'arcanos', 'config.py');
     let configContent = await fs.readFile(configPath, 'utf-8');
     configContent = configContent.replace(
       /VERSION\s*[:=]\s*["'][^"']+["']/,

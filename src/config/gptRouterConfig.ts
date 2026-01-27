@@ -83,6 +83,17 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
   return map;
 }
 
-const gptModuleMapPromise = loadGptModuleMap();
+let gptModuleMapPromise: Promise<Record<string, GptModuleEntry>> | null = null;
 
-export default gptModuleMapPromise;
+export function getGptModuleMap(): Promise<Record<string, GptModuleEntry>> {
+  if (!gptModuleMapPromise) {
+    gptModuleMapPromise = loadGptModuleMap();
+  }
+  return gptModuleMapPromise;
+}
+
+export function resetGptModuleMapCache(): void {
+  gptModuleMapPromise = null;
+}
+
+export default getGptModuleMap;

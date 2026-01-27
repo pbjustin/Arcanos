@@ -5,11 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "arcanos"
 version = "1.1.2"
-description = "ARCANOS daemon CLI"
+description = "ARCANOS CLI daemon with voice, vision, and backend sync."
 readme = "README.md"
-authors = [{ name = "ARCANOS Team" }]
-license = { text = "MIT" }
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "ARCANOS Team" }
+]
+keywords = ["ai", "cli", "assistant", "arcanos"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+
 dependencies = [
   "openai>=1.12.0,<2",
   "packaging>=24.0",
@@ -25,24 +34,23 @@ dependencies = [
   "pyaudio>=0.2.14",
   "pyttsx3>=2.90",
   "pynput>=1.7.6",
-  "webrtcvad-wheels>=2.0.14; platform_system == \"Windows\"",
-  "webrtcvad>=2.0.10; platform_system != \"Windows\"",
-  "pywin32>=306; platform_system == \"Windows\"",
-  "winshell>=0.6; platform_system == \"Windows\"",
+  "webrtcvad>=2.0.10; platform_system != "Windows"",
   "pystray>=0.19.5",
   "rich>=13.7.0",
-  "psycopg2-binary>=2.9.9",
-  "pyinstaller>=6.3.0",
+  "psycopg2-binary>=2.9.9"
 ]
 
 [project.optional-dependencies]
+build = [
+  "pyinstaller>=6.3.0"
+]
 dev = [
   "pytest>=7.4.0",
   "pytest-cov>=4.1.0",
   "pytest-mock>=3.12.0",
   "black>=23.12.0",
   "flake8>=7.0.0",
-  "mypy>=1.8.0",
+  "mypy>=1.8.0"
 ]
 
 [project.scripts]
@@ -52,11 +60,9 @@ arcanos = "arcanos.cli:main"
 include-package-data = true
 
 [tool.setuptools.packages.find]
+where = ["."]
 include = ["arcanos*"]
 
 [tool.setuptools.package-data]
-arcanos = [
-  "memory/*.json",
-  "assets/*.*",
-  "memories.json",
-]
+arcanos = ["memory/*.json", "assets/*"]
+

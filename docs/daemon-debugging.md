@@ -34,7 +34,7 @@ To enable the debug server, you need to set one of the following environment var
     # or
     DAEMON_DEBUG_PORT=9999
     ```
-3.  Run the daemon as usual (`python daemon-python/cli.py`).
+3.  Run the daemon as usual (`python -m arcanos.cli`).
 
 ## Using the `daemon-debug.ps1` CLI
 

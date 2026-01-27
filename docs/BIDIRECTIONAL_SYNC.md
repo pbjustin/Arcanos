@@ -25,7 +25,7 @@ Action: Update daemon to match server
 
 **Example:**
 ```
-You add: daemon-python/backend_client.py::request_new_method()
+You add: daemon-python/arcanos/backend_client.py::request_new_method()
 System detects: Server doesn't have corresponding route
 Action: Either add route to server, or remove method from daemon
 ```
@@ -47,7 +47,7 @@ npm run sync:check
 💡 Add request_new_endpoint() method to backend_client.py
 
 # 4. Update daemon to follow server
-# ... edit daemon-python/backend_client.py ...
+# ... edit daemon-python/arcanos/backend_client.py ...
 
 # 5. Verify
 npm run sync:check
@@ -57,7 +57,7 @@ npm run sync:check
 
 ```bash
 # 1. Make changes to daemon
-# ... edit daemon-python/backend_client.py ...
+# ... edit daemon-python/arcanos/backend_client.py ...
 
 # 2. Run sync check
 npm run sync:check
@@ -137,7 +137,7 @@ npm run sync:check
 # Shows: Daemon needs request_new_feature() method
 
 # 3. Add method to daemon
-# ... edit daemon-python/backend_client.py ...
+# ... edit daemon-python/arcanos/backend_client.py ...
 
 # 4. Verify
 npm run sync:check
@@ -148,7 +148,7 @@ npm run sync:check
 
 ```bash
 # 1. Add method to daemon
-# ... edit daemon-python/backend_client.py ...
+# ... edit daemon-python/arcanos/backend_client.py ...
 
 # 2. Check sync
 npm run sync:check

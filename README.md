@@ -10,7 +10,7 @@ HTTP APIs, and persists state to disk or PostgreSQL. The server boots from
 OpenAI client via `src/services/openai.ts` and `src/services/openai/*`.
 
 This repository also includes a **Python daemon client** (`daemon-python/`) that provides
-a local Windows terminal interface for interacting with the backend. The daemon can work
+a local cross-platform terminal interface for interacting with the backend (Windows/macOS/Linux). The daemon can work
 standalone or connect to this backend server for cloud sync and shared services.
 
 ## Prerequisites
@@ -68,7 +68,7 @@ curl http://localhost:8080/readyz
 
 ## Python Daemon Client
 
-The repository includes a Python daemon (`daemon-python/`) that provides a local Windows
+The repository includes a Python daemon (`daemon-python/`) that provides a local cross-platform
 terminal interface. The daemon can work standalone or connect to this backend server.
 
 To use the daemon:
@@ -76,11 +76,15 @@ To use the daemon:
 ```bash
 cd daemon-python
 python -m venv venv
+# Windows (PowerShell)
 .\venv\Scripts\Activate.ps1
+# macOS/Linux
+source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Add your OPENAI_API_KEY and optionally BACKEND_URL
-python cli.py
+python -m arcanos.cli
+# Or, after pip install: arcanos
 ```
 
 See `QUICKSTART.md` for detailed daemon setup instructions.
