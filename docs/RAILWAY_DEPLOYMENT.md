@@ -272,7 +272,7 @@ railway redeploy <deployment-id>
 - `../RAILWAY_COMPATIBILITY_GUIDE.md` - Implementation details.
 
 **External resources:**
-- https://docs.railway.app/
-- https://docs.railway.app/develop/cli
-- https://platform.openai.com/docs
-- https://github.com/openai/openai-node
+- [Railway Documentation](https://docs.railway.app/)
+- [Railway CLI Reference](https://docs.railway.app/develop/cli)
+- [OpenAI API Documentation](https://platform.openai.com/docs)
+- [OpenAI Node.js SDK](https://github.com/openai/openai-node)
