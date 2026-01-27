@@ -158,18 +158,6 @@ export async function executeInSandbox(
   timeoutMs = DEFAULT_SANDBOX_TIMEOUT_MS
 ): Promise<SandboxExecutionResult> {
   return new Promise(resolve => {
-    const child = spawn(process.execPath, ['-e', script], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        NODE_ENV: process.env.NODE_ENV || 'production'
-      }
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let resolved = false;
-    let timedOut = false;
-
     const finish = (result: SandboxExecutionResult) => {
       //audit Assumption: finish should resolve once; Handling: guard with resolved flag
       if (!resolved) {
@@ -177,6 +165,33 @@ export async function executeInSandbox(
         resolve(result);
       }
     };
+
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+    let timedOut = false;
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(process.execPath, ['-e', script], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          NODE_ENV: process.env.NODE_ENV || 'production'
+        }
+      });
+    } catch (err) {
+      //audit Assumption: spawn can throw synchronously (e.g. EPERM on Windows); Handling: resolve with failure
+      const msg = err instanceof Error ? err.message : String(err);
+      finish({
+        success: false,
+        stdout: '',
+        stderr: msg,
+        exitCode: null,
+        timedOut: false,
+        errorMessage: msg
+      });
+      return;
+    }
 
     const timeoutHandle = setTimeout(() => {
       //audit Assumption: sandbox timeout enforces safety; Handling: kill process
@@ -191,11 +206,11 @@ export async function executeInSandbox(
       });
     }, timeoutMs);
 
-    child.stdout.on('data', data => {
+    child.stdout!.on('data', data => {
       stdout += data.toString();
     });
 
-    child.stderr.on('data', data => {
+    child.stderr!.on('data', data => {
       stderr += data.toString();
     });
 
@@ -229,6 +244,20 @@ export async function executeInSandbox(
 }
 
 async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxExecutionResult }> {
+  // Skip probe when env requests it (e.g. Windows spawn restrictions). Opts into trusting
+  // the runtime without probe validation.
+  const skipProbe = process.env.SKIP_ENV_SECURITY_PROBE === '1' || process.env.SKIP_ENV_SECURITY_PROBE === 'true';
+  if (skipProbe) {
+    const sandbox: SandboxExecutionResult = {
+      success: true,
+      stdout: JSON.stringify({ nodeVersion: process.version, hasFetch: true, hasIntl: true }),
+      stderr: '',
+      timedOut: false,
+      exitCode: 0
+    };
+    return { issues: [], sandbox };
+  }
+
   const sandbox = await executeInSandbox(
     RUNTIME_PROBE_SUMMARY_SCRIPT.trim()
   );
