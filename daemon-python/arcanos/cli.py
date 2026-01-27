@@ -467,10 +467,29 @@ Type **help** for available commands or just start chatting naturally.
 
     def _start_daemon_threads(self) -> None:
         """Start heartbeat and command polling threads"""
-        while self._daemon_running:
-            try:
-                if not self.backend_client:
-                    break
+        if self._daemon_running:
+            return
+        
+        if not self.backend_client:
+            return
+
+        self._daemon_running = True
+
+        # Start heartbeat thread
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name="daemon-heartbeat"
+        )
+        self._heartbeat_thread.start()
+
+        # Start command polling thread
+        self._command_poll_thread = threading.Thread(
+            target=self._command_poll_loop,
+            daemon=True,
+            name="daemon-command-poll"
+        )
+        self._command_poll_thread.start()
 
     def _heartbeat_loop(self) -> None:
         """Background thread that sends periodic heartbeats"""
