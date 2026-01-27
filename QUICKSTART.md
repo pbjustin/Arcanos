@@ -50,7 +50,7 @@ cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 
 # 6. Run ARCANOS
-python cli.py
+python -m arcanos.cli
 ```
 
 ## 🎯 First Steps
@@ -130,18 +130,7 @@ MAX_TOKENS=500
 
 ## 🪟 Windows Terminal Integration
 
-To add ARCANOS as a Windows Terminal profile:
-
-1. Launch ARCANOS: `python cli.py`
-2. On first run, accept Windows integration when prompted
-3. Open Windows Terminal settings
-4. You'll see "ARCANOS" profile with custom theme
-
-Or manually:
-```powershell
-cd daemon-python
-python -c "from windows_integration import WindowsIntegration; WindowsIntegration().install_all()"
-```
+Windows Terminal profile/shortcut integration has been removed in the cross-platform CLI build.
 
 ## 🔧 Building an .exe
 

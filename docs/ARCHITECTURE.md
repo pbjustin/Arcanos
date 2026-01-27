@@ -230,7 +230,7 @@ User: Hold SPACEBAR → PTT Manager → Audio System → Microphone
 1. Clone repository
 2. Run `setup.ps1`
 3. Add OpenAI API key to `.env`
-4. Run `python cli.py`
+4. Run `python -m arcanos.cli`
 
 ### Backend Deployment
 

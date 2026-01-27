@@ -14,7 +14,7 @@ cd C:\arcanos-hybrid\daemon-python
 .\venv\Scripts\Activate.ps1
 
 # 2. Try running directly
-python cli.py
+python -m arcanos.cli
 
 # 3. If error, check dependencies
 python -m pip install -r requirements.txt --force-reinstall
@@ -30,7 +30,7 @@ Get-Content daemon-python\crash_reports\crash_log.txt -Tail 20
 Remove-Item daemon-python\crash_reports\* -Force
 
 # 3. Restart with clean state
-python cli.py
+python -m arcanos.cli
 ```
 
 ### Memory Corruption
@@ -43,7 +43,7 @@ Copy-Item daemon-python\memories.json daemon-python\backups\memories_corrupted.j
 Copy-Item daemon-python\memory\bootstrap_template.json daemon-python\memories.json
 
 # 3. Restart daemon
-python cli.py
+python -m arcanos.cli
 ```
 
 ---
@@ -246,7 +246,7 @@ Remove-Item daemon-python\screenshots\* -Recurse -Force
 Copy-Item daemon-python\memory\bootstrap_template.json daemon-python\memories.json
 
 # 4. Restart
-python cli.py
+python -m arcanos.cli
 ```
 
 ### Backup & Restore
@@ -319,7 +319,7 @@ Get-ChildItem daemon-python\crash_reports\* | Where-Object { $_.LastWriteTime -l
 # 1. Corrupt memory (safe test)
 Copy-Item daemon-python\memories.json daemon-python\memories_backup.json
 "invalid json{" | Set-Content daemon-python\memories.json
-python cli.py
+python -m arcanos.cli
 # Should recover automatically
 
 # 2. Test crash recovery

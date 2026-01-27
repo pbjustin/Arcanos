@@ -50,7 +50,6 @@ class Memory:
             },
             "settings": {
                 "telemetry_consent": None,  # None = not asked, True/False = consent
-                "windows_integration_installed": False,
                 "first_run": True,
                 "instance_id": None  # Persistent daemon instance ID
             }

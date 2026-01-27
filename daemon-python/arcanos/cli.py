@@ -1,4 +1,4 @@
-"""
+﻿"""
 ARCANOS CLI - Main Command Line Interface
 Human-like AI assistant with rich terminal UI.
 """
@@ -12,8 +12,7 @@ import base64
 import time
 import urllib.request
 import uuid
-from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Callable, Optional, Any, Mapping, Tuple
 
 from rich.console import Console
@@ -21,6 +20,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.markdown import Markdown
 from rich import print as rprint
+from collections import deque
 
 from .config import Config
 from .backend_client import BackendApiClient, BackendResponse, BackendRequestError
@@ -44,7 +44,6 @@ from .audio import AudioSystem
 from .terminal import TerminalController
 from .rate_limiter import RateLimiter
 from .error_handler import handle_errors, ErrorHandler, logger as error_logger
-from .windows_integration import WindowsIntegration
 from .update_checker import check_for_updates
 
 try:
@@ -52,6 +51,15 @@ try:
     PTT_AVAILABLE = True
 except ImportError:
     PTT_AVAILABLE = False
+
+
+@dataclass
+class DaemonCommand:
+    """Represents a command from the backend"""
+    id: str
+    name: str
+    payload: Mapping[str, Any]
+    issuedAt: str
 
 
 @dataclass(frozen=True)
@@ -69,16 +77,6 @@ class _ConversationResult:
     source: str
 
 
-@dataclass(frozen=True)
-class DaemonCommand:
-    """Represents a daemon command received from the backend."""
-
-    id: str
-    name: str
-    payload: Mapping[str, Any]
-    issuedAt: str
-
-
 class ArcanosCLI:
     """Main ARCANOS CLI application"""
 
@@ -86,33 +84,45 @@ class ArcanosCLI:
         # Initialize console
         self.console = Console()
         self.start_time = time.time()
+        self._last_error: Optional[str] = None
+        self._activity: deque = deque(maxlen=200)
+        self._activity_lock = threading.Lock()
 
         # Initialize components
         self.memory = Memory()
         self.rate_limiter = RateLimiter()
+    
+    def _append_activity(self, kind: str, detail: str):
+        with self._activity_lock:
+            self._activity.appendleft({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "kind": kind,
+                "detail": detail
+            })
+
 
         # Generate or retrieve persistent instance ID
         self.instance_id = self._get_or_create_instance_id()
-        self.client_id = "arcanos-daemon"  # Static client identifier
+        self.client_id = "arcanos-cli"  # Client identifier for CLI application
+
+        # Daemon thread management (integrated from daemon_service.py)
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._command_poll_thread: Optional[threading.Thread] = None
+        self._daemon_running = False
+        self._heartbeat_interval = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "30"))
+        self._command_poll_interval = 10  # Poll commands every 10 seconds
 
         try:
             self.gpt_client = GPTClient()
         except ValueError as e:
-            self.console.print(f"[red]❌ {e}[/red]")
-            self.console.print(f"\n[yellow]💡 Add your API key to {Config.ENV_PATH}[/yellow]")
+            self.console.print(f"[red]? {e}[/red]")
+            self.console.print(f"\n[yellow]?? Add your API key to {Config.ENV_PATH}[/yellow]")
             sys.exit(1)
 
         self.vision = VisionSystem(self.gpt_client)
         self.audio = AudioSystem(self.gpt_client)
         self.terminal = TerminalController()
-        self.windows_integration = WindowsIntegration()
         self._last_response: Optional[str] = None
-
-        self._heartbeat_thread: Optional[threading.Thread] = None
-        self._command_poll_thread: Optional[threading.Thread] = None
-        self._daemon_running = False
-        self._heartbeat_interval = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "30"))
-        self._command_poll_interval = 10
 
         self.backend_client: Optional[BackendApiClient] = None
         if Config.BACKEND_URL:
@@ -132,8 +142,11 @@ class ArcanosCLI:
         if self.backend_client:
             # //audit assumption: backend registry fetch is best-effort; risk: startup delay; invariant: fallback prompt; strategy: attempt fetch.
             self._refresh_registry_cache()
-            # Start daemon service threads for HTTP heartbeat/command polling
+
+        # Start daemon threads for HTTP-based heartbeat and command polling
+        if Config.BACKEND_URL and self.backend_client:
             self._start_daemon_threads()
+            self.console.print(f"[green]?[/green] Backend connection active (heartbeat + command polling)")
 
         # PTT Manager
         self.ptt_manager = None
@@ -159,6 +172,18 @@ class ArcanosCLI:
                     error_logger.debug("Update check failed: %s", e)
             threading.Thread(target=_check, daemon=True).start()
 
+        # Start debug server if enabled
+        if Config.IDE_AGENT_DEBUG or (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0):
+            try:
+                port = Config.DAEMON_DEBUG_PORT if (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0) else 9999
+                # Late import to avoid loading when not in use
+                from .debug_server import start_debug_server
+                start_debug_server(self, port)
+                self.console.print(f"[green]?[/green] IDE agent debug server on 127.0.0.1:{port}")
+            except Exception as e:
+                self.console.print(f"[yellow]Debug server failed to start: {e}[/yellow]")
+
+
     def _get_or_create_instance_id(self) -> str:
         """Get or create persistent instance ID for this daemon installation"""
         instance_id = self.memory.get_setting("instance_id")
@@ -166,7 +191,7 @@ class ArcanosCLI:
             # Generate new UUID
             instance_id = str(uuid.uuid4())
             self.memory.set_setting("instance_id", instance_id)
-            self.console.print(f"[green]✓[/green] Generated daemon instance ID: {instance_id[:8]}...")
+            self.console.print(f"[green]?[/green] Generated daemon instance ID: {instance_id[:8]}...")
         return instance_id
 
     def show_welcome(self) -> None:
@@ -175,7 +200,7 @@ class ArcanosCLI:
             return
 
         welcome_text = f"""
-# 🌌 Welcome to ARCANOS v{Config.VERSION}
+# ?? Welcome to ARCANOS v{Config.VERSION}
 
 **Your AI-powered terminal companion**
 
@@ -186,7 +211,7 @@ Type **help** for available commands or just start chatting naturally.
 
         self.console.print(Panel(
             Markdown(welcome_text),
-            title="🌟 ARCANOS",
+            title="?? ARCANOS",
             border_style="cyan"
         ))
 
@@ -196,11 +221,11 @@ Type **help** for available commands or just start chatting naturally.
 
     def first_run_setup(self) -> None:
         """First-run configuration"""
-        self.console.print("\n[cyan]👋 First time setup[/cyan]")
+        self.console.print("\n[cyan]?? First time setup[/cyan]")
 
         # Telemetry consent
         if self.memory.get_setting("telemetry_consent") is None:
-            self.console.print("\n[yellow]📊 Telemetry & Crash Reporting[/yellow]")
+            self.console.print("\n[yellow]?? Telemetry & Crash Reporting[/yellow]")
             self.console.print("ARCANOS can send anonymous crash reports to help improve the software.")
             self.console.print("No personal data, conversations, or API keys are collected.")
 
@@ -210,19 +235,9 @@ Type **help** for available commands or just start chatting naturally.
             if consent == 'y':
                 Config.TELEMETRY_ENABLED = True
                 ErrorHandler.initialize()
-                self.console.print("[green]✅ Telemetry enabled[/green]")
+                self.console.print("[green]? Telemetry enabled[/green]")
             else:
-                self.console.print("[green]✅ Telemetry disabled[/green]")
-
-        # Windows integration
-        if not self.memory.get_setting("windows_integration_installed", False):
-            self.console.print("\n[yellow]🪟 Windows Integration[/yellow]")
-            self.console.print("Install Windows Terminal profile and desktop shortcuts?")
-
-            install = input("\nInstall now? (y/n): ").lower().strip()
-            if install == 'y':
-                success = self.windows_integration.install_all()
-                self.memory.set_setting("windows_integration_installed", success)
+                self.console.print("[green]? Telemetry disabled[/green]")
 
         self.memory.set_setting("first_run", False)
 
@@ -401,7 +416,8 @@ Type **help** for available commands or just start chatting naturally.
 
     def _handle_confirmation_required(
         self,
-        error: BackendRequestError
+        error: BackendRequestError,
+        from_debug: bool = False,
     ) -> Optional[_ConversationResult]:
         """
         Purpose: Prompt the user (or auto-confirm) for sensitive backend actions.
@@ -413,6 +429,11 @@ Type **help** for available commands or just start chatting naturally.
 
         if not confirmation_id or not isinstance(pending_actions, list):
             # //audit assumption: confirmation fields required; risk: invalid state; invariant: return None; strategy: abort.
+            error_logger.warning("Invalid confirmation payload received from backend.")
+            return None
+
+        if from_debug:
+            error_logger.info("[DEBUG] Confirmation auto-rejected because request is from debug server.")
             return None
 
         if Config.CONFIRM_SENSITIVE_ACTIONS:
@@ -445,12 +466,16 @@ Type **help** for available commands or just start chatting naturally.
         return self._confirm_pending_actions(confirmation_id)
 
     def _start_daemon_threads(self) -> None:
-        """Start background heartbeat and command polling threads when backend is configured."""
-        if self._daemon_running or not self.backend_client:
-            # //audit assumption: backend client required; risk: duplicate threads; invariant: start once; strategy: guard on running flag and client.
+        """Start heartbeat and command polling threads"""
+        if self._daemon_running:
+            return
+        
+        if not self.backend_client:
             return
 
         self._daemon_running = True
+
+        # Start heartbeat thread
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
             daemon=True,
@@ -458,50 +483,56 @@ Type **help** for available commands or just start chatting naturally.
         )
         self._heartbeat_thread.start()
 
+        # Start command polling thread
         self._command_poll_thread = threading.Thread(
             target=self._command_poll_loop,
             daemon=True,
             name="daemon-command-poll"
         )
         self._command_poll_thread.start()
-        self.console.print(f"[green]✓[/green] Daemon service started (HTTP mode)")
 
     def _heartbeat_loop(self) -> None:
-        """Background thread that sends periodic heartbeats."""
-        while self._daemon_running and self.backend_client:
+        """Background thread that sends periodic heartbeats"""
+        while self._daemon_running:
             try:
+                if not self.backend_client:
+                    break
+                    
                 uptime = time.time() - self.start_time
-                payload = {
-                    "clientId": self.client_id,
-                    "instanceId": self.instance_id,
-                    "version": Config.VERSION,
-                    "uptime": uptime,
-                    "routingMode": "http",
-                    "stats": {}
-                }
+                
+                # Send heartbeat via backend client
                 response = self.backend_client._make_request(
                     "POST",
                     "/api/daemon/heartbeat",
-                    json=payload
+                    json={
+                        "clientId": self.client_id,
+                        "instanceId": self.instance_id,
+                        "version": Config.VERSION,
+                        "uptime": uptime,
+                        "routingMode": "http",
+                        "stats": {}
+                    }
                 )
 
                 if response.status_code != 200:
-                    # //audit assumption: heartbeat should succeed; risk: backend issues; invariant: continue loop; strategy: log debug and continue.
-                    error_logger.debug("Daemon heartbeat failed: %s", response.status_code)
+                    # Log error but continue
+                    error_logger.error(f"[DAEMON] Heartbeat failed: {response.status_code}")
 
-            except BackendRequestError as exc:
-                # //audit assumption: network errors are recoverable; risk: noisy logs; invariant: loop continues; strategy: log debug and sleep.
-                error_logger.debug("Daemon heartbeat request error: %s", exc)
-            except Exception as exc:
-                # //audit assumption: unexpected error should not crash thread; risk: silent failure; invariant: loop continues; strategy: log debug and continue.
-                error_logger.debug("Daemon heartbeat error: %s", exc)
+            except Exception as e:
+                # Log error but continue
+                error_logger.error(f"[DAEMON] Heartbeat error: {e}")
 
+            # Wait for next heartbeat
             time.sleep(self._heartbeat_interval)
 
     def _command_poll_loop(self) -> None:
-        """Background thread that polls the backend for daemon commands."""
-        while self._daemon_running and self.backend_client:
+        """Background thread that polls for commands"""
+        while self._daemon_running:
             try:
+                if not self.backend_client:
+                    break
+                    
+                # Poll for commands
                 response = self.backend_client._make_request(
                     "GET",
                     f"/api/daemon/commands?instance_id={self.instance_id}"
@@ -509,9 +540,10 @@ Type **help** for available commands or just start chatting naturally.
 
                 if response.status_code == 200:
                     data = response.json()
-                    commands = data.get("commands", []) if isinstance(data, Mapping) else []
+                    commands = data.get("commands", [])
 
                     if commands:
+                        # Process each command
                         command_ids = []
                         for cmd_data in commands:
                             try:
@@ -519,14 +551,15 @@ Type **help** for available commands or just start chatting naturally.
                                     id=cmd_data["id"],
                                     name=cmd_data["name"],
                                     payload=cmd_data["payload"],
-                                    issuedAt=cmd_data["issuedAt"],
+                                    issuedAt=cmd_data["issuedAt"]
                                 )
+                                # Call handler
                                 self._handle_daemon_command(command)
                                 command_ids.append(command.id)
-                            except Exception as exc:
-                                # //audit assumption: bad command payload should not stop polling; risk: lost command; invariant: continue; strategy: log debug.
-                                error_logger.debug("Daemon command handling error: %s", exc)
+                            except Exception as e:
+                                error_logger.error(f"[DAEMON] Error handling command {cmd_data.get('id')}: {e}")
 
+                        # Acknowledge processed commands
                         if command_ids:
                             try:
                                 ack_response = self.backend_client._make_request(
@@ -534,39 +567,41 @@ Type **help** for available commands or just start chatting naturally.
                                     "/api/daemon/commands/ack",
                                     json={
                                         "commandIds": command_ids,
-                                        "instanceId": self.instance_id,
-                                    },
+                                        "instanceId": self.instance_id
+                                    }
                                 )
                                 if ack_response.status_code != 200:
-                                    # //audit assumption: ack should succeed; risk: command re-delivery; invariant: continue; strategy: log debug.
-                                    error_logger.debug("Daemon command ack failed: %s", ack_response.status_code)
-                            except Exception as exc:
-                                error_logger.debug("Daemon command ack error: %s", exc)
+                                    error_logger.error(f"[DAEMON] Command ack failed: {ack_response.status_code}")
+                            except Exception as e:
+                                error_logger.error(f"[DAEMON] Command ack error: {e}")
 
                 elif response.status_code == 401:
-                    # //audit assumption: auth failure means stop polling; risk: stale token; invariant: exit loop; strategy: stop daemon threads.
-                    error_logger.debug("Daemon command poll auth failed; stopping command poll loop.")
-                    self._daemon_running = False
+                    # Authentication failed, stop polling
+                    error_logger.warning("[DAEMON] Authentication failed, stopping command polling")
                     break
                 else:
-                    # //audit assumption: other HTTP errors are transient; risk: missed commands; invariant: continue polling; strategy: log debug.
-                    error_logger.debug("Daemon command poll failed: %s", response.status_code)
+                    # Log error but continue
+                    error_logger.error(f"[DAEMON] Command poll failed: {response.status_code}")
 
-            except BackendRequestError as exc:
-                error_logger.debug("Daemon command poll request error: %s", exc)
-            except Exception as exc:
-                error_logger.debug("Daemon command poll error: %s", exc)
+            except BackendRequestError as e:
+                # Network/request error, log and continue
+                error_logger.error(f"[DAEMON] Command poll request error: {e}")
+            except Exception as e:
+                # Unexpected error, log and continue
+                error_logger.error(f"[DAEMON] Command poll error: {e}")
 
+            # Wait before next poll
             time.sleep(self._command_poll_interval)
 
     def _handle_daemon_command(self, command: DaemonCommand) -> None:
         """
         Handle daemon command from HTTP polling.
         Processes commands from the backend (ping, get_status, get_stats, notify).
-        Note: DaemonService handles acknowledgment automatically.
+        Commands are automatically acknowledged after processing.
         """
         command_name = command.name
         command_payload = command.payload or {}
+        self._append_activity("command", f"{command_name}: {command_payload}")
 
         if command_name == "ping":
             # //audit assumption: ping should always succeed; risk: none; invariant: ok response; strategy: return pong payload.
@@ -611,18 +646,13 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: unsupported commands should be logged; risk: unexpected behavior; invariant: error logged; strategy: warn.
             self.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
 
-    def _stop_daemon_threads(self) -> None:
-        """Stop daemon heartbeat and command polling threads."""
-        if not self._daemon_running:
-            return
-
+    def _stop_daemon_service(self) -> None:
+        """Stop daemon threads"""
         self._daemon_running = False
         if self._heartbeat_thread:
             self._heartbeat_thread.join(timeout=5.0)
-            self._heartbeat_thread = None
         if self._command_poll_thread:
             self._command_poll_thread.join(timeout=5.0)
-            self._command_poll_thread = None
 
     def _perform_local_conversation(self, message: str) -> Optional[_ConversationResult]:
         history = self.memory.get_recent_conversations(limit=5)
@@ -644,7 +674,7 @@ Type **help** for available commands or just start chatting naturally.
             source="local"
         )
 
-    def _perform_backend_conversation(self, message: str, domain: Optional[str] = None) -> Optional[_ConversationResult]:
+    def _perform_backend_conversation(self, message: str, domain: Optional[str] = None, from_debug: bool = False) -> Optional[_ConversationResult]:
         if not self.backend_client:
             # //audit assumption: backend client optional; risk: missing backend; invariant: return None; strategy: warn and return None.
             self.console.print("[yellow]Backend is not configured.[/yellow]")
@@ -708,7 +738,7 @@ Type **help** for available commands or just start chatting naturally.
         if response.error and response.error.kind == "confirmation":
             # //audit assumption: backend requires confirmation; risk: bypassing prompt; invariant: confirmation handled; strategy: prompt or auto-confirm.
             self._last_confirmation_handled = True
-            return self._handle_confirmation_required(response.error)
+            return self._handle_confirmation_required(response.error, from_debug=from_debug)
 
         # //audit assumption: backend response required; risk: backend failure; invariant: response ok; strategy: return None.
         return None
@@ -940,22 +970,21 @@ Type **help** for available commands or just start chatting naturally.
         message: str,
         route_override: Optional[str] = None,
         speak_response: bool = False,
-        return_result: bool = False
+        return_result: bool = False,
+        from_debug: bool = False,
     ) -> Optional[_ConversationResult]:
         """
         Purpose: Route and handle a conversation request locally or via backend.
         Inputs/Outputs: message text, optional route_override, speak_response flag; prints response and updates local state.
         Edge cases: Falls back to local when backend fails if configured.
         """
-        display_response = not return_result
-
+        self._append_activity("ask", message)
         # Check rate limits
         can_request, deny_reason = self.rate_limiter.can_make_request()
         if not can_request:
             # //audit assumption: rate limits enforced; risk: overuse; invariant: requests blocked; strategy: return with reason.
-            if display_response:
-                self.console.print(f"[red]Rate limit: {deny_reason}[/red]")
-            return None
+            self.console.print(f"[red]Rate limit: {deny_reason}[/red]")
+            return None if return_result else None
 
         route_decision = determine_conversation_route(
             user_message=message,
@@ -986,11 +1015,10 @@ Type **help** for available commands or just start chatting naturally.
         result: Optional[_ConversationResult] = None
 
         # Show thinking indicator
-        status_context = self.console.status("Thinking...", spinner="dots") if display_response else nullcontext()
-        with status_context:
+        with self.console.status("Thinking...", spinner="dots"):
             if route_decision.route == "backend":
                 # //audit assumption: backend route requested; risk: backend unavailable; invariant: backend attempt; strategy: call backend.
-                result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain)
+                result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain, from_debug=from_debug)
                 if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
                     # //audit assumption: fallback allowed when backend fails; risk: unwanted fallback on confirmation; invariant: skip when confirmation handled; strategy: gate on flag.
                     self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
@@ -1001,26 +1029,14 @@ Type **help** for available commands or just start chatting naturally.
 
         if not result:
             # //audit assumption: result required; risk: no response; invariant: message shown; strategy: return without updates.
-            if display_response:
+            if not return_result:
                 self.console.print("[red]No response generated.[/red]")
             return None
 
-        # Display response
-        if display_response:
-            self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
-        self._last_response = result.response_text
-
-        should_speak = (speak_response or Config.SPEAK_RESPONSES) and display_response
-        if should_speak:
-            # //audit assumption: TTS optional; risk: noisy output; invariant: speak only when enabled; strategy: gate on flag.
-            truncated = self._truncate_for_tts(result.response_text)
-            if truncated:
-                # //audit assumption: truncated text may be empty; risk: silence; invariant: speak non-empty; strategy: guard.
-                self.audio.speak(truncated, wait=True)
-
-        # Record request locally
+        # Record request and update state BEFORE returning or printing
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
         self.memory.add_conversation(route_decision.normalized_message, result.response_text, result.tokens_used, result.cost_usd)
+        self._last_response = result.response_text
 
         update_payload = {
             "eventId": str(uuid.uuid4()),
@@ -1030,59 +1046,67 @@ Type **help** for available commands or just start chatting naturally.
             "model": result.model,
             "messageLength": len(route_decision.normalized_message)
         }
-        # //audit assumption: update payload is metadata-only; risk: leaking content; invariant: no raw text; strategy: send metrics only.
         self._send_backend_update("conversation_usage", update_payload)
 
+
+        if return_result:
+            return result
+
+        # Display response
+        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
+        
+        should_speak = speak_response or Config.SPEAK_RESPONSES
+        if should_speak:
+            # //audit assumption: TTS optional; risk: noisy output; invariant: speak only when enabled; strategy: gate on flag.
+            truncated = self._truncate_for_tts(result.response_text)
+            if truncated:
+                # //audit assumption: truncated text may be empty; risk: silence; invariant: speak non-empty; strategy: guard.
+                self.audio.speak(truncated, wait=True)
+
         # Show stats
-        if Config.SHOW_STATS and display_response:
+        if Config.SHOW_STATS:
             stats = self.rate_limiter.get_usage_stats()
             self.console.print(
                 f"[dim]Tokens: {result.tokens_used} | Cost: ${result.cost_usd:.4f} | Total today: {stats['tokens_today']:,}[/dim]"
             )
-
-        return result if return_result else None
+        
+        return None
 
     @handle_errors("vision analysis")
-    def handle_see(self, args: list[str], return_result: bool = False) -> Optional[dict[str, Any]]:
+    def handle_see(self, args: list[str], return_result: bool = False) -> Optional[dict]:
         """
         Purpose: Handle vision commands for screen or camera input.
         Inputs/Outputs: args list; prints response and updates local stats.
         Edge cases: Returns early when vision is disabled or capture fails.
         """
-        display_response = not return_result
+        self._append_activity("see", "camera" if "camera" in args else "screen")
         if not Config.VISION_ENABLED:
-            # //audit assumption: vision can be disabled; risk: unsupported action; invariant: block when disabled; strategy: return.
-            if display_response:
+            if not return_result:
                 self.console.print("[red]Vision is disabled in config.[/red]")
-            return None
+            return {"ok": False, "error": "Vision is disabled in config"} if return_result else None
 
         # Check rate limits
         can_request, deny_reason = self.rate_limiter.can_make_request()
         if not can_request:
-            # //audit assumption: rate limits enforced; risk: overuse; invariant: requests blocked; strategy: return with reason.
-            if display_response:
+            if not return_result:
                 self.console.print(f"[red]Rate limit: {deny_reason}[/red]")
-            return None
+            return {"ok": False, "error": f"Rate limit: {deny_reason}"} if return_result else None
 
         route_decision = parse_vision_route_args(args, Config.BACKEND_VISION_ENABLED)
         result: Optional[_ConversationResult] = None
 
         if route_decision.use_backend:
-            # //audit assumption: backend vision requested; risk: backend unavailable; invariant: backend attempt; strategy: call backend.
             result = self._perform_backend_vision(route_decision.use_camera)
             if result is None:
                 if Config.BACKEND_FALLBACK_TO_LOCAL:
-                    # //audit assumption: fallback allowed; risk: user expects backend; invariant: local fallback; strategy: retry locally.
-                    if display_response:
+                    if not return_result:
                         self.console.print("[yellow]Backend unavailable; falling back to local vision.[/yellow]")
                 else:
-                    # //audit assumption: fallback disabled; risk: no vision response; invariant: backend required; strategy: return.
-                    if display_response:
+                    if not return_result:
                         self.console.print("[red]Backend vision unavailable.[/red]")
-                    return None
+                    return {"ok": False, "error": "Backend vision unavailable."} if return_result else None
 
         if not result:
-            # //audit assumption: local vision should run when backend absent; risk: missing response; invariant: local call; strategy: run local.
             if route_decision.use_camera:
                 response, tokens, cost = self.vision.see_camera()
             else:
@@ -1098,24 +1122,14 @@ Type **help** for available commands or just start chatting naturally.
                 )
 
         if not result:
-            # //audit assumption: response required; risk: no response; invariant: message shown; strategy: return.
-            if display_response:
+            if not return_result:
                 self.console.print("[red]No vision response generated.[/red]")
-            return None
+            return {"ok": False, "error": "No vision response generated."} if return_result else None
 
-        if display_response:
-            self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
-        self._last_response = result.response_text
-
-        if Config.SPEAK_RESPONSES and display_response:
-            # //audit assumption: SPEAK_RESPONSES enables TTS; risk: noisy output; invariant: speak when enabled; strategy: gate on flag.
-            truncated = self._truncate_for_tts(result.response_text)
-            if truncated:
-                # //audit assumption: truncated text may be empty; risk: silence; invariant: speak non-empty; strategy: guard.
-                self.audio.speak(truncated, wait=True)
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
         self.memory.increment_stat("vision_requests")
-
+        self._last_response = result.response_text
+        
         update_payload = {
             "eventId": str(uuid.uuid4()),
             "source": result.source,
@@ -1124,20 +1138,21 @@ Type **help** for available commands or just start chatting naturally.
             "model": result.model,
             "mode": "camera" if route_decision.use_camera else "screen"
         }
-        # //audit assumption: update payload is metadata-only; risk: leaking content; invariant: no raw image; strategy: send metrics only.
         self._send_backend_update("vision_usage", update_payload)
 
-        if Config.SHOW_STATS and display_response:
-            self.console.print(f"[dim]Tokens: {result.tokens_used} | Cost: ${result.cost_usd:.4f}[/dim]")
-
         if return_result:
-            return {
-                "response_text": result.response_text,
-                "tokens_used": result.tokens_used,
-                "cost_usd": result.cost_usd,
-                "model": result.model,
-                "source": result.source,
-            }
+            return {"ok": True, **asdict(result)}
+
+        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
+
+        if Config.SPEAK_RESPONSES:
+            truncated = self._truncate_for_tts(result.response_text)
+            if truncated:
+                self.audio.speak(truncated, wait=True)
+
+        if Config.SHOW_STATS:
+            self.console.print(f"[dim]Tokens: {result.tokens_used} | Cost: ${result.cost_usd:.4f}[/dim]")
+        
         return None
 
     @handle_errors("voice input")
@@ -1147,6 +1162,7 @@ Type **help** for available commands or just start chatting naturally.
         Inputs/Outputs: args list; prints transcription and forwards to conversation handler.
         Edge cases: Returns early when voice is disabled or transcription fails.
         """
+        self._append_activity("voice", "mic capture")
         if not Config.VOICE_ENABLED:
             # //audit assumption: voice can be disabled; risk: unsupported action; invariant: block when disabled; strategy: return.
             self.console.print("[red]Voice is disabled in config.[/red]")
@@ -1202,14 +1218,14 @@ Type **help** for available commands or just start chatting naturally.
     def handle_ptt(self) -> None:
         """Start push-to-talk mode"""
         if not PTT_AVAILABLE:
-            self.console.print("[red]❌ Push-to-talk not available (missing dependencies)[/red]")
+            self.console.print("[red]? Push-to-talk not available (missing dependencies)[/red]")
             return
 
         if not self.ptt_manager:
-            self.console.print("[red]❌ PTT manager not initialized[/red]")
+            self.console.print("[red]? PTT manager not initialized[/red]")
             return
 
-        self.console.print("[green]✨ Starting Push-to-Talk mode...[/green]")
+        self.console.print("[green]? Starting Push-to-Talk mode...[/green]")
         self.ptt_manager.start()
 
         # Wait for exit
@@ -1219,7 +1235,7 @@ Type **help** for available commands or just start chatting naturally.
                 input()  # Keep running
         except KeyboardInterrupt:
             self.ptt_manager.stop()
-            self.console.print("\n[yellow]⏹️  PTT mode stopped[/yellow]")
+            self.console.print("\n[yellow]??  PTT mode stopped[/yellow]")
 
     def handle_ptt_speech(self, text: str, has_screenshot: bool) -> None:
         """
@@ -1228,11 +1244,11 @@ Type **help** for available commands or just start chatting naturally.
             text: Recognized speech text
             has_screenshot: Whether screenshot was requested
         """
-        self.console.print(f"\n[green]🎤 You said:[/green] {text}")
+        self.console.print(f"\n[green]?? You said:[/green] {text}")
 
         # Handle screenshot if requested
         if has_screenshot:
-            self.console.print("[cyan]📸 Capturing screenshot...[/cyan]")
+            self.console.print("[cyan]?? Capturing screenshot...[/cyan]")
             img_base64 = self.vision.capture_screenshot(save=True)
 
             if img_base64:
@@ -1252,42 +1268,43 @@ Type **help** for available commands or just start chatting naturally.
             self.handle_ask(text, speak_response=True)
 
     @handle_errors("executing terminal command")
-    def handle_run(self, command: str, return_result: bool = False) -> Optional[dict[str, Any]]:
+    def handle_run(self, command: str, return_result: bool = False) -> Optional[dict]:
         """Execute terminal command"""
-        display_response = not return_result
+        self._append_activity("run", command)
         if not command:
-            if display_response:
-                self.console.print("[red]❌ No command specified[/red]")
-            return None
+            if not return_result:
+                self.console.print("[red]? No command specified[/red]")
+            return {"ok": False, "error": "No command specified"} if return_result else None
 
-        if display_response:
-            self.console.print(f"[cyan]💻 Running:[/cyan] {command}")
+        if not return_result:
+            self.console.print(f"[cyan]?? Running:[/cyan] {command}")
 
         # Execute command
-        stdout, stderr, return_code = self.terminal.execute_powershell(
+        stdout, stderr, return_code = self.terminal.execute(
             command, elevated=Config.RUN_ELEVATED
         )
-
-        # Display output
-        if display_response and stdout:
-            self.console.print(f"\n[green]{stdout}[/green]\n")
-        if display_response and stderr:
-            self.console.print(f"\n[red]{stderr}[/red]\n")
-
-        if display_response:
-            if return_code == 0:
-                self.console.print(f"[dim]✅ Exit code: {return_code}[/dim]")
-            else:
-                self.console.print(f"[dim red]❌ Exit code: {return_code}[/dim red]")
 
         self.memory.increment_stat("terminal_commands")
 
         if return_result:
             return {
+                "ok": True,
                 "stdout": stdout,
                 "stderr": stderr,
                 "return_code": return_code,
             }
+
+        # Display output
+        if stdout:
+            self.console.print(f"\n[green]{stdout}[/green]\n")
+        if stderr:
+            self.console.print(f"\n[red]{stderr}[/red]\n")
+
+        if return_code == 0:
+            self.console.print(f"[dim]? Exit code: {return_code}[/dim]")
+        else:
+            self.console.print(f"[dim red]? Exit code: {return_code}[/dim red]")
+        
         return None
 
     @handle_errors("speaking response")
@@ -1315,7 +1332,7 @@ Type **help** for available commands or just start chatting naturally.
         stats = self.memory.get_statistics()
         rate_stats = self.rate_limiter.get_usage_stats()
 
-        table = Table(title="📊 ARCANOS Statistics")
+        table = Table(title="?? ARCANOS Statistics")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
 
@@ -1335,7 +1352,7 @@ Type **help** for available commands or just start chatting naturally.
     def handle_help(self) -> None:
         """Display help message"""
         help_text = """
-# 📖 ARCANOS Commands
+# ?? ARCANOS Commands
 
 ### Conversation
 - Just type naturally to chat with ARCANOS
@@ -1357,8 +1374,8 @@ Type **help** for available commands or just start chatting naturally.
 - **speak** - Replay the last response (TTS)
 
 ### Terminal
-- **run <command>** - Execute PowerShell command
-  Example: `run Get-Process`
+- **run <command>** - Execute shell command (PowerShell on Windows, bash/sh on macOS/Linux)
+  Examples: `run Get-Process` (Windows), `run ls -la` (macOS/Linux)
 
 ### System
 - **stats** - Show usage statistics
@@ -1378,21 +1395,21 @@ You: ptt
 
         self.console.print(Panel(
             Markdown(help_text),
-            title="🌟 ARCANOS Help",
+            title="?? ARCANOS Help",
             border_style="cyan"
         ))
 
     def handle_clear(self) -> None:
         """Clear conversation history"""
         self.memory.clear_conversations()
-        self.console.print("[green]✅ Conversation history cleared[/green]")
+        self.console.print("[green]? Conversation history cleared[/green]")
 
     def handle_reset(self) -> None:
         """Reset statistics"""
         confirm = input("Reset all statistics? (y/n): ").lower().strip()
         if confirm == 'y':
             self.memory.reset_statistics()
-            self.console.print("[green]✅ Statistics reset[/green]")
+            self.console.print("[green]? Statistics reset[/green]")
 
     def handle_update(self) -> None:
         """Check for updates and optionally download and run ARCANOS-Setup.exe"""
@@ -1424,88 +1441,158 @@ You: ptt
         except Exception as e:
             self.console.print(f"[red]Download failed: {e}[/red]")
 
-    def run(self) -> None:
+    def run(self, debug_mode: bool = False) -> None:
         """Main CLI loop"""
-        self.show_welcome()
+        if debug_mode:
+            self._run_debug_mode()
+        else:
+            self._run_interactive_mode()
+
+    def _run_debug_mode(self) -> None:
+        """Run in non-interactive debug mode, using the logging module for robust output."""
+        import logging
+
+        log_file_path = os.path.join(os.path.dirname(__file__), 'debug_log.txt')
+        cmd_file_path = os.path.join(os.path.dirname(__file__), 'debug_cmd.in')
+
+        # Announce startup on the actual terminal
+        self.console.print("Daemon starting in robust debug mode...")
+        self.console.print(f"All output will be in: {log_file_path}")
+
+        # --- Set up robust logging ---
+        # Clear previous log handlers
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            filename=log_file_path,
+            filemode='w'
+        )
+
         try:
+            logging.info("Robust debug mode initialized.")
+            
+            # Re-initialize console to use the logger's stream if possible, or just log
+            # For simplicity, we will just use the logger directly.
+            logging.info(f"Command file to watch: {cmd_file_path}")
 
             while True:
-                try:
-                    # Get user input
-                    user_input = input("\n💬 You: ").strip()
+                if os.path.exists(cmd_file_path):
+                    try:
+                        with open(cmd_file_path, 'r') as f:
+                            user_input = f.read().strip()
+                        os.remove(cmd_file_path)
 
+                        logging.info(f"EXECUTING COMMAND: {user_input}")
+                        if user_input.lower() in ["exit", "quit"]:
+                            logging.info("Exit command received. Shutting down.")
+                            break
+                        
+                        # We can't use self.console here as it prints to stdout
+                        # Instead, we will have to trust the handlers we've set up
+                        # or temporarily redirect for rich output (too complex for now).
+                        # We will call the process function and let it log errors.
+                        self._process_input(user_input)
+                        logging.info(f"COMMAND FINISHED: {user_input}")
+
+                    except Exception as e:
+                        logging.error(f"Error in command processing loop: {e}", exc_info=True)
+
+                time.sleep(1)  # Poll for command file every second
+
+        except KeyboardInterrupt:
+            logging.info("Debug mode interrupted by user.")
+        except Exception as e:
+            logging.critical(f"A critical error occurred in the debug mode runner: {e}", exc_info=True)
+        finally:
+            logging.info("Stopping daemon service and shutting down.")
+            self._stop_daemon_service()
+            logging.shutdown()
+    
+    def _run_interactive_mode(self) -> None:
+        """Run in standard interactive CLI mode."""
+        self.show_welcome()
+        try:
+            while True:
+                try:
+                    user_input = input("\n?? You: ").strip()
                     if not user_input:
                         continue
-
-                    # Parse command
-                    parts = user_input.split(maxsplit=1)
-                    command = parts[0].lower()
-                    args = parts[1] if len(parts) > 1 else ""
-
-                    # Handle commands
-                    if command in ["exit", "quit", "bye"]:
-                        self.console.print("[cyan]👋 Goodbye![/cyan]")
+                    
+                    if user_input.lower() in ["exit", "quit", "bye"]:
+                        self.console.print("[cyan]?? Goodbye![/cyan]")
                         break
-                    elif command == "help":
-                        self.handle_help()
-                    elif command in ["deep", "backend"]:
-                        # //audit assumption: deep command signals backend routing; risk: missing prompt; invariant: args present; strategy: validate args.
-                        if not args:
-                            self.console.print("[red]No prompt provided for backend request.[/red]")
-                        else:
-                            self.handle_ask(args, route_override="backend")
-                    elif command == "see":
-                        self.handle_see(args.split())
-                    elif command == "voice":
-                        self.handle_voice(args.split())
-                    elif command == "ptt":
-                        self.handle_ptt()
-                    elif command == "run":
-                        self.handle_run(args)
-                    elif command == "speak":
-                        self.handle_speak()
-                    elif command == "stats":
-                        self.handle_stats()
-                    elif command == "clear":
-                        self.handle_clear()
-                    elif command == "reset":
-                        self.handle_reset()
-                    elif command == "update":
-                        self.handle_update()
-                    else:
-                        # Natural conversation
-                        intent = self._detect_run_see_intent(user_input)
-                        if intent:
-                            # //audit assumption: detected intent should override chat; risk: misclassification; invariant: run/see handled; strategy: route to handlers.
-                            intent_name, intent_payload = intent
-                            if intent_name == "run" and intent_payload:
-                                # //audit assumption: run intent has command; risk: empty command; invariant: command executed; strategy: call handle_run.
-                                self.handle_run(intent_payload)
-                            elif intent_name == "see_screen":
-                                # //audit assumption: screen intent should capture screen; risk: wrong mode; invariant: screen capture; strategy: call handle_see.
-                                self.handle_see([])
-                            elif intent_name == "see_camera":
-                                # //audit assumption: camera intent should capture camera; risk: wrong mode; invariant: camera capture; strategy: call handle_see with camera.
-                                self.handle_see(["camera"])
-                            else:
-                                # //audit assumption: unknown intent should fallback to chat; risk: missed handling; invariant: chat path; strategy: call handle_ask.
-                                self.handle_ask(user_input)
-                        else:
-                            self.handle_ask(user_input)
+
+                    self._process_input(user_input)
 
                 except KeyboardInterrupt:
-                    self.console.print("\n[cyan]👋 Goodbye![/cyan]")
+                    self.console.print("\n[cyan]?? Goodbye![/cyan]")
                     break
                 except Exception as e:
+                    self._last_error = str(e) or type(e).__name__
+                    self._append_activity("error", self._last_error)
                     error_msg = ErrorHandler.handle_exception(e, "main loop")
                     self.console.print(f"[red]{error_msg}[/red]")
-
-
         finally:
-            self._stop_daemon_threads()
+            self._stop_daemon_service()
+
+    def _process_input(self, user_input: str) -> None:
+        """Process a single command or conversational input."""
+        parts = user_input.split(maxsplit=1)
+        command = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        # Handle commands
+        if command == "help":
+            self.handle_help()
+        elif command in ["deep", "backend"]:
+            if not args:
+                self.console.print("[red]No prompt provided for backend request.[/red]")
+            else:
+                self.handle_ask(args, route_override="backend")
+        elif command == "see":
+            self.handle_see(args.split())
+        elif command == "voice":
+            self.handle_voice(args.split())
+        elif command == "ptt":
+            self.handle_ptt()
+        elif command == "run":
+            self.handle_run(args)
+        elif command == "speak":
+            self.handle_speak()
+        elif command == "stats":
+            self.handle_stats()
+        elif command == "clear":
+            self.handle_clear()
+        elif command == "reset":
+            self.handle_reset()
+        elif command == "update":
+            self.handle_update()
+        else:
+            # Natural conversation
+            intent = self._detect_run_see_intent(user_input)
+            if intent:
+                intent_name, intent_payload = intent
+                if intent_name == "run" and intent_payload:
+                    self.handle_run(intent_payload)
+                elif intent_name == "see_screen":
+                    self.handle_see([])
+                elif intent_name == "see_camera":
+                    self.handle_see(["camera"])
+                else:
+                    self.handle_ask(user_input)
+            else:
+                self.handle_ask(user_input)
+
 
 def main() -> None:
-    """Console entrypoint for ARCANOS."""
+    """
+    Purpose: Console script entry point for ARCANOS CLI.
+    Inputs/Outputs: None; runs the CLI loop and exits on fatal errors.
+    Edge cases: Exits with status 1 when credential bootstrap fails.
+    """
     # //audit assumption: bootstrap runs before CLI; risk: missing credentials; invariant: credentials ready; strategy: bootstrap then run.
     try:
         bootstrap_credentials()
@@ -1515,8 +1602,10 @@ def main() -> None:
         print(f"Crash reports are saved to: {Config.CRASH_REPORTS_DIR}")
         sys.exit(1)
 
+    # //audit assumption: debug flag toggles mode; risk: unexpected behavior; invariant: boolean flag; strategy: parse argv.
+    debug_mode = "--debug-mode" in sys.argv
     cli = ArcanosCLI()
-    cli.run()
+    cli.run(debug_mode=debug_mode)
 
 
 # //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.

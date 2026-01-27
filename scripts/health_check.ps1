@@ -39,7 +39,7 @@ if (Test-Path $memoryPath) {
         Write-Result "Memory" "FAIL" "memories.json is corrupted"
     }
 } else {
-    $template = Join-Path $projectRoot "daemon-python\memory\bootstrap_template.json"
+    $template = Join-Path $projectRoot "daemon-python\arcanos\memory\bootstrap_template.json"
     Write-Result "Memory" "WARN" "Not found; restore from template: $template"
 }
 
@@ -60,7 +60,7 @@ if ($backendUrl) {
 
 # 5) Quick daemon import test
 try {
-    $code = "from config import Config; ok, msg = Config.validate(); print('OK' if ok else msg)"
+    $code = "import sys; sys.path.insert(0, 'daemon-python'); from arcanos.config import Config; ok, msg = Config.validate(); print('OK' if ok else msg)"
     $result = & $python -c $code 2>&1
     if ($LASTEXITCODE -eq 0 -and $result -match "OK") {
         Write-Result "Daemon" "OK" "Config validated"

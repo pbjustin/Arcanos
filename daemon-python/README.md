@@ -1,15 +1,25 @@
-# ARCANOS Daemon Package
+# ARCANOS CLI (Python)
 
-Install the daemon in editable mode for development:
+Cross-platform ARCANOS CLI daemon with voice, vision, and backend sync.
+
+## Install (dev)
 
 ```bash
+cd daemon-python
+python -m venv venv
+# Windows (PowerShell)
+.\venv\Scripts\Activate.ps1
+# macOS/Linux
+source venv/bin/activate
 pip install -e .
+cp .env.example .env
+# Set OPENAI_API_KEY (and optional BACKEND_URL/BACKEND_TOKEN)
 ```
 
-After installation, run the CLI with:
+## Run
 
 ```bash
 arcanos
+# or
+python -m arcanos.cli
 ```
-
-Set environment values in `.env` (API keys, backend URL/token).

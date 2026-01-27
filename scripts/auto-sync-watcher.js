@@ -27,7 +27,7 @@ const WATCH_PATHS = {
   daemon: [
     path.join(ROOT, 'daemon-python'),
     path.join(ROOT, 'daemon-python', 'requirements.txt'),
-    path.join(ROOT, 'daemon-python', 'config.py')
+    path.join(ROOT, 'daemon-python', 'arcanos', 'config.py')
   ]
 };
 
@@ -140,7 +140,7 @@ function startWatcher() {
   const filesToWatch = [
     path.join(ROOT, 'package.json'),
     path.join(ROOT, 'daemon-python', 'requirements.txt'),
-    path.join(ROOT, 'daemon-python', 'config.py')
+    path.join(ROOT, 'daemon-python', 'arcanos', 'config.py')
   ];
   
   for (const filePath of filesToWatch) {

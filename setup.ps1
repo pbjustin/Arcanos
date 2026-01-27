@@ -99,22 +99,13 @@ if (!(Test-Path ".env")) {
 # Create directories
 Write-Host ""
 Write-Host "📁 Creating data directories..." -ForegroundColor Green
-$dirs = @("logs", "screenshots", "crash_reports", "telemetry", "assets")
+$dirs = @("logs", "screenshots", "crash_reports", "telemetry")
 foreach ($dir in $dirs) {
     if (!(Test-Path $dir)) {
         New-Item -ItemType Directory -Path $dir | Out-Null
     }
 }
 Write-Host "   ✅ Directories created" -ForegroundColor Green
-
-# Windows integration
-Write-Host ""
-$installIntegration = Read-Host "Install Windows Terminal integration? (y/n)"
-
-if ($installIntegration -eq "y") {
-    Write-Host "✨ Installing Windows integration..." -ForegroundColor Green
-    python -c "from windows_integration import WindowsIntegration; WindowsIntegration().install_all()"
-}
 
 # Complete
 Write-Host ""
@@ -123,7 +114,7 @@ Write-Host "✅ Setup Complete!" -ForegroundColor Green
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "🚀 To start ARCANOS, run:" -ForegroundColor Yellow
-Write-Host "   python cli.py" -ForegroundColor Cyan
+Write-Host "   python -m arcanos.cli" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "📖 For help, visit:" -ForegroundColor Yellow
 Write-Host "   https://github.com/yourusername/arcanos-hybrid" -ForegroundColor Cyan
@@ -134,5 +125,5 @@ $startNow = Read-Host "Start ARCANOS now? (y/n)"
 if ($startNow -eq "y") {
     Write-Host ""
     Write-Host "🚀 Starting ARCANOS..." -ForegroundColor Green
-    python cli.py
+    python -m arcanos.cli
 }

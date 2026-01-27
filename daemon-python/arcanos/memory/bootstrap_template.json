@@ -21,7 +21,6 @@
   },
   "settings": {
     "telemetry_consent": null,
-    "windows_integration_installed": false,
     "first_run": true,
     "onboarding_completed": false,
     "version": "1.0.0"
