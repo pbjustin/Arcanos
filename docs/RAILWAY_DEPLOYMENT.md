@@ -13,6 +13,13 @@ and health checks defined in the repo.
 - Optional: Railway PostgreSQL service for persistence.
 - Optional: Local Node.js 18+ for pre-deploy validation.
 
+**Pre-deployment validation checklist:**
+- [ ] OpenAI SDK v6.16.0 installed (`npm list openai`)
+- [ ] TypeScript builds successfully (`npm run build`)
+- [ ] Tests pass (`npm test`)
+- [ ] Railway compatibility validated (`npm run validate:railway`)
+- [ ] Environment variables prepared
+
 ## Setup
 
 ### 1) Prepare the repository
@@ -131,6 +138,17 @@ curl http://localhost:8080/healthz
 curl http://localhost:8080/readyz
 ```
 
+Expected health response:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-01-14T...",
+  "uptime": 123.45,
+  "openai": { "configured": true, "status": "valid" },
+  "database": { "status": "connected" }
+}
+```
+
 ## Deploy (Railway)
 
 ### Deployment process
@@ -245,7 +263,9 @@ railway redeploy <deployment-id>
 
 **Solutions:**
 - Verify `OPENAI_API_KEY` is set (not the placeholder from `.env.example`).
+- Check API key format: must start with `sk-`
 - Review logs for API key configuration messages.
+- Test key validity: `curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"`
 
 ### Environment validation failures
 
@@ -256,6 +276,41 @@ railway redeploy <deployment-id>
 - Review validation error messages for specific missing variables.
 - Ensure required variables are set in Railway dashboard.
 - Check variable names match exactly (case-sensitive).
+
+## Monitoring
+
+### Health endpoints
+
+Monitor service status:
+- `/health` - Overall health (OpenAI + database + uptime)
+- `/api/memory/health` - Memory service status
+- `/api/sim/health` - Simulation service status
+- `/healthz` - Kubernetes-style liveness probe
+- `/readyz` - Kubernetes-style readiness probe
+
+### Logging
+
+Railway captures structured JSON logs:
+- Request tracking with unique IDs
+- Performance metrics per endpoint
+- Error boundaries with context
+- Circuit breaker status
+- Model routing information
+
+Access logs via:
+- Railway dashboard **Logs** tab
+- Railway CLI: `railway logs`
+- Railway API for programmatic access
+
+### Success metrics
+
+Deployment successful when:
+- ✅ Build completes without errors
+- ✅ Service starts and binds to PORT
+- ✅ Health endpoints return 200 OK
+- ✅ OpenAI client initializes successfully
+- ✅ Database connection established (if configured)
+- ✅ No restart loops observed
 
 ## References
 
