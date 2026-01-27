@@ -86,14 +86,14 @@ class Uninstaller:
         """Remove all ARCANOS shortcuts"""
         if not self._is_windows:
             # //audit assumption: shortcuts only exist on Windows; risk: misleading errors; invariant: skip; strategy: early return.
-            print("🗑️  Skipping shortcuts removal (non-Windows).")
+            print("???  Skipping shortcuts removal (non-Windows).")
             return
-        print("🗑️  Removing shortcuts...")
+        print("???  Removing shortcuts...")
         for shortcut in self.shortcuts:
             if shortcut.exists():
                 # //audit assumption: shortcut exists; risk: unlink failure; invariant: delete link; strategy: unlink and report.
                 shortcut.unlink()
-                print(f"   ✅ Removed: {shortcut.name}")
+                print(f"   ? Removed: {shortcut.name}")
 
     def _get_windows_terminal_settings_path(self) -> Path:
         """
@@ -117,7 +117,7 @@ class Uninstaller:
         """Remove Windows Terminal profile"""
         if not self._is_windows:
             # //audit assumption: Windows Terminal only on Windows; risk: invalid path on Unix; invariant: skip; strategy: early return.
-            print("🗑️  Skipping Terminal profile removal (non-Windows).")
+            print("???  Skipping Terminal profile removal (non-Windows).")
             return
         try:
             import json
@@ -125,10 +125,10 @@ class Uninstaller:
 
             if not settings_path.exists():
                 # //audit assumption: settings path missing; risk: no Windows Terminal; invariant: skip; strategy: early return.
-                print("   ⏭️  Windows Terminal not found")
+                print("   ??  Windows Terminal not found")
                 return
 
-            print("🗑️  Removing Terminal profile...")
+            print("???  Removing Terminal profile...")
 
             # Load settings
             with open(settings_path, "r", encoding="utf-8") as f:
@@ -146,13 +146,13 @@ class Uninstaller:
                 with open(settings_path, "w", encoding="utf-8") as f:
                     json.dump(settings, f, indent=4)
 
-                print("   ✅ Terminal profile removed")
+                print("   ? Terminal profile removed")
             else:
                 # //audit assumption: profile missing; risk: false negative; invariant: notify user; strategy: log skip.
-                print("   ⏭️  Terminal profile not found")
+                print("   ??  Terminal profile not found")
 
         except Exception as e:
-            print(f"   ⚠️  Failed to remove Terminal profile: {e}")
+            print(f"   ??  Failed to remove Terminal profile: {e}")
 
     def backup_user_data(self, backup_path: Path) -> bool:
         """
@@ -161,68 +161,68 @@ class Uninstaller:
             True if successful
         """
         try:
-            print(f"💾 Backing up user data to: {backup_path}")
+            print(f"?? Backing up user data to: {backup_path}")
             backup_path.mkdir(parents=True, exist_ok=True)
 
             # Backup memories
             if Config.MEMORY_FILE.exists():
                 # //audit assumption: memory file exists; risk: missing file; invariant: copy; strategy: copy to backup.
                 shutil.copy2(Config.MEMORY_FILE, backup_path / "memories.json")
-                print("   ✅ Backed up memories")
+                print("   ? Backed up memories")
 
             # Backup .env
             env_file = Config.BASE_DIR / ".env"
             if env_file.exists():
                 # //audit assumption: .env exists; risk: missing file; invariant: copy config; strategy: copy to backup.
                 shutil.copy2(env_file, backup_path / ".env")
-                print("   ✅ Backed up configuration")
+                print("   ? Backed up configuration")
 
             # Backup logs
             if Config.LOG_DIR.exists():
                 # //audit assumption: log dir exists; risk: empty dir; invariant: copy tree; strategy: copytree.
                 shutil.copytree(Config.LOG_DIR, backup_path / "logs", dirs_exist_ok=True)
-                print("   ✅ Backed up logs")
+                print("   ? Backed up logs")
 
-            print(f"✅ Backup complete: {backup_path}")
+            print(f"? Backup complete: {backup_path}")
             return True
 
         except Exception as e:
-            print(f"❌ Backup failed: {e}")
+            print(f"? Backup failed: {e}")
             return False
 
     def remove_all_data(self) -> None:
         """Remove all ARCANOS data (destructive!)"""
-        print("🗑️  Removing all data...")
+        print("???  Removing all data...")
 
         # Remove memories
         if Config.MEMORY_FILE.exists():
             # //audit assumption: memory file exists; risk: unlink failure; invariant: delete; strategy: unlink file.
             Config.MEMORY_FILE.unlink()
-            print("   ✅ Removed memories")
+            print("   ? Removed memories")
 
         # Remove logs
         if Config.LOG_DIR.exists():
             # //audit assumption: log dir exists; risk: rmtree failure; invariant: delete; strategy: rmtree.
             shutil.rmtree(Config.LOG_DIR)
-            print("   ✅ Removed logs")
+            print("   ? Removed logs")
 
         # Remove screenshots
         if Config.SCREENSHOT_DIR.exists():
             # //audit assumption: screenshot dir exists; risk: rmtree failure; invariant: delete; strategy: rmtree.
             shutil.rmtree(Config.SCREENSHOT_DIR)
-            print("   ✅ Removed screenshots")
+            print("   ? Removed screenshots")
 
         # Remove crash reports
         if Config.CRASH_REPORTS_DIR.exists():
             # //audit assumption: crash dir exists; risk: rmtree failure; invariant: delete; strategy: rmtree.
             shutil.rmtree(Config.CRASH_REPORTS_DIR)
-            print("   ✅ Removed crash reports")
+            print("   ? Removed crash reports")
 
         # Remove telemetry
         if Config.TELEMETRY_DIR.exists():
             # //audit assumption: telemetry dir exists; risk: rmtree failure; invariant: delete; strategy: rmtree.
             shutil.rmtree(Config.TELEMETRY_DIR)
-            print("   ✅ Removed telemetry")
+            print("   ? Removed telemetry")
 
     def uninstall(self, backup: bool = True) -> None:
         """
@@ -231,11 +231,11 @@ class Uninstaller:
             backup: Whether to backup user data before removal
         """
         print("\n" + "="*50)
-        print("🗑️  ARCANOS UNINSTALLER")
+        print("???  ARCANOS UNINSTALLER")
         print("="*50 + "\n")
 
         # Confirm
-        print("⚠️  This will remove ARCANOS from your system.")
+        print("??  This will remove ARCANOS from your system.")
         if self._is_windows:
             # //audit assumption: Windows-specific artifacts exist; risk: missing shortcuts; invariant: warn user; strategy: print Windows items.
             print("   - Windows shortcuts")
@@ -245,7 +245,7 @@ class Uninstaller:
         confirm = input("\nAre you sure? Type 'UNINSTALL' to confirm: ").strip()
         if confirm != "UNINSTALL":
             # //audit assumption: confirmation mismatch; risk: accidental uninstall; invariant: cancel; strategy: return early.
-            print("❌ Uninstall cancelled")
+            print("? Uninstall cancelled")
             return
 
         # Backup if requested
@@ -260,15 +260,15 @@ class Uninstaller:
         self.remove_all_data()
 
         print("\n" + "="*50)
-        print("✅ ARCANOS has been uninstalled")
+        print("? ARCANOS has been uninstalled")
         print("="*50)
 
         if backup:
             # //audit assumption: backup requested; risk: missing backup_path; invariant: report location; strategy: print path.
-            print(f"\n💾 Your data was backed up to:")
+            print(f"\n?? Your data was backed up to:")
             print(f"   {backup_path}")
 
-        print("\n👋 Thank you for using ARCANOS!")
+        print("\n?? Thank you for using ARCANOS!")
 
 
 if __name__ == "__main__":

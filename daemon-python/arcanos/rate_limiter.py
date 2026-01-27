@@ -84,3 +84,4 @@ class RateLimiter:
             f"   Tokens: {stats['tokens_today']:,}/{Config.MAX_TOKENS_PER_DAY:,} today\n"
             f"   Cost: ${stats['cost_today']:.4f}/${Config.MAX_COST_PER_DAY:.2f} today"
         )
+

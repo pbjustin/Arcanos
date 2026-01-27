@@ -103,3 +103,4 @@ class VADProcessor:
                 return audio_data
 
             return None
+

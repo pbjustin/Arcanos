@@ -7,10 +7,10 @@ name = "arcanos"
 version = "1.1.2"
 description = "ARCANOS CLI daemon with voice, vision, and backend sync."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-  { name = "ARCANOS" }
+  { name = "ARCANOS Team" }
 ]
 keywords = ["ai", "cli", "assistant", "arcanos"]
 classifiers = [
@@ -34,7 +34,7 @@ dependencies = [
   "pyaudio>=0.2.14",
   "pyttsx3>=2.90",
   "pynput>=1.7.6",
-  "webrtcvad>=2.0.10; platform_system != 'Windows'",
+  "webrtcvad>=2.0.10; platform_system != "Windows"",
   "pystray>=0.19.5",
   "rich>=13.7.0",
   "psycopg2-binary>=2.9.9"
@@ -44,7 +44,6 @@ dependencies = [
 build = [
   "pyinstaller>=6.3.0"
 ]
-
 dev = [
   "pytest>=7.4.0",
   "pytest-cov>=4.1.0",
@@ -66,3 +65,4 @@ include = ["arcanos*"]
 
 [tool.setuptools.package-data]
 arcanos = ["memory/*.json", "assets/*"]
+

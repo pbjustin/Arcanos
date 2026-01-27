@@ -228,3 +228,4 @@ class AdvancedPushToTalkManager:
             self.start()
 
         print(f"✅ Hotkeys updated: PTT={ptt_key}, Screenshot={screenshot_key}")
+

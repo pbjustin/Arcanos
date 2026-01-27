@@ -142,3 +142,4 @@ def handle_errors(context: str = ""):
 # Initialize on import if telemetry enabled
 if Config.TELEMETRY_ENABLED:
     ErrorHandler.initialize()
+

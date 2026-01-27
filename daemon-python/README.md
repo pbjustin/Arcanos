@@ -13,7 +13,7 @@ python -m venv venv
 source venv/bin/activate
 pip install -e .
 cp .env.example .env
-# Set OPENAI_API_KEY (and optional BACKEND_URL)
+# Set OPENAI_API_KEY (and optional BACKEND_URL/BACKEND_TOKEN)
 ```
 
 ## Run

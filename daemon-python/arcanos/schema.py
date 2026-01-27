@@ -147,3 +147,4 @@ class Memory:
             return True
         except (json.JSONDecodeError, IOError):
             return False
+

@@ -320,3 +320,4 @@ if not is_valid:
     for error in validation_errors:
         print(f"   - {error}")
     print("\nCheck your .env file and fix the errors above.")
+

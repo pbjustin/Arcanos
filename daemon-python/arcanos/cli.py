@@ -1,4 +1,4 @@
-"""
+﻿"""
 ARCANOS CLI - Main Command Line Interface
 Human-like AI assistant with rich terminal UI.
 """
@@ -12,7 +12,7 @@ import base64
 import time
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Callable, Optional, Any, Mapping, Tuple
 
 from rich.console import Console
@@ -115,8 +115,8 @@ class ArcanosCLI:
         try:
             self.gpt_client = GPTClient()
         except ValueError as e:
-            self.console.print(f"[red]❌ {e}[/red]")
-            self.console.print(f"\n[yellow]💡 Add your API key to {Config.ENV_PATH}[/yellow]")
+            self.console.print(f"[red]? {e}[/red]")
+            self.console.print(f"\n[yellow]?? Add your API key to {Config.ENV_PATH}[/yellow]")
             sys.exit(1)
 
         self.vision = VisionSystem(self.gpt_client)
@@ -146,7 +146,7 @@ class ArcanosCLI:
         # Start daemon threads for HTTP-based heartbeat and command polling
         if Config.BACKEND_URL and self.backend_client:
             self._start_daemon_threads()
-            self.console.print(f"[green]✓[/green] Backend connection active (heartbeat + command polling)")
+            self.console.print(f"[green]?[/green] Backend connection active (heartbeat + command polling)")
 
         # PTT Manager
         self.ptt_manager = None
@@ -179,7 +179,7 @@ class ArcanosCLI:
                 # Late import to avoid loading when not in use
                 from .debug_server import start_debug_server
                 start_debug_server(self, port)
-                self.console.print(f"[green]✓[/green] IDE agent debug server on 127.0.0.1:{port}")
+                self.console.print(f"[green]?[/green] IDE agent debug server on 127.0.0.1:{port}")
             except Exception as e:
                 self.console.print(f"[yellow]Debug server failed to start: {e}[/yellow]")
 
@@ -191,7 +191,7 @@ class ArcanosCLI:
             # Generate new UUID
             instance_id = str(uuid.uuid4())
             self.memory.set_setting("instance_id", instance_id)
-            self.console.print(f"[green]✓[/green] Generated daemon instance ID: {instance_id[:8]}...")
+            self.console.print(f"[green]?[/green] Generated daemon instance ID: {instance_id[:8]}...")
         return instance_id
 
     def show_welcome(self) -> None:
@@ -200,7 +200,7 @@ class ArcanosCLI:
             return
 
         welcome_text = f"""
-# 🌌 Welcome to ARCANOS v{Config.VERSION}
+# ?? Welcome to ARCANOS v{Config.VERSION}
 
 **Your AI-powered terminal companion**
 
@@ -211,7 +211,7 @@ Type **help** for available commands or just start chatting naturally.
 
         self.console.print(Panel(
             Markdown(welcome_text),
-            title="🌟 ARCANOS",
+            title="?? ARCANOS",
             border_style="cyan"
         ))
 
@@ -221,11 +221,11 @@ Type **help** for available commands or just start chatting naturally.
 
     def first_run_setup(self) -> None:
         """First-run configuration"""
-        self.console.print("\n[cyan]👋 First time setup[/cyan]")
+        self.console.print("\n[cyan]?? First time setup[/cyan]")
 
         # Telemetry consent
         if self.memory.get_setting("telemetry_consent") is None:
-            self.console.print("\n[yellow]📊 Telemetry & Crash Reporting[/yellow]")
+            self.console.print("\n[yellow]?? Telemetry & Crash Reporting[/yellow]")
             self.console.print("ARCANOS can send anonymous crash reports to help improve the software.")
             self.console.print("No personal data, conversations, or API keys are collected.")
 
@@ -235,9 +235,9 @@ Type **help** for available commands or just start chatting naturally.
             if consent == 'y':
                 Config.TELEMETRY_ENABLED = True
                 ErrorHandler.initialize()
-                self.console.print("[green]✅ Telemetry enabled[/green]")
+                self.console.print("[green]? Telemetry enabled[/green]")
             else:
-                self.console.print("[green]✅ Telemetry disabled[/green]")
+                self.console.print("[green]? Telemetry disabled[/green]")
 
         self.memory.set_setting("first_run", False)
 
@@ -1141,7 +1141,7 @@ Type **help** for available commands or just start chatting naturally.
         self._send_backend_update("vision_usage", update_payload)
 
         if return_result:
-            return {"ok": True, **result._asdict()}
+            return {"ok": True, **asdict(result)}
 
         self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
 
@@ -1218,14 +1218,14 @@ Type **help** for available commands or just start chatting naturally.
     def handle_ptt(self) -> None:
         """Start push-to-talk mode"""
         if not PTT_AVAILABLE:
-            self.console.print("[red]❌ Push-to-talk not available (missing dependencies)[/red]")
+            self.console.print("[red]? Push-to-talk not available (missing dependencies)[/red]")
             return
 
         if not self.ptt_manager:
-            self.console.print("[red]❌ PTT manager not initialized[/red]")
+            self.console.print("[red]? PTT manager not initialized[/red]")
             return
 
-        self.console.print("[green]✨ Starting Push-to-Talk mode...[/green]")
+        self.console.print("[green]? Starting Push-to-Talk mode...[/green]")
         self.ptt_manager.start()
 
         # Wait for exit
@@ -1235,7 +1235,7 @@ Type **help** for available commands or just start chatting naturally.
                 input()  # Keep running
         except KeyboardInterrupt:
             self.ptt_manager.stop()
-            self.console.print("\n[yellow]⏹️  PTT mode stopped[/yellow]")
+            self.console.print("\n[yellow]??  PTT mode stopped[/yellow]")
 
     def handle_ptt_speech(self, text: str, has_screenshot: bool) -> None:
         """
@@ -1244,11 +1244,11 @@ Type **help** for available commands or just start chatting naturally.
             text: Recognized speech text
             has_screenshot: Whether screenshot was requested
         """
-        self.console.print(f"\n[green]🎤 You said:[/green] {text}")
+        self.console.print(f"\n[green]?? You said:[/green] {text}")
 
         # Handle screenshot if requested
         if has_screenshot:
-            self.console.print("[cyan]📸 Capturing screenshot...[/cyan]")
+            self.console.print("[cyan]?? Capturing screenshot...[/cyan]")
             img_base64 = self.vision.capture_screenshot(save=True)
 
             if img_base64:
@@ -1273,11 +1273,11 @@ Type **help** for available commands or just start chatting naturally.
         self._append_activity("run", command)
         if not command:
             if not return_result:
-                self.console.print("[red]❌ No command specified[/red]")
+                self.console.print("[red]? No command specified[/red]")
             return {"ok": False, "error": "No command specified"} if return_result else None
 
         if not return_result:
-            self.console.print(f"[cyan]💻 Running:[/cyan] {command}")
+            self.console.print(f"[cyan]?? Running:[/cyan] {command}")
 
         # Execute command
         stdout, stderr, return_code = self.terminal.execute(
@@ -1301,9 +1301,9 @@ Type **help** for available commands or just start chatting naturally.
             self.console.print(f"\n[red]{stderr}[/red]\n")
 
         if return_code == 0:
-            self.console.print(f"[dim]✅ Exit code: {return_code}[/dim]")
+            self.console.print(f"[dim]? Exit code: {return_code}[/dim]")
         else:
-            self.console.print(f"[dim red]❌ Exit code: {return_code}[/dim red]")
+            self.console.print(f"[dim red]? Exit code: {return_code}[/dim red]")
         
         return None
 
@@ -1332,7 +1332,7 @@ Type **help** for available commands or just start chatting naturally.
         stats = self.memory.get_statistics()
         rate_stats = self.rate_limiter.get_usage_stats()
 
-        table = Table(title="📊 ARCANOS Statistics")
+        table = Table(title="?? ARCANOS Statistics")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
 
@@ -1352,7 +1352,7 @@ Type **help** for available commands or just start chatting naturally.
     def handle_help(self) -> None:
         """Display help message"""
         help_text = """
-# 📖 ARCANOS Commands
+# ?? ARCANOS Commands
 
 ### Conversation
 - Just type naturally to chat with ARCANOS
@@ -1395,21 +1395,21 @@ You: ptt
 
         self.console.print(Panel(
             Markdown(help_text),
-            title="🌟 ARCANOS Help",
+            title="?? ARCANOS Help",
             border_style="cyan"
         ))
 
     def handle_clear(self) -> None:
         """Clear conversation history"""
         self.memory.clear_conversations()
-        self.console.print("[green]✅ Conversation history cleared[/green]")
+        self.console.print("[green]? Conversation history cleared[/green]")
 
     def handle_reset(self) -> None:
         """Reset statistics"""
         confirm = input("Reset all statistics? (y/n): ").lower().strip()
         if confirm == 'y':
             self.memory.reset_statistics()
-            self.console.print("[green]✅ Statistics reset[/green]")
+            self.console.print("[green]? Statistics reset[/green]")
 
     def handle_update(self) -> None:
         """Check for updates and optionally download and run ARCANOS-Setup.exe"""
@@ -1517,18 +1517,18 @@ You: ptt
         try:
             while True:
                 try:
-                    user_input = input("\n💬 You: ").strip()
+                    user_input = input("\n?? You: ").strip()
                     if not user_input:
                         continue
                     
                     if user_input.lower() in ["exit", "quit", "bye"]:
-                        self.console.print("[cyan]👋 Goodbye![/cyan]")
+                        self.console.print("[cyan]?? Goodbye![/cyan]")
                         break
 
                     self._process_input(user_input)
 
                 except KeyboardInterrupt:
-                    self.console.print("\n[cyan]👋 Goodbye![/cyan]")
+                    self.console.print("\n[cyan]?? Goodbye![/cyan]")
                     break
                 except Exception as e:
                     self._last_error = str(e) or type(e).__name__
@@ -1611,3 +1611,4 @@ def main() -> None:
 # //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.
 if __name__ == "__main__":
     main()
+

@@ -311,3 +311,4 @@ class GPTClient:
             raise RuntimeError(f"OpenAI error: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"Unexpected error in transcription: {str(e)}")
+

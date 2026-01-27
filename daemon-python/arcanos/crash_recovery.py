@@ -150,7 +150,8 @@ def run_with_recovery(main_function, *args, **kwargs):
 
 if __name__ == "__main__":
     # Example usage
-    from cli import ArcanosCLI
+    from .cli import ArcanosCLI
 
     cli = ArcanosCLI()
     run_with_recovery(cli.run)
+

@@ -172,3 +172,4 @@ class Telemetry:
                 sentry_sdk.flush(timeout=2.0)
             except Exception:
                 pass
+

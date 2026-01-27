@@ -185,3 +185,4 @@ def format_registry_for_prompt(registry: Mapping[str, Any]) -> str:
             lines.append(f"- {core_id}: {description}{modes_suffix}")
 
     return "\n".join(lines)
+

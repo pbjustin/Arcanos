@@ -584,3 +584,4 @@ class BackendApiClient:
             ok=True,
             value=BackendTranscriptionResult(text=text, model=model)
         )
+

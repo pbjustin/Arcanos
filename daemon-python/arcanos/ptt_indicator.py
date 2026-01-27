@@ -99,3 +99,4 @@ class PTTIndicator:
             else:
                 status = "Idle"
             self.icon.title = f"ARCANOS PTT ({status})"
+
