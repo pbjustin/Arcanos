@@ -204,6 +204,7 @@ export const env = {
   
   // Telemetry Configuration
   TELEMETRY_RECENT_LOGS_LIMIT: Environment.getNumber('TELEMETRY_RECENT_LOGS_LIMIT', 100),
+  TELEMETRY_TRACE_EVENT_LIMIT: Environment.getNumber('TELEMETRY_TRACE_EVENT_LIMIT', 200),
   
   // Audit Configuration
   AUDIT_OVERRIDE: Environment.get('AUDIT_OVERRIDE'),

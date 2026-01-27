@@ -10,7 +10,7 @@
  * - openaiErrorHandler.ts → openai.ts
  * 
  * Usage:
- *   import { classifyError, resolveErrorMessage, sendValidationError } from '@/lib/errors';
+ *   import { classifyError, resolveErrorMessage, sendValidationError } from '../lib/errors/index.js';
  */
 
 // Error classification and detection
