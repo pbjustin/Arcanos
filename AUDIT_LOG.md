@@ -119,6 +119,16 @@
 
 ---
 
+## 2026-01-27: Pass 1 Updates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed `src/services/notionSync.ts` | Notion sync was unused and unreferenced in runtime code. | `rg "notionSync" src` (no matches) |
+| Removed `@notionhq/client` dependency | Only used by removed Notion sync module. | `npm uninstall @notionhq/client` |
+| Removed `utils/tagRequest.js` | Legacy JS duplicate; TypeScript version is used in `src/utils`. | `rg "utils/tagRequest\\.js"` (no matches) |
+| Moved `@jest/globals` to `devDependencies` | Test-only dependency should not ship in production. | `npm install --save-dev @jest/globals` |
+| Updated Notion env documentation in `.env.example` and legacy docs | Avoid stale configuration references after module removal. | Manual review of updated files |
+
 ## Pass 1: Remove Unused Code
 
 ### Changes Made
@@ -729,4 +739,3 @@ All autonomous refactoring passes have been successfully executed. The codebase 
 - **Maintainable:** Clean, modular architecture
 
 No further autonomous optimizations are required at this time. The repository is ready for production deployment.
-
