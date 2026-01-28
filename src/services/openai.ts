@@ -63,7 +63,8 @@ import {
   getFallbackModel,
   getGPT5Model,
   hasValidAPIKey,
-  getOpenAIKeySource
+  getOpenAIKeySource,
+  resolveOpenAIBaseURL
 } from './openai/unifiedClient.js';
 import { withRetry } from '../utils/resilience/unifiedRetry.js';
 import { classifyOpenAIError, getRetryDelay, shouldRetry } from '../lib/errors/reusable.js';
@@ -621,21 +622,59 @@ export {
   getGPT5Model,
   generateMockResponse,
   getCircuitBreakerSnapshot,
-  validateClientHealth as getOpenAIServiceHealth,
   validateClientHealth,
   createChatCompletionWithFallback
 };
+
+// Legacy export for backward compatibility
+export function getOpenAIServiceHealth() {
+  const health = validateClientHealth();
+  const circuitBreakerMetrics = getCircuitBreakerSnapshot();
+  const cacheStats = responseCache.getStats();
+
+  return {
+    apiKey: {
+      configured: health.apiKeyConfigured,
+      status: health.apiKeyConfigured ? 'valid' : 'missing_or_invalid',
+      source: health.apiKeySource
+    },
+    client: {
+      initialized: health.healthy,
+      model: health.defaultModel,
+      timeout: API_TIMEOUT_MS,
+      baseURL: resolveOpenAIBaseURL()
+    },
+    circuitBreaker: {
+      ...circuitBreakerMetrics,
+      healthy: health.circuitBreakerHealthy
+    },
+    cache: {
+      ...cacheStats,
+      enabled: health.cacheEnabled
+    },
+    lastHealthCheck: health.lastCheck,
+    defaults: {
+      maxTokens: RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
+    }
+  };
+}
+
+// Legacy export for backward compatibility
+export function validateAPIKeyAtStartup(): boolean {
+  const health = validateClientHealth();
+  return health.apiKeyConfigured;
+}
 
 export default {
   getOpenAIClient: getOrCreateClient,
   getDefaultModel,
   getGPT5Model,
   createGPT5Reasoning,
-  validateAPIKeyAtStartup: validateClientHealth,
+  validateAPIKeyAtStartup,
   callOpenAI,
   call_gpt5_strict,
   generateImage,
-  getOpenAIServiceHealth: validateClientHealth,
+  getOpenAIServiceHealth,
   createCentralizedCompletion,
   createChatCompletionWithFallback
 };

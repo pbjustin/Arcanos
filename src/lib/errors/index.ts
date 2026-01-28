@@ -16,7 +16,7 @@
 // Error classification and detection
 export {
   ErrorType,
-  isRetryableError,
+  isRetryableError as isRetryableErrorBase,
   classifyError,
   isNetworkError,
   isRateLimitError

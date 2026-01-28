@@ -296,7 +296,7 @@ export function buildTranscriptionRequest(
  */
 export function buildImageRequest(
   params: ImageParams
-): OpenAI.Images.ImageCreateParams {
+): OpenAI.Images.ImageGenerateParams {
   const {
     prompt,
     size = DEFAULT_IMAGE_SIZE,

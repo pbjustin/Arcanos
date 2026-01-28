@@ -243,6 +243,7 @@ export function recordError(
   const errorStack = error instanceof Error ? error.stack : undefined;
 
   recordLogEvent({
+    timestamp: new Date().toISOString(),
     level,
     message: errorMessage,
     context: {
@@ -331,6 +332,7 @@ export function logRailway(
   }
 
   recordLogEvent({
+    timestamp: new Date().toISOString(),
     level,
     message,
     metadata
