@@ -82,7 +82,7 @@ The debug server exposes the following endpoints:
   - Returns: `log_dir`, `files` (array of file metadata)
   
 - **`GET /debug/help`** - Get help text (requires authentication)
-  - Returns: `help` (markdown-formatted help text with available commands)
+  - Returns: `help_text` (markdown-formatted help text with available commands)
   
 - **`GET /debug/audit?limit=50&filter=error&order=desc`** - Get audit trail (requires authentication)
   - Query params:
