@@ -382,16 +382,32 @@ export async function checkDatabaseHealth(): Promise<HealthCheckResult> {
     };
   }
 
-  // TODO: Implement actual database connectivity check
-  // For now, return healthy if database URL is configured
-  return {
-    healthy: true,
-    name: 'database',
-    metadata: {
-      configured: true,
-      url: config.databaseUrl ? 'configured' : 'not configured'
-    }
-  };
+  // Check database connectivity using db client
+  try {
+    const { getStatus } = await import('../../db.js');
+    const dbStatus = getStatus();
+    
+    return {
+      healthy: dbStatus.connected,
+      name: 'database',
+      error: dbStatus.error || undefined,
+      metadata: {
+        configured: true,
+        connected: dbStatus.connected,
+        url: config.databaseUrl ? 'configured' : 'not configured'
+      }
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      name: 'database',
+      error: error instanceof Error ? error.message : String(error),
+      metadata: {
+        configured: true,
+        connected: false
+      }
+    };
+  }
 }
 
 /**

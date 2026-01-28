@@ -12,7 +12,6 @@ import { generateMockResponse } from './openai/mock.js';
 import { logOpenAIEvent, logOpenAISuccess } from '../utils/openaiLogger.js';
 import { handleOpenAIRequestError } from '../lib/errors/index.js';
 import { buildSystemPromptMessages } from '../utils/messageBuilderUtils.js';
-import { buildCompletionRequestPayload } from '../utils/requestPayloadUtils.js';
 import { OPENAI_LOG_MESSAGES } from '../config/openaiLogMessages.js';
 import {
   CACHE_TTL_MS,
@@ -117,9 +116,8 @@ export async function callOpenAI(
     });
     const mockResult = mock.result ?? '';
     trackModelResponse(mockResult, reinforcementMetadata);
-    // REVIEW: Mock response structure differs from ChatCompletion, but used for fallback
-    // Confidence: 0.9 - Mock is intentionally different structure
     // Create a minimal ChatCompletion-compatible structure for type safety
+    // Mock response structure is intentionally different but converted to match ChatCompletion interface
     const mockChatCompletion: ChatCompletion = {
       id: mock.meta.id,
       object: 'chat.completion',
@@ -243,19 +241,24 @@ async function makeOpenAIRequest(
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   
   try {
-    const tokenParams = getTokenParameter(model, tokenLimit);
-    const requestPayload = buildCompletionRequestPayload(model, messages, tokenParams, options);
-    
-    // Ensure stream is explicitly false for non-streaming requests
-    const nonStreamingPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-      ...requestPayload,
-      stream: false
-    };
+    // Use the new standardized request builder
+    // Pass messages directly to preserve conversation history and routing message
+    const nonStreamingPayload = buildChatCompletionRequest({
+      model,
+      messages,
+      maxTokens: tokenLimit,
+      temperature: options.temperature,
+      top_p: options.top_p,
+      frequency_penalty: options.frequency_penalty,
+      presence_penalty: options.presence_penalty,
+      responseFormat: options.responseFormat,
+      user: options.user,
+      includeRoutingMessage: false // Messages already include routing message if needed
+    });
 
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(1, 1, model));
 
-    // REVIEW: OpenAI SDK types may not include custom headers in types, but runtime supports them
-    // Confidence: 0.9 - SDK types are conservative, runtime accepts headers
+    // OpenAI SDK runtime supports custom headers even if types don't explicitly include them
     const response = await client.chat.completions.create(nonStreamingPayload, {
       signal: controller.signal,
       // Add request ID for tracing
