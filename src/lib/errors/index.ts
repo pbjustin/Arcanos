@@ -46,3 +46,16 @@ export {
 export {
   handleOpenAIRequestError
 } from './openai.js';
+
+// Reusable error handling utilities
+export {
+  classifyOpenAIError,
+  isRetryableError,
+  getRetryDelay,
+  formatErrorMessage,
+  shouldRetry,
+  getUserFriendlyMessage,
+  getTechnicalMessage,
+  type ErrorClassification,
+  type RetryDelayResult
+} from './reusable.js';

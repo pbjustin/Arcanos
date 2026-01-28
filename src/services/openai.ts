@@ -51,26 +51,23 @@ import {
   IMAGE_GENERATION_MODEL,
   ROUTING_MAX_TOKENS
 } from './openai/config.js';
+// Credential provider functions now imported from unifiedClient
+import { RESILIENCE_CONSTANTS, getCircuitBreakerSnapshot } from './openai/resilience.js';
+// Retry logic now uses unifiedRetry module
 import {
+  getOrCreateClient,
+  validateClientHealth,
+  API_TIMEOUT_MS,
+  ARCANOS_ROUTING_MESSAGE,
   getDefaultModel,
   getFallbackModel,
   getGPT5Model,
-  getOpenAIKeySource,
-  hasValidAPIKey
-} from './openai/credentialProvider.js';
-import {
-  RESILIENCE_CONSTANTS,
-  executeWithResilience,
-  calculateRetryDelay,
-  getCircuitBreakerSnapshot
-} from './openai/resilience.js';
-import {
-  API_TIMEOUT_MS,
-  ARCANOS_ROUTING_MESSAGE,
-  getOpenAIClient,
-  getOpenAIServiceHealth,
-  validateAPIKeyAtStartup
-} from './openai/clientFactory.js';
+  hasValidAPIKey,
+  getOpenAIKeySource
+} from './openai/unifiedClient.js';
+import { withRetry } from '../utils/resilience/unifiedRetry.js';
+import { classifyOpenAIError, getRetryDelay, shouldRetry } from '../lib/errors/reusable.js';
+import { buildChatCompletionRequest } from './openai/requestBuilders.js';
 
 export type {
   CallOpenAIOptions,
@@ -91,7 +88,7 @@ export async function callOpenAI(
   useCache: boolean = true,
   options: CallOpenAIOptions = {}
 ): Promise<CallOpenAIResult> {
-  const client = getOpenAIClient();
+  const client = getOrCreateClient();
 
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const baseMetadata = options.metadata ?? {};
@@ -188,12 +185,19 @@ export async function callOpenAI(
     cacheEnabled: useCache
   });
 
-  // Use circuit breaker for resilient API calls
+  // Use unified retry/resilience module for resilient API calls
   let result: CallOpenAIResult;
   try {
-    result = await executeWithResilience(async () => {
-      return await makeOpenAIRequest(client, model, preparedMessages, tokenLimit, options);
-    });
+    result = await withRetry(
+      async () => {
+        return await makeOpenAIRequest(client, model, preparedMessages, tokenLimit, options);
+      },
+      {
+        maxRetries: DEFAULT_MAX_RETRIES,
+        operationName: 'callOpenAI',
+        useCircuitBreaker: true
+      }
+    );
   } catch (error) {
     recordTraceEvent('openai.call.error', {
       model,
@@ -223,7 +227,8 @@ export async function callOpenAI(
 }
 
 /**
- * Internal OpenAI request handler with exponential backoff retry logic
+ * Internal OpenAI request handler (single attempt)
+ * Retry logic is handled by unifiedRetry module in callOpenAI
  * Implements error taxonomy with specialized handling for different error types
  */
 async function makeOpenAIRequest(
@@ -231,74 +236,62 @@ async function makeOpenAIRequest(
   model: string,
   messages: ChatCompletionMessageParam[],
   tokenLimit: number,
-  options: CallOpenAIOptions,
-  maxRetries: number = DEFAULT_MAX_RETRIES
+  options: CallOpenAIOptions
 ): Promise<CallOpenAIResult> {
-  let lastError: Error | null = null;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  
+  try {
+    const tokenParams = getTokenParameter(model, tokenLimit);
+    const requestPayload = buildCompletionRequestPayload(model, messages, tokenParams, options);
     
-    try {
-      // Apply exponential backoff with jitter on retries
-      if (attempt > 1) {
-        const delay = calculateRetryDelay(attempt - 1, lastError);
-        await new Promise(resolve => setTimeout(resolve, delay));
+    // Ensure stream is explicitly false for non-streaming requests
+    const nonStreamingPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+      ...requestPayload,
+      stream: false
+    };
+
+    logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(1, 1, model));
+
+    // REVIEW: OpenAI SDK types may not include custom headers in types, but runtime supports them
+    // Confidence: 0.9 - SDK types are conservative, runtime accepts headers
+    const response = await client.chat.completions.create(nonStreamingPayload, {
+      signal: controller.signal,
+      // Add request ID for tracing
+      headers: {
+        [REQUEST_ID_HEADER]: crypto.randomUUID()
       }
+    });
 
-      const tokenParams = getTokenParameter(model, tokenLimit);
-      const requestPayload = buildCompletionRequestPayload(model, messages, tokenParams, options);
-      
-      // Ensure stream is explicitly false for non-streaming requests
-      const nonStreamingPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-        ...requestPayload,
-        stream: false
-      };
+    clearTimeout(timeout);
+    const output = response.choices?.[0]?.message?.content?.trim() || NO_RESPONSE_CONTENT_FALLBACK;
+    const activeModel = response.model || model;
 
-      logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(attempt, maxRetries, model));
+    // Log success metrics
+    logOpenAISuccess(OPENAI_LOG_MESSAGES.REQUEST.SUCCESS, {
+      attempt: 1,
+      model: activeModel,
+      totalTokens: response.usage?.total_tokens || 'unknown'
+    });
 
-      // REVIEW: OpenAI SDK types may not include custom headers in types, but runtime supports them
-      // Confidence: 0.9 - SDK types are conservative, runtime accepts headers
-      const response = await client.chat.completions.create(nonStreamingPayload, {
-        signal: controller.signal,
-        // Add request ID for tracing
-        headers: {
-          [REQUEST_ID_HEADER]: crypto.randomUUID()
-        }
-      });
+    return { response, output, model: activeModel, cached: false };
+    
+  } catch (err: unknown) {
+    clearTimeout(timeout);
+    const error = err instanceof Error ? err : new Error(String(err));
+    
+    // Classify error using unified error handling
+    const classification = classifyOpenAIError(error);
+    
+    // Log error with classification
+    logOpenAIEvent('error', OPENAI_LOG_MESSAGES.REQUEST.FAILED_PERMANENT(1), {
+      model,
+      errorType: classification.type,
+      errorMessage: classification.message
+    }, error);
 
-      clearTimeout(timeout);
-      const output = response.choices?.[0]?.message?.content?.trim() || NO_RESPONSE_CONTENT_FALLBACK;
-      const activeModel = response.model || model;
-
-      // Log success metrics
-      logOpenAISuccess(OPENAI_LOG_MESSAGES.REQUEST.SUCCESS, {
-        attempt,
-        model: activeModel,
-        totalTokens: response.usage?.total_tokens || 'unknown'
-      });
-
-      return { response, output, model: activeModel, cached: false };
-      
-    } catch (err: unknown) {
-      clearTimeout(timeout);
-      lastError = err instanceof Error ? err : new Error(String(err));
-      
-      // Handle error with centralized logic
-      const { shouldRetry } = handleOpenAIRequestError(lastError, attempt, maxRetries);
-
-      if (!shouldRetry) {
-        break;
-      }
-    }
+    throw error;
   }
-
-  recordTraceEvent('openai.call.exhausted', {
-    attempts: maxRetries,
-    error: lastError instanceof Error ? lastError.message : 'unknown'
-  });
-  throw lastError || new Error('OpenAI request failed after all retry attempts');
 }
 
 /**
@@ -313,7 +306,7 @@ const extractReasoningText = (response: ChatCompletion, fallback: string = REASO
  * Used by both core logic and workers
  */
 export const createGPT5Reasoning = async (
-  client: OpenAI,
+  client: OpenAI | null,
   prompt: string,
   systemPrompt?: string
 ): Promise<{ content: string; model?: string; error?: string }> => {
@@ -358,7 +351,7 @@ export const createGPT5Reasoning = async (
  * Implements the layered approach: ARCANOS -> GPT-5.1 reasoning -> refined output
  */
 export const createGPT5ReasoningLayer = async (
-  client: OpenAI,
+  client: OpenAI | null,
   arcanosResult: string,
   originalPrompt: string,
   context?: string
@@ -437,7 +430,7 @@ export async function call_gpt5_strict(
   prompt: string, 
   kwargs: Partial<ChatCompletionCreateParams> = {}
 ): Promise<ChatCompletion> {
-  const client = getOpenAIClient();
+  const client = getOrCreateClient();
   if (!client) {
     throw new Error("GPT-5.1 call failed — no fallback allowed. OpenAI client not available.");
   }
@@ -501,7 +494,7 @@ export async function generateImage(
   input: string,
   size: ImageSize = DEFAULT_IMAGE_SIZE
 ): Promise<{ image: string; prompt: string; meta: { id: string; created: number }; error?: string }> {
-  const client = getOpenAIClient();
+  const client = getOrCreateClient();
   if (!client) {
     const mock = generateMockResponse(input, 'image');
     return { image: '', prompt: input, meta: mock.meta, error: mock.error };
@@ -565,7 +558,7 @@ export async function createCentralizedCompletion(
     presence_penalty?: number;
   } = {}
 ): Promise<OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-  const client = getOpenAIClient();
+  const client = getOrCreateClient();
   if (!client) {
     throw new Error('OpenAI client not initialized - API key required');
   }
@@ -620,7 +613,7 @@ export async function createCentralizedCompletion(
 }
 
 export {
-  getOpenAIClient,
+  getOrCreateClient as getOpenAIClient,
   getOpenAIKeySource,
   hasValidAPIKey,
   getDefaultModel,
@@ -628,21 +621,21 @@ export {
   getGPT5Model,
   generateMockResponse,
   getCircuitBreakerSnapshot,
-  getOpenAIServiceHealth,
-  validateAPIKeyAtStartup,
+  validateClientHealth as getOpenAIServiceHealth,
+  validateClientHealth,
   createChatCompletionWithFallback
 };
 
 export default {
-  getOpenAIClient,
+  getOpenAIClient: getOrCreateClient,
   getDefaultModel,
   getGPT5Model,
   createGPT5Reasoning,
-  validateAPIKeyAtStartup,
+  validateAPIKeyAtStartup: validateClientHealth,
   callOpenAI,
   call_gpt5_strict,
   generateImage,
-  getOpenAIServiceHealth,
+  getOpenAIServiceHealth: validateClientHealth,
   createCentralizedCompletion,
   createChatCompletionWithFallback
 };
