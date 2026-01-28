@@ -156,7 +156,7 @@ def build_image_request(
     Creates a properly formatted image generation request.
     """
     return {
-        "model": model or "gpt-image-1",
+        "model": model or Config.OPENAI_IMAGE_MODEL,  # Assuming a config variable like this exists
         "prompt": prompt,
         "size": size,
         "quality": quality,
