@@ -132,19 +132,14 @@ MAX_TOKENS=500
 
 Windows Terminal profile/shortcut integration has been removed in the cross-platform CLI build.
 
-## 🔧 Building an .exe
+## 🔧 Running the CLI Agent
 
-Want to distribute ARCANOS as a standalone executable?
+The CLI agent runs as a Python application:
 
 ```powershell
-# Using the build script
-.\scripts\build.ps1
-
-# Or manually
+# Run the CLI agent
 cd daemon-python
-pyinstaller arcanos.spec
-
-# Output: daemon-python\dist\ARCANOS.exe
+python -m arcanos.cli
 ```
 
 ### Code Signing (Optional)

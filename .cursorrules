@@ -1,8 +1,17 @@
 # ARCANOS Cross-Codebase Sync Rules for AI Assistants
 
-## Debugging the live daemon (installed .exe)
-- When helping debug the running ARCANOS daemon, use `scripts/daemon-debug.ps1` with `status`, **`logs`** (see your logs), **`audit`** (what's happening), **`chat-log`** (conversation), `log-files`, `see` (screen/camera), `crash-reports`, `ask`, `run`.
-- Ensure the daemon is started with `IDE_AGENT_DEBUG=1` (in `%LOCALAPPDATA%\ARCANOS\.env`) or `DAEMON_DEBUG_PORT` set. See `docs/daemon-debugging.md`.
+## Debugging the live daemon
+- When helping debug the running ARCANOS daemon, use the debug server API endpoints:
+  - `GET /debug/status` - Get daemon status
+  - `GET /debug/logs?tail=100` - See logs
+  - `GET /debug/audit?limit=100` - See what's happening
+  - `GET /debug/chat-log` - See conversation
+  - `GET /debug/log-files` - List log files
+  - `POST /debug/see` - Screen/camera analysis
+  - `GET /debug/crash-reports` - View crash reports
+  - `POST /debug/ask` - Send message
+  - `POST /debug/run` - Execute command
+- Ensure the daemon is started with `IDE_AGENT_DEBUG=1` or `DAEMON_DEBUG_PORT` set in `.env` file or environment variables. See `docs/daemon-debugging.md`.
 
 ## Architecture & Source of Truth
 - **TypeScript Server (src/)** = SOURCE OF TRUTH (GitHub repository)

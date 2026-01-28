@@ -390,8 +390,10 @@ export function checkEphemeralFS(): void {
   
   // Check if running on Railway
   if (process.env.RAILWAY_ENVIRONMENT) {
-    console.log('🚂 Running on Railway - using ephemeral filesystem');
-    console.log('   Files in /tmp/ and database are suitable for persistence');
+    logger.info('Running on Railway - using ephemeral filesystem', {
+      module: 'environment',
+      note: 'Files in /tmp/ and database are suitable for persistence'
+    });
   }
 }
 

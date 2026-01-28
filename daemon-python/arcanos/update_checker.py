@@ -1,6 +1,6 @@
 """
-In-app update checker for ARCANOS Windows daemon.
-Checks GitHub Releases for a newer version and returns download info for ARCANOS-Setup.exe.
+In-app update checker for ARCANOS CLI.
+Checks GitHub Releases for a newer version and returns download info for platform-agnostic releases.
 """
 
 from __future__ import annotations
@@ -22,14 +22,22 @@ def _is_newer(latest: str, current: str) -> bool:
     return parse_version(latest) > parse_version(current)
 
 
-def _find_installer_url(assets: list[dict[str, Any]]) -> str | None:
-    """Prefer ARCANOS-Setup.exe, else ARCANOS.exe."""
-    for name in ("ARCANOS-Setup.exe", "ARCANOS.exe"):
+def _find_release_asset(assets: list[dict[str, Any]]) -> str | None:
+    """Find platform-agnostic release asset (prefer source distribution or wheel)."""
+    # Prefer source distribution or wheel packages
+    preferred_patterns = [".tar.gz", ".whl", ".zip"]
+    for pattern in preferred_patterns:
         for a in assets:
-            if (a.get("name") or "").strip() == name:
+            name = (a.get("name") or "").strip()
+            if pattern in name.lower() and "arcanos" in name.lower():
                 url = a.get("browser_download_url")
                 if url:
                     return url
+    # Fallback to any asset
+    for a in assets:
+        url = a.get("browser_download_url")
+        if url:
+            return url
     return None
 
 
@@ -68,9 +76,9 @@ def check_for_updates(
         return None
 
     assets = data.get("assets") or []
-    download_url = _find_installer_url(assets)
+    download_url = _find_release_asset(assets)
     if not download_url:
-        logger.debug("No ARCANOS-Setup.exe or ARCANOS.exe in release assets")
+        logger.debug("No release assets found")
         return None
 
     return {

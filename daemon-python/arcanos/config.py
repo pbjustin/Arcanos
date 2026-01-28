@@ -1,8 +1,7 @@
 """
 ARCANOS Configuration Manager
 Loads and validates environment variables with sensible defaults.
-When run as a PyInstaller frozen EXE (installer), uses a user-writable data dir
-to avoid writing under Program Files or a read-only extract dir.
+Uses a user-writable data dir for configuration, logs, and crash reports.
 """
 
 import os
@@ -15,13 +14,12 @@ try:
 except ModuleNotFoundError:
     load_dotenv = None
 
-# //audit assumption: PyInstaller sets sys.frozen; risk: other freezers differ; invariant: avoid _MEIPASS for writes; strategy: use user data dir when frozen.
-_frozen = getattr(sys, "frozen", False)
+# Note: Removed PyInstaller frozen EXE detection - CLI agent runs as Python application
 
 
 def _get_user_data_dir() -> Optional[Path]:
     """
-    Purpose: Resolve a user-writable base dir for .env, logs, crash_reports when running as frozen EXE.
+    Purpose: Resolve a user-writable base dir for .env, logs, crash_reports.
     Inputs/Outputs: None; returns a platform-specific user data directory, or None on failure.
     Edge cases: Creates the directory; returns None if home directory cannot be found or mkdir fails.
     """
@@ -56,11 +54,11 @@ def _resolve_base_dir() -> Path:
     package_dir = Path(__file__).resolve().parent
     project_root = package_dir.parent
 
-    if _frozen:
-        user_dir = _get_user_data_dir()
-        if user_dir:
-            # //audit assumption: frozen apps must write to user dir; risk: permissions; invariant: user dir used; strategy: prefer user dir.
-            return user_dir
+    # Prefer user data directory for production use
+    user_dir = _get_user_data_dir()
+    if user_dir and (user_dir / ".env").exists():
+        # If .env exists in user data dir, prefer it (production install)
+        return user_dir
 
     # //audit assumption: dev installs keep config at daemon-python root or package dir; risk: missing files; invariant: use project root when markers exist; strategy: check both locations.
     if (project_root / ".env.example").exists() or (project_root / "requirements.txt").exists():
@@ -269,6 +267,9 @@ class Config:
     # Only enable if you have implemented authentication or are in a secure development environment.
     DEBUG_SERVER_CORS_ENABLED: bool = os.getenv("DEBUG_SERVER_CORS_ENABLED", "false").lower() in ("1", "true", "yes")
     DEBUG_SERVER_LOG_RETENTION_DAYS: int = int(os.getenv("DEBUG_SERVER_LOG_RETENTION_DAYS", "7"))
+    # Security: Authentication token for debug server (required for non-read-only endpoints)
+    # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    DEBUG_SERVER_TOKEN: Optional[str] = os.getenv("DEBUG_SERVER_TOKEN") or None
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:

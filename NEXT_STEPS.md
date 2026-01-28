@@ -73,7 +73,7 @@ Read these documents in order:
 ARCANOS needs two icon files for the best experience:
 
 ### Required Icons:
-- `daemon-python/assets/icon.ico` - Windows executable icon (256x256)
+- `daemon-python/assets/icon.ico` - Application icon (256x256, optional)
 - `daemon-python/assets/icon.png` - Terminal profile icon (256x256)
 
 ### How to Create:
@@ -96,27 +96,20 @@ cyberpunk aesthetic, simple geometric shapes, transparent background,
 
 ---
 
-## 🔨 Build Standalone .exe (5 minutes)
+## 🔨 Build Standalone Executable (Deprecated)
 
-Want to distribute ARCANOS without requiring Python?
+**Note:** Windows executable builds have been deprecated. The CLI agent now runs as a Python application.
 
-### Option 1: Quick Build (Unsigned)
-```powershell
-.\scripts\build.ps1
-# Output: daemon-python\dist\ARCANOS.exe
+To run the CLI agent:
+```bash
+cd daemon-python
+python -m arcanos.cli
 ```
 
-### Option 2: Signed Build (Requires Certificate)
-```powershell
-# If you have a code signing certificate:
-.\scripts\build.ps1 -Sign -CertPath "path\to\cert.pfx" -CertPassword "password"
-```
-
-### Option 3: Buy Certificate (Optional)
-For a trusted, signed executable:
-1. Buy certificate from: Sectigo, DigiCert, or SSL.com (~$75-200/year)
-2. Receive .pfx file
-3. Build with signing script above
+For distribution, consider:
+- Packaging as a Python package (pip installable)
+- Using platform-specific package managers (Homebrew, apt, etc.)
+- Docker containers for consistent deployment
 
 ---
 
@@ -209,9 +202,8 @@ git push --tags
 
 # GitHub Actions will automatically:
 # 1. Run tests
-# 2. Build .exe
-# 3. Create release
-# 4. Upload ARCANOS.exe
+# 2. Create release
+# 3. Upload distribution packages
 ```
 
 ---
@@ -239,8 +231,8 @@ npm test
 - ✅ Rate limiting prevents excessive usage
 - ✅ Stats display correctly
 - ✅ Crash recovery restarts on error
-- ✅ Windows integration installs profile
-- ✅ .exe runs without Python installed
+- ✅ Cross-platform compatibility verified
+- ✅ CLI agent runs correctly
 
 ---
 
@@ -249,20 +241,20 @@ npm test
 ### Option 1: GitHub Releases (Recommended)
 1. Push code to GitHub
 2. Create release with tag (e.g., v1.0.0)
-3. GitHub Actions builds and uploads .exe
-4. Users download from Releases page
+3. GitHub Actions runs tests and creates release
+4. Users can install via pip or download source
 
-### Option 2: Direct Distribution
-1. Build .exe: `.\scripts\build.ps1`
-2. Zip the .exe with README
-3. Share via Google Drive, Dropbox, etc.
-4. Include installation instructions
+### Option 2: Python Package Distribution
+1. Build Python package: `cd daemon-python && python -m build`
+2. Upload to PyPI (optional)
+3. Users install via: `pip install arcanos`
+4. Or distribute source code directly
 
-### Option 3: Windows Package
-1. Use Advanced Installer or Inno Setup
-2. Create MSI installer
-3. Includes uninstaller automatically
-4. Professional appearance
+### Option 3: Docker Container (Optional)
+1. Create Dockerfile for CLI agent
+2. Build container image
+3. Distribute via container registry
+4. Cross-platform deployment
 
 ---
 
@@ -407,7 +399,7 @@ Keep track of your API usage:
 - OpenAI API Docs: https://platform.openai.com/docs
 - Railway Docs: https://docs.railway.app
 - Rich Library: https://rich.readthedocs.io
-- PyInstaller: https://pyinstaller.org
+- Python packaging: https://packaging.python.org/
 
 ---
 
@@ -427,7 +419,7 @@ Mark these off as you complete them:
 
 ### Optional (Week 1):
 - [ ] Add custom icons
-- [ ] Build .exe
+- [ ] Test CLI agent on all platforms
 - [ ] Test on another machine
 - [ ] Push to GitHub
 - [ ] Deploy backend (optional)

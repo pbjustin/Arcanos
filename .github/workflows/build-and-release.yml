@@ -1,4 +1,4 @@
-name: Build and Release Windows Executables
+name: Build and Release (Deprecated - Windows builds removed)
 
 on:
   push:
@@ -15,9 +15,12 @@ permissions:
   contents: write
 
 jobs:
+  # Windows executable build job disabled - Windows builds deprecated
+  # CLI agent now runs as Python application
   build-windows-executables:
-    name: Build Windows Executables
+    name: Build Windows Executables (Deprecated)
     runs-on: windows-latest
+    if: false  # Disabled - Windows builds deprecated
     
     steps:
       - name: 📥 Checkout code

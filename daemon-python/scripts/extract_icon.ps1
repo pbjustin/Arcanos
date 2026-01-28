@@ -1,10 +1,6 @@
-Add-Type -AssemblyName System.Drawing
-$src = "C:\Users\pbjus\Downloads\ARCANOS-Windows\ARCANOS-Setup.exe"
-$dest = (Join-Path $PSScriptRoot "..\arcanos\assets\icon.ico")
-if (-not (Test-Path $src)) { Write-Host "SOURCE_NOT_FOUND"; exit 2 }
-$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($src)
-$fs = [System.IO.File]::Create($dest)
-$icon.Save($fs)
-$fs.Close()
-$fs.Dispose()
-Write-Host "OK"
+# Icon extraction script (deprecated - Windows builds removed)
+# This script is no longer used as Windows executable builds have been deprecated.
+# Icons should be created manually or using image editing tools.
+Write-Host "This script is deprecated. Windows executable builds have been removed."
+Write-Host "Please create icons manually using image editing tools."
+exit 1
