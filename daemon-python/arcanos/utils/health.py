@@ -17,7 +17,7 @@ Features:
 from typing import Callable, List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
-from ..openai.unified_client import validate_client_health, HealthStatus
+from ..openai.unified_client import validate_client_health
 import logging
 
 logger = logging.getLogger("arcanos.health")

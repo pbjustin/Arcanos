@@ -15,16 +15,14 @@ Features:
 """
 
 import time
-import random
 from typing import Callable, TypeVar, Optional, Any
 from functools import wraps
 from .error_handling import (
     classify_openai_error,
     get_retry_delay,
-    should_retry as should_retry_error,
-    ErrorType
+    should_retry as should_retry_error
 )
-from ..telemetry import record_trace_event
+from .telemetry import record_trace_event
 import logging
 
 logger = logging.getLogger("arcanos.retry")

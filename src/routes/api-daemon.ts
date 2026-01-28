@@ -1,5 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { getModulesForRegistry } from './modules.js';
@@ -83,6 +85,43 @@ const daemonHeartbeats = new Map<string, DaemonHeartbeat>();
 const daemonCommands = new Map<string, DaemonCommand[]>();
 const daemonTokensByInstanceId = new Map<string, string>();
 const pendingDaemonActions = new Map<string, PendingDaemonActions>();
+
+const DAEMON_TOKENS_FILE = path.join(process.cwd(), 'memory', 'daemon_tokens.json');
+
+function loadDaemonTokens(): void {
+  try {
+    if (fs.existsSync(DAEMON_TOKENS_FILE)) {
+      const data = fs.readFileSync(DAEMON_TOKENS_FILE, 'utf-8');
+      const tokens = JSON.parse(data);
+      for (const [instanceId, token] of Object.entries(tokens)) {
+        daemonTokensByInstanceId.set(instanceId, token as string);
+      }
+      console.log(`[DAEMON] Loaded ${daemonTokensByInstanceId.size} daemon token mappings.`);
+    }
+  } catch (error) {
+    console.error('[DAEMON] Error loading daemon tokens:', error);
+  }
+}
+
+function saveDaemonTokens(): void {
+  try {
+    const tokens: { [key: string]: string } = {};
+    for (const [instanceId, token] of daemonTokensByInstanceId.entries()) {
+      tokens[instanceId] = token;
+    }
+    // Ensure the directory exists
+    const dir = path.dirname(DAEMON_TOKENS_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(DAEMON_TOKENS_FILE, JSON.stringify(tokens, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('[DAEMON] Error saving daemon tokens:', error);
+  }
+}
+
+// Load tokens at startup
+loadDaemonTokens();
 
 const PENDING_DAEMON_ACTION_TTL_MS = 5 * 60 * 1000;
 const REGISTRY_RATE_LIMIT = createRateLimitMiddleware(30, 10 * 60 * 1000);
@@ -250,7 +289,10 @@ router.post(
     }
     
     // Safe to set/update the token mapping
-    daemonTokensByInstanceId.set(instanceId, token);
+    if (!existingToken) {
+      daemonTokensByInstanceId.set(instanceId, token);
+      saveDaemonTokens();
+    }
 
     res.json({
       pong: true,

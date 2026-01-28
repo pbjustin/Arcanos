@@ -158,7 +158,7 @@ def build_image_request(
     return {
         # Prefer configurable image model when available, fall back to
         # the default literal used in main.
-        "model": model or getattr(Config, "OPENAI_IMAGE_MODEL", None) or "gpt-image-1",
+        "model": model or Config.OPENAI_IMAGE_MODEL,
         "prompt": prompt,
         "size": size,
         "quality": quality,

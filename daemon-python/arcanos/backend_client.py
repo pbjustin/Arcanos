@@ -500,10 +500,22 @@ class BackendApiClient:
         return BackendResponse(ok=True, value=response.value)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
-        response_text = response_json.get("response")
+        # Support both "result" (production backend) and "response" (legacy) field names
+        response_text = response_json.get("result") or response_json.get("response")
         tokens = response_json.get("tokens")
         cost = response_json.get("cost")
-        model = response_json.get("model")
+        model = response_json.get("model") or response_json.get("activeModel")
+
+        # Extract tokens from nested meta.tokens structure if present
+        if not isinstance(tokens, int):
+            meta = response_json.get("meta", {})
+            if isinstance(meta, dict):
+                tokens_obj = meta.get("tokens", {})
+                if isinstance(tokens_obj, dict):
+                    tokens = tokens_obj.get("total_tokens", 0)
+            if not isinstance(tokens, int):
+                # //audit assumption: tokens should be int; risk: missing usage; invariant: integer tokens; strategy: default to zero.
+                tokens = 0
 
         if not isinstance(response_text, str):
             # //audit assumption: response text required; risk: parse failure; invariant: string response; strategy: return parse error.
@@ -511,9 +523,6 @@ class BackendApiClient:
                 ok=False,
                 error=BackendRequestError(kind="parse", message="Chat response missing text")
             )
-        if not isinstance(tokens, int):
-            # //audit assumption: tokens should be int; risk: missing usage; invariant: integer tokens; strategy: default to zero.
-            tokens = 0
         if not isinstance(cost, (int, float)):
             # //audit assumption: cost should be numeric; risk: missing cost; invariant: numeric cost; strategy: default to zero.
             cost = 0.0
