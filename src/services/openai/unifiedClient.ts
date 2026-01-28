@@ -223,7 +223,6 @@ export function getOrCreateClient(): OpenAI | null {
  */
 export function validateClientHealth(): HealthStatus {
   const circuitBreakerMetrics = getCircuitBreakerSnapshot();
-  const cacheStats = responseCache.getStats();
   const configured = hasValidAPIKey();
   const initialized = singletonClient !== null;
 

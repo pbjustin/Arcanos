@@ -14,9 +14,10 @@ Features:
 
 import os
 from typing import Optional, Dict, Any
+from datetime import datetime
 from openai import OpenAI
 from ..config import Config
-from ..telemetry import record_trace_event
+from ..utils.telemetry import record_trace_event
 import logging
 
 logger = logging.getLogger("arcanos.openai")
@@ -264,11 +265,10 @@ def validate_client_health() -> HealthStatus:
         api_key_configured=configured,
         api_key_source=get_openai_key_source(),
         default_model=Config.OPENAI_MODEL,
-        fallback_model=getattr(Config, "FALLBACK_MODEL", "gpt-4")
+        fallback_model=getattr(Config, "FALLBACK_MODEL", "gpt-4"),
     )
-    
-    health.last_check = None  # Would use datetime.now().isoformat() in production
-    
+    # Record the actual check time for observability
+    health.last_check = datetime.now().isoformat()
     if not health.healthy:
         if not configured:
             health.error = "API key not configured"

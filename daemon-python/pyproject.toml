@@ -34,7 +34,7 @@ dependencies = [
   "pyaudio>=0.2.14",
   "pyttsx3>=2.90",
   "pynput>=1.7.6",
-  "webrtcvad>=2.0.10; platform_system != "Windows"",
+  "webrtcvad>=2.0.10; platform_system != 'Windows'",
   "pystray>=0.19.5",
   "rich>=13.7.0",
   "psycopg2-binary>=2.9.9"

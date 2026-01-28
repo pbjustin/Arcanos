@@ -17,10 +17,7 @@ Features:
 """
 
 from typing import Optional, Dict, Any, List, Union
-from openai import OpenAI
 from ..config import Config
-
-
 def build_chat_completion_request(
     prompt: str,
     system_prompt: Optional[str] = None,
@@ -156,7 +153,9 @@ def build_image_request(
     Creates a properly formatted image generation request.
     """
     return {
-        "model": model or "gpt-image-1",
+        # Prefer configurable image model when available, fall back to
+        # the default literal used in main.
+        "model": model or Config.OPENAI_IMAGE_MODEL,
         "prompt": prompt,
         "size": size,
         "quality": quality,
