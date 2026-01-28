@@ -25,7 +25,8 @@ import {
   setDefaultModel,
   getDefaultModel,
   getFallbackModel,
-  getGPT5Model
+  getGPT5Model,
+  getComplexModel
 } from './credentialProvider.js';
 import {
   getCircuitBreakerSnapshot,
@@ -137,12 +138,12 @@ export function createOpenAIClient(options: ClientOptions = {}): OpenAI | null {
 
     // Configure default model from environment
     const configuredDefaultModel =
-      process.env.OPENAI_MODEL ||
-      process.env.RAILWAY_OPENAI_MODEL ||
       process.env.FINETUNED_MODEL_ID ||
       process.env.FINE_TUNED_MODEL_ID ||
       process.env.AI_MODEL ||
-      'gpt-4o';
+      process.env.OPENAI_MODEL ||
+      process.env.RAILWAY_OPENAI_MODEL ||
+      'gpt-4o-mini';
 
     setDefaultModel(configuredDefaultModel);
 
@@ -283,6 +284,7 @@ export function getClient(): OpenAI | null {
 export {
   getDefaultModel,
   getFallbackModel,
+  getComplexModel,
   getGPT5Model,
   hasValidAPIKey,
   getOpenAIKeySource,
@@ -301,6 +303,7 @@ export default {
   resetClient,
   getDefaultModel,
   getFallbackModel,
+  getComplexModel,
   getGPT5Model,
   hasValidAPIKey,
   API_TIMEOUT_MS,

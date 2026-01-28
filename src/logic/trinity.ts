@@ -22,7 +22,7 @@
 
 import OpenAI from 'openai';
 import { logArcanosRouting, logGPT5Invocation, logRoutingSummary } from '../utils/aiLogger.js';
-import { getDefaultModel, getGPT5Model, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
+import { getDefaultModel, getGPT5Model, getComplexModel, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
@@ -276,19 +276,21 @@ async function runFinalStage(
   auditSafePrompt: string,
   gpt5Output: string
 ): Promise<TrinityFinalOutput> {
-  const finalTokenParams = getTokenParameter(activeModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
+  const complexModel = getComplexModel();
+  const finalTokenParams = getTokenParameter(complexModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalResponse = await createChatCompletionWithFallback(client, {
     messages: buildFinalArcanosMessages(memoryContextSummary, auditSafePrompt, gpt5Output),
     temperature: 0.2,
+    model: complexModel,
     ...finalTokenParams
   });
   const finalText = finalResponse.choices[0]?.message?.content || '';
-  const finalModel = finalResponse.activeModel || activeModel;
+  const finalModel = finalResponse.activeModel || complexModel;
   const finalFallback = finalResponse.fallbackFlag || false;
 
   //audit Assumption: final response may be empty on model failure; Failure risk: empty output; Expected invariant: finalText is string; Handling: default to empty string.
   if (finalFallback) {
-    logFallbackEvent('ARCANOS-FINAL', activeModel, finalModel, 'Fallback flag set by final completion');
+    logFallbackEvent('ARCANOS-FINAL', complexModel, finalModel, 'Fallback flag set by final completion');
   }
 
   return {
@@ -311,7 +313,7 @@ function buildDryRunPreview(
   dryRunReason?: string
 ): TrinityDryRunPreview {
   const intakeModelCandidate = getDefaultModel();
-  const finalModelCandidate = intakeModelCandidate;
+  const finalModelCandidate = getComplexModel();
   const gpt5ModelCandidate = getGPT5Model();
   const routingPlan = [
     `ARCANOS-INTAKE:${intakeModelCandidate}`,
