@@ -241,9 +241,18 @@ async function makeOpenAIRequest(
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   
   try {
+    // Extract prompt from messages for the builder (required by ChatParams type)
+    const userMessage = messages.find(m => m.role === 'user');
+    const prompt = typeof userMessage?.content === 'string' 
+      ? userMessage.content 
+      : Array.isArray(userMessage?.content)
+        ? userMessage.content.find(c => c.type === 'text')?.text || ''
+        : '';
+    
     // Use the new standardized request builder
     // Pass messages directly to preserve conversation history and routing message
     const nonStreamingPayload = buildChatCompletionRequest({
+      prompt,
       model,
       messages,
       maxTokens: tokenLimit,
