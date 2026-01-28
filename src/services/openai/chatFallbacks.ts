@@ -126,7 +126,7 @@ export const createChatCompletionWithFallback = async (
   client: OpenAI,
   params: ChatCompletionParams,
 ): Promise<ChatCompletionWithFallback> => {
-  const primaryModel = getDefaultModel();
+  const primaryModel = params.model ?? getDefaultModel();
   const gpt5Model = getGPT5Model();
   const finalFallbackModel = getFallbackModel();
 

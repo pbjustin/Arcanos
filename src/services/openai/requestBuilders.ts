@@ -176,11 +176,11 @@ export function buildChatCompletionRequest(
   }
 
   // Get token parameters for the model
-  const tokenParams = getTokenParameter(model || 'gpt-4o', maxTokens);
+  const tokenParams = getTokenParameter(model || 'gpt-4o-mini', maxTokens);
 
   // Build request payload
   const requestPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
-    model: model || 'gpt-4o',
+    model: model || 'gpt-4o-mini',
     messages: preparedMessages,
     stream: false,
     temperature,
