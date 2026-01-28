@@ -16,7 +16,7 @@ import os
 from typing import Optional, Dict, Any
 from openai import OpenAI
 from ..config import Config
-from ..telemetry import record_trace_event
+from ..utils.telemetry import record_trace_event
 import logging
 
 logger = logging.getLogger("arcanos.openai")
