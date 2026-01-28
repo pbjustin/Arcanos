@@ -244,13 +244,10 @@ export async function traceOperation<T>(
   operation: () => Promise<T>,
   attributes: Record<string, unknown> = {}
 ): Promise<T> {
-  // Sanitize attributes to prevent credential leakage
-  const sanitizedAttributes = sanitizeSensitiveData(attributes) as Record<string, unknown>;
-  
-  const span = createSpan(name, sanitizedAttributes);
+  const span = createSpan(name, attributes);
   const traceId = recordTraceEvent(`operation.start.${name}`, {
     spanId: span.id,
-    ...sanitizedAttributes
+    ...attributes
   });
 
   try {
@@ -325,28 +322,25 @@ export function recordError(
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorStack = error instanceof Error ? error.stack : undefined;
 
-  // Sanitize context to prevent credential leakage
-  const sanitizedContext = sanitizeSensitiveData(context) as Record<string, unknown>;
-
   recordLogEvent({
     timestamp: new Date().toISOString(),
     level,
     message: errorMessage,
     context: {
-      ...sanitizedContext,
+      ...context,
       error: {
         name: error instanceof Error ? error.name : 'Unknown',
         message: errorMessage,
         stack: errorStack
       }
     },
-    metadata: sanitizedContext
+    metadata: context
   });
 
   recordTraceEvent('error.recorded', {
     error: errorMessage,
     level,
-    ...sanitizedContext
+    ...context
   });
 }
 
@@ -398,7 +392,6 @@ export function logRailway(
 ): void {
   // Sanitize metadata to prevent credential leakage
   const sanitizedMetadata = sanitizeSensitiveData(metadata) as Record<string, unknown>;
-  
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction) {

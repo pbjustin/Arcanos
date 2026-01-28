@@ -43,6 +43,7 @@ SENSITIVE_PATTERNS = [
     r'backend[_-]?token',
 ]
 
+
 def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> Any:
     """
     Recursively sanitizes sensitive data from dictionaries and nested structures.
@@ -78,11 +79,9 @@ def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> A
                 # Recursively sanitize nested structures
                 sanitized[key] = sanitize_sensitive_data(value, depth + 1, max_depth)
         return sanitized
-    elif isinstance(data, list):
+    if isinstance(data, list):
         return [sanitize_sensitive_data(item, depth + 1, max_depth) for item in data]
-    else:
-        return data
-
+    return data
 # Global telemetry instance
 _telemetry_instance: Optional[Telemetry] = None
 
@@ -108,7 +107,6 @@ def record_trace_event(name: str, attributes: Optional[Dict[str, Any]] = None) -
     """
     # Sanitize attributes to prevent credential leakage
     sanitized_attributes = sanitize_sensitive_data(attributes or {}) if attributes else {}
-    
     event = {
         "id": str(uuid.uuid4()),
         "timestamp": datetime.now().isoformat(),
@@ -223,23 +221,26 @@ def record_error(
     
     telemetry = get_telemetry()
     if telemetry.enabled:
-        telemetry.track_event(f"{level}.recorded", {
-            "error": error_message,
-            "errorName": error_name,
-            **sanitized_context
-        })
+        telemetry.track_event(
+            f"{level}.recorded",
+            {
+                "error": error_message,
+                "errorName": error_name,
+                **sanitized_context,
+            },
+        )
     
     if level == "error":
         logger.error(
             error_message,
             extra={"module": "telemetry.unified", **sanitized_context},
-            exc_info=error
+            exc_info=error,
         )
     else:
         logger.warning(
             error_message,
             extra={"module": "telemetry.unified", **sanitized_context},
-            exc_info=error
+            exc_info=error,
         )
 
 
@@ -295,7 +296,6 @@ def log_railway(
     
     # Sanitize metadata to prevent credential leakage
     sanitized_metadata = sanitize_sensitive_data(metadata or {}) if metadata else {}
-    
     is_production = os.getenv("NODE_ENV") == "production" or os.getenv("RAILWAY_ENVIRONMENT")
     
     if is_production:
@@ -327,5 +327,5 @@ __all__ = [
     "start_timer",
     "log_railway",
     "get_telemetry",
-    "sanitize_sensitive_data"
+    "sanitize_sensitive_data",
 ]
