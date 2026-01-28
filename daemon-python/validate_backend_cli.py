@@ -251,11 +251,7 @@ def test_version_command() -> bool:
     
     try:
         # Version is included in status endpoint
-<<<<<<< HEAD
         response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", headers=get_debug_auth_headers(), timeout=5)
-=======
-        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", timeout=5)
->>>>>>> origin/main
         
         if response.status_code == 200:
             data = response.json()
