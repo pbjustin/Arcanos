@@ -268,7 +268,7 @@ def validate_client_health() -> HealthStatus:
     )
     
     health.last_check = None  # Would use datetime.now().isoformat() in production
-    
+    health.last_check = datetime.now().isoformat()
     if not health.healthy:
         if not configured:
             health.error = "API key not configured"
