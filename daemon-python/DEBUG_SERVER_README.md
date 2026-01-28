@@ -81,6 +81,9 @@ The debug server exposes the following endpoints:
 - **`GET /debug/log-files`** - List log files (requires authentication)
   - Returns: `log_dir`, `files` (array of file metadata)
   
+- **`GET /debug/help`** - Get help text (requires authentication)
+  - Returns: `help_text` (markdown-formatted help text with available commands)
+  
 - **`GET /debug/audit?limit=50&filter=error&order=desc`** - Get audit trail (requires authentication)
   - Query params:
     - `limit` (number of entries, default: 50, max: 500)

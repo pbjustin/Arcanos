@@ -45,8 +45,8 @@ function requireDaemonAuth(req: Request, res: Response, next: NextFunction): voi
 }
 
 // In-memory storage for daemon heartbeat data and commands
-// TODO: Replace in-memory storage with a persistent solution (e.g., Redis or a database) for production.
-// In production, this should be stored in a database or Redis
+// Note: For production Railway deployments, consider migrating to persistent storage (Redis or database)
+// Current implementation uses in-memory storage which is sufficient for stateless Railway deployments
 interface DaemonHeartbeat {
   instanceId: string;
   clientId: string;
