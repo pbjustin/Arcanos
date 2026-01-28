@@ -204,7 +204,7 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
       deps.logger.error('Failed to load daemon tokens', {
         module: 'daemonStore.loadTokens',
         tokensFilePath: deps.tokensFilePath
-      }, error instanceof Error ? error : undefined);
+      }, undefined, error instanceof Error ? error : undefined);
     }
   };
 
@@ -227,7 +227,7 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
       deps.logger.error('Failed to save daemon tokens', {
         module: 'daemonStore.saveTokens',
         tokensFilePath: deps.tokensFilePath
-      }, error instanceof Error ? error : undefined);
+      }, undefined, error instanceof Error ? error : undefined);
     }
   };
 
