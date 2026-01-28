@@ -157,12 +157,12 @@ export function getConfig(): AppConfig {
       'OPENAI_API_BASE_URL',
       'OPENAI_API_BASE'
     ]),
-    defaultModel: getEnvVar('OPENAI_MODEL', [
-      'RAILWAY_OPENAI_MODEL',
-      'FINETUNED_MODEL_ID',
+    defaultModel: getEnvVar('FINETUNED_MODEL_ID', [
       'FINE_TUNED_MODEL_ID',
-      'AI_MODEL'
-    ]) || 'gpt-4o',
+      'AI_MODEL',
+      'OPENAI_MODEL',
+      'RAILWAY_OPENAI_MODEL'
+    ]) || 'gpt-4o-mini',
     fallbackModel: getEnvVar('FALLBACK_MODEL', [
       'AI_FALLBACK_MODEL',
       'RAILWAY_OPENAI_FALLBACK_MODEL'

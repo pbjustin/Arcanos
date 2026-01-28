@@ -47,7 +47,7 @@ export async function generateTaggedGuide(entryKey) {
   const dbEntry = await fetchDBEntry(entryKey);
 
   const response = await openai.chat.completions.create({
-    model: process.env.AI_MODEL || 'REDACTED_FINE_TUNED_MODEL_ID',
+    model: process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     messages: [
       {
         role: 'system',
