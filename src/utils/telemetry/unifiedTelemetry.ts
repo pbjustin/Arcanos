@@ -25,6 +25,80 @@ import { aiLogger } from '../structuredLogging.js';
 import { generateRequestId } from '../idGenerator.js';
 
 /**
+ * Patterns for sensitive data that should be redacted
+ */
+const SENSITIVE_PATTERNS = [
+  /api[-_]?key/i,
+  /api[-_]?token/i,
+  /bearer[-_]?token/i,
+  /access[-_]?token/i,
+  /secret[-_]?key/i,
+  /password/i,
+  /passwd/i,
+  /auth[-_]?token/i,
+  /authorization/i,
+  /credential/i,
+  /private[-_]?key/i,
+  /secret/i,
+  /token/i,
+  /openai[-_]?api[-_]?key/i,
+  /backend[-_]?token/i,
+];
+
+/**
+ * Recursively sanitizes sensitive data from objects and nested structures.
+ * 
+ * Redacts values for keys matching sensitive patterns (API keys, tokens, passwords, etc.)
+ * to prevent credential leakage in logs.
+ * 
+ * @param data - Data structure to sanitize (object, array, or primitive)
+ * @param depth - Current recursion depth
+ * @param maxDepth - Maximum recursion depth to prevent stack overflow
+ * @returns Sanitized data structure with sensitive values redacted
+ */
+function sanitizeSensitiveData(
+  data: unknown,
+  depth = 0,
+  maxDepth = 10
+): unknown {
+  if (depth > maxDepth) {
+    return '[max depth reached]';
+  }
+
+  if (data === null || data === undefined) {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    return data.map(item => sanitizeSensitiveData(item, depth + 1, maxDepth));
+  }
+
+  if (typeof data === 'object') {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      const keyLower = key.toLowerCase();
+      // Check if key matches any sensitive pattern
+      const isSensitive = SENSITIVE_PATTERNS.some(pattern => pattern.test(keyLower));
+
+      if (isSensitive) {
+        // Redact sensitive values
+        if (typeof value === 'string' && value.length > 0) {
+          sanitized[key] = `[REDACTED:${value.length} chars]`;
+        } else {
+          sanitized[key] = '[REDACTED]';
+        }
+      } else {
+        // Recursively sanitize nested structures
+        sanitized[key] = sanitizeSensitiveData(value, depth + 1, maxDepth);
+      }
+    }
+    return sanitized;
+  }
+
+  return data;
+}
+
+/**
  * Span for tracing operations
  */
 export interface Span {
@@ -103,10 +177,13 @@ export function createSpan(
 
   activeSpans.set(spanId, span);
 
+  // Sanitize attributes to prevent credential leakage
+  const sanitizedAttributes = sanitizeSensitiveData(attributes) as Record<string, unknown>;
+  
   recordTraceEvent(`span.start.${name}`, {
     spanId,
     parentId,
-    ...attributes
+    ...sanitizedAttributes
   });
 
   return span;
@@ -131,10 +208,13 @@ export function endSpan(span: Span, attributes: Record<string, unknown> = {}): v
 
   activeSpans.delete(span.id);
 
+  // Sanitize attributes to prevent credential leakage
+  const sanitizedAttributes = sanitizeSensitiveData(span.attributes) as Record<string, unknown>;
+  
   recordTraceEvent(`span.end.${span.name}`, {
     spanId: span.id,
     duration,
-    ...span.attributes
+    ...sanitizedAttributes
   });
 
   // Log if duration is significant
@@ -164,10 +244,13 @@ export async function traceOperation<T>(
   operation: () => Promise<T>,
   attributes: Record<string, unknown> = {}
 ): Promise<T> {
-  const span = createSpan(name, attributes);
+  // Sanitize attributes to prevent credential leakage
+  const sanitizedAttributes = sanitizeSensitiveData(attributes) as Record<string, unknown>;
+  
+  const span = createSpan(name, sanitizedAttributes);
   const traceId = recordTraceEvent(`operation.start.${name}`, {
     spanId: span.id,
-    ...attributes
+    ...sanitizedAttributes
   });
 
   try {
@@ -242,25 +325,28 @@ export function recordError(
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorStack = error instanceof Error ? error.stack : undefined;
 
+  // Sanitize context to prevent credential leakage
+  const sanitizedContext = sanitizeSensitiveData(context) as Record<string, unknown>;
+
   recordLogEvent({
     timestamp: new Date().toISOString(),
     level,
     message: errorMessage,
     context: {
-      ...context,
+      ...sanitizedContext,
       error: {
         name: error instanceof Error ? error.name : 'Unknown',
         message: errorMessage,
         stack: errorStack
       }
     },
-    metadata: context
+    metadata: sanitizedContext
   });
 
   recordTraceEvent('error.recorded', {
     error: errorMessage,
     level,
-    ...context
+    ...sanitizedContext
   });
 }
 
@@ -310,6 +396,9 @@ export function logRailway(
   message: string,
   metadata: Record<string, unknown> = {}
 ): void {
+  // Sanitize metadata to prevent credential leakage
+  const sanitizedMetadata = sanitizeSensitiveData(metadata) as Record<string, unknown>;
+  
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (isProduction) {
@@ -318,7 +407,7 @@ export function logRailway(
       timestamp: new Date().toISOString(),
       level,
       message,
-      ...metadata,
+      ...sanitizedMetadata,
       service: 'arcanos-backend',
       environment: process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'development'
     };
@@ -327,7 +416,7 @@ export function logRailway(
     // Human-readable format for development
     aiLogger[level](message, {
       module: 'telemetry.unified',
-      ...metadata
+      ...sanitizedMetadata
     });
   }
 
@@ -335,7 +424,7 @@ export function logRailway(
     timestamp: new Date().toISOString(),
     level,
     message,
-    metadata
+    metadata: sanitizedMetadata
   });
 }
 

@@ -14,6 +14,7 @@ Features:
 
 import time
 import uuid
+import re
 from typing import Callable, TypeVar, Optional, Dict, Any
 from datetime import datetime
 from ..telemetry import Telemetry
@@ -22,6 +23,65 @@ import logging
 logger = logging.getLogger("arcanos.telemetry")
 
 T = TypeVar("T")
+
+# Patterns for sensitive data that should be redacted
+SENSITIVE_PATTERNS = [
+    r'api[_-]?key',
+    r'api[_-]?token',
+    r'bearer[_-]?token',
+    r'access[_-]?token',
+    r'secret[_-]?key',
+    r'password',
+    r'passwd',
+    r'auth[_-]?token',
+    r'authorization',
+    r'credential',
+    r'private[_-]?key',
+    r'secret',
+    r'token',
+    r'openai[_-]?api[_-]?key',
+    r'backend[_-]?token',
+]
+
+def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> Any:
+    """
+    Recursively sanitizes sensitive data from dictionaries and nested structures.
+    
+    Redacts values for keys matching sensitive patterns (API keys, tokens, passwords, etc.)
+    to prevent credential leakage in logs.
+    
+    Args:
+        data: Data structure to sanitize (dict, list, or primitive)
+        depth: Current recursion depth
+        max_depth: Maximum recursion depth to prevent stack overflow
+    
+    Returns:
+        Sanitized data structure with sensitive values redacted
+    """
+    if depth > max_depth:
+        return "[max depth reached]"
+    
+    if isinstance(data, dict):
+        sanitized = {}
+        for key, value in data.items():
+            key_lower = str(key).lower()
+            # Check if key matches any sensitive pattern
+            is_sensitive = any(re.search(pattern, key_lower, re.IGNORECASE) for pattern in SENSITIVE_PATTERNS)
+            
+            if is_sensitive:
+                # Redact sensitive values
+                if isinstance(value, str) and len(value) > 0:
+                    sanitized[key] = f"[REDACTED:{len(value)} chars]"
+                else:
+                    sanitized[key] = "[REDACTED]"
+            else:
+                # Recursively sanitize nested structures
+                sanitized[key] = sanitize_sensitive_data(value, depth + 1, max_depth)
+        return sanitized
+    elif isinstance(data, list):
+        return [sanitize_sensitive_data(item, depth + 1, max_depth) for item in data]
+    else:
+        return data
 
 # Global telemetry instance
 _telemetry_instance: Optional[Telemetry] = None
@@ -46,17 +106,20 @@ def record_trace_event(name: str, attributes: Optional[Dict[str, Any]] = None) -
     Returns:
         Trace event dictionary with ID
     """
+    # Sanitize attributes to prevent credential leakage
+    sanitized_attributes = sanitize_sensitive_data(attributes or {}) if attributes else {}
+    
     event = {
         "id": str(uuid.uuid4()),
         "timestamp": datetime.now().isoformat(),
         "name": name,
-        "attributes": attributes or {}
+        "attributes": sanitized_attributes
     }
     
     # Track via telemetry system
     telemetry = get_telemetry()
     if telemetry.enabled:
-        telemetry.track_event(f"trace.{name}", attributes)
+        telemetry.track_event(f"trace.{name}", sanitized_attributes)
     
     return event
 
@@ -155,24 +218,27 @@ def record_error(
     error_message = str(error)
     error_name = type(error).__name__
     
+    # Sanitize context to prevent credential leakage
+    sanitized_context = sanitize_sensitive_data(context or {}) if context else {}
+    
     telemetry = get_telemetry()
     if telemetry.enabled:
         telemetry.track_event(f"{level}.recorded", {
             "error": error_message,
             "errorName": error_name,
-            **context or {}
+            **sanitized_context
         })
     
     if level == "error":
         logger.error(
             error_message,
-            extra={"module": "telemetry.unified", **context or {}},
+            extra={"module": "telemetry.unified", **sanitized_context},
             exc_info=error
         )
     else:
         logger.warning(
             error_message,
-            extra={"module": "telemetry.unified", **context or {}},
+            extra={"module": "telemetry.unified", **sanitized_context},
             exc_info=error
         )
 
@@ -227,6 +293,9 @@ def log_railway(
     import os
     import json
     
+    # Sanitize metadata to prevent credential leakage
+    sanitized_metadata = sanitize_sensitive_data(metadata or {}) if metadata else {}
+    
     is_production = os.getenv("NODE_ENV") == "production" or os.getenv("RAILWAY_ENVIRONMENT")
     
     if is_production:
@@ -235,19 +304,19 @@ def log_railway(
             "timestamp": datetime.now().isoformat(),
             "level": level,
             "message": message,
-            **metadata or {},
+            **sanitized_metadata,
             "service": "arcanos-cli",
             "environment": os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("NODE_ENV", "development")
         }
         print(json.dumps(log_entry))
     else:
         # Human-readable format for development
-        getattr(logger, level)(message, extra={"module": "telemetry.unified", **metadata or {}})
+        getattr(logger, level)(message, extra={"module": "telemetry.unified", **sanitized_metadata})
     
     # Also track via telemetry system
     telemetry = get_telemetry()
     if telemetry.enabled:
-        telemetry.track_event(f"log.{level}", {"message": message, **metadata or {}})
+        telemetry.track_event(f"log.{level}", {"message": message, **sanitized_metadata})
 
 
 __all__ = [
@@ -257,5 +326,6 @@ __all__ = [
     "record_error",
     "start_timer",
     "log_railway",
-    "get_telemetry"
+    "get_telemetry",
+    "sanitize_sensitive_data"
 ]

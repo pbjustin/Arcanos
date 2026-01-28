@@ -235,7 +235,21 @@ router.post(
     const token = req.daemonToken!;
     const key = `${token}:${instanceId}`;
     daemonHeartbeats.set(key, heartbeat);
-    //audit Assumption: instanceId uniquely identifies daemon; risk: stale token mapping; invariant: latest token wins; handling: overwrite mapping.
+    
+    // Security: Prevent instanceId hijacking by validating token ownership
+    // Only allow setting/updating token mapping if:
+    // 1. InstanceId has no existing token (first registration), OR
+    // 2. The existing token matches the current token (legitimate update)
+    const existingToken = daemonTokensByInstanceId.get(instanceId);
+    if (existingToken && existingToken !== token) {
+      //audit Assumption: instanceId hijacking attempt detected; risk: unauthorized access; invariant: reject; handling: return 403.
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'InstanceId is already registered with a different token'
+      });
+    }
+    
+    // Safe to set/update the token mapping
     daemonTokensByInstanceId.set(instanceId, token);
 
     res.json({
