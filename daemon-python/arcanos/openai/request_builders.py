@@ -17,10 +17,7 @@ Features:
 """
 
 from typing import Optional, Dict, Any, List, Union
-from openai import OpenAI
 from ..config import Config
-
-
 def build_chat_completion_request(
     prompt: str,
     system_prompt: Optional[str] = None,
