@@ -208,6 +208,15 @@ export const env = {
   
   // Audit Configuration
   AUDIT_OVERRIDE: Environment.get('AUDIT_OVERRIDE'),
+
+  // Daemon Configuration
+  DAEMON_TOKENS_FILE: Environment.get('DAEMON_TOKENS_FILE'),
+  DAEMON_RATE_LIMIT_MAX: Environment.getNumber('DAEMON_RATE_LIMIT_MAX', 120),
+  DAEMON_RATE_LIMIT_WINDOW_MS: Environment.getNumber('DAEMON_RATE_LIMIT_WINDOW_MS', 10 * 60 * 1000),
+  DAEMON_REGISTRY_RATE_LIMIT_MAX: Environment.getNumber('DAEMON_REGISTRY_RATE_LIMIT_MAX', 30),
+  DAEMON_REGISTRY_RATE_LIMIT_WINDOW_MS: Environment.getNumber('DAEMON_REGISTRY_RATE_LIMIT_WINDOW_MS', 10 * 60 * 1000),
+  DAEMON_PENDING_ACTION_TTL_MS: Environment.getNumber('DAEMON_PENDING_ACTION_TTL_MS', 5 * 60 * 1000),
+  DAEMON_COMMAND_RETENTION_MS: Environment.getNumber('DAEMON_COMMAND_RETENTION_MS', 60 * 60 * 1000),
   
   // Development helpers
   isDevelopment: Environment.isDevelopment(),
