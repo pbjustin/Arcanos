@@ -375,11 +375,10 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
     let queuedCount = 0;
     for (const action of pending.actions) {
       const commandId = queueCommandForInstance(instanceId, action.daemon, action.payload);
+      // After validation above, commandId is guaranteed to be non-null
       if (commandId) {
         //audit Assumption: queue returns ID on success; risk: missing command; invariant: count successes; handling: increment.
         queuedCount += 1;
-      } else {
-        //audit Assumption: queue can fail due to missing token; risk: dropped action; invariant: continue; handling: no-op.
       }
     }
 
