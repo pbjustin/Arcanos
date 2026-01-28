@@ -13,6 +13,7 @@ PREREQUISITES:
   - Or add to .env file: IDE_AGENT_DEBUG=true and DAEMON_DEBUG_PORT=9999
   - Then run: python -m arcanos.cli
   - Debug server should be on http://127.0.0.1:9999
+  - **IMPORTANT**: Set DEBUG_SERVER_TOKEN for authentication (see DEBUG_SERVER_README.md)
 
 See DEBUG_SERVER_README.md for detailed instructions.
 """
@@ -250,7 +251,11 @@ def test_version_command() -> bool:
     
     try:
         # Version is included in status endpoint
+<<<<<<< HEAD
         response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", headers=get_debug_auth_headers(), timeout=5)
+=======
+        response = requests.get(f"{DEBUG_SERVER_URL}/debug/status", timeout=5)
+>>>>>>> origin/main
         
         if response.status_code == 200:
             data = response.json()

@@ -6,12 +6,13 @@
 
 import fs from 'fs';
 import path from 'path';
+import { env, Environment } from './env.js';
 
 /**
  * Get the log directory path from environment variable or default
  */
 export function getLogPath(): string {
-  return process.env.ARC_LOG_PATH || '/tmp/arc/log';
+  return env.ARC_LOG_PATH;
 }
 
 /**
@@ -84,7 +85,7 @@ export function ensureLogDirectory(): void {
  * Maintains backward compatibility with existing logic
  */
 export function getEnvironmentLogPath(): string {
-  if (process.env.NODE_ENV === 'production') {
+  if (Environment.isProduction()) {
     return getSessionLogPath();
   } else {
     // In development, use local memory directory as fallback

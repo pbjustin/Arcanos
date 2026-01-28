@@ -1,9 +1,3 @@
-/**
- * ARCANOS OpenAI SDK Interface
- * 
- * Provides OpenAI SDK-compatible interface for worker management and scheduling
- */
-
 import express from 'express';
 import { runSystemDiagnostics, type SystemDiagnostics } from '../utils/systemDiagnostics.js';
 import { logExecution, type JobData } from '../db.js';
@@ -16,7 +10,7 @@ import {
 } from '../config/workerConfig.js';
 import { createValidationMiddleware } from '../utils/security.js';
 import { connectResearchBridge } from '../services/researchHub.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
 
 const router = express.Router();
 const sdkResearchBridge = connectResearchBridge('SDK:RESEARCH');

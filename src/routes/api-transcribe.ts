@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
 import { getOpenAIClient } from '../services/openai/clientFactory.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';

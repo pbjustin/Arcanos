@@ -63,55 +63,56 @@ The debug server exposes the following endpoints:
 
 ### GET Endpoints
 
-- **`GET /debug/status`** - Get CLI agent status
+**Note:** All endpoints except `/debug/health`, `/debug/ready`, and `/debug/metrics` require authentication via `DEBUG_SERVER_TOKEN`.
+
+- **`GET /debug/status`** - Get CLI agent status (requires authentication)
   - Returns: `instanceId`, `clientId`, `uptime`, `backend_configured`, `version`, `last_error`
   
-- **`GET /debug/help`** - Get help text
-  - Returns: `help_text` (markdown formatted command documentation)
-  
-- **`GET /debug/instance-id`** - Get instance ID
+- **`GET /debug/instance-id`** - Get instance ID (requires authentication)
   - Returns: `instanceId`
   
-- **`GET /debug/chat-log`** - Get recent conversation log
+- **`GET /debug/chat-log`** - Get recent conversation log (requires authentication)
   - Returns: `chat_log` (array of conversation entries)
   
-- **`GET /debug/logs?tail=50`** - Get error logs
+- **`GET /debug/logs?tail=50`** - Get error logs (requires authentication)
   - Query params: `tail` (number of lines, default: 50, max: 1000)
   - Returns: `path`, `lines` (array of log lines), `total`, `returned`
   
-- **`GET /debug/log-files`** - List log files
+- **`GET /debug/log-files`** - List log files (requires authentication)
   - Returns: `log_dir`, `files` (array of file metadata)
   
-- **`GET /debug/audit?limit=50&filter=error&order=desc`** - Get audit trail
+- **`GET /debug/audit?limit=50&filter=error&order=desc`** - Get audit trail (requires authentication)
   - Query params:
     - `limit` (number of entries, default: 50, max: 500)
     - `filter` (optional: filter by activity kind, e.g., "error", "ask", "run")
     - `order` (optional: "asc" or "desc", default: "desc")
   - Returns: `entries`, `total`, `returned`, `limit`
   
-- **`GET /debug/crash-reports`** - Get crash reports
+- **`GET /debug/crash-reports`** - Get crash reports (requires authentication)
   - Returns: `files` (array of crash report files), `latest_content` (content of most recent crash report)
 
-- **`GET /debug/health`** - Liveness probe (always returns 200 if server is running)
+- **`GET /debug/health`** - Liveness probe (no authentication required - read-only)
   - Returns: `{"ok": true, "ts": float, "version": str}`
   
-- **`GET /debug/ready`** - Readiness probe (checks CLI initialization and dependencies)
+- **`GET /debug/ready`** - Readiness probe (no authentication required - read-only)
   - Returns: `{"ok": bool, "checks": {...}, "ts": float, "version": str}` (200 if ready, 503 if not)
   
-- **`GET /debug/metrics`** - Prometheus metrics export
+- **`GET /debug/metrics`** - Prometheus metrics export (no authentication required - read-only)
   - Returns: Prometheus text format (Content-Type: text/plain)
 
 ### POST Endpoints
 
-- **`POST /debug/ask`** - Send a message to the AI
+**Note:** All POST endpoints require authentication via `DEBUG_SERVER_TOKEN` as they can execute commands or interact with AI services.
+
+- **`POST /debug/ask`** - Send a message to the AI (requires authentication)
   - Body: `{"message": "your message", "route_override": "backend" (optional)}`
   - Returns: `_ConversationResult` with `response_text`, `tokens_used`, `cost_usd`, `model`, `source`
   
-- **`POST /debug/run`** - Execute a shell command
+- **`POST /debug/run`** - Execute a shell command (requires authentication)
   - Body: `{"command": "your command"}`
   - Returns: Command execution result
   
-- **`POST /debug/see`** - Analyze screenshot or webcam
+- **`POST /debug/see`** - Analyze screenshot or webcam (requires authentication)
   - Body: `{"use_camera": false}` (optional, default: false)
   - Returns: Vision analysis result
 
@@ -253,9 +254,48 @@ The validation script expects:
    ```
 4. Review the validation results JSON file for detailed error messages
 
+## Example Usage with curl
+
+**Important:** All requests (except `/debug/health`, `/debug/ready`, and `/debug/metrics`) require authentication via `DEBUG_SERVER_TOKEN`.
+
+```bash
+# Set your token (generate with: python -c "import secrets; print(secrets.token_urlsafe(32))")
+export DEBUG_SERVER_TOKEN="your-token-here"
+
+# Get status (requires authentication)
+curl -H "Authorization: Bearer $DEBUG_SERVER_TOKEN" http://127.0.0.1:9999/debug/status
+
+# Alternative: Use X-Debug-Token header
+curl -H "X-Debug-Token: $DEBUG_SERVER_TOKEN" http://127.0.0.1:9999/debug/status
+
+# Alternative: Use query parameter (less secure)
+curl "http://127.0.0.1:9999/debug/status?token=$DEBUG_SERVER_TOKEN"
+
+# Get logs (requires authentication)
+curl -H "Authorization: Bearer $DEBUG_SERVER_TOKEN" "http://127.0.0.1:9999/debug/logs?tail=100"
+
+# Send a message (requires authentication)
+curl -X POST http://127.0.0.1:9999/debug/ask \
+  -H "Authorization: Bearer $DEBUG_SERVER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is your status?"}'
+
+# Execute a command (requires authentication)
+curl -X POST http://127.0.0.1:9999/debug/run \
+  -H "Authorization: Bearer $DEBUG_SERVER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"command": "echo hello"}'
+
+# Health check (no authentication required - read-only)
+curl http://127.0.0.1:9999/debug/health
+```
+
+**Note:** On Windows, you can use PowerShell's `Invoke-WebRequest` or `Invoke-RestMethod` if curl is not available.
+
 ## Notes
 
 - The debug server is **localhost-only** (127.0.0.1) for security
 - Environment variables set in the terminal are **session-only** and won't persist after closing the terminal (use `.env` file for persistence)
 - The CLI agent must remain running for the debug server to be accessible
 - Use Ctrl+C in the CLI agent window to stop it (this also stops the debug server)
+- **Authentication is required** for security - see Configuration section above

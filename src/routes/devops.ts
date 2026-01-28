@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { runSelfTestPipeline } from '../services/selfTestPipeline.js';
 import { generateDailySummary } from '../services/dailySummaryService.js';
 import { buildTimestampedPayload } from '../utils/responseHelpers.js';
-import { resolveErrorMessage } from '../utils/errorHandling.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = Router();
 

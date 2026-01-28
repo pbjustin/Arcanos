@@ -10,7 +10,7 @@ import { trackModelResponse, trackPromptUsage } from './contextualReinforcement.
 import { createCacheKey } from '../utils/hashUtils.js';
 import { generateMockResponse } from './openai/mock.js';
 import { logOpenAIEvent, logOpenAISuccess } from '../utils/openaiLogger.js';
-import { handleOpenAIRequestError } from '../utils/openaiErrorHandler.js';
+import { handleOpenAIRequestError } from '../lib/errors/index.js';
 import { buildSystemPromptMessages } from '../utils/messageBuilderUtils.js';
 import { buildCompletionRequestPayload } from '../utils/requestPayloadUtils.js';
 import { OPENAI_LOG_MESSAGES } from '../config/openaiLogMessages.js';
