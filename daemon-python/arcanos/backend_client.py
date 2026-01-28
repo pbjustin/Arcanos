@@ -111,6 +111,46 @@ class BackendApiClient:
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
 
+    @staticmethod
+    def _normalize_metadata(metadata: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
+        """
+        Purpose: Normalize optional metadata mapping into a dict.
+        Inputs/Outputs: metadata mapping or None; returns dict or None.
+        Edge cases: returns None when metadata is falsy.
+        """
+        if not metadata:
+            # //audit assumption: metadata optional; risk: missing context; invariant: None returned; strategy: skip metadata.
+            return None
+        # //audit assumption: metadata should be serialized; risk: non-serializable values; invariant: dict conversion attempted; strategy: dict() copy.
+        return dict(metadata)
+
+    @staticmethod
+    def _extract_tokens_used(response_json: Mapping[str, Any]) -> int:
+        """
+        Purpose: Extract token usage count from backend response payload.
+        Inputs/Outputs: response JSON mapping; returns token count integer.
+        Edge cases: defaults to zero when tokens cannot be determined.
+        """
+        tokens = response_json.get("tokens")
+        if isinstance(tokens, int):
+            # //audit assumption: tokens already provided; risk: incorrect type; invariant: integer tokens; strategy: return early.
+            return tokens
+
+        # //audit assumption: tokens may be nested under meta.tokens; risk: missing usage data; invariant: check nested metadata; strategy: fallback parsing.
+        meta = response_json.get("meta", {})
+        if isinstance(meta, dict):
+            # //audit assumption: meta should be mapping; risk: schema mismatch; invariant: dict parsed; strategy: inspect tokens.
+            tokens_obj = meta.get("tokens", {})
+            if isinstance(tokens_obj, dict):
+                # //audit assumption: tokens object should be mapping; risk: schema mismatch; invariant: dict parsed; strategy: read total_tokens.
+                tokens = tokens_obj.get("total_tokens", 0)
+
+        if not isinstance(tokens, int):
+            # //audit assumption: tokens should be int; risk: missing usage; invariant: integer tokens; strategy: default to zero.
+            return 0
+
+        return tokens
+
     def _make_request(
         self,
         method: str,
@@ -167,12 +207,16 @@ class BackendApiClient:
             "message": message
         }
         if domain:
+            # //audit assumption: domain optional; risk: missing routing context; invariant: include when provided; strategy: conditional field.
             payload["domain"] = domain
-        if metadata:
-            payload["metadata"] = dict(metadata)
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
+            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/ask", payload)
         if not response.ok or not response.value:
+            # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
             return BackendResponse(ok=False, error=response.error)
 
         return self._parse_chat_response(response.value)
@@ -190,6 +234,7 @@ class BackendApiClient:
         Inputs/Outputs: messages, optional temperature/model, stream flag; returns BackendChatResult.
         Edge cases: Returns structured error on auth, network, or parsing failures.
         """
+        # //audit assumption: messages sequence should be serializable; risk: invalid payload; invariant: list of mappings; strategy: list() copy.
         payload: dict[str, Any] = {
             "messages": list(messages),
             "stream": stream
@@ -200,9 +245,10 @@ class BackendApiClient:
         if model:
             # //audit assumption: model override optional; risk: invalid model; invariant: include when provided; strategy: conditional field.
             payload["model"] = model
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/ask", payload)
         if not response.ok or not response.value:
@@ -240,9 +286,10 @@ class BackendApiClient:
         if max_tokens is not None:
             # //audit assumption: max tokens optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
             payload["maxTokens"] = max_tokens
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/vision", payload)
         if not response.ok or not response.value:
@@ -276,9 +323,10 @@ class BackendApiClient:
         if language:
             # //audit assumption: language optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
             payload["language"] = language
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/transcribe", payload)
         if not response.ok or not response.value:
@@ -302,9 +350,10 @@ class BackendApiClient:
             "updateType": update_type,
             "data": dict(data)
         }
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/update", payload)
         if not response.ok or not response.value:
@@ -502,20 +551,9 @@ class BackendApiClient:
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
         # Support both "result" (production backend) and "response" (legacy) field names
         response_text = response_json.get("result") or response_json.get("response")
-        tokens = response_json.get("tokens")
+        tokens = self._extract_tokens_used(response_json)
         cost = response_json.get("cost")
         model = response_json.get("model") or response_json.get("activeModel")
-
-        # Extract tokens from nested meta.tokens structure if present
-        if not isinstance(tokens, int):
-            meta = response_json.get("meta", {})
-            if isinstance(meta, dict):
-                tokens_obj = meta.get("tokens", {})
-                if isinstance(tokens_obj, dict):
-                    tokens = tokens_obj.get("total_tokens", 0)
-            if not isinstance(tokens, int):
-                # //audit assumption: tokens should be int; risk: missing usage; invariant: integer tokens; strategy: default to zero.
-                tokens = 0
 
         if not isinstance(response_text, str):
             # //audit assumption: response text required; risk: parse failure; invariant: string response; strategy: return parse error.
@@ -593,4 +631,3 @@ class BackendApiClient:
             ok=True,
             value=BackendTranscriptionResult(text=text, model=model)
         )
-
