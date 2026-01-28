@@ -21,14 +21,15 @@ const baseUrlCandidates = [
   process.env.OPENAI_API_BASE
 ].filter((value): value is string => Boolean(value && value.trim().length > 0));
 
+/** Backend prefers fine-tuned model when set; otherwise OPENAI_MODEL then fallback. */
 function computeDefaultModelFromEnv(): string {
   return (
-    process.env.OPENAI_MODEL ||
-    process.env.RAILWAY_OPENAI_MODEL ||
     process.env.FINETUNED_MODEL_ID ||
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
-    'gpt-4o'
+    process.env.OPENAI_MODEL ||
+    process.env.RAILWAY_OPENAI_MODEL ||
+    'gpt-4o-mini'
   );
 }
 
@@ -94,6 +95,18 @@ export function getFallbackModel(): string {
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
     'gpt-4'
+  );
+}
+
+/** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else OPENAI_COMPLEX_MODEL / vision / gpt-4o. */
+export function getComplexModel(): string {
+  return (
+    process.env.OPENAI_COMPLEX_MODEL ||
+    process.env.FINETUNED_MODEL_ID ||
+    process.env.FINE_TUNED_MODEL_ID ||
+    process.env.AI_MODEL ||
+    process.env.OPENAI_VISION_MODEL ||
+    'gpt-4o'
   );
 }
 
