@@ -7,10 +7,11 @@ Cross-platform ARCANOS CLI daemon with voice, vision, and backend sync.
 ```bash
 cd daemon-python
 python -m venv venv
-# Windows (PowerShell)
-.\venv\Scripts\Activate.ps1
-# macOS/Linux
+# Activate virtual environment
+# On macOS/Linux:
 source venv/bin/activate
+# On Windows:
+# .\venv\Scripts\Activate.ps1
 pip install -e .
 cp .env.example .env
 # Set OPENAI_API_KEY (and optional BACKEND_URL/BACKEND_TOKEN)

@@ -25,7 +25,7 @@ arcanos-hybrid/
 │   ├── pyproject.toml          # Package metadata + entrypoint
 │   ├── requirements.txt        # Python dependencies
 │   ├── .env.example            # Configuration template
-│   ├── arcanos.spec            # PyInstaller build config
+│   ├── arcanos.spec            # (Deprecated - PyInstaller build config, no longer used)
 │   └── arcanos/                # Python package
 │       ├── __init__.py         # Package metadata
 │       ├── cli.py              # Main CLI interface ⭐
@@ -61,8 +61,7 @@ arcanos-hybrid/
 │   └── test_daemon.py          # Python unit tests
 │
 ├── scripts/                    # Build/deploy scripts
-│   ├── build.ps1               # Build .exe with PyInstaller
-│   └── deploy-backend.ps1      # Deploy to Railway
+│   └── deploy-backend.ps1      # Deploy to Railway (optional)
 │
 ├── .github/workflows/          # CI/CD
 │   └── build-sign-deploy.yml   # GitHub Actions pipeline
@@ -157,17 +156,17 @@ arcanos-hybrid/
 - ✅ Python unit tests (pytest)
 - ✅ TypeScript tests (jest) - structure created
 - ✅ GitHub Actions workflow
-- ✅ Automated .exe build
+- ✅ Cross-platform Python CLI
 - ✅ Code signing support
 - ✅ Automated Railway deployment
 - ✅ Release creation with assets
 
 ### 📦 Build & Distribution (100% Complete)
-- ✅ PyInstaller spec file
+- ✅ Python package distribution
 - ✅ Build script (build.ps1)
 - ✅ Code signing script
 - ✅ GitHub Releases integration
-- ✅ Standalone .exe (no Python needed)
+- ✅ Cross-platform Python application
 - ✅ All dependencies bundled
 
 ---
@@ -194,10 +193,10 @@ cd daemon-python
 python -m arcanos.cli
 ```
 
-### Build .exe
-```powershell
-.\scripts\build.ps1
-# Output: daemon-python\dist\ARCANOS.exe
+### Run CLI Agent
+```bash
+cd daemon-python
+python -m arcanos.cli
 ```
 
 ### Deploy Backend
@@ -223,7 +222,7 @@ python -m arcanos.cli
 - tenacity, sentry-sdk, Pillow, pyautogui
 - opencv-python, speechrecognition, pyaudio, pyttsx3
 - pynput, webrtcvad, pywin32, winshell
-- pystray, rich, psycopg2-binary, pyinstaller
+- pystray, rich, psycopg2-binary
 
 **TypeScript (13 packages):**
 - express, cors, pg, helmet
@@ -279,7 +278,7 @@ python -m arcanos.cli
 - ✅ Code comments
 
 ### Build & Deploy
-- ✅ PyInstaller spec
+- ✅ Python package configuration
 - ✅ Build scripts
 - ✅ GitHub Actions workflow
 - ✅ Code signing support
@@ -379,7 +378,7 @@ SHOW_STATS=true
 
 ### For Distribution:
 1. Create icon assets in `daemon-python/assets/`
-2. Build .exe: `.\scripts\build.ps1`
+2. Run CLI: `cd daemon-python && python -m arcanos.cli`
 3. Test on clean Windows machine
 4. Create GitHub repository
 5. Push code: `git push origin main`

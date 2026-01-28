@@ -12,6 +12,7 @@ import { recordTraceEvent } from '../utils/telemetry.js';
 import { getFallbackMessage } from '../config/fallbackMessages.js';
 import { FALLBACK_RESPONSE_MESSAGES } from '../config/fallbackResponseMessages.js';
 import { FALLBACK_LOG_MESSAGES, FALLBACK_LOG_REASON } from '../config/fallbackLogMessages.js';
+import { logger } from '../utils/structuredLogging.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -81,7 +82,7 @@ function logFallbackEvent(
     ? FALLBACK_LOG_MESSAGES.degraded(endpoint, reason)
     : FALLBACK_LOG_MESSAGES.preemptive(endpoint);
 
-  console.log(message);
+  logger.warn(message, { module: 'fallback', endpoint, reason, ...metadata });
   recordTraceEvent(`fallback.${type}`, { endpoint, reason, ...metadata });
 }
 

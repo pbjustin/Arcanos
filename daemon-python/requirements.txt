@@ -17,7 +17,6 @@ webrtcvad>=2.0.10; platform_system != "Windows"
 pystray>=0.19.5
 rich>=13.7.0
 psycopg2-binary>=2.9.9
-pyinstaller>=6.3.0
 
 # Development packages
 pytest>=7.4.0

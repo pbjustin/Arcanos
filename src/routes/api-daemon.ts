@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { getModulesForRegistry } from './modules.js';
+import { recordTraceEvent } from '../utils/telemetry.js';
 
 const router = express.Router();
 
@@ -491,9 +492,8 @@ router.post(
     const token = req.daemonToken!;
     const instanceId = (req.body.metadata?.instanceId as string) || 'unknown';
 
-    // Log the update event
-    console.log(`[DAEMON UPDATE] ${instanceId}: ${updateType}`, {
-      token: token.substring(0, 8) + '...',
+    // Log the update event (using trace event for daemon updates)
+    recordTraceEvent('daemon.update', {
       instanceId,
       updateType,
       dataKeys: Object.keys(data)

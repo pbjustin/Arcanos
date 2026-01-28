@@ -1577,7 +1577,7 @@ You: ptt
             self.console.print("[green]? Statistics reset[/green]")
 
     def handle_update(self) -> None:
-        """Check for updates and optionally download and run ARCANOS-Setup.exe"""
+        """Check for updates and display download information"""
         repo = Config.GITHUB_RELEASES_REPO or ""
         if not repo.strip():
             self.console.print("[yellow]Set GITHUB_RELEASES_REPO (owner/repo) to enable update checks.[/yellow]")
@@ -1591,20 +1591,19 @@ You: ptt
         if not url:
             self.console.print("[red]No download URL in release.[/red]")
             return
-        tmp = tempfile.gettempdir()
-        safe = "".join(c if c.isalnum() or c in ".-_" else "-" for c in tag)
-        path = os.path.join(tmp, f"ARCANOS-Setup-{safe}.exe")
+        
+        self.console.print(f"[cyan]Update available: {tag}[/cyan]")
+        self.console.print(f"[yellow]Download URL: {url}[/yellow]")
+        self.console.print("[yellow]Please download and install the update manually from the release page.[/yellow]")
+        
+        # Optionally open the release page in browser
         try:
-            self.console.print(f"[cyan]Downloading {tag}...[/cyan]")
-            with urllib.request.urlopen(url) as response, open(path, "wb") as out_file:
-                out_file.write(response.read())
-            if hasattr(os, "startfile"):
-                os.startfile(path)
-                self.console.print("[green]Installer started. Complete the setup to finish.[/green]")
-            else:
-                self.console.print(f"[green]Downloaded to: {path}[/green]")
+            import webbrowser
+            release_url = f"https://github.com/{repo}/releases/tag/{tag}"
+            webbrowser.open(release_url)
+            self.console.print(f"[green]Opened release page in browser: {release_url}[/green]")
         except Exception as e:
-            self.console.print(f"[red]Download failed: {e}[/red]")
+            self.console.print(f"[yellow]Could not open browser: {e}[/yellow]")
 
     def run(self, debug_mode: bool = False) -> None:
         """Main CLI loop"""

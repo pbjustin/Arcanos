@@ -1,0 +1,45 @@
+{
+  "backend_connectivity": {
+    "configured": {
+      "value": true,
+      "error": null,
+      "timestamp": 1769504944.928668
+    },
+    "registry_endpoint": {
+      "value": true,
+      "error": null,
+      "timestamp": 1769504946.9797487
+    }
+  },
+  "cli_agent": {
+    "debug_server": {
+      "value": false,
+      "error": "Debug server not reachable (connection refused)",
+      "timestamp": 1769504949.0225985
+    }
+  },
+  "commands": {
+    "help": {
+      "value": false,
+      "error": "CLI agent not available",
+      "timestamp": 1769504949.0225985
+    },
+    "status": {
+      "value": false,
+      "error": "CLI agent not available",
+      "timestamp": 1769504949.0225985
+    },
+    "version": {
+      "value": false,
+      "error": "CLI agent not available",
+      "timestamp": 1769504949.0225985
+    }
+  },
+  "bugs": [
+    "cli_agent.debug_server: Debug server not reachable (connection refused)",
+    "commands.help: CLI agent not available",
+    "commands.status: CLI agent not available",
+    "commands.version: CLI agent not available"
+  ],
+  "verdict": "FAIL"
+}
