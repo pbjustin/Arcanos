@@ -8,12 +8,10 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logger } from '../utils/structuredLogging.js';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-/** Max length for prompt snippet in fallback mode template (chars). */
-const FALLBACK_PROMPT_SNIPPET_LENGTH = 200;
 
 interface PromptsConfig {
   backstage: {
@@ -191,7 +189,7 @@ export const ARCANOS_SYSTEM_PROMPTS = {
   
   FALLBACK_MODE: (prompt: string) => {
     const template = loadPromptsConfig().arcanos.fallback_mode;
-    const truncatedPrompt = prompt.slice(0, FALLBACK_PROMPT_SNIPPET_LENGTH);
+    const truncatedPrompt = prompt.slice(0, APPLICATION_CONSTANTS.FALLBACK_PROMPT_SNIPPET_LENGTH);
     return template.replace('{prompt}', truncatedPrompt);
   },
 

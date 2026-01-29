@@ -33,6 +33,8 @@ export const APPLICATION_CONSTANTS = {
   MAX_MEMORY_ENTRIES: 1000,
   MIN_PASSWORD_LENGTH: 8,
   MAX_INPUT_LENGTH: 1000,
+  /** Max length for prompt snippet in fallback mode template (chars). Used by prompts and fallbackMessages. */
+  FALLBACK_PROMPT_SNIPPET_LENGTH: 200,
   
   // Rate limiting
   DEFAULT_RATE_LIMIT: 100,

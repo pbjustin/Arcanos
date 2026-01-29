@@ -23,6 +23,7 @@ import {
 } from '../services/auditSafe.js';
 import { getMemoryContext } from '../services/memoryAware.js';
 import { logger } from '../utils/structuredLogging.js';
+import { calculateMemoryScoreSummary, logFallbackEvent } from './trinityHelpers.js';
 import type {
   TrinityIntakeOutput,
   TrinityReasoningOutput,
@@ -32,6 +33,7 @@ import type {
 import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
 
 export { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH };
+export { calculateMemoryScoreSummary };
 
 /**
  * Validates the availability of the configured AI model.
@@ -60,19 +62,6 @@ export async function validateModel(client: OpenAI): Promise<string> {
   }
 }
 
-/**
- * Computes max and average relevance score from memory entries.
- */
-export function calculateMemoryScoreSummary(relevanceScores: number[]): { maxScore: number; averageScore: number } {
-  if (relevanceScores.length === 0) {
-    return { maxScore: 0, averageScore: 0 };
-  }
-  const maxScore = Math.max(...relevanceScores);
-  const totalScore = relevanceScores.reduce((sum, value) => sum + value, 0);
-  const averageScore = totalScore / relevanceScores.length;
-  return { maxScore, averageScore };
-}
-
 export function buildFinalArcanosMessages(
   memoryContextSummary: string,
   auditSafePrompt: string,
@@ -84,17 +73,6 @@ export function buildFinalArcanosMessages(
     { role: 'assistant', content: buildFinalGpt5AnalysisMessage(gpt5Output) },
     { role: 'user', content: getFinalResponseInstruction() }
   ];
-}
-
-export function logFallbackEvent(stage: string, requestedModel: string, fallbackModel: string, reason: string): void {
-  logger.warn('Trinity fallback invoked', {
-    module: 'trinity',
-    operation: 'model-fallback',
-    stage,
-    requestedModel,
-    fallbackModel,
-    reason
-  });
 }
 
 export async function runIntakeStage(
