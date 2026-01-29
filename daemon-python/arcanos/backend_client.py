@@ -492,7 +492,7 @@ class BackendApiClient:
                     pass
             if retry_after_sec is not None:
                 mins = (retry_after_sec + 59) // 60
-                msg = f"Rate limit exceeded. Try again in {mins} minute(s)."
+                msg = f"Rate limit exceeded. Try again in {mins} {'minute' if mins == 1 else 'minutes'}."
             else:
                 msg = "Rate limit exceeded. Try again later."
             return BackendResponse(
