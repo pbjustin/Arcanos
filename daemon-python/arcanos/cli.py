@@ -191,7 +191,10 @@ class ArcanosCLI:
                         "log_level": Config.DEBUG_SERVER_LOG_LEVEL,
                     },
                 )
-                self.console.print(f"[green]✓[/green] IDE agent debug server on 127.0.0.1:{port}")
+                # Use ASCII-safe marker on Windows when stdout encoding is not UTF-8 (avoids UnicodeEncodeError on cp1252)
+                _enc = getattr(sys.stdout, "encoding", "") or ""
+                _mark = "[OK]" if (_enc and "utf" not in _enc.lower()) else "✓"
+                self.console.print(f"[green]{_mark}[/green] IDE agent debug server on 127.0.0.1:{port}")
             except Exception as e:
                 from .debug_logging import get_debug_logger
                 logger = get_debug_logger()
@@ -1186,6 +1189,14 @@ Type **help** for available commands or just start chatting naturally.
                 result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain, from_debug=from_debug)
                 if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
                     # //audit assumption: fallback allowed when backend fails; risk: unwanted fallback on confirmation; invariant: skip when confirmation handled; strategy: gate on flag.
+                    # #region agent log
+                    try:
+                        import json as _json
+                        with open(r"c:\Users\pbjus\.cursor\debug.log", "a", encoding="utf-8") as _lf:
+                            _lf.write(_json.dumps({"kind": "suspicious", "location": "cli.py:handle_ask:fallback", "message": "Backend unavailable; falling back to local", "data": {"message_preview": route_decision.normalized_message[:80]}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": "FALLBACK"}) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
                     self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
                     result = self._perform_local_conversation(route_decision.normalized_message)
             else:
