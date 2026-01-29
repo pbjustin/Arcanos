@@ -474,6 +474,37 @@ class BackendApiClient:
                 )
             )
 
+        if response.status_code == 429:
+            # Rate limit: parse retryAfter from body or Retry-After header for a clearer message.
+            retry_after_sec: Optional[int] = None
+            try:
+                parsed_429 = response.json()
+                if isinstance(parsed_429, dict):
+                    ra = parsed_429.get("retryAfter")
+                    if isinstance(ra, (int, float)) and ra >= 0:
+                        retry_after_sec = int(ra)
+            except ValueError:
+                pass
+            if retry_after_sec is None and response.headers.get("Retry-After"):
+                try:
+                    retry_after_sec = int(response.headers["Retry-After"])
+                except (ValueError, TypeError):
+                    pass
+            if retry_after_sec is not None:
+                mins = (retry_after_sec + 59) // 60
+                msg = f"Rate limit exceeded. Try again in {mins} minute(s)."
+            else:
+                msg = "Rate limit exceeded. Try again later."
+            return BackendResponse(
+                ok=False,
+                error=BackendRequestError(
+                    kind="rate_limit",
+                    message=msg,
+                    status_code=429,
+                    details=response.text
+                )
+            )
+
         if response.status_code >= 400:
             # //audit assumption: non-2xx indicates error; risk: backend failure; invariant: error returned; strategy: return http error.
             return BackendResponse(
