@@ -26,7 +26,12 @@ import { getDefaultModel, getGPT5Model, getComplexModel, createChatCompletionWit
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
-import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
+import {
+  ARCANOS_SYSTEM_PROMPTS,
+  buildFinalGpt5AnalysisMessage,
+  buildFinalOriginalRequestMessage,
+  getFinalResponseInstruction
+} from '../config/prompts.js';
 import type { ChatCompletionMessageParam } from '../services/openai/types.js';
 import {
   getAuditSafeConfig,
@@ -38,6 +43,10 @@ import {
 } from '../services/auditSafe.js';
 import { getMemoryContext, storePattern } from '../services/memoryAware.js';
 import { logger } from '../utils/structuredLogging.js';
+
+const TRINITY_INTAKE_TOKEN_LIMIT = 500;
+const TRINITY_STAGE_TEMPERATURE = 0.2;
+const TRINITY_PREVIEW_SNIPPET_LENGTH = 50;
 
 /**
  * Comprehensive result from the Trinity processing pipeline.
@@ -183,9 +192,9 @@ function buildFinalArcanosMessages(
 ): ChatCompletionMessageParam[] {
   return [
     { role: 'system', content: ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary) },
-    { role: 'user', content: `Original request: ${auditSafePrompt}` },
-    { role: 'assistant', content: `GPT-5.1 analysis: ${gpt5Output}` },
-    { role: 'user', content: 'Provide the final ARCANOS response.' }
+    { role: 'user', content: buildFinalOriginalRequestMessage(auditSafePrompt) },
+    { role: 'assistant', content: buildFinalGpt5AnalysisMessage(gpt5Output) },
+    { role: 'user', content: getFinalResponseInstruction() }
   ];
 }
 
@@ -208,13 +217,13 @@ async function runIntakeStage(
   memoryContextSummary: string
 ): Promise<TrinityIntakeOutput> {
   const intakeSystemPrompt = ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary);
-  const intakeTokenParams = getTokenParameter(arcanosModel, 500);
+  const intakeTokenParams = getTokenParameter(arcanosModel, TRINITY_INTAKE_TOKEN_LIMIT);
   const intakeResponse = await createChatCompletionWithFallback(client, {
     messages: [
       { role: 'system', content: intakeSystemPrompt },
       { role: 'user', content: auditSafePrompt }
     ],
-    temperature: 0.2,
+    temperature: TRINITY_STAGE_TEMPERATURE,
     ...intakeTokenParams
   });
 
@@ -280,7 +289,7 @@ async function runFinalStage(
   const finalTokenParams = getTokenParameter(complexModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalResponse = await createChatCompletionWithFallback(client, {
     messages: buildFinalArcanosMessages(memoryContextSummary, auditSafePrompt, gpt5Output),
-    temperature: 0.2,
+    temperature: TRINITY_STAGE_TEMPERATURE,
     model: complexModel,
     ...finalTokenParams
   });
@@ -500,14 +509,14 @@ export async function runThroughBrain(
     auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
   }
 
-  //audit Assumption: pattern storage should avoid fallback outputs; Failure risk: storing low-quality patterns; Expected invariant: store only safe, non-fallback outputs; Handling: gate on flags.
+  //audit Assumption: pattern storage should avoid fallback outputs and use audit-safe input snippet to avoid storing PII/secrets; Failure risk: storing low-quality or sensitive patterns; Expected invariant: store only safe, non-fallback outputs; Handling: gate on flags, use auditSafePrompt for input snippet.
   if (finalProcessedSafely && !intakeOutput.fallbackUsed && !finalOutput.fallbackUsed) {
     storePattern(
       'Successful Trinity pipeline',
       [
-        `Input pattern: ${prompt.substring(0, 50)}...`,
-        `GPT-5.1 output pattern: ${gpt5Output.substring(0, 50)}...`,
-        `Final output pattern: ${finalText.substring(0, 50)}...`
+        `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+        `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+        `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
       ],
       sessionId
     );
