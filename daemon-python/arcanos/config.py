@@ -219,6 +219,10 @@ class Config:
     BASE_DIR: Path = BASE_DIR  # module-level resolved base dir (frozen/user data or project root fallback)
     MEMORY_FILE: Path = BASE_DIR / os.getenv("MEMORY_FILE", "memories.json")
     LOG_DIR: Path = BASE_DIR / os.getenv("LOG_DIR", "logs")
+    # Debug log for instrumentation; override with DEBUG_LOG_PATH env (absolute path) for portability.
+    DEBUG_LOG_PATH: Path = (
+        Path(os.environ["DEBUG_LOG_PATH"]) if os.environ.get("DEBUG_LOG_PATH") else (BASE_DIR / os.getenv("LOG_DIR", "logs") / "debug.log")
+    )
     SCREENSHOT_DIR: Path = BASE_DIR / os.getenv("SCREENSHOT_DIR", "screenshots")
     CRASH_REPORTS_DIR: Path = BASE_DIR / "crash_reports"
     TELEMETRY_DIR: Path = BASE_DIR / "telemetry"
