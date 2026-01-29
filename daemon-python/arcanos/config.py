@@ -54,7 +54,13 @@ def _resolve_base_dir() -> Path:
     package_dir = Path(__file__).resolve().parent
     project_root = package_dir.parent
 
-    # Prefer user data directory for production use
+    # Prefer project .env when running from project (dev/local) so BACKEND_URL etc. from daemon-python/.env are used
+    if (project_root / ".env").exists() and (
+        (project_root / ".env.example").exists() or (project_root / "requirements.txt").exists()
+    ):
+        return project_root
+
+    # User data directory for production install (no project .env or not running from project)
     user_dir = _get_user_data_dir()
     if user_dir and (user_dir / ".env").exists():
         # If .env exists in user data dir, prefer it (production install)
