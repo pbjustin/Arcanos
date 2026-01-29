@@ -17,7 +17,6 @@ from typing import Callable, Optional, Any, Mapping, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.markdown import Markdown
 from rich import print as rprint
 from collections import deque
@@ -43,6 +42,7 @@ from .cli_content import (
     get_telemetry_section_header,
 )
 from .cli_debug_helpers import build_debug_marker, resolve_debug_port
+from .cli_presenters import build_help_panel, build_stats_table
 from .daemon_system_definition import (
     build_daemon_system_prompt,
     DEFAULT_BACKEND_BLOCK,
@@ -1443,73 +1443,18 @@ class ArcanosCLI:
         """Display usage statistics"""
         stats = self.memory.get_statistics()
         rate_stats = self.rate_limiter.get_usage_stats()
-
-        table = Table(title="?? ARCANOS Statistics")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
-
-        table.add_row("Total Requests", f"{stats['total_requests']:,}")
-        table.add_row("Total Tokens", f"{stats['total_tokens']:,}")
-        table.add_row("Total Cost", f"${stats['total_cost']:.4f}")
-        table.add_row("Vision Requests", f"{stats['vision_requests']:,}")
-        table.add_row("Voice Requests", f"{stats['voice_requests']:,}")
-        table.add_row("Terminal Commands", f"{stats['terminal_commands']:,}")
-        table.add_row("", "")
-        table.add_row("Requests This Hour", f"{rate_stats['requests_this_hour']}/{Config.MAX_REQUESTS_PER_HOUR}")
-        table.add_row("Tokens Today", f"{rate_stats['tokens_today']:,}/{Config.MAX_TOKENS_PER_DAY:,}")
-        table.add_row("Cost Today", f"${rate_stats['cost_today']:.4f}/${Config.MAX_COST_PER_DAY:.2f}")
-
+        table = build_stats_table(
+            stats=stats,
+            rate_stats=rate_stats,
+            max_requests_per_hour=Config.MAX_REQUESTS_PER_HOUR,
+            max_tokens_per_day=Config.MAX_TOKENS_PER_DAY,
+            max_cost_per_day=Config.MAX_COST_PER_DAY,
+        )
         self.console.print(table)
 
     def handle_help(self) -> None:
         """Display help message"""
-        help_text = """
-# ?? ARCANOS Commands
-
-### Conversation
-- Just type naturally to chat with ARCANOS
-- **help** - Show this help message
-- **exit** / **quit** - Exit ARCANOS
-- **deep <prompt>** / **backend <prompt>** - Force backend routing
-- **deep:** / **backend:** - Prefix for backend routing in hybrid mode
-
-### Vision
-- **see** - Analyze screenshot
-- **see camera** - Analyze webcam image
-- **see backend** - Analyze screenshot via backend
-- **see camera backend** - Analyze webcam image via backend
-
-### Voice
-- **voice** - Use voice input (one-time)
-- **voice backend** - Use backend transcription
-- **ptt** - Start push-to-talk mode (hold SPACEBAR)
-- **speak** - Replay the last response (TTS)
-
-### Terminal
-- **run <command>** - Execute shell command (PowerShell on Windows, bash/sh on macOS/Linux)
-  Examples: `run Get-Process` (Windows), `run ls -la` (macOS/Linux)
-
-### System
-- **stats** - Show usage statistics
-- **clear** - Clear conversation history
-- **reset** - Reset statistics
-- **update** - Check for updates and download installer (if GITHUB_RELEASES_REPO is set)
-
-### Examples
-```
-You: hey arcanos, what's the weather like today?
-You: see
-You: run Get-Date
-You: voice
-You: ptt
-```
-        """
-
-        self.console.print(Panel(
-            Markdown(help_text),
-            title="?? ARCANOS Help",
-            border_style="cyan"
-        ))
+        self.console.print(build_help_panel())
 
     def handle_clear(self) -> None:
         """Clear conversation history"""
