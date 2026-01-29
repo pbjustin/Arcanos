@@ -1123,6 +1123,16 @@ class ArcanosCLI:
                 result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain, from_debug=from_debug)
                 if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
                     # //audit assumption: fallback allowed when backend fails; risk: unwanted fallback on confirmation; invariant: skip when confirmation handled; strategy: gate on flag.
+                    # #region agent log
+                    try:
+                        import json as _json
+                        _debug_log_path = Config.DEBUG_LOG_PATH
+                        _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                        with _debug_log_path.open("a", encoding="utf-8") as _lf:
+                            _lf.write(_json.dumps({"kind": "suspicious", "location": "cli.py:handle_ask:fallback", "message": "Backend unavailable; falling back to local", "data": {"message_length": len(route_decision.normalized_message)}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": "FALLBACK"}) + "\n")
+                    except (OSError, IOError) as _e:
+                        error_logger.debug("Debug log write failed: %s", _e)
+                    # #endregion
                     self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
                     result = self._perform_local_conversation(route_decision.normalized_message)
             else:
