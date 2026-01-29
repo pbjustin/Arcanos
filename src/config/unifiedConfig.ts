@@ -14,6 +14,7 @@
  * @module unifiedConfig
  */
 
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { Environment } from '../utils/env.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
@@ -141,7 +142,7 @@ export function getConfig(): AppConfig {
   const config: AppConfig = {
     // Server Configuration
     nodeEnv: Environment.get('NODE_ENV', 'development'),
-    port: Environment.getNumber('PORT', 8080),
+    port: Environment.getNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT),
     isDevelopment: Environment.isDevelopment(),
     isProduction: Environment.isProduction(),
     isTest: Environment.isTest(),
@@ -167,8 +168,8 @@ export function getConfig(): AppConfig {
       'AI_FALLBACK_MODEL',
       'RAILWAY_OPENAI_FALLBACK_MODEL'
     ]) || 'gpt-4',
-    gpt5Model: getEnvVar('GPT5_MODEL') || 'gpt-5',
-    gpt51Model: getEnvVar('GPT51_MODEL') || 'gpt-5.1',
+    gpt5Model: getEnvVar('GPT5_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5,
+    gpt51Model: getEnvVar('GPT51_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5_1,
 
     // Database Configuration
     databaseUrl: getEnvVar('DATABASE_URL'),

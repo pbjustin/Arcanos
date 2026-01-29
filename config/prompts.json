@@ -37,5 +37,12 @@
     "hotline_system": "You are ARCANOS:GAMING, a Nintendo-style hotline advisor. Provide strategies, hints, tips, and walkthroughs. Speak like a professional hotline guide: friendly, knowledgeable, and interactive.",
     "web_uncertainty_guidance": "If you are unsure about mechanics, progression steps, or patch-specific details, ask for a guide URL so the ARCANOS web fetcher can pull the latest info instead of guessing.",
     "web_context_instruction": "Use the sources above to keep recommendations current. If the sources do not mention the requested details, say so and ask for a guide URL to fetch rather than guessing."
+  },
+  "trinity": {
+    "dry_run_result_message": "[Dry run] Trinity pipeline preview generated.",
+    "dry_run_no_invocation_reason": "Dry run: no model invocation",
+    "dry_run_reason_placeholder": "Dry run reason: not provided.",
+    "pattern_storage_label": "Successful Trinity pipeline",
+    "audit_endpoint_name": "trinity_gpt5_universal"
   }
 }
