@@ -509,12 +509,12 @@ export async function runThroughBrain(
     auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
   }
 
-  //audit Assumption: pattern storage should avoid fallback outputs; Failure risk: storing low-quality patterns; Expected invariant: store only safe, non-fallback outputs; Handling: gate on flags.
+  //audit Assumption: pattern storage should avoid fallback outputs and use audit-safe input snippet to avoid storing PII/secrets; Failure risk: storing low-quality or sensitive patterns; Expected invariant: store only safe, non-fallback outputs; Handling: gate on flags, use auditSafePrompt for input snippet.
   if (finalProcessedSafely && !intakeOutput.fallbackUsed && !finalOutput.fallbackUsed) {
     storePattern(
       'Successful Trinity pipeline',
       [
-        `Input pattern: ${prompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+        `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
         `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
         `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
       ],

@@ -187,24 +187,22 @@ export const ARCANOS_SYSTEM_PROMPTS = {
 
 /**
  * Build the final-stage user prompt that embeds the original request.
- * Inputs/Outputs: receives the raw user prompt and returns a labeled message string.
- * Edge cases: empty prompts are replaced with a placeholder to avoid blank context.
+ * Uses structured delimiters to mitigate prompt injection; consistently uses trimmed input.
  */
 export const buildFinalOriginalRequestMessage = (prompt: string): string => {
-  //audit Assumption: prompt may be empty; Failure risk: missing context in final stage; Expected invariant: message includes label; Handling: fallback placeholder.
-  const safePrompt = prompt?.trim() ? prompt : 'No request provided.';
-  return `${loadPromptsConfig().arcanos.final_original_request_prefix} ${safePrompt}`;
+  const safePrompt = prompt?.trim() ? prompt.trim() : 'No request provided.';
+  const prefix = loadPromptsConfig().arcanos.final_original_request_prefix;
+  return `${prefix}\n<user_input>\n${safePrompt}\n</user_input>`;
 };
 
 /**
  * Build the final-stage assistant message that embeds the GPT-5.1 analysis.
- * Inputs/Outputs: receives the GPT-5.1 output and returns a labeled message string.
- * Edge cases: empty analysis text is replaced with a placeholder for clarity.
+ * Uses structured delimiters to mitigate indirect prompt injection; consistently uses trimmed input.
  */
 export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
-  //audit Assumption: analysis may be empty; Failure risk: loss of reasoning context; Expected invariant: message includes label; Handling: fallback placeholder.
-  const safeAnalysis = analysis?.trim() ? analysis : 'No analysis provided.';
-  return `${loadPromptsConfig().arcanos.final_gpt5_analysis_prefix} ${safeAnalysis}`;
+  const safeAnalysis = analysis?.trim() ? analysis.trim() : 'No analysis provided.';
+  const prefix = loadPromptsConfig().arcanos.final_gpt5_analysis_prefix;
+  return `${prefix}\n<analysis_output>\n${safeAnalysis}\n</analysis_output>`;
 };
 
 /**
