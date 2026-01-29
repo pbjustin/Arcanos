@@ -9,10 +9,11 @@ It:
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 import json
+import os
+import sys
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
 import requests
@@ -33,13 +34,15 @@ from arcanos.backend_client import (  # type: ignore
 )
 
 
-# Debug-mode logging: append NDJSON lines to the shared debug log file so we
-# can correlate hypotheses with actual runtime behaviour.
-DEBUG_LOG_PATH = Path(r"c:\Users\pbjus\.cursor\debug.log")
+def _get_debug_log_path() -> Path:
+    """Configurable path: DEBUG_LOG_PATH env or Config.LOG_DIR / debug.log (portable, no PII)."""
+    if os.environ.get("DEBUG_LOG_PATH"):
+        return Path(os.environ["DEBUG_LOG_PATH"])
+    return Config.LOG_DIR / "debug.log"
 
 
 def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    """Write a single NDJSON debug line; failures are silent."""
+    """Write a single NDJSON debug line; do not include user prompt or PII in data."""
     payload = {
         "sessionId": "debug-session",
         "runId": "pre-fix",
@@ -49,12 +52,14 @@ def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> N
         "data": data,
         "timestamp": int(time.time() * 1000),
     }
+    path = _get_debug_log_path()
     try:
-        with DEBUG_LOG_PATH.open("a", encoding="utf-8") as fh:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload) + "\n")
-    except OSError:
-        # Logging must never break the main flow
-        pass
+    except OSError as e:
+        import sys
+        sys.stderr.write(f"Debug log write failed: {e}\n")
 
 
 def make_client() -> BackendApiClient:
@@ -78,15 +83,14 @@ def ask_backend(client: BackendApiClient, message: str, domain: str | None = Non
     print("-" * 60)
     print(message)
 
-    # region agent log
+    # region agent log (no user message content; metadata only)
     _debug_log(
         hypothesis_id="H1",
         location="talk_to_backend.py:ask_backend:before_request",
         message="About to call request_ask_with_domain",
         data={
             "has_domain": bool(domain),
-            "message_preview": message[:120],
-            "backend_url": Config.BACKEND_URL,
+            "message_length": len(message),
         },
     )
     # endregion
@@ -148,13 +152,13 @@ def ask_backend(client: BackendApiClient, message: str, domain: str | None = Non
             # Fallback: print as repr to avoid encoding issues
             print(repr(text[:500]) if text else "(empty response)")
 
-        # region agent log
+        # region agent log (no response content; metadata only)
         _debug_log(
             hypothesis_id="H3",
             location="talk_to_backend.py:ask_backend:response_ok",
             message="Backend response parsed successfully",
             data={
-                "text_preview": (text or "")[:160],
+                "response_length": len(text or ""),
                 "tokens_used": getattr(result, "tokens_used", None),
                 "model": getattr(result, "model", None),
             },
@@ -225,14 +229,13 @@ def raw_ask_backend(message: str) -> None:
 
     print("\n[RAW] Sending direct POST to /api/ask ...")
 
-    # region agent log
+    # region agent log (no user message content)
     _debug_log(
         hypothesis_id="H6",
         location="talk_to_backend.py:raw_ask_backend:before_post",
         message="About to send raw POST to /api/ask",
         data={
-            "url": url,
-            "payload_preview": payload["message"][:120],
+            "message_length": len(payload["message"]),
         },
     )
     # endregion
@@ -259,7 +262,7 @@ def raw_ask_backend(message: str) -> None:
             response_json = resp.json()
             print(f"\n[RAW] Parsed JSON keys: {list(response_json.keys()) if isinstance(response_json, dict) else 'not a dict'}")
             
-            # region agent log
+            # region agent log (no response body content; metadata only)
             _debug_log(
                 hypothesis_id="H7",
                 location="talk_to_backend.py:raw_ask_backend:after_post",
@@ -270,13 +273,13 @@ def raw_ask_backend(message: str) -> None:
                     "has_response_field": "response" in response_json if isinstance(response_json, dict) else False,
                     "has_text_field": "text" in response_json if isinstance(response_json, dict) else False,
                     "has_message_field": "message" in response_json if isinstance(response_json, dict) else False,
-                    "body_preview": str(response_json)[:300],
+                    "body_length": len(resp.text),
                 },
             )
             # endregion
         except Exception as json_err:
             print(f"[RAW] Could not parse JSON: {json_err}")
-            # region agent log
+            # region agent log (no body content)
             _debug_log(
                 hypothesis_id="H7",
                 location="talk_to_backend.py:raw_ask_backend:after_post",
@@ -284,7 +287,7 @@ def raw_ask_backend(message: str) -> None:
                 data={
                     "status_code": resp.status_code,
                     "parse_error": str(json_err),
-                    "body_preview": resp.text[:300],
+                    "body_length": len(resp.text),
                 },
             )
             # endregion
