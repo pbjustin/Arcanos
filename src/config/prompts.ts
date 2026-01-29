@@ -22,6 +22,9 @@ interface PromptsConfig {
     intake_system: string;
     gpt5_reasoning: string;
     fallback_mode: string;
+    final_original_request_prefix: string;
+    final_gpt5_analysis_prefix: string;
+    final_response_instruction: string;
     final_review_system: string;
     system_prompt: string;
     secure_reasoning_integration: string;
@@ -115,6 +118,9 @@ function loadPromptsConfig(): PromptsConfig {
         intake_system: 'You are ARCANOS AI system.',
         gpt5_reasoning: 'Use reasoning for analysis.',
         fallback_mode: 'System temporarily unavailable.',
+        final_original_request_prefix: 'Original request:',
+        final_gpt5_analysis_prefix: 'GPT-5.1 analysis:',
+        final_response_instruction: 'Provide the final ARCANOS response.',
         final_review_system: 'Review GPT-5.1 analysis and deliver the final ARCANOS response.',
         system_prompt: 'You are ARCANOS AI system.',
         secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
@@ -178,6 +184,35 @@ export const ARCANOS_SYSTEM_PROMPTS = {
     return template.replace('{memoryContext}', safeContext);
   }
 } as const;
+
+/**
+ * Build the final-stage user prompt that embeds the original request.
+ * Inputs/Outputs: receives the raw user prompt and returns a labeled message string.
+ * Edge cases: empty prompts are replaced with a placeholder to avoid blank context.
+ */
+export const buildFinalOriginalRequestMessage = (prompt: string): string => {
+  //audit Assumption: prompt may be empty; Failure risk: missing context in final stage; Expected invariant: message includes label; Handling: fallback placeholder.
+  const safePrompt = prompt?.trim() ? prompt : 'No request provided.';
+  return `${loadPromptsConfig().arcanos.final_original_request_prefix} ${safePrompt}`;
+};
+
+/**
+ * Build the final-stage assistant message that embeds the GPT-5.1 analysis.
+ * Inputs/Outputs: receives the GPT-5.1 output and returns a labeled message string.
+ * Edge cases: empty analysis text is replaced with a placeholder for clarity.
+ */
+export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
+  //audit Assumption: analysis may be empty; Failure risk: loss of reasoning context; Expected invariant: message includes label; Handling: fallback placeholder.
+  const safeAnalysis = analysis?.trim() ? analysis : 'No analysis provided.';
+  return `${loadPromptsConfig().arcanos.final_gpt5_analysis_prefix} ${safeAnalysis}`;
+};
+
+/**
+ * Retrieve the final response instruction for the last stage of Trinity.
+ * Inputs/Outputs: no inputs, returns the configured instruction string.
+ * Edge cases: relies on fallback config when the prompts file is missing.
+ */
+export const getFinalResponseInstruction = (): string => loadPromptsConfig().arcanos.final_response_instruction;
 
 /**
  * Get all prompts configuration
