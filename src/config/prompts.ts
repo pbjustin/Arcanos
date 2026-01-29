@@ -217,7 +217,7 @@ export const buildFinalOriginalRequestMessage = (prompt: string): string => {
  * Uses structured delimiters to mitigate indirect prompt injection; consistently uses trimmed input.
  */
 export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
-  const safeAnalysis = analysis?.trim() ? analysis.trim().replace(/<\/analysis_output>/g, '') : 'No analysis provided.';
+  const safeAnalysis = analysis?.trim() ? analysis.trim().replace(/<\/\s*analysis_output\s*>/gi, '') : 'No analysis provided.';
   const prefix = loadPromptsConfig().arcanos.final_gpt5_analysis_prefix;
   return `${prefix}\n<analysis_output>\n${safeAnalysis}\n</analysis_output>`;
 };
