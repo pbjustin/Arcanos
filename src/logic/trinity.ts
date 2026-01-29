@@ -216,7 +216,7 @@ export async function runThroughBrain(
 
   logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
-  const finalOutput = await runFinalStage(client, actualModel, memoryContext.contextSummary, auditSafePrompt, gpt5Output);
+  const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output);
   const finalText = finalOutput.output;
 
   const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
