@@ -1192,10 +1192,12 @@ Type **help** for available commands or just start chatting naturally.
                     # #region agent log
                     try:
                         import json as _json
-                        with open(r"c:\Users\pbjus\.cursor\debug.log", "a", encoding="utf-8") as _lf:
-                            _lf.write(_json.dumps({"kind": "suspicious", "location": "cli.py:handle_ask:fallback", "message": "Backend unavailable; falling back to local", "data": {"message_preview": route_decision.normalized_message[:80]}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": "FALLBACK"}) + "\n")
-                    except Exception:
-                        pass
+                        _debug_log_path = Config.DEBUG_LOG_PATH
+                        _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                        with _debug_log_path.open("a", encoding="utf-8") as _lf:
+                            _lf.write(_json.dumps({"kind": "suspicious", "location": "cli.py:handle_ask:fallback", "message": "Backend unavailable; falling back to local", "data": {"message_length": len(route_decision.normalized_message)}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": "FALLBACK"}) + "\n")
+                    except (OSError, IOError) as _e:
+                        error_logger.debug("Debug log write failed: %s", _e)
                     # #endregion
                     self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
                     result = self._perform_local_conversation(route_decision.normalized_message)
