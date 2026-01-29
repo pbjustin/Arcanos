@@ -207,7 +207,7 @@ export const ARCANOS_SYSTEM_PROMPTS = {
  * Uses structured delimiters to mitigate prompt injection; consistently uses trimmed input.
  */
 export const buildFinalOriginalRequestMessage = (prompt: string): string => {
-  const safePrompt = prompt?.trim() ? prompt.trim().replace(/<\/user_input>/g, '') : 'No request provided.';
+  const safePrompt = prompt?.trim() ? prompt.trim().replace(/<\/\s*user_input\s*>/gi, '') : 'No request provided.';
   const prefix = loadPromptsConfig().arcanos.final_original_request_prefix;
   return `${prefix}\n<user_input>\n${safePrompt}\n</user_input>`;
 };
