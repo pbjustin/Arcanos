@@ -113,6 +113,8 @@ ENV/
 env.bak/
 venv.bak/
 .pytest_cache/
+!config/env/
+!config/env/*.env.example
 
 # Dead code scanner reports
 dead_code_report.txt

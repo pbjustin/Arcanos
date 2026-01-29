@@ -24,6 +24,14 @@ from collections import deque
 
 from .config import Config
 from .backend_client import BackendApiClient, BackendResponse, BackendRequestError
+from .cli_constants import (
+    DEFAULT_ACTIVITY_HISTORY_LIMIT,
+    DEFAULT_COMMAND_POLL_INTERVAL_SECONDS,
+    DEFAULT_DEBUG_SERVER_PORT,
+    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    MIN_REGISTRY_CACHE_TTL_MINUTES,
+)
+from .cli_content import build_welcome_markdown
 from .daemon_system_definition import (
     build_daemon_system_prompt,
     DEFAULT_BACKEND_BLOCK,
@@ -85,7 +93,7 @@ class ArcanosCLI:
         self.console = Console()
         self.start_time = time.time()
         self._last_error: Optional[str] = None
-        self._activity: deque = deque(maxlen=200)
+        self._activity: deque = deque(maxlen=DEFAULT_ACTIVITY_HISTORY_LIMIT)
         self._activity_lock = threading.Lock()
 
         # Initialize components
@@ -100,8 +108,12 @@ class ArcanosCLI:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._command_poll_thread: Optional[threading.Thread] = None
         self._daemon_running = False
-        self._heartbeat_interval = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "60"))  # Default: 60s to reduce backend load
-        self._command_poll_interval = int(os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", "30"))  # Default: 30s (was 10s) to reduce backend load
+        self._heartbeat_interval = int(
+            os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", str(DEFAULT_HEARTBEAT_INTERVAL_SECONDS))
+        )  # Default: 60s to reduce backend load
+        self._command_poll_interval = int(
+            os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", str(DEFAULT_COMMAND_POLL_INTERVAL_SECONDS))
+        )  # Default: 30s (was 10s) to reduce backend load
 
         try:
             self.gpt_client = GPTClient()
@@ -127,7 +139,7 @@ class ArcanosCLI:
         self._registry_cache: Optional[dict[str, Any]] = None
         self._registry_cache_updated_at: Optional[float] = None
         self._registry_cache_warning_logged = False
-        self._registry_cache_ttl_seconds = max(1, Config.REGISTRY_CACHE_TTL_MINUTES) * 60
+        self._registry_cache_ttl_seconds = max(MIN_REGISTRY_CACHE_TTL_MINUTES, Config.REGISTRY_CACHE_TTL_MINUTES) * 60
         self._last_confirmation_handled = False
 
         if self.backend_client:
@@ -175,7 +187,11 @@ class ArcanosCLI:
                 port = (
                     Config.DEBUG_SERVER_PORT
                     if Config.DEBUG_SERVER_PORT > 0
-                    else (Config.DAEMON_DEBUG_PORT if (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0) else 9999)
+                    else (
+                        Config.DAEMON_DEBUG_PORT
+                        if (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0)
+                        else DEFAULT_DEBUG_SERVER_PORT
+                    )
                 )
                 # Late import to avoid loading when not in use
                 from .debug_server import start_debug_server
@@ -221,15 +237,7 @@ class ArcanosCLI:
         if not Config.SHOW_WELCOME:
             return
 
-        welcome_text = f"""
-# ?? Welcome to ARCANOS v{Config.VERSION}
-
-**Your AI-powered terminal companion**
-
-I can chat, see your screen, hear your voice, and help with commands!
-
-Type **help** for available commands or just start chatting naturally.
-        """
+        welcome_text = build_welcome_markdown(Config.VERSION)
 
         self.console.print(Panel(
             Markdown(welcome_text),
@@ -1696,4 +1704,3 @@ def main() -> None:
 # //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.
 if __name__ == "__main__":
     main()
-
