@@ -140,7 +140,6 @@ export async function runReasoningStage(client: OpenAI, framedRequest: string): 
 
 export async function runFinalStage(
   client: OpenAI,
-  _activeModel: string,
   memoryContextSummary: string,
   auditSafePrompt: string,
   gpt5Output: string

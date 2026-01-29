@@ -54,14 +54,24 @@ interface PromptsConfig {
     web_uncertainty_guidance: string;
     web_context_instruction: string;
   };
-  trinity: {
-    dry_run_result_message: string;
-    dry_run_no_invocation_reason: string;
-    dry_run_reason_placeholder: string;
-    pattern_storage_label: string;
-    audit_endpoint_name: string;
-  };
+  trinity: TrinityMessages;
 }
+
+export type TrinityMessages = {
+  dry_run_result_message: string;
+  dry_run_no_invocation_reason: string;
+  dry_run_reason_placeholder: string;
+  pattern_storage_label: string;
+  audit_endpoint_name: string;
+};
+
+const TRINITY_MESSAGES_DEFAULTS: TrinityMessages = {
+  dry_run_result_message: '[Dry run] Trinity pipeline preview generated.',
+  dry_run_no_invocation_reason: 'Dry run: no model invocation',
+  dry_run_reason_placeholder: 'Dry run reason: not provided.',
+  pattern_storage_label: 'Successful Trinity pipeline',
+  audit_endpoint_name: 'trinity_gpt5_universal'
+};
 
 let promptsConfig: PromptsConfig | null = null;
 
@@ -160,13 +170,7 @@ function loadPromptsConfig(): PromptsConfig {
         web_context_instruction:
           'Use the sources above to keep recommendations current. If the sources do not mention the requested details, say so and ask for a guide URL to fetch rather than guessing.'
       },
-      trinity: {
-        dry_run_result_message: '[Dry run] Trinity pipeline preview generated.',
-        dry_run_no_invocation_reason: 'Dry run: no model invocation',
-        dry_run_reason_placeholder: 'Dry run reason: not provided.',
-        pattern_storage_label: 'Successful Trinity pipeline',
-        audit_endpoint_name: 'trinity_gpt5_universal'
-      }
+      trinity: TRINITY_MESSAGES_DEFAULTS
     };
   }
 }
@@ -226,22 +230,6 @@ export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
  * Edge cases: relies on fallback config when the prompts file is missing.
  */
 export const getFinalResponseInstruction = (): string => loadPromptsConfig().arcanos.final_response_instruction;
-
-export type TrinityMessages = {
-  dry_run_result_message: string;
-  dry_run_no_invocation_reason: string;
-  dry_run_reason_placeholder: string;
-  pattern_storage_label: string;
-  audit_endpoint_name: string;
-};
-
-const TRINITY_MESSAGES_DEFAULTS: TrinityMessages = {
-  dry_run_result_message: '[Dry run] Trinity pipeline preview generated.',
-  dry_run_no_invocation_reason: 'Dry run: no model invocation',
-  dry_run_reason_placeholder: 'Dry run reason: not provided.',
-  pattern_storage_label: 'Successful Trinity pipeline',
-  audit_endpoint_name: 'trinity_gpt5_universal'
-};
 
 /**
  * Trinity pipeline messages (dry run, audit, pattern storage).
