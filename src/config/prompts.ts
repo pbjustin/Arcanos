@@ -253,6 +253,27 @@ export function getTrinityMessages(): TrinityMessages {
 }
 
 /**
+ * Trinity pipeline messages (dry run, audit, pattern storage).
+ * Falls back to defaults when config or keys are missing.
+ */
+export function getTrinityMessages(): TrinityMessages {
+  try {
+    const config = loadPromptsConfig();
+    const t = config.trinity;
+    if (!t) return TRINITY_MESSAGES_DEFAULTS;
+    return {
+      dry_run_result_message: t.dry_run_result_message ?? TRINITY_MESSAGES_DEFAULTS.dry_run_result_message,
+      dry_run_no_invocation_reason: t.dry_run_no_invocation_reason ?? TRINITY_MESSAGES_DEFAULTS.dry_run_no_invocation_reason,
+      dry_run_reason_placeholder: t.dry_run_reason_placeholder ?? TRINITY_MESSAGES_DEFAULTS.dry_run_reason_placeholder,
+      pattern_storage_label: t.pattern_storage_label ?? TRINITY_MESSAGES_DEFAULTS.pattern_storage_label,
+      audit_endpoint_name: t.audit_endpoint_name ?? TRINITY_MESSAGES_DEFAULTS.audit_endpoint_name
+    };
+  } catch {
+    return TRINITY_MESSAGES_DEFAULTS;
+  }
+}
+
+/**
  * Get all prompts configuration
  */
 export const getPromptsConfig = (): PromptsConfig => loadPromptsConfig();
