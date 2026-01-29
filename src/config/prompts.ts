@@ -12,6 +12,9 @@ import { logger } from '../utils/structuredLogging.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+/** Max length for prompt snippet in fallback mode template (chars). */
+const FALLBACK_PROMPT_SNIPPET_LENGTH = 200;
+
 interface PromptsConfig {
   backstage: {
     booker_persona: string;
@@ -52,6 +55,13 @@ interface PromptsConfig {
     audit_system: string;
     web_uncertainty_guidance: string;
     web_context_instruction: string;
+  };
+  trinity: {
+    dry_run_result_message: string;
+    dry_run_no_invocation_reason: string;
+    dry_run_reason_placeholder: string;
+    pattern_storage_label: string;
+    audit_endpoint_name: string;
   };
 }
 
@@ -151,6 +161,13 @@ function loadPromptsConfig(): PromptsConfig {
           'If you are unsure about mechanics, progression steps, or patch-specific details, ask for a guide URL so the ARCANOS web fetcher can pull the latest info instead of guessing.',
         web_context_instruction:
           'Use the sources above to keep recommendations current. If the sources do not mention the requested details, say so and ask for a guide URL to fetch rather than guessing.'
+      },
+      trinity: {
+        dry_run_result_message: '[Dry run] Trinity pipeline preview generated.',
+        dry_run_no_invocation_reason: 'Dry run: no model invocation',
+        dry_run_reason_placeholder: 'Dry run reason: not provided.',
+        pattern_storage_label: 'Successful Trinity pipeline',
+        audit_endpoint_name: 'trinity_gpt5_universal'
       }
     };
   }
@@ -174,7 +191,7 @@ export const ARCANOS_SYSTEM_PROMPTS = {
   
   FALLBACK_MODE: (prompt: string) => {
     const template = loadPromptsConfig().arcanos.fallback_mode;
-    const truncatedPrompt = prompt.slice(0, 200);
+    const truncatedPrompt = prompt.slice(0, FALLBACK_PROMPT_SNIPPET_LENGTH);
     return template.replace('{prompt}', truncatedPrompt);
   },
 
@@ -190,7 +207,7 @@ export const ARCANOS_SYSTEM_PROMPTS = {
  * Uses structured delimiters to mitigate prompt injection; consistently uses trimmed input.
  */
 export const buildFinalOriginalRequestMessage = (prompt: string): string => {
-  const safePrompt = prompt?.trim() ? prompt.trim().replace(/<\/user_input>/g, '') : 'No request provided.';
+  const safePrompt = prompt?.trim() ? prompt.trim().replace(/<\/\s*user_input\s*>/gi, '') : 'No request provided.';
   const prefix = loadPromptsConfig().arcanos.final_original_request_prefix;
   return `${prefix}\n<user_input>\n${safePrompt}\n</user_input>`;
 };
@@ -200,7 +217,7 @@ export const buildFinalOriginalRequestMessage = (prompt: string): string => {
  * Uses structured delimiters to mitigate indirect prompt injection; consistently uses trimmed input.
  */
 export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
-  const safeAnalysis = analysis?.trim() ? analysis.trim().replace(/<\/analysis_output>/g, '') : 'No analysis provided.';
+  const safeAnalysis = analysis?.trim() ? analysis.trim().replace(/<\/\s*analysis_output\s*>/gi, '') : 'No analysis provided.';
   const prefix = loadPromptsConfig().arcanos.final_gpt5_analysis_prefix;
   return `${prefix}\n<analysis_output>\n${safeAnalysis}\n</analysis_output>`;
 };
@@ -211,6 +228,43 @@ export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
  * Edge cases: relies on fallback config when the prompts file is missing.
  */
 export const getFinalResponseInstruction = (): string => loadPromptsConfig().arcanos.final_response_instruction;
+
+export type TrinityMessages = {
+  dry_run_result_message: string;
+  dry_run_no_invocation_reason: string;
+  dry_run_reason_placeholder: string;
+  pattern_storage_label: string;
+  audit_endpoint_name: string;
+};
+
+const TRINITY_MESSAGES_DEFAULTS: TrinityMessages = {
+  dry_run_result_message: '[Dry run] Trinity pipeline preview generated.',
+  dry_run_no_invocation_reason: 'Dry run: no model invocation',
+  dry_run_reason_placeholder: 'Dry run reason: not provided.',
+  pattern_storage_label: 'Successful Trinity pipeline',
+  audit_endpoint_name: 'trinity_gpt5_universal'
+};
+
+/**
+ * Trinity pipeline messages (dry run, audit, pattern storage).
+ * Falls back to defaults when config or keys are missing.
+ */
+export function getTrinityMessages(): TrinityMessages {
+  try {
+    const config = loadPromptsConfig();
+    const t = config.trinity;
+    if (!t) return TRINITY_MESSAGES_DEFAULTS;
+    return {
+      dry_run_result_message: t.dry_run_result_message ?? TRINITY_MESSAGES_DEFAULTS.dry_run_result_message,
+      dry_run_no_invocation_reason: t.dry_run_no_invocation_reason ?? TRINITY_MESSAGES_DEFAULTS.dry_run_no_invocation_reason,
+      dry_run_reason_placeholder: t.dry_run_reason_placeholder ?? TRINITY_MESSAGES_DEFAULTS.dry_run_reason_placeholder,
+      pattern_storage_label: t.pattern_storage_label ?? TRINITY_MESSAGES_DEFAULTS.pattern_storage_label,
+      audit_endpoint_name: t.audit_endpoint_name ?? TRINITY_MESSAGES_DEFAULTS.audit_endpoint_name
+    };
+  } catch {
+    return TRINITY_MESSAGES_DEFAULTS;
+  }
+}
 
 /**
  * Get all prompts configuration

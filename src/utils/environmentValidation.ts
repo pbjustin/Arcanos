@@ -3,6 +3,7 @@
  * Provides comprehensive environment validation with helpful error messages
  */
 
+import { APPLICATION_CONSTANTS } from './constants.js';
 import { logger } from './structuredLogging.js';
 import type { EnvironmentSecuritySummary } from './environmentSecurity.js';
 
@@ -41,7 +42,7 @@ const environmentChecks: EnvironmentCheck[] = [
     name: 'PORT',
     required: false,
     description: 'Server port number',
-    defaultValue: '8080',
+    defaultValue: String(APPLICATION_CONSTANTS.DEFAULT_PORT),
     validator: (value) => {
       const port = parseInt(value, 10);
       return !isNaN(port) && port > 0 && port < 65536;
@@ -302,7 +303,7 @@ export function validateRailwayEnvironment(): ValidationResult {
 
   // Check port configuration
   const port = process.env.PORT;
-  if (port && port !== '8080') {
+  if (port && port !== String(APPLICATION_CONSTANTS.DEFAULT_PORT)) {
     logger.info(`🚄 Railway port override detected: ${port}`);
   }
 
