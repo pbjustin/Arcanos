@@ -29,9 +29,20 @@ from .cli_constants import (
     DEFAULT_COMMAND_POLL_INTERVAL_SECONDS,
     DEFAULT_DEBUG_SERVER_PORT,
     DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    DEFAULT_QUEUED_ACTIONS_COUNT,
     MIN_REGISTRY_CACHE_TTL_MINUTES,
+    SINGLE_ACTION_COUNT,
+    ZERO_COST_USD,
+    ZERO_TOKENS_USED,
 )
-from .cli_content import build_welcome_markdown
+from .cli_content import (
+    build_welcome_markdown,
+    get_first_run_setup_header,
+    get_telemetry_description_lines,
+    get_telemetry_prompt,
+    get_telemetry_section_header,
+)
+from .cli_debug_helpers import build_debug_marker, resolve_debug_port
 from .daemon_system_definition import (
     build_daemon_system_prompt,
     DEFAULT_BACKEND_BLOCK,
@@ -184,14 +195,10 @@ class ArcanosCLI:
         if debug_enabled:
             try:
                 # Prefer new config, fallback to legacy
-                port = (
-                    Config.DEBUG_SERVER_PORT
-                    if Config.DEBUG_SERVER_PORT > 0
-                    else (
-                        Config.DAEMON_DEBUG_PORT
-                        if (Config.DAEMON_DEBUG_PORT and Config.DAEMON_DEBUG_PORT > 0)
-                        else DEFAULT_DEBUG_SERVER_PORT
-                    )
+                port = resolve_debug_port(
+                    Config.DEBUG_SERVER_PORT,
+                    Config.DAEMON_DEBUG_PORT,
+                    DEFAULT_DEBUG_SERVER_PORT,
                 )
                 # Late import to avoid loading when not in use
                 from .debug_server import start_debug_server
@@ -209,7 +216,7 @@ class ArcanosCLI:
                 )
                 # Use ASCII-safe marker on Windows when stdout encoding is not UTF-8 (avoids UnicodeEncodeError on cp1252)
                 _enc = getattr(sys.stdout, "encoding", "") or ""
-                _mark = "[OK]" if (_enc and "utf" not in _enc.lower()) else "✓"
+                _mark = build_debug_marker(_enc)
                 self.console.print(f"[green]{_mark}[/green] IDE agent debug server on 127.0.0.1:{port}")
             except Exception as e:
                 from .debug_logging import get_debug_logger
@@ -254,15 +261,16 @@ class ArcanosCLI:
 
     def first_run_setup(self) -> None:
         """First-run configuration"""
-        self.console.print("\n[cyan]?? First time setup[/cyan]")
+        self.console.print(get_first_run_setup_header())
 
         # Telemetry consent
         if self.memory.get_setting("telemetry_consent") is None:
-            self.console.print("\n[yellow]?? Telemetry & Crash Reporting[/yellow]")
-            self.console.print("ARCANOS can send anonymous crash reports to help improve the software.")
-            self.console.print("No personal data, conversations, or API keys are collected.")
+            self.console.print(get_telemetry_section_header())
+            # //audit assumption: telemetry lines iterable; risk: missing lines; invariant: print each line; strategy: iterate.
+            for line in get_telemetry_description_lines():
+                self.console.print(line)
 
-            consent = input("\nEnable telemetry? (y/n): ").lower().strip()
+            consent = input(get_telemetry_prompt()).lower().strip()
             self.memory.set_setting("telemetry_consent", consent == 'y')
 
             if consent == 'y':
@@ -435,15 +443,12 @@ class ArcanosCLI:
             return None
 
         queued_value = response.value.get("queued")
-        queued_count = 0
+        queued_count = DEFAULT_QUEUED_ACTIONS_COUNT
         if isinstance(queued_value, int):
             # //audit assumption: queued count numeric; risk: wrong type; invariant: int count; strategy: accept int value.
             queued_count = queued_value
-        else:
-            # //audit assumption: queued count missing; risk: misreporting; invariant: default to zero; strategy: set default.
-            queued_count = 0
 
-        if queued_count == 1:
+        if queued_count == SINGLE_ACTION_COUNT:
             # //audit assumption: singular count; risk: grammar mismatch; invariant: singular noun; strategy: use "action".
             plural = "action"
         else:
@@ -453,8 +458,8 @@ class ArcanosCLI:
 
         return _ConversationResult(
             response_text=response_text,
-            tokens_used=0,
-            cost_usd=0.0,
+            tokens_used=ZERO_TOKENS_USED,
+            cost_usd=ZERO_COST_USD,
             model=Config.BACKEND_CHAT_MODEL or "backend",
             source="backend"
         )
