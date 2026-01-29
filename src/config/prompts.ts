@@ -231,6 +231,43 @@ export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
  */
 export const getFinalResponseInstruction = (): string => loadPromptsConfig().arcanos.final_response_instruction;
 
+export type TrinityMessages = {
+  dry_run_result_message: string;
+  dry_run_no_invocation_reason: string;
+  dry_run_reason_placeholder: string;
+  pattern_storage_label: string;
+  audit_endpoint_name: string;
+};
+
+const TRINITY_MESSAGES_DEFAULTS: TrinityMessages = {
+  dry_run_result_message: '[Dry run] Trinity pipeline preview generated.',
+  dry_run_no_invocation_reason: 'Dry run: no model invocation',
+  dry_run_reason_placeholder: 'Dry run reason: not provided.',
+  pattern_storage_label: 'Successful Trinity pipeline',
+  audit_endpoint_name: 'trinity_gpt5_universal'
+};
+
+/**
+ * Trinity pipeline messages (dry run, audit, pattern storage).
+ * Falls back to defaults when config or keys are missing.
+ */
+export function getTrinityMessages(): TrinityMessages {
+  try {
+    const config = loadPromptsConfig();
+    const t = config.trinity;
+    if (!t) return TRINITY_MESSAGES_DEFAULTS;
+    return {
+      dry_run_result_message: t.dry_run_result_message ?? TRINITY_MESSAGES_DEFAULTS.dry_run_result_message,
+      dry_run_no_invocation_reason: t.dry_run_no_invocation_reason ?? TRINITY_MESSAGES_DEFAULTS.dry_run_no_invocation_reason,
+      dry_run_reason_placeholder: t.dry_run_reason_placeholder ?? TRINITY_MESSAGES_DEFAULTS.dry_run_reason_placeholder,
+      pattern_storage_label: t.pattern_storage_label ?? TRINITY_MESSAGES_DEFAULTS.pattern_storage_label,
+      audit_endpoint_name: t.audit_endpoint_name ?? TRINITY_MESSAGES_DEFAULTS.audit_endpoint_name
+    };
+  } catch {
+    return TRINITY_MESSAGES_DEFAULTS;
+  }
+}
+
 /**
  * Trinity pipeline messages (dry run, audit, pattern storage).
  * Falls back to defaults when config or keys are missing.
