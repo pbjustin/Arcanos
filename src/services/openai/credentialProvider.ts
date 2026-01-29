@@ -96,7 +96,7 @@ export function getFallbackModel(): string {
     process.env.FINETUNED_MODEL_ID ||
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
-    'gpt-4'
+    APPLICATION_CONSTANTS.MODEL_GPT_4
   );
 }
 
@@ -108,7 +108,7 @@ export function getComplexModel(): string {
     process.env.FINE_TUNED_MODEL_ID ||
     process.env.AI_MODEL ||
     process.env.OPENAI_VISION_MODEL ||
-    'gpt-4o'
+    APPLICATION_CONSTANTS.MODEL_GPT_4O
   );
 }
 

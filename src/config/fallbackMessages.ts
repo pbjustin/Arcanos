@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { logger } from '../utils/structuredLogging.js';
 
 export type FallbackMessagesConfig = Record<string, string> & { default: string };
@@ -72,7 +73,7 @@ function applyTemplate(message: string, prompt?: string): string {
 export function getFallbackMessage(endpoint: string, prompt?: string): string {
   const messages = getFallbackMessages();
   const template = messages[endpoint] ?? messages.default;
-  const truncatedPrompt = prompt?.slice(0, 200);
+  const truncatedPrompt = prompt?.slice(0, APPLICATION_CONSTANTS.FALLBACK_PROMPT_SNIPPET_LENGTH);
 
   return applyTemplate(template, truncatedPrompt);
 }

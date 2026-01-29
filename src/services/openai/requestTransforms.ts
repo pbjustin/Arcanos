@@ -1,4 +1,5 @@
 import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
+import { APPLICATION_CONSTANTS } from '../../utils/constants.js';
 import { REASONING_SYSTEM_PROMPT, REASONING_TEMPERATURE, REASONING_TOKEN_LIMIT, buildReasoningPrompt } from '../../config/reasoningTemplates.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
 import type { ChatCompletionCreateParams } from './types.js';
@@ -13,7 +14,7 @@ type GPT5RequestPayload = ChatCompletionCreateParams & {
 
 export function prepareGPT5Request(payload: ChatCompletionCreateParams): ChatCompletionCreateParams {
   //audit Assumption: GPT-5 models need max_output_tokens; Handling: translate
-  if (payload.model && typeof payload.model === 'string' && payload.model.includes('gpt-5')) {
+  if (payload.model && typeof payload.model === 'string' && payload.model.includes(APPLICATION_CONSTANTS.MODEL_GPT_5)) {
     const gpt5Payload: GPT5RequestPayload = { ...payload };
     if (payload.max_tokens) {
       gpt5Payload.max_output_tokens = payload.max_tokens;
