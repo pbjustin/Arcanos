@@ -22,6 +22,9 @@ interface PromptsConfig {
     intake_system: string;
     gpt5_reasoning: string;
     fallback_mode: string;
+    final_original_request_prefix: string;
+    final_gpt5_analysis_prefix: string;
+    final_response_instruction: string;
     final_review_system: string;
     system_prompt: string;
     secure_reasoning_integration: string;
@@ -115,6 +118,9 @@ function loadPromptsConfig(): PromptsConfig {
         intake_system: 'You are ARCANOS AI system.',
         gpt5_reasoning: 'Use reasoning for analysis.',
         fallback_mode: 'System temporarily unavailable.',
+        final_original_request_prefix: 'Original request:',
+        final_gpt5_analysis_prefix: 'GPT-5.1 analysis:',
+        final_response_instruction: 'Provide the final ARCANOS response.',
         final_review_system: 'Review GPT-5.1 analysis and deliver the final ARCANOS response.',
         system_prompt: 'You are ARCANOS AI system.',
         secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
@@ -178,6 +184,33 @@ export const ARCANOS_SYSTEM_PROMPTS = {
     return template.replace('{memoryContext}', safeContext);
   }
 } as const;
+
+/**
+ * Build the final-stage user prompt that embeds the original request.
+ * Uses structured delimiters to mitigate prompt injection; consistently uses trimmed input.
+ */
+export const buildFinalOriginalRequestMessage = (prompt: string): string => {
+  const safePrompt = prompt?.trim() ? prompt.trim() : 'No request provided.';
+  const prefix = loadPromptsConfig().arcanos.final_original_request_prefix;
+  return `${prefix}\n<user_input>\n${safePrompt}\n</user_input>`;
+};
+
+/**
+ * Build the final-stage assistant message that embeds the GPT-5.1 analysis.
+ * Uses structured delimiters to mitigate indirect prompt injection; consistently uses trimmed input.
+ */
+export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
+  const safeAnalysis = analysis?.trim() ? analysis.trim() : 'No analysis provided.';
+  const prefix = loadPromptsConfig().arcanos.final_gpt5_analysis_prefix;
+  return `${prefix}\n<analysis_output>\n${safeAnalysis}\n</analysis_output>`;
+};
+
+/**
+ * Retrieve the final response instruction for the last stage of Trinity.
+ * Inputs/Outputs: no inputs, returns the configured instruction string.
+ * Edge cases: relies on fallback config when the prompts file is missing.
+ */
+export const getFinalResponseInstruction = (): string => loadPromptsConfig().arcanos.final_response_instruction;
 
 /**
  * Get all prompts configuration
