@@ -169,21 +169,10 @@ def _write_bootstrap_trace(trace_path: Optional[Path], message: str) -> None:
 
 def _resolve_env_template_text(trace_path: Optional[Path]) -> Optional[str]:
     """
-    Purpose: Load the .env template text from repo or packaged assets.
+    Purpose: Load the .env template text from packaged assets.
     Inputs/Outputs: Optional trace path for diagnostics; returns template text or None.
     Edge cases: Missing template or read failures return None with trace logging.
     """
-    project_root = Path(__file__).resolve().parent.parent
-    repo_template_path = project_root / ".env.example"
-
-    if repo_template_path.exists():
-        # //audit assumption: repo template is authoritative; risk: stale template; invariant: read text; strategy: use repo template first.
-        try:
-            return repo_template_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            # //audit assumption: template read can fail; risk: no template seed; invariant: fallback attempted; strategy: log and continue.
-            _write_bootstrap_trace(trace_path, f"Failed to read repo env template: {exc}")
-
     try:
         template_resource = importlib_resources.files("arcanos").joinpath("assets", "env.example")
         if template_resource.is_file():
