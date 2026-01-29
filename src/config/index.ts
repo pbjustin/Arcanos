@@ -11,7 +11,7 @@ import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 // Load environment variables
 dotenv.config();
 
-const serverPort = Number(process.env.PORT) || 8080;
+const serverPort = Number(process.env.PORT) || APPLICATION_CONSTANTS.DEFAULT_PORT;
 const serverHost = process.env.HOST || '0.0.0.0';
 const serverBaseUrl = process.env.SERVER_URL || `http://127.0.0.1:${serverPort}`;
 const statusEndpoint = process.env.BACKEND_STATUS_ENDPOINT || '/status';

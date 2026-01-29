@@ -145,7 +145,7 @@ export class Environment {
 export const env = {
   // Server Configuration
   NODE_ENV: Environment.get('NODE_ENV', 'development'),
-  PORT: Environment.getNumber('PORT', 8080),
+  PORT: Environment.getNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT),
   BACKEND_STATUS_ENDPOINT: Environment.get('BACKEND_STATUS_ENDPOINT', '/status'),
   
   // OpenAI Configuration

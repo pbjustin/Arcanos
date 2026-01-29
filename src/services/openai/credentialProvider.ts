@@ -1,3 +1,5 @@
+import { APPLICATION_CONSTANTS } from '../../utils/constants.js';
+
 const OPENAI_KEY_ENV_PRIORITY = [
   'OPENAI_API_KEY',
   'RAILWAY_OPENAI_API_KEY',
@@ -111,6 +113,6 @@ export function getComplexModel(): string {
 }
 
 export function getGPT5Model(): string {
-  return process.env.GPT51_MODEL || process.env.GPT5_MODEL || 'gpt-5.1';
+  return process.env.GPT51_MODEL || process.env.GPT5_MODEL || APPLICATION_CONSTANTS.MODEL_GPT_5_1;
 }
 

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { updateState } from './stateManager.js';
 import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from '../config/selfTestConfig.js';
 
@@ -38,7 +39,7 @@ const LOG_FILE = path.join(process.cwd(), 'logs', 'healthcheck.json');
 function resolveBaseUrl(): string {
   if (process.env.SELF_TEST_BASE_URL) return process.env.SELF_TEST_BASE_URL;
   if (process.env.SERVER_URL) return process.env.SERVER_URL.replace(/\/$/, '');
-  const port = process.env.PORT || '8080';
+  const port = process.env.PORT || String(APPLICATION_CONSTANTS.DEFAULT_PORT);
   return `http://127.0.0.1:${port}`;
 }
 
