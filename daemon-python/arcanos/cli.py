@@ -363,12 +363,24 @@ Type **help** for available commands or just start chatting naturally.
             # //audit assumption: refreshed cache should update prompt; risk: stale prompt; invariant: prompt rebuilt; strategy: rebuild.
             self.system_prompt = self._build_system_prompt()
 
+    def _get_backend_connection_status(self) -> str:
+        """
+        Purpose: One-line backend connection status for the system prompt so the model can answer "Am I connected?".
+        Inputs/Outputs: None; returns a short status string.
+        """
+        if not self.backend_client:
+            return "Current backend connection: not configured."
+        if self._registry_cache_is_valid():
+            return "Current backend connection: connected (registry available)."
+        return "Current backend connection: unavailable (registry fetch failed or stale)."
+
     def _get_backend_block(self) -> str:
         """
         Purpose: Resolve the backend block for the system prompt.
         Inputs/Outputs: None; returns backend block string.
         Edge cases: Falls back to default block when registry is unavailable or invalid.
         """
+        status_line = self._get_backend_connection_status()
         if self.backend_client and self._registry_cache_is_valid():
             # //audit assumption: registry cache valid; risk: formatting errors; invariant: block built; strategy: format registry.
             try:
@@ -379,10 +391,10 @@ Type **help** for available commands or just start chatting naturally.
                 return DEFAULT_BACKEND_BLOCK
             if registry_block.strip():
                 # //audit assumption: registry block is non-empty; risk: empty prompt section; invariant: use registry block; strategy: return block.
-                return registry_block
+                return f"{status_line}\n\n{registry_block}"
 
         # //audit assumption: fallback block needed; risk: stale registry; invariant: default block returned; strategy: return fallback.
-        return DEFAULT_BACKEND_BLOCK
+        return f"{status_line}\n\n{DEFAULT_BACKEND_BLOCK}"
 
     def _build_system_prompt(self) -> str:
         """
@@ -515,11 +527,6 @@ Type **help** for available commands or just start chatting naturally.
 
     def _heartbeat_loop(self) -> None:
         """Background thread that sends periodic heartbeats"""
-        # #region agent log
-        import json
-        from .config import Config
-        log_path = Config.LOG_DIR / "debug_agent.log"
-        # #endregion
         last_request_time = time.time()
         consecutive_429_count = 0
         
@@ -531,15 +538,7 @@ Type **help** for available commands or just start chatting naturally.
                 uptime = time.time() - self.start_time
                 request_start = time.time()
                 time_since_last = request_start - last_request_time
-                
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        json.dump({"id":f"hb_{int(time.time()*1000)}","timestamp":int(time.time()*1000),"location":"cli.py:502","message":"Heartbeat request start","data":{"instanceId":self.instance_id[:8],"interval":self._heartbeat_interval,"timeSinceLast":round(time_since_last,2),"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}, f)
-                        f.write("\n")
-                except: pass
-                # #endregion
-                
+
                 # Send heartbeat via backend client
                 response = self.backend_client._make_request(
                     "POST",
@@ -558,24 +557,9 @@ Type **help** for available commands or just start chatting naturally.
                 last_request_time = time.time()
                 status_code = response.status_code
                 retry_after = response.headers.get("Retry-After")
-                
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        json.dump({"id":f"hb_{int(time.time()*1000)}_resp","timestamp":int(time.time()*1000),"location":"cli.py:515","message":"Heartbeat response","data":{"statusCode":status_code,"duration":round(request_duration,3),"retryAfter":retry_after,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
-                        f.write("\n")
-                except: pass
-                # #endregion
 
                 if status_code == 429:
                     consecutive_429_count += 1
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            json.dump({"id":f"hb_{int(time.time()*1000)}_429","timestamp":int(time.time()*1000),"location":"cli.py:530","message":"Heartbeat 429 detected","data":{"consecutive429":consecutive_429_count,"retryAfter":retry_after,"willBackoff":True},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
-                            f.write("\n")
-                    except: pass
-                    # #endregion
                     error_logger.error(f"[DAEMON] Heartbeat failed: {response.status_code}")
                     # Apply exponential backoff for 429 errors
                     backoff_time = min(60, self._heartbeat_interval * (2 ** min(consecutive_429_count, 3)))
@@ -584,13 +568,6 @@ Type **help** for available commands or just start chatting naturally.
                             backoff_time = max(backoff_time, int(retry_after))
                         except ValueError:
                             pass
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            json.dump({"id":f"hb_{int(time.time()*1000)}_backoff","timestamp":int(time.time()*1000),"location":"cli.py:540","message":"Heartbeat backoff applied","data":{"backoffSeconds":backoff_time,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
-                            f.write("\n")
-                    except: pass
-                    # #endregion
                     time.sleep(backoff_time)
                     continue
                 elif status_code != 200:
@@ -601,13 +578,6 @@ Type **help** for available commands or just start chatting naturally.
 
             except Exception as e:
                 consecutive_429_count = 0
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        json.dump({"id":f"hb_{int(time.time()*1000)}_exc","timestamp":int(time.time()*1000),"location":"cli.py:550","message":"Heartbeat exception","data":{"error":str(e)[:100]},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}, f)
-                        f.write("\n")
-                except: pass
-                # #endregion
                 error_logger.error(f"[DAEMON] Heartbeat error: {e}")
 
             # Wait for next heartbeat
@@ -615,11 +585,6 @@ Type **help** for available commands or just start chatting naturally.
 
     def _command_poll_loop(self) -> None:
         """Background thread that polls for commands"""
-        # #region agent log
-        import json
-        from .config import Config
-        log_path = Config.LOG_DIR / "debug_agent.log"
-        # #endregion
         last_request_time = time.time()
         consecutive_429_count = 0
         
@@ -630,15 +595,7 @@ Type **help** for available commands or just start chatting naturally.
                     
                 request_start = time.time()
                 time_since_last = request_start - last_request_time
-                
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        json.dump({"id":f"poll_{int(time.time()*1000)}","timestamp":int(time.time()*1000),"location":"cli.py:534","message":"Command poll request start","data":{"instanceId":self.instance_id[:8],"interval":self._command_poll_interval,"timeSinceLast":round(time_since_last,2),"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"A"}, f)
-                        f.write("\n")
-                except: pass
-                # #endregion
-                    
+
                 # Poll for commands
                 response = self.backend_client._make_request(
                     "GET",
@@ -649,14 +606,6 @@ Type **help** for available commands or just start chatting naturally.
                 last_request_time = time.time()
                 status_code = response.status_code
                 retry_after = response.headers.get("Retry-After")
-                
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        json.dump({"id":f"poll_{int(time.time()*1000)}_resp","timestamp":int(time.time()*1000),"location":"cli.py:560","message":"Command poll response","data":{"statusCode":status_code,"duration":round(request_duration,3),"retryAfter":retry_after,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
-                        f.write("\n")
-                except: pass
-                # #endregion
 
                 if status_code == 200:
                     consecutive_429_count = 0
@@ -703,13 +652,6 @@ Type **help** for available commands or just start chatting naturally.
                     break
                 elif status_code == 429:
                     consecutive_429_count += 1
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            json.dump({"id":f"poll_{int(time.time()*1000)}_429","timestamp":int(time.time()*1000),"location":"cli.py:610","message":"Command poll 429 detected","data":{"consecutive429":consecutive_429_count,"retryAfter":retry_after,"willBackoff":True},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
-                            f.write("\n")
-                    except: pass
-                    # #endregion
                     error_logger.error(f"[DAEMON] Command poll failed: {response.status_code}")
                     # Apply exponential backoff for 429 errors
                     backoff_time = min(60, self._command_poll_interval * (2 ** min(consecutive_429_count, 3)))
@@ -718,13 +660,6 @@ Type **help** for available commands or just start chatting naturally.
                             backoff_time = max(backoff_time, int(retry_after))
                         except ValueError:
                             pass
-                    # #region agent log
-                    try:
-                        with open(log_path, "a", encoding="utf-8") as f:
-                            json.dump({"id":f"poll_{int(time.time()*1000)}_backoff","timestamp":int(time.time()*1000),"location":"cli.py:620","message":"Command poll backoff applied","data":{"backoffSeconds":backoff_time,"consecutive429":consecutive_429_count},"sessionId":"debug-session","runId":"run1","hypothesisId":"B"}, f)
-                            f.write("\n")
-                    except: pass
-                    # #endregion
                     time.sleep(backoff_time)
                     continue
                 else:
@@ -734,24 +669,10 @@ Type **help** for available commands or just start chatting naturally.
 
             except BackendRequestError as e:
                 consecutive_429_count = 0
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        json.dump({"id":f"poll_{int(time.time()*1000)}_exc","timestamp":int(time.time()*1000),"location":"cli.py:630","message":"Command poll BackendRequestError","data":{"error":str(e)[:100]},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}, f)
-                        f.write("\n")
-                except: pass
-                # #endregion
                 # Network/request error, log and continue
                 error_logger.error(f"[DAEMON] Command poll request error: {e}")
             except Exception as e:
                 consecutive_429_count = 0
-                # #region agent log
-                try:
-                    with open(log_path, "a", encoding="utf-8") as f:
-                        json.dump({"id":f"poll_{int(time.time()*1000)}_exc2","timestamp":int(time.time()*1000),"location":"cli.py:640","message":"Command poll exception","data":{"error":str(e)[:100]},"sessionId":"debug-session","runId":"run1","hypothesisId":"E"}, f)
-                        f.write("\n")
-                except: pass
-                # #endregion
                 # Unexpected error, log and continue
                 error_logger.error(f"[DAEMON] Command poll error: {e}")
 

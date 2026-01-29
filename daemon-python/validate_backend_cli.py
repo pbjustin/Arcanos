@@ -598,7 +598,7 @@ def main():
     # Generate report
     success = generate_report()
     
-    # Save results to file
+    # Save results to file (gitignored; do not commit - see .gitignore)
     results_file = Path(__file__).parent / "validation_results.json"
     with open(results_file, "w") as f:
         json.dump(results, f, indent=2, default=str)
