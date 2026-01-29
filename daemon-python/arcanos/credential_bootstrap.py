@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import importlib.resources as importlib_resources
 import json
 import os
 import time
@@ -166,6 +167,67 @@ def _write_bootstrap_trace(trace_path: Optional[Path], message: str) -> None:
         pass
 
 
+def _resolve_env_template_text(trace_path: Optional[Path]) -> Optional[str]:
+    """
+    Purpose: Load the .env template text from repo or packaged assets.
+    Inputs/Outputs: Optional trace path for diagnostics; returns template text or None.
+    Edge cases: Missing template or read failures return None with trace logging.
+    """
+    project_root = Path(__file__).resolve().parent.parent
+    repo_template_path = project_root / ".env.example"
+
+    if repo_template_path.exists():
+        # //audit assumption: repo template is authoritative; risk: stale template; invariant: read text; strategy: use repo template first.
+        try:
+            return repo_template_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            # //audit assumption: template read can fail; risk: no template seed; invariant: fallback attempted; strategy: log and continue.
+            _write_bootstrap_trace(trace_path, f"Failed to read repo env template: {exc}")
+
+    try:
+        template_resource = importlib_resources.files("arcanos").joinpath("assets", "env.example")
+        if template_resource.is_file():
+            # //audit assumption: packaged template exists; risk: missing resource; invariant: read text; strategy: use packaged template.
+            return template_resource.read_text(encoding="utf-8")
+    except (AttributeError, FileNotFoundError, OSError, ModuleNotFoundError) as exc:
+        # //audit assumption: resource lookup can fail; risk: no template seed; invariant: best-effort; strategy: log and return None.
+        _write_bootstrap_trace(trace_path, f"Failed to read packaged env template: {exc}")
+
+    return None
+
+
+def _seed_env_file_if_missing(env_path: Path, trace_path: Optional[Path]) -> bool:
+    """
+    Purpose: Ensure a .env exists by seeding from the template on first run.
+    Inputs/Outputs: env_path and trace path; returns True when a seed file was created.
+    Edge cases: Missing template or write failures return False without stopping bootstrap.
+    """
+    if env_path.exists():
+        # //audit assumption: existing env should be preserved; risk: overwriting user config; invariant: no overwrite; strategy: skip.
+        return False
+
+    project_root = Path(__file__).resolve().parent.parent
+    if env_path.parent == project_root:
+        # //audit assumption: repo installs manage .env manually; risk: unwanted file creation; invariant: avoid auto-seed in repo; strategy: skip.
+        return False
+
+    template_text = _resolve_env_template_text(trace_path)
+    if not template_text:
+        # //audit assumption: template may be missing; risk: minimal config; invariant: bootstrap continues; strategy: skip seeding.
+        return False
+
+    try:
+        ensure_env_parent_dir(env_path)
+        env_path.write_text(template_text, encoding="utf-8")
+    except (EnvFileError, OSError) as exc:
+        # //audit assumption: template write can fail; risk: no seed file; invariant: bootstrap continues; strategy: log and continue.
+        _write_bootstrap_trace(trace_path, f"Failed to seed env template: {exc}")
+        return False
+
+    _write_bootstrap_trace(trace_path, f"Seeded env template at {env_path}")
+    return True
+
+
 def ensure_env_parent_dir(env_path: Path) -> None:
     """
     Purpose: Ensure parent directory for env file exists.
@@ -275,6 +337,8 @@ def bootstrap_credentials(
     _write_bootstrap_trace(trace_path, "Bootstrap start")
     _write_bootstrap_trace(trace_path, f"OpenAI key present: {bool(openai_api_key)}")
     _write_bootstrap_trace(trace_path, f"Backend URL present: {bool(Config.BACKEND_URL)}")
+
+    _seed_env_file_if_missing(resolved_env_path, trace_path)
 
     if not openai_api_key:
         # //audit assumption: OpenAI key required; risk: GPT client init fails; invariant: non-empty key; strategy: prompt and persist.

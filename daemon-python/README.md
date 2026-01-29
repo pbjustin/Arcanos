@@ -2,6 +2,19 @@
 
 Cross-platform ARCANOS CLI daemon with voice, vision, and backend sync.
 
+## Install (pipx)
+
+```bash
+pipx install "arcanos @ git+https://github.com/pbjustin/Arcanos.git#subdirectory=daemon-python"
+# or, once published:
+# pipx install arcanos
+```
+
+Config file locations for pipx/global installs:
+- Windows: `%LOCALAPPDATA%\ARCANOS\.env`
+- macOS: `~/Library/Application Support/ARCANOS/.env`
+- Linux: `~/.local/share/ARCANOS/.env`
+
 ## Install (dev)
 
 ```bash
