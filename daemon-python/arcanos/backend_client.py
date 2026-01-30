@@ -16,6 +16,8 @@ from .backend_client_models import (
     BackendTranscriptionResult,
     BackendVisionResult,
 )
+from .config import Config
+from .debug_logging import log_audit_event
 
 
 class BackendApiClient:
@@ -37,7 +39,7 @@ class BackendApiClient:
         Inputs/Outputs: base_url, token_provider, timeout_seconds, request_sender; stores config.
         Edge cases: Empty base_url disables requests and returns config errors.
         """
-        self._base_url = normalize_backend_url(base_url)
+        self._base_url = normalize_backend_url(base_url, allow_http_dev=Config.BACKEND_ALLOW_HTTP)
         self._token_provider = token_provider
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
@@ -100,6 +102,13 @@ class BackendApiClient:
         token = self._token_provider()
         if not token:
             # //audit assumption: auth token required; risk: unauthorized request; invariant: token present; strategy: raise auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="token_missing",
+                path=path,
+                method=method
+            )
             raise BackendRequestError(kind="auth", message="Backend token is missing")
 
         url = f"{self._base_url}{path}"
@@ -318,6 +327,13 @@ class BackendApiClient:
         token = self._token_provider()
         if not token:
             # //audit assumption: auth token required; risk: unauthorized request; invariant: token present; strategy: return auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="token_missing",
+                path=path,
+                method=method
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(kind="auth", message="Backend token is missing")
@@ -352,6 +368,14 @@ class BackendApiClient:
 
         if response.status_code == 401:
             # //audit assumption: auth errors should be surfaced; risk: unauthorized usage; invariant: auth error returned; strategy: return auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="401_unauthorized",
+                path=path,
+                method=method,
+                status_code=response.status_code
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
@@ -395,6 +419,14 @@ class BackendApiClient:
                     )
 
             # //audit assumption: 403 without confirmation is auth failure; risk: misclassified error; invariant: auth error returned; strategy: return auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="403_forbidden_not_confirmation",
+                path=path,
+                method=method,
+                status_code=response.status_code
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(

@@ -5,6 +5,7 @@ When RUN_ELEVATED=true, uses UAC elevation on Windows and sudo on Unix-like syst
 """
 
 import base64
+import hashlib
 import os
 import platform
 import shutil
@@ -14,6 +15,7 @@ import tempfile
 from typing import Optional, Tuple
 
 from .config import Config
+from .debug_logging import log_audit_event
 from .error_handler import handle_errors
 
 
@@ -224,11 +226,34 @@ class TerminalController:
         Returns:
             (stdout, stderr, return_code)
         """
+        # Calculate command hash for audit logging (never log raw command)
+        command_hash = hashlib.sha256(command.encode()).hexdigest()
+        
         # Safety check
         if check_safety:
             is_safe, reason = self.is_command_safe(command)
             if not is_safe:
+                # Audit log: command blocked
+                log_audit_event(
+                    "command_attempt",
+                    command_hash=command_hash,
+                    command_length=len(command),
+                    safe=False,
+                    reason_if_blocked=reason,
+                    source="terminal",
+                    outcome="blocked"
+                )
                 raise ValueError(reason)
+        
+        # Audit log: command attempt (before execution)
+        log_audit_event(
+            "command_attempt",
+            command_hash=command_hash,
+            command_length=len(command),
+            safe=True,
+            source="terminal",
+            outcome="attempting"
+        )
 
         if shell is None:
             # //audit assumption: caller wants auto-detected shell; risk: wrong shell; invariant: detected shell used; strategy: detect now.
@@ -237,7 +262,33 @@ class TerminalController:
         # Elevated path: platform-aware
         if elevated:
             # //audit assumption: elevated execution requested; risk: sudo/UAC prompt; invariant: run elevated; strategy: route to elevation handler.
-            return self._execute_elevated(command, shell, timeout)
+            try:
+                stdout, stderr, return_code = self._execute_elevated(command, shell, timeout)
+                # Audit log: elevated command execution completed
+                log_audit_event(
+                    "command_executed",
+                    command_hash=command_hash,
+                    command_length=len(command),
+                    safe=True,
+                    source="terminal",
+                    outcome="completed",
+                    return_code=return_code,
+                    elevated=True
+                )
+                return stdout, stderr, return_code
+            except Exception as e:
+                # Audit log: elevated command execution error
+                log_audit_event(
+                    "command_executed",
+                    command_hash=command_hash,
+                    command_length=len(command),
+                    safe=True,
+                    source="terminal",
+                    outcome="error",
+                    error_type=type(e).__name__,
+                    elevated=True
+                )
+                raise
 
         # Prepare command based on shell
         full_command = self._build_shell_command(shell, command)
@@ -257,8 +308,28 @@ class TerminalController:
             return_code = result.returncode
             return stdout, stderr, return_code
         except subprocess.TimeoutExpired:
+            # Audit log: command timeout
+            log_audit_event(
+                "command_executed",
+                command_hash=command_hash,
+                command_length=len(command),
+                safe=True,
+                source="terminal",
+                outcome="timeout",
+                return_code=None
+            )
             raise TimeoutError(f"Command timed out after {timeout} seconds")
         except Exception as e:
+            # Audit log: command execution error
+            log_audit_event(
+                "command_executed",
+                command_hash=command_hash,
+                command_length=len(command),
+                safe=True,
+                source="terminal",
+                outcome="error",
+                error_type=type(e).__name__
+            )
             raise RuntimeError(f"Failed to execute command: {str(e)}")
 
     @handle_errors("executing PowerShell")
