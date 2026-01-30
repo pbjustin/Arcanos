@@ -77,7 +77,7 @@ None. All changes were updates/corrections; no content was removed.
 
 3. **File Path Verification:**
    ```bash
-   grep -r "dist/index\.js\|dist/server\.js" docs/ --include="*.md" | grep -v "legacy\|AUDIT"
+   grep -r "dist/index\.js\|dist/server\.js" docs/ --include="*.md" --exclude-dir=legacy --exclude="*AUDIT*"
    ```
    Expected: No results (except in historical context)
 
