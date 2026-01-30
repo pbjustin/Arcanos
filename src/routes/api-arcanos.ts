@@ -226,7 +226,7 @@ function createArcanosAskHandler(deps: {
       }
 
       //audit Assumption: unknown errors should surface; risk: leaking details; invariant: 500 with error message; handling: fallback.
-      return res.status(500).json({ success: false, error: errorMessage });
+return res.status(500).json({ success: false, error: 'An internal server error occurred' });
     }
   });
 }
