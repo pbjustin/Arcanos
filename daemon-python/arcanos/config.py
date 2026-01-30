@@ -165,6 +165,10 @@ class Config:
     BACKEND_URL: Optional[str] = os.getenv("BACKEND_URL")
     BACKEND_TOKEN: Optional[str] = os.getenv("BACKEND_TOKEN")
     BACKEND_LOGIN_EMAIL: Optional[str] = os.getenv("BACKEND_LOGIN_EMAIL")
+    BACKEND_ALLOW_HTTP: bool = os.getenv("BACKEND_ALLOW_HTTP", "false").lower() == "true"
+    BACKEND_JWT_SECRET: Optional[str] = os.getenv("BACKEND_JWT_SECRET") or None
+    BACKEND_JWT_PUBLIC_KEY: Optional[str] = os.getenv("BACKEND_JWT_PUBLIC_KEY") or None
+    BACKEND_JWT_JWKS_URL: Optional[str] = os.getenv("BACKEND_JWT_JWKS_URL") or None
     BACKEND_ROUTING_MODE: str = os.getenv("BACKEND_ROUTING_MODE", "hybrid").lower()
     # //audit assumption: prefixes are comma-separated; risk: empty tokens; invariant: trimmed list; strategy: strip and filter.
     BACKEND_DEEP_PREFIXES: list[str] = [
@@ -277,6 +281,8 @@ class Config:
     # WARNING: Enabling CORS on unauthenticated debug server is a security risk.
     # Only enable if you have implemented authentication or are in a secure development environment.
     DEBUG_SERVER_CORS_ENABLED: bool = os.getenv("DEBUG_SERVER_CORS_ENABLED", "false").lower() in ("1", "true", "yes")
+    # Security: Disable token-in-query by default (headers-only auth). Set to true to allow ?token= for development.
+    DEBUG_SERVER_ALLOW_QUERY_TOKEN: bool = os.getenv("DEBUG_SERVER_ALLOW_QUERY_TOKEN", "false").lower() in ("1", "true", "yes")
     DEBUG_SERVER_LOG_RETENTION_DAYS: int = int(os.getenv("DEBUG_SERVER_LOG_RETENTION_DAYS", "7"))
     # Security: Authentication token for debug server (required for non-read-only endpoints)
     # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"

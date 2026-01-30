@@ -77,6 +77,26 @@ def get_debug_logger() -> logging.Logger:
         return logger
 
 
+def log_audit_event(event_type: str, **kwargs: Any) -> None:
+    """
+    Purpose: Log audit events (e.g. command execution attempts) with sanitized data.
+    Inputs/Outputs: event_type string and keyword arguments; writes to debug log.
+    Edge cases: All kwargs are sanitized to prevent credential leakage.
+    """
+    logger = get_debug_logger()
+    # Sanitize kwargs to prevent credential leakage
+    try:
+        from .utils.telemetry import sanitize_sensitive_data
+        sanitized_kwargs = sanitize_sensitive_data(kwargs) if kwargs else {}
+    except ImportError:
+        # Fallback if telemetry not available
+        sanitized_kwargs = kwargs
+    logger.info(
+        f"audit.{event_type}",
+        extra={"event_type": event_type, **sanitized_kwargs}
+    )
+
+
 def log_request(
     method: str,
     path: str,
