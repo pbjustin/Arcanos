@@ -9,6 +9,8 @@ export type DatabaseStatusLike = {
 };
 
 export type OpenAIHealthLike = {
+  apiKey?: { configured: boolean };
+  client?: { initialized: boolean };
   circuitBreaker: {
     healthy: boolean;
   };
@@ -49,8 +51,11 @@ export function assessCoreServiceReadiness(
   databaseUrl: string | undefined
 ): CoreServiceReadiness {
   const isDatabaseReady = resolveDatabaseReadiness(dbStatus, databaseUrl);
-  const isOpenAIReady = openaiHealth.circuitBreaker.healthy;
-  //audit Assumption: OpenAI circuit breaker health reflects current availability; risk: stale health; invariant: readiness requires healthy circuit; handling: use circuit breaker state.
+  // AI is ready only when key is configured, client is initialized, and circuit is not OPEN
+  const isOpenAIReady =
+    openaiHealth.circuitBreaker.healthy &&
+    (openaiHealth.apiKey?.configured ?? false) &&
+    (openaiHealth.client?.initialized ?? false);
   const isReady = isDatabaseReady && isOpenAIReady;
 
   //audit Assumption: readiness is a pure derivation of the inputs; risk: incorrect mapping; invariant: output mirrors input states; handling: return explicit readiness flags.
