@@ -3,6 +3,7 @@ ARCANOS CLI - Main Command Line Interface
 Human-like AI assistant with rich terminal UI.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -315,6 +316,9 @@ class ArcanosCLI:
         details = f" ({error.details})" if error.details else ""
         status_info = f" [{error.status_code}]" if error.status_code else ""
         self.console.print(f"[red]Backend {action_label} failed{status_info}: {error.message}{details}[/red]")
+        # //audit: network errors mean requests never reach the server; surface hint so user can fix BACKEND_URL or server.
+        if error.kind == "network" or error.kind == "timeout":
+            self.console.print("[yellow]Check BACKEND_URL and ensure the backend server is running and reachable.[/yellow]")
 
     def _refresh_backend_credentials(self) -> bool:
         """

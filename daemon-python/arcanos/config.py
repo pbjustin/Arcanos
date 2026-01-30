@@ -111,6 +111,33 @@ def _load_dotenv_fallback(path: Path) -> None:
     except OSError:
         print("Warning: Failed to read .env file; environment variables may be missing.")
 
+
+def _load_dotenv_override(path: Path) -> None:
+    """Load .env and set env vars, overwriting existing (for ARCANOS_ENV_PATH)."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
+                    value = value[1:-1]
+                os.environ[key] = value
+    except FileNotFoundError:
+        return
+    except OSError:
+        print("Warning: Failed to read ARCANOS_ENV_PATH file.")
+
+
 def _get_primary_env_path() -> Path:
     return BASE_DIR / ".env"
 
@@ -142,9 +169,20 @@ ENV_PATH = PRIMARY_ENV_PATH
 if load_dotenv is not None:
     for env_path in ENV_PATHS:
         load_dotenv(dotenv_path=env_path)
+    # Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
+    _env_override = os.environ.get("ARCANOS_ENV_PATH")
+    if _env_override:
+        _override_path = Path(_env_override)
+        if _override_path.is_file():
+            load_dotenv(dotenv_path=_override_path, override=True)
 else:
     for env_path in ENV_PATHS:
         _load_dotenv_fallback(env_path)
+    _env_override = os.environ.get("ARCANOS_ENV_PATH")
+    if _env_override:
+        _override_path = Path(_env_override)
+        if _override_path.is_file():
+            _load_dotenv_override(_override_path)
 
 
 class Config:
