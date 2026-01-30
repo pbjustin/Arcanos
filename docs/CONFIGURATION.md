@@ -46,15 +46,15 @@ The OpenAI client resolves keys in this order, skipping placeholders:
 
 ### OpenAI model selection
 
-The OpenAI client selects the first non-empty model in this order and defaults to `gpt-4o`
+The OpenAI client selects the first non-empty model in this order and defaults to `gpt-4o-mini`
 when none are configured:
 
-1. `OPENAI_MODEL`
-2. `RAILWAY_OPENAI_MODEL`
-3. `FINETUNED_MODEL_ID`
-4. `FINE_TUNED_MODEL_ID`
-5. `AI_MODEL`
-6. `gpt-4o`
+1. `FINETUNED_MODEL_ID`
+2. `FINE_TUNED_MODEL_ID`
+3. `AI_MODEL`
+4. `OPENAI_MODEL`
+5. `RAILWAY_OPENAI_MODEL`
+6. `gpt-4o-mini`
 
 Fallback model selection (used when primary calls fail):
 
