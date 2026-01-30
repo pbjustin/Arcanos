@@ -1,5 +1,5 @@
 import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIAdapter, isOpenAIAdapterInitialized } from '../adapters/openai.adapter.js';
 import type OpenAI from 'openai';
 import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
 import type { TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
@@ -707,14 +707,19 @@ export function getOpenAIServiceHealth() {
   const circuitBreakerMetrics = getCircuitBreakerSnapshot();
   const cacheStats = responseCache.getStats();
 
-  return {
+  // Health reads from unified client singleton; init-openai sets only the adapter. Treat adapter as source of truth for "initialized" so AI readiness matches actual request path.
+  const adapterInitialized = isOpenAIAdapterInitialized();
+  const effectiveInitialized = health.healthy || adapterInitialized;
+  const effectiveApiKeyConfigured = health.apiKeyConfigured || adapterInitialized;
+
+  const result = {
     apiKey: {
-      configured: health.apiKeyConfigured,
-      status: health.apiKeyConfigured ? 'valid' : 'missing_or_invalid',
+      configured: effectiveApiKeyConfigured,
+      status: effectiveApiKeyConfigured ? 'valid' : 'missing_or_invalid',
       source: health.apiKeySource
     },
     client: {
-      initialized: health.healthy,
+      initialized: effectiveInitialized,
       model: health.defaultModel,
       timeout: API_TIMEOUT_MS,
       baseURL: resolveOpenAIBaseURL()
@@ -732,6 +737,7 @@ export function getOpenAIServiceHealth() {
       maxTokens: RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
     }
   };
+  return result;
 }
 
 // Legacy export for backward compatibility
