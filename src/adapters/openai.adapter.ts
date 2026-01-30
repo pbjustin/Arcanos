@@ -147,3 +147,11 @@ export function getOpenAIAdapter(config?: OpenAIAdapterConfig): OpenAIAdapter {
 export function resetOpenAIAdapter(): void {
   adapterInstance = null;
 }
+
+/**
+ * Whether the OpenAI adapter singleton is initialized (without throwing).
+ * Used by health/readiness so "AI core" reflects the same client used for requests.
+ */
+export function isOpenAIAdapterInitialized(): boolean {
+  return adapterInstance !== null;
+}

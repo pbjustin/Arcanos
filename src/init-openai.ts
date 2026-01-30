@@ -11,6 +11,11 @@ import { logger } from './utils/structuredLogging.js';
  * @param app - Express application instance
  */
 export function initOpenAI(app: Express): void {
+  function clearAdapter(): void {
+    resetOpenAIAdapter();
+    app.locals.openaiAdapter = null;
+  }
+
   try {
     const unified = getConfig();
     const apiKey = unified.openaiApiKey?.trim() || '';
@@ -30,8 +35,7 @@ export function initOpenAI(app: Express): void {
         defaultModel: adapterConfig.defaultModel
       });
     } else {
-      resetOpenAIAdapter();
-      app.locals.openaiAdapter = null;
+      clearAdapter();
       logger.warn('OpenAI adapter not initialized - API key missing', {
         module: 'init-openai'
       });
@@ -41,7 +45,6 @@ export function initOpenAI(app: Express): void {
       module: 'init-openai',
       error: error instanceof Error ? error.message : String(error)
     });
-    resetOpenAIAdapter();
-    app.locals.openaiAdapter = null;
+    clearAdapter();
   }
 }

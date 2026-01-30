@@ -20,6 +20,7 @@ import { Request, Response, NextFunction } from 'express';
 import { aiLogger } from '../structuredLogging.js';
 import { recordTraceEvent } from '../telemetry.js';
 import { validateClientHealth, HealthStatus as ClientHealthStatus } from '../../services/openai/unifiedClient.js';
+import { isOpenAIAdapterInitialized } from '../../adapters/openai.adapter.js';
 import { getConfig } from '../../config/unifiedConfig.js';
 import { assessCoreServiceReadiness, HealthStatus as ServiceHealthStatus } from '../healthChecks.js';
 
@@ -348,19 +349,23 @@ export function buildReadinessEndpoint(checks: HealthChecker[]): (req: Request, 
  */
 
 /**
- * OpenAI client health check
+ * OpenAI client health check.
+ * Considers adapter singleton (set by init-openai) as well as unified client so /readyz and /health match actual request path.
  */
 export async function checkOpenAIHealth(): Promise<HealthCheckResult> {
   const health = validateClientHealth();
+  const adapterInitialized = isOpenAIAdapterInitialized();
+  const effectiveHealthy = health.healthy || (adapterInitialized && health.circuitBreakerHealthy);
   return {
-    healthy: health.healthy,
+    healthy: effectiveHealthy,
     name: 'openai',
-    error: health.error,
+    error: effectiveHealthy ? undefined : health.error,
     metadata: {
-      apiKeyConfigured: health.apiKeyConfigured,
+      apiKeyConfigured: health.apiKeyConfigured || adapterInitialized,
       apiKeySource: health.apiKeySource,
       defaultModel: health.defaultModel,
-      circuitBreakerHealthy: health.circuitBreakerHealthy
+      circuitBreakerHealthy: health.circuitBreakerHealthy,
+      adapterInitialized
     }
   };
 }
