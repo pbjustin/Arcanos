@@ -5,6 +5,7 @@ import { validateAuditSafeOutput, createAuditSummary } from './auditSafe.js';
 import { ensureShadowReady, disableShadowMode } from './shadowControl.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
+import type { ChatCompletion } from './openai/types.js';
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
 
@@ -38,7 +39,11 @@ async function routeToModule(clientOrAdapter: OpenAI | OpenAIAdapter, tag: Shado
         ...tokenParams
       });
 
-  return response.choices[0]?.message?.content || '';
+  // Handle both ChatCompletion and Stream types
+  if (response && typeof response === 'object' && 'choices' in response) {
+    return (response as ChatCompletion).choices[0]?.message?.content || '';
+  }
+  return '';
 }
 
 export async function mirrorDecisionEvent(
@@ -52,7 +57,7 @@ export async function mirrorDecisionEvent(
 
   try {
     const shadowInput = `Event: ${event}\nTask ID: ${taskId}\nOriginal Data: ${original}`;
-    const gpt4Output = await routeToModule(client, tag, shadowInput);
+    const gpt4Output = await routeToModule(clientOrAdapter, tag, shadowInput);
 
     ensureLogDirectory();
     const timestamp = new Date().toISOString();

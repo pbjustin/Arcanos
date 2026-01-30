@@ -96,9 +96,9 @@ export function validateRequiredEnv(): EnvConfig {
     const value = process.env[spec.name];
     if (value) {
       (config as any)[key] = value;
-    } else if (spec.defaultValue) {
+    } else if ('defaultValue' in spec && spec.defaultValue) {
       (config as any)[key] = spec.defaultValue;
-    } else if (spec.warnIfMissing) {
+    } else if ('warnIfMissing' in spec && spec.warnIfMissing) {
       warnings.push(`${spec.name} not set - ${spec.description}`);
     }
   }
@@ -183,7 +183,7 @@ export function validateEnv(): ValidationResult {
   // Check optional vars
   for (const [key, spec] of Object.entries(OPTIONAL_VARS)) {
     const value = process.env[spec.name];
-    if (!value && spec.warnIfMissing) {
+    if (!value && 'warnIfMissing' in spec && spec.warnIfMissing) {
       warnings.push(`${spec.name} not set - ${spec.description}`);
     }
   }

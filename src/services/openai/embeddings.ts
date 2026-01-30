@@ -1,6 +1,8 @@
 import type OpenAI from 'openai';
 import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
 import { getOpenAIAdapter } from '../../adapters/openai.adapter.js';
+import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
+import type { ChatCompletion } from './types.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
@@ -16,9 +18,28 @@ export async function createEmbedding(
     // Legacy client - wrap it
     const client = clientOrAdapter as OpenAI;
     adapter = {
-      chat: { completions: { create: (params) => client.chat.completions.create(params) } },
-      embeddings: { create: (params) => client.embeddings.create(params) },
-      audio: { transcriptions: { create: (params) => client.audio.transcriptions.create(params) } },
+      chat: { 
+        completions: { 
+          create: async (params) => {
+            const nonStreamingParams = { ...params, stream: false } as typeof params & { stream: false };
+            const result = await client.chat.completions.create(nonStreamingParams);
+            return result as import('./types.js').ChatCompletion;
+          }
+        } 
+      },
+      embeddings: { 
+        create: async (params) => {
+          return client.embeddings.create(params) as Promise<CreateEmbeddingResponse>;
+        }
+      },
+      audio: { 
+        transcriptions: { 
+          create: async (params) => {
+            const nonStreamingParams = { ...params, stream: false } as typeof params & { stream: false };
+            return client.audio.transcriptions.create(nonStreamingParams);
+          }
+        } 
+      },
       getClient: () => client
     };
   } else {
@@ -35,5 +56,6 @@ export async function createEmbedding(
     input
   });
 
-  return embeddingRes.data[0].embedding;
+  // embeddingRes is CreateEmbeddingResponse which has a data array
+  return embeddingRes.data[0]?.embedding || [];
 }

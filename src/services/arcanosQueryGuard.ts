@@ -5,7 +5,8 @@ import { getDefaultModel } from "./openai.js";
 import { getOpenAIAdapter } from "../adapters/openai.adapter.js";
 
 // ✅ Use centralized OpenAI adapter for consistency (adapter boundary pattern)
-let adapter;
+import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
+let adapter: OpenAIAdapter | null = null;
 try {
   adapter = getOpenAIAdapter();
 } catch {

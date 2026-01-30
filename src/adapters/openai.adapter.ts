@@ -13,8 +13,8 @@
 
 import OpenAI from 'openai';
 import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
-import type { Embedding, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
-import type { Transcription } from 'openai/resources/audio/transcriptions.js';
+import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
+import type { Transcription, TranscriptionCreateParams } from 'openai/resources/audio/transcriptions.js';
 import type { FileObject } from 'openai/resources/files.js';
 
 /**
@@ -50,7 +50,7 @@ export interface OpenAIAdapter {
    * Create embeddings
    */
   embeddings: {
-    create: (params: EmbeddingCreateParams) => Promise<Embedding>;
+    create: (params: EmbeddingCreateParams) => Promise<CreateEmbeddingResponse>;
   };
 
   /**
@@ -101,26 +101,25 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     chat: {
       completions: {
         create: async (params: ChatCompletionCreateParams): Promise<ChatCompletion> => {
-          return client.chat.completions.create(params);
+          // Ensure stream is false for non-streaming completions
+          const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
+          const result = await client.chat.completions.create(nonStreamingParams);
+          // Type assertion needed because SDK can return Stream | ChatCompletion
+          return result as ChatCompletion;
         }
       }
     },
     embeddings: {
-      create: async (params: EmbeddingCreateParams): Promise<Embedding> => {
+      create: async (params: EmbeddingCreateParams): Promise<CreateEmbeddingResponse> => {
         return client.embeddings.create(params);
       }
     },
     audio: {
       transcriptions: {
-        create: async (params: {
-          file: FileObject | File | Blob | Uint8Array | ArrayBuffer;
-          model: string;
-          language?: string;
-          prompt?: string;
-          response_format?: 'json' | 'text' | 'srt' | 'verbose_json' | 'vtt';
-          temperature?: number;
-        }): Promise<Transcription> => {
-          return client.audio.transcriptions.create(params);
+        create: async (params: TranscriptionCreateParams): Promise<Transcription> => {
+          // Ensure stream is false for non-streaming transcription
+          const nonStreamingParams = { ...params, stream: false } as TranscriptionCreateParams & { stream: false };
+          return client.audio.transcriptions.create(nonStreamingParams);
         }
       }
     },

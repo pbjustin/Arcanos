@@ -9,6 +9,7 @@ import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { setMemory } from './memory.js';
 import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from '../config/researchPrompts.js';
 import { getEnvNumber, getEnv } from '../config/env.js';
+import type OpenAI from 'openai';
 
 export interface ResearchSourceSummary {
   url: string;

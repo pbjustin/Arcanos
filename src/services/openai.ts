@@ -2,6 +2,7 @@ import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import type OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletion } from '../services/openai/types.js';
+import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 
 /**
@@ -21,9 +22,28 @@ function getOpenAIClientOrAdapter(): { adapter: OpenAIAdapter | null; client: Op
     }
     // Create adapter wrapper for legacy client (temporary bridge)
     const adapter: OpenAIAdapter = {
-      chat: { completions: { create: (params) => client.chat.completions.create(params) } },
-      embeddings: { create: (params) => client.embeddings.create(params) },
-      audio: { transcriptions: { create: (params) => client.audio.transcriptions.create(params) } },
+      chat: { 
+        completions: { 
+          create: async (params) => {
+            const nonStreamingParams = { ...params, stream: false } as typeof params & { stream: false };
+            const result = await client.chat.completions.create(nonStreamingParams);
+            return result as ChatCompletion;
+          }
+        } 
+      },
+      embeddings: { 
+        create: async (params) => {
+          return client.embeddings.create(params);
+        }
+      },
+      audio: { 
+        transcriptions: { 
+          create: async (params) => {
+            const nonStreamingParams = { ...params, stream: false } as typeof params & { stream: false };
+            return client.audio.transcriptions.create(nonStreamingParams);
+          }
+        } 
+      },
       getClient: () => client
     };
     return { adapter, client };
@@ -382,10 +402,10 @@ export const createGPT5Reasoning = async (
     // Support both adapter and legacy client
     const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
       ? await clientOrAdapter.chat.completions.create(requestPayload)
-      : await (clientOrAdapter as OpenAI).chat.completions.create(requestPayload);
-    const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
+      : await (clientOrAdapter as OpenAI).chat.completions.create({ ...requestPayload, stream: false });
+    const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
-    const content = extractReasoningText(response);
+    const content = extractReasoningText(response as ChatCompletion);
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_SUCCESS, {
       model: resolvedModel,
       preview: truncateText(content, SERVER_CONSTANTS.LOG_PREVIEW_LENGTH)
@@ -444,10 +464,10 @@ export const createGPT5ReasoningLayer = async (
     // Support both adapter and legacy client
     const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
       ? await clientOrAdapter.chat.completions.create(requestPayload)
-      : await (clientOrAdapter as OpenAI).chat.completions.create(requestPayload);
-    const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
+      : await (clientOrAdapter as OpenAI).chat.completions.create({ ...requestPayload, stream: false });
+    const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
-    const reasoningContent = extractReasoningText(response);
+    const reasoningContent = extractReasoningText(response as ChatCompletion);
 
     // The GPT-5.1 response IS the refined result
     const refinedResult = reasoningContent;

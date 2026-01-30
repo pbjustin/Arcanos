@@ -4,6 +4,7 @@ import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import type { IdleStateService } from '../services/idleStateService.js';
+import type OpenAI from 'openai';
 
 const router = express.Router();
 
@@ -159,18 +160,20 @@ max_tokens: typeof options.max_tokens === 'number' ? Math.min(options.max_tokens
           'Access-Control-Allow-Origin': '*'
         });
 
-        // Stream ARCANOS results
-        for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
-          const content = chunk.choices[0]?.delta?.content || '';
-          //audit Assumption: chunk delta may be empty; risk: noisy stream; invariant: only write non-empty content; handling: guard on content.
-          if (content) {
-            res.write(`data: ${JSON.stringify({ success: true, content, type: 'chunk' })}\n\n`);
+        // Stream ARCANOS results (response is already a stream when stream=true)
+        if (response && typeof response === 'object' && Symbol.asyncIterator in response) {
+          for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
+            const content = chunk.choices[0]?.delta?.content || '';
+            //audit Assumption: chunk delta may be empty; risk: noisy stream; invariant: only write non-empty content; handling: guard on content.
+            if (content) {
+              res.write(`data: ${JSON.stringify({ success: true, content, type: 'chunk' })}\n\n`);
+            }
           }
-        }
 
-        res.write(`data: ${JSON.stringify({ success: true, type: 'done' })}\n\n`);
-        res.end();
-        return;
+          res.write(`data: ${JSON.stringify({ success: true, type: 'done' })}\n\n`);
+          res.end();
+          return;
+        }
       }
 
       // Handle regular response

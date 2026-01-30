@@ -17,6 +17,7 @@ import { getDefaultModel } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import config from '../config/index.js';
 import { getEnv } from '../config/env.js';
+import type OpenAI from 'openai';
 
 const router = express.Router();
 

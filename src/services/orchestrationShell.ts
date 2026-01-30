@@ -186,7 +186,8 @@ export async function getOrchestrationShellStatus(): Promise<{
   lastReset?: string;
   memoryEntries: number;
 }> {
-  const client = getOpenAIClient();
+  const adapter = getOpenAIAdapter();
+  const client = adapter.getClient();
   const memoryContext = await getMemoryContext('orchestration');
   
   return {

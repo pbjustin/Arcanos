@@ -192,7 +192,8 @@ export async function syncAssistantRegistry(): Promise<AssistantRegistry> {
  * Call an assistant by its name with a single message.
  */
 export async function callAssistantByName(name: string, message: string) {
-  const client = getOpenAIClient();
+  const adapter = getOpenAIAdapter();
+  const client = adapter.getClient();
   //audit Assumption: OpenAI client required to call assistant
   if (!client) throw new Error('OpenAI client not initialized');
 
