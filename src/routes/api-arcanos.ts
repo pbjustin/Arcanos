@@ -148,8 +148,8 @@ function createArcanosAskHandler(deps: {
       //audit Assumption: stream option is boolean; risk: incorrect streaming path; invariant: stream true triggers SSE; handling: branch on options.stream.
       if (options.stream) {
         const response = await createCompletion(messages, {
-          temperature: options.temperature || 0.7,
-          max_tokens: options.max_tokens || 2048,
+temperature: typeof options.temperature === 'number' ? options.temperature : 0.7,
+max_tokens: typeof options.max_tokens === 'number' ? Math.min(options.max_tokens, 4096) : 2048,
           stream: true
         });
 
