@@ -63,7 +63,7 @@ None. All changes were updates/corrections; no content was removed.
 
 1. **SDK Version Verification:**
    ```bash
-   grep -r "v6\.15\.0\|v5\.16\.0" docs/ .github/ --include="*.md" | grep -v "AUDIT_LOG\|CHANGELOG\|legacy"
+   grep -r "v6\.15\.0\|v5\.16\.0" docs/ .github/ --include="*.md" --exclude-dir=legacy --exclude="*AUDIT_LOG*" --exclude="*CHANGELOG*"
    ```
    Expected: No results (except in historical logs/changelogs)
 
