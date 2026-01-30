@@ -4,6 +4,7 @@ packaging>=24.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 cryptography>=41.0.0
+PyJWT>=2.8,<3
 tenacity>=8.2.0
 sentry-sdk>=1.40.0
 Pillow>=10.2.0

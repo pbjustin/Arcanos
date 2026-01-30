@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 from .config import Config
 from .debug_health import liveness, readiness
+from .debug_logging import get_debug_logger, log_audit_event
 from .debug_middleware import handle_request
 
 
@@ -99,14 +100,28 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         if token_header == Config.DEBUG_SERVER_TOKEN:
             return True
         
-        # Check query parameter (less secure, but convenient for curl)
-        params = self._query_params()
-        if "token" in params and params["token"]:
-            if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
-                return True
+        # Check query parameter (disabled by default for security)
+        if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
+            params = self._query_params()
+            if "token" in params and params["token"]:
+                if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
+                    return True
         
         if require_auth:
-            self._send_response(401, error="Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header, X-Debug-Token header, or ?token=<token> query parameter.")
+            # Audit log: auth failure (without logging token)
+            client_ip = getattr(self, "client_address", ("unknown",))[0]
+            log_audit_event(
+                "auth_failure",
+                source="debug_server",
+                client_ip=client_ip,
+                path=self._path_without_query(),
+                method=getattr(self, "command", "UNKNOWN")
+            )
+            if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
+                error_msg = "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header, X-Debug-Token header, or ?token=<token> query parameter."
+            else:
+                error_msg = "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header or X-Debug-Token header. Query parameter authentication is disabled for security."
+            self._send_response(401, error=error_msg)
             return False
         
         return True
