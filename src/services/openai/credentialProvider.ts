@@ -40,7 +40,8 @@ export function resolveOpenAIBaseURL(): string | undefined {
 }
 
 export function resolveOpenAIKey(): string | null {
-  if (resolvedApiKey !== undefined) {
+  // Only use cache when we have a valid key; re-check env when we had none (handles late .env load or deployment vars)
+  if (resolvedApiKey !== undefined && resolvedApiKey !== null) {
     return resolvedApiKey;
   }
 
@@ -58,7 +59,6 @@ export function resolveOpenAIKey(): string | null {
     return resolvedApiKey;
   }
 
-  resolvedApiKey = null;
   resolvedApiKeySource = null;
   return null;
 }

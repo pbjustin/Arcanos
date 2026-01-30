@@ -196,7 +196,16 @@ export function getOrCreateClient(): OpenAI | null {
     return singletonClient;
   }
 
-  // Prevent multiple simultaneous initialization attempts
+  // If we previously failed (no key) but a key is now available, allow one retry (e.g. env loaded late or set in platform)
+  if (initializationAttempted && hasValidAPIKey()) {
+    aiLogger.info('OpenAI API key now available - retrying client creation', {
+      module: 'openai.unified',
+      operation: 'getOrCreateClient'
+    });
+    initializationAttempted = false;
+    singletonClient = null;
+  }
+
   if (initializationAttempted) {
     aiLogger.warn('OpenAI client initialization already attempted, returning null', {
       module: 'openai.unified',
