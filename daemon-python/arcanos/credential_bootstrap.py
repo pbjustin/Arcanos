@@ -8,14 +8,26 @@ import base64
 import binascii
 import importlib.resources as importlib_resources
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 
+try:
+    import jwt
+    from jwt import PyJWKClient
+    JWT_AVAILABLE = True
+except ImportError:
+    JWT_AVAILABLE = False
+    jwt = None
+    PyJWKClient = None
+
 from .config import Config
 from .env_store import EnvFileError, upsert_env_values
+
+logger = logging.getLogger("arcanos.credential_bootstrap")
 
 
 class CredentialBootstrapError(RuntimeError):
@@ -87,6 +99,123 @@ def is_jwt_expired(token: str, now_seconds: float, leeway_seconds: int = 60) -> 
 
     # //audit assumption: leeway avoids edge expiry; risk: near-expiry use; invariant: now+leeway < exp; strategy: compare with leeway.
     return now_seconds + leeway_seconds >= exp_value
+
+
+# JWKS cache for RS256 tokens
+_jwks_cache: dict[str, tuple[PyJWKClient, float]] = {}
+_JWKS_CACHE_TTL = 3600  # 1 hour
+
+
+def verify_backend_jwt(
+    token: str,
+    secret: Optional[str] = None,
+    public_key: Optional[str] = None,
+    jwks_url: Optional[str] = None
+) -> bool:
+    """
+    Purpose: Verify backend JWT signature and standard claims (exp, iat, iss, aud).
+    Inputs/Outputs: token string, optional secret/public_key/jwks_url; returns True if valid, False if invalid.
+    Edge cases: Returns False if verification fails or JWT library unavailable; logs warnings for missing verification keys.
+    """
+    if not JWT_AVAILABLE:
+        logger.warning(
+            "PyJWT not available. JWT signature verification disabled. "
+            "Install PyJWT>=2.8,<3 to enable verification."
+        )
+        return False
+    
+    if not token:
+        return False
+    
+    # Determine verification method
+    if secret:
+        # HS256 with shared secret
+        try:
+            jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                options={"verify_signature": True, "verify_exp": True}
+            )
+            return True
+        except jwt.ExpiredSignatureError:
+            logger.debug("JWT token expired")
+            return False
+        except jwt.InvalidTokenError as e:
+            logger.debug(f"JWT token invalid: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"JWT verification error (HS256): {e}")
+            return False
+    
+    elif public_key:
+        # RS256 with public key
+        try:
+            jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                options={"verify_signature": True, "verify_exp": True}
+            )
+            return True
+        except jwt.ExpiredSignatureError:
+            logger.debug("JWT token expired")
+            return False
+        except jwt.InvalidTokenError as e:
+            logger.debug(f"JWT token invalid: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"JWT verification error (RS256): {e}")
+            return False
+    
+    elif jwks_url:
+        # RS256 with JWKS URL
+        try:
+            # Check cache
+            now = time.time()
+            jwks_client = None
+            cache_key = jwks_url
+            
+            if cache_key in _jwks_cache:
+                cached_client, cached_time = _jwks_cache[cache_key]
+                if now - cached_time < _JWKS_CACHE_TTL:
+                    jwks_client = cached_client
+                else:
+                    # Cache expired, remove
+                    del _jwks_cache[cache_key]
+            
+            if not jwks_client:
+                jwks_client = PyJWKClient(jwks_url)
+                _jwks_cache[cache_key] = (jwks_client, now)
+            
+            # Get signing key from JWKS
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            
+            jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                options={"verify_signature": True, "verify_exp": True}
+            )
+            return True
+        except jwt.ExpiredSignatureError:
+            logger.debug("JWT token expired")
+            return False
+        except jwt.InvalidTokenError as e:
+            logger.debug(f"JWT token invalid: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"JWT verification error (JWKS): {e}")
+            return False
+    
+    else:
+        # No verification key configured
+        logger.warning(
+            "JWT verification key not configured. "
+            "Set BACKEND_JWT_SECRET, BACKEND_JWT_PUBLIC_KEY, or BACKEND_JWT_JWKS_URL to enable signature verification. "
+            "Currently only checking expiration (exp claim)."
+        )
+        return False
 
 
 def prompt_for_value(
@@ -346,7 +475,32 @@ def bootstrap_credentials(
     backend_url = Config.BACKEND_URL or ""
     if backend_url:
         # Backend is optional: do not prompt for login. Use BACKEND_TOKEN from env if set.
-        token_is_valid = bool(backend_token) and not is_jwt_expired(backend_token, now_seconds())
+        token_is_valid = False
+        if backend_token:
+            # Check expiration first (quick check)
+            if not is_jwt_expired(backend_token, now_seconds()):
+                # If verification keys are configured, verify signature
+                if Config.BACKEND_JWT_SECRET or Config.BACKEND_JWT_PUBLIC_KEY or Config.BACKEND_JWT_JWKS_URL:
+                    token_is_valid = verify_backend_jwt(
+                        backend_token,
+                        secret=Config.BACKEND_JWT_SECRET,
+                        public_key=Config.BACKEND_JWT_PUBLIC_KEY,
+                        jwks_url=Config.BACKEND_JWT_JWKS_URL
+                    )
+                    if not token_is_valid:
+                        _write_bootstrap_trace(trace_path, "Backend token failed signature verification")
+                        logger.warning(
+                            "Backend JWT token failed signature verification. "
+                            "Token will be rejected. Please refresh your backend token."
+                        )
+                        # Clear invalid token
+                        backend_token = None
+                else:
+                    # No verification key configured, only check expiration
+                    token_is_valid = True
+                    _write_bootstrap_trace(trace_path, "Backend token expiration check passed (signature verification not configured)")
+            else:
+                _write_bootstrap_trace(trace_path, "Backend token expired")
         _write_bootstrap_trace(trace_path, f"Backend token valid: {token_is_valid}")
 
     _write_bootstrap_trace(trace_path, "Bootstrap complete")
