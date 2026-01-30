@@ -1,8 +1,10 @@
 # ARCANOS Recursive Refactoring Summary
 
-**Date:** 2026-01-21  
-**Version:** 1.0.0  
-**Confidence Score:** 0.95
+> **⚠️ HISTORICAL DOCUMENT**: This document is preserved for historical reference.  
+> **Date:** 2026-01-21  
+> **Version:** 1.0.0  
+> **Confidence Score:** 0.95  
+> **Current Status:** See [docs/DOCUMENTATION_STATUS.md](docs/DOCUMENTATION_STATUS.md) for current documentation status
 
 ## Overview
 

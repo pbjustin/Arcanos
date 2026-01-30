@@ -200,6 +200,16 @@ curl -X POST https://your-app.railway.app/api/ask \
   -d '{"prompt": "Hello, Arcanos!"}'
 ```
 
+### CI/CD Integration
+
+The repository includes GitHub Actions workflows for automated deployment:
+
+- **`.github/workflows/arcanos-deploy.yml`** - Manual deployment workflow triggered via GitHub Actions
+- **`.github/workflows/arcanos-ci-cd-pipeline.yml`** - Continuous integration pipeline
+- **`.github/workflows/arcanos-release.yml`** - Release automation workflow
+
+These workflows can trigger Railway deployments programmatically. See the workflow files for configuration details and trigger conditions.
+
 ### Rollback
 
 If deployment fails or introduces issues:

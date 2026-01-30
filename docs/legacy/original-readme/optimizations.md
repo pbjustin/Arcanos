@@ -1,6 +1,6 @@
 > **⚠️ HISTORICAL DOCUMENT**: This document is preserved for historical reference.  
 > **Last Updated:** 2024 (Historical) | **SDK Version at time:** v5.16.0  
-> **Current Version:** See [/README.md](../../../README.md) for latest (OpenAI SDK v6.15.0)
+> **Current Version:** See [/README.md](../../../README.md) for latest (OpenAI SDK v6.16.0)
 
 ---
 
