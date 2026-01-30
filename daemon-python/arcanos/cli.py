@@ -4,7 +4,6 @@ Human-like AI assistant with rich terminal UI.
 """
 
 import os
-import re
 import sys
 import tempfile
 import threading
@@ -13,7 +12,7 @@ import time
 import urllib.request
 import uuid
 from dataclasses import dataclass, asdict
-from typing import Callable, Optional, Any, Mapping, Tuple
+from typing import Callable, Optional, Any, Mapping
 
 from rich.console import Console
 from rich.panel import Panel
@@ -34,6 +33,13 @@ from .cli_constants import (
     ZERO_COST_USD,
     ZERO_TOKENS_USED,
 )
+from .cli_intent_config import (
+    CAMERA_INTENT_PATTERN,
+    DOMAIN_KEYWORDS,
+    RUN_COMMAND_PATTERNS,
+    SCREEN_INTENT_PATTERN,
+)
+from .cli_intents import detect_domain_intent, detect_run_see_intent, truncate_for_tts
 from .cli_content import (
     build_welcome_markdown,
     get_first_run_setup_header,
@@ -97,9 +103,14 @@ class _ConversationResult:
 
 
 class ArcanosCLI:
-    """Main ARCANOS CLI application"""
+    """Main ARCANOS CLI application."""
 
     def __init__(self):
+        """
+        Purpose: Initialize CLI services, backends, and background threads.
+        Inputs/Outputs: None; prepares components and prints startup info.
+        Edge cases: Exits process if required API credentials are missing.
+        """
         # Initialize console
         self.console = Console()
         self.start_time = time.time()
@@ -243,7 +254,11 @@ class ArcanosCLI:
         return instance_id
 
     def show_welcome(self) -> None:
-        """Display welcome message"""
+        """
+        Purpose: Display welcome message and first-run guidance.
+        Inputs/Outputs: None; prints welcome panels and setup prompts.
+        Edge cases: No-op when welcome is disabled in config.
+        """
         if not Config.SHOW_WELCOME:
             return
 
@@ -260,7 +275,11 @@ class ArcanosCLI:
             self.first_run_setup()
 
     def first_run_setup(self) -> None:
-        """First-run configuration"""
+        """
+        Purpose: Guide users through first-run configuration prompts.
+        Inputs/Outputs: None; updates stored settings based on consent.
+        Edge cases: Skips telemetry prompt once consent is stored.
+        """
         self.console.print(get_first_run_setup_header())
 
         # Telemetry consent
@@ -283,6 +302,11 @@ class ArcanosCLI:
         self.memory.set_setting("first_run", False)
 
     def _report_backend_error(self, action_label: str, error: Optional[BackendRequestError]) -> None:
+        """
+        Purpose: Print a user-friendly backend error summary.
+        Inputs/Outputs: action_label + optional error; prints error message.
+        Edge cases: Falls back to generic message when error is missing.
+        """
         if not error:
             # //audit assumption: error details may be missing; risk: silent failure; invariant: generic message; strategy: print fallback.
             self.console.print(f"[red]Backend {action_label} failed.[/red]")
@@ -293,6 +317,11 @@ class ArcanosCLI:
         self.console.print(f"[red]Backend {action_label} failed{status_info}: {error.message}{details}[/red]")
 
     def _refresh_backend_credentials(self) -> bool:
+        """
+        Purpose: Re-authenticate with the backend if credentials are stale.
+        Inputs/Outputs: None; returns True on success, False otherwise.
+        Edge cases: Returns False and prints error when refresh fails.
+        """
         try:
             bootstrap_credentials()
             return True
@@ -306,6 +335,11 @@ class ArcanosCLI:
         request_func: Callable[[], BackendResponse[Any]],
         action_label: str
     ) -> BackendResponse[Any]:
+        """
+        Purpose: Execute a backend request with one auth-refresh retry.
+        Inputs/Outputs: request_func + action_label; returns response.
+        Edge cases: Returns auth/confirmation errors without retries beyond one.
+        """
         response = request_func()
         if response.ok:
             # //audit assumption: response ok; risk: none; invariant: return response; strategy: short-circuit.
@@ -516,7 +550,11 @@ class ArcanosCLI:
         return self._confirm_pending_actions(confirmation_id)
 
     def _start_daemon_threads(self) -> None:
-        """Start heartbeat and command polling threads"""
+        """
+        Purpose: Launch daemon background threads for heartbeat and polling.
+        Inputs/Outputs: None; starts threads when backend is configured.
+        Edge cases: Returns early when already running or backend missing.
+        """
         if self._daemon_running:
             return
         
@@ -542,7 +580,11 @@ class ArcanosCLI:
         self._command_poll_thread.start()
 
     def _heartbeat_loop(self) -> None:
-        """Background thread that sends periodic heartbeats"""
+        """
+        Purpose: Background thread that sends periodic heartbeats.
+        Inputs/Outputs: None; communicates with backend while running.
+        Edge cases: Applies backoff on 429 responses and stops on shutdown.
+        """
         last_request_time = time.time()
         consecutive_429_count = 0
         
@@ -600,7 +642,11 @@ class ArcanosCLI:
             time.sleep(self._heartbeat_interval)
 
     def _command_poll_loop(self) -> None:
-        """Background thread that polls for commands"""
+        """
+        Purpose: Background thread that polls the backend for commands.
+        Inputs/Outputs: None; processes commands until shutdown.
+        Edge cases: Applies backoff on 429 and stops on 401.
+        """
         last_request_time = time.time()
         consecutive_429_count = 0
         
@@ -749,7 +795,11 @@ class ArcanosCLI:
             self.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
 
     def _stop_daemon_service(self) -> None:
-        """Stop daemon threads"""
+        """
+        Purpose: Stop background daemon threads safely.
+        Inputs/Outputs: None; joins threads with a timeout.
+        Edge cases: No-op when threads are not running.
+        """
         self._daemon_running = False
         if self._heartbeat_thread:
             self._heartbeat_thread.join(timeout=5.0)
@@ -757,6 +807,11 @@ class ArcanosCLI:
             self._command_poll_thread.join(timeout=5.0)
 
     def _perform_local_conversation(self, message: str) -> Optional[_ConversationResult]:
+        """
+        Purpose: Execute a local GPT conversation with recent history.
+        Inputs/Outputs: message string; returns ConversationResult or None.
+        Edge cases: Returns None when GPT client produces no response.
+        """
         history = self.memory.get_recent_conversations(limit=5)
         response, tokens, cost = self.gpt_client.ask(
             user_message=message,
@@ -777,6 +832,11 @@ class ArcanosCLI:
         )
 
     def _perform_backend_conversation(self, message: str, domain: Optional[str] = None, from_debug: bool = False) -> Optional[_ConversationResult]:
+        """
+        Purpose: Execute backend conversation, including routing metadata.
+        Inputs/Outputs: message string + optional domain; returns ConversationResult or None.
+        Edge cases: Returns None when backend is unavailable or confirmation required.
+        """
         if not self.backend_client:
             # //audit assumption: backend client optional; risk: missing backend; invariant: return None; strategy: warn and return None.
             self.console.print("[yellow]Backend is not configured.[/yellow]")
@@ -846,6 +906,11 @@ class ArcanosCLI:
         return None
 
     def _encode_audio_base64(self, audio_data: bytes | bytearray) -> Optional[str]:
+        """
+        Purpose: Extract and base64-encode audio for backend transcription.
+        Inputs/Outputs: audio bytes; returns base64 string or None.
+        Edge cases: Returns None when audio extraction fails.
+        """
         try:
             audio_bytes = self.audio.extract_audio_bytes(audio_data)
         except RuntimeError as exc:
@@ -857,6 +922,11 @@ class ArcanosCLI:
         return base64.b64encode(audio_bytes).decode("ascii")
 
     def _perform_backend_transcription(self, audio_data: bytes | bytearray) -> Optional[str]:
+        """
+        Purpose: Request backend transcription for audio payloads.
+        Inputs/Outputs: audio bytes; returns transcription text or None.
+        Edge cases: Returns None when backend is unavailable or fails.
+        """
         if not self.backend_client:
             # //audit assumption: backend client optional; risk: missing backend; invariant: return None; strategy: warn and return None.
             self.console.print("[yellow]Backend is not configured.[/yellow]")
@@ -891,6 +961,11 @@ class ArcanosCLI:
         return response.value.text
 
     def _perform_backend_vision(self, use_camera: bool) -> Optional[_ConversationResult]:
+        """
+        Purpose: Send a vision request to backend for camera or screen captures.
+        Inputs/Outputs: use_camera flag; returns ConversationResult or None.
+        Edge cases: Returns None when capture fails or backend errors.
+        """
         if not self.backend_client:
             # //audit assumption: backend client optional; risk: missing backend; invariant: return None; strategy: warn and return None.
             self.console.print("[yellow]Backend is not configured.[/yellow]")
@@ -944,6 +1019,11 @@ class ArcanosCLI:
         )
 
     def _send_backend_update(self, update_type: str, data: Mapping[str, Any]) -> None:
+        """
+        Purpose: Send usage update events to the backend if enabled.
+        Inputs/Outputs: update_type + payload data; no return value.
+        Edge cases: No-op when backend updates are disabled or missing.
+        """
         if not Config.BACKEND_SEND_UPDATES:
             # //audit assumption: updates can be disabled; risk: missing telemetry; invariant: skip when disabled; strategy: return.
             return
@@ -970,101 +1050,6 @@ class ArcanosCLI:
         if response.ok:
             # //audit assumption: update succeeded; risk: none; invariant: no action needed; strategy: return.
             return
-
-    def _detect_domain_intent(self, message: str) -> Optional[str]:
-        """
-        Detect domain intent from user message for module routing.
-        Returns domain hint (e.g., "backstage:booker") or None for general conversation.
-        """
-        message_lower = message.lower()
-
-        # Simple keyword-based intent detection
-        # Can be enhanced with AI-based classification later
-        domain_keywords = {
-            "backstage:booker": ["book", "booking", "match", "wrestling", "wwe", "aew", "wrestler", "storyline", "event"],
-            "backstage": ["book", "booking", "match", "wrestling", "wwe", "aew"],
-            "tutor": ["tutor", "teach", "learn", "lesson", "education", "study"],
-            "arcanos:tutor": ["tutor", "teach", "learn", "lesson"],
-            "gaming": ["game", "gaming", "play", "player"],
-            "arcanos:gaming": ["game", "gaming"],
-            "research": ["research", "study", "analyze", "investigate"]
-        }
-
-        for domain, keywords in domain_keywords.items():
-            if any(keyword in message_lower for keyword in keywords):
-                return domain
-
-        return None
-
-    def _truncate_for_tts(self, text: str, max_chars: int = 600) -> str:
-        """
-        Purpose: Trim text for TTS playback to avoid overly long responses.
-        Inputs/Outputs: text and max_chars; returns a shortened string.
-        Edge cases: Returns empty string for blank input; uses sentence boundary when possible.
-        """
-        normalized = (text or "").strip()
-        if not normalized:
-            # //audit assumption: empty text should not be spoken; risk: confusing output; invariant: empty string; strategy: return empty.
-            return ""
-
-        if len(normalized) <= max_chars:
-            # //audit assumption: short text safe for TTS; risk: none; invariant: original text; strategy: return original.
-            return normalized
-
-        snippet = normalized[:max_chars]
-        last_sentence = max(snippet.rfind("."), snippet.rfind("!"), snippet.rfind("?"))
-        if last_sentence > 0:
-            # //audit assumption: sentence boundary improves clarity; risk: mid-sentence cut; invariant: end at punctuation; strategy: trim to boundary.
-            snippet = snippet[: last_sentence + 1].strip()
-        else:
-            # //audit assumption: no sentence boundary; risk: abrupt cut; invariant: trimmed length; strategy: keep max_chars slice.
-            snippet = snippet.strip()
-
-        if snippet.endswith("..."):
-            return snippet
-        return f"{snippet}..."
-
-    def _detect_run_see_intent(self, text: str) -> Optional[Tuple[str, Optional[str]]]:
-        """
-        Purpose: Detect run/see intents from natural language input.
-        Inputs/Outputs: raw text; returns ("run", command), ("see_screen", None), ("see_camera", None), or None.
-        Edge cases: Returns None for empty or unsupported inputs.
-        """
-        normalized = (text or "").strip()
-        if not normalized:
-            # //audit assumption: empty input has no intent; risk: false positives; invariant: None; strategy: return None.
-            return None
-
-        run_patterns = [
-            r"^\s*(run|execute)\s+(.+)$",
-            r"^\s*(can you|could you|please)\s+run\s+(.+)$",
-            r"^\s*(run|execute)\s+the\s+command\s+(.+)$"
-        ]
-
-        for pattern in run_patterns:
-            match = re.search(pattern, normalized, re.IGNORECASE)
-            if match:
-                # //audit assumption: regex groups contain command; risk: missing command; invariant: command extracted; strategy: use last group.
-                command = (match.groups()[-1] or "").strip()
-                command = re.sub(r"\s+(for me|please)$", "", command, flags=re.IGNORECASE).strip()
-                if command:
-                    # //audit assumption: command is non-empty; risk: accidental empty run; invariant: return run intent; strategy: return tuple.
-                    return ("run", command)
-
-        camera_pattern = r"\b(see\s+(my\s+)?camera|look\s+at\s+(my\s+)?camera|webcam|take\s+a\s+(photo|picture))\b"
-        if re.search(camera_pattern, normalized, re.IGNORECASE):
-            # //audit assumption: camera keywords imply camera intent; risk: false match; invariant: camera route; strategy: return camera intent.
-            return ("see_camera", None)
-
-        screen_pattern = (
-            r"\b(see\s+(my\s+)?screen|look\s+at\s+(my\s+)?screen|what('?s| is)\s+on\s+(my\s+)?screen|show\s+(me\s+)?my\s+screen|"
-            r"screenshot|take\s+a\s+screenshot|capture\s+(my\s+)?screen|analyze\s+(my\s+)?screen)\b"
-        )
-        if re.search(screen_pattern, normalized, re.IGNORECASE):
-            # //audit assumption: screen keywords imply screen intent; risk: false match; invariant: screen route; strategy: return screen intent.
-            return ("see_screen", None)
-
-        return None
 
     @handle_errors("processing user input")
     def handle_ask(
@@ -1112,7 +1097,7 @@ class ArcanosCLI:
                 )
 
         # Detect domain intent for natural language routing
-        domain = self._detect_domain_intent(message) if route_decision.route == "backend" else None
+        domain = detect_domain_intent(message, DOMAIN_KEYWORDS) if route_decision.route == "backend" else None
 
         result: Optional[_ConversationResult] = None
 
@@ -1170,7 +1155,7 @@ class ArcanosCLI:
         should_speak = speak_response or Config.SPEAK_RESPONSES
         if should_speak:
             # //audit assumption: TTS optional; risk: noisy output; invariant: speak only when enabled; strategy: gate on flag.
-            truncated = self._truncate_for_tts(result.response_text)
+            truncated = truncate_for_tts(result.response_text)
             if truncated:
                 # //audit assumption: truncated text may be empty; risk: silence; invariant: speak non-empty; strategy: guard.
                 self.audio.speak(truncated, wait=True)
@@ -1258,7 +1243,7 @@ class ArcanosCLI:
         self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
 
         if Config.SPEAK_RESPONSES:
-            truncated = self._truncate_for_tts(result.response_text)
+            truncated = truncate_for_tts(result.response_text)
             if truncated:
                 self.audio.speak(truncated, wait=True)
 
@@ -1328,7 +1313,11 @@ class ArcanosCLI:
 
     @handle_errors("starting push-to-talk")
     def handle_ptt(self) -> None:
-        """Start push-to-talk mode"""
+        """
+        Purpose: Start push-to-talk mode for voice capture.
+        Inputs/Outputs: None; blocks until user stops mode.
+        Edge cases: Returns early when dependencies are missing.
+        """
         if not PTT_AVAILABLE:
             self.console.print("[red]? Push-to-talk not available (missing dependencies)[/red]")
             return
@@ -1351,10 +1340,9 @@ class ArcanosCLI:
 
     def handle_ptt_speech(self, text: str, has_screenshot: bool) -> None:
         """
-        Callback for PTT speech detection
-        Args:
-            text: Recognized speech text
-            has_screenshot: Whether screenshot was requested
+        Purpose: Process recognized speech from PTT, with optional screenshot.
+        Inputs/Outputs: speech text + screenshot flag; prints and responds.
+        Edge cases: Skips vision analysis when screenshot capture fails.
         """
         self.console.print(f"\n[green]?? You said:[/green] {text}")
 
@@ -1371,7 +1359,7 @@ class ArcanosCLI:
                     self._last_response = response
                     self.rate_limiter.record_request(tokens, cost)
                     self.memory.increment_stat("vision_requests")
-                    truncated = self._truncate_for_tts(response)
+                    truncated = truncate_for_tts(response)
                     if truncated:
                         # //audit assumption: PTT expects spoken response; risk: noisy output; invariant: speak response; strategy: TTS when available.
                         self.audio.speak(truncated, wait=True)
@@ -1381,7 +1369,11 @@ class ArcanosCLI:
 
     @handle_errors("executing terminal command")
     def handle_run(self, command: str, return_result: bool = False) -> Optional[dict]:
-        """Execute terminal command"""
+        """
+        Purpose: Execute a terminal command via the terminal controller.
+        Inputs/Outputs: command string + return_result flag; prints output or returns dict.
+        Edge cases: Returns error dict when command is empty.
+        """
         self._append_activity("run", command)
         if not command:
             if not return_result:
@@ -1431,7 +1423,7 @@ class ArcanosCLI:
             self.console.print("[yellow]Nothing to speak yet.[/yellow]")
             return
 
-        truncated = self._truncate_for_tts(self._last_response)
+        truncated = truncate_for_tts(self._last_response)
         if not truncated:
             # //audit assumption: empty truncated text should not be spoken; risk: silence; invariant: warning; strategy: notify user.
             self.console.print("[yellow]Nothing to speak yet.[/yellow]")
@@ -1440,7 +1432,11 @@ class ArcanosCLI:
         self.audio.speak(truncated, wait=True)
 
     def handle_stats(self) -> None:
-        """Display usage statistics"""
+        """
+        Purpose: Display usage statistics for the current session.
+        Inputs/Outputs: None; prints a stats table.
+        Edge cases: None.
+        """
         stats = self.memory.get_statistics()
         rate_stats = self.rate_limiter.get_usage_stats()
         table = build_stats_table(
@@ -1453,23 +1449,39 @@ class ArcanosCLI:
         self.console.print(table)
 
     def handle_help(self) -> None:
-        """Display help message"""
+        """
+        Purpose: Display CLI help text.
+        Inputs/Outputs: None; prints help panel.
+        Edge cases: None.
+        """
         self.console.print(build_help_panel())
 
     def handle_clear(self) -> None:
-        """Clear conversation history"""
+        """
+        Purpose: Clear stored conversation history.
+        Inputs/Outputs: None; clears memory and prints confirmation.
+        Edge cases: None.
+        """
         self.memory.clear_conversations()
         self.console.print("[green]? Conversation history cleared[/green]")
 
     def handle_reset(self) -> None:
-        """Reset statistics"""
+        """
+        Purpose: Reset stored usage statistics.
+        Inputs/Outputs: None; prompts for confirmation before reset.
+        Edge cases: No changes when user declines.
+        """
         confirm = input("Reset all statistics? (y/n): ").lower().strip()
         if confirm == 'y':
             self.memory.reset_statistics()
             self.console.print("[green]? Statistics reset[/green]")
 
     def handle_update(self) -> None:
-        """Check for updates and display download information"""
+        """
+        Purpose: Check for updates and show manual download info.
+        Inputs/Outputs: None; prints update information.
+        Edge cases: No-op when repo is not configured.
+        """
         repo = Config.GITHUB_RELEASES_REPO or ""
         if not repo.strip():
             self.console.print("[yellow]Set GITHUB_RELEASES_REPO (owner/repo) to enable update checks.[/yellow]")
@@ -1498,7 +1510,11 @@ class ArcanosCLI:
             self.console.print(f"[yellow]Could not open browser: {e}[/yellow]")
 
     def run(self, debug_mode: bool = False) -> None:
-        """Main CLI loop"""
+        """
+        Purpose: Start the CLI loop in debug or interactive mode.
+        Inputs/Outputs: debug_mode flag; runs until exit.
+        Edge cases: None.
+        """
         if debug_mode:
             self._run_debug_mode()
         else:
@@ -1628,7 +1644,12 @@ class ArcanosCLI:
             self.handle_update()
         else:
             # Natural conversation
-            intent = self._detect_run_see_intent(user_input)
+            intent = detect_run_see_intent(
+                user_input,
+                RUN_COMMAND_PATTERNS,
+                CAMERA_INTENT_PATTERN,
+                SCREEN_INTENT_PATTERN,
+            )
             if intent:
                 intent_name, intent_payload = intent
                 if intent_name == "run" and intent_payload:
