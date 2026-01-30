@@ -28,17 +28,17 @@ def build_stats_table(
     table.add_column("Value", style="green")
 
     # //audit assumption: stats keys exist; risk: KeyError; invariant: rows follow schema; strategy: rely on Memory stats schema.
-    table.add_row("Total Requests", f"{stats['total_requests']:,}")
-    table.add_row("Total Tokens", f"{stats['total_tokens']:,}")
-    table.add_row("Total Cost", f"${stats['total_cost']:.4f}")
-    table.add_row("Vision Requests", f"{stats['vision_requests']:,}")
-    table.add_row("Voice Requests", f"{stats['voice_requests']:,}")
-    table.add_row("Terminal Commands", f"{stats['terminal_commands']:,}")
+    table.add_row("Total Requests", f"{stats.get('total_requests', 0):,}")
+    table.add_row("Total Tokens", f"{stats.get('total_tokens', 0):,}")
+    table.add_row("Total Cost", f"${stats.get('total_cost', 0.0):.4f}")
+    table.add_row("Vision Requests", f"{stats.get('vision_requests', 0):,}")
+    table.add_row("Voice Requests", f"{stats.get('voice_requests', 0):,}")
+    table.add_row("Terminal Commands", f"{stats.get('terminal_commands', 0):,}")
     table.add_row("", "")
     # //audit assumption: rate_stats keys exist; risk: KeyError; invariant: limits displayed; strategy: rely on RateLimiter schema.
-    table.add_row("Requests This Hour", f"{rate_stats['requests_this_hour']}/{max_requests_per_hour}")
-    table.add_row("Tokens Today", f"{rate_stats['tokens_today']:,}/{max_tokens_per_day:,}")
-    table.add_row("Cost Today", f"${rate_stats['cost_today']:.4f}/${max_cost_per_day:.2f}")
+    table.add_row("Requests This Hour", f"{rate_stats.get('requests_this_hour', 0)}/{max_requests_per_hour}")
+    table.add_row("Tokens Today", f"{rate_stats.get('tokens_today', 0):,}/{max_tokens_per_day:,}")
+    table.add_row("Cost Today", f"${rate_stats.get('cost_today', 0.0):.4f}/${max_cost_per_day:.2f}")
 
     return table
 
