@@ -146,7 +146,7 @@ Reviewed all documentation files for SDK usage examples.
 
 #### SDK Version Verification
 ```bash
-grep -r "v6\.15\.0\|v5\.16\.0" docs/ .github/ --include="*.md" | grep -v "AUDIT\|CHANGELOG\|legacy\|historical"
+grep -r "v6\.15\.0\|v5\.16\.0" docs/ .github/ --include="*.md" --exclude-dir={legacy,historical} --exclude="*AUDIT*" --exclude="*CHANGELOG*"
 ```
 **Result:** ✅ No outdated SDK version references found (except in historical/audit logs)
 
