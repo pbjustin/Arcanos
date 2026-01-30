@@ -93,4 +93,4 @@ def truncate_for_tts(text: str, max_chars: int = 600) -> str:
 
     if snippet.endswith("..."):
         return snippet
-    return f"{snippet}..."
+    return f"{snippet.rstrip('.?!')}..."
