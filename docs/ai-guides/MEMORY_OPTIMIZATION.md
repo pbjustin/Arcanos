@@ -23,9 +23,9 @@ The application has been configured with `--max-old-space-size=7168` (7GB) to ut
 ```json
 {
   "scripts": {
-    "start": "node --max-old-space-size=7168 dist/index.js",
-    "start:railway": "node --max-old-space-size=7168 dist/index.js",
-    "dev": "ts-node --max-old-space-size=7168 src/index.ts"
+    "start": "node --max-old-space-size=7168 dist/start-server.js",
+    "start:railway": "node --max-old-space-size=7168 dist/start-server.js",
+    "dev": "ts-node --max-old-space-size=7168 src/start-server.ts"
   }
 }
 ```
@@ -34,7 +34,7 @@ The application has been configured with `--max-old-space-size=7168` (7GB) to ut
 ```json
 {
   "deploy": {
-    "startCommand": "node --max-old-space-size=7168 dist/index.js"
+    "startCommand": "node --max-old-space-size=7168 dist/start-server.js"
   }
 }
 ```
@@ -43,20 +43,20 @@ The application has been configured with `--max-old-space-size=7168` (7GB) to ut
 ```json
 {
   "deploy": {
-    "startCommand": "node --max-old-space-size=7168 dist/index.js"
+    "startCommand": "node --max-old-space-size=7168 dist/start-server.js"
   }
 }
 ```
 
 #### 4. `Procfile`
 ```
-web: node --max-old-space-size=7168 dist/index.js
-worker: RUN_WORKERS=true node --max-old-space-size=7168 dist/index.js
+web: node --max-old-space-size=7168 dist/start-server.js
+worker: RUN_WORKERS=true node --max-old-space-size=7168 dist/start-server.js
 ```
 
 #### 5. `Dockerfile`
 ```dockerfile
-CMD ["node", "--max-old-space-size=7168", "dist/index.js"]
+CMD ["node", "--max-old-space-size=7168", "dist/start-server.js"]
 ```
 
 ### NPM Install Optimizations
