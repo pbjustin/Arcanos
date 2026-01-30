@@ -220,16 +220,17 @@ export const buildFinalOriginalRequestMessage = (prompt: string): string => {
  */
 export const buildFinalGpt5AnalysisMessage = (analysis: string): string => {
   const safeAnalysis = analysis?.trim() ? analysis.trim().replace(/<\/\s*analysis_output\s*>/gi, '') : 'No analysis provided.';
-  const prefix = loadPromptsConfig().arcanos.final_gpt5_analysis_prefix;
+  const prefix = loadPromptsConfig().arcanos?.final_gpt5_analysis_prefix ?? 'GPT-5.1 analysis:';
   return `${prefix}\n<analysis_output>\n${safeAnalysis}\n</analysis_output>`;
 };
 
 /**
  * Retrieve the final response instruction for the last stage of Trinity.
  * Inputs/Outputs: no inputs, returns the configured instruction string.
- * Edge cases: relies on fallback config when the prompts file is missing.
+ * Edge cases: relies on fallback config when the prompts file is missing; never returns null/undefined (OpenAI requires string content).
  */
-export const getFinalResponseInstruction = (): string => loadPromptsConfig().arcanos.final_response_instruction;
+export const getFinalResponseInstruction = (): string =>
+  loadPromptsConfig().arcanos?.final_response_instruction ?? 'Provide the final response to the user.';
 
 /**
  * Trinity pipeline messages (dry run, audit, pattern storage).

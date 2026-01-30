@@ -8,10 +8,6 @@ const mapMessagesToResponseInput = (
   messages: ChatCompletionMessageParam[]
 ): ChatCompletionMessageParam[] => messages;
 
-type GPT5Payload = ChatCompletionCreateParams & {
-  max_output_tokens?: number;
-};
-
 export const buildResponseRequestPayload = ({
   model,
   messages,
@@ -22,8 +18,8 @@ export const buildResponseRequestPayload = ({
   messages: ChatCompletionMessageParam[];
   tokenParams: TokenParameterResult;
   options: CallOpenAIOptions;
-}): GPT5Payload => {
-  const basePayload = prepareGPT5Request({
+}): ChatCompletionCreateParams => {
+  return prepareGPT5Request({
     model,
     messages: mapMessagesToResponseInput(messages),
     ...tokenParams,
@@ -34,14 +30,6 @@ export const buildResponseRequestPayload = ({
     ...(options.responseFormat !== undefined ? { response_format: options.responseFormat } : {}),
     ...(options.user !== undefined ? { user: options.user } : {})
   });
-
-  const payload: GPT5Payload = { ...basePayload };
-  //audit Assumption: GPT-5 variants accept max_output_tokens; Handling: mirror
-  if (payload.max_output_tokens === undefined && typeof payload.max_tokens === 'number') {
-    payload.max_output_tokens = payload.max_tokens;
-  }
-
-  return payload;
 };
 
 type ResponseOutput = ChatCompletion & {
