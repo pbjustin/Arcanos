@@ -3,6 +3,7 @@ import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
 import { getOpenAIAdapter } from '../../adapters/openai.adapter.js';
 import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
 import type { ChatCompletion } from './types.js';
+import type { TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
@@ -34,10 +35,8 @@ export async function createEmbedding(
       },
       audio: { 
         transcriptions: { 
-          create: async (params: Parameters<OpenAI['audio']['transcriptions']['create']>[0]) => {
-            // Ensure non-streaming by omitting stream property
-            const { stream: _stream, ...restParams } = params as Record<string, unknown>;
-            return client.audio.transcriptions.create(restParams as Parameters<OpenAI['audio']['transcriptions']['create']>[0]);
+          create: async (params: TranscriptionCreateParamsNonStreaming) => {
+            return client.audio.transcriptions.create(params);
           }
         } 
       },
