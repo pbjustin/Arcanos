@@ -8,7 +8,7 @@
  * Implements safety checks and audit logging as required by the system directive.
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { APPLICATION_CONSTANTS } from './constants.js';
 
 // Known models that require max_completion_tokens instead of max_tokens

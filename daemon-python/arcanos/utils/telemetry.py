@@ -296,7 +296,11 @@ def log_railway(
     
     # Sanitize metadata to prevent credential leakage
     sanitized_metadata = sanitize_sensitive_data(metadata or {}) if metadata else {}
-    is_production = os.getenv("NODE_ENV") == "production" or os.getenv("RAILWAY_ENVIRONMENT")
+    # Use Config for env access (adapter boundary pattern)
+    from ..config import Config
+    node_env = getattr(Config, "NODE_ENV", None) or os.getenv("NODE_ENV")
+    railway_env = getattr(Config, "RAILWAY_ENVIRONMENT", None) or os.getenv("RAILWAY_ENVIRONMENT")
+    is_production = node_env == "production" or bool(railway_env)
     
     if is_production:
         # Railway-compatible structured JSON logging
@@ -306,7 +310,7 @@ def log_railway(
             "message": message,
             **sanitized_metadata,
             "service": "arcanos-cli",
-            "environment": os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("NODE_ENV", "development")
+            "environment": railway_env or node_env or "development"
         }
         print(json.dumps(log_entry))
     else:

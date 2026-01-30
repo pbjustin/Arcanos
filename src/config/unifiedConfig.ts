@@ -90,16 +90,19 @@ export interface ValidationResult {
  * @param fallbacks - Fallback environment variable names (in priority order)
  * @returns Resolved value or undefined if not found
  */
+import { getEnv } from './env.js';
+
 export function getEnvVar(key: string, fallbacks?: string[]): string | undefined {
+  // Use env module for consistency (adapter boundary pattern)
   // Check primary key
-  const primaryValue = process.env[key];
+  const primaryValue = getEnv(key);
   if (primaryValue && primaryValue.trim().length > 0) {
     return primaryValue.trim();
   }
 
   // Check Railway-prefixed key
   const railwayKey = `RAILWAY_${key}`;
-  const railwayValue = process.env[railwayKey];
+  const railwayValue = getEnv(railwayKey);
   if (railwayValue && railwayValue.trim().length > 0) {
     return railwayValue.trim();
   }
@@ -107,7 +110,7 @@ export function getEnvVar(key: string, fallbacks?: string[]): string | undefined
   // Check fallback keys
   if (fallbacks && fallbacks.length > 0) {
     for (const fallback of fallbacks) {
-      const fallbackValue = process.env[fallback];
+      const fallbackValue = getEnv(fallback);
       if (fallbackValue && fallbackValue.trim().length > 0) {
         return fallbackValue.trim();
       }
@@ -123,10 +126,11 @@ export function getEnvVar(key: string, fallbacks?: string[]): string | undefined
  * @returns True if running on Railway
  */
 export function isRailwayEnvironment(): boolean {
+  // Use env module for consistency (adapter boundary pattern)
   return Boolean(
-    process.env.RAILWAY_ENVIRONMENT ||
-    process.env.RAILWAY_PROJECT_ID ||
-    process.env.RAILWAY_SERVICE_NAME
+    getEnv('RAILWAY_ENVIRONMENT') ||
+    getEnv('RAILWAY_PROJECT_ID') ||
+    getEnv('RAILWAY_SERVICE_NAME')
   );
 }
 

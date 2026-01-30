@@ -18,7 +18,7 @@
  * @module requestBuilders
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionResponseFormat, ImageSize } from './types.js';
 import { ARCANOS_ROUTING_MESSAGE } from './unifiedClient.js';
 import { getTokenParameter } from '../../utils/tokenParameterHelper.js';

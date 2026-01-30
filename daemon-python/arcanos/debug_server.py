@@ -79,11 +79,13 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         if path in ("/debug/health", "/debug/ready", "/debug/metrics"):
             return True
         
-        # If no token is configured, require explicit opt-in via environment variable
+        # If no token is configured, require explicit opt-in via Config
         if not Config.DEBUG_SERVER_TOKEN:
             # Allow unauthenticated access only if explicitly disabled (for development)
-            allow_unauth = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
-            if not allow_unauth:
+            # Use Config if available, fallback to env for backward compatibility
+            allow_unauth_env = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
+            # TODO: Add DEBUG_SERVER_ALLOW_UNAUTHENTICATED to Config class
+            if not allow_unauth_env:
                 self._send_response(401, error="DEBUG_SERVER_TOKEN not configured. Set DEBUG_SERVER_TOKEN environment variable for security.")
                 return False
             return True

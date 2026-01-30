@@ -4,9 +4,10 @@
  */
 
 import { query as dbQuery, logExecution } from '../db.js';
-import { getOpenAIClient, generateMockResponse } from '../services/openai.js';
+import { generateMockResponse } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
 import type { QueryResult } from 'pg';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 export interface WorkerContext {
   log: (message: string) => Promise<void>;
@@ -60,15 +61,18 @@ export function createWorkerContext(workerId: string): WorkerContext {
     ai: {
       ask: async (prompt: string) => {
         try {
-          const client = getOpenAIClient();
-          //audit Assumption: missing client should return mock response
-          if (!client) {
+          // Use adapter (adapter boundary pattern)
+          let adapter;
+          try {
+            adapter = getOpenAIAdapter();
+          } catch {
             // Return mock response when API key not available
             const mockResponse = generateMockResponse(prompt, 'ask');
             return mockResponse.result || 'Hello from the AI mock system!';
           }
 
-          // Use the trinity brain system for AI processing
+          // Use the trinity brain system for AI processing (pass adapter's client)
+          const client = adapter.getClient();
           const result = await runThroughBrain(client, prompt);
           return result.result;
         } catch (error: unknown) {

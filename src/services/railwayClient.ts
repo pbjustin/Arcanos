@@ -1,15 +1,17 @@
 import { getRailwayApiConfig, RAILWAY_DEFAULTS } from '../config/railway.js';
 import { logger } from '../utils/structuredLogging.js';
+import { getEnv } from '../config/env.js';
 
 const railwayApiConfig = getRailwayApiConfig();
 
+const graphqlTimeoutEnv = getEnv('RAILWAY_GRAPHQL_TIMEOUT_MS');
 if (
-  process.env.RAILWAY_GRAPHQL_TIMEOUT_MS &&
+  graphqlTimeoutEnv &&
   railwayApiConfig.timeoutMs === RAILWAY_DEFAULTS.GRAPHQL_TIMEOUT_MS &&
-  process.env.RAILWAY_GRAPHQL_TIMEOUT_MS.trim() !== `${RAILWAY_DEFAULTS.GRAPHQL_TIMEOUT_MS}`
+  graphqlTimeoutEnv.trim() !== `${RAILWAY_DEFAULTS.GRAPHQL_TIMEOUT_MS}`
 ) {
   logger.warn('Ignoring invalid RAILWAY_GRAPHQL_TIMEOUT_MS value', {
-    rawTimeout: process.env.RAILWAY_GRAPHQL_TIMEOUT_MS,
+    rawTimeout: graphqlTimeoutEnv,
   });
 }
 
@@ -83,7 +85,8 @@ function truncate(value: string, maxLength = 300): string {
 }
 
 function getToken(): string | null {
-  const token = process.env.RAILWAY_API_TOKEN?.trim();
+  // Use config layer for env access (adapter boundary pattern)
+  const token = getEnv('RAILWAY_API_TOKEN')?.trim();
   return token ? token : null;
 }
 

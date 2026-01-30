@@ -1,10 +1,17 @@
 // arcanosQueryGuard.ts
 // Unified domain guard + OpenAI SDK dispatcher with TypeScript support
 
-import { getOpenAIClient, getDefaultModel } from "./openai.js";
+import { getDefaultModel } from "./openai.js";
+import { getOpenAIAdapter } from "../adapters/openai.adapter.js";
 
-// ✅ Use centralized OpenAI client for consistency
-const openai = getOpenAIClient();
+// ✅ Use centralized OpenAI adapter for consistency (adapter boundary pattern)
+let adapter;
+try {
+  adapter = getOpenAIAdapter();
+} catch {
+  adapter = null;
+}
+const openai = adapter?.getClient() || null;
 
 // ----------------------
 // Domain / Category Types
@@ -101,11 +108,11 @@ function buildMessages(query: GuardedQuery) {
 export async function dispatchQuery(rawQuery: QueryInput): Promise<string> {
   const safeQuery = guardQuery(rawQuery);
 
-  if (!openai) {
-    throw new Error('OpenAI client not available');
+  if (!adapter || !openai) {
+    throw new Error('OpenAI adapter not available');
   }
 
-  const response = await openai.chat.completions.create({
+  const response = await adapter.chat.completions.create({
     model: getDefaultModel(),
     messages: buildMessages(safeQuery),
     temperature: 0.1,

@@ -1,3 +1,5 @@
+import { getEnv, getEnvNumber } from './env.js';
+
 export interface RailwayApiConfig {
   endpoint: string;
   timeoutMs: number;
@@ -18,9 +20,12 @@ function parseTimeout(rawTimeout: string | undefined): number {
 }
 
 export function getRailwayApiConfig(): RailwayApiConfig {
+  // Use config layer for env access (adapter boundary pattern)
+  const endpointEnv = getEnv('RAILWAY_GRAPHQL_ENDPOINT');
+  const timeoutEnv = getEnv('RAILWAY_GRAPHQL_TIMEOUT_MS');
   return {
-    endpoint: process.env.RAILWAY_GRAPHQL_ENDPOINT?.trim() || DEFAULT_GRAPHQL_ENDPOINT,
-    timeoutMs: parseTimeout(process.env.RAILWAY_GRAPHQL_TIMEOUT_MS),
+    endpoint: endpointEnv?.trim() || DEFAULT_GRAPHQL_ENDPOINT,
+    timeoutMs: parseTimeout(timeoutEnv),
   };
 }
 

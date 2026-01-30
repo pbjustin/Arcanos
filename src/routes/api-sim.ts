@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import OpenAI from 'openai';
 import { createCentralizedCompletion } from '../services/openai.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';

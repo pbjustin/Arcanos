@@ -1,14 +1,14 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import OpenAI from 'openai';
 import { fetchAndClean } from './webFetcher.js';
 import {
   createCentralizedCompletion,
-  getOpenAIClient,
   getDefaultModel
 } from './openai.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { setMemory } from './memory.js';
 import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from '../config/researchPrompts.js';
+import { getEnvNumber, getEnv } from '../config/env.js';
 
 export interface ResearchSourceSummary {
   url: string;
@@ -25,10 +25,10 @@ export interface ResearchResult {
   model: string;
 }
 
-const MAX_CONTENT_CHARS = parseInt(process.env.RESEARCH_MAX_CONTENT_CHARS ?? '6000', 10);
+const MAX_CONTENT_CHARS = getEnvNumber('RESEARCH_MAX_CONTENT_CHARS', 6000);
 
 function resolveResearchModel(): string {
-  const configuredModel = process.env.RESEARCH_MODEL_ID?.trim();
+  const configuredModel = getEnv('RESEARCH_MODEL_ID')?.trim();
   return configuredModel && configuredModel.length > 0 ? configuredModel : getDefaultModel();
 }
 
@@ -97,8 +97,16 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   }
 
   const generatedAt = new Date().toISOString();
-  const client = getOpenAIClient();
-  const useMock = !client || process.env.OPENAI_API_KEY === 'test_key_for_mocking';
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    adapter = null;
+  }
+  // Use config for mock detection (adapter boundary pattern)
+  const apiKey = getEnv('OPENAI_API_KEY');
+  const useMock = !adapter || apiKey === 'test_key_for_mocking';
   const researchModel = resolveResearchModel();
 
   //audit Assumption: mock mode when client missing or test key

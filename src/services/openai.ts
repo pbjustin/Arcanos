@@ -1,5 +1,34 @@
-import OpenAI from 'openai';
+import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import type OpenAI from 'openai';
+import type { ChatCompletionMessageParam, ChatCompletion } from '../services/openai/types.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+
+/**
+ * Helper to get OpenAI client (adapter preferred, legacy fallback)
+ * This allows gradual migration to adapter pattern
+ */
+function getOpenAIClientOrAdapter(): { adapter: OpenAIAdapter | null; client: OpenAI | null } {
+  // Try adapter first (preferred)
+  try {
+    const adapter = getOpenAIAdapter();
+    return { adapter, client: adapter.getClient() };
+  } catch {
+    // Fallback to legacy client for backward compatibility
+    const client = getOrCreateClient();
+    if (!client) {
+      return { adapter: null, client: null };
+    }
+    // Create adapter wrapper for legacy client (temporary bridge)
+    const adapter: OpenAIAdapter = {
+      chat: { completions: { create: (params) => client.chat.completions.create(params) } },
+      embeddings: { create: (params) => client.embeddings.create(params) },
+      audio: { transcriptions: { create: (params) => client.audio.transcriptions.create(params) } },
+      getClient: () => client
+    };
+    return { adapter, client };
+  }
+}
 import { generateRequestId } from '../utils/idGenerator.js';
 import { responseCache } from '../utils/cache.js';
 import { aiLogger } from '../utils/structuredLogging.js';
@@ -89,7 +118,7 @@ export async function callOpenAI(
   useCache: boolean = true,
   options: CallOpenAIOptions = {}
 ): Promise<CallOpenAIResult> {
-  const client = getOrCreateClient();
+  const { adapter } = getOpenAIClientOrAdapter();
 
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const baseMetadata = options.metadata ?? {};
@@ -190,7 +219,7 @@ export async function callOpenAI(
   try {
     result = await withRetry(
       async () => {
-        return await makeOpenAIRequest(client, model, preparedMessages, tokenLimit, options);
+        return await makeOpenAIRequest(adapter, model, preparedMessages, tokenLimit, options);
       },
       {
         maxRetries: DEFAULT_MAX_RETRIES,
@@ -232,7 +261,7 @@ export async function callOpenAI(
  * Implements error taxonomy with specialized handling for different error types
  */
 async function makeOpenAIRequest(
-  client: OpenAI,
+  adapter: OpenAIAdapter | null,
   model: string,
   messages: ChatCompletionMessageParam[],
   tokenLimit: number,
@@ -268,7 +297,14 @@ async function makeOpenAIRequest(
 
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(1, 1, model));
 
-    // OpenAI SDK runtime supports custom headers even if types don't explicitly include them
+    if (!adapter) {
+      throw new Error('OpenAI adapter not available');
+    }
+
+    // Use adapter for OpenAI calls (adapter boundary pattern)
+    // Note: Adapter doesn't support signal/headers yet, so we use getClient() for now
+    // TODO: Extend adapter interface to support signal/headers
+    const client = adapter.getClient();
     const response = await client.chat.completions.create(nonStreamingPayload, {
       signal: controller.signal,
       // Add request ID for tracing
@@ -320,11 +356,11 @@ const extractReasoningText = (response: ChatCompletion, fallback: string = REASO
  * Used by both core logic and workers
  */
 export const createGPT5Reasoning = async (
-  client: OpenAI | null,
+  clientOrAdapter: OpenAI | OpenAIAdapter | null,
   prompt: string,
   systemPrompt?: string
 ): Promise<{ content: string; model?: string; error?: string }> => {
-  if (!client) {
+  if (!clientOrAdapter) {
     return { content: '[Fallback: GPT-5.1 unavailable - no OpenAI client]', error: 'No OpenAI client' };
   }
 
@@ -343,7 +379,10 @@ export const createGPT5Reasoning = async (
       ...tokenParams
     };
 
-    const response = await client.chat.completions.create(requestPayload);
+    // Support both adapter and legacy client
+    const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
+      ? await clientOrAdapter.chat.completions.create(requestPayload)
+      : await (clientOrAdapter as OpenAI).chat.completions.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const content = extractReasoningText(response);
@@ -365,7 +404,7 @@ export const createGPT5Reasoning = async (
  * Implements the layered approach: ARCANOS -> GPT-5.1 reasoning -> refined output
  */
 export const createGPT5ReasoningLayer = async (
-  client: OpenAI | null,
+  clientOrAdapter: OpenAI | OpenAIAdapter | null,
   arcanosResult: string,
   originalPrompt: string,
   context?: string
@@ -376,7 +415,7 @@ export const createGPT5ReasoningLayer = async (
   model?: string;
   error?: string
 }> => {
-  if (!client) {
+  if (!clientOrAdapter) {
     return { 
       refinedResult: arcanosResult, 
       reasoningUsed: false, 
@@ -402,7 +441,10 @@ export const createGPT5ReasoningLayer = async (
       temperature: REASONING_TEMPERATURE
     };
 
-    const response = await client.chat.completions.create(requestPayload);
+    // Support both adapter and legacy client
+    const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
+      ? await clientOrAdapter.chat.completions.create(requestPayload)
+      : await (clientOrAdapter as OpenAI).chat.completions.create(requestPayload);
     const resolvedModel = ensureModelMatchesExpectation(response, gpt5Model);
 
     const reasoningContent = extractReasoningText(response);
@@ -444,7 +486,7 @@ export async function call_gpt5_strict(
   prompt: string, 
   kwargs: Partial<ChatCompletionCreateParams> = {}
 ): Promise<ChatCompletion> {
-  const client = getOrCreateClient();
+  const { client } = getOpenAIClientOrAdapter();
   if (!client) {
     throw new Error("GPT-5.1 call failed — no fallback allowed. OpenAI client not available.");
   }
@@ -508,7 +550,7 @@ export async function generateImage(
   input: string,
   size: ImageSize = DEFAULT_IMAGE_SIZE
 ): Promise<{ image: string; prompt: string; meta: { id: string; created: number }; error?: string }> {
-  const client = getOrCreateClient();
+  const { client } = getOpenAIClientOrAdapter();
   if (!client) {
     const mock = generateMockResponse(input, 'image');
     return { image: '', prompt: input, meta: mock.meta, error: mock.error };
@@ -561,7 +603,7 @@ export async function generateImage(
  * @returns Promise resolving to OpenAI chat completion response or stream
  */
 export async function createCentralizedCompletion(
-  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  messages: ChatCompletionMessageParam[],
   options: {
     model?: string;
     max_tokens?: number;
@@ -571,8 +613,8 @@ export async function createCentralizedCompletion(
     frequency_penalty?: number;
     presence_penalty?: number;
   } = {}
-): Promise<OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-  const client = getOrCreateClient();
+): Promise<ChatCompletion | AsyncIterable<unknown>> {
+  const { client } = getOpenAIClientOrAdapter();
   if (!client) {
     throw new Error('OpenAI client not initialized - API key required');
   }
@@ -581,7 +623,7 @@ export async function createCentralizedCompletion(
   const model = options.model || getDefaultModel();
   
   // Prepend ARCANOS routing system message to ensure proper handling
-  const arcanosMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+  const arcanosMessages: ChatCompletionMessageParam[] = [
     { role: 'system', content: ARCANOS_ROUTING_MESSAGE },
     ...messages
   ];

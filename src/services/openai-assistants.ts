@@ -1,9 +1,9 @@
 import type OpenAI from 'openai';
 import fs from 'fs/promises';
-import { getOpenAIClient } from './openai.js';
 import config from '../config/index.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { writeJsonFile } from '../utils/fileStorage.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 export interface AssistantInfo {
   id: string;
@@ -29,7 +29,14 @@ const REGISTRY_PATH = config.assistantSync.registryPath;
  * Fetch all assistants from OpenAI with pagination support.
  */
 export async function getAllAssistants(): Promise<AssistantInfo[]> {
-  const client = getOpenAIClient();
+  // Use adapter (assistants API not yet in adapter, so use getClient())
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    throw new Error('OpenAI adapter not initialized');
+  }
+  const client = adapter.getClient();
   if (!client) throw new Error('OpenAI client not initialized');
 
   const assistants: AssistantInfo[] = [];

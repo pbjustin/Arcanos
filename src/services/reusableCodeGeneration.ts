@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { getDefaultModel } from './openai/credentialProvider.js';
 
 export type ReusableCodeTarget = 'all' | 'asyncHandler' | 'errorResponse' | 'idGenerator';

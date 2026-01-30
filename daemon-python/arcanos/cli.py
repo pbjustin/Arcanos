@@ -21,7 +21,7 @@ from rich.markdown import Markdown
 from rich import print as rprint
 from collections import deque
 
-from .config import Config
+from .config import Config, validate_required_config
 from .backend_client import BackendApiClient, BackendResponse, BackendRequestError
 from .cli_constants import (
     DEFAULT_ACTIVITY_HISTORY_LIMIT,
@@ -131,11 +131,15 @@ class ArcanosCLI:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._command_poll_thread: Optional[threading.Thread] = None
         self._daemon_running = False
+        # Use Config if available, fallback to env (adapter boundary pattern)
+        # TODO: Add these to Config class
+        heartbeat_env = os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS")
         self._heartbeat_interval = int(
-            os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", str(DEFAULT_HEARTBEAT_INTERVAL_SECONDS))
+            heartbeat_env if heartbeat_env else str(DEFAULT_HEARTBEAT_INTERVAL_SECONDS)
         )  # Default: 60s to reduce backend load
+        poll_env = os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS")
         self._command_poll_interval = int(
-            os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", str(DEFAULT_COMMAND_POLL_INTERVAL_SECONDS))
+            poll_env if poll_env else str(DEFAULT_COMMAND_POLL_INTERVAL_SECONDS)
         )  # Default: 30s (was 10s) to reduce backend load
 
         try:
@@ -1691,6 +1695,9 @@ def main() -> None:
         print(f"Credential setup failed: {e}")
         print(f"Crash reports are saved to: {Config.CRASH_REPORTS_DIR}")
         sys.exit(1)
+
+    # Fail-fast validation after bootstrap (ensures all required config is valid)
+    validate_required_config(exit_on_error=True)
 
     # //audit assumption: debug flag toggles mode; risk: unexpected behavior; invariant: boolean flag; strategy: parse argv.
     debug_mode = "--debug-mode" in sys.argv

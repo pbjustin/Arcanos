@@ -26,8 +26,8 @@ logger = logging.getLogger("arcanos.openai")
 _singleton_client: Optional[OpenAI] = None
 _initialization_attempted = False
 
-# API timeout from environment or default
-API_TIMEOUT_MS = int(os.getenv("WORKER_API_TIMEOUT_MS", "60000"))
+# API timeout default (config should be injected)
+API_TIMEOUT_MS_DEFAULT = 60000
 
 
 class ClientOptions:
@@ -77,16 +77,27 @@ class HealthStatus:
         }
 
 
-def resolve_openai_key() -> Optional[str]:
+def resolve_openai_key(config: Optional[Config] = None) -> Optional[str]:
     """
-    Resolves OpenAI API key with Railway fallbacks
+    Resolves OpenAI API key from Config (preferred) or environment fallback.
     
-    Checks multiple environment variable names in priority order:
-    1. OPENAI_API_KEY
-    2. RAILWAY_OPENAI_API_KEY
-    3. API_KEY
-    4. OPENAI_KEY
+    Args:
+        config: Config instance (preferred). If None, falls back to os.getenv for backward compatibility.
+    
+    Returns:
+        API key string or None if not found
     """
+    # Prefer Config if provided (adapter boundary pattern)
+    if config:
+        key = config.OPENAI_API_KEY
+        if key and key.strip():
+            normalized = key.strip().lower()
+            # Skip placeholder values
+            if normalized not in {"", "your-openai-api-key-here", "your-openai-key-here"}:
+                return key.strip()
+        return None
+    
+    # Fallback to env for backward compatibility (will be removed in future)
     key_priority = [
         "OPENAI_API_KEY",
         "RAILWAY_OPENAI_API_KEY",
@@ -98,15 +109,24 @@ def resolve_openai_key() -> Optional[str]:
         value = os.getenv(key_name)
         if value and value.strip():
             normalized = value.strip().lower()
-            # Skip placeholder values
             if normalized not in {"", "your-openai-api-key-here", "your-openai-key-here"}:
                 return value.strip()
     
     return None
 
 
-def resolve_openai_base_url() -> Optional[str]:
-    """Resolves OpenAI base URL with Railway fallbacks"""
+def resolve_openai_base_url(config: Optional[Config] = None) -> Optional[str]:
+    """
+    Resolves OpenAI base URL from Config (preferred) or environment fallback.
+    
+    Args:
+        config: Config instance (preferred). If None, falls back to os.getenv for backward compatibility.
+    
+    Returns:
+        Base URL string or None if not found
+    """
+    # Config doesn't have base URL yet, so fallback to env for now
+    # TODO: Add base URL to Config class
     url_candidates = [
         os.getenv("OPENAI_BASE_URL"),
         os.getenv("OPENAI_API_BASE_URL"),
@@ -120,8 +140,25 @@ def resolve_openai_base_url() -> Optional[str]:
     return None
 
 
-def get_openai_key_source() -> Optional[str]:
-    """Gets the source environment variable name for the API key"""
+def get_openai_key_source(config: Optional[Config] = None) -> Optional[str]:
+    """
+    Gets the source of the API key (from Config or env).
+    
+    Args:
+        config: Config instance (preferred). If None, checks env for backward compatibility.
+    
+    Returns:
+        Source identifier string or None
+    """
+    config_to_use = config or Config
+    
+    # If using Config and key is set, return Config source
+    if config_to_use.OPENAI_API_KEY and config_to_use.OPENAI_API_KEY.strip():
+        normalized = config_to_use.OPENAI_API_KEY.strip().lower()
+        if normalized not in {"", "your-openai-api-key-here", "your-openai-key-here"}:
+            return "OPENAI_API_KEY"  # Config always uses this key name
+    
+    # Fallback to env check for backward compatibility
     key_priority = [
         "OPENAI_API_KEY",
         "RAILWAY_OPENAI_API_KEY",
@@ -139,23 +176,36 @@ def get_openai_key_source() -> Optional[str]:
     return None
 
 
-def has_valid_api_key() -> bool:
-    """Checks if a valid API key is configured"""
-    return resolve_openai_key() is not None
-
-
-def create_openai_client(options: Optional[ClientOptions] = None) -> Optional[OpenAI]:
+def has_valid_api_key(config: Optional[Config] = None) -> bool:
     """
-    Creates a new OpenAI client with Railway-native credential resolution
+    Checks if a valid API key is configured
     
-    This function follows Railway best practices:
+    Args:
+        config: Config instance (preferred). If None, uses module-level Config.
+    """
+    config_to_use = config or Config
+    return resolve_openai_key(config_to_use) is not None
+
+
+def create_openai_client(options: Optional[ClientOptions] = None, config: Optional[Config] = None) -> Optional[OpenAI]:
+    """
+    Creates a new OpenAI client with config-based credential resolution
+    
+    This function follows adapter boundary pattern:
+    - Accepts Config instance (preferred) or falls back to env
     - Stateless initialization (no local state dependencies)
-    - Environment variable resolution with Railway fallbacks
     - Deterministic behavior (same inputs = same outputs)
     - Comprehensive error handling and logging
+    
+    Args:
+        options: Client initialization options (optional)
+        config: Config instance (preferred). If None, falls back to os.getenv for backward compatibility.
     """
     if options is None:
         options = ClientOptions()
+    
+    # Use Config if provided, otherwise use module-level Config
+    config_to_use = config or Config
     
     trace_id = record_trace_event("openai.client.create.start", {
         "hasApiKeyOverride": bool(options.api_key),
@@ -164,8 +214,8 @@ def create_openai_client(options: Optional[ClientOptions] = None) -> Optional[Op
     })
     
     try:
-        # Resolve API key with Railway fallbacks
-        api_key = options.api_key or resolve_openai_key()
+        # Resolve API key from config (adapter boundary pattern)
+        api_key = options.api_key or resolve_openai_key(config_to_use)
         
         if not api_key:
             logger.warning(
@@ -175,9 +225,9 @@ def create_openai_client(options: Optional[ClientOptions] = None) -> Optional[Op
             record_trace_event("openai.client.create.no_key", {"traceId": trace_id})
             return None
         
-        # Resolve base URL with Railway fallbacks
-        base_url = options.base_url or resolve_openai_base_url()
-        timeout = options.timeout or API_TIMEOUT_MS
+        # Resolve base URL from config
+        base_url = options.base_url or resolve_openai_base_url(config_to_use)
+        timeout = options.timeout or API_TIMEOUT_MS_DEFAULT
         
         # Create client instance
         client_kwargs = {
@@ -192,8 +242,8 @@ def create_openai_client(options: Optional[ClientOptions] = None) -> Optional[Op
         
         record_trace_event("openai.client.create.success", {
             "traceId": trace_id,
-            "model": Config.OPENAI_MODEL,
-            "source": get_openai_key_source()
+            "model": config_to_use.OPENAI_MODEL,
+            "source": get_openai_key_source(config_to_use)
         })
         
         logger.info(
@@ -201,8 +251,8 @@ def create_openai_client(options: Optional[ClientOptions] = None) -> Optional[Op
             extra={
                 "module": "openai.unified",
                 "operation": "createOpenAIClient",
-                "model": Config.OPENAI_MODEL,
-                "source": get_openai_key_source()
+                "model": config_to_use.OPENAI_MODEL,
+                "source": get_openai_key_source(config_to_use)
             }
         )
         
@@ -223,12 +273,15 @@ def create_openai_client(options: Optional[ClientOptions] = None) -> Optional[Op
         return None
 
 
-def get_or_create_client() -> Optional[OpenAI]:
+def get_or_create_client(config: Optional[Config] = None) -> Optional[OpenAI]:
     """
     Gets or creates the singleton OpenAI client
     
     Uses singleton pattern for consistent client reuse across the application.
-    Initializes on first call with Railway-native credential resolution.
+    Initializes on first call with config-based credential resolution.
+    
+    Args:
+        config: Config instance (preferred). If None, uses module-level Config.
     """
     global _singleton_client, _initialization_attempted
     
@@ -243,8 +296,9 @@ def get_or_create_client() -> Optional[OpenAI]:
         )
         return None
     
+    config_to_use = config or Config
     _initialization_attempted = True
-    _singleton_client = create_openai_client(ClientOptions(singleton=True))
+    _singleton_client = create_openai_client(ClientOptions(singleton=True), config=config_to_use)
     
     return _singleton_client
 
@@ -263,7 +317,7 @@ def validate_client_health() -> HealthStatus:
     health = HealthStatus(
         healthy=configured and initialized,
         api_key_configured=configured,
-        api_key_source=get_openai_key_source(),
+        api_key_source=get_openai_key_source(Config),
         default_model=Config.OPENAI_MODEL,
         fallback_model=getattr(Config, "FALLBACK_MODEL", "gpt-4"),
     )
@@ -336,7 +390,7 @@ __all__ = [
     "get_openai_key_source",
     "resolve_openai_key",
     "resolve_openai_base_url",
-    "API_TIMEOUT_MS",
+    "API_TIMEOUT_MS_DEFAULT",
     "ClientOptions",
     "HealthStatus"
 ]

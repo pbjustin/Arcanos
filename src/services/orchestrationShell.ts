@@ -4,8 +4,10 @@
  * Integrates with existing ARCANOS infrastructure
  */
 
-import { getOpenAIClient, getGPT5Model, call_gpt5_strict } from './openai.js';
+import { getGPT5Model, call_gpt5_strict } from './openai.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { generateRequestId } from '../utils/idGenerator.js';
+import { getEnv } from '../config/env.js';
 import {
   ISOLATE_MODULE_PROMPT,
   PURGE_MEMORY_PROMPT,
@@ -44,19 +46,21 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
   logs.push("🔄 Starting GPT-5.1 Orchestration Shell purge...");
   console.log("🔄 Starting GPT-5.1 Orchestration Shell purge...");
 
-  // Get OpenAI client using existing infrastructure
-  const client = getOpenAIClient();
-  if (!client) {
+  // Get OpenAI adapter using existing infrastructure (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
     const errorResult: OrchestrationResult = {
       success: false,
-      message: "OpenAI client not available - check OPENAI_API_KEY configuration",
+      message: "OpenAI adapter not available - check OPENAI_API_KEY configuration",
       meta: {
         timestamp: new Date().toISOString(),
         stages: ["FAILED_INITIALIZATION"],
         gpt5Model: getGPT5Model(),
         safeguardsApplied: false
       },
-      logs: ["❌ OpenAI client initialization failed"]
+      logs: ["❌ OpenAI adapter initialization failed"]
     };
     return errorResult;
   }
@@ -188,7 +192,8 @@ export async function getOrchestrationShellStatus(): Promise<{
   return {
     active: !!client,
     model: getGPT5Model(),
-    lastReset: process.env.ORCHESTRATION_LAST_RESET,
+    // Use config layer for env access (adapter boundary pattern)
+    lastReset: getEnv('ORCHESTRATION_LAST_RESET'),
     memoryEntries: memoryContext.relevantEntries.length
   };
 }

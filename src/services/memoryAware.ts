@@ -8,6 +8,7 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import { generateRequestId } from '../utils/idGenerator.js';
+import { getEnv } from '../config/env.js';
 
 export interface MemoryEntry {
   id: string;
@@ -36,7 +37,8 @@ export interface MemoryContext {
 }
 
 // Memory storage paths
-const MEMORY_DIR = process.env.ARC_MEMORY_PATH || '/tmp/arc/memory';
+// Use config layer for env access (adapter boundary pattern)
+const MEMORY_DIR = getEnv('ARC_MEMORY_PATH') || '/tmp/arc/memory';
 // Ensure memory directory exists at runtime
 mkdirSync(MEMORY_DIR, { recursive: true });
 const MEMORY_INDEX_FILE = join(MEMORY_DIR, 'index.json');

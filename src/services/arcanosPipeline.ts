@@ -1,6 +1,7 @@
-import OpenAI from 'openai';
-import { getDefaultModel, getGPT5Model, getOpenAIClient } from './openai.js';
+import type OpenAI from 'openai';
+import { getDefaultModel, getGPT5Model } from './openai.js';
 import { ARCANOS_PIPELINE_PROMPTS } from '../config/arcanosPipelinePrompts.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 const ARC_V2 = getDefaultModel();
 const ARC_V2_FALLBACK = 'gpt-4o-mini';
@@ -22,20 +23,26 @@ export interface PipelineResult {
 export async function executeArcanosPipeline(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]
 ): Promise<PipelineResult> {
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    throw new Error('OpenAI adapter not available');
+  }
 
-  if (!client) {
-    throw new Error('OpenAI client not available');
+  if (!adapter) {
+    throw new Error('OpenAI adapter not available');
   }
 
   try {
-    const arcFirst = await client.chat.completions.create({
+    const arcFirst = await adapter.chat.completions.create({
       model: ARC_V2,
       messages
     });
     const arcFirstOutput = arcFirst.choices[0].message;
 
-    const subAgentResp = await client.chat.completions.create({
+    const subAgentResp = await adapter.chat.completions.create({
       model: GPT35_SUBAGENT,
       messages: [
         { role: 'system', content: ARCANOS_PIPELINE_PROMPTS.subAgent },
@@ -44,7 +51,7 @@ export async function executeArcanosPipeline(
     });
     const subAgentOutput = subAgentResp.choices[0].message;
 
-    const gpt5Response = await client.chat.completions.create({
+    const gpt5Response = await adapter.chat.completions.create({
       model: GPT5,
       messages: [
         { role: 'system', content: ARCANOS_PIPELINE_PROMPTS.overseer },
@@ -54,7 +61,7 @@ export async function executeArcanosPipeline(
     });
     const gpt5Reasoning = gpt5Response.choices[0].message;
 
-    const arcFinal = await client.chat.completions.create({
+    const arcFinal = await adapter.chat.completions.create({
       model: ARC_V2,
       messages: [
         ...messages,
@@ -76,7 +83,7 @@ export async function executeArcanosPipeline(
     };
   } catch (err) {
     console.warn('Primary ARCANOS pipeline failed, using fallback model', err);
-    const fallback = await client.chat.completions.create({
+    const fallback = await adapter.chat.completions.create({
       model: ARC_V2_FALLBACK,
       messages
     });

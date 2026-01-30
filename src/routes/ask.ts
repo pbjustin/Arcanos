@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import OpenAI from 'openai';
 import { runThroughBrain } from '../logic/trinity.js';
 import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
@@ -16,6 +15,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { createPendingDaemonActions, queueDaemonCommandForInstance } from './api-daemon.js';
 import { getDefaultModel } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import config from '../config/index.js';
 
 const router = express.Router();
 
@@ -24,7 +24,8 @@ router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
 
 const ASK_TEXT_FIELDS = ['prompt', 'userInput', 'content', 'text', 'query'] as const;
-const CONFIRM_SENSITIVE_DAEMON_ACTIONS = process.env.CONFIRM_SENSITIVE_DAEMON_ACTIONS !== 'false';
+// Get from config (defaults to true if not explicitly false)
+const CONFIRM_SENSITIVE_DAEMON_ACTIONS = config.fallback?.preemptive !== false;
 
 // Enhanced validation schema for ask requests that accepts multiple text field aliases
 const askValidationSchema = {

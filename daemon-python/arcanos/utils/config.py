@@ -15,7 +15,10 @@ logger = logging.getLogger("arcanos.config")
 
 def get_env_var(key: str, fallbacks: Optional[List[str]] = None) -> Optional[str]:
     """
-    Resolves environment variable with Railway fallbacks
+    Resolves environment variable with Railway fallbacks.
+    
+    DEPRECATED: Use Config class directly instead of this function.
+    This function is kept for backward compatibility but should be migrated to Config.
     
     Checks multiple environment variable names in priority order:
     1. Primary variable name
@@ -24,7 +27,11 @@ def get_env_var(key: str, fallbacks: Optional[List[str]] = None) -> Optional[str
     
     This ensures Railway-native configuration resolution.
     """
-    # Check primary key
+    # Prefer Config for known keys (adapter boundary pattern)
+    if key == "OPENAI_API_KEY":
+        return Config.OPENAI_API_KEY if Config.OPENAI_API_KEY else None
+    
+    # Fallback to os.getenv for backward compatibility (will be removed)
     primary_value = os.getenv(key)
     if primary_value and primary_value.strip():
         return primary_value.strip()
@@ -47,11 +54,16 @@ def get_env_var(key: str, fallbacks: Optional[List[str]] = None) -> Optional[str
 
 def is_railway_environment() -> bool:
     """
-    Checks if running in Railway environment
+    Checks if running in Railway environment.
+    
+    DEPRECATED: Use Config class or check Railway env vars directly.
+    This function is kept for backward compatibility.
     
     Returns:
         True if running on Railway
     """
+    # Use Config if available, fallback to env check
+    # Note: Config doesn't expose isRailway yet, so check env directly
     return bool(
         os.getenv("RAILWAY_ENVIRONMENT") or
         os.getenv("RAILWAY_PROJECT_ID") or
@@ -60,7 +72,16 @@ def is_railway_environment() -> bool:
 
 
 def resolve_openai_key() -> Optional[str]:
-    """Resolves OpenAI API key with Railway fallbacks"""
+    """
+    Resolves OpenAI API key from Config (preferred) or Railway fallbacks.
+    
+    DEPRECATED: Use Config.OPENAI_API_KEY directly instead.
+    """
+    # Prefer Config (adapter boundary pattern)
+    if Config.OPENAI_API_KEY:
+        return Config.OPENAI_API_KEY
+    
+    # Fallback to env for backward compatibility
     return get_env_var("OPENAI_API_KEY", [
         "RAILWAY_OPENAI_API_KEY",
         "API_KEY",
@@ -69,7 +90,11 @@ def resolve_openai_key() -> Optional[str]:
 
 
 def resolve_openai_base_url() -> Optional[str]:
-    """Resolves OpenAI base URL with Railway fallbacks"""
+    """
+    Resolves OpenAI base URL with Railway fallbacks.
+    
+    DEPRECATED: Config doesn't expose base URL yet, so this uses env fallback.
+    """
     return get_env_var("OPENAI_BASE_URL", [
         "OPENAI_API_BASE_URL",
         "OPENAI_API_BASE"
@@ -88,25 +113,17 @@ def get_config() -> Dict[str, Any]:
         "nodeEnv": os.getenv("NODE_ENV", "development"),
         "isRailway": is_railway_environment(),
         
-        # OpenAI Configuration
-        "openaiApiKey": resolve_openai_key(),
+        # OpenAI Configuration (prefer Config, fallback to env)
+        "openaiApiKey": Config.OPENAI_API_KEY or resolve_openai_key(),
         "openaiBaseUrl": resolve_openai_base_url(),
-        "defaultModel": get_env_var("OPENAI_MODEL", [
-            "RAILWAY_OPENAI_MODEL",
-            "FINETUNED_MODEL_ID",
-            "FINE_TUNED_MODEL_ID",
-            "AI_MODEL"
-        ]) or Config.OPENAI_MODEL,
-        "fallbackModel": get_env_var("FALLBACK_MODEL", [
-            "AI_FALLBACK_MODEL",
-            "RAILWAY_OPENAI_FALLBACK_MODEL"
-        ]) or "gpt-4",
+        "defaultModel": Config.OPENAI_MODEL,  # Config is canonical
+        "fallbackModel": getattr(Config, "FALLBACK_MODEL", None) or "gpt-4",
         "gpt5Model": get_env_var("GPT5_MODEL") or "gpt-5",
         "gpt51Model": get_env_var("GPT51_MODEL") or "gpt-5.1",
         
-        # Railway Configuration
-        "railwayEnvironment": os.getenv("RAILWAY_ENVIRONMENT"),
-        "railwayProjectId": os.getenv("RAILWAY_PROJECT_ID")
+        # Railway Configuration (use Config when available)
+        "railwayEnvironment": os.getenv("RAILWAY_ENVIRONMENT"),  # TODO: Add to Config
+        "railwayProjectId": os.getenv("RAILWAY_PROJECT_ID")  # TODO: Add to Config
     }
 
 

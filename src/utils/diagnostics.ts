@@ -19,6 +19,7 @@ import { getCircuitBreakerSnapshot } from '../services/openai.js';
 import { getTelemetrySnapshot } from './telemetry.js';
 import { getEnvironmentSecuritySummary } from './environmentSecurity.js';
 import { resolveWorkersDirectory } from './workerPaths.js';
+import { getConfig } from '../config/unifiedConfig.js';
 
 /**
  * Worker subsystem health status.
@@ -70,8 +71,9 @@ export interface HealthCheckReport {
  */
 function evaluateWorkerHealth(): WorkerHealth {
   const { path: workersDir, exists: directoryExists, checked } = resolveWorkersDirectory();
-  const runWorkersEnv = process.env.RUN_WORKERS;
-  const workersEnabled = runWorkersEnv === 'true' || runWorkersEnv === '1';
+  // Use config layer for env access (adapter boundary pattern)
+  const config = getConfig();
+  const workersEnabled = config.runWorkers;
 
   if (!workersEnabled) {
     return {

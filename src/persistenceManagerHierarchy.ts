@@ -3,12 +3,14 @@
 // Kernel Failsafe → Audit Layer → Root Override
 
 import { createAuditStore, type AuditStore, type AuditStoreTransaction } from './db/auditStore.js';
+import { getEnv } from './config/env.js';
 
 // ----------------------
 // Database Config
 // ----------------------
+// Use config layer for env access (adapter boundary pattern)
 const auditStore = createAuditStore({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: getEnv('DATABASE_URL'),
   pool: { min: 2, max: 10 }
 });
 let auditStoreOverride: AuditStore | null = null;
@@ -89,10 +91,11 @@ export async function logAuditEvent(event: string, payload: Record<string, unkno
  */
 function canEnableRootOverride(userRole: string, token: string) {
   //audit assumption: override requires env flag, admin role, and token; risk: escalation; invariant: all conditions true.
+  // Use config layer for env access (adapter boundary pattern)
   return (
-    process.env.ALLOW_ROOT_OVERRIDE === 'true' &&
+    getEnv('ALLOW_ROOT_OVERRIDE') === 'true' &&
     userRole === 'admin' &&
-    token === process.env.ROOT_OVERRIDE_TOKEN
+    token === getEnv('ROOT_OVERRIDE_TOKEN')
   );
 }
 
@@ -242,7 +245,8 @@ async function isValid(validator: AuditValidator, data: unknown) {
  */
 export async function verifySchema() {
   //audit assumption: missing DATABASE_URL disables verification; risk: false negatives; invariant: skip with log.
-  if (!process.env.DATABASE_URL) {
+  // Use config layer for env access (adapter boundary pattern)
+  if (!getEnv('DATABASE_URL')) {
     console.log('⚠️ No DATABASE_URL configured - skipping schema verification');
     return;
   }
