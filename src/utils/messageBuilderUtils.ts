@@ -33,8 +33,7 @@ export const buildSystemPromptMessages = (
   const validatedPrompt = assertNonEmptyContent(prompt, 'prompt');
   //audit Assumption: system prompt is optional; risk: invalid string bypass; invariant: only add when valid; handling: validate when provided.
   if (systemPrompt !== undefined) {
-    const validatedSystemPrompt = assertNonEmptyContent(systemPrompt, 'systemPrompt');
-    messages.push({ role: 'system', content: validatedSystemPrompt });
+    messages.push({ role: 'system', content: assertNonEmptyContent(systemPrompt, 'systemPrompt') });
   }
   //audit Assumption: message array must include user prompt; risk: missing prompt; invariant: user message present; handling: always append.
   messages.push({ role: 'user', content: validatedPrompt });
