@@ -26,7 +26,7 @@ def validate_backend_url(base_url: str, allow_http_dev: bool = False) -> str:
     hostname_lower = hostname.lower()
     
     # Allow HTTP for localhost/127.0.0.1 or when explicitly allowed for dev
-    is_localhost = hostname_lower in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+    is_localhost = hostname_lower in ("localhost", "127.0.0.1", "::1")
     allow_http = is_localhost or allow_http_dev
     
     if scheme == "http" and not allow_http:
