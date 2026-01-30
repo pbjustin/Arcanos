@@ -1,18 +1,25 @@
 import { EventEmitter } from 'events';
-import { getOpenAIClient, createGPT5Reasoning } from '../services/openai.js';
+import { createGPT5Reasoning } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 import { logger } from '../utils/structuredLogging.js';
-import { env } from '../utils/env.js';
+import { getConfig } from './unifiedConfig.js';
+import { getEnvNumber, getEnv } from './env.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 // ✅ Environment setup
-process.env.WORKER_COUNT = process.env.WORKER_COUNT || "4";
-process.env.WORKER_MODEL = process.env.AI_MODEL || "gpt-4o"; // Use configured model with latest default
+// Use config layer for env access (adapter boundary pattern)
+const workerCountEnv = getEnv('WORKER_COUNT') || "4";
+const workerModelEnv = getEnv('WORKER_MODEL') || getEnv('AI_MODEL') || "gpt-4o";
+// Set process.env for backward compatibility (runtime state modification is acceptable)
+process.env.WORKER_COUNT = workerCountEnv;
+process.env.WORKER_MODEL = workerModelEnv;
 
 // Environment configuration
+const config = getConfig();
 export const workerSettings = {
-  runWorkers: env.RUN_WORKERS,
-  count: parseInt(process.env.WORKER_COUNT || '4', 10),
-  model: process.env.WORKER_MODEL || process.env.AI_MODEL || 'gpt-4o'
+  runWorkers: config.runWorkers,
+  count: getEnvNumber('WORKER_COUNT', 4),
+  model: workerModelEnv
 };
 
 // Worker runtime bookkeeping
@@ -107,7 +114,14 @@ export const workerTaskQueue = new WorkerTaskQueue();
 
 // ✅ GPT-5.1 reasoning function using centralized helper
 export async function gpt5Reasoning(prompt: string): Promise<string> {
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    return '[Fallback: GPT-5.1 unavailable]';
+  }
+  const client = adapter.getClient();
   if (!client) return '[Fallback: GPT-5.1 unavailable]';
 
   const result = await createGPT5Reasoning(
@@ -141,7 +155,14 @@ export type WorkerResult = Partial<ArcanosResult> & {
 
 // ✅ ARCANOS core logic alias for compatibility with problem statement
 export async function arcanosCoreLogic(input: string): Promise<WorkerResult> {
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    return { error: 'OpenAI adapter unavailable' } as WorkerResult;
+  }
+  const client = adapter.getClient();
   if (!client) {
     return { error: 'OpenAI client unavailable' } as WorkerResult;
   }

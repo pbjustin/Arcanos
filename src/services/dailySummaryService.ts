@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { callOpenAI, getDefaultModel } from './openai.js';
 import { loadState, updateState } from './stateManager.js';
+import { getEnv } from '../config/env.js';
 
 interface SummarySources {
   systemState: Record<string, unknown>;
@@ -91,7 +92,8 @@ function buildPrompt(model: string, sources: SummarySources): string {
 
 export async function generateDailySummary(triggeredBy: string = 'cli'): Promise<DailySummaryResult> {
   const sources = await buildSummarySources();
-  const model = process.env.DAILY_SUMMARY_MODEL || getDefaultModel();
+  // Use config layer for env access (adapter boundary pattern)
+  const model = getEnv('DAILY_SUMMARY_MODEL') || getDefaultModel();
   const prompt = buildPrompt(model, sources);
 
   let parsed: Record<string, unknown> = {};

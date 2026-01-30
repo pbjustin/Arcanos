@@ -7,6 +7,7 @@ import express, { Request, Response } from 'express';
 import { arcanosQuery } from '../services/arcanosQuery.js';
 import { requireField } from '../utils/validation.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { getConfig } from '../config/unifiedConfig.js';
 
 const router = express.Router();
 
@@ -35,7 +36,7 @@ const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> 
           'GPT-5.1 reasoning and refinement'
         ]
       },
-      activeModel: process.env.AI_MODEL || 'gpt-4o',
+      activeModel: getConfig().defaultModel || 'gpt-4o',
       module: 'ArcanosQuery'
     });
 

@@ -23,6 +23,7 @@ import {
 } from '../telemetry.js';
 import { aiLogger } from '../structuredLogging.js';
 import { generateRequestId } from '../idGenerator.js';
+import { getEnv } from '../../config/env.js';
 
 /**
  * Patterns for sensitive data that should be redacted
@@ -392,7 +393,8 @@ export function logRailway(
 ): void {
   // Sanitize metadata to prevent credential leakage
   const sanitizedMetadata = sanitizeSensitiveData(metadata) as Record<string, unknown>;
-  const isProduction = process.env.NODE_ENV === 'production';
+  // Use config layer for env access (adapter boundary pattern)
+  const isProduction = getEnv('NODE_ENV') === 'production';
 
   if (isProduction) {
     // Railway-compatible structured JSON logging
@@ -402,7 +404,7 @@ export function logRailway(
       message,
       ...sanitizedMetadata,
       service: 'arcanos-backend',
-      environment: process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'development'
+      environment: getEnv('RAILWAY_ENVIRONMENT') || getEnv('NODE_ENV') || 'development'
     };
     console.log(JSON.stringify(logEntry));
   } else {

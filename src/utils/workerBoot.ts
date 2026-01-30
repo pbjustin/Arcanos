@@ -10,6 +10,7 @@ import cron from 'node-cron';
 import { initializeDatabase, getStatus } from '../db.js';
 import { createWorkerContext } from './workerContext.js';
 import { resolveWorkersDirectory } from './workerPaths.js';
+import { getConfig } from '../config/unifiedConfig.js';
 
 interface WorkerInitResult {
   initialized: string[];
@@ -26,7 +27,8 @@ const scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
 
 // Dynamic import for workers
 async function initializeWorkers(): Promise<WorkerInitResult> {
-  const runWorkers = process.env.RUN_WORKERS === 'true' || process.env.RUN_WORKERS === '1';
+  const config = getConfig();
+  const runWorkers = config.runWorkers;
   
   console.log(`[🔧 WORKER-BOOT] Worker initialization - RUN_WORKERS: ${runWorkers}`);
   
@@ -40,7 +42,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
   } else {
     console.log('[🔧 WORKER-BOOT] ⚠️  Database initialization failed - workers will use fallback mode');
     
-    if (!process.env.DATABASE_URL) {
+    if (!config.databaseUrl) {
       console.log('[🔧 WORKER-BOOT] ℹ️  DATABASE_URL not set - this is expected for development');
     }
   }

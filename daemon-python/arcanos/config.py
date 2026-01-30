@@ -335,6 +335,23 @@ class Config:
     # Security: Authentication token for debug server (required for non-read-only endpoints)
     # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
     DEBUG_SERVER_TOKEN: Optional[str] = os.getenv("DEBUG_SERVER_TOKEN") or None
+    # Security: Allow unauthenticated access to debug server (default: false, only for development)
+    DEBUG_SERVER_ALLOW_UNAUTHENTICATED: bool = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
+    
+    # ============================================
+    # Daemon Settings
+    # ============================================
+    # Heartbeat interval for daemon (seconds)
+    DAEMON_HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "60"))
+    # Command poll interval for daemon (seconds)
+    DAEMON_COMMAND_POLL_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", "30"))
+    # Shell override for terminal commands
+    ARCANOS_SHELL: Optional[str] = os.getenv("ARCANOS_SHELL") or None
+    
+    # ============================================
+    # OpenAI Base URL (for custom endpoints)
+    # ============================================
+    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE_URL") or os.getenv("OPENAI_API_BASE") or None
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:
@@ -393,11 +410,38 @@ class Config:
         return cls.DEFAULT_DANGEROUS_COMMANDS + cls.COMMAND_BLACKLIST
 
 
-# Validate on import
+# Validate on import (non-fatal - allows importing config for reading)
 is_valid, validation_errors = Config.validate()
 if not is_valid:
     print("Configuration Errors:")
     for error in validation_errors:
         print(f"   - {error}")
     print("\nCheck your .env file and fix the errors above.")
+
+
+def validate_required_config(exit_on_error: bool = True) -> bool:
+    """
+    Fail-fast validation for required configuration.
+    Exits with code 1 if required vars are missing (unless exit_on_error=False).
+    
+    Args:
+        exit_on_error: If True, call sys.exit(1) on validation failure
+        
+    Returns:
+        True if valid, False if invalid (only returned if exit_on_error=False)
+    """
+    is_valid, errors = Config.validate()
+    
+    if not is_valid:
+        print("[❌ CONFIG VALIDATION FAILED]")
+        print("Required configuration is missing or invalid:")
+        for error in errors:
+            print(f"  - {error}")
+        print("\nApplication cannot start. Please set the required variables.")
+        
+        if exit_on_error:
+            sys.exit(1)
+        return False
+    
+    return True
 

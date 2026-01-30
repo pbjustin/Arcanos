@@ -5,8 +5,8 @@
 
 import { Request, Response, NextFunction } from 'express';
 import config from '../config/index.js';
-import { getOpenAIClient } from '../services/openai.js';
 import { responseCache } from '../utils/cache.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { getFallbackMessage } from '../config/fallbackMessages.js';
@@ -124,7 +124,14 @@ export function createFallbackMiddleware() {
  * Health check for fallback system readiness
  */
 export function getFallbackSystemHealth() {
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    adapter = null;
+  }
+  const client = adapter?.getClient() || null;
   const cacheStats = {
     size: getCacheSize(responseCache),
     hitRate: 0 // Cache doesn't expose hit rate directly
@@ -180,7 +187,14 @@ export function createHealthCheckMiddleware() {
       return next();
     }
 
-    const client = getOpenAIClient();
+    // Use adapter (adapter boundary pattern)
+    let adapter;
+    try {
+      adapter = getOpenAIAdapter();
+    } catch {
+      adapter = null;
+    }
+    const client = adapter?.getClient() || null;
     const strictEnvs = config.fallback.strictEnvironments;
     const enforcePreemptive = config.fallback.preemptive || strictEnvs.includes(config.server.environment);
 

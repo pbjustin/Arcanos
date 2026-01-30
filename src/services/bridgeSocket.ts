@@ -3,6 +3,7 @@ import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from '../utils/structuredLogging.js';
 import { isBridgeEnabled } from '../utils/bridgeEnv.js';
+import { getEnv } from '../config/env.js';
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
 const bridgeClients = new Set<WebSocket>();
@@ -31,11 +32,12 @@ function resolveHeader(req: IncomingMessage, headerName: string): string | undef
 }
 
 function isAutomationAuthorized(req: IncomingMessage): boolean {
-  const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
+  // Use config layer for env access (adapter boundary pattern)
+  const secret = (getEnv('ARCANOS_AUTOMATION_SECRET') || '').trim();
   if (!secret) {
     return true;
   }
-  const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
+  const headerName = (getEnv('ARCANOS_AUTOMATION_HEADER') || 'x-arcanos-automation').toLowerCase();
   const provided = resolveHeader(req, headerName);
   return provided === secret;
 }

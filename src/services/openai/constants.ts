@@ -1,21 +1,17 @@
-const parseIntegerEnv = (key: string, defaultValue: number): number => {
-  const raw = process.env[key];
-  if (!raw) return defaultValue;
+import { getEnv, getEnvNumber, getEnvBoolean } from '../../config/env.js';
 
-  const parsed = parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : defaultValue;
+const parseIntegerEnv = (key: string, defaultValue: number): number => {
+  return getEnvNumber(key, defaultValue);
 };
 
 const parseStringEnv = (key: string, defaultValue: string): string => {
-  const raw = process.env[key];
-  return raw && raw.trim().length > 0 ? raw.trim() : defaultValue;
+  return getEnv(key, defaultValue) || defaultValue;
 };
 
 const parseFloatEnv = (key: string, defaultValue: number): number => {
-  const raw = process.env[key];
-  if (!raw) return defaultValue;
-
-  const parsed = parseFloat(raw);
+  const value = getEnv(key);
+  if (!value) return defaultValue;
+  const parsed = parseFloat(value);
   return Number.isFinite(parsed) ? parsed : defaultValue;
 };
 

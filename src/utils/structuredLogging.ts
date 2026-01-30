@@ -6,6 +6,7 @@
 import { type NextFunction, type Request, type Response } from 'express';
 import { generateRequestId } from './idGenerator.js';
 import { recordLogEvent, recordTraceEvent } from './telemetry.js';
+import { getEnv } from '../config/env.js';
 
 export enum LogLevel {
   DEBUG = 'debug',
@@ -112,7 +113,8 @@ class StructuredLogger {
   }
 
   private log(entry: LogEntry): void {
-    const isProduction = process.env.NODE_ENV === 'production';
+    // Use config layer for env access (adapter boundary pattern)
+    const isProduction = getEnv('NODE_ENV') === 'production';
 
     const sanitizedEntry = {
       ...entry,

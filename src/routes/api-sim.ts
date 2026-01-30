@@ -1,11 +1,11 @@
 import express, { Request, Response } from 'express';
-import OpenAI from 'openai';
 import { createCentralizedCompletion } from '../services/openai.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { buildTimestampedPayload } from '../utils/responseHelpers.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
+import type OpenAI from 'openai';
 
 const router = express.Router();
 
@@ -112,16 +112,18 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
       });
 
       // Stream simulation results
-      for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-          res.write(`data: ${JSON.stringify({ content, type: 'chunk' })}\n\n`);
+      if (response && typeof response === 'object' && Symbol.asyncIterator in response) {
+        for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
+          const content = chunk.choices[0]?.delta?.content || '';
+          if (content) {
+            res.write(`data: ${JSON.stringify({ content, type: 'chunk' })}\n\n`);
+          }
         }
+        
+        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+        res.end();
+        return;
       }
-      
-      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-      res.end();
-      return;
     }
 
     // Handle regular response

@@ -20,6 +20,7 @@ import { validateAIRequest, handleAIError } from '../utils/requestHandler.js';
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
 import { getConfirmGateConfiguration } from '../middleware/confirmGate.js';
 import config from '../config/index.js';
+import { getEnv } from '../config/env.js';
 
 /**
  * Request type for prompt execution with optional model override.
@@ -108,8 +109,9 @@ export function getOpenAIStatus(_: Request, res: Response): void {
     },
     confirmation,
     environment: {
-      railwayEnvironment: process.env.RAILWAY_ENVIRONMENT || null,
-      nodeEnv: process.env.NODE_ENV || 'development'
+      // Use config layer for env access (adapter boundary pattern)
+      railwayEnvironment: getEnv('RAILWAY_ENVIRONMENT') || null,
+      nodeEnv: getEnv('NODE_ENV') || 'development'
     }
   });
 }

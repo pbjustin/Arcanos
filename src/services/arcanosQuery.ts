@@ -1,5 +1,6 @@
-import { getOpenAIClient, getDefaultModel, getGPT5Model } from './openai.js';
+import { getDefaultModel, getGPT5Model } from './openai.js';
 import { ARCANOS_PROMPTS, buildMockArcanosResponse } from '../config/arcanosPrompts.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 // Use centralized model configuration
 const FT_MODEL = getDefaultModel();
@@ -21,24 +22,30 @@ function buildReasoningMessages(fineTunedOutput: string) {
 
 export async function arcanosQuery(prompt: string): Promise<string> {
   try {
-    // Get OpenAI client - will return null if no API key
-    const client = getOpenAIClient();
-
-    if (!client) {
+    // Get OpenAI adapter (adapter boundary pattern)
+    let adapter;
+    try {
+      adapter = getOpenAIAdapter();
+    } catch {
       // Return mock response when no API key is configured
       return buildMockArcanosResponse(prompt, FT_MODEL);
     }
 
-    // Step 1 → Fine-tuned GPT-4.1
-    const ftResponse = await client.chat.completions.create({
+    if (!adapter) {
+      // Return mock response when no API key is configured
+      return buildMockArcanosResponse(prompt, FT_MODEL);
+    }
+
+    // Step 1 → Fine-tuned GPT-4.1 (use adapter)
+    const ftResponse = await adapter.chat.completions.create({
       model: FT_MODEL,
       messages: buildFineTunedMessages(prompt)
     });
 
     const ftOutput = ftResponse.choices[0].message.content || '';
 
-    // Step 2 → Reasoning with GPT-5.1
-    const reasoningResponse = await client.chat.completions.create({
+    // Step 2 → Reasoning with GPT-5.1 (use adapter)
+    const reasoningResponse = await adapter.chat.completions.create({
       model: REASONING_MODEL,
       messages: buildReasoningMessages(ftOutput)
     });
