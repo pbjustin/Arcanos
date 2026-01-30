@@ -355,7 +355,7 @@ export function buildReadinessEndpoint(checks: HealthChecker[]): (req: Request, 
 export async function checkOpenAIHealth(): Promise<HealthCheckResult> {
   const health = validateClientHealth();
   const adapterInitialized = isOpenAIAdapterInitialized();
-  const effectiveHealthy = health.healthy || adapterInitialized;
+  const effectiveHealthy = health.healthy || (adapterInitialized && health.circuitBreakerHealthy);
   return {
     healthy: effectiveHealthy,
     name: 'openai',
