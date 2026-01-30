@@ -34,9 +34,10 @@ export async function createEmbedding(
       },
       audio: { 
         transcriptions: { 
-          create: async (params) => {
-            const nonStreamingParams = { ...params, stream: false } as typeof params & { stream: false };
-            return client.audio.transcriptions.create(nonStreamingParams);
+          create: async (params: Parameters<OpenAI['audio']['transcriptions']['create']>[0]) => {
+            // Ensure non-streaming by omitting stream or setting to false
+            const { stream, ...restParams } = params as any;
+            return client.audio.transcriptions.create(restParams as any);
           }
         } 
       },

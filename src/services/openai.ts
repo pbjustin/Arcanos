@@ -1,7 +1,6 @@
 import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import type OpenAI from 'openai';
-import type { ChatCompletionMessageParam, ChatCompletion } from '../services/openai/types.js';
 import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 
@@ -38,9 +37,10 @@ function getOpenAIClientOrAdapter(): { adapter: OpenAIAdapter | null; client: Op
       },
       audio: { 
         transcriptions: { 
-          create: async (params) => {
-            const nonStreamingParams = { ...params, stream: false } as typeof params & { stream: false };
-            return client.audio.transcriptions.create(nonStreamingParams);
+          create: async (params: Parameters<OpenAI['audio']['transcriptions']['create']>[0]) => {
+            // Ensure non-streaming by omitting stream or setting to false
+            const { stream, ...restParams } = params as any;
+            return client.audio.transcriptions.create(restParams as any);
           }
         } 
       },
@@ -157,7 +157,7 @@ export async function callOpenAI(
 
   const preparedMessages = buildChatMessages(prompt, systemPrompt, options);
 
-  if (!client) {
+  if (!adapter) {
     const mock = generateMockResponse(prompt, 'ask');
     recordTraceEvent('openai.call.mock', {
       model,

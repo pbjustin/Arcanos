@@ -14,7 +14,7 @@
 import OpenAI from 'openai';
 import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
-import type { Transcription, TranscriptionCreateParams } from 'openai/resources/audio/transcriptions.js';
+import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 import type { FileObject } from 'openai/resources/files.js';
 
 /**
@@ -58,14 +58,7 @@ export interface OpenAIAdapter {
    */
   audio: {
     transcriptions: {
-      create: (params: {
-        file: FileObject | File | Blob | Uint8Array | ArrayBuffer;
-        model: string;
-        language?: string;
-        prompt?: string;
-        response_format?: 'json' | 'text' | 'srt' | 'verbose_json' | 'vtt';
-        temperature?: number;
-      }) => Promise<Transcription>;
+      create: (params: TranscriptionCreateParamsNonStreaming) => Promise<Transcription>;
     };
   };
 
@@ -116,10 +109,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     },
     audio: {
       transcriptions: {
-        create: async (params: TranscriptionCreateParams): Promise<Transcription> => {
-          // Ensure stream is false for non-streaming transcription
-          const nonStreamingParams = { ...params, stream: false } as TranscriptionCreateParams & { stream: false };
-          return client.audio.transcriptions.create(nonStreamingParams);
+        create: async (params: TranscriptionCreateParamsNonStreaming): Promise<Transcription> => {
+          return client.audio.transcriptions.create(params);
         }
       }
     },
