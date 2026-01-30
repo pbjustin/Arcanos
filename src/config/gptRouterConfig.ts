@@ -1,4 +1,5 @@
 import { loadModuleDefinitions, LoadedModule } from '../modules/moduleLoader.js';
+import { getEnv } from './env.js';
 
 interface GptModuleEntry {
   route: string;
@@ -48,7 +49,8 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
 
   const map: Record<string, GptModuleEntry> = { ...defaults };
 
-  const raw = process.env.GPT_MODULE_MAP;
+  // Use config layer for env access (adapter boundary pattern)
+  const raw = getEnv('GPT_MODULE_MAP');
   if (raw) {
     try {
       const parsed = JSON.parse(raw) as Record<string, GptModuleEntry>;
@@ -68,9 +70,9 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
   }
 
   const legacyEntries: Array<[string | undefined, string]> = [
-    [process.env.GPTID_BACKSTAGE_BOOKER, 'BACKSTAGE:BOOKER'],
-    [process.env.GPTID_ARCANOS_GAMING, 'ARCANOS:GAMING'],
-    [process.env.GPTID_ARCANOS_TUTOR, 'ARCANOS:TUTOR'],
+    [getEnv('GPTID_BACKSTAGE_BOOKER'), 'BACKSTAGE:BOOKER'],
+    [getEnv('GPTID_ARCANOS_GAMING'), 'ARCANOS:GAMING'],
+    [getEnv('GPTID_ARCANOS_TUTOR'), 'ARCANOS:TUTOR'],
   ];
 
   for (const [id, moduleName] of legacyEntries) {

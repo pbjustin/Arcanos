@@ -1,9 +1,11 @@
 import { callOpenAI, getDefaultModel, getFallbackModel, generateMockResponse } from '../services/openai.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { DecideInput, RouteExecutionResult, RouteSelection } from './types.js';
+import { getEnvNumber } from '../config/env.js';
 
-const PRIMARY_TOKEN_LIMIT = parseInt(process.env.AFOL_PRIMARY_TOKEN_LIMIT || '1024', 10);
-const BACKUP_TOKEN_LIMIT = parseInt(process.env.AFOL_BACKUP_TOKEN_LIMIT || '1024', 10);
+// Use config layer for env access (adapter boundary pattern)
+const PRIMARY_TOKEN_LIMIT = getEnvNumber('AFOL_PRIMARY_TOKEN_LIMIT', 1024);
+const BACKUP_TOKEN_LIMIT = getEnvNumber('AFOL_BACKUP_TOKEN_LIMIT', 1024);
 
 function extractPrompt(input: DecideInput): string {
   if (typeof input.prompt === 'string') return input.prompt;

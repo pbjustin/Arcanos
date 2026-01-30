@@ -34,6 +34,7 @@ import {
 } from './resilience.js';
 import { responseCache } from '../../utils/cache.js';
 import { getRoutingActiveMessage } from '../../config/prompts.js';
+import { getConfig } from '../../config/unifiedConfig.js';
 
 /**
  * Client initialization options
@@ -80,12 +81,12 @@ let singletonClient: OpenAI | null = null;
 let initializationAttempted = false;
 
 /**
- * API timeout from environment or default
+ * API timeout from config or default
  */
-export const API_TIMEOUT_MS = parseInt(
-  process.env.WORKER_API_TIMEOUT_MS || '60000',
-  10
-);
+export const API_TIMEOUT_MS = (() => {
+  const config = getConfig();
+  return config.workerApiTimeoutMs;
+})();
 
 /**
  * ARCANOS routing message for all completions
@@ -136,15 +137,9 @@ export function createOpenAIClient(options: ClientOptions = {}): OpenAI | null {
       ...(baseURL ? { baseURL } : {})
     });
 
-    // Configure default model from environment
-    const configuredDefaultModel =
-      process.env.FINETUNED_MODEL_ID ||
-      process.env.FINE_TUNED_MODEL_ID ||
-      process.env.AI_MODEL ||
-      process.env.OPENAI_MODEL ||
-      process.env.RAILWAY_OPENAI_MODEL ||
-      'gpt-4o-mini';
-
+    // Configure default model from config (adapter boundary pattern)
+    const config = getConfig();
+    const configuredDefaultModel = config.defaultModel || 'gpt-4o-mini';
     setDefaultModel(configuredDefaultModel);
 
     const duration = Date.now() - startTime;

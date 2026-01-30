@@ -1,6 +1,7 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { runHealthCheck, type HealthCheckReport } from '../utils/diagnostics.js';
 import { call_gpt5_strict, getGPT5Model } from '../services/openai.js';
+import { getEnv } from '../config/env.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
@@ -261,7 +262,7 @@ CURRENT SYSTEM STATUS:
 - Node.js Version: ${process.version}
 - Platform: ${process.platform}
 - Architecture: ${process.arch}
-- Environment: ${process.env.NODE_ENV || 'development'}
+- Environment: ${getEnv('NODE_ENV') || 'development'}
 - Uptime: ${process.uptime().toFixed(1)}s
 
 ${memoryContext.memoryPrompt}`;

@@ -1,11 +1,6 @@
 import { APPLICATION_CONSTANTS } from '../../utils/constants.js';
-
-const OPENAI_KEY_ENV_PRIORITY = [
-  'OPENAI_API_KEY',
-  'RAILWAY_OPENAI_API_KEY',
-  'API_KEY',
-  'OPENAI_KEY'
-] as const;
+import config from '../../config/index.js';
+import { getConfig } from '../../config/unifiedConfig.js';
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -17,26 +12,15 @@ let resolvedApiKey: string | null | undefined;
 let resolvedApiKeySource: string | null = null;
 let cachedDefaultModel: string | null = null;
 
-const baseUrlCandidates = [
-  process.env.OPENAI_BASE_URL,
-  process.env.OPENAI_API_BASE_URL,
-  process.env.OPENAI_API_BASE
-].filter((value): value is string => Boolean(value && value.trim().length > 0));
-
 /** Backend prefers fine-tuned model when set; otherwise OPENAI_MODEL then fallback. */
-function computeDefaultModelFromEnv(): string {
-  return (
-    process.env.FINETUNED_MODEL_ID ||
-    process.env.FINE_TUNED_MODEL_ID ||
-    process.env.AI_MODEL ||
-    process.env.OPENAI_MODEL ||
-    process.env.RAILWAY_OPENAI_MODEL ||
-    'gpt-4o-mini'
-  );
+function computeDefaultModelFromConfig(): string {
+  const appConfig = getConfig();
+  return appConfig.defaultModel || 'gpt-4o-mini';
 }
 
 export function resolveOpenAIBaseURL(): string | undefined {
-  return baseUrlCandidates[0]?.trim();
+  const appConfig = getConfig();
+  return appConfig.openaiBaseUrl;
 }
 
 export function resolveOpenAIKey(): string | null {
@@ -45,22 +29,24 @@ export function resolveOpenAIKey(): string | null {
     return resolvedApiKey;
   }
 
-  for (const envName of OPENAI_KEY_ENV_PRIORITY) {
-    const rawValue = process.env[envName];
-    if (!rawValue) continue;
+  // Get from config (config layer handles env access)
+  const appConfig = getConfig();
+  const apiKey = appConfig.openaiApiKey;
 
-    const trimmed = rawValue.trim();
-    if (OPENAI_KEY_PLACEHOLDERS.has(trimmed)) {
-      continue;
-    }
-
-    resolvedApiKey = trimmed;
-    resolvedApiKeySource = envName;
-    return resolvedApiKey;
+  if (!apiKey) {
+    resolvedApiKeySource = null;
+    return null;
   }
 
-  resolvedApiKeySource = null;
-  return null;
+  const trimmed = apiKey.trim();
+  if (OPENAI_KEY_PLACEHOLDERS.has(trimmed)) {
+    resolvedApiKeySource = null;
+    return null;
+  }
+
+  resolvedApiKey = trimmed;
+  resolvedApiKeySource = 'OPENAI_API_KEY'; // Config layer resolves this
+  return resolvedApiKey;
 }
 
 export function getOpenAIKeySource(): string | null {
@@ -83,36 +69,25 @@ export function setDefaultModel(model: string): void {
 
 export function getDefaultModel(): string {
   if (!cachedDefaultModel) {
-    cachedDefaultModel = computeDefaultModelFromEnv();
+    cachedDefaultModel = computeDefaultModelFromConfig();
   }
   return cachedDefaultModel;
 }
 
 export function getFallbackModel(): string {
-  return (
-    process.env.FALLBACK_MODEL ||
-    process.env.AI_FALLBACK_MODEL ||
-    process.env.RAILWAY_OPENAI_FALLBACK_MODEL ||
-    process.env.FINETUNED_MODEL_ID ||
-    process.env.FINE_TUNED_MODEL_ID ||
-    process.env.AI_MODEL ||
-    APPLICATION_CONSTANTS.MODEL_GPT_4
-  );
+  const appConfig = getConfig();
+  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4;
 }
 
 /** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else OPENAI_COMPLEX_MODEL / vision / gpt-4o. */
 export function getComplexModel(): string {
-  return (
-    process.env.OPENAI_COMPLEX_MODEL ||
-    process.env.FINETUNED_MODEL_ID ||
-    process.env.FINE_TUNED_MODEL_ID ||
-    process.env.AI_MODEL ||
-    process.env.OPENAI_VISION_MODEL ||
-    APPLICATION_CONSTANTS.MODEL_GPT_4O
-  );
+  const appConfig = getConfig();
+  // Prefer default model, fallback to gpt-4o
+  return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4O;
 }
 
 export function getGPT5Model(): string {
-  return process.env.GPT51_MODEL || process.env.GPT5_MODEL || APPLICATION_CONSTANTS.MODEL_GPT_5_1;
+  const appConfig = getConfig();
+  return appConfig.gpt51Model || APPLICATION_CONSTANTS.MODEL_GPT_5_1;
 }
 
