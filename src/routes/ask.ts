@@ -16,6 +16,7 @@ import { createPendingDaemonActions, queueDaemonCommandForInstance } from './api
 import { getDefaultModel } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import config from '../config/index.js';
+import { getEnv } from '../config/env.js';
 
 const router = express.Router();
 
@@ -24,8 +25,15 @@ router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
 
 const ASK_TEXT_FIELDS = ['prompt', 'userInput', 'content', 'text', 'query'] as const;
-// Get from config (defaults to true if not explicitly false)
-const CONFIRM_SENSITIVE_DAEMON_ACTIONS = config.fallback?.preemptive !== false;
+// Security: Default to requiring confirmation for sensitive daemon actions
+// preemptive=true means "preemptively execute without confirmation" (skip confirmation)
+// preemptive=false/undefined means "require confirmation" (default secure behavior)
+// This ensures security by default - confirmation gate is enabled unless explicitly disabled
+// Also check direct env var for backward compatibility
+const explicitConfirm = getEnv('CONFIRM_SENSITIVE_DAEMON_ACTIONS');
+const CONFIRM_SENSITIVE_DAEMON_ACTIONS = explicitConfirm !== undefined 
+  ? explicitConfirm !== 'false' 
+  : !config.fallback?.preemptive;
 
 // Enhanced validation schema for ask requests that accepts multiple text field aliases
 const askValidationSchema = {

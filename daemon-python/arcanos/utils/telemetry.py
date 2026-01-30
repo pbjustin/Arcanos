@@ -297,9 +297,10 @@ def log_railway(
     # Sanitize metadata to prevent credential leakage
     sanitized_metadata = sanitize_sensitive_data(metadata or {}) if metadata else {}
     # Use Config for env access (adapter boundary pattern)
-    from ..config import Config
-    node_env = getattr(Config, "NODE_ENV", None) or os.getenv("NODE_ENV")
-    railway_env = getattr(Config, "RAILWAY_ENVIRONMENT", None) or os.getenv("RAILWAY_ENVIRONMENT")
+    # Note: NODE_ENV and RAILWAY_ENVIRONMENT are not yet in Config class, so check env directly
+    # These are system/env detection vars, acceptable to check via os.getenv
+    node_env = os.getenv("NODE_ENV")
+    railway_env = os.getenv("RAILWAY_ENVIRONMENT")
     is_production = node_env == "production" or bool(railway_env)
     
     if is_production:

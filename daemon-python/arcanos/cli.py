@@ -131,16 +131,9 @@ class ArcanosCLI:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._command_poll_thread: Optional[threading.Thread] = None
         self._daemon_running = False
-        # Use Config if available, fallback to env (adapter boundary pattern)
-        # TODO: Add these to Config class
-        heartbeat_env = os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS")
-        self._heartbeat_interval = int(
-            heartbeat_env if heartbeat_env else str(DEFAULT_HEARTBEAT_INTERVAL_SECONDS)
-        )  # Default: 60s to reduce backend load
-        poll_env = os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS")
-        self._command_poll_interval = int(
-            poll_env if poll_env else str(DEFAULT_COMMAND_POLL_INTERVAL_SECONDS)
-        )  # Default: 30s (was 10s) to reduce backend load
+        # Use Config class (adapter boundary pattern)
+        self._heartbeat_interval = Config.DAEMON_HEARTBEAT_INTERVAL_SECONDS
+        self._command_poll_interval = Config.DAEMON_COMMAND_POLL_INTERVAL_SECONDS
 
         try:
             self.gpt_client = GPTClient()

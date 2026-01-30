@@ -335,6 +335,23 @@ class Config:
     # Security: Authentication token for debug server (required for non-read-only endpoints)
     # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
     DEBUG_SERVER_TOKEN: Optional[str] = os.getenv("DEBUG_SERVER_TOKEN") or None
+    # Security: Allow unauthenticated access to debug server (default: false, only for development)
+    DEBUG_SERVER_ALLOW_UNAUTHENTICATED: bool = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
+    
+    # ============================================
+    # Daemon Settings
+    # ============================================
+    # Heartbeat interval for daemon (seconds)
+    DAEMON_HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "60"))
+    # Command poll interval for daemon (seconds)
+    DAEMON_COMMAND_POLL_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", "30"))
+    # Shell override for terminal commands
+    ARCANOS_SHELL: Optional[str] = os.getenv("ARCANOS_SHELL") or None
+    
+    # ============================================
+    # OpenAI Base URL (for custom endpoints)
+    # ============================================
+    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE_URL") or os.getenv("OPENAI_API_BASE") or None
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:

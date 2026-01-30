@@ -108,9 +108,11 @@ def get_config() -> Dict[str, Any]:
     Resolves all configuration values with Railway fallbacks
     and provides type-safe access to configuration.
     """
+    # Use Config when available, fallback to env for system detection vars
+    # Note: NODE_ENV and Railway vars are system detection, acceptable via os.getenv
     return {
         # Server Configuration
-        "nodeEnv": os.getenv("NODE_ENV", "development"),
+        "nodeEnv": os.getenv("NODE_ENV", "development"),  # System env var, acceptable
         "isRailway": is_railway_environment(),
         
         # OpenAI Configuration (prefer Config, fallback to env)
@@ -121,9 +123,9 @@ def get_config() -> Dict[str, Any]:
         "gpt5Model": get_env_var("GPT5_MODEL") or "gpt-5",
         "gpt51Model": get_env_var("GPT51_MODEL") or "gpt-5.1",
         
-        # Railway Configuration (use Config when available)
-        "railwayEnvironment": os.getenv("RAILWAY_ENVIRONMENT"),  # TODO: Add to Config
-        "railwayProjectId": os.getenv("RAILWAY_PROJECT_ID")  # TODO: Add to Config
+        # Railway Configuration (system detection vars, acceptable via os.getenv)
+        "railwayEnvironment": os.getenv("RAILWAY_ENVIRONMENT"),  # System detection var
+        "railwayProjectId": os.getenv("RAILWAY_PROJECT_ID")  # System detection var
     }
 
 

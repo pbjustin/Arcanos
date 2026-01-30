@@ -51,9 +51,8 @@ class TerminalController:
         Inputs/Outputs: None; returns shell string or path.
         Edge cases: Honors ARCANOS_SHELL override; falls back to cmd/sh if preferred shell missing.
         """
-        # Prefer Config if available (adapter boundary pattern)
-        # TODO: Add ARCANOS_SHELL to Config class
-        shell_override = getattr(Config, "ARCANOS_SHELL", None) or os.getenv("ARCANOS_SHELL")
+        # Use Config class (adapter boundary pattern)
+        shell_override = Config.ARCANOS_SHELL
         if shell_override:
             # //audit assumption: override provided by user; risk: invalid shell; invariant: user intent respected; strategy: return override.
             return shell_override
@@ -343,8 +342,8 @@ class TerminalController:
         Inputs/Outputs: command, timeout, elevated; returns (stdout, stderr, return_code).
         Edge cases: Falls back to sh when bash missing on Unix.
         """
-        # Prefer Config if available (adapter boundary pattern)
-        shell_override = getattr(Config, "ARCANOS_SHELL", None) or os.getenv("ARCANOS_SHELL")
+        # Use Config class (adapter boundary pattern)
+        shell_override = Config.ARCANOS_SHELL
         if shell_override:
             # //audit assumption: override provided; risk: mismatch with method name; invariant: respect override; strategy: delegate to execute.
             return self.execute(command, shell=shell_override, timeout=timeout, elevated=elevated)

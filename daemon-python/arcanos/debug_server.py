@@ -81,11 +81,9 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         
         # If no token is configured, require explicit opt-in via Config
         if not Config.DEBUG_SERVER_TOKEN:
-            # Allow unauthenticated access only if explicitly disabled (for development)
-            # Use Config if available, fallback to env for backward compatibility
-            allow_unauth_env = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
-            # TODO: Add DEBUG_SERVER_ALLOW_UNAUTHENTICATED to Config class
-            if not allow_unauth_env:
+            # Allow unauthenticated access only if explicitly enabled (for development)
+            # Use Config class (adapter boundary pattern)
+            if not Config.DEBUG_SERVER_ALLOW_UNAUTHENTICATED:
                 self._send_response(401, error="DEBUG_SERVER_TOKEN not configured. Set DEBUG_SERVER_TOKEN environment variable for security.")
                 return False
             return True

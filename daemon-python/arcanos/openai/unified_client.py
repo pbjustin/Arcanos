@@ -125,8 +125,11 @@ def resolve_openai_base_url(config: Optional[Config] = None) -> Optional[str]:
     Returns:
         Base URL string or None if not found
     """
-    # Config doesn't have base URL yet, so fallback to env for now
-    # TODO: Add base URL to Config class
+    # Use Config class (adapter boundary pattern)
+    if config and config.OPENAI_BASE_URL:
+        return config.OPENAI_BASE_URL.strip()
+    
+    # Fallback to env for backward compatibility during transition
     url_candidates = [
         os.getenv("OPENAI_BASE_URL"),
         os.getenv("OPENAI_API_BASE_URL"),
@@ -371,8 +374,24 @@ def get_fallback_model() -> str:
     return getattr(Config, "FALLBACK_MODEL", "gpt-4")
 
 
-def get_gpt5_model() -> str:
-    """Gets the GPT-5 model from environment"""
+def get_gpt5_model(config: Optional[Config] = None) -> str:
+    """
+    Gets the GPT-5 model from Config or environment.
+    
+    Args:
+        config: Config instance (preferred). If None, falls back to os.getenv for backward compatibility.
+    
+    Returns:
+        GPT-5 model name string
+    """
+    # Use Config if available (adapter boundary pattern)
+    if config:
+        # Check if Config has GPT5_MODEL attribute (may not exist yet)
+        gpt5_model = getattr(config, "GPT5_MODEL", None) or getattr(config, "GPT51_MODEL", None)
+        if gpt5_model:
+            return gpt5_model
+    
+    # Fallback to env for backward compatibility during transition
     return os.getenv("GPT51_MODEL") or os.getenv("GPT5_MODEL") or "gpt-5.1"
 
 

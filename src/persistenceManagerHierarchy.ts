@@ -92,11 +92,26 @@ export async function logAuditEvent(event: string, payload: Record<string, unkno
 function canEnableRootOverride(userRole: string, token: string) {
   //audit assumption: override requires env flag, admin role, and token; risk: escalation; invariant: all conditions true.
   // Use config layer for env access (adapter boundary pattern)
-  return (
-    getEnv('ALLOW_ROOT_OVERRIDE') === 'true' &&
-    userRole === 'admin' &&
-    token === getEnv('ROOT_OVERRIDE_TOKEN')
-  );
+  // Security: All three conditions must be true - fail closed if any missing
+  const allowOverride = getEnv('ALLOW_ROOT_OVERRIDE');
+  const overrideToken = getEnv('ROOT_OVERRIDE_TOKEN');
+  
+  // Fail closed: require explicit enable flag
+  if (allowOverride !== 'true') {
+    return false;
+  }
+  
+  // Fail closed: require admin role
+  if (userRole !== 'admin') {
+    return false;
+  }
+  
+  // Fail closed: require non-empty token and exact match
+  if (!overrideToken || !token || token !== overrideToken) {
+    return false;
+  }
+  
+  return true;
 }
 
 /**
