@@ -62,16 +62,26 @@ export async function validateModel(client: OpenAI): Promise<string> {
   }
 }
 
+function ensureStringContent(value: unknown): string {
+  if (typeof value === 'string' && value.length > 0) return value;
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
 export function buildFinalArcanosMessages(
   memoryContextSummary: string,
   auditSafePrompt: string,
   gpt5Output: string
 ): ChatCompletionMessageParam[] {
+  const systemContent = ensureStringContent(ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary)) || 'Review and respond.';
+  const userRequestContent = ensureStringContent(buildFinalOriginalRequestMessage(auditSafePrompt)) || 'No request provided.';
+  const assistantContent = ensureStringContent(buildFinalGpt5AnalysisMessage(gpt5Output)) || 'No analysis provided.';
+  const finalInstructionContent = ensureStringContent(getFinalResponseInstruction()) || 'Provide the final response.';
   return [
-    { role: 'system', content: ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary) },
-    { role: 'user', content: buildFinalOriginalRequestMessage(auditSafePrompt) },
-    { role: 'assistant', content: buildFinalGpt5AnalysisMessage(gpt5Output) },
-    { role: 'user', content: getFinalResponseInstruction() }
+    { role: 'system', content: systemContent },
+    { role: 'user', content: userRequestContent },
+    { role: 'assistant', content: assistantContent },
+    { role: 'user', content: finalInstructionContent }
   ];
 }
 
