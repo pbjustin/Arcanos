@@ -169,19 +169,18 @@ ENV_PATH = PRIMARY_ENV_PATH
 if load_dotenv is not None:
     for env_path in ENV_PATHS:
         load_dotenv(dotenv_path=env_path)
-    # Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
-    _env_override = os.environ.get("ARCANOS_ENV_PATH")
-    if _env_override:
-        _override_path = Path(_env_override)
-        if _override_path.is_file():
-            load_dotenv(dotenv_path=_override_path, override=True)
 else:
     for env_path in ENV_PATHS:
         _load_dotenv_fallback(env_path)
-    _env_override = os.environ.get("ARCANOS_ENV_PATH")
-    if _env_override:
-        _override_path = Path(_env_override)
-        if _override_path.is_file():
+
+# Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
+_env_override = os.environ.get("ARCANOS_ENV_PATH")
+if _env_override:
+    _override_path = Path(_env_override)
+    if _override_path.is_file():
+        if load_dotenv is not None:
+            load_dotenv(dotenv_path=_override_path, override=True)
+        else:
             _load_dotenv_override(_override_path)
 
 
