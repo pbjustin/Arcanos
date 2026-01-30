@@ -153,11 +153,14 @@ class ArcanosCLI:
         self.backend_client: Optional[BackendApiClient] = None
         if Config.BACKEND_URL:
             # //audit assumption: backend URL configured; risk: misconfigured URL; invariant: client initialized; strategy: build client.
-            self.backend_client = BackendApiClient(
-                base_url=Config.BACKEND_URL,
-                token_provider=lambda: Config.BACKEND_TOKEN,
-                timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
-            )
+            try:
+                self.backend_client = BackendApiClient(
+                    base_url=Config.BACKEND_URL,
+                    token_provider=lambda: Config.BACKEND_TOKEN,
+                    timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
+                )
+            except Exception as e:
+                raise
 
         self._registry_cache: Optional[dict[str, Any]] = None
         self._registry_cache_updated_at: Optional[float] = None
@@ -591,7 +594,7 @@ class ArcanosCLI:
         """
         last_request_time = time.time()
         consecutive_429_count = 0
-        
+
         while self._daemon_running:
             try:
                 if not self.backend_client:
@@ -622,14 +625,17 @@ class ArcanosCLI:
 
                 if status_code == 429:
                     consecutive_429_count += 1
-                    error_logger.error(f"[DAEMON] Heartbeat failed: {response.status_code}")
-                    # Apply exponential backoff for 429 errors
-                    backoff_time = min(60, self._heartbeat_interval * (2 ** min(consecutive_429_count, 3)))
+                    # 429 = rate limit; back off and log as warning (not connection failure)
+                    backoff_time = min(120, self._heartbeat_interval * (2 ** min(consecutive_429_count, 4)))
                     if retry_after:
                         try:
                             backoff_time = max(backoff_time, int(retry_after))
                         except ValueError:
                             pass
+                    error_logger.warning(
+                        "[DAEMON] Heartbeat rate limited (429); backing off %ds (Retry-After respected)",
+                        backoff_time,
+                    )
                     time.sleep(backoff_time)
                     continue
                 elif status_code != 200:
@@ -653,7 +659,7 @@ class ArcanosCLI:
         """
         last_request_time = time.time()
         consecutive_429_count = 0
-        
+
         while self._daemon_running:
             try:
                 if not self.backend_client:
@@ -718,14 +724,17 @@ class ArcanosCLI:
                     break
                 elif status_code == 429:
                     consecutive_429_count += 1
-                    error_logger.error(f"[DAEMON] Command poll failed: {response.status_code}")
-                    # Apply exponential backoff for 429 errors
-                    backoff_time = min(60, self._command_poll_interval * (2 ** min(consecutive_429_count, 3)))
+                    # 429 = rate limit; back off and log as warning (not connection failure)
+                    backoff_time = min(120, self._command_poll_interval * (2 ** min(consecutive_429_count, 4)))
                     if retry_after:
                         try:
                             backoff_time = max(backoff_time, int(retry_after))
                         except ValueError:
                             pass
+                    error_logger.warning(
+                        "[DAEMON] Command poll rate limited (429); backing off %ds (Retry-After respected)",
+                        backoff_time,
+                    )
                     time.sleep(backoff_time)
                     continue
                 else:

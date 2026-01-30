@@ -184,6 +184,16 @@ else:
         if _override_path.is_file():
             _load_dotenv_override(_override_path)
 
+# Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
+_env_override = os.environ.get("ARCANOS_ENV_PATH")
+if _env_override:
+    _override_path = Path(_env_override)
+    if _override_path.is_file():
+        if load_dotenv is not None:
+            load_dotenv(dotenv_path=_override_path, override=True)
+        else:
+            _load_dotenv_override(_override_path)
+
 
 class Config:
     """Central configuration for ARCANOS daemon"""
