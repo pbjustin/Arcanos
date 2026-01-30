@@ -48,7 +48,6 @@ router.get('/health', async (_: Request, res: Response) => {
       openaiHealth,
       config.databaseUrl
     );
-    
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
