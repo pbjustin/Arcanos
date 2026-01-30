@@ -152,7 +152,7 @@ grep -r "v6\.15\.0\|v5\.16\.0" docs/ .github/ --include="*.md" --exclude-dir={le
 
 #### File Path Verification
 ```bash
-grep -r "dist/index\.js\|dist/server\.js" docs/ --include="*.md" | grep -v "legacy\|AUDIT"
+grep -r "dist/index\.js\|dist/server\.js" docs/ --include="*.md" --exclude-dir=legacy --exclude="*AUDIT*"
 ```
 **Result:** ✅ No incorrect file path references found (except in historical context)
 
