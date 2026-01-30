@@ -4,7 +4,8 @@
  */
 
 import { query } from '../db.js';
-import { getOpenAIClient, getDefaultModel } from './openai.js';
+import { getDefaultModel } from './openai.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 /**
  * Register or update memory state in PostgreSQL
@@ -54,14 +55,17 @@ export async function validateMemory(
   entryData: unknown,
   stateVersion: string
 ): Promise<string> {
-  const client = getOpenAIClient();
-  //audit Assumption: missing client returns mock validation
-  if (!client) {
-    console.warn('⚠️ OpenAI client not available - returning mock validation');
-    return 'OpenAI client unavailable';
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    //audit Assumption: missing adapter returns mock validation
+    console.warn('⚠️ OpenAI adapter not available - returning mock validation');
+    return 'OpenAI adapter unavailable';
   }
 
-  const response = await client.chat.completions.create({
+  const response = await adapter.chat.completions.create({
     model: getDefaultModel(),
     messages: [
       { role: 'system', content: 'You are ARCANOS Memory Validator. Ensure consistent state across GPT chats.' },

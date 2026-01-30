@@ -4,14 +4,16 @@ import { runHealthCheck } from './utils/diagnostics.js';
 import { logger } from './utils/structuredLogging.js';
 import config from './config/index.js';
 import { getDefaultModel } from './services/openai.js';
+import { getEnv } from './config/env.js';
 
 /**
  * Registers health check endpoint and monitoring cron job.
  */
 export function setupDiagnostics(app: Express): void {
+  // Use config layer for env access (adapter boundary pattern)
   const diagnosticsEnabled =
     config.server.environment !== 'test' &&
-    process.env.DISABLE_DIAGNOSTICS_CRON !== 'true';
+    getEnv('DISABLE_DIAGNOSTICS_CRON') !== 'true';
 
   if (diagnosticsEnabled) {
     cron.schedule('*/5 * * * *', async () => {
@@ -49,7 +51,9 @@ export function setupDiagnostics(app: Express): void {
       status: healthReport.status,
       timestamp: new Date().toISOString(),
       service: 'ARCANOS',
-      version: process.env.npm_package_version || '1.0.0',
+      // Use config layer for env access (adapter boundary pattern)
+      // Note: npm_package_version is set by npm, not a standard env var
+      version: getEnv('npm_package_version') || '1.0.0',
       summary: healthReport.summary,
       components: healthReport.components,
       ai: {

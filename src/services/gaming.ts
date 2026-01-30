@@ -1,8 +1,11 @@
 import { getPrompt } from '../config/prompts.js';
-import { getOpenAIClient, getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js';
+import { getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js';
 import { fetchAndClean } from './webFetcher.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getEnv } from '../config/env.js';
 
-const FINETUNE_MODEL = process.env.FINETUNE_MODEL || getDefaultModel();
+// Use config layer for env access (adapter boundary pattern)
+const FINETUNE_MODEL = getEnv('FINETUNE_MODEL') || getDefaultModel();
 
 type WebSource = {
   url: string;
@@ -45,8 +48,11 @@ const gamingPrompts = {
 };
 
 export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
-  const openai = getOpenAIClient();
-  if (!openai) {
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
     const mock = generateMockResponse(userPrompt, 'guide');
     return {
       gaming_response: mock.result,
@@ -81,7 +87,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
     }
 
     // Step 1: Fine-tuned ARCANOS Intake
-    const intake = await openai.chat.completions.create({
+    const intake = await adapter.chat.completions.create({
       model: FINETUNE_MODEL,
       messages: [
         { role: 'system', content: gamingPrompts.intakeSystem },
@@ -91,7 +97,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
     const refinedPrompt = intake.choices[0].message?.content || '';
 
     // Step 2: GPT-5.1 Reasoning (Hotline Advisor Mode)
-    const gpt5 = await openai.chat.completions.create({
+    const gpt5 = await adapter.chat.completions.create({
       model: getGPT5Model(),
       messages: [
         {
@@ -105,7 +111,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
     const reasoningOutput = gpt5.choices[0].message?.content || '';
 
     // Step 3: Fine-tuned ARCANOS Audit
-    const audit = await openai.chat.completions.create({
+    const audit = await adapter.chat.completions.create({
       model: FINETUNE_MODEL,
       messages: [
         { role: 'system', content: gamingPrompts.auditSystem },

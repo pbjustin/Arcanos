@@ -3,10 +3,11 @@
  * Consolidates common error handling, validation, and response patterns
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { Request, Response } from 'express';
 import fs from 'fs';
-import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
+import { generateMockResponse, hasValidAPIKey } from '../services/openai.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import {
   aiRequestSchema,
   type AIRequestDTO,
@@ -65,7 +66,17 @@ export function validateAIRequest(
     return null;
   }
 
-  const openai = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    console.log(`🤖 Returning mock response for /${endpointName} (adapter init failed)`);
+    const mockResponse = generateMockResponse(input, endpointName);
+    res.json({ ...(mockResponse as AIResponseDTO), clientContext });
+    return null;
+  }
+  const openai = adapter.getClient();
   //audit Assumption: client init failure should return mock response; Handling: fallback
   if (!openai) {
     console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);

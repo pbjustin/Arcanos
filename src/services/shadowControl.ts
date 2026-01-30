@@ -2,10 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { ensureLogDirectory, getAuditShadowPath, getLogPath } from '../utils/logPath.js';
 import { checkMemoryIntegrity } from './memoryAware.js';
+import { getEnv } from '../config/env.js';
 
 const DISABLE_FLAG_FILE = path.join(getLogPath(), 'shadow_disabled');
 
-let shadowEnabled = (process.env.ARC_SHADOW_MODE || 'enabled') !== 'disabled' && !fs.existsSync(DISABLE_FLAG_FILE);
+// Use config layer for env access (adapter boundary pattern)
+const shadowModeEnv = getEnv('ARC_SHADOW_MODE') || 'enabled';
+let shadowEnabled = shadowModeEnv !== 'disabled' && !fs.existsSync(DISABLE_FLAG_FILE);
 
 export function isShadowModeEnabled(): boolean {
   return shadowEnabled && !fs.existsSync(DISABLE_FLAG_FILE);

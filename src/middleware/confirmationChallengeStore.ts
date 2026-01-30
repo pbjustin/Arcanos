@@ -13,6 +13,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { getEnvNumber } from '../config/env.js';
 
 /**
  * Confirmation challenge structure linking a UUID token to a specific request.
@@ -38,20 +39,15 @@ const DEFAULT_CHALLENGE_TTL_MS = 2 * 60 * 1000; // 2 minutes
  * @returns Challenge TTL in milliseconds
  */
 function resolveChallengeTtl(): number {
-  const raw = process.env.CONFIRMATION_CHALLENGE_TTL_MS;
-  if (!raw) {
-    return DEFAULT_CHALLENGE_TTL_MS;
-  }
-
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  // Use config layer for env access (adapter boundary pattern)
+  const ttl = getEnvNumber('CONFIRMATION_CHALLENGE_TTL_MS', DEFAULT_CHALLENGE_TTL_MS);
+  if (ttl <= 0) {
     console.warn(
-      `Invalid CONFIRMATION_CHALLENGE_TTL_MS value ("${raw}"). Falling back to ${DEFAULT_CHALLENGE_TTL_MS}ms.`,
+      `Invalid CONFIRMATION_CHALLENGE_TTL_MS value. Falling back to ${DEFAULT_CHALLENGE_TTL_MS}ms.`,
     );
     return DEFAULT_CHALLENGE_TTL_MS;
   }
-
-  return parsed;
+  return ttl;
 }
 
 const challengeTtlMs = resolveChallengeTtl();

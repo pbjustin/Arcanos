@@ -1,4 +1,5 @@
 import { appendFileSync, mkdirSync } from 'fs';
+import { getEnv } from '../config/env.js';
 
 export interface GPT5OrchestrationConfig {
   memoryContextEnabled?: boolean;
@@ -13,8 +14,9 @@ export async function initializeGPT5Orchestration(config: GPT5OrchestrationConfi
     config.memoryContextEnabled = true;
 
     //audit Assumption: missing snapshot tag should default
+    // Use config layer for env access (adapter boundary pattern)
     if (!config.contextSnapshotTag) {
-      config.contextSnapshotTag = process.env.CONTEXT_SNAPSHOT_TAG || 'orchestration';
+      config.contextSnapshotTag = getEnv('CONTEXT_SNAPSHOT_TAG') || 'orchestration';
     }
 
     //audit Assumption: agentId and sessionId are required

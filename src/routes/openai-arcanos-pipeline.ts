@@ -1,11 +1,11 @@
 import express, { Request, Response } from 'express';
-import OpenAI from 'openai';
 import { executeArcanosPipeline } from '../services/arcanosPipeline.js';
+import type { ChatCompletionMessageParam } from '../services/openai/types.js';
 
 const router = express.Router();
 
 router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
-  const { messages } = req.body as { messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] };
+  const { messages } = req.body as { messages: ChatCompletionMessageParam[] };
 
   try {
     const pipelineResult = await executeArcanosPipeline(messages);

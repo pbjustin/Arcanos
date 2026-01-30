@@ -64,6 +64,7 @@ export function updateState(newData: Partial<SystemState>): SystemState {
  */
 import config from '../config/index.js';
 import { webFetcher } from '../utils/webFetcher.js';
+import { getEnv } from '../config/env.js';
 
 function buildStatusUrl(portOverride?: number): string {
   const statusEndpoint = config.server.statusEndpoint || '/status';
@@ -72,7 +73,9 @@ function buildStatusUrl(portOverride?: number): string {
     return statusEndpoint;
   }
 
-  if (portOverride && portOverride !== config.server.port && !process.env.SERVER_URL) {
+  // Use config layer for env access (adapter boundary pattern)
+  const serverUrl = getEnv('SERVER_URL');
+  if (portOverride && portOverride !== config.server.port && !serverUrl) {
     return new URL(statusEndpoint, `http://127.0.0.1:${portOverride}`).toString();
   }
 

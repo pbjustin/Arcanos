@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import OpenAI from 'openai';
 import { runThroughBrain } from '../logic/trinity.js';
 import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
@@ -16,6 +15,9 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { createPendingDaemonActions, queueDaemonCommandForInstance } from './api-daemon.js';
 import { getDefaultModel } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import config from '../config/index.js';
+import { getEnv } from '../config/env.js';
+import type OpenAI from 'openai';
 
 const router = express.Router();
 
@@ -24,7 +26,15 @@ router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
 
 const ASK_TEXT_FIELDS = ['prompt', 'userInput', 'content', 'text', 'query'] as const;
-const CONFIRM_SENSITIVE_DAEMON_ACTIONS = process.env.CONFIRM_SENSITIVE_DAEMON_ACTIONS !== 'false';
+// Security: Default to requiring confirmation for sensitive daemon actions
+// preemptive=true means "preemptively execute without confirmation" (skip confirmation)
+// preemptive=false/undefined means "require confirmation" (default secure behavior)
+// This ensures security by default - confirmation gate is enabled unless explicitly disabled
+// Also check direct env var for backward compatibility
+const explicitConfirm = getEnv('CONFIRM_SENSITIVE_DAEMON_ACTIONS');
+const CONFIRM_SENSITIVE_DAEMON_ACTIONS = explicitConfirm !== undefined 
+  ? explicitConfirm !== 'false' 
+  : !config.fallback?.preemptive;
 
 // Enhanced validation schema for ask requests that accepts multiple text field aliases
 const askValidationSchema = {
