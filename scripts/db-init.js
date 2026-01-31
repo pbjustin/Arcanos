@@ -92,7 +92,9 @@ async function ensureSchema() {
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         completed_at TIMESTAMPTZ
       );
-    `
+    `,
+    idx_execution_logs_ts_wid: `CREATE INDEX IF NOT EXISTS idx_execution_logs_ts_wid ON execution_logs(timestamp DESC, worker_id);`,
+    idx_job_data_created_at: `CREATE INDEX IF NOT EXISTS idx_job_data_created_at ON job_data(created_at DESC);`
     // add more tables here as needed
   };
 
