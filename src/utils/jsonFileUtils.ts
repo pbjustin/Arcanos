@@ -19,10 +19,10 @@ const defaultDependencies: JsonReadDependencies = {
  * Inputs/Outputs: filePath string + optional dependencies; returns record or undefined.
  * Edge cases: Missing file or parse errors log and return undefined.
  */
-export function readJsonFileSafely(
+export function readJsonFileSafely<T>(
   filePath: string,
   dependencies: JsonReadDependencies = defaultDependencies
-): Record<string, unknown> | undefined {
+): T | undefined {
   const { fsModule, logError } = dependencies;
 
   try {
