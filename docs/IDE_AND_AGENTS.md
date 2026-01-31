@@ -27,8 +27,7 @@ You can review the contents of the [`.cursorignore`](../.cursorignore) file dire
 
 - **Debug live code while backend is running:** Start the backend with `npm run dev:inspect`, then in the IDE run **Attach to Backend**. Breakpoints in `src/*.ts` will hit.
 - **Launch under debugger:** IDE → **Backend (TS) Launch** (runs the `build` task first, then launches with inspector).
-- **Debug Python daemon:** IDE → **Daemon (Python)**; breakpoints in `daemon-python/arcanos/*.py` will hit.
-- **CLI debug server:** Run the CLI with the HTTP debug server so IDE agents can inspect the live daemon (status, logs, audit, ask/run/see). Use the **Daemon (Python)** launch configuration, or run `.\daemon-python\start_cli_debug.ps1` in a terminal. The server listens on `http://127.0.0.1:9999` (e.g. `GET /debug/status`, `GET /debug/logs?tail=100`). Set `DEBUG_SERVER_TOKEN` for authenticated endpoints. See [daemon-debugging.md](daemon-debugging.md) for all endpoints and security.
+- **Debug Python daemon / CLI debug server:** IDE → **Daemon (Python)**; breakpoints in `daemon-python/arcanos/*.py` will hit. This config also enables the HTTP debug server on `http://127.0.0.1:9999` (e.g. `GET /debug/status`, `GET /debug/logs?tail=100`) so IDE agents can inspect the live daemon (status, logs, audit, ask/run/see). Set `DEBUG_SERVER_TOKEN` for authenticated endpoints. See [daemon-debugging.md](daemon-debugging.md) for all endpoints and security. Alternatively, run `.\daemon-python\start_cli_debug.ps1` in a terminal.
 
 Configs: [`.vscode/launch.json`](../.vscode/launch.json), [`.vscode/tasks.json`](../.vscode/tasks.json). Script: `npm run dev:inspect`.
 
@@ -51,7 +50,7 @@ Configs: [`.vscode/launch.json`](../.vscode/launch.json), [`.vscode/tasks.json`]
 3. **Source map integrity:** Call stack shows `src/.../*.ts`; stepping follows TS lines correctly.
 4. **Launch config:** VS Code → **Backend (TS) Launch**; pass if preLaunch build runs and server starts under debugger.
 5. **PORT:** Verify `PORT` env overrides default; otherwise uses 8080.
-6. **Python daemon (optional):** VS Code → **Daemon (Python)**; breakpoints in `daemon-python/arcanos/cli.py` should hit. You can also verify the debug server is running by executing `curl http://127.0.0.1:9999/debug/status`, which should return JSON.
+6. **Python daemon (optional):** VS Code → **Daemon (Python)**; breakpoints in `daemon-python/arcanos/cli.py` hit. Debug HTTP server is available at `http://127.0.0.1:9999/debug/status` with `IDE_AGENT_DEBUG=1`. Verify with `curl http://127.0.0.1:9999/debug/status` (returns JSON).
 
 **Automatable checks (optional)**
 
