@@ -45,8 +45,8 @@ function collectLogsPreview(): string[] {
 
 async function buildSummarySources(): Promise<SummarySources> {
   const systemState = loadState() as Record<string, unknown>;
-  const memoryState = readJsonFileSafely(path.join(MEMORY_DIR, 'state.json'));
-  const healthHistory = readJsonFileSafely(path.join(process.cwd(), 'logs', 'healthcheck.json'));
+  const memoryState = readJsonFileSafely<Record<string, unknown>>(path.join(MEMORY_DIR, 'state.json'));
+  const healthHistory = readJsonFileSafely<Record<string, unknown>>(path.join(process.cwd(), 'logs', 'healthcheck.json'));
   const logsPreview = collectLogsPreview();
 
   return {
@@ -72,10 +72,12 @@ function resolveSummaryFile(date: Date): string {
 
 function buildPrompt(model: string, sources: SummarySources): string {
   //audit Assumption: prompt lines are safe to concatenate; risk: large payload; invariant: string output; handling: join with newlines.
+  //audit Assumption: untrusted data is delimited; risk: prompt injection; invariant: data treated as content; handling: explicit delimiters and instructions.
   return [
     DAILY_SUMMARY_PROMPT_LINES.intro(model),
     ...DAILY_SUMMARY_PROMPT_LINES.instructions,
-    JSON.stringify(sources)
+    JSON.stringify(sources),
+    DAILY_SUMMARY_PROMPT_LINES.dataEnd
   ].join('\n');
 }
 

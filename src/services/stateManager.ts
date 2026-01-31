@@ -23,16 +23,11 @@ export interface SystemState {
  * Edge cases: Missing/invalid file returns default state.
  */
 export function loadState(): SystemState {
-  try {
-    //audit Assumption: state file presence indicates persisted state; risk: invalid JSON; invariant: fallback to default; handling: safe read.
-    const parsedState = readJsonFileSafely(STATE_FILE);
-    //audit Assumption: parsed state indicates valid structure; risk: partial data; invariant: return SystemState; handling: cast and return.
-    if (parsedState) {
-      return parsedState as SystemState;
-    }
-  } catch (error: unknown) {
-    //audit Assumption: load failure should fall back to default state; risk: hide storage issue; invariant: return default; handling: log and fallback.
-    console.error('[STATE] Error loading state file:', error instanceof Error ? error.message : error);
+  //audit Assumption: state file presence indicates persisted state; risk: invalid JSON; invariant: fallback to default; handling: safe read.
+  const parsedState = readJsonFileSafely<SystemState>(STATE_FILE);
+  //audit Assumption: parsed state indicates valid structure; risk: partial data; invariant: return SystemState; handling: return or fallback.
+  if (parsedState) {
+    return parsedState;
   }
   
   // Return default state
