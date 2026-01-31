@@ -11,7 +11,9 @@
     "forceConsistentCasingInFileNames": true,
     "isolatedModules": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "sourceMap": true,
+    "inlineSources": true
   },
   "include": ["src"],
   "exclude": ["node_modules"],
