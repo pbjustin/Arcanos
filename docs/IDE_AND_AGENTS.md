@@ -66,6 +66,22 @@ Configs: [`.vscode/launch.json`](../.vscode/launch.json), [`.vscode/tasks.json`]
 - **Alignment:** No runtime logic changes, only tooling/config.
 - **Resilience:** Works across OSes; stable sourcemap/outFiles mapping.
 
+## Local vs production parity
+
+To make local diagnostics match production (`acranos-production.up.railway.app`):
+
+| Env var | Local (for parity) | Production |
+|---------|--------------------|------------|
+| `PORT` | 8080 | 8080 |
+| `NODE_ENV` | development | production |
+| `DATABASE_URL` | PostgreSQL connection string | Set by Railway |
+| `OPENAI_API_KEY` | Your key | Set in Railway |
+| `AI_MODEL` | e.g. `ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote` | Same |
+
+- **Trusted / safe mode:** Production matches `railway-node-20` fingerprint (trusted). Local Windows matches `dev-windows-node-24`; sandbox probe may fail, resulting in safe mode.
+- **Workers:** Local Windows may show worker ESM load failures; production uses Linux. Core `/ask` pipeline works on both.
+- **Diagnostics:** Run `npm run db:init` or ensure `execution_logs` exists so `/sdk/diagnostics` reports correctly.
+
 ## User-level rule (workspace = home)
 
 If you sometimes open the user home folder instead of Arcanos, a Cursor rule at `.cursor/rules/arcanos-context.mdc` (in your user config) tells the AI that the primary codebase is Arcanos under `Arcanos/`. That rule is optional and lives outside this repo.
