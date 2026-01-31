@@ -19,72 +19,9 @@ The workspace file lives **inside the repo** with a single folder `"."`, so it w
 
 ## .cursorignore (focused indexing)
 
-A project-level `.cursorignore` in the repo root keeps the index focused on source (excludes `node_modules/`, venvs, `__pycache__/`, `dist/`, logs, secrets). If `.cursorignore` is missing, create it in the repo root with the contents from the “.cursorignore template” section below so Cursor and agents index only relevant files.
+A project-level `.cursorignore` file is included in the repo root to keep the index focused on source code. It excludes dependencies (`node_modules/`), build artifacts (`dist/`), Python caches (`__pycache__/`), logs, and secrets. This ensures that Cursor and other agents index only relevant files.
 
-### .cursorignore template
-
-Copy into `Arcanos/.cursorignore` if the file does not exist:
-
-```
-# Dependencies and build (keep index focused on source)
-node_modules/
-.npm
-dist/
-build/
-*.tsbuildinfo
-coverage/
-*.lcov
-.eslintcache
-
-# Python env and caches
-daemon-python/venv/
-daemon-python/.venv/
-**/__pycache__/
-**/.pytest_cache/
-*.py[cod]
-*.pyo
-*.pyd
-.pytest_cache/
-.tox/
-.coverage
-htmlcov/
-
-# Logs and runtime artifacts (not useful for codebase understanding)
-logs/
-*.log
-pids
-*.pid
-*.seed
-*.pid.lock
-tmp/
-temp/
-daemon-python/temp/
-daemon-python/cache/
-daemon-python/crash_reports/
-daemon-python/telemetry/
-daemon-python/backups/
-daemon-python/screenshots/
-*.db
-
-# Secrets and env (never index)
-.env
-.env.*
-!.env.example
-**/secrets/
-**/private_keys/
-**/*.pem
-**/*.key
-**/*.pfx
-**/*.p12
-
-# Large/generated or third-party content
-daemon-python/build_pyi/
-daemon-python/dist_new/
-installer/dist_new/
-build_pyi/
-dist_new/
-/src/generated/prisma
-```
+You can review the contents of the [`.cursorignore`](../.cursorignore) file directly.
 
 ## User-level rule (workspace = home)
 
