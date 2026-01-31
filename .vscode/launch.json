@@ -37,18 +37,6 @@
         "IDE_AGENT_DEBUG": "1",
         "DAEMON_DEBUG_PORT": "9999"
       }
-    },
-    {
-      "type": "python",
-      "request": "launch",
-      "name": "CLI (debug server)",
-      "module": "arcanos.cli",
-      "cwd": "${workspaceFolder}/daemon-python",
-      "console": "integratedTerminal",
-      "env": {
-        "IDE_AGENT_DEBUG": "1",
-        "DAEMON_DEBUG_PORT": "9999"
-      }
     }
   ]
 }
