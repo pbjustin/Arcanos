@@ -10,6 +10,7 @@
     "db:patch": "node scripts/schema-sync.js",
     "start": "node dist/start-server.js",
     "dev": "npm run build:workers && tsc && node dist/start-server.js",
+    "dev:inspect": "npm run build && node --inspect dist/start-server.js",
     "dev:watch": "tsc --watch",
     "build": "npm run build:workers && tsc",
     "clean": "rm -rf dist",
