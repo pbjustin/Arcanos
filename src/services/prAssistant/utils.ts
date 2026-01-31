@@ -44,5 +44,6 @@ export function uniqueStrings(values: string[]): string[] {
  * Edge cases: Non-camelCase strings return unchanged.
  */
 export function formatCheckLabel(value: string): string {
-  return value.replace(/([a-z])([A-Z])/g, '$1 $2');
+  const spaced = value.replace(/([a-z])([A-Z])/g, '$1 $2');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
