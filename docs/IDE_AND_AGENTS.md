@@ -50,7 +50,7 @@ Configs: [`.vscode/launch.json`](../.vscode/launch.json), [`.vscode/tasks.json`]
 3. **Source map integrity:** Call stack shows `src/.../*.ts`; stepping follows TS lines correctly.
 4. **Launch config:** VS Code → **Backend (TS) Launch**; pass if preLaunch build runs and server starts under debugger.
 5. **PORT:** Verify `PORT` env overrides default; otherwise uses 8080.
-6. **Python daemon (optional):** VS Code → **Daemon (Python)**; breakpoints in `daemon-python/arcanos/cli.py` hit. Debug HTTP server is available at `http://127.0.0.1:9999/debug/status` with `IDE_AGENT_DEBUG=1`.
+6. **Python daemon (optional):** VS Code → **Daemon (Python)**; breakpoints in `daemon-python/arcanos/cli.py` hit. Debug HTTP server is available at `http://127.0.0.1:9999/debug/status` with `IDE_AGENT_DEBUG=1`. Verify with `curl http://127.0.0.1:9999/debug/status` (returns JSON).
 
 **Automatable checks (optional)**
 
