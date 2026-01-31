@@ -1,3 +1,5 @@
+import { PR_ASSISTANT_MESSAGES } from '../../config/prAssistantMessages.js';
+import { formatCheckLabel } from './utils.js';
 import type { CheckResult, PRAnalysisResult } from './types.js';
 
 /**
@@ -6,15 +8,18 @@ import type { CheckResult, PRAnalysisResult } from './types.js';
  * Edge cases: Defaults to rejection when not all pass and no warnings.
  */
 export function generateSummary(checks: PRAnalysisResult['checks'], allPass: boolean, hasWarnings: boolean): string {
+  //audit assumption: allPass overrides warnings; failure risk: conflicting flags; expected invariant: flags derived from checks; handling: order checks.
   if (allPass) {
-    return '✅ **APPROVED** - All checks passed, ready for merge';
+    return PR_ASSISTANT_MESSAGES.summary.approved;
   }
 
+  //audit assumption: warnings allowed without failures; failure risk: misclassification; expected invariant: hasWarnings reflects checks; handling: warning branch.
   if (hasWarnings) {
-    return '⚠️ **CONDITIONAL** - Minor issues found, review recommended';
+    return PR_ASSISTANT_MESSAGES.summary.conditional;
   }
 
-  return '❌ **REJECTED** - Critical issues detected, fixes required before merge';
+  //audit assumption: remaining cases are failures; failure risk: hidden errors; expected invariant: no-pass + no-warning implies failure; handling: reject message.
+  return PR_ASSISTANT_MESSAGES.summary.rejected;
 }
 
 /**
@@ -26,6 +31,7 @@ export function generateReasoning(checks: PRAnalysisResult['checks']): string {
   const reasons: string[] = [];
 
   Object.entries(checks).forEach(([checkName, result]) => {
+    //audit assumption: only warning/error statuses need reasoning; failure risk: missing context; expected invariant: success is optional; handling: branch by status.
     if (result.status === '❌') {
       reasons.push(`**${checkName}**: ${result.message}`);
     } else if (result.status === '⚠️') {
@@ -33,8 +39,9 @@ export function generateReasoning(checks: PRAnalysisResult['checks']): string {
     }
   });
 
+  //audit assumption: no reasons means all checks passed; failure risk: silent errors; expected invariant: reasons derived from checks; handling: success message fallback.
   if (reasons.length === 0) {
-    return 'All validation checks passed successfully. The PR maintains code quality standards and platform compatibility.';
+    return PR_ASSISTANT_MESSAGES.reasoning.noIssues;
   }
 
   return reasons.join('\n\n');
@@ -50,28 +57,31 @@ export function generateRecommendations(checks: Record<string, CheckResult>): st
   const successDetails: string[] = [];
 
   Object.entries(checks).forEach(([checkName, result]) => {
-    //audit Assumption: checkName is camelCase; risk: unreadable labels; invariant: label is readable; handling: insert spaces.
-    const label = checkName.replace(/([a-z])([A-Z])/g, '$1 $2');
+    //audit assumption: checkName is camelCase; failure risk: unreadable labels; expected invariant: label is readable; handling: format helper.
+    const label = formatCheckLabel(checkName);
+    //audit assumption: only failing/warning checks need recommendations; failure risk: noisy output; expected invariant: success checks skip; handling: branch by status.
     if (result.status !== '✅') {
       recommendations.push(...result.details);
       return;
     }
 
     const detail = result.details?.[0];
+    //audit assumption: success details might be empty; failure risk: unclear success; expected invariant: success summary exists; handling: fallback message.
     if (detail) {
       successDetails.push(`✅ ${label}: ${detail}`);
     } else {
-      //audit Assumption: success path should still inform; risk: vague success; invariant: message provided; handling: generic success detail.
-      successDetails.push(`✅ ${label}: check passed`);
+      //audit assumption: success path should still inform; failure risk: vague success; expected invariant: message provided; handling: generic success detail.
+      successDetails.push(PR_ASSISTANT_MESSAGES.recommendations.successFallback.replace('{label}', label));
     }
   });
 
+  //audit assumption: no recommendations implies success; failure risk: missing info; expected invariant: successDetails filled; handling: return success summary or fallback.
   if (recommendations.length === 0) {
     const uniqueSuccess = [...new Set(successDetails)];
     if (uniqueSuccess.length > 0) {
       return uniqueSuccess;
     }
-    return ['No specific recommendations - maintain current code quality standards'];
+    return [PR_ASSISTANT_MESSAGES.recommendations.noSpecific];
   }
 
   return [...new Set(recommendations)];
