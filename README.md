@@ -95,6 +95,10 @@ See `docs/RAILWAY_DEPLOYMENT.md` for a step-by-step guide.
 - **Confirmation gate**: send `x-confirmed: yes` for manual runs or configure
   `TRUSTED_GPT_IDS` / `ARCANOS_AUTOMATION_SECRET` for automation.
 
+## IDE and cloud agents
+
+For full codebase indexing and AI/agent context, open **`Arcanos.code-workspace`** (in this repo root) in Cursor, VS Code, or GitHub Codespaces. The workspace defines this repo as the single root so semantic search and rules (`.cursorrules`, `AGENTS.md`) apply to Arcanos only. See `CODEBASE_INDEX.md` for a short map of entry points and key directories.
+
 ## References
 
 - Configuration matrix: `docs/CONFIGURATION.md`

@@ -1,0 +1,58 @@
+# Dependencies and build (keep index focused on source)
+node_modules/
+.npm
+dist/
+build/
+*.tsbuildinfo
+coverage/
+*.lcov
+.eslintcache
+
+# Python env and caches
+daemon-python/venv/
+daemon-python/.venv/
+**/__pycache__/
+**/.pytest_cache/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Logs and runtime artifacts (not useful for codebase understanding)
+logs/
+*.log
+pids
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+daemon-python/temp/
+daemon-python/cache/
+daemon-python/crash_reports/
+daemon-python/telemetry/
+daemon-python/backups/
+daemon-python/screenshots/
+*.db
+
+# Secrets and env (never index)
+.env
+.env.*
+!.env.example
+**/secrets/
+**/private_keys/
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.p12
+
+# Large/generated or third-party content
+daemon-python/build_pyi/
+daemon-python/dist_new/
+installer/dist_new/
+build_pyi/
+dist_new/
+/src/generated/prisma
