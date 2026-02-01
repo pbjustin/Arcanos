@@ -4,6 +4,7 @@ import {
   getChallengeTtlMs,
   verifyConfirmationChallenge,
 } from './confirmationChallengeStore.js';
+import { consumeOneTimeToken } from '../lib/tokenStore.js';
 import { getDefaultModel } from '../services/openai/credentialProvider.js';
 
 export interface ConfirmationContext {
@@ -14,6 +15,7 @@ export interface ConfirmationContext {
   isTrustedGpt: boolean;
   automationSecretApproved: boolean;
   allowAllOverride: boolean;
+  usedOneTimeToken: boolean;
 }
 
 declare module 'express-serve-static-core' {
@@ -115,6 +117,7 @@ function maskConfirmationHeader(value: string | undefined): string {
 
 export function confirmGate(req: Request, res: Response, next: NextFunction): void {
   const confirmationHeader = normalizeHeaderValue(req.headers['x-confirmed']);
+  const oneTimeTokenHeader = normalizeHeaderValue(req.headers['x-arcanos-confirm-token']);
   const gptIdHeader = normalizeHeaderValue(req.headers['x-gpt-id'] as string | string[] | undefined);
   const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId : undefined;
   const gptId = gptIdHeader || gptIdFromBody;
@@ -133,21 +136,31 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     normalizedConfirmation && confirmationHeaderLower?.startsWith(confirmationTokenPrefix)
       ? normalizedConfirmation.slice(confirmationTokenPrefix.length).trim()
       : undefined;
+  const oneTimeTokenValue = oneTimeTokenHeader?.toString().trim();
 
   let hasValidToken = false;
   if (!allowAllGpts && providedToken) {
     hasValidToken = verifyConfirmationChallenge(providedToken, req.method, req.path);
   }
 
+  let oneTimeTokenApproved = false;
+  if (!allowAllGpts && oneTimeTokenValue && !manualConfirmation && !hasValidToken && !isTrustedGpt && !automationBypassApproved) {
+    // //audit Assumption: one-time token grants single-use approval; risk: token replay if not consumed; invariant: consume on success; handling: consume + set approval when valid.
+    const tokenResult = consumeOneTimeToken(oneTimeTokenValue);
+    oneTimeTokenApproved = tokenResult.ok;
+  }
+
   // Log the request for audit purposes
   console.log(
     `[🛡️ CONFIRM-GATE] ${req.method} ${req.path} - Confirmation: ${maskConfirmationHeader(confirmationHeader)} - GPTID: ${
       gptId || 'none'
-    } - Mode: ${confirmationMode} - Automation: ${automationBypassApproved ? 'trusted' : 'none'}`,
+    } - Mode: ${confirmationMode} - Automation: ${automationBypassApproved ? 'trusted' : 'none'} - OneTimeToken: ${
+      oneTimeTokenApproved ? 'approved' : oneTimeTokenValue ? 'provided' : 'none'
+    }`,
   );
 
   // Check if user has explicitly confirmed the action
-  if (!manualConfirmation && !hasValidToken && !isTrustedGpt && !automationBypassApproved && !allowAllGpts) {
+  if (!manualConfirmation && !hasValidToken && !oneTimeTokenApproved && !isTrustedGpt && !automationBypassApproved && !allowAllGpts) {
     const challenge = createConfirmationChallenge(req.method, req.path, gptId || null);
     const tokenStatus = providedToken ? 'invalid' : 'missing';
 
@@ -161,6 +174,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     const confirmationInstructions = [
       'Inform the operator that this action is blocked until they explicitly approve it.',
       `If approved, resend the request with the header: x-confirmed: ${confirmationTokenPrefix}${challenge.id}.`,
+      'Alternatively, request a one-time token and resend with header: x-arcanos-confirm-token: <token>.',
       'Trusted automations can bypass manual review by registering their GPT ID in the TRUSTED_GPT_IDS environment variable.',
       automationBypassEnabled
         ? `Backend automations can also send ${automationBypassHeader}: <secret> when ARC automation is configured.`
@@ -196,6 +210,8 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     ? 'auto-allowed'
     : hasValidToken
     ? 'challenge-token'
+    : oneTimeTokenApproved
+    ? 'one-time-token'
     : automationBypassApproved
     ? 'automation-secret'
     : isTrustedGpt
@@ -207,6 +223,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     gptId: gptId || undefined,
     manualConfirmation,
     usedChallengeToken: hasValidToken,
+    usedOneTimeToken: oneTimeTokenApproved,
     isTrustedGpt,
     automationSecretApproved: automationBypassApproved,
     allowAllOverride: allowAllGpts,
@@ -216,13 +233,13 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
 }
 
 export const isAllowAllGptsEnabled = (): boolean => allowAllGpts;
-
 export const getConfirmGateConfiguration = () => ({
   allowAllGpts,
   trustedGptIds: Array.from(trustedGptIds),
   requiresHeader: !allowAllGpts,
   confirmationHeader: 'x-confirmed',
   gptHeader: 'x-gpt-id',
+  oneTimeTokenHeader: 'x-arcanos-confirm-token',
   confirmationTokenPrefix,
   confirmationChallengeTtlMs: getChallengeTtlMs(),
   automationBypassEnabled,

@@ -128,6 +128,17 @@ TEMPERATURE=0.7
 MAX_TOKENS=500
 ```
 
+## 🧩 Local IDE Debugging (One-Time Tokens)
+
+For IDE debugging, enable the daemon debug server and use one-time confirmation tokens for operator-approved access.
+
+- Set `IDE_AGENT_DEBUG=1` or `DAEMON_DEBUG_PORT=9999` to enable the daemon debug API.
+- Set `ARCANOS_AUTOMATION_SECRET` on the backend to allow token issuance.
+- Request a one-time token via `POST /debug/create-confirmation-token` and send it in the IDE header `x-arcanos-confirm-token`.
+- Tokens are single-use and expire after the configured TTL (default: 10 minutes).
+
+Note: Debug interfaces bind to `127.0.0.1` in development; use dev-only port mappings if you need external access.
+
 ## 🪟 Windows Terminal Integration
 
 To add ARCANOS as a Windows Terminal profile:

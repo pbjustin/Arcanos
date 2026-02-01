@@ -53,6 +53,11 @@ function Invoke-DaemonRequest {
 
     $uri = "$base$Path"
     $headers = @{ 'Content-Type' = 'application/json' }
+    $automationSecret = $env:ARCANOS_AUTOMATION_SECRET
+    $automationHeaderName = if ($env:ARCANOS_AUTOMATION_HEADER) { $env:ARCANOS_AUTOMATION_HEADER } else { 'x-arcanos-automation' }
+    if ($automationSecret) {
+        $headers[$automationHeaderName] = $automationSecret
+    }
     
     $requestParams = @{
         Uri = $uri

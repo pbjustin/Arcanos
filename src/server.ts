@@ -16,6 +16,7 @@ import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, 
 import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
 import { createIdleStateService } from './services/idleStateService.js';
+import { setupBridgeSocket } from './services/bridgeSocket.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -173,6 +174,13 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       const instance = app.listen(actualPort, host, () => resolve(instance));
       instance.on('error', reject);
     });
+
+    // //audit Assumption: bridge IPC should attach after server is listening; risk: upgrade hooks missed if attached too late; invariant: attach once; handling: attach after listen with error guard.
+    try {
+      setupBridgeSocket(server);
+    } catch (error) {
+      serverLogger.warn('Failed to setup bridge socket', undefined, undefined, error as Error);
+    }
 
     logBootSummary(actualPort, workerResults);
 

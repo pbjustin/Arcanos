@@ -3,6 +3,7 @@ import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from '../utils/structuredLogging.js';
 import { isBridgeEnabled } from '../utils/bridgeEnv.js';
+import { consumeOneTimeToken } from '../lib/tokenStore.js';
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
 const bridgeClients = new Set<WebSocket>();
@@ -33,11 +34,24 @@ function resolveHeader(req: IncomingMessage, headerName: string): string | undef
 function isAutomationAuthorized(req: IncomingMessage): boolean {
   const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
   if (!secret) {
-    return true;
+    const token = resolveHeader(req, 'x-arcanos-confirm-token');
+    if (!token) {
+      return true;
+    }
+    // //audit Assumption: confirmation token is the capability; risk: replay if not consumed; invariant: consume on success; handling: consume + accept only when valid.
+    return consumeOneTimeToken(token).ok;
   }
   const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
   const provided = resolveHeader(req, headerName);
-  return provided === secret;
+  if (provided === secret) {
+    return true;
+  }
+  const token = resolveHeader(req, 'x-arcanos-confirm-token');
+  if (!token) {
+    return false;
+  }
+  // //audit Assumption: confirmation token can authorize IPC without automation secret; risk: replay; invariant: token must be consumed; handling: consume + accept when valid.
+  return consumeOneTimeToken(token).ok;
 }
 
 function rejectUpgrade(socket: Duplex, status: number, message: string): void {

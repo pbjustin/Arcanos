@@ -12,7 +12,8 @@ import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 dotenv.config();
 
 const serverPort = Number(process.env.PORT) || 8080;
-const serverHost = process.env.HOST || '0.0.0.0';
+// //audit Assumption: development should bind to localhost by default; risk: exposing local endpoints; invariant: use 127.0.0.1 in dev unless HOST overrides; handling: conditional default.
+const serverHost = process.env.HOST || (process.env.NODE_ENV === 'development' ? '127.0.0.1' : '0.0.0.0');
 const serverBaseUrl = process.env.SERVER_URL || `http://127.0.0.1:${serverPort}`;
 const statusEndpoint = process.env.BACKEND_STATUS_ENDPOINT || '/status';
 
