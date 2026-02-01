@@ -19,8 +19,9 @@ import {
 import { DaemonHeartbeat } from './daemonStore.js';
 import { daemonLogger, daemonStore } from './api-daemon/context.js';
 import { requireDaemonAuth } from './api-daemon/auth.js';
+import { createPendingDaemonActions, consumePendingDaemonActions } from './api-daemon/pending.js';
 
-export { createPendingDaemonActions, consumePendingDaemonActions } from './api-daemon/pending.js';
+export { createPendingDaemonActions, consumePendingDaemonActions };
 
 const router = express.Router();
 
