@@ -1,5 +1,6 @@
-
-import json
+﻿import json
+import logging
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -172,8 +173,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
-            if not self._check_auth():
-                self._send_response(403, error="Forbidden")
+            if not self._check_authentication():
                 return
 
             if path == "/debug/status":
@@ -207,8 +207,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
-            if not self._check_auth():
-                self._send_response(403, error="Forbidden")
+            if not self._check_authentication():
                 return
 
             body = self._read_body()

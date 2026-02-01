@@ -1,4 +1,4 @@
-import { createServer } from "http";
+﻿import { createServer } from "http";
 import { resolve } from "path";
 import { pathToFileURL } from "url";
 
@@ -9,6 +9,7 @@ const BRIDGE_STATUS_PATH = "/bridge-status";
 const BRIDGE_STATUS_RESPONSE = "active";
 const BRIDGE_NOT_FOUND_RESPONSE = "not found";
 const bridgeEnabled = process.env.BRIDGE_ENABLED === "true";
+
 function getAutomationAuth() {
   const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
   const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
