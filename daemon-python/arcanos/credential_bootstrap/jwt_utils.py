@@ -177,6 +177,8 @@ def verify_backend_jwt(
             return False
     
     else:
-        # No verification method provided
-        logger.warning("No verification method provided for JWT token")
+        logger.warning(
+            "JWT verification key not configured. Set BACKEND_JWT_SECRET, "
+            "BACKEND_JWT_PUBLIC_KEY, or BACKEND_JWT_JWKS_URL to enable signature verification."
+        )
         return False
