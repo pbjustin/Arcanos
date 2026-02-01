@@ -69,7 +69,7 @@ async function isRequestAuthorized(req) {
   const tokenHeader = req.headers['x-arcanos-confirm-token'];
   const tokenValue = Array.isArray(tokenHeader) ? tokenHeader[0] : tokenHeader;
   if (!tokenValue) {
-    return !automationSecret;
+    return false;
   }
 
   // //audit Assumption: one-time token grants authorization; risk: replay if not consumed; invariant: token must be consumed by backend; handling: call consume endpoint and allow only on success.
