@@ -35,6 +35,7 @@ import apiUpdateRouter from './api-update.js';
 import apiDaemonRouter from './api-daemon.js';
 import bridgeRouter from './bridge.js';
 import reusableCodeRouter from './api-reusable-code.js';
+import debugConfirmationRouter from './debug-confirmation.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import devopsRouter from './devops.js';
@@ -98,6 +99,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', apiUpdateRouter);
   app.use('/', apiDaemonRouter);
   app.use('/', bridgeRouter);
+  app.use('/', debugConfirmationRouter);
   app.use('/', reusableCodeRouter);
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
