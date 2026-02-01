@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface ModuleDef {
   name: string;
@@ -54,7 +55,7 @@ export async function loadModuleDefinitions(): Promise<LoadedModule[]> {
       }
     } catch (err: unknown) {
       //audit Assumption: module load failure should not halt loading
-      console.error(`Failed to load module ${file.name}:`, err instanceof Error ? err.message : err);
+      console.error(`Failed to load module ${file.name}:`, resolveErrorMessage(err));
     }
   }
 

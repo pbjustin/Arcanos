@@ -7,6 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import { env, Environment } from './env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 /**
  * Get the log directory path from environment variable or default
@@ -75,7 +76,7 @@ export function ensureLogDirectory(): void {
       console.log(`📁 Created log directory: ${logDir}`);
     }
   } catch (error) {
-    console.error(`❌ Failed to create log directory ${logDir}:`, error instanceof Error ? error.message : 'Unknown error');
+    console.error(`❌ Failed to create log directory ${logDir}:`, resolveErrorMessage(error));
     throw error;
   }
 }

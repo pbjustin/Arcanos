@@ -2,6 +2,7 @@ import { getOpenAIAdapter, resetOpenAIAdapter } from './adapters/openai.adapter.
 import { getConfig } from './config/unifiedConfig.js';
 import { Express } from 'express';
 import { logger } from './utils/structuredLogging.js';
+import { resolveErrorMessage } from './lib/errors/index.js';
 
 /**
  * Initializes OpenAI adapter and attaches it to Express app locals.
@@ -43,7 +44,7 @@ export function initOpenAI(app: Express): void {
   } catch (error) {
     logger.error('Failed to initialize OpenAI adapter', {
       module: 'init-openai',
-      error: error instanceof Error ? error.message : String(error)
+      error: resolveErrorMessage(error)
     });
     clearAdapter();
   }

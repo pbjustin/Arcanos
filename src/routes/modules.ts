@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { loadModuleDefinitions, ModuleDef } from '../modules/moduleLoader.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 
@@ -29,7 +30,7 @@ function createHandler(mod: ModuleDef) {
       res.json(result);
     } catch (err: unknown) {
       //audit Assumption: module failures should return 500
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+      res.status(500).json({ error: resolveErrorMessage(err) });
     }
   };
 }
@@ -139,7 +140,7 @@ router.post('/queryroute', async (req: Request, res: Response) => {
     res.json(result);
   } catch (err: unknown) {
     //audit Assumption: module failures should return 500
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+    res.status(500).json({ error: resolveErrorMessage(err) });
   }
 });
 

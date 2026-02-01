@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import { buildValidationErrorResponse, resolveErrorMessage } from '../lib/errors/index.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import type { ErrorResponseDTO } from '../types/dto.js';
@@ -85,7 +85,7 @@ router.post('/api/update', updateValidation, asyncHandler(async (req: Request<{}
   } catch (error: unknown) {
     aiLogger.error('Update request failed', { operation: 'update' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('update.error', {
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: resolveErrorMessage(error)
     });
 
     return res.status(500).json({

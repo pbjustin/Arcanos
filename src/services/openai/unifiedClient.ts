@@ -35,6 +35,7 @@ import {
 import { responseCache } from '../../utils/cache.js';
 import { getRoutingActiveMessage } from '../../config/prompts.js';
 import { getConfig } from '../../config/unifiedConfig.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 /**
  * Client initialization options
@@ -160,7 +161,7 @@ export function createOpenAIClient(options: ClientOptions = {}): OpenAI | null {
     return client;
   } catch (error) {
     const duration = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = resolveErrorMessage(error);
     
     aiLogger.error('❌ Failed to create OpenAI client', {
       module: 'openai.unified',

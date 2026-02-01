@@ -11,6 +11,7 @@ import { initializeDatabase, getStatus } from '../db.js';
 import { createWorkerContext } from './workerContext.js';
 import { resolveWorkersDirectory } from './workerPaths.js';
 import { getConfig } from '../config/unifiedConfig.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 interface WorkerInitResult {
   initialized: string[];
@@ -111,7 +112,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
         console.log(`[🔧 WORKER-BOOT] ✅ worker-logger initialized`);
         results.initialized.push('worker-logger');
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage = resolveErrorMessage(error);
         console.error(`[🔧 WORKER-BOOT] ❌ worker-logger failed:`, errorMessage);
         results.failed.push({ worker: 'worker-logger', error: errorMessage });
       }
@@ -137,7 +138,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
         
         results.initialized.push('worker-planner-engine');
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage = resolveErrorMessage(error);
         console.error(`[🔧 WORKER-BOOT] ❌ worker-planner-engine failed:`, errorMessage);
         results.failed.push({ worker: 'worker-planner-engine', error: errorMessage });
       }
@@ -171,7 +172,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
                   await context.log(`Running scheduled worker: ${workerModule.name}`);
                   await workerModule.run(context);
                 } catch (error) {
-                  const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+                  const errorMsg = resolveErrorMessage(error);
                   await context.error(`Scheduled execution failed: ${errorMsg}`);
                 }
               });
@@ -183,7 +184,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
               results.scheduled.push(workerId);
               results.initialized.push(workerId);
             } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+              const errorMessage = resolveErrorMessage(error);
               console.error(`[🔧 WORKER-BOOT] ❌ Failed to schedule ${workerModule.name}:`, errorMessage);
               results.failed.push({ worker: workerId, error: `Scheduling failed: ${errorMessage}` });
             }
@@ -205,7 +206,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
           results.failed.push({ worker: workerId, error: 'Missing required exports' });
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage = resolveErrorMessage(error);
         console.error(`[🔧 WORKER-BOOT] ❌ ${workerId} failed:`, errorMessage);
         results.failed.push({ worker: workerId, error: errorMessage });
       }
@@ -221,7 +222,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
 
     return results;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     console.error('[🔧 WORKER-BOOT] Fatal error during worker initialization:', error);
     return { 
       initialized: [], 

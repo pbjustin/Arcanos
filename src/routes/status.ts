@@ -11,6 +11,7 @@ import { queryCache, configCache } from '../utils/cache.js';
 import { getStatus as getDbStatus } from '../db.js';
 import { sendJsonError } from '../utils/responseHelpers.js';
 import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from '../utils/healthChecks.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '../config/unifiedConfig.js';
 
 const router = express.Router();
@@ -29,7 +30,7 @@ router.get('/status', (_: Request, res: Response) => {
       res,
       500,
       'Failed to retrieve system state',
-      error instanceof Error ? error.message : 'Unknown error'
+      resolveErrorMessage(error)
     );
   }
 });
@@ -84,7 +85,7 @@ router.get('/health', async (_: Request, res: Response) => {
       res,
       500,
       'Failed to retrieve health status',
-      error instanceof Error ? error.message : 'Unknown error',
+      resolveErrorMessage(error),
       { status: 'unhealthy' }
     );
   }
@@ -117,7 +118,7 @@ router.post('/status', confirmGate, (req: Request, res: Response) => {
       res,
       500,
       'Failed to update system state',
-      error instanceof Error ? error.message : 'Unknown error'
+      resolveErrorMessage(error)
     );
   }
 });

@@ -5,6 +5,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const execAsync = promisify(exec);
 
@@ -50,7 +51,7 @@ async function executeGitCommand(command: string, workingDir?: string): Promise<
     return {
       success: false,
       output: '',
-      error: error instanceof Error ? error.message : 'Unknown git command error'
+      error: resolveErrorMessage(error, 'Unknown git command error')
     };
   }
 }
@@ -209,7 +210,7 @@ export async function executePRWorkflow(
     return {
       success: false,
       message: `Failed at step: ${currentStep}`,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: resolveErrorMessage(error)
     };
   }
 }

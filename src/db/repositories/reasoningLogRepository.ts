@@ -7,6 +7,7 @@
 import { isDatabaseConnected } from '../client.js';
 import type { ReasoningLog } from '../schema.js';
 import { query } from '../query.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 /**
  * Log reasoning input and output
@@ -32,7 +33,7 @@ export async function logReasoning(
     return result.rows[0];
   } catch (error: unknown) {
     //audit Assumption: DB failures should fall back to console logging
-    console.error('[🔌 DB] Failed to log reasoning:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('[🔌 DB] Failed to log reasoning:', resolveErrorMessage(error));
     // Fallback to console logging
     console.log('[🧠 REASONING] Input:', input.substring(0, 100) + '...');
     console.log('[🧠 REASONING] Output:', output.substring(0, 100) + '...');

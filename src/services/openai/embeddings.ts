@@ -4,6 +4,7 @@ import { getOpenAIAdapter } from '../../adapters/openai.adapter.js';
 import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
 import type { ChatCompletion } from './types.js';
 import type { TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
+import { buildEmbeddingRequest } from './requestBuilders.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
@@ -51,10 +52,8 @@ export async function createEmbedding(
     }
   }
 
-  const embeddingRes = await adapter.embeddings.create({
-    model: DEFAULT_EMBEDDING_MODEL,
-    input
-  });
+  const requestParams = buildEmbeddingRequest({ input, model: DEFAULT_EMBEDDING_MODEL });
+  const embeddingRes = await adapter.embeddings.create(requestParams);
 
   // embeddingRes is CreateEmbeddingResponse which has a data array
   return embeddingRes.data[0]?.embedding || [];

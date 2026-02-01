@@ -14,7 +14,8 @@ dotenv.config();
 
 // Use validated env for PORT (validated at startup via validateRequiredEnv)
 const serverPort = getEnvNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT);
-const serverHost = getEnv('HOST') || '0.0.0.0';
+// //audit Assumption: development should bind to localhost by default; risk: exposing local endpoints; invariant: use 127.0.0.1 in dev unless HOST overrides; handling: conditional default.
+const serverHost = getEnv('HOST') || (process.env.NODE_ENV === 'development' ? '127.0.0.1' : '0.0.0.0');
 const serverBaseUrl = getEnv('SERVER_URL') || `http://127.0.0.1:${serverPort}`;
 const statusEndpoint = getEnv('BACKEND_STATUS_ENDPOINT') || '/status';
 

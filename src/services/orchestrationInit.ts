@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from 'fs';
 import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface GPT5OrchestrationConfig {
   memoryContextEnabled?: boolean;
@@ -40,7 +41,7 @@ export async function initializeGPT5Orchestration(config: GPT5OrchestrationConfi
     logEvent('GPT-5.1 memory context attached', config);
   } catch (err: unknown) {
     //audit Assumption: orchestration init errors should be surfaced
-    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = resolveErrorMessage(err);
     console.error('❌ [GPT5-INIT] Orchestration init failed:', errorMessage);
     logEvent('GPT-5.1 orchestration init failure', { error: errorMessage });
     throw err;
@@ -58,7 +59,7 @@ function logEvent(message: string, details: unknown) {
     appendFileSync('/logs/orchestration.log', `${new Date().toISOString()} - ${message} - ${JSON.stringify(details)}\n`);
   } catch (error: unknown) {
     //audit Assumption: logging failures should not crash flow
-    console.error('❌ Failed to write orchestration log:', error instanceof Error ? error.message : error);
+    console.error('❌ Failed to write orchestration log:', resolveErrorMessage(error));
   }
 }
 

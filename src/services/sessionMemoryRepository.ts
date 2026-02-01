@@ -3,6 +3,7 @@ import memoryStore from '../memory/store.js';
 import { loadMemory, saveMemory } from '../db.js';
 import { logger } from '../utils/structuredLogging.js';
 import { getEnvNumber } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 type ChannelName = string;
 type SessionMessage = Record<string, unknown> | string;
@@ -87,7 +88,7 @@ class SessionMemoryRepository {
         operation: 'appendMessage',
         sessionId,
         channel,
-        error: error instanceof Error ? error.message : String(error)
+        error: resolveErrorMessage(error)
       });
     }
 
@@ -121,7 +122,7 @@ class SessionMemoryRepository {
           operation: 'getChannel',
           sessionId,
           channel,
-          error: error instanceof Error ? error.message : String(error)
+          error: resolveErrorMessage(error)
         });
         return cloneMessages(cached);
       }

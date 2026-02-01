@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface ScholarlySource {
   title: string;
@@ -37,7 +38,7 @@ export async function searchScholarly(
     }));
   } catch (err: unknown) {
     //audit Assumption: API errors should return empty results
-    console.error('searchScholarly error:', err instanceof Error ? err.message : err);
+    console.error('searchScholarly error:', resolveErrorMessage(err));
     return [];
   }
 }

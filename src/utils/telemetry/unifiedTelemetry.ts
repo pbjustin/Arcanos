@@ -24,6 +24,7 @@ import {
 import { aiLogger } from '../structuredLogging.js';
 import { generateRequestId } from '../idGenerator.js';
 import { getEnv } from '../../config/env.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 /**
  * Patterns for sensitive data that should be redacted
@@ -260,7 +261,7 @@ export async function traceOperation<T>(
     });
     return result;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = resolveErrorMessage(error);
     endSpan(span, {
       success: false,
       error: errorMessage
@@ -320,7 +321,7 @@ export function recordError(
   context: Record<string, unknown> = {},
   level: 'error' | 'warn' = 'error'
 ): void {
-  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorMessage = resolveErrorMessage(error);
   const errorStack = error instanceof Error ? error.stack : undefined;
 
   recordLogEvent({

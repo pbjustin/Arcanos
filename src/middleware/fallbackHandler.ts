@@ -9,9 +9,12 @@ import { responseCache } from '../utils/cache.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
-import { getFallbackMessage } from '../config/fallbackMessages.js';
-import { FALLBACK_RESPONSE_MESSAGES } from '../config/fallbackResponseMessages.js';
-import { FALLBACK_LOG_MESSAGES, FALLBACK_LOG_REASON } from '../config/fallbackLogMessages.js';
+import {
+  FALLBACK_LOG_MESSAGES,
+  FALLBACK_LOG_REASON,
+  FALLBACK_RESPONSE_MESSAGES,
+  getFallbackMessage
+} from '../config/fallbackMessages.js';
 import { logger } from '../utils/structuredLogging.js';
 
 export interface DegradedResponse {

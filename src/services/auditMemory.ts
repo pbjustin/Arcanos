@@ -4,6 +4,7 @@
 ///////////////////////////////////////////////////////////
 
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export async function auditMemory(state: unknown): Promise<boolean> {
   try {
@@ -37,7 +38,7 @@ export async function auditMemory(state: unknown): Promise<boolean> {
     }
   } catch (error: unknown) {
     //audit Assumption: audit failures should return false
-    console.error('❌ Audit memory error:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Audit memory error:', resolveErrorMessage(error));
     return false;
   }
 }

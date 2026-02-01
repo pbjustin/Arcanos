@@ -1,6 +1,7 @@
 import knexPkg from 'knex';
 import type { Knex } from 'knex';
 import { logger } from '../utils/structuredLogging.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const knexFactory = knexPkg as unknown as (config: Knex.Config) => Knex;
 
@@ -106,7 +107,7 @@ export function createAuditStore(config: AuditStoreConfig): AuditStore | null {
     //audit assumption: constructor failure is recoverable; risk: audit writes unavailable; invariant: error is logged.
     logger.warn('Audit store initialization failed', {
       module: 'auditStore',
-      error: error instanceof Error ? error.message : 'unknown'
+      error: resolveErrorMessage(error, 'unknown')
     });
     return null;
   }

@@ -3,6 +3,7 @@ import { decide } from '../afol/engine.js';
 import { getStatus } from '../afol/health.js';
 import { getRecent, logError } from '../afol/logger.js';
 import { getAnalyticsSnapshot } from '../afol/analytics.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = Router();
 
@@ -12,7 +13,7 @@ router.post('/decide', async (req, res) => {
     res.json(result);
   } catch (error) {
     logError('decide', error);
-    res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    res.status(500).json({ ok: false, error: resolveErrorMessage(error) });
   }
 });
 
