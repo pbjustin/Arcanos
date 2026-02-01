@@ -9,6 +9,13 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 import requests
 
 from .backend_auth_client import normalize_backend_url
+from .backend_client.chat import request_ask_with_domain as _request_ask_with_domain
+from .backend_client.chat import request_chat_completion as _request_chat_completion
+from .backend_client.daemon import request_confirm_daemon_actions as _request_confirm_daemon_actions
+from .backend_client.registry import request_registry as _request_registry
+from .backend_client.transcribe import request_transcription as _request_transcription
+from .backend_client.updates import submit_update_event as _submit_update_event
+from .backend_client.vision import request_vision_analysis as _request_vision_analysis
 from .backend_client_models import (
     BackendChatResult,
     BackendRequestError,
@@ -17,7 +24,7 @@ from .backend_client_models import (
     BackendVisionResult,
 )
 from .config import Config
-from .debug_logging import log_audit_event
+from arcanos.debug import log_audit_event
 
 
 class BackendApiClient:
@@ -138,28 +145,7 @@ class BackendApiClient:
         domain: Optional[str] = None,
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendChatResult]:
-        """
-        Purpose: Call backend /api/ask with domain hint for natural language routing.
-        Inputs/Outputs: message, optional domain, optional metadata; returns BackendChatResult.
-        Edge cases: Returns structured error on auth, network, or parsing failures.
-        """
-        payload: dict[str, Any] = {
-            "message": message
-        }
-        if domain:
-            # //audit assumption: domain optional; risk: missing routing context; invariant: include when provided; strategy: conditional field.
-            payload["domain"] = domain
-        normalized_metadata = self._normalize_metadata(metadata)
-        if normalized_metadata is not None:
-            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = normalized_metadata
-
-        response = self._request_json("post", "/api/ask", payload)
-        if not response.ok or not response.value:
-            # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
-            return BackendResponse(ok=False, error=response.error)
-
-        return self._parse_chat_response(response.value)
+        return _request_ask_with_domain(self, message, domain, metadata)
 
     def request_chat_completion(
         self,
@@ -169,33 +155,7 @@ class BackendApiClient:
         stream: bool = False,
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendChatResult]:
-        """
-        Purpose: Call backend /api/ask with conversation messages.
-        Inputs/Outputs: messages, optional temperature/model, stream flag; returns BackendChatResult.
-        Edge cases: Returns structured error on auth, network, or parsing failures.
-        """
-        # //audit assumption: messages sequence should be serializable; risk: invalid payload; invariant: list of mappings; strategy: list() copy.
-        payload: dict[str, Any] = {
-            "messages": list(messages),
-            "stream": stream
-        }
-        if temperature is not None:
-            # //audit assumption: temperature optional; risk: missing value; invariant: include when provided; strategy: conditional field.
-            payload["temperature"] = temperature
-        if model:
-            # //audit assumption: model override optional; risk: invalid model; invariant: include when provided; strategy: conditional field.
-            payload["model"] = model
-        normalized_metadata = self._normalize_metadata(metadata)
-        if normalized_metadata is not None:
-            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = normalized_metadata
-
-        response = self._request_json("post", "/api/ask", payload)
-        if not response.ok or not response.value:
-            # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
-            return BackendResponse(ok=False, error=response.error)
-
-        return self._parse_chat_response(response.value)
+        return _request_chat_completion(self, messages, temperature, model, stream, metadata)
 
     def request_vision_analysis(
         self,
@@ -206,37 +166,7 @@ class BackendApiClient:
         max_tokens: Optional[int] = None,
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendVisionResult]:
-        """
-        Purpose: Call backend /api/vision to analyze an image.
-        Inputs/Outputs: base64 image, optional prompt/temperature/model/max_tokens; returns BackendVisionResult.
-        Edge cases: Returns structured error on auth, network, or parsing failures.
-        """
-        payload: dict[str, Any] = {
-            "imageBase64": image_base64
-        }
-        if prompt:
-            # //audit assumption: prompt optional; risk: empty prompt; invariant: include when provided; strategy: conditional field.
-            payload["prompt"] = prompt
-        if temperature is not None:
-            # //audit assumption: temperature optional; risk: missing value; invariant: include when provided; strategy: conditional field.
-            payload["temperature"] = temperature
-        if model:
-            # //audit assumption: model override optional; risk: invalid model; invariant: include when provided; strategy: conditional field.
-            payload["model"] = model
-        if max_tokens is not None:
-            # //audit assumption: max tokens optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
-            payload["maxTokens"] = max_tokens
-        normalized_metadata = self._normalize_metadata(metadata)
-        if normalized_metadata is not None:
-            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = normalized_metadata
-
-        response = self._request_json("post", "/api/vision", payload)
-        if not response.ok or not response.value:
-            # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
-            return BackendResponse(ok=False, error=response.error)
-
-        return self._parse_vision_response(response.value)
+        return _request_vision_analysis(self, image_base64, prompt, temperature, model, max_tokens, metadata)
 
     def request_transcription(
         self,
@@ -246,34 +176,7 @@ class BackendApiClient:
         language: Optional[str] = None,
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendTranscriptionResult]:
-        """
-        Purpose: Call backend /api/transcribe to transcribe audio.
-        Inputs/Outputs: base64 audio, optional filename/model/language; returns BackendTranscriptionResult.
-        Edge cases: Returns structured error on auth, network, or parsing failures.
-        """
-        payload: dict[str, Any] = {
-            "audioBase64": audio_base64
-        }
-        if filename:
-            # //audit assumption: filename optional; risk: missing filename; invariant: include when provided; strategy: conditional field.
-            payload["filename"] = filename
-        if model:
-            # //audit assumption: model override optional; risk: invalid model; invariant: include when provided; strategy: conditional field.
-            payload["model"] = model
-        if language:
-            # //audit assumption: language optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
-            payload["language"] = language
-        normalized_metadata = self._normalize_metadata(metadata)
-        if normalized_metadata is not None:
-            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = normalized_metadata
-
-        response = self._request_json("post", "/api/transcribe", payload)
-        if not response.ok or not response.value:
-            # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
-            return BackendResponse(ok=False, error=response.error)
-
-        return self._parse_transcription_response(response.value)
+        return _request_transcription(self, audio_base64, filename, model, language, metadata)
 
     def submit_update_event(
         self,
@@ -281,35 +184,7 @@ class BackendApiClient:
         data: Mapping[str, Any],
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[bool]:
-        """
-        Purpose: Call backend /api/update to record a structured update event.
-        Inputs/Outputs: update_type string and data mapping; returns bool success.
-        Edge cases: Returns structured error on auth, network, or parsing failures.
-        """
-        payload: dict[str, Any] = {
-            "updateType": update_type,
-            "data": dict(data)
-        }
-        normalized_metadata = self._normalize_metadata(metadata)
-        if normalized_metadata is not None:
-            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = normalized_metadata
-
-        response = self._request_json("post", "/api/update", payload)
-        if not response.ok or not response.value:
-            # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
-            return BackendResponse(ok=False, error=response.error)
-
-        success_value = response.value.get("success")
-        if isinstance(success_value, bool):
-            # //audit assumption: success is boolean; risk: wrong type; invariant: bool value; strategy: return parsed value.
-            return BackendResponse(ok=True, value=success_value)
-
-        # //audit assumption: success should be boolean; risk: parse failure; invariant: bool; strategy: return error.
-        return BackendResponse(
-            ok=False,
-            error=BackendRequestError(kind="parse", message="update response missing success flag")
-        )
+        return _submit_update_event(self, update_type, data, metadata)
 
     def _request_json(
         self,
@@ -512,35 +387,10 @@ class BackendApiClient:
         confirmation_token: str,
         instance_id: str
     ) -> BackendResponse[dict[str, Any]]:
-        """
-        Purpose: Confirm and queue sensitive daemon actions via backend.
-        Inputs/Outputs: confirmation_token and instance_id; returns backend payload.
-        Edge cases: Returns structured error on auth, network, or invalid confirmation token.
-        """
-        payload: dict[str, Any] = {
-            "confirmation_token": confirmation_token,
-            "instanceId": instance_id
-        }
-
-        response = self._request_json("post", "/api/daemon/confirm-actions", payload)
-        if not response.ok or not response.value:
-            # //audit assumption: response must be ok; risk: backend failure; invariant: error returned; strategy: return error.
-            return BackendResponse(ok=False, error=response.error)
-
-        return BackendResponse(ok=True, value=response.value)
+        return _request_confirm_daemon_actions(self, confirmation_token, instance_id)
 
     def request_registry(self) -> BackendResponse[dict[str, Any]]:
-        """
-        Purpose: Fetch backend daemon registry for prompt construction.
-        Inputs/Outputs: None; returns registry JSON.
-        Edge cases: Returns structured error on auth, network, or parsing failures.
-        """
-        response = self._request_json("get", "/api/daemon/registry", None)
-        if not response.ok or not response.value:
-            # //audit assumption: response must be ok; risk: backend failure; invariant: error returned; strategy: return error.
-            return BackendResponse(ok=False, error=response.error)
-
-        return BackendResponse(ok=True, value=response.value)
+        return _request_registry(self)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
         # Support both "result" (production backend) and "response" (legacy) field names

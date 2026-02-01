@@ -12,6 +12,7 @@
 
 import { getDefaultModel } from './openai.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
 
@@ -101,7 +102,7 @@ export async function interpretCommand(userCommand: string) {
       console.warn('⚠️ Unrecognized command. Mode unchanged.');
     }
   } catch (error) {
-    console.error('❌ Error interpreting command:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Error interpreting command:', resolveErrorMessage(error));
     console.warn('⚠️ Command interpretation failed. Mode unchanged.');
   }
 }

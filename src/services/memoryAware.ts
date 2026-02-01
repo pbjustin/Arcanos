@@ -1,3 +1,8 @@
+export type { MemoryEntry, MemoryContext } from './memory/types.js';
+
+export { storeMemory, storeDecision, storePattern } from './memory/store.js';
+export { getMemoryContext } from './memory/context.js';
+export { getMemoryStats, cleanupMemory, checkMemoryIntegrity, clearMemoryState } from './memory/maintenance.js';
 /**
  * ARCANOS Memory-Aware Reasoning Service
  * 
@@ -9,6 +14,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, appendFileSync } fr
 import { join } from 'path';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface MemoryEntry {
   id: string;
@@ -109,7 +115,7 @@ function initializeMemory() {
     memoryLoaded = true;
   } catch (error: unknown) {
     //audit Assumption: init failures should fall back to empty state
-    console.error('❌ Failed to initialize memory:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Failed to initialize memory:', resolveErrorMessage(error));
     memoryIndex = [];
     memoryLoaded = true;
   }
@@ -122,7 +128,7 @@ function saveMemoryIndex() {
   try {
     writeFileSync(MEMORY_INDEX_FILE, JSON.stringify(memoryIndex, null, 2));
   } catch (error: unknown) {
-    console.error('❌ Failed to save memory index:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Failed to save memory index:', resolveErrorMessage(error));
   }
 }
 
@@ -367,7 +373,7 @@ function logMemoryAccess(operation: string, key: string, entryId: string) {
     const logEntry = `${new Date().toISOString()} | ${operation} | ${key} | ${entryId}\n`;
     appendFileSync(MEMORY_LOG_FILE, logEntry);
   } catch (error: unknown) {
-    console.error('❌ Failed to log memory access:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Failed to log memory access:', resolveErrorMessage(error));
   }
 }
 

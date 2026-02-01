@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { FileStorageError } from '../lib/errors.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 interface JsonWriteOptions {
   space?: number;
@@ -18,7 +19,7 @@ export async function writeJsonFile<T>(filePath: string, data: T, options: JsonW
     await ensureDirectoryForFile(filePath);
     await fs.writeFile(filePath, serialized);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = resolveErrorMessage(error);
     throw new FileStorageError('FileWriteError', undefined, `Failed to write JSON file at ${filePath}: ${message}`);
   }
 }

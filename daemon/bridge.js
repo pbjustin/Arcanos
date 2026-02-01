@@ -9,8 +9,23 @@ const BRIDGE_STATUS_PATH = "/bridge-status";
 const BRIDGE_STATUS_RESPONSE = "active";
 const BRIDGE_NOT_FOUND_RESPONSE = "not found";
 const bridgeEnabled = process.env.BRIDGE_ENABLED === "true";
-const automationHeaderName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
-const automationSecret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
+function getAutomationAuth() {
+  const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
+  const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
+  return { headerName, secret };
+}
+
+function resolveBackendBaseUrl() {
+  const raw =
+    process.env.ARCANOS_BACKEND_URL ||
+    process.env.SERVER_URL ||
+    process.env.BACKEND_URL;
+  if (!raw) {
+    return null;
+  }
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  return trimmed.length > 0 ? trimmed.replace(/\/$/, "") : null;
+}
 
 function resolveTagPrefix() {
   //audit Assumption: BRIDGE_TAG_PREFIX is a non-empty string; risk: empty prefix breaks routing tags; invariant: prefix defaults when invalid; handling: trim and fallback.
@@ -97,6 +112,7 @@ function sendToDaemon(payload) {
 }
 
 async function isRequestAuthorized(req) {
+  const { headerName: automationHeaderName, secret: automationSecret } = getAutomationAuth();
   const providedAutomation = req.headers[automationHeaderName];
   const automationHeaderValue = Array.isArray(providedAutomation) ? providedAutomation[0] : providedAutomation;
   if (automationSecret && automationHeaderValue === automationSecret) {
@@ -114,12 +130,11 @@ async function isRequestAuthorized(req) {
 }
 
 async function consumeConfirmToken(token) {
-  const backendUrlRaw = process.env.BACKEND_URL || process.env.SERVER_URL;
-  if (!backendUrlRaw) {
+  const backendUrl = resolveBackendBaseUrl();
+  if (!backendUrl) {
     return false;
   }
 
-  const backendUrl = backendUrlRaw.replace(/\/$/, '');
   const url = `${backendUrl}/debug/consume-confirm-token`;
   try {
     const response = await fetch(url, {

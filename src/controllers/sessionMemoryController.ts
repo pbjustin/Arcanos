@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { saveMessage, getChannel, getConversation, type SessionMessage } from '../services/sessionMemoryService.js';
 import { requireField } from '../utils/validation.js';
 import { logger } from '../utils/structuredLogging.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 /**
  * Helper function to normalize message input
@@ -75,7 +76,7 @@ export const sessionMemoryController = {
         module: 'sessionMemory',
         operation: 'saveDual',
         sessionId,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: resolveErrorMessage(error)
       });
 
       res.status(500).json({ error: 'Failed to save message' });
@@ -93,7 +94,7 @@ export const sessionMemoryController = {
         module: 'sessionMemory',
         operation: 'getCore',
         sessionId,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: resolveErrorMessage(error)
       });
 
       res.status(500).json({ error: 'Failed to retrieve core data' });
@@ -111,7 +112,7 @@ export const sessionMemoryController = {
         module: 'sessionMemory',
         operation: 'getMeta',
         sessionId,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: resolveErrorMessage(error)
       });
 
       res.status(500).json({ error: 'Failed to retrieve meta data' });
@@ -129,7 +130,7 @@ export const sessionMemoryController = {
         module: 'sessionMemory',
         operation: 'getFull',
         sessionId,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: resolveErrorMessage(error)
       });
 
       res.status(500).json({ error: 'Failed to retrieve conversation' });

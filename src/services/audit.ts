@@ -7,6 +7,7 @@ import {
   parseClearPrincipleScores,
   type ClearScorecardSummary
 } from './clearScorecard.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const CLEAR_SYSTEM_IDENTIFIER = 'CLEAR';
 
@@ -195,12 +196,12 @@ async function attemptClearFeedbackDelivery(
     aiLogger.warn(
       'Failed to deliver CLEAR feedback to external service',
       { operation: 'audit:transport' },
-      { errorMessage: error instanceof Error ? error.message : 'Unknown transport error' },
+      { errorMessage: resolveErrorMessage(error, 'Unknown transport error') },
       error instanceof Error ? error : undefined
     );
     return {
       delivered: false,
-      deliveryMessage: error instanceof Error ? error.message : 'Unknown transport error'
+      deliveryMessage: resolveErrorMessage(error, 'Unknown transport error')
     };
   }
 }

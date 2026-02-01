@@ -17,6 +17,7 @@ import {
   AUDIT_SAFE_USER_PROMPT_TEMPLATE,
   AUDIT_LINEAGE_TEMPLATE
 } from '../config/auditSafe.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface AuditSafeConfig {
   auditSafeMode: boolean;
@@ -140,7 +141,7 @@ export function logAITaskLineage(entry: AuditLogEntry) {
 
     console.log(`📋 [AUDIT] Task logged: ${entry.requestId} | Endpoint: ${entry.endpoint} | AuditSafe: ${entry.auditSafeMode}`);
   } catch (error) {
-    console.error('❌ Failed to write audit log:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Failed to write audit log:', resolveErrorMessage(error));
   }
 }
 

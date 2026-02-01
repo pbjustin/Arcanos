@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getAssistant, getAssistantRegistry, syncAssistantRegistry } from '../services/openai-assistants.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = Router();
 
@@ -30,7 +31,7 @@ router.post('/sync', async (_req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to sync assistants',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: resolveErrorMessage(error),
       timestamp: new Date().toISOString()
     });
   }

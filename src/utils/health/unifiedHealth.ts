@@ -23,6 +23,7 @@ import { validateClientHealth, HealthStatus as ClientHealthStatus } from '../../
 import { isOpenAIAdapterInitialized } from '../../adapters/openai.adapter.js';
 import { getConfig } from '../../config/unifiedConfig.js';
 import { assessCoreServiceReadiness, HealthStatus as ServiceHealthStatus } from '../healthChecks.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 /**
  * Health check function type
@@ -129,7 +130,7 @@ async function executeHealthCheck(checker: HealthChecker): Promise<HealthCheckRe
     return healthResult;
   } catch (error) {
     const duration = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = resolveErrorMessage(error);
 
     aiLogger.error(`Health check failed: ${checker.name}`, {
       module: 'health.unified',
@@ -260,7 +261,7 @@ export function buildHealthEndpoint(checks: HealthChecker[]): (req: Request, res
       });
     } catch (error) {
       const duration = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = resolveErrorMessage(error);
 
       aiLogger.error('Health endpoint error', {
         module: 'health.unified',
@@ -331,7 +332,7 @@ export function buildReadinessEndpoint(checks: HealthChecker[]): (req: Request, 
       });
     } catch (error) {
       const duration = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = resolveErrorMessage(error);
 
       res.status(503).json({
         ready: false,
@@ -406,7 +407,7 @@ export async function checkDatabaseHealth(): Promise<HealthCheckResult> {
     return {
       healthy: false,
       name: 'database',
-      error: error instanceof Error ? error.message : String(error),
+      error: resolveErrorMessage(error),
       metadata: {
         configured: true,
         connected: false

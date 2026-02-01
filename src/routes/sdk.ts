@@ -1,3 +1,4 @@
+export { default } from './sdk/index.js';
 import express from 'express';
 import { runSystemDiagnostics, type SystemDiagnostics } from '../utils/systemDiagnostics.js';
 import { logExecution, type JobData } from '../db.js';
@@ -10,7 +11,7 @@ import {
 } from '../config/workerConfig.js';
 import { createValidationMiddleware } from '../utils/security.js';
 import { connectResearchBridge } from '../services/researchHub.js';
-import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import { buildValidationErrorResponse, resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 const sdkResearchBridge = connectResearchBridge('SDK:RESEARCH');
@@ -87,7 +88,7 @@ router.post('/workers/init', confirmGate, async (_, res) => {
     });
   } catch (error: unknown) {
     //audit Assumption: init failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Worker initialization failed via SDK', { error: errorMessage });
     
     res.status(500).json({
@@ -152,7 +153,7 @@ router.post('/routes/register', confirmGate, async (_, res) => {
           module: `Mock handler for ${route.name}`
         });
       } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorMessage = resolveErrorMessage(error);
         registrationResults.push({
           route: route.name,
           success: false,
@@ -172,7 +173,7 @@ router.post('/routes/register', confirmGate, async (_, res) => {
     });
   } catch (error: unknown) {
     //audit Assumption: registration failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Route registration failed via SDK', { error: errorMessage });
     
     res.status(500).json({
@@ -223,7 +224,7 @@ router.post('/scheduler/activate', confirmGate, async (_, res) => {
     });
   } catch (error: unknown) {
     //audit Assumption: scheduler activation failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Scheduler activation failed via SDK', { error: errorMessage });
     
     res.status(500).json({
@@ -257,7 +258,7 @@ router.get('/diagnostics', async (req, res) => {
     }
   } catch (error: unknown) {
     //audit Assumption: diagnostic failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Diagnostics failed via SDK', { error: errorMessage });
     
     res.status(500).json({
@@ -326,7 +327,7 @@ router.post('/jobs/dispatch', confirmGate, async (req, res) => {
     });
   } catch (error: unknown) {
     //audit Assumption: dispatch failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Job dispatch failed via SDK', { 
       error: errorMessage, 
       workerId: req.body.workerId, 
@@ -417,7 +418,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
     });
   } catch (error: unknown) {
     //audit Assumption: test job failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Test job failed via SDK', { error: errorMessage });
     
     res.status(500).json({
@@ -442,7 +443,7 @@ router.get('/workers/status', async (_, res) => {
     });
   } catch (error: unknown) {
     //audit Assumption: status failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Worker status check failed via SDK', { error: errorMessage });
     
     res.status(500).json({
@@ -487,7 +488,7 @@ router.post('/init-all', confirmGate, async (_, res) => {
       results.diagnostics = diagnosticsResult.diagnostics;
     } catch (error: unknown) {
       //audit Assumption: diagnostics failure should still return init results
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = resolveErrorMessage(error);
       results.diagnostics = { error: errorMessage };
     }
 
@@ -501,7 +502,7 @@ router.post('/init-all', confirmGate, async (_, res) => {
     });
   } catch (error: unknown) {
     //audit Assumption: init-all failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Full SDK initialization failed', { error: errorMessage });
     
     res.status(500).json({
@@ -681,7 +682,7 @@ job_data_entry:
     res.send(yamlOutput);
   } catch (error: unknown) {
     //audit Assumption: system test failures should return 500
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'System test failed', { error: errorMessage });
     
     res.status(500).json({

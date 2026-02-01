@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import { buildValidationErrorResponse, resolveErrorMessage } from '../lib/errors/index.js';
 import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
@@ -9,6 +9,7 @@ import path from 'path';
 import type { ErrorResponseDTO } from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import config from '../config/index.js';
+import { buildTranscriptionRequest } from '../services/openai/requestBuilders.js';
 
 const router = express.Router();
 
@@ -99,11 +100,13 @@ router.post('/api/transcribe', transcribeValidation, asyncHandler(async (req: Re
     });
 
     const file = await toFile(audioBuffer, sanitizedFilename);
-    const transcription = await adapter.audio.transcriptions.create({
+    const requestParams = buildTranscriptionRequest({
+      audioFile: file,
+      filename: sanitizedFilename,
       model: transcribeModel,
-      file,
-      ...(transcribeLanguage ? { language: transcribeLanguage } : {})
+      language: transcribeLanguage
     });
+    const transcription = await adapter.audio.transcriptions.create(requestParams);
 
     const text = typeof transcription === 'string' ? transcription : transcription.text;
 
@@ -125,7 +128,7 @@ router.post('/api/transcribe', transcribeValidation, asyncHandler(async (req: Re
   } catch (error: unknown) {
     aiLogger.error('Transcription request failed', { operation: 'transcribe' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('openai.transcribe.error', {
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: resolveErrorMessage(error)
     });
 
     return res.status(500).json({

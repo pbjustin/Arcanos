@@ -17,6 +17,7 @@ import fs from 'fs';
 import os from 'os';
 import { getCircuitBreakerSnapshot } from '../services/openai.js';
 import { getTelemetrySnapshot } from './telemetry.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getEnvironmentSecuritySummary } from './environmentSecurity.js';
 import { resolveWorkersDirectory } from './workerPaths.js';
 import { getConfig } from '../config/unifiedConfig.js';
@@ -109,7 +110,7 @@ function evaluateWorkerHealth(): WorkerHealth {
       directoryExists: true,
       healthy: false,
       files: [],
-      reason: error instanceof Error ? error.message : 'Failed to read workers directory'
+      reason: resolveErrorMessage(error, 'Failed to read workers directory')
     };
   }
 

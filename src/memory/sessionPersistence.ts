@@ -3,6 +3,7 @@ import { createSessionCacheStore, type SessionCacheStore, type SessionCacheStore
 import { logger } from '../utils/structuredLogging.js';
 import type { SessionEntry } from './store.js';
 import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface SessionPersistenceAdapter {
   initialize(): Promise<void>;
@@ -71,7 +72,7 @@ function safeParse(payload: string): SessionEntry | null {
     //audit assumption: JSON parse errors are expected in corrupted cache rows; risk: log noise; invariant: invalid payload returns null.
     logger.warn('Failed to parse session cache payload', {
       module: 'sessionPersistence',
-      error: error instanceof Error ? error.message : 'unknown'
+      error: resolveErrorMessage(error, 'unknown')
     });
     return null;
   }
@@ -139,7 +140,7 @@ export function createSessionPersistenceAdapter(): SessionPersistenceAdapter | n
     //audit assumption: initialization failures are recoverable; risk: sessions not persisted; invariant: warning logged.
     logger.warn('Session persistence adapter initialization failed, continuing with in-memory store', {
       module: 'sessionPersistence',
-      error: error instanceof Error ? error.message : 'unknown'
+      error: resolveErrorMessage(error, 'unknown')
     });
     return null;
   }

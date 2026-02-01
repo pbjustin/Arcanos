@@ -7,6 +7,7 @@
 import { isDatabaseConnected } from '../client.js';
 import type { JobData } from '../schema.js';
 import { query } from '../query.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 /**
  * Create a new job
@@ -70,7 +71,7 @@ export async function getLatestJob(): Promise<JobData | null> {
     return result.rows[0] || null;
   } catch (error: unknown) {
     //audit Assumption: failures return null
-    console.error('Error fetching latest job:', error instanceof Error ? error.message : error);
+    console.error('Error fetching latest job:', resolveErrorMessage(error));
     return null;
   }
 }

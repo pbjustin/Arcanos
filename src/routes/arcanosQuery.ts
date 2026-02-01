@@ -7,6 +7,7 @@ import express, { Request, Response } from 'express';
 import { arcanosQuery } from '../services/arcanosQuery.js';
 import { requireField } from '../utils/validation.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '../config/unifiedConfig.js';
 
 const router = express.Router();
@@ -42,10 +43,10 @@ const arcanosQueryEndpoint = async (req: Request, res: Response): Promise<void> 
 
   } catch (error: unknown) {
     //audit Assumption: failures should return 500 with safe message
-    console.error('[ARCANOS-QUERY] Error:', error instanceof Error ? error.message : error);
+    console.error('[ARCANOS-QUERY] Error:', resolveErrorMessage(error));
     res.status(500).json({
       error: 'ARCANOS query processing failed',
-      message: error instanceof Error ? error.message : 'Unknown error',
+      message: resolveErrorMessage(error),
       timestamp: new Date().toISOString()
     });
   }

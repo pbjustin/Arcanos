@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logger } from '../utils/structuredLogging.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -122,7 +123,7 @@ function loadPromptsConfig(): PromptsConfig {
     logger.error('Failed to load prompts configuration', {
       module: 'prompts',
       operation: 'loadConfig',
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: resolveErrorMessage(error)
     });
 
     // Return fallback configuration

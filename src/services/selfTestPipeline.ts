@@ -1,10 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { updateState } from './stateManager.js';
 import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from '../config/selfTestConfig.js';
-import { getConfig } from '../config/unifiedConfig.js';
-import { getEnv } from '../config/env.js';
+import { getBackendBaseUrl, getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface SelfTestResult {
   id: string;
@@ -39,13 +38,9 @@ export interface SelfTestOptions {
 const LOG_FILE = path.join(process.cwd(), 'logs', 'healthcheck.json');
 
 function resolveBaseUrl(): string {
-  const config = getConfig();
   const selfTestBaseUrl = getEnv('SELF_TEST_BASE_URL');
   if (selfTestBaseUrl) return selfTestBaseUrl;
-  const serverUrl = getEnv('SERVER_URL');
-  if (serverUrl) return serverUrl.replace(/\/$/, '');
-  const port = config.port || APPLICATION_CONSTANTS.DEFAULT_PORT;
-  return `http://127.0.0.1:${port}`;
+  return getBackendBaseUrl().toString().replace(/\/$/, '');
 }
 
 function ensureLogFile(): void {
@@ -153,7 +148,7 @@ async function executePrompt(
       statusCode: 0,
       latencyMs: Date.now() - started,
       success: false,
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: resolveErrorMessage(error)
     };
   }
 }

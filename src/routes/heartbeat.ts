@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
 import { confirmGate } from '../middleware/confirmGate.js';
-import { HEARTBEAT_LOG_FILENAME, HEARTBEAT_RESPONSE_TEMPLATE } from '../config/heartbeat.js';
+import { HEARTBEAT_LOG_FILENAME, HEARTBEAT_RESPONSE_TEMPLATE } from '../config/serverMessages.js';
 
 interface HeartbeatPayload {
   write_override: boolean;

@@ -4,6 +4,7 @@ import config from '../config/index.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { writeJsonFile } from '../utils/fileStorage.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface AssistantInfo {
   id: string;
@@ -112,7 +113,7 @@ export async function loadAssistantRegistry(): Promise<AssistantRegistry> {
     if (!isNodeError(error) || error.code !== 'ENOENT') {
       aiLogger.warn('[AI-ASSISTANT-SYNC] Failed to read assistant registry', LOG_CONTEXT, {
         path: REGISTRY_PATH,
-        message: error instanceof Error ? error.message : String(error)
+        message: resolveErrorMessage(error)
       });
     } else {
       await saveAssistantRegistry({});

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 /** Maximum file size (10MB) to prevent DoS via memory exhaustion */
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -12,7 +13,7 @@ export interface JsonReadDependencies {
 const defaultDependencies: JsonReadDependencies = {
   fsModule: fs,
   logError: (message: string, error: unknown) => {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = resolveErrorMessage(error);
     console.error(message, errorMessage);
   },
   maxFileSizeBytes: MAX_FILE_SIZE_BYTES

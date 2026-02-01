@@ -8,6 +8,7 @@ import { generateMockResponse } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
 import type { QueryResult } from 'pg';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface WorkerContext {
   log: (message: string) => Promise<void>;
@@ -77,7 +78,7 @@ export function createWorkerContext(workerId: string): WorkerContext {
           return result.result;
         } catch (error: unknown) {
           //audit Assumption: AI failures should propagate with safe message
-          throw new Error(`AI request failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          throw new Error(`AI request failed: ${resolveErrorMessage(error)}`);
         }
       }
     }
