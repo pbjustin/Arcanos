@@ -13,6 +13,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getEnv } from '../config/env.js';
 
 // ----------------------
 // Types and State
@@ -57,10 +58,11 @@ const inMemoryStore: Record<string, SaveEntry[]> = {};
  * @returns True if override is permitted
  */
 function canEnableRootOverride(userRole: string, token: string): boolean {
+  // Use config layer for env access (adapter boundary pattern)
   return (
-    process.env.ALLOW_ROOT_OVERRIDE === 'true' &&
+    getEnv('ALLOW_ROOT_OVERRIDE') === 'true' &&
     userRole === 'admin' &&
-    token === process.env.ROOT_OVERRIDE_TOKEN
+    token === getEnv('ROOT_OVERRIDE_TOKEN')
   );
 }
 

@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { createSessionPersistenceAdapter, type SessionPersistenceAdapter } from './sessionPersistence.js';
+import { getEnvNumber } from '../config/env.js';
 
 export interface SessionMetadata {
   topic?: string;
@@ -25,8 +26,9 @@ interface MemoryStoreOptions {
   capacity?: number;
 }
 
-const DEFAULT_CAPACITY = parseInt(process.env.SESSION_CACHE_CAPACITY || '200', 10);
-const DEFAULT_RETENTION_MINUTES = parseInt(process.env.SESSION_RETENTION_MINUTES || '1440', 10);
+// Use config layer for env access (adapter boundary pattern)
+const DEFAULT_CAPACITY = getEnvNumber('SESSION_CACHE_CAPACITY', 200);
+const DEFAULT_RETENTION_MINUTES = getEnvNumber('SESSION_RETENTION_MINUTES', 1440);
 
 class MemoryStore {
   private sessions = new Map<string, SessionEntry>();

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getEnv, getEnvNumber } from '../config/env.js';
 import { DecisionRecord } from './types.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 
@@ -18,10 +19,11 @@ interface AnalyticsState {
   lastUpdated: string | null;
 }
 
-const RECENT_LIMIT = parseInt(process.env.AFOL_ANALYTICS_RECENT_LIMIT || '50', 10);
+// Use config layer for env access (adapter boundary pattern)
+const RECENT_LIMIT = getEnvNumber('AFOL_ANALYTICS_RECENT_LIMIT', 50);
 
-const defaultAnalyticsPath = process.env.AFOL_ANALYTICS_PATH
-  ? path.resolve(process.env.AFOL_ANALYTICS_PATH)
+const defaultAnalyticsPath = getEnv('AFOL_ANALYTICS_PATH')
+  ? path.resolve(getEnv('AFOL_ANALYTICS_PATH')!)
   : path.resolve(process.cwd(), 'logs', 'afol-analytics.json');
 
 let analyticsFilePath = defaultAnalyticsPath;

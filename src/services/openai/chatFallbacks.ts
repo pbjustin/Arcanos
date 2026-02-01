@@ -1,4 +1,5 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
+import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
 import { prepareGPT5Request } from './requestTransforms.js';
 import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
@@ -28,23 +29,30 @@ const getTokensFromParams = (params: ChatCompletionParams): number =>
   params.max_tokens || params.max_completion_tokens || RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
 
 async function attemptModelCall(
-  client: OpenAI,
+  clientOrAdapter: OpenAI | OpenAIAdapter,
   params: ChatCompletionParams,
   model: string,
   logPrefix: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
   console.log(`${logPrefix} Attempting with model: ${model}`);
-  const response = await client.chat.completions.create({
-    ...params,
-    model,
-    stream: false,
-  }) as ChatCompletionResponse;
+  // Support both adapter and legacy client
+  const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
+    ? await clientOrAdapter.chat.completions.create({
+        ...params,
+        model,
+        stream: false,
+      }) as ChatCompletionResponse
+    : await (clientOrAdapter as OpenAI).chat.completions.create({
+        ...params,
+        model,
+        stream: false,
+      }) as ChatCompletionResponse;
   console.log(`✅ ${logPrefix} Success with ${model}`);
   return { response, model };
 }
 
 async function attemptGPT5Call(
-  client: OpenAI,
+  clientOrAdapter: OpenAI | OpenAIAdapter,
   params: ChatCompletionParams,
   gpt5Model: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
@@ -57,10 +65,16 @@ async function attemptGPT5Call(
     ...tokenParams,
   });
 
-  const response = await client.chat.completions.create({
-    ...gpt5Payload,
-    stream: false,
-  }) as ChatCompletionResponse;
+  // Support both adapter and legacy client
+  const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
+    ? await clientOrAdapter.chat.completions.create({
+        ...gpt5Payload,
+        stream: false,
+      }) as ChatCompletionResponse
+    : await (clientOrAdapter as OpenAI).chat.completions.create({
+        ...gpt5Payload,
+        stream: false,
+      }) as ChatCompletionResponse;
   console.log(`✅ [GPT-5.1 FALLBACK] Success with ${gpt5Model}`);
   return { response, model: gpt5Model };
 }
@@ -123,17 +137,17 @@ const executeModelFallbacks = async <T>(
 };
 
 export const createChatCompletionWithFallback = async (
-  client: OpenAI,
+  clientOrAdapter: OpenAI | OpenAIAdapter,
   params: ChatCompletionParams,
 ): Promise<ChatCompletionWithFallback> => {
-  const primaryModel = getDefaultModel();
+  const primaryModel = params.model ?? getDefaultModel();
   const gpt5Model = getGPT5Model();
   const finalFallbackModel = getFallbackModel();
 
   const attempts = [
     {
       label: '🧠 [PRIMARY]',
-      executor: () => attemptModelCall(client, params, primaryModel, '🧠 [PRIMARY]'),
+      executor: () => attemptModelCall(clientOrAdapter, params, primaryModel, '🧠 [PRIMARY]'),
       transform: ({ response, model }: ModelAttemptResult) => ({
         ...response,
         activeModel: model,
@@ -142,7 +156,7 @@ export const createChatCompletionWithFallback = async (
     },
     {
       label: '🔄 [RETRY]',
-      executor: () => attemptModelCall(client, params, primaryModel, '🔄 [RETRY]'),
+      executor: () => attemptModelCall(clientOrAdapter, params, primaryModel, '🔄 [RETRY]'),
       transform: ({ response, model }: ModelAttemptResult) => ({
         ...response,
         activeModel: model,
@@ -152,7 +166,7 @@ export const createChatCompletionWithFallback = async (
     },
     {
       label: '🧠 [GPT-5.1 FALLBACK]',
-      executor: () => attemptGPT5Call(client, params, gpt5Model),
+      executor: () => attemptGPT5Call(clientOrAdapter, params, gpt5Model),
       transform: ({ response, model }: ModelAttemptResult) => ({
         ...response,
         activeModel: model,
@@ -163,7 +177,7 @@ export const createChatCompletionWithFallback = async (
     },
     {
       label: '🛟 [FINAL FALLBACK]',
-      executor: () => attemptModelCall(client, params, finalFallbackModel, '🛟 [FINAL FALLBACK]'),
+      executor: () => attemptModelCall(clientOrAdapter, params, finalFallbackModel, '🛟 [FINAL FALLBACK]'),
       transform: ({ response, model }: ModelAttemptResult) => ({
         ...response,
         activeModel: model,

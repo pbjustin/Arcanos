@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { createValidationMiddleware, ValidationSchema } from '../utils/security.js';
-import { sendServerError } from '../utils/errorResponse.js';
+import { sendServerError } from '../lib/errors/index.js';
 import {
   generateReusableCodeSnippets,
   ReusableCodeGenerationRequest,
   ReusableCodeTarget
 } from '../services/reusableCodeGeneration.js';
-import { getOpenAIClient } from '../services/openai/clientFactory.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 const router = Router();
 
@@ -40,7 +40,19 @@ router.post(
   '/api/reusables',
   createValidationMiddleware(reusableCodeRequestSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const client = getOpenAIClient();
+    // Use adapter (adapter boundary pattern)
+    let adapter;
+    try {
+      adapter = getOpenAIAdapter();
+    } catch {
+      res.status(503).json({
+        error: 'OpenAI adapter unavailable',
+        message: 'Configure OPENAI_API_KEY or RAILWAY_OPENAI_API_KEY to enable code generation.',
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+    const client = adapter.getClient();
 
     //audit Assumption: OpenAI client must be available; risk: missing API key; invariant: client required for generation; handling: return 503.
     if (!client) {
@@ -80,7 +92,19 @@ router.post(
  * @edgeCases Returns 503 when OpenAI client is not initialized.
  */
 router.get('/api/reusables/health', (_req: Request, res: Response) => {
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    res.status(503).json({
+      status: 'unavailable',
+      message: 'OpenAI adapter not initialized',
+      timestamp: new Date().toISOString()
+    });
+    return;
+  }
+  const client = adapter.getClient();
 
   //audit Assumption: client presence maps to readiness; risk: false positives; invariant: client required; handling: status based on client.
   if (!client) {

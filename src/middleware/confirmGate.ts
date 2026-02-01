@@ -6,6 +6,8 @@ import {
 } from './confirmationChallengeStore.js';
 import { consumeOneTimeToken } from '../lib/tokenStore.js';
 import { getDefaultModel } from '../services/openai/credentialProvider.js';
+import { getConfig } from '../config/unifiedConfig.js';
+import { getEnv } from '../config/env.js';
 
 export interface ConfirmationContext {
   confirmationStatus: string;
@@ -47,14 +49,14 @@ function isFineTunedModelIdentifier(value: string | undefined): value is string 
 }
 
 function collectFineTunedAutomationIds(): string[] {
+  const config = getConfig();
   const candidates = [
-    process.env.FINE_TUNED_AUTOMATION_GPT_ID,
-    process.env.FINETUNED_AUTOMATION_GPT_ID,
-    process.env.FINETUNED_MODEL_ID,
-    process.env.FINE_TUNED_MODEL_ID,
-    process.env.OPENAI_MODEL,
-    process.env.RAILWAY_OPENAI_MODEL,
-    process.env.AI_MODEL,
+    getEnv('FINE_TUNED_AUTOMATION_GPT_ID'),
+    getEnv('FINETUNED_AUTOMATION_GPT_ID'),
+    config.defaultModel, // From config (handles FINETUNED_MODEL_ID, etc.)
+    getEnv('OPENAI_MODEL'),
+    getEnv('RAILWAY_OPENAI_MODEL'),
+    getEnv('AI_MODEL'),
     getDefaultModel()
   ];
 
@@ -69,7 +71,7 @@ function collectFineTunedAutomationIds(): string[] {
 }
 
 const trustedGptIds = new Set(
-  (process.env.TRUSTED_GPT_IDS || '')
+  (getEnv('TRUSTED_GPT_IDS') || '')
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean)
@@ -79,11 +81,12 @@ const implicitlyTrustedFineTunedIds = collectFineTunedAutomationIds();
 implicitlyTrustedFineTunedIds.forEach((id) => trustedGptIds.add(id));
 
 const wildcardTrusted = trustedGptIds.has('*');
-const allowAllGpts = wildcardTrusted || process.env.ALLOW_ALL_GPTS === 'true';
+const allowAllGptsEnv = getEnv('ALLOW_ALL_GPTS');
+const allowAllGpts = wildcardTrusted || allowAllGptsEnv === 'true';
 
 const confirmationTokenPrefix = 'token:';
-const automationBypassSecret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
-const automationBypassHeader = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
+const automationBypassSecret = (getEnv('ARCANOS_AUTOMATION_SECRET') || '').trim();
+const automationBypassHeader = (getEnv('ARCANOS_AUTOMATION_HEADER') || 'x-arcanos-automation').toLowerCase();
 const automationBypassEnabled = Boolean(automationBypassSecret);
 
 if (allowAllGpts) {

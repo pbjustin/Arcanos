@@ -2,6 +2,8 @@
 
 The Trinity brain is ARCANOS' universal AI execution pipeline. Every conversational entry point—including `/ask`, `/brain`, and the Custom GPT dispatcher—delegates to this three-stage workflow so that request validation, GPT-5.1 reasoning, memory recall, and audit logging are consistently applied before a response leaves the server. This document explains how the pipeline is wired into the Express surface area and how each stage collaborates with supporting services such as memory awareness, audit-safe enforcement, and logging.
 
+**Implementation layout:** The pipeline is implemented across `src/logic/trinity.ts` (orchestrator and public API), `src/logic/trinityTypes.ts` (type definitions), and `src/logic/trinityStages.ts` (stage runners and helpers). Callers should import only from `trinity.js`; do not import `trinityTypes` or `trinityStages` from app or route code.
+
 ## Request lifecycle
 
 1. **Client hits a conversational route.** The `/ask` and `/brain` routes share `handleAIRequest`, which runs security middleware, validation, and request logging before handing control to the Trinity brain. 【F:src/routes/ask.ts†L10-L85】

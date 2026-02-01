@@ -1,6 +1,7 @@
-import { getOpenAIClient, generateMockResponse } from './openai.js';
+import { generateMockResponse } from './openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
-import { mapErrorToFriendlyMessage } from '../utils/errorMessageMapper.js';
+import { mapErrorToFriendlyMessage } from '../lib/errors/index.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 /**
  * Handles a basic ARCANOS prompt by routing it through the Trinity brain.
@@ -16,7 +17,14 @@ export async function handleArcanosPrompt(prompt: string) {
     throw new Error('Invalid prompt');
   }
 
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    return generateMockResponse(prompt, 'ask');
+  }
+  const client = adapter.getClient();
 
   // When no OpenAI API key is configured we return a mock response
   //audit Assumption: missing client triggers mock response

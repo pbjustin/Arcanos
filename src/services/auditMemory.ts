@@ -3,11 +3,19 @@
 // ARCANOS AGENT: HOLLOW CORE v2
 ///////////////////////////////////////////////////////////
 
-import { getOpenAIClient } from './openai.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 export async function auditMemory(state: unknown): Promise<boolean> {
   try {
-    const client = getOpenAIClient();
+    // Use adapter (adapter boundary pattern)
+    let adapter;
+    try {
+      adapter = getOpenAIAdapter();
+    } catch {
+      console.warn('⚠️ OpenAI adapter not available for audit memory - returning mock success');
+      return true; // Return success in mock mode to not block operations
+    }
+    const client = adapter.getClient();
     //audit Assumption: missing client returns mock success
     if (!client) {
       console.warn('⚠️ OpenAI client not available for audit memory - returning mock success');

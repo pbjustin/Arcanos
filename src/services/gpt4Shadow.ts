@@ -1,13 +1,15 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { appendFileSync } from 'fs';
 import { ensureLogDirectory, getGPT4TracePath, getAuditShadowPath } from '../utils/logPath.js';
 import { validateAuditSafeOutput, createAuditSummary } from './auditSafe.js';
 import { ensureShadowReady, disableShadowMode } from './shadowControl.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
+import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
+import type { ChatCompletion } from './openai/types.js';
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
 
-async function routeToModule(client: OpenAI, tag: ShadowTag, content: string): Promise<string> {
+async function routeToModule(clientOrAdapter: OpenAI | OpenAIAdapter, tag: ShadowTag, content: string): Promise<string> {
   const systemPrompt =
     tag === 'content_generation'
       ? 'You are creative_architect, an advanced AI module for synthesizing content. Mirror the described ARCANOS event and respond.'
@@ -15,21 +17,37 @@ async function routeToModule(client: OpenAI, tag: ShadowTag, content: string): P
 
   const model = 'gpt-4o';
   const tokenParams = getTokenParameter(model, 500);
-  const response = await client.chat.completions.create({
-    model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content }
-    ],
-    temperature: 0.2,
-    ...tokenParams
-  });
+  
+  // Support both adapter and legacy client
+  const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
+    ? await clientOrAdapter.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content }
+        ],
+        temperature: 0.2,
+        ...tokenParams
+      })
+    : await (clientOrAdapter as OpenAI).chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content }
+        ],
+        temperature: 0.2,
+        ...tokenParams
+      });
 
-  return response.choices[0]?.message?.content || '';
+  // Handle both ChatCompletion and Stream types
+  if (response && typeof response === 'object' && 'choices' in response) {
+    return (response as ChatCompletion).choices[0]?.message?.content || '';
+  }
+  return '';
 }
 
 export async function mirrorDecisionEvent(
-  client: OpenAI,
+  clientOrAdapter: OpenAI | OpenAIAdapter,
   taskId: string,
   event: string,
   original: string,
@@ -39,7 +57,7 @@ export async function mirrorDecisionEvent(
 
   try {
     const shadowInput = `Event: ${event}\nTask ID: ${taskId}\nOriginal Data: ${original}`;
-    const gpt4Output = await routeToModule(client, tag, shadowInput);
+    const gpt4Output = await routeToModule(clientOrAdapter, tag, shadowInput);
 
     ensureLogDirectory();
     const timestamp = new Date().toISOString();

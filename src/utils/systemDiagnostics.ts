@@ -246,8 +246,8 @@ async function getErrorRate(): Promise<number> {
       `SELECT 
          COUNT(*) FILTER (WHERE level = 'error') as error_count,
          COUNT(*) as total_count
-       FROM execution_log 
-       WHERE created_at > NOW() - INTERVAL '1 hour'`,
+       FROM execution_logs 
+       WHERE timestamp > NOW() - INTERVAL '1 hour'`,
       []
     );
 

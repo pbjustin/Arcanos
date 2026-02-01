@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { handleAIRequest, type AskRequest, type AskResponse } from './ask.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
 import { inferHttpMethodIntent } from '../utils/httpMethodIntent.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
 import type {
   ClientContextDTO,
   ConfirmationRequiredResponseDTO,

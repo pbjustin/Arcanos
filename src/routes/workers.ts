@@ -17,6 +17,7 @@ import type {
 import { resolveWorkersDirectory } from '../utils/workerPaths.js';
 import { buildAutoHealPlan, summarizeAutoHeal } from '../services/autoHealService.js';
 import { loadState, updateState } from '../services/stateManager.js';
+import { getConfig } from '../config/unifiedConfig.js';
 
 const router = Router();
 
@@ -77,8 +78,8 @@ async function buildStatusPayload(): Promise<WorkerStatusResponseDTO> {
     workers,
     arcanosWorkers,
     system: {
-      model: process.env.AI_MODEL || 'gpt-4o',
-      environment: process.env.NODE_ENV || 'development'
+      model: getConfig().defaultModel || 'gpt-4o',
+      environment: getConfig().nodeEnv
     }
   };
 

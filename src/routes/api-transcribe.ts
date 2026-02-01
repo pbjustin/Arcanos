@@ -1,13 +1,14 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
-import { getOpenAIClient } from '../services/openai/clientFactory.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { toFile } from 'openai/uploads';
 import path from 'path';
 import type { ErrorResponseDTO } from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import config from '../config/index.js';
 
 const router = express.Router();
 
@@ -49,7 +50,8 @@ function resolveTranscribeModel(override?: string): string {
   if (override && override.trim().length > 0) {
     return override.trim();
   }
-  return process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
+  // Default model (config can be extended later to include transcribeModel)
+  return 'whisper-1';
 }
 
 router.post('/api/transcribe', transcribeValidation, asyncHandler(async (req: Request<{}, TranscribeResponse | ErrorResponseDTO, TranscribeRequest>, res: Response<TranscribeResponse | ErrorResponseDTO>) => {
@@ -69,9 +71,10 @@ router.post('/api/transcribe', transcribeValidation, asyncHandler(async (req: Re
       );
     }
 
-    const client = getOpenAIClient();
-    if (!client) {
-      aiLogger.warn('OpenAI client not available for transcription request');
+    // Get adapter from app locals (injected at startup)
+    const adapter = req.app.locals.openaiAdapter as OpenAIAdapter | null;
+    if (!adapter) {
+      aiLogger.warn('OpenAI adapter not available for transcription request');
       return res.status(503).json({
         error: 'Service Unavailable',
         details: 'OpenAI service is not configured'
@@ -96,7 +99,7 @@ router.post('/api/transcribe', transcribeValidation, asyncHandler(async (req: Re
     });
 
     const file = await toFile(audioBuffer, sanitizedFilename);
-    const transcription = await client.audio.transcriptions.create({
+    const transcription = await adapter.audio.transcriptions.create({
       model: transcribeModel,
       file,
       ...(transcribeLanguage ? { language: transcribeLanguage } : {})

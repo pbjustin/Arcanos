@@ -1,13 +1,13 @@
 import express from 'express';
 import modulesRouter from './modules.js';
-import gptModuleMapPromise from '../config/gptRouterConfig.js';
+import getGptModuleMap from '../config/gptRouterConfig.js';
 
 const router = express.Router();
 
 // Forward any request under /gpt/:gptId to the appropriate module route
 router.use('/:gptId', async (req, res, next) => {
   try {
-    const gptModuleMap = await gptModuleMapPromise;
+    const gptModuleMap = await getGptModuleMap();
     const entry = gptModuleMap[req.params.gptId];
     if (!entry) {
       return res.status(404).json({ error: 'Unknown GPTID' });

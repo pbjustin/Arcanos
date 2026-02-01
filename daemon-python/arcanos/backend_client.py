@@ -4,87 +4,20 @@ Backend API client for ARCANOS daemon.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Generic, Mapping, Optional, Sequence, TypeVar
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 import requests
 
 from .backend_auth_client import normalize_backend_url
-
-T = TypeVar("T")
-
-
-@dataclass(frozen=True)
-class BackendRequestError(RuntimeError):
-    """
-    Purpose: Structured error for backend request failures.
-    Inputs/Outputs: kind, message, optional status code/details, optional confirmation fields.
-    Edge cases: details may be None for network or parsing errors; confirmation fields optional.
-    """
-
-    kind: str
-    message: str
-    status_code: Optional[int] = None
-    details: Optional[str] = None
-    confirmation_challenge_id: Optional[str] = None
-    pending_actions: Optional[list[Mapping[str, Any]]] = None
-
-    def __post_init__(self) -> None:
-        # //audit assumption: exception message should be initialized; risk: missing error context; invariant: message stored; strategy: init base class.
-        super().__init__(self.message)
-
-
-@dataclass(frozen=True)
-class BackendResponse(Generic[T]):
-    """
-    Purpose: Wrapper for backend responses with structured errors.
-    Inputs/Outputs: ok flag, optional value, optional error.
-    Edge cases: value is None when ok is False.
-    """
-
-    ok: bool
-    value: Optional[T] = None
-    error: Optional[BackendRequestError] = None
-
-
-@dataclass(frozen=True)
-class BackendChatResult:
-    """
-    Purpose: Parsed chat response from backend ask endpoint.
-    Inputs/Outputs: response text, tokens, cost, and model.
-    Edge cases: tokens and cost may be zero if backend omits usage.
-    """
-
-    response_text: str
-    tokens_used: int
-    cost_usd: float
-    model: str
-
-
-@dataclass(frozen=True)
-class BackendVisionResult:
-    """
-    Purpose: Parsed vision response from backend vision endpoint.
-    Inputs/Outputs: response text, tokens, cost, and model.
-    Edge cases: tokens and cost may be zero if backend omits usage.
-    """
-
-    response_text: str
-    tokens_used: int
-    cost_usd: float
-    model: str
-
-
-@dataclass(frozen=True)
-class BackendTranscriptionResult:
-    """
-    Purpose: Parsed transcription response from backend transcribe endpoint.
-    Inputs/Outputs: transcription text and model name.
-    Edge cases: text may be empty if backend returns no transcription.
-    """
-
-    text: str
-    model: str
+from .backend_client_models import (
+    BackendChatResult,
+    BackendRequestError,
+    BackendResponse,
+    BackendTranscriptionResult,
+    BackendVisionResult,
+)
+from .config import Config
+from .debug_logging import log_audit_event
 
 
 class BackendApiClient:
@@ -106,10 +39,50 @@ class BackendApiClient:
         Inputs/Outputs: base_url, token_provider, timeout_seconds, request_sender; stores config.
         Edge cases: Empty base_url disables requests and returns config errors.
         """
-        self._base_url = normalize_backend_url(base_url)
+        self._base_url = normalize_backend_url(base_url, allow_http_dev=Config.BACKEND_ALLOW_HTTP)
         self._token_provider = token_provider
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
+
+    @staticmethod
+    def _normalize_metadata(metadata: Optional[Mapping[str, Any]]) -> Optional[dict[str, Any]]:
+        """
+        Purpose: Normalize optional metadata mapping into a dict.
+        Inputs/Outputs: metadata mapping or None; returns dict or None.
+        Edge cases: returns None when metadata is falsy.
+        """
+        if not metadata:
+            # //audit assumption: metadata optional; risk: missing context; invariant: None returned; strategy: skip metadata.
+            return None
+        # //audit assumption: metadata should be serialized; risk: non-serializable values; invariant: dict conversion attempted; strategy: dict() copy.
+        return dict(metadata)
+
+    @staticmethod
+    def _extract_tokens_used(response_json: Mapping[str, Any]) -> int:
+        """
+        Purpose: Extract token usage count from backend response payload.
+        Inputs/Outputs: response JSON mapping; returns token count integer.
+        Edge cases: defaults to zero when tokens cannot be determined.
+        """
+        tokens = response_json.get("tokens")
+        if isinstance(tokens, int):
+            # //audit assumption: tokens already provided; risk: incorrect type; invariant: integer tokens; strategy: return early.
+            return tokens
+
+        # //audit assumption: tokens may be nested under meta.tokens; risk: missing usage data; invariant: check nested metadata; strategy: fallback parsing.
+        meta = response_json.get("meta", {})
+        if isinstance(meta, dict):
+            # //audit assumption: meta should be mapping; risk: schema mismatch; invariant: dict parsed; strategy: inspect tokens.
+            tokens_obj = meta.get("tokens", {})
+            if isinstance(tokens_obj, dict):
+                # //audit assumption: tokens object should be mapping; risk: schema mismatch; invariant: dict parsed; strategy: read total_tokens.
+                tokens = tokens_obj.get("total_tokens", 0)
+
+        if not isinstance(tokens, int):
+            # //audit assumption: tokens should be int; risk: missing usage; invariant: integer tokens; strategy: default to zero.
+            return 0
+
+        return tokens
 
     def _make_request(
         self,
@@ -129,6 +102,13 @@ class BackendApiClient:
         token = self._token_provider()
         if not token:
             # //audit assumption: auth token required; risk: unauthorized request; invariant: token present; strategy: raise auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="token_missing",
+                path=path,
+                method=method
+            )
             raise BackendRequestError(kind="auth", message="Backend token is missing")
 
         url = f"{self._base_url}{path}"
@@ -167,12 +147,16 @@ class BackendApiClient:
             "message": message
         }
         if domain:
+            # //audit assumption: domain optional; risk: missing routing context; invariant: include when provided; strategy: conditional field.
             payload["domain"] = domain
-        if metadata:
-            payload["metadata"] = dict(metadata)
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
+            # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/ask", payload)
         if not response.ok or not response.value:
+            # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
             return BackendResponse(ok=False, error=response.error)
 
         return self._parse_chat_response(response.value)
@@ -190,6 +174,7 @@ class BackendApiClient:
         Inputs/Outputs: messages, optional temperature/model, stream flag; returns BackendChatResult.
         Edge cases: Returns structured error on auth, network, or parsing failures.
         """
+        # //audit assumption: messages sequence should be serializable; risk: invalid payload; invariant: list of mappings; strategy: list() copy.
         payload: dict[str, Any] = {
             "messages": list(messages),
             "stream": stream
@@ -200,9 +185,10 @@ class BackendApiClient:
         if model:
             # //audit assumption: model override optional; risk: invalid model; invariant: include when provided; strategy: conditional field.
             payload["model"] = model
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/ask", payload)
         if not response.ok or not response.value:
@@ -240,9 +226,10 @@ class BackendApiClient:
         if max_tokens is not None:
             # //audit assumption: max tokens optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
             payload["maxTokens"] = max_tokens
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/vision", payload)
         if not response.ok or not response.value:
@@ -276,9 +263,10 @@ class BackendApiClient:
         if language:
             # //audit assumption: language optional; risk: invalid value; invariant: include when provided; strategy: conditional field.
             payload["language"] = language
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/transcribe", payload)
         if not response.ok or not response.value:
@@ -302,9 +290,10 @@ class BackendApiClient:
             "updateType": update_type,
             "data": dict(data)
         }
-        if metadata:
+        normalized_metadata = self._normalize_metadata(metadata)
+        if normalized_metadata is not None:
             # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
-            payload["metadata"] = dict(metadata)
+            payload["metadata"] = normalized_metadata
 
         response = self._request_json("post", "/api/update", payload)
         if not response.ok or not response.value:
@@ -338,6 +327,13 @@ class BackendApiClient:
         token = self._token_provider()
         if not token:
             # //audit assumption: auth token required; risk: unauthorized request; invariant: token present; strategy: return auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="token_missing",
+                path=path,
+                method=method
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(kind="auth", message="Backend token is missing")
@@ -372,6 +368,14 @@ class BackendApiClient:
 
         if response.status_code == 401:
             # //audit assumption: auth errors should be surfaced; risk: unauthorized usage; invariant: auth error returned; strategy: return auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="401_unauthorized",
+                path=path,
+                method=method,
+                status_code=response.status_code
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
@@ -415,12 +419,51 @@ class BackendApiClient:
                     )
 
             # //audit assumption: 403 without confirmation is auth failure; risk: misclassified error; invariant: auth error returned; strategy: return auth error.
+            log_audit_event(
+                "auth_failure",
+                source="backend_client",
+                reason="403_forbidden_not_confirmation",
+                path=path,
+                method=method,
+                status_code=response.status_code
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
                     kind="auth",
                     message="Backend authorization failed",
                     status_code=response.status_code,
+                    details=response.text
+                )
+            )
+
+        if response.status_code == 429:
+            # Rate limit: parse retryAfter from body or Retry-After header for a clearer message.
+            retry_after_sec: Optional[int] = None
+            try:
+                parsed_429 = response.json()
+                if isinstance(parsed_429, dict):
+                    ra = parsed_429.get("retryAfter")
+                    if isinstance(ra, (int, float)) and ra >= 0:
+                        retry_after_sec = int(ra)
+            except ValueError:
+                pass
+            if retry_after_sec is None and response.headers.get("Retry-After"):
+                try:
+                    retry_after_sec = int(response.headers["Retry-After"])
+                except (ValueError, TypeError):
+                    pass
+            if retry_after_sec is not None:
+                mins = (retry_after_sec + 59) // 60
+                msg = f"Rate limit exceeded. Try again in {mins} {'minute' if mins == 1 else 'minutes'}."
+            else:
+                msg = "Rate limit exceeded. Try again later."
+            return BackendResponse(
+                ok=False,
+                error=BackendRequestError(
+                    kind="rate_limit",
+                    message=msg,
+                    status_code=429,
                     details=response.text
                 )
             )
@@ -500,10 +543,11 @@ class BackendApiClient:
         return BackendResponse(ok=True, value=response.value)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
-        response_text = response_json.get("response")
-        tokens = response_json.get("tokens")
+        # Support both "result" (production backend) and "response" (legacy) field names
+        response_text = response_json.get("result") or response_json.get("response")
+        tokens = self._extract_tokens_used(response_json)
         cost = response_json.get("cost")
-        model = response_json.get("model")
+        model = response_json.get("model") or response_json.get("activeModel")
 
         if not isinstance(response_text, str):
             # //audit assumption: response text required; risk: parse failure; invariant: string response; strategy: return parse error.
@@ -511,9 +555,6 @@ class BackendApiClient:
                 ok=False,
                 error=BackendRequestError(kind="parse", message="Chat response missing text")
             )
-        if not isinstance(tokens, int):
-            # //audit assumption: tokens should be int; risk: missing usage; invariant: integer tokens; strategy: default to zero.
-            tokens = 0
         if not isinstance(cost, (int, float)):
             # //audit assumption: cost should be numeric; risk: missing cost; invariant: numeric cost; strategy: default to zero.
             cost = 0.0
@@ -584,4 +625,3 @@ class BackendApiClient:
             ok=True,
             value=BackendTranscriptionResult(text=text, model=model)
         )
-

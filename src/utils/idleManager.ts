@@ -45,17 +45,18 @@
  */
 
 import { createCacheKey } from './hashUtils.js';
+import { env } from './env.js';
 
 // Configuration with environment variable overrides
 const DEFAULTS = {
-  IDLE_MEMORY_THRESHOLD_MB: parseInt(process.env.IDLE_MEMORY_THRESHOLD_MB || '150', 10),
-  MEMORY_GROWTH_WINDOW_MS: parseInt(process.env.MEMORY_GROWTH_WINDOW_MS || '60000', 10),
-  INITIAL_IDLE_TIMEOUT_MS: parseInt(process.env.INITIAL_IDLE_TIMEOUT_MS || '30000', 10),
-  MIN_IDLE_TIMEOUT_MS: parseInt(process.env.MIN_IDLE_TIMEOUT_MS || '10000', 10),
-  MAX_IDLE_TIMEOUT_MS: parseInt(process.env.MAX_IDLE_TIMEOUT_MS || '120000', 10),
-  EWMA_DECAY: parseFloat(process.env.EWMA_DECAY || '0.85'),
-  CACHE_TTL_MS: parseInt(process.env.OPENAI_CACHE_TTL_MS || '60000', 10),
-  BATCH_WINDOW_MS: parseInt(process.env.OPENAI_BATCH_WINDOW_MS || '150', 10),
+  IDLE_MEMORY_THRESHOLD_MB: env.IDLE_MEMORY_THRESHOLD_MB,
+  MEMORY_GROWTH_WINDOW_MS: env.MEMORY_GROWTH_WINDOW_MS,
+  INITIAL_IDLE_TIMEOUT_MS: env.INITIAL_IDLE_TIMEOUT_MS,
+  MIN_IDLE_TIMEOUT_MS: env.MIN_IDLE_TIMEOUT_MS,
+  MAX_IDLE_TIMEOUT_MS: env.MAX_IDLE_TIMEOUT_MS,
+  EWMA_DECAY: env.EWMA_DECAY,
+  CACHE_TTL_MS: env.OPENAI_CACHE_TTL_MS,
+  BATCH_WINDOW_MS: env.OPENAI_BATCH_WINDOW_MS,
 };
 
 import type OpenAI from 'openai';

@@ -3,7 +3,7 @@
  * Provides reusable functions for constructing OpenAI request payloads
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionResponseFormat } from '../services/openai/types.js';
 
 type ChatCompletionPayload = Omit<

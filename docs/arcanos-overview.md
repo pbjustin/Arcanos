@@ -16,7 +16,7 @@ callers.
 
 This overview includes:
 - [x] Core AI-controlled architecture principles
-- [x] Integration patterns with OpenAI SDK v6.15.0
+- [x] Integration patterns with OpenAI SDK v6.16.0
 - [x] Database fallback behaviors
 - [x] Worker system architecture
 - [x] Configuration patterns and environment dependencies
@@ -106,7 +106,7 @@ still validated server-side. The `aiCron` module performs:
 - Memory syncs between PostgreSQL, filesystem snapshots, and cached state.
 - Assistant synchronization so OpenAI organization assistants stay aligned with
   project configuration.
-- Health polling for external services referenced in `config/` (Notion, research
+- Health polling for external services referenced in `config/` (research
   fetchers, etc.).
 
 Workers inherit the same OpenAI client helpers, so model selection and failover

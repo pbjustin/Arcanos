@@ -113,6 +113,8 @@ ENV/
 env.bak/
 venv.bak/
 .pytest_cache/
+!config/env/
+!config/env/*.env.example
 
 # Dead code scanner reports
 dead_code_report.txt
@@ -132,6 +134,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!src/lib/
+!src/lib/**
 lib64/
 parts/
 sdist/
@@ -209,3 +213,7 @@ REFACTORING_COMMIT_MESSAGE.md
 REFACTORING_GITHUB_CONFIRMATION.md
 REFACTORING_ROLLBACK.md
 PR_BODY.md
+
+# Validation results (temporary; do not commit - run: git rm --cached daemon-python/validation_results.json if already tracked)
+daemon-python/validation_results.json
+daemon-python/validation_report.html

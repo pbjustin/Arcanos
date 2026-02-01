@@ -6,9 +6,10 @@ Handles all OpenAI API interactions with retry logic and caching.
 import time
 from io import BytesIO
 from typing import Optional, Dict, Any
-from openai import OpenAI, OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError, NotFoundError
+from openai import OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError, NotFoundError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .config import Config
+from .openai.unified_client import get_or_create_client
 
 
 def _is_mock_api_key(api_key: str) -> bool:
@@ -47,12 +48,22 @@ class GPTClient:
     """OpenAI API client with built-in rate limiting and error handling"""
 
     def __init__(self, api_key: Optional[str] = None):
+        """
+        Initialize GPT client using unified_client adapter.
+        
+        Args:
+            api_key: Optional API key override. If None, uses Config.OPENAI_API_KEY via unified_client.
+        """
         self.api_key = api_key or Config.OPENAI_API_KEY
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
 
         self.is_mock = _is_mock_api_key(self.api_key)
-        self.client = None if self.is_mock else OpenAI(api_key=self.api_key)
+        # Use unified_client adapter instead of direct OpenAI construction
+        # This enforces the adapter boundary pattern
+        self.client = None if self.is_mock else get_or_create_client(Config)
+        if not self.is_mock and not self.client:
+            raise RuntimeError("Failed to initialize OpenAI client via unified_client adapter")
         self._request_cache: Dict[str, tuple[str, float]] = {}
         self._cache_ttl = 300  # 5 minutes
 

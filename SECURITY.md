@@ -56,14 +56,19 @@ ARCANOS takes security seriously. This document outlines our security model, res
 
 **NEVER commit `.env` files to version control.**
 
+The `.env` file contains sensitive credentials and must be kept private. Always use `.env.example` as a template (which contains no real secrets).
+
 ```env
 # ✅ GOOD - Stored in .env (gitignored)
 OPENAI_API_KEY=sk-...
-JWT_SECRET=random-secret-here
-DATABASE_URL=postgresql://...
+BACKEND_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+DEBUG_SERVER_TOKEN=your-secure-token-here
 
 # ❌ BAD - Never hardcode in source code
 api_key = "sk-proj-abc123..."
+
+# ❌ BAD - Never commit .env to Git
+git add .env  # DON'T DO THIS
 ```
 
 ### Storage Locations
@@ -79,25 +84,45 @@ api_key = "sk-proj-abc123..."
 ### Best Practices
 
 1. **Rotate API Keys Regularly**
-   - Change OpenAI API key every 90 days
-   - Rotate JWT secret on suspected compromise
+   - Change OpenAI API key every 90 days (or immediately if suspected compromise)
+   - Rotate backend JWT token via backend login flow
+   - Regenerate `DEBUG_SERVER_TOKEN` if exposed: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+   - Update `.env` with new values and restart the daemon
 
 2. **Use Environment Variables**
    ```powershell
-   # Set temporarily
+   # Set temporarily (not recommended for production)
    $env:OPENAI_API_KEY="sk-..."
-   python cli.py
+   python -m arcanos.cli
    
    # Or use .env file (recommended)
+   # Copy .env.example to .env and fill in values
    ```
 
 3. **Never Log Secrets**
-   - All logging filters API keys automatically
+   - All logging filters API keys automatically via `sanitize_sensitive_data()`
    - Error messages redact sensitive data
+   - Command execution logs use SHA-256 hashes, never raw commands
 
-4. **Backup Encryption** (Future)
+4. **Backend HTTPS Enforcement**
+   - Backend URLs must use `https://` unless `BACKEND_ALLOW_HTTP=true` (dev only)
+   - Localhost (`127.0.0.1`, `localhost`) allows HTTP for development
+   - Production deployments should always use HTTPS
+
+5. **JWT Verification** (Recommended)
+   - Configure `BACKEND_JWT_SECRET`, `BACKEND_JWT_PUBLIC_KEY`, or `BACKEND_JWT_JWKS_URL` to enable signature verification
+   - Without verification keys, only expiration (`exp`) is checked (security warning logged)
+   - Invalid tokens are rejected at bootstrap and refresh
+
+6. **Debug Server Security**
+   - Always set `DEBUG_SERVER_TOKEN` (required for non-read-only endpoints)
+   - Query parameter auth (`?token=`) is disabled by default (`DEBUG_SERVER_ALLOW_QUERY_TOKEN=false`)
+   - Rate limiting enforced per IP (`DEBUG_SERVER_RATE_LIMIT`, default: 60 requests/minute)
+   - Keep `DEBUG_SERVER_ALLOW_UNAUTHENTICATED=false` unless in a secure dev environment
+
+7. **Backup Encryption** (Future)
    - Encrypt `memories.json` at rest
-   - Use Windows DPAPI for key storage
+   - Use Windows DPAPI or OS keychain for key storage
 
 ---
 
@@ -247,12 +272,15 @@ await query('INSERT INTO conversations VALUES ($1, $2)', [userId, message]);
 If you discover a security vulnerability, please follow these steps:
 
 1. **DO NOT** open a public GitHub issue
-2. **Email:** security@arcanos.example.com (or create a private security advisory on GitHub)
+2. **Report via:** 
+   - GitHub Security Advisories (preferred): https://github.com/pbjustin/Arcanos/security/advisories/new
+   - Or email: security@arcanos.example.com (if contact available)
 3. **Include:**
    - Description of vulnerability
    - Steps to reproduce
    - Affected versions
    - Suggested fix (if any)
+   - Impact assessment (e.g., credential exposure, RCE, data breach)
 
 ### Response Timeline
 
@@ -331,19 +359,46 @@ If you discover a security vulnerability, please follow these steps:
 
 Before deploying ARCANOS:
 
-- [ ] `.env` file not committed to Git
+### Credentials & Secrets
+- [ ] `.env` file not committed to Git (check `.gitignore`)
+- [ ] `.env.example` contains no real secrets (only placeholders)
 - [ ] API keys rotated and secure
+- [ ] `DEBUG_SERVER_TOKEN` set and secure (generate with `secrets.token_urlsafe(32)`)
+- [ ] Backend JWT verification keys configured (if backend used)
+- [ ] Database credentials secure (if backend deployed)
+
+### Transport Security
+- [ ] Backend URL uses `https://` (or `BACKEND_ALLOW_HTTP=true` only for localhost/dev)
+- [ ] Backend HTTPS enforcement enabled (default)
+- [ ] Debug server bound to `127.0.0.1` only (not exposed to network)
+
+### Authentication & Authorization
+- [ ] Backend JWT verification enabled (if backend used)
+- [ ] Debug server authentication enabled (`DEBUG_SERVER_TOKEN` set)
+- [ ] Query parameter auth disabled (`DEBUG_SERVER_ALLOW_QUERY_TOKEN=false`)
+- [ ] Unauthenticated access disabled (`DEBUG_SERVER_ALLOW_UNAUTHENTICATED=false`)
+
+### Rate Limiting & DoS Protection
+- [ ] Debug server rate limiting enabled (`DEBUG_SERVER_RATE_LIMIT` configured)
+- [ ] Local rate limits configured appropriately
+- [ ] Backend rate limiting enabled (if backend deployed)
+
+### Command Execution Safety
 - [ ] Command blacklist enabled
-- [ ] Rate limiting configured appropriately
-- [ ] Backend uses HTTPS only (Railway default)
-- [ ] JWT secret is random and strong (>32 chars)
-- [ ] Database credentials secure
-- [ ] Telemetry consent obtained
-- [ ] Logs don't contain secrets
-- [ ] File permissions correct on memories.json
+- [ ] Dangerous commands blocked (`ALLOW_DANGEROUS_COMMANDS=false`)
+- [ ] Command execution audit logging enabled (logs command hash, not raw command)
+- [ ] Sensitive action confirmation enabled (`CONFIRM_SENSITIVE_ACTIONS=true`)
+
+### Logging & Monitoring
+- [ ] Telemetry consent obtained (if enabled)
+- [ ] Logs don't contain secrets (redaction enabled)
+- [ ] Auth failures logged (without tokens)
+- [ ] Command execution attempts logged (hash only)
+
+### System Security
+- [ ] File permissions correct on `memories.json` and `.env`
 - [ ] Windows Defender/antivirus not blocking
-- [ ] Backend rate limiting enabled
-- [ ] SQL queries parameterized
+- [ ] SQL queries parameterized (if backend deployed)
 - [ ] User input sanitized
 
 ---

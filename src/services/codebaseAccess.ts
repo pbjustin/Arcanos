@@ -2,6 +2,7 @@ import fs from 'fs';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getEnv } from '../config/env.js';
 
 const { readdir, readFile, stat } = fsp;
 
@@ -36,7 +37,8 @@ let cachedRoot: string | null = null;
 
 function candidateRepositoryRoots(): string[] {
   const candidates: string[] = [];
-  const envRoot = process.env.CODEBASE_ROOT;
+  // Use config layer for env access (adapter boundary pattern)
+  const envRoot = getEnv('CODEBASE_ROOT');
   if (envRoot) {
     candidates.push(path.isAbsolute(envRoot) ? envRoot : path.resolve(process.cwd(), envRoot));
   }

@@ -8,7 +8,10 @@ export const GPT_SYNC_STRINGS = {
 } as const;
 
 export const GPT_SYNC_ERRORS = {
-  clientUnavailable: 'OpenAI client not available - API key required for GPT sync functionality'
+  clientUnavailable:
+    'OpenAI client not available - API key required for GPT sync functionality. ' +
+    'Set OPENAI_API_KEY (or RAILWAY_OPENAI_API_KEY / API_KEY / OPENAI_KEY) in your environment. ' +
+    'On Railway/Docker: add the variable in the platform dashboard (Variables), not only in .env.'
 } as const;
 
 export const GPT_SYNC_LOG_MESSAGES = {

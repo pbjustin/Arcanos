@@ -3,7 +3,7 @@ import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { connectResearchBridge } from '../services/researchHub.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
 
 const routeBridge = connectResearchBridge('ROUTE:RESEARCH');
 
