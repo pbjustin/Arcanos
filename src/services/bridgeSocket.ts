@@ -36,7 +36,8 @@ function isAutomationAuthorized(req: IncomingMessage): boolean {
   if (!secret) {
     const token = resolveHeader(req, 'x-arcanos-confirm-token');
     if (!token) {
-      return true;
+      return false;
+    }
     }
     // //audit Assumption: confirmation token is the capability; risk: replay if not consumed; invariant: consume on success; handling: consume + accept only when valid.
     return consumeOneTimeToken(token).ok;
