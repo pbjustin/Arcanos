@@ -5,13 +5,14 @@
 
 import { Request, Response, NextFunction } from 'express';
 import config from '../config/index.js';
-import { getOpenAIClient } from '../services/openai.js';
 import { responseCache } from '../utils/cache.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { getFallbackMessage } from '../config/fallbackMessages.js';
 import { FALLBACK_RESPONSE_MESSAGES } from '../config/fallbackResponseMessages.js';
 import { FALLBACK_LOG_MESSAGES, FALLBACK_LOG_REASON } from '../config/fallbackLogMessages.js';
+import { logger } from '../utils/structuredLogging.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -81,7 +82,7 @@ function logFallbackEvent(
     ? FALLBACK_LOG_MESSAGES.degraded(endpoint, reason)
     : FALLBACK_LOG_MESSAGES.preemptive(endpoint);
 
-  console.log(message);
+  logger.warn(message, { module: 'fallback', endpoint, reason, ...metadata });
   recordTraceEvent(`fallback.${type}`, { endpoint, reason, ...metadata });
 }
 
@@ -123,7 +124,14 @@ export function createFallbackMiddleware() {
  * Health check for fallback system readiness
  */
 export function getFallbackSystemHealth() {
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    adapter = null;
+  }
+  const client = adapter?.getClient() || null;
   const cacheStats = {
     size: getCacheSize(responseCache),
     hitRate: 0 // Cache doesn't expose hit rate directly
@@ -179,7 +187,14 @@ export function createHealthCheckMiddleware() {
       return next();
     }
 
-    const client = getOpenAIClient();
+    // Use adapter (adapter boundary pattern)
+    let adapter;
+    try {
+      adapter = getOpenAIAdapter();
+    } catch {
+      adapter = null;
+    }
+    const client = adapter?.getClient() || null;
     const strictEnvs = config.fallback.strictEnvironments;
     const enforcePreemptive = config.fallback.preemptive || strictEnvs.includes(config.server.environment);
 

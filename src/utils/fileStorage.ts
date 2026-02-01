@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { logger } from './structuredLogging.js';
+import { FileStorageError } from '../lib/errors.js';
 
 interface JsonWriteOptions {
   space?: number;
@@ -18,12 +18,7 @@ export async function writeJsonFile<T>(filePath: string, data: T, options: JsonW
     await ensureDirectoryForFile(filePath);
     await fs.writeFile(filePath, serialized);
   } catch (error: unknown) {
-    logger.error(
-      'Failed to write JSON file',
-      { module: 'fileStorage', operation: 'writeJsonFile', filePath },
-      { error: error instanceof Error ? error.message : String(error) },
-      error instanceof Error ? error : undefined
-    );
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new FileStorageError('FileWriteError', undefined, `Failed to write JSON file at ${filePath}: ${message}`);
   }
 }

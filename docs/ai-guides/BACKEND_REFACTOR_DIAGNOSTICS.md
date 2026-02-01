@@ -119,7 +119,7 @@ $ npm run build
 
 #### Runtime Testing
 ```bash
-$ node dist/index.js
+$ node dist/start-server.js
 ✅ Server starts successfully
 ✅ Unified OpenAI service initializes
 ✅ All routes load properly
@@ -167,7 +167,7 @@ $ node dist/index.js
 **All objectives from the problem statement have been successfully completed:**
 
 1. ✅ **Refactor all backend modules and logic** - Consolidated OpenAI services
-2. ✅ **Latest OpenAI Node.js SDK installed and used properly** - v6.15.0 with modern patterns
+2. ✅ **Latest OpenAI Node.js SDK installed and used properly** - v6.16.0 with modern patterns
 3. ✅ **Remove outdated packages and deprecated code** - Legacy services marked deprecated
 4. ✅ **Upgrade dependencies to secure versions** - All packages updated, 0 vulnerabilities
 5. ✅ **Streamline business logic and service layers** - Unified architecture implemented

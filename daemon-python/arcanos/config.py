@@ -1,8 +1,7 @@
 """
 ARCANOS Configuration Manager
 Loads and validates environment variables with sensible defaults.
-When run as a PyInstaller frozen EXE (installer), uses a user-writable data dir
-to avoid writing under Program Files or a read-only extract dir.
+Uses a user-writable data dir for configuration, logs, and crash reports.
 """
 
 import os
@@ -15,13 +14,12 @@ try:
 except ModuleNotFoundError:
     load_dotenv = None
 
-# //audit assumption: PyInstaller sets sys.frozen; risk: other freezers differ; invariant: avoid _MEIPASS for writes; strategy: use user data dir when frozen.
-_frozen = getattr(sys, "frozen", False)
+# Note: Removed PyInstaller frozen EXE detection - CLI agent runs as Python application
 
 
 def _get_user_data_dir() -> Optional[Path]:
     """
-    Purpose: Resolve a user-writable base dir for .env, logs, crash_reports when running as frozen EXE.
+    Purpose: Resolve a user-writable base dir for .env, logs, crash_reports.
     Inputs/Outputs: None; returns a platform-specific user data directory, or None on failure.
     Edge cases: Creates the directory; returns None if home directory cannot be found or mkdir fails.
     """
@@ -47,11 +45,45 @@ def _get_user_data_dir() -> Optional[Path]:
         return None
 
 
-_user_data_dir = _get_user_data_dir() if _frozen else None
-# When frozen, base must be user-writable; else use package dir.
-BASE_DIR: Path = (
-    _user_data_dir if (_frozen and _user_data_dir) else Path(__file__).parent
-)
+def _resolve_base_dir() -> Path:
+    """
+    Purpose: Resolve the base directory for data, logs, and .env resolution.
+    Inputs/Outputs: None; returns a writable Path.
+    Edge cases: Falls back to package directory if user data dir cannot be created.
+    """
+    package_dir = Path(__file__).resolve().parent
+    project_root = package_dir.parent
+
+    # Prefer project .env when running from project (dev/local) so BACKEND_URL etc. from daemon-python/.env are used
+    if (project_root / ".env").exists() and (
+        (project_root / ".env.example").exists() or (project_root / "requirements.txt").exists()
+    ):
+        return project_root
+
+    # User data directory for production install (no project .env or not running from project)
+    user_dir = _get_user_data_dir()
+    if user_dir and (user_dir / ".env").exists():
+        # If .env exists in user data dir, prefer it (production install)
+        return user_dir
+
+    # //audit assumption: dev installs keep config at daemon-python root or package dir; risk: missing files; invariant: use project root when markers exist; strategy: check both locations.
+    if (project_root / ".env.example").exists() or (project_root / "requirements.txt").exists():
+        return project_root
+    # Also check package directory (arcanos) for markers
+    package_dir = project_root / "arcanos"
+    if package_dir.exists() and ((package_dir / ".env.example").exists() or (package_dir / "requirements.txt").exists()):
+        return package_dir.parent if package_dir.name == "arcanos" else package_dir
+
+    user_dir = _get_user_data_dir()
+    if user_dir:
+        # //audit assumption: user dir available; risk: permission errors; invariant: user dir used; strategy: fallback to user dir.
+        return user_dir
+
+    # //audit assumption: fallback to package dir; risk: read-only install; invariant: best-effort; strategy: use package dir.
+    return package_dir
+
+
+BASE_DIR: Path = _resolve_base_dir()
 
 
 def _load_dotenv_fallback(path: Path) -> None:
@@ -79,18 +111,47 @@ def _load_dotenv_fallback(path: Path) -> None:
     except OSError:
         print("Warning: Failed to read .env file; environment variables may be missing.")
 
+
+def _load_dotenv_override(path: Path) -> None:
+    """Load .env and set env vars, overwriting existing (for ARCANOS_ENV_PATH)."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                if (value.startswith('"') and value.endswith('"')) or (
+                    value.startswith("'") and value.endswith("'")
+                ):
+                    value = value[1:-1]
+                os.environ[key] = value
+    except FileNotFoundError:
+        return
+    except OSError:
+        print("Warning: Failed to read ARCANOS_ENV_PATH file.")
+
+
 def _get_primary_env_path() -> Path:
     return BASE_DIR / ".env"
 
 
 def _get_fallback_env_path() -> Optional[Path]:
-    appdata = os.getenv("APPDATA")
-    if appdata:
-        return Path(appdata) / "ARCANOS" / ".env"
-
-    userprofile = os.getenv("USERPROFILE")
-    if userprofile:
-        return Path(userprofile) / ".arcanos" / ".env"
+    """
+    Purpose: Resolve a cross-platform fallback .env path.
+    Inputs/Outputs: None; returns a candidate Path or None.
+    Edge cases: Returns None when user data dir unavailable.
+    """
+    user_data_dir = _get_user_data_dir()
+    if user_data_dir:
+        # //audit assumption: user data dir available; risk: permission issues; invariant: fallback path derived; strategy: return .env under data dir.
+        return user_data_dir / ".env"
 
     return None
 
@@ -108,9 +169,30 @@ ENV_PATH = PRIMARY_ENV_PATH
 if load_dotenv is not None:
     for env_path in ENV_PATHS:
         load_dotenv(dotenv_path=env_path)
+    # Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
+    _env_override = os.environ.get("ARCANOS_ENV_PATH")
+    if _env_override:
+        _override_path = Path(_env_override)
+        if _override_path.is_file():
+            load_dotenv(dotenv_path=_override_path, override=True)
 else:
     for env_path in ENV_PATHS:
         _load_dotenv_fallback(env_path)
+    _env_override = os.environ.get("ARCANOS_ENV_PATH")
+    if _env_override:
+        _override_path = Path(_env_override)
+        if _override_path.is_file():
+            _load_dotenv_override(_override_path)
+
+# Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
+_env_override = os.environ.get("ARCANOS_ENV_PATH")
+if _env_override:
+    _override_path = Path(_env_override)
+    if _override_path.is_file():
+        if load_dotenv is not None:
+            load_dotenv(dotenv_path=_override_path, override=True)
+        else:
+            _load_dotenv_override(_override_path)
 
 
 class Config:
@@ -131,6 +213,10 @@ class Config:
     BACKEND_URL: Optional[str] = os.getenv("BACKEND_URL")
     BACKEND_TOKEN: Optional[str] = os.getenv("BACKEND_TOKEN")
     BACKEND_LOGIN_EMAIL: Optional[str] = os.getenv("BACKEND_LOGIN_EMAIL")
+    BACKEND_ALLOW_HTTP: bool = os.getenv("BACKEND_ALLOW_HTTP", "false").lower() == "true"
+    BACKEND_JWT_SECRET: Optional[str] = os.getenv("BACKEND_JWT_SECRET") or None
+    BACKEND_JWT_PUBLIC_KEY: Optional[str] = os.getenv("BACKEND_JWT_PUBLIC_KEY") or None
+    BACKEND_JWT_JWKS_URL: Optional[str] = os.getenv("BACKEND_JWT_JWKS_URL") or None
     BACKEND_ROUTING_MODE: str = os.getenv("BACKEND_ROUTING_MODE", "hybrid").lower()
     # //audit assumption: prefixes are comma-separated; risk: empty tokens; invariant: trimmed list; strategy: strip and filter.
     BACKEND_DEEP_PREFIXES: list[str] = [
@@ -174,6 +260,7 @@ class Config:
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_VISION_MODEL: str = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")
     OPENAI_TRANSCRIBE_MODEL: str = os.getenv("OPENAI_TRANSCRIBE_MODEL", "whisper-1")
+    OPENAI_IMAGE_MODEL: str = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))
     MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "500"))
     REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "30"))
@@ -181,9 +268,13 @@ class Config:
     # ============================================
     # Storage Paths
     # ============================================
-    BASE_DIR: Path = BASE_DIR  # module-level: user data dir when frozen, else Path(__file__).parent
+    BASE_DIR: Path = BASE_DIR  # module-level resolved base dir (frozen/user data or project root fallback)
     MEMORY_FILE: Path = BASE_DIR / os.getenv("MEMORY_FILE", "memories.json")
     LOG_DIR: Path = BASE_DIR / os.getenv("LOG_DIR", "logs")
+    # Debug log for instrumentation; override with DEBUG_LOG_PATH env (absolute path) for portability.
+    DEBUG_LOG_PATH: Path = (
+        Path(os.environ["DEBUG_LOG_PATH"]) if os.environ.get("DEBUG_LOG_PATH") else (BASE_DIR / os.getenv("LOG_DIR", "logs") / "debug.log")
+    )
     SCREENSHOT_DIR: Path = BASE_DIR / os.getenv("SCREENSHOT_DIR", "screenshots")
     CRASH_REPORTS_DIR: Path = BASE_DIR / "crash_reports"
     TELEMETRY_DIR: Path = BASE_DIR / "telemetry"
@@ -191,7 +282,7 @@ class Config:
     # ============================================
     # Security Settings
     # ============================================
-    # Run PowerShell/CMD with elevation (Start-Process -Verb RunAs) so admin-required tasks work. UAC prompt per run when True.
+    # Run shell commands with elevation (UAC on Windows, sudo on Unix) so admin-required tasks work. Prompt per run when True.
     RUN_ELEVATED: bool = os.getenv("RUN_ELEVATED", "false").lower() == "true"
     # Prompt "Do you confirm this action?" before sensitive daemon commands (run, mouse, keyboard, etc.). Set false to skip.
     CONFIRM_SENSITIVE_ACTIONS: bool = os.getenv("CONFIRM_SENSITIVE_ACTIONS", "true").strip().lower() in ("true", "1", "yes")
@@ -229,6 +320,38 @@ class Config:
     # ============================================
     IDE_AGENT_DEBUG: bool = os.getenv("IDE_AGENT_DEBUG","").lower() in ("1","true","yes")
     DAEMON_DEBUG_PORT: int = int(os.getenv("DAEMON_DEBUG_PORT", "0"))
+    # New debug server config (prefer these over legacy envs when set)
+    DEBUG_SERVER_ENABLED: bool = os.getenv("DEBUG_SERVER_ENABLED", "").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_PORT: int = int(os.getenv("DEBUG_SERVER_PORT", "9999"))
+    DEBUG_SERVER_LOG_LEVEL: str = os.getenv("DEBUG_SERVER_LOG_LEVEL", "INFO")
+    DEBUG_SERVER_RATE_LIMIT: int = int(os.getenv("DEBUG_SERVER_RATE_LIMIT", "60"))
+    DEBUG_SERVER_METRICS_ENABLED: bool = os.getenv("DEBUG_SERVER_METRICS_ENABLED", "true").lower() in ("1", "true", "yes")
+    # WARNING: Enabling CORS on unauthenticated debug server is a security risk.
+    # Only enable if you have implemented authentication or are in a secure development environment.
+    DEBUG_SERVER_CORS_ENABLED: bool = os.getenv("DEBUG_SERVER_CORS_ENABLED", "false").lower() in ("1", "true", "yes")
+    # Security: Disable token-in-query by default (headers-only auth). Set to true to allow ?token= for development.
+    DEBUG_SERVER_ALLOW_QUERY_TOKEN: bool = os.getenv("DEBUG_SERVER_ALLOW_QUERY_TOKEN", "false").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_LOG_RETENTION_DAYS: int = int(os.getenv("DEBUG_SERVER_LOG_RETENTION_DAYS", "7"))
+    # Security: Authentication token for debug server (required for non-read-only endpoints)
+    # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    DEBUG_SERVER_TOKEN: Optional[str] = os.getenv("DEBUG_SERVER_TOKEN") or None
+    # Security: Allow unauthenticated access to debug server (default: false, only for development)
+    DEBUG_SERVER_ALLOW_UNAUTHENTICATED: bool = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
+    
+    # ============================================
+    # Daemon Settings
+    # ============================================
+    # Heartbeat interval for daemon (seconds)
+    DAEMON_HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "60"))
+    # Command poll interval for daemon (seconds)
+    DAEMON_COMMAND_POLL_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", "30"))
+    # Shell override for terminal commands
+    ARCANOS_SHELL: Optional[str] = os.getenv("ARCANOS_SHELL") or None
+    
+    # ============================================
+    # OpenAI Base URL (for custom endpoints)
+    # ============================================
+    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE_URL") or os.getenv("OPENAI_API_BASE") or None
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:
@@ -287,11 +410,38 @@ class Config:
         return cls.DEFAULT_DANGEROUS_COMMANDS + cls.COMMAND_BLACKLIST
 
 
-# Validate on import
+# Validate on import (non-fatal - allows importing config for reading)
 is_valid, validation_errors = Config.validate()
 if not is_valid:
     print("Configuration Errors:")
     for error in validation_errors:
         print(f"   - {error}")
     print("\nCheck your .env file and fix the errors above.")
+
+
+def validate_required_config(exit_on_error: bool = True) -> bool:
+    """
+    Fail-fast validation for required configuration.
+    Exits with code 1 if required vars are missing (unless exit_on_error=False).
+    
+    Args:
+        exit_on_error: If True, call sys.exit(1) on validation failure
+        
+    Returns:
+        True if valid, False if invalid (only returned if exit_on_error=False)
+    """
+    is_valid, errors = Config.validate()
+    
+    if not is_valid:
+        print("[❌ CONFIG VALIDATION FAILED]")
+        print("Required configuration is missing or invalid:")
+        for error in errors:
+            print(f"  - {error}")
+        print("\nApplication cannot start. Please set the required variables.")
+        
+        if exit_on_error:
+            sys.exit(1)
+        return False
+    
+    return True
 

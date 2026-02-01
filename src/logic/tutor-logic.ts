@@ -1,5 +1,4 @@
 import {
-  getOpenAIClient,
   getDefaultModel,
   getGPT5Model,
   generateMockResponse
@@ -14,8 +13,11 @@ import {
   buildResearchBriefPrompt,
   buildResearchFallbackPrompt
 } from '../config/tutorPrompts.js';
+import { env } from '../utils/env.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getEnv } from '../config/env.js';
 
-const DEFAULT_TOKEN_LIMIT = parseInt(process.env.TUTOR_DEFAULT_TOKEN_LIMIT ?? '200', 10);
+const DEFAULT_TOKEN_LIMIT = env.TUTOR_DEFAULT_TOKEN_LIMIT;
 
 export interface TutorQuery {
   intent?: string;
@@ -62,11 +64,18 @@ async function runTutorPipeline(
     temperature?: number;
   } = {}
 ): Promise<TutorPipelineOutput> {
-  const client = getOpenAIClient();
-  const testMode = process.env.OPENAI_API_KEY === 'test_key_for_mocking';
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    adapter = null;
+  }
+  // Use config layer for env access (adapter boundary pattern)
+  const testMode = getEnv('OPENAI_API_KEY') === 'test_key_for_mocking';
 
-  //audit Assumption: missing client or test mode uses mock pipeline
-  if (!client || testMode) {
+  //audit Assumption: missing adapter or test mode uses mock pipeline
+  if (!adapter || testMode) {
     const mock = generateMockResponse(prompt, 'ask');
     return {
       tutor_response: mock.result || '',
@@ -90,7 +99,7 @@ async function runTutorPipeline(
     //audit Assumption: token limit is required; Handling: default if absent
     const tokenLimit = options.tokenLimit ?? DEFAULT_TOKEN_LIMIT;
 
-    const intakeResponse = await client.chat.completions.create({
+    const intakeResponse = await adapter.chat.completions.create({
       model: intakeModel,
       messages: [
         { role: 'system', content: options.intakePrompt || DEFAULT_INTAKE_SYSTEM_PROMPT },
@@ -101,7 +110,7 @@ async function runTutorPipeline(
 
     const refinedPrompt = intakeResponse.choices[0]?.message?.content?.trim() || prompt;
 
-    const reasoningResponse = await client.chat.completions.create({
+    const reasoningResponse = await adapter.chat.completions.create({
       model: reasoningModel,
       messages: [
         {
@@ -116,7 +125,7 @@ async function runTutorPipeline(
 
     const reasoningOutput = reasoningResponse.choices[0]?.message?.content?.trim() || '';
 
-    const auditResponse = await client.chat.completions.create({
+    const auditResponse = await adapter.chat.completions.create({
       model: auditModel,
       messages: [
         {

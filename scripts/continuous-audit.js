@@ -120,6 +120,21 @@ function parseCycleCount(argv) {
 }
 
 /**
+ * Parse command-line flags from argv.
+ * Purpose: Extract boolean flags for audit behavior.
+ * Inputs: argv array.
+ * Outputs: object with flag values.
+ */
+function parseFlags(argv) {
+  return {
+    recursive: argv.includes('--recursive'),
+    autoFix: argv.includes('--auto-fix'),
+    railwayCheck: argv.includes('--railway-check'),
+    maxDepth: 10 // Maximum recursive depth
+  };
+}
+
+/**
  * Determine if a path should be ignored.
  * Purpose: Skip generated or vendor directories.
  * Inputs: relative path string.
@@ -1297,33 +1312,73 @@ async function auditWorkspace(root) {
 async function main() {
   const workspaces = parseWorkspaceArgs(process.argv);
   const cycles = parseCycleCount(process.argv);
+  const flags = parseFlags(process.argv);
   let overallStatus = 'CLEAN';
+  let depth = 0;
 
-  //audit Assumption: cycles are finite; risk: long runs; invariant: loop bounded by cycles; handling: iterate fixed count.
-  for (let cycle = 0; cycle < cycles; cycle += 1) {
+  // Recursive refactoring loop
+  while ((flags.recursive || flags.autoFix) && depth < flags.maxDepth) {
     const cycleResults = [];
 
-    //audit Assumption: each workspace should be audited; risk: one failing stops others; invariant: all workspaces processed; handling: await sequentially.
     for (const workspace of workspaces) {
       const result = await auditWorkspace(workspace);
       cycleResults.push(result);
+
+      // Auto-fix if enabled
+      if (flags.autoFix && result.status !== 'CLEAN' && result.findings.length > 0) {
+        const checkpoint = await createGitCheckpoint(workspace);
+        const fixesApplied = await applyAutoFixes(workspace, result.findings);
+
+        if (fixesApplied.length > 0) {
+          console.log(`🔧 Applied ${fixesApplied.length} auto-fixes (syntax-validated)`);
+          
+          const validation = await validateChanges(workspace);
+          if (!validation.passed) {
+            console.log('❌ Validation failed, rolling back...');
+            if (checkpoint) {
+              await rollbackToCheckpoint(workspace, checkpoint);
+              console.log('✅ Rolled back to checkpoint');
+            }
+          } else {
+            console.log('✅ Auto-fixes validated successfully');
+          }
+        }
+      }
     }
 
     const anyNeedsAttention = cycleResults.some(result => result.status !== 'CLEAN');
-
     if (anyNeedsAttention) {
       overallStatus = 'NEEDS_ATTENTION';
-    }
-
-    //audit Assumption: early exit if already clean; risk: missing future changes; invariant: stop when clean; handling: break on all clean.
-    if (!anyNeedsAttention) {
+      depth++;
+      if (flags.recursive) {
+        console.log(`🔄 Recursive iteration ${depth}/${flags.maxDepth}`);
+      }
+      continue;
+    } else {
+      overallStatus = 'CLEAN';
       break;
     }
   }
 
+  // Fallback to cycle-based loop
+  if (!flags.recursive && !flags.autoFix) {
+    for (let cycle = 0; cycle < cycles; cycle += 1) {
+      const cycleResults = [];
+      for (const workspace of workspaces) {
+        const result = await auditWorkspace(workspace);
+        cycleResults.push(result);
+      }
+      const anyNeedsAttention = cycleResults.some(result => result.status !== 'CLEAN');
+      if (anyNeedsAttention) {
+        overallStatus = 'NEEDS_ATTENTION';
+      } else {
+        break;
+      }
+    }
+  }
+
   const exitCode = overallStatus === 'CLEAN' ? 0 : 1;
-  const statusLine = `STATUS: ${overallStatus}`;
-  console.log(statusLine);
+  console.log(`STATUS: ${overallStatus}`);
   process.exit(exitCode);
 }
 

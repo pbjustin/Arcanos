@@ -12,18 +12,18 @@ export const DIAGNOSTIC_JOBS = [
 
 export const DIAGNOSTIC_QUERIES = {
   WORKER_ACTIVITY_LAST_HOUR: `SELECT worker_id, COUNT(*) as activity_count,
-              MAX(created_at) as last_activity
-       FROM execution_log
-       WHERE created_at > NOW() - INTERVAL '1 hour'
+              MAX(timestamp) as last_activity
+       FROM execution_logs
+       WHERE timestamp > NOW() - INTERVAL '1 hour'
        GROUP BY worker_id`,
-  JOB_EXECUTIONS_LAST_DAY: `SELECT worker_id, COUNT(*) as executions, MAX(created_at) as last_run
-       FROM execution_log
-       WHERE created_at > NOW() - INTERVAL '24 hours'
+  JOB_EXECUTIONS_LAST_DAY: `SELECT worker_id, COUNT(*) as executions, MAX(timestamp) as last_run
+       FROM execution_logs
+       WHERE timestamp > NOW() - INTERVAL '24 hours'
          AND worker_id IN ('audit-runner', 'cleanup-worker', 'task-processor')
        GROUP BY worker_id`,
   ROUTE_ACTIVITY_LAST_HOUR: `SELECT worker_id, COUNT(*) as requests
-       FROM execution_log
-       WHERE created_at > NOW() - INTERVAL '1 hour'
+       FROM execution_logs
+       WHERE timestamp > NOW() - INTERVAL '1 hour'
          AND worker_id IN ('audit-runner', 'cleanup-worker', 'task-processor')
        GROUP BY worker_id`
 } as const;

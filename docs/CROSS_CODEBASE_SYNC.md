@@ -71,7 +71,7 @@ node scripts/sync-helper.js sync-version 1.0.1
 
 This updates:
 - `package.json` (Node version)
-- `daemon-python/config.py` (Python VERSION)
+- `daemon-python/arcanos/config.py` (Python VERSION)
 
 ### 4. Environment Variable Alignment
 
@@ -127,7 +127,7 @@ Ensures tests exist on both sides for critical functionality.
 ### Adding a New API Endpoint
 
 1. **Create Server Route** in `src/routes/api-*.ts`
-2. **Add Client Method** in `daemon-python/backend_client.py`
+2. **Add Client Method** in `daemon-python/arcanos/backend_client.py`
 3. **Update API Contracts** in `scripts/sync-config.json`
 4. **Run Sync Check**: `npm run sync:check`
 5. **Add Tests** for both sides

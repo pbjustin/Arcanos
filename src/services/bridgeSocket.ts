@@ -3,6 +3,7 @@ import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from '../utils/structuredLogging.js';
 import { isBridgeEnabled } from '../utils/bridgeEnv.js';
+import { getEnv } from '../config/env.js';
 import { consumeOneTimeToken } from '../lib/tokenStore.js';
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
@@ -32,17 +33,17 @@ function resolveHeader(req: IncomingMessage, headerName: string): string | undef
 }
 
 function isAutomationAuthorized(req: IncomingMessage): boolean {
-  const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
+  // Use config layer for env access (adapter boundary pattern)
+  const secret = (getEnv('ARCANOS_AUTOMATION_SECRET') || '').trim();
   if (!secret) {
     const token = resolveHeader(req, 'x-arcanos-confirm-token');
     if (!token) {
       return false;
     }
-    }
     // //audit Assumption: confirmation token is the capability; risk: replay if not consumed; invariant: consume on success; handling: consume + accept only when valid.
     return consumeOneTimeToken(token).ok;
   }
-  const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
+  const headerName = (getEnv('ARCANOS_AUTOMATION_HEADER') || 'x-arcanos-automation').toLowerCase();
   const provided = resolveHeader(req, headerName);
   if (provided === secret) {
     return true;

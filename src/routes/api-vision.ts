@@ -1,11 +1,12 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
-import { getOpenAIClient } from '../services/openai/clientFactory.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import type { ErrorResponseDTO } from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import config from '../config/index.js';
 
 const router = express.Router();
 
@@ -54,7 +55,8 @@ function resolveVisionModel(override?: string): string {
   if (override && override.trim().length > 0) {
     return override.trim();
   }
-  return process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || 'gpt-4o';
+  // Default vision model (config can be extended later)
+  return 'gpt-4o';
 }
 
 function calculateVisionCost(inputTokens: number, outputTokens: number): number {
@@ -89,9 +91,10 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       );
     }
 
-    const client = getOpenAIClient();
-    if (!client) {
-      aiLogger.warn('OpenAI client not available for vision request');
+    // Get adapter from app locals (injected at startup)
+    const adapter = req.app.locals.openaiAdapter as OpenAIAdapter | null;
+    if (!adapter) {
+      aiLogger.warn('OpenAI adapter not available for vision request');
       return res.status(503).json({
         error: 'Service Unavailable',
         details: 'OpenAI service is not configured'
@@ -115,7 +118,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       imageBytes: imageBuffer.length
     });
 
-    const completion = await client.chat.completions.create({
+    const completion = await adapter.chat.completions.create({
       model: visionModel,
       messages: [
         {

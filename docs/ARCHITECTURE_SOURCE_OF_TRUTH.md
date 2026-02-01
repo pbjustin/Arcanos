@@ -98,7 +98,7 @@ npm run sync:check
 #    💡 Add request_new_endpoint() to backend_client.py
 
 # 4. Update daemon to follow server
-# ... edit daemon-python/backend_client.py ...
+# ... edit daemon-python/arcanos/backend_client.py ...
 
 # 5. Verify sync
 npm run sync:check
@@ -108,7 +108,7 @@ npm run sync:check
 
 ```bash
 # 1. Make changes to daemon
-# ... edit daemon-python/backend_client.py ...
+# ... edit daemon-python/arcanos/backend_client.py ...
 
 # 2. Check if it matches server
 npm run sync:check

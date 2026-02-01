@@ -68,7 +68,33 @@ async function ensureSchema() {
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
-    `
+    `,
+    execution_logs: `
+      CREATE TABLE IF NOT EXISTS execution_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        worker_id VARCHAR(255) NOT NULL,
+        timestamp TIMESTAMPTZ DEFAULT NOW(),
+        level VARCHAR(50) NOT NULL,
+        message TEXT NOT NULL,
+        metadata JSONB DEFAULT '{}'
+      );
+    `,
+    job_data: `
+      CREATE TABLE IF NOT EXISTS job_data (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        worker_id VARCHAR(255) NOT NULL,
+        job_type VARCHAR(255) NOT NULL,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending',
+        input JSONB NOT NULL,
+        output JSONB,
+        error_message TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+      );
+    `,
+    idx_execution_logs_ts_wid: `CREATE INDEX IF NOT EXISTS idx_execution_logs_ts_wid ON execution_logs(timestamp DESC, worker_id);`,
+    idx_job_data_created_at: `CREATE INDEX IF NOT EXISTS idx_job_data_created_at ON job_data(created_at DESC);`
     // add more tables here as needed
   };
 

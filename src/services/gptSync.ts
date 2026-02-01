@@ -5,18 +5,17 @@
 
 import { getBackendState, SystemState } from './stateManager.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
-import { getOpenAIClient } from './openai.js';
-
 import config from '../config/index.js';
 import { GPT_SYNC_CONFIG } from '../config/gptSyncConfig.js';
 import { GPT_SYNC_ERRORS, GPT_SYNC_LOG_MESSAGES, GPT_SYNC_STRINGS } from '../config/gptSyncMessages.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
-function getRequiredOpenAIClient() {
-  const client = getOpenAIClient();
-  if (!client) {
+function getRequiredAdapter() {
+  try {
+    return getOpenAIAdapter();
+  } catch {
     throw new Error(GPT_SYNC_ERRORS.clientUnavailable);
   }
-  return client;
 }
 
 function logSyncInfo(message: string, data?: unknown): void {
@@ -53,10 +52,10 @@ function buildSystemPrompt(
 }
 
 async function createSyncedCompletion(systemPrompt: string, userPrompt: string, model: string) {
-  const client = getRequiredOpenAIClient();
+  const adapter = getRequiredAdapter();
   const tokenParams = getTokenParameter(model, GPT_SYNC_CONFIG.maxCompletionTokens);
 
-  const response = await client.chat.completions.create({
+  const response = await adapter.chat.completions.create({
     model: model,
     messages: [
       { role: 'system', content: systemPrompt },

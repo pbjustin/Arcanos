@@ -11,6 +11,7 @@ import { queryCache, configCache } from '../utils/cache.js';
 import { getStatus as getDbStatus } from '../db.js';
 import { sendJsonError } from '../utils/responseHelpers.js';
 import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from '../utils/healthChecks.js';
+import { getConfig } from '../config/unifiedConfig.js';
 
 const router = express.Router();
 
@@ -41,12 +42,12 @@ router.get('/health', async (_: Request, res: Response) => {
     const openaiHealth = getOpenAIServiceHealth();
     const dbStatus = await getDbStatus();
     //audit Assumption: readiness depends on database connectivity and OpenAI health; risk: misclassification; invariant: readiness requires critical services; handling: shared readiness helper.
+    const config = getConfig();
     const readiness = assessCoreServiceReadiness(
       dbStatus,
       openaiHealth,
-      process.env.DATABASE_URL
+      config.databaseUrl
     );
-    
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
@@ -62,7 +63,7 @@ router.get('/health', async (_: Request, res: Response) => {
         uptime: process.uptime(),
         memoryUsage: process.memoryUsage(),
         nodeVersion: process.version,
-        environment: process.env.NODE_ENV || 'development'
+        environment: config.nodeEnv
       }
     };
 

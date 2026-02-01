@@ -44,8 +44,6 @@ interface PRAnalysisRequest {
  */
 router.post('/webhook', async (req: Request, res: Response) => {
   try {
-    console.log('🔔 PR webhook received');
-    
     const payload: PRWebhookPayload = req.body;
     
     // Only process opened, synchronize, and reopened PRs
@@ -55,8 +53,6 @@ router.post('/webhook', async (req: Request, res: Response) => {
         action: payload.action 
       });
     }
-
-    console.log(`📝 Analyzing PR #${payload.pull_request.number} - ${payload.pull_request.title}`);
 
     // For webhook integration, we'd need to fetch the diff and files
     // This is a simplified version that would need GitHub API integration
@@ -120,7 +116,6 @@ router.post('/analyze', validateCustom((data) => {
   return { valid: errors.length === 0, errors };
 }), async (req: Request, res: Response) => {
   try {
-    console.log('🔍 Direct PR analysis requested');
     
     const { prDiff, prFiles, metadata }: PRAnalysisRequest = req.body;
 
@@ -137,7 +132,6 @@ router.post('/analyze', validateCustom((data) => {
     
     const markdownOutput = assistant.formatAsMarkdown(analysisResult);
 
-    console.log(`✅ PR analysis completed - Status: ${analysisResult.status}`);
 
     res.json({
       success: true,

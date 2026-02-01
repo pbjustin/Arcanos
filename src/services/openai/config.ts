@@ -1,4 +1,5 @@
 import { ImageSize } from './types.js';
+import { getEnv } from '../../config/env.js';
 
 const VALID_IMAGE_SIZES: ImageSize[] = [
   '256x256',
@@ -12,13 +13,20 @@ const VALID_IMAGE_SIZES: ImageSize[] = [
 ];
 
 export const DEFAULT_ROUTING_MAX_TOKENS = 4096;
-export const ROUTING_MAX_TOKENS = Number(process.env.ROUTING_MAX_TOKENS ?? DEFAULT_ROUTING_MAX_TOKENS);
+export const ROUTING_MAX_TOKENS = (() => {
+  const envValue = getEnv('ROUTING_MAX_TOKENS');
+  if (envValue) {
+    const parsed = Number(envValue);
+    return Number.isFinite(parsed) ? parsed : DEFAULT_ROUTING_MAX_TOKENS;
+  }
+  return DEFAULT_ROUTING_MAX_TOKENS;
+})();
 
 const DEFAULT_IMAGE_GENERATION_MODEL = 'gpt-image-1';
-export const IMAGE_GENERATION_MODEL = process.env.IMAGE_MODEL || DEFAULT_IMAGE_GENERATION_MODEL;
+export const IMAGE_GENERATION_MODEL = getEnv('IMAGE_MODEL') || DEFAULT_IMAGE_GENERATION_MODEL;
 
 const resolveDefaultImageSize = (): ImageSize => {
-  const configuredSize = (process.env.IMAGE_DEFAULT_SIZE || '').trim() as ImageSize;
+  const configuredSize = (getEnv('IMAGE_DEFAULT_SIZE') || '').trim() as ImageSize;
   if (configuredSize && VALID_IMAGE_SIZES.includes(configuredSize)) {
     return configuredSize;
   }

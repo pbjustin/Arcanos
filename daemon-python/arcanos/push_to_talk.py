@@ -12,7 +12,7 @@ from .audio import AudioSystem
 from .error_handler import handle_errors
 
 try:
-    from vad_processor import VADProcessor
+    from .vad_processor import VADProcessor
     VAD_AVAILABLE = True
 except ImportError:
     VAD_AVAILABLE = False

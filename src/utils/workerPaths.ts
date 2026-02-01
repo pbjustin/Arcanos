@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getEnv } from '../config/env.js';
 
 interface WorkersDirectoryResolution {
   /**
@@ -32,7 +33,8 @@ export function resolveWorkersDirectory(): WorkersDirectoryResolution {
   const checked: string[] = [];
   const candidates: string[] = [];
 
-  const envOverride = process.env.WORKERS_DIRECTORY;
+  // Use config layer for env access (adapter boundary pattern)
+  const envOverride = getEnv('WORKERS_DIRECTORY');
   if (envOverride) {
     candidates.push(
       path.isAbsolute(envOverride)

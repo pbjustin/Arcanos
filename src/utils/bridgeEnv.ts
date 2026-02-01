@@ -1,9 +1,11 @@
+import { env, Environment } from './env.js';
+
 function hasExplicitBridgeFlag(): boolean {
-  return typeof process.env.BRIDGE_ENABLED === 'string';
+  return typeof env.BRIDGE_ENABLED === 'string';
 }
 
 export function isBridgeEnabled(): boolean {
-  const raw = process.env.BRIDGE_ENABLED;
+  const raw = env.BRIDGE_ENABLED;
   if (raw === 'true') return true;
   if (raw === 'false') return false;
 
@@ -12,7 +14,7 @@ export function isBridgeEnabled(): boolean {
   }
 
   // Default to enabled on Railway deployments so IPC can come online without manual env wiring.
-  return Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+  return Environment.isRailway();
 }
 
 export default {

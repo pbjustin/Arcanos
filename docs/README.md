@@ -1,15 +1,14 @@
 # Arcanos Documentation Index
 
-> **Last Updated:** 2026-01-14 | **Version:** 1.0.0
-
 ## Overview
 
-This index maps the current documentation set for the Arcanos backend. Use it to find
-the most accurate references for configuration, API surface area, and deployment on Railway.
+This index maps the current documentation set for the Arcanos backend. Use it to locate
+authoritative references for configuration, API surface area, and Railway deployment.
 
 ## Prerequisites
 
 - Familiarity with the repository root README and the `docs/` structure.
+- Access to `.env.example` for configuration reference.
 
 ## Setup
 
@@ -18,11 +17,14 @@ Start with these documents in order:
 1. `../README.md` – primary overview and quick start.
 2. `CONFIGURATION.md` – environment variables and defaults.
 3. `api/README.md` – API reference and confirmation requirements.
+4. `RAILWAY_DEPLOYMENT.md` – Railway deployment runbook.
 
 ## Configuration
 
 Configuration details live in `CONFIGURATION.md` and the `.env.example` template at the
-repository root. Use those documents to align environment variables with the runtime.
+repository root. Keep environment variables aligned with current runtime defaults and
+Railway variables.
+
 Every documentation file in this repo should follow the standard structure:
 Overview → Prerequisites → Setup → Configuration → Run locally → Deploy (Railway) →
 Troubleshooting → References.

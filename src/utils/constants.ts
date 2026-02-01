@@ -3,6 +3,8 @@
  * Centralized configuration for commonly used values across the application
  */
 
+import { getEnv } from '../config/env.js';
+
 export const APPLICATION_CONSTANTS = {
   // Default values
   DEFAULT_PORT: 8080,
@@ -33,6 +35,8 @@ export const APPLICATION_CONSTANTS = {
   MAX_MEMORY_ENTRIES: 1000,
   MIN_PASSWORD_LENGTH: 8,
   MAX_INPUT_LENGTH: 1000,
+  /** Max length for prompt snippet in fallback mode template (chars). Used by prompts and fallbackMessages. */
+  FALLBACK_PROMPT_SNIPPET_LENGTH: 200,
   
   // Rate limiting
   DEFAULT_RATE_LIMIT: 100,
@@ -63,6 +67,7 @@ export const APPLICATION_CONSTANTS = {
 
 /**
  * Get environment variable with fallback to application constant
+ * @deprecated Use config layer (getConfig() from config/unifiedConfig.js or getEnv() from config/env.js) instead
  * @param envKey - Environment variable key
  * @param constantKey - Key in APPLICATION_CONSTANTS
  * @returns Environment value or default from constants
@@ -71,7 +76,10 @@ export function getConfigValue<T extends keyof typeof APPLICATION_CONSTANTS>(
   envKey: string, 
   constantKey: T
 ): typeof APPLICATION_CONSTANTS[T] | string {
-  const envValue = process.env[envKey];
+  // Use config layer for env access (adapter boundary pattern)
+  // This function is deprecated but kept for backward compatibility
+  const envValue = getEnv(envKey);
+  
   if (envValue !== undefined) {
     // Try to parse as number if the constant is a number
     const constant = APPLICATION_CONSTANTS[constantKey];
