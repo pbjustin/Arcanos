@@ -1,12 +1,13 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import { buildValidationErrorResponse, resolveErrorMessage } from '../lib/errors/index.js';
 import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import type { ErrorResponseDTO } from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import config from '../config/index.js';
+import { buildVisionRequest } from '../services/openai/requestBuilders.js';
 
 const router = express.Router();
 
@@ -118,26 +119,15 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       imageBytes: imageBuffer.length
     });
 
-    const completion = await adapter.chat.completions.create({
+    const requestPayload = buildVisionRequest({
+      prompt: visionPrompt,
+      imageBase64: base64,
+      mimeType,
       model: visionModel,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: visionPrompt },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${mimeType};base64,${base64}`,
-                detail: 'auto'
-              }
-            }
-          ]
-        }
-      ],
       temperature: visionTemperature,
-      ...(maxTokens ? { max_tokens: maxTokens } : {})
+      maxTokens: maxTokens || 1024
     });
+    const completion = await adapter.chat.completions.create(requestPayload);
 
     const responseText = completion.choices[0]?.message?.content || '';
     const tokens = completion.usage?.total_tokens || 0;
@@ -167,7 +157,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
   } catch (error: unknown) {
     aiLogger.error('Vision request failed', { operation: 'vision' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('openai.vision.error', {
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: resolveErrorMessage(error)
     });
 
     return res.status(500).json({

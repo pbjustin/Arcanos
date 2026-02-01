@@ -64,6 +64,8 @@ export interface VisionParams {
   prompt: string;
   /** Base64-encoded image data */
   imageBase64: string;
+  /** MIME type for image (default: image/png) */
+  mimeType?: string;
   /** Model to use (defaults to vision model) */
   model?: string;
   /** Maximum tokens for completion */
@@ -216,6 +218,7 @@ export function buildVisionRequest(
   const {
     prompt,
     imageBase64,
+    mimeType = 'image/png',
     model = 'gpt-4o',
     maxTokens = ROUTING_MAX_TOKENS,
     temperature = OPENAI_COMPLETION_DEFAULTS.TEMPERATURE,
@@ -230,7 +233,7 @@ export function buildVisionRequest(
         {
           type: 'image_url',
           image_url: {
-            url: `data:image/png;base64,${imageBase64}`,
+            url: `data:${mimeType};base64,${imageBase64}`,
             detail
           }
         }
@@ -259,7 +262,7 @@ export function buildVisionRequest(
  */
 export function buildTranscriptionRequest(
   params: TranscriptionParams
-): OpenAI.Audio.Transcriptions.TranscriptionCreateParams {
+): OpenAI.Audio.Transcriptions.TranscriptionCreateParamsNonStreaming {
   const {
     audioFile,
     filename,
@@ -269,10 +272,11 @@ export function buildTranscriptionRequest(
     temperature
   } = params;
 
-  const requestParams: OpenAI.Audio.Transcriptions.TranscriptionCreateParams = {
+  const requestParams: OpenAI.Audio.Transcriptions.TranscriptionCreateParamsNonStreaming = {
     file: audioFile as File,
     model,
-    response_format: responseFormat
+    response_format: responseFormat,
+    stream: false
   };
 
   if (language) {
@@ -296,7 +300,7 @@ export function buildTranscriptionRequest(
  */
 export function buildImageRequest(
   params: ImageParams
-): OpenAI.Images.ImageGenerateParams {
+): OpenAI.Images.ImageGenerateParamsNonStreaming {
   const {
     prompt,
     size = DEFAULT_IMAGE_SIZE,
@@ -312,7 +316,8 @@ export function buildImageRequest(
     size,
     quality,
     n,
-    response_format: responseFormat
+    response_format: responseFormat,
+    stream: false
   };
 }
 

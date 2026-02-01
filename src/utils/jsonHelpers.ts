@@ -4,6 +4,7 @@
  */
 
 import { logger } from './structuredLogging.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface JSONParseResult<T = unknown> {
   success: boolean;
@@ -28,7 +29,7 @@ export function safeJSONParse<T = unknown>(input: string, context?: string): JSO
     return { success: true, data };
   } catch (error: unknown) {
     //audit Assumption: parse errors should not bubble; Handling: log + safe result
-    const errorMsg = error instanceof Error ? error.message : 'Unknown parsing error';
+    const errorMsg = resolveErrorMessage(error, 'Unknown parsing error');
     
     logger.warn('JSON parsing failed', {
       module: 'jsonHelpers',
@@ -56,7 +57,7 @@ export function safeJSONStringify(data: unknown, context?: string): string | nul
     return JSON.stringify(data);
   } catch (error: unknown) {
     //audit Assumption: stringify errors should not crash; Handling: log + null
-    const errorMsg = error instanceof Error ? error.message : 'Unknown stringify error';
+    const errorMsg = resolveErrorMessage(error, 'Unknown stringify error');
     
     logger.warn('JSON stringification failed', {
       module: 'jsonHelpers',

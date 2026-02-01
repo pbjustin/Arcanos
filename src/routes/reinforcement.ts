@@ -4,6 +4,7 @@ import { registerContextEntry, getReinforcementHealth } from '../services/contex
 import { getMemoryDigest } from '../services/memoryDigest.js';
 import { processClearFeedback } from '../services/audit.js';
 import type { ClearFeedbackPayload } from '../types/reinforcement.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 
@@ -49,7 +50,7 @@ router.post('/audit', auditTrace, async (req: Request, res: Response) => {
     return res.status(400).json({
       status: 'error',
       traceId: res.locals.auditTraceId,
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: resolveErrorMessage(error)
     });
   }
 });

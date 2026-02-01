@@ -21,6 +21,7 @@ import {
   type AuditLogEntry 
 } from './auditSafe.js';
 import { getMemoryContext, clearMemoryState } from './memoryAware.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 interface OrchestrationResult {
   success: boolean;
@@ -154,12 +155,12 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
 
   } catch (error: unknown) {
     //audit Assumption: reset failures should be logged and returned
-    const errorMessage = `❌ Error during orchestration reset: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    const errorMessage = `❌ Error during orchestration reset: ${resolveErrorMessage(error)}`;
     logs.push(errorMessage);
-    console.error(errorMessage, error instanceof Error ? error.message : error);
+    console.error(errorMessage, resolveErrorMessage(error));
 
     // Update audit log with error
-    auditEntry.outputSummary = `Orchestration shell reset failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    auditEntry.outputSummary = `Orchestration shell reset failed: ${resolveErrorMessage(error)}`;
     auditEntry.auditFlags.push('RESET_ERROR');
     logAITaskLineage(auditEntry);
 

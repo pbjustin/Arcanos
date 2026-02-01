@@ -3,6 +3,7 @@ import { createCentralizedCompletion } from '../services/openai.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 import type { IdleStateService } from '../services/idleStateService.js';
 import type OpenAI from 'openai';
 
@@ -199,9 +200,9 @@ max_tokens: typeof options.max_tokens === 'number' ? Math.min(options.max_tokens
         }
       });
     } catch (err: unknown) {
-      console.error('ARCANOS API error:', err instanceof Error ? err.message : err);
+      console.error('ARCANOS API error:', resolveErrorMessage(err));
 
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      const errorMessage = resolveErrorMessage(err, 'Unknown error occurred');
 
       //audit Assumption: ENOTFOUND/ECONNREFUSED imply network failure; risk: misclassification; invariant: 503 on connectivity issue; handling: check message.
       if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {

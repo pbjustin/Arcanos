@@ -8,6 +8,7 @@ import { resetOrchestrationShell, getOrchestrationShellStatus } from '../service
 import { handleAIError } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 
@@ -123,7 +124,7 @@ router.post('/orchestration/reset', confirmGate, async (
     }
 
   } catch (error: unknown) {
-    console.error('❌ [ORCHESTRATION] Reset failed:', error instanceof Error ? error.message : error);
+    console.error('❌ [ORCHESTRATION] Reset failed:', resolveErrorMessage(error));
     handleAIError(error, 'orchestration reset request', 'orchestration-reset', res);
   }
 });
@@ -179,7 +180,7 @@ router.get('/orchestration/status', async (
     res.status(200).json(response);
 
   } catch (error: unknown) {
-    console.error('❌ [ORCHESTRATION] Status check failed:', error instanceof Error ? error.message : error);
+    console.error('❌ [ORCHESTRATION] Status check failed:', resolveErrorMessage(error));
     handleAIError(error, 'orchestration status request', 'orchestration-status', res);
   }
 });
@@ -254,7 +255,7 @@ router.post('/orchestration/purge', confirmGate, async (
     }
 
   } catch (error: unknown) {
-    console.error('❌ [ORCHESTRATION] Purge failed:', error instanceof Error ? error.message : error);
+    console.error('❌ [ORCHESTRATION] Purge failed:', resolveErrorMessage(error));
     handleAIError(error, 'orchestration purge request', 'orchestration-purge', res);
   }
 });

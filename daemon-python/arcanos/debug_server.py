@@ -1,6 +1,5 @@
 
 import json
-import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -8,19 +7,62 @@ from socketserver import ThreadingMixIn
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
+import requests
+
 if TYPE_CHECKING:
     from cli import ArcanosCLI
 
-from .config import Config
-from .debug_health import liveness, readiness
-from .debug_logging import get_debug_logger, log_audit_event
-from .debug_middleware import handle_request
+from .config import Config, get_automation_auth, get_backend_base_url
+from arcanos.debug import handle_request, liveness, log_audit_event, readiness, get_debug_logger
 
 
 class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
     _last_status_code: int = 200
     _request_id: Optional[str] = None
+
+    def _is_localhost(self) -> bool:
+        return (self.client_address[0] if self.client_address else None) == "127.0.0.1"
+
+    def _consume_confirmation_token(self, token: str) -> bool:
+        backend_url = (get_backend_base_url() or "").rstrip("/")
+        if not backend_url:
+            return False
+
+        url = f"{backend_url}/debug/consume-confirm-token"
+        headers = {"Content-Type": "application/json"}
+        header_name, secret = get_automation_auth()
+        if secret:
+            headers[header_name] = secret
+        try:
+            response = requests.post(url, json={"token": token}, headers=headers, timeout=5)
+            if response.status_code < 200 or response.status_code >= 300:
+                return False
+            payload = response.json() if response.content else {}
+            return bool(payload.get("ok"))
+        except requests.RequestException:
+            return False
+
+    def _check_auth(self) -> bool:
+        header_name, secret = get_automation_auth()
+        provided = self.headers.get(header_name)
+        token_header = self.headers.get("x-arcanos-confirm-token")
+
+        # //audit Assumption: automation secret is the primary gate; risk: unauthorized access; invariant: secret must match when configured; handling: allow only matching header.
+        if secret and provided == secret:
+            return True
+
+        if token_header:
+            # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: call backend consume endpoint.
+            return self._consume_confirmation_token(token_header)
+
+        if not secret and self._is_localhost():
+            logging.getLogger("arcanos.debug").warning(
+                "ARCANOS_AUTOMATION_SECRET is not set; debug API available only from localhost."
+            )
+            return True
+
+        return False
 
     def _send_response(
         self,
@@ -130,10 +172,10 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
-            # Check authentication for non-read-only endpoints
-            if not self._check_authentication(require_auth=True):
-                return  # Response already sent by _check_authentication
-            
+            if not self._check_auth():
+                self._send_response(403, error="Forbidden")
+                return
+
             if path == "/debug/status":
                 self.get_status()
             elif path == "/debug/instance-id":
@@ -165,10 +207,10 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
-            # POST endpoints require authentication (they can execute commands)
-            if not self._check_authentication(require_auth=True):
-                return  # Response already sent by _check_authentication
-            
+            if not self._check_auth():
+                self._send_response(403, error="Forbidden")
+                return
+
             body = self._read_body()
             if body is None and path in ("/debug/ask", "/debug/run"):  # see can have empty body
                 self._send_response(400, error="Invalid or missing JSON body")
@@ -388,7 +430,7 @@ You: ptt
 
     def _get_metrics(self) -> None:
         # Text response, not JSON
-        from .debug_metrics import get_metrics  # local import to avoid cycles
+        from arcanos.debug import get_metrics  # local import to avoid cycles
 
         payload = get_metrics().to_prometheus()
         self._last_status_code = 200
@@ -409,6 +451,7 @@ def start_debug_server(cli: "ArcanosCLI", port: int):
             self.cli_instance = cli
             super().__init__(*args, **kwargs)
 
+    # //audit Assumption: debug API is local-only; risk: exposure if bound to 0.0.0.0; invariant: bind to localhost; handling: explicit 127.0.0.1.
     server_address = ("127.0.0.1", port)
     httpd = ThreadingHTTPServer(server_address, BoundDebugAPIHandler)
 

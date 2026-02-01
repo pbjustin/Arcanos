@@ -11,6 +11,7 @@
  */
 
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface EnvConfig {
   // Required for Railway deployment
@@ -87,7 +88,7 @@ export function validateRequiredEnv(): EnvConfig {
       const validated = spec.validator(value);
       (config as any)[key] = validated;
     } catch (error) {
-      errors.push(`${spec.name}: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`${spec.name}: ${resolveErrorMessage(error)}`);
     }
   }
 
@@ -161,6 +162,42 @@ export function getEnvBoolean(key: string, defaultValue: boolean): boolean {
   return normalized === 'true' || normalized === '1' || normalized === 'yes';
 }
 
+function resolveBackendBaseUrlValue(): string | undefined {
+  const raw =
+    getEnv('ARCANOS_BACKEND_URL') ||
+    getEnv('SERVER_URL') ||
+    getEnv('BACKEND_URL');
+  if (!raw) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function getBackendBaseUrlValue(): string | undefined {
+  return resolveBackendBaseUrlValue();
+}
+
+export function getBackendBaseUrl(): URL {
+  const explicitUrl = resolveBackendBaseUrlValue();
+  if (explicitUrl) {
+    try {
+      return new URL(explicitUrl);
+    } catch {
+      // Fall back to local default when env is invalid
+    }
+  }
+
+  const port = getEnvNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT);
+  return new URL(`http://127.0.0.1:${port}`);
+}
+
+export function getAutomationAuth(): { headerName: string; secret: string } {
+  const headerName = (getEnv('ARCANOS_AUTOMATION_HEADER') || 'x-arcanos-automation').toLowerCase();
+  const secret = (getEnv('ARCANOS_AUTOMATION_SECRET') || '').trim();
+  return { headerName, secret };
+}
+
 /**
  * Validates environment configuration
  * Returns validation result without exiting
@@ -176,7 +213,7 @@ export function validateEnv(): ValidationResult {
     try {
       spec.validator(value);
     } catch (error) {
-      errors.push(`${spec.name}: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`${spec.name}: ${resolveErrorMessage(error)}`);
     }
   }
 

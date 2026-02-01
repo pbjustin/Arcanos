@@ -15,7 +15,7 @@ import tempfile
 from typing import Optional, Tuple
 
 from .config import Config
-from .debug_logging import log_audit_event
+from arcanos.debug import log_audit_event
 from .error_handler import handle_errors
 
 

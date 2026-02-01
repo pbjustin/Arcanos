@@ -1,3 +1,5 @@
+import { resolveErrorMessage } from '../lib/errors/index.js';
+
 export interface SafeFetchHtmlResult {
   raw: string | null;
   error: string | null;
@@ -54,7 +56,7 @@ export async function safeFetchHtml(url: string, options: RequestInit = {}): Pro
   } catch (error) {
     const message = (error as Error)?.name === 'AbortError'
       ? 'Request timed out'
-      : (error instanceof Error ? error.message : 'Unknown error');
+      : resolveErrorMessage(error);
 
     return buildErrorResult(message);
   } finally {

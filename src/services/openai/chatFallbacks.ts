@@ -4,9 +4,7 @@ import { prepareGPT5Request } from './requestTransforms.js';
 import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
 import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
-
-const formatErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : 'Unknown error';
+import { formatErrorMessage } from '../../lib/errors/reusable.js';
 
 const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 

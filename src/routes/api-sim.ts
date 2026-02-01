@@ -148,7 +148,7 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
     }));
 
   } catch (error: unknown) {
-    console.error('Simulation error:', error instanceof Error ? error.message : error);
+    console.error('Simulation error:', resolveErrorMessage(error));
 
     //audit Assumption: simulation errors should return 500; risk: leaking internal details; invariant: response includes timestamp; handling: sanitize error message.
     res.status(500).json(buildTimestampedPayload({

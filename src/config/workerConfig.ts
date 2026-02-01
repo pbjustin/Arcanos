@@ -5,6 +5,7 @@ import { logger } from '../utils/structuredLogging.js';
 import { getConfig } from './unifiedConfig.js';
 import { getEnvNumber, getEnv } from './env.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 // ✅ Environment setup
 // Use config layer for env access (adapter boundary pattern)
@@ -83,7 +84,7 @@ export class WorkerTaskQueue extends EventEmitter {
         } catch (err) {
           attempt++;
           if (attempt >= attempts) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
+            const errorMessage = resolveErrorMessage(err);
             logger.error('[WORKER] Task failed after max retries', {
               inputPreview: input.slice(0, 120),
               error: errorMessage
@@ -93,7 +94,7 @@ export class WorkerTaskQueue extends EventEmitter {
             logger.warn(`[WORKER] Task failed - retrying in ${delay}ms`, {
               attempt,
               inputPreview: input.slice(0, 120),
-              error: err instanceof Error ? err.message : err
+              error: resolveErrorMessage(err)
             });
             await new Promise(res => {
               const timeout = setTimeout(res, delay);

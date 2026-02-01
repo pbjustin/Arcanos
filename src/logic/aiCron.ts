@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../utils/structuredLogging.js';
 import { writeJsonFile } from '../utils/fileStorage.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 /**
  * Sets up recurring AI maintenance tasks.
@@ -18,7 +19,7 @@ async function writeHeartbeat(): Promise<void> {
     logger.error('Failed to write heartbeat file', {
       module: 'aiCron',
       operation: 'heartbeat-write',
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: resolveErrorMessage(err),
       file: HB_FILE
     });
   }

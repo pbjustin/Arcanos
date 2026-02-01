@@ -10,6 +10,7 @@ import { setMemory } from './memory.js';
 import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from '../config/researchPrompts.js';
 import { getEnvNumber, getEnv } from '../config/env.js';
 import type OpenAI from 'openai';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface ResearchSourceSummary {
   url: string;
@@ -142,7 +143,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
       }
     } catch (error: unknown) {
       //audit Assumption: source failures should be tracked, not fatal
-      console.error(`Failed to process research source ${url}:`, error instanceof Error ? error.message : error);
+      console.error(`Failed to process research source ${url}:`, resolveErrorMessage(error));
       failedUrls.push(url);
     }
   }

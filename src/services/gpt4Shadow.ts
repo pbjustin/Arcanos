@@ -6,6 +6,7 @@ import { ensureShadowReady, disableShadowMode } from './shadowControl.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import type { ChatCompletion } from './openai/types.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
 
@@ -79,7 +80,7 @@ export async function mirrorDecisionEvent(
   } catch (err) {
     ensureLogDirectory();
     const timestamp = new Date().toISOString();
-    const msg = err instanceof Error ? err.message : 'Unknown error';
+    const msg = resolveErrorMessage(err);
     appendFileSync(
       getAuditShadowPath(),
       `${timestamp} | ${taskId} | ${event} | FALLBACK:${msg}\n`

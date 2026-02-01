@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import { tagRequest } from './tagRequest.js';
 import { broadcastBridgeEvent } from '../services/bridgeSocket.js';
 import { isBridgeEnabled } from './bridgeEnv.js';
+import { resolveHeader } from './requestHeaders.js';
 
 type RequestWithBridgeContext = Request & {
   requestId?: string;
@@ -21,20 +22,15 @@ type BridgeModule = {
   };
 };
 
-function normalizeHeaderValue(value: string | string[] | undefined): string | undefined {
-  if (!value) return undefined;
-  return Array.isArray(value) ? value[0] : value;
-}
-
 function resolveRequestId(req: RequestWithBridgeContext): string | undefined {
   if (typeof req.requestId === 'string' && req.requestId.trim().length > 0) {
     return req.requestId;
   }
-  return normalizeHeaderValue(req.headers['x-request-id']);
+  return resolveHeader(req.headers, 'x-request-id');
 }
 
 function resolveGptId(req: RequestWithBridgeContext): string | undefined {
-  const header = normalizeHeaderValue(req.headers['x-gpt-id']);
+  const header = resolveHeader(req.headers, 'x-gpt-id');
   const param = typeof req.params?.gptId === 'string' ? req.params.gptId : undefined;
   const body = typeof (req.body as Record<string, unknown> | undefined)?.gptId === 'string'
     ? ((req.body as Record<string, unknown>).gptId as string)
