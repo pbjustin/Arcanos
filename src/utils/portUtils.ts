@@ -4,7 +4,7 @@
  */
 
 import { createServer, Server } from 'http';
-import { PORT_CONSTANTS, PORT_TEXT } from '../config/portMessages.js';
+import { PORT_CONSTANTS, PORT_TEXT } from '../config/serverMessages.js';
 
 const DEFAULT_HOST = '0.0.0.0';
 const { DEFAULT_MAX_ATTEMPTS, SEARCH_START_OFFSET } = PORT_CONSTANTS;

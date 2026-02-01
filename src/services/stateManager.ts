@@ -58,7 +58,7 @@ export function updateState(newData: Partial<SystemState>): SystemState {
     return updatedState;
   } catch (error: unknown) {
     //audit Assumption: write failure should surface to caller; risk: partial state; invariant: error thrown; handling: log and rethrow.
-    console.error('[STATE] Error updating state file:', error instanceof Error ? error.message : error);
+    console.error('[STATE] Error updating state file:', resolveErrorMessage(error));
     throw error;
   }
 }
@@ -71,7 +71,8 @@ export function updateState(newData: Partial<SystemState>): SystemState {
  */
 import config from '../config/index.js';
 import { webFetcher } from '../utils/webFetcher.js';
-import { getEnv } from '../config/env.js';
+import { getBackendBaseUrl, getBackendBaseUrlValue } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 function buildStatusUrl(portOverride?: number): string {
   const statusEndpoint = config.server.statusEndpoint || '/status';
@@ -81,14 +82,13 @@ function buildStatusUrl(portOverride?: number): string {
     return statusEndpoint;
   }
 
-  // Use config layer for env access (adapter boundary pattern)
-  const serverUrl = getEnv('SERVER_URL');
+  const explicitBackendUrl = getBackendBaseUrlValue();
   //audit Assumption: port override only used when serverUrl unset; risk: wrong base; invariant: valid URL; handling: conditional check.
-  if (portOverride && portOverride !== config.server.port && !serverUrl) {
+  if (portOverride && portOverride !== config.server.port && !explicitBackendUrl) {
     return new URL(statusEndpoint, `http://127.0.0.1:${portOverride}`).toString();
   }
 
-  const baseUrl = config.server.baseUrl || `http://127.0.0.1:${config.server.port}`;
+  const baseUrl = getBackendBaseUrl().toString();
   return new URL(statusEndpoint, baseUrl).toString();
 }
 
@@ -98,7 +98,7 @@ export async function getBackendState(port: number = config.server.port): Promis
     return await webFetcher<SystemState>(statusUrl);
   } catch (error: unknown) {
     //audit Assumption: fetch failure should fall back to file state; risk: stale data; invariant: return cached state; handling: log and fallback.
-    console.error('[STATE] Error fetching backend state:', error instanceof Error ? error.message : error);
+    console.error('[STATE] Error fetching backend state:', resolveErrorMessage(error));
     // Fallback to file-based state
     return loadState();
   }

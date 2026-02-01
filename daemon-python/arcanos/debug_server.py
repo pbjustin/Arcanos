@@ -1,6 +1,5 @@
 
 import json
-import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -13,10 +12,8 @@ import requests
 if TYPE_CHECKING:
     from cli import ArcanosCLI
 
-from .config import Config
-from .debug_health import liveness, readiness
-from .debug_logging import get_debug_logger, log_audit_event
-from .debug_middleware import handle_request
+from .config import Config, get_automation_auth, get_backend_base_url
+from arcanos.debug import handle_request, liveness, log_audit_event, readiness, get_debug_logger
 
 
 class DebugAPIHandler(BaseHTTPRequestHandler):
@@ -28,14 +25,13 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         return (self.client_address[0] if self.client_address else None) == "127.0.0.1"
 
     def _consume_confirmation_token(self, token: str) -> bool:
-        backend_url = (Config.BACKEND_URL or "").rstrip("/")
+        backend_url = (get_backend_base_url() or "").rstrip("/")
         if not backend_url:
             return False
 
         url = f"{backend_url}/debug/consume-confirm-token"
         headers = {"Content-Type": "application/json"}
-        secret = os.getenv("ARCANOS_AUTOMATION_SECRET", "").strip()
-        header_name = os.getenv("ARCANOS_AUTOMATION_HEADER", "x-arcanos-automation").lower()
+        header_name, secret = get_automation_auth()
         if secret:
             headers[header_name] = secret
         try:
@@ -48,8 +44,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
             return False
 
     def _check_auth(self) -> bool:
-        secret = os.getenv("ARCANOS_AUTOMATION_SECRET", "").strip()
-        header_name = os.getenv("ARCANOS_AUTOMATION_HEADER", "x-arcanos-automation").lower()
+        header_name, secret = get_automation_auth()
         provided = self.headers.get(header_name)
         token_header = self.headers.get("x-arcanos-confirm-token")
 
@@ -435,7 +430,7 @@ You: ptt
 
     def _get_metrics(self) -> None:
         # Text response, not JSON
-        from .debug_metrics import get_metrics  # local import to avoid cycles
+        from arcanos.debug import get_metrics  # local import to avoid cycles
 
         payload = get_metrics().to_prometheus()
         self._last_status_code = 200

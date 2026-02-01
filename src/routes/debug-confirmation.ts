@@ -1,17 +1,13 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { createOneTimeToken, consumeOneTimeToken, getOneTimeTokenTtlMs } from '../lib/tokenStore.js';
+import { getAutomationAuth } from '../config/env.js';
+import { resolveHeader } from '../utils/requestHeaders.js';
 
 const router = Router();
 
-function resolveAutomationHeaderName(): string {
-  return (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
-}
-
 function requireAutomationSecret(req: Request, res: Response, next: NextFunction): void {
-  const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
-  const headerName = resolveAutomationHeaderName();
-  const provided = req.headers[headerName];
-  const providedValue = Array.isArray(provided) ? provided[0] : provided;
+  const { headerName, secret } = getAutomationAuth();
+  const providedValue = resolveHeader(req.headers, headerName);
 
   // //audit Assumption: issuance requires operator secret; risk: token issuance without operator approval; invariant: secret must match; handling: reject 403 if missing/invalid.
   if (!secret) {
@@ -47,8 +43,7 @@ router.post('/debug/create-confirmation-token', requireAutomationSecret, (_req: 
 });
 
 router.post('/debug/consume-confirm-token', (req: Request, res: Response) => {
-  const tokenFromHeader = req.headers['x-arcanos-confirm-token'];
-  const tokenHeaderValue = Array.isArray(tokenFromHeader) ? tokenFromHeader[0] : tokenFromHeader;
+  const tokenHeaderValue = resolveHeader(req.headers, 'x-arcanos-confirm-token');
   const tokenFromBody = typeof req.body?.token === 'string' ? req.body.token : undefined;
   const token = tokenHeaderValue || tokenFromBody;
 

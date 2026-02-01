@@ -2,6 +2,7 @@ import { sanitizeInput } from '../utils/security.js';
 import { createCentralizedCompletion, generateMockResponse, hasValidAPIKey } from './openai.js';
 import { getAuditSafeMode, interpretCommand, setAuditSafeMode } from './auditSafeToggle.js';
 import { extractTextPrompt } from '../utils/payloadNormalization.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export type CommandName = 'audit-safe:set-mode' | 'audit-safe:interpret' | 'ai:prompt';
 
@@ -115,7 +116,7 @@ const commandHandlers: Record<CommandName, CommandHandler> = {
       });
     } catch (error: unknown) {
       //audit Assumption: prompt failures should return a failure result
-      const errorMessage = error instanceof Error ? error.message : 'Failed to execute AI command.';
+      const errorMessage = resolveErrorMessage(error, 'Failed to execute AI command.');
       return buildResult('ai:prompt', false, errorMessage);
     }
   }

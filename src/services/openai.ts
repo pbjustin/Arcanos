@@ -1,3 +1,70 @@
+import { callOpenAI, createCentralizedCompletion, createGPT5Reasoning, createGPT5ReasoningLayer, call_gpt5_strict } from './openai/chatFlow.js';
+import { generateImage } from './openai/imageGeneration.js';
+import { getOpenAIServiceHealth, validateAPIKeyAtStartup } from './openai/serviceHealth.js';
+import {
+  getOrCreateClient,
+  getOpenAIKeySource,
+  hasValidAPIKey,
+  getDefaultModel,
+  getFallbackModel,
+  getComplexModel,
+  getGPT5Model,
+  validateClientHealth
+} from './openai/unifiedClient.js';
+import { generateMockResponse } from './openai/mock.js';
+import { getCircuitBreakerSnapshot } from './openai/resilience.js';
+import { createChatCompletionWithFallback } from './openai/chatFallbacks.js';
+
+export type {
+  CallOpenAIOptions,
+  CallOpenAIResult,
+  CallOpenAICacheEntry,
+  ChatCompletionMessageParam,
+  ChatCompletionResponseFormat,
+  ImageSize,
+  ChatCompletion,
+  ChatCompletionCreateParams
+} from './openai/types.js';
+
+export {
+  callOpenAI,
+  createCentralizedCompletion,
+  createGPT5Reasoning,
+  createGPT5ReasoningLayer,
+  call_gpt5_strict,
+  generateImage,
+  getOpenAIServiceHealth,
+  validateAPIKeyAtStartup
+};
+
+export {
+  getOrCreateClient as getOpenAIClient,
+  getOpenAIKeySource,
+  hasValidAPIKey,
+  getDefaultModel,
+  getFallbackModel,
+  getComplexModel,
+  getGPT5Model,
+  generateMockResponse,
+  getCircuitBreakerSnapshot,
+  validateClientHealth,
+  createChatCompletionWithFallback
+};
+
+export default {
+  getOpenAIClient: getOrCreateClient,
+  getDefaultModel,
+  getGPT5Model,
+  createGPT5Reasoning,
+  createGPT5ReasoningLayer,
+  validateAPIKeyAtStartup,
+  callOpenAI,
+  call_gpt5_strict,
+  generateImage,
+  getOpenAIServiceHealth,
+  createCentralizedCompletion,
+  createChatCompletionWithFallback
+};
 import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { getOpenAIAdapter, isOpenAIAdapterInitialized } from '../adapters/openai.adapter.js';
 import type OpenAI from 'openai';
@@ -58,7 +125,7 @@ import { trackModelResponse, trackPromptUsage } from './contextualReinforcement.
 import { createCacheKey } from '../utils/hashUtils.js';
 import { generateMockResponse } from './openai/mock.js';
 import { logOpenAIEvent, logOpenAISuccess } from '../utils/openaiLogger.js';
-import { handleOpenAIRequestError } from '../lib/errors/index.js';
+import { handleOpenAIRequestError, resolveErrorMessage } from '../lib/errors/index.js';
 import { buildSystemPromptMessages } from '../utils/messageBuilderUtils.js';
 import { OPENAI_LOG_MESSAGES } from '../config/openaiLogMessages.js';
 import {
@@ -116,7 +183,7 @@ import {
 } from './openai/unifiedClient.js';
 import { withRetry } from '../utils/resilience/unifiedRetry.js';
 import { classifyOpenAIError, getRetryDelay, shouldRetry } from '../lib/errors/reusable.js';
-import { buildChatCompletionRequest } from './openai/requestBuilders.js';
+import { buildChatCompletionRequest, buildImageRequest } from './openai/requestBuilders.js';
 
 export type {
   CallOpenAIOptions,
@@ -249,7 +316,7 @@ export async function callOpenAI(
   } catch (error) {
     recordTraceEvent('openai.call.error', {
       model,
-      error: error instanceof Error ? error.message : 'unknown'
+      error: resolveErrorMessage(error, 'unknown')
     });
     throw error;
   }
@@ -540,7 +607,7 @@ export async function call_gpt5_strict(
     return response;
   } catch (error: unknown) {
     // Re-throw with clear error message indicating no fallback
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = resolveErrorMessage(error);
     throw new Error(`GPT-5.1 call failed — no fallback allowed. ${errorMessage}`);
   }
 }
@@ -579,11 +646,8 @@ export async function generateImage(
   const prompt = await buildEnhancedImagePrompt(input);
 
   try {
-    const response = await client.images.generate({
-      model: IMAGE_GENERATION_MODEL,
-      prompt,
-      size
-    });
+    const requestParams = buildImageRequest({ prompt, size });
+    const response = await client.images.generate(requestParams);
 
     const image = response.data?.[0]?.b64_json || '';
 
@@ -604,7 +668,7 @@ export async function generateImage(
         id: crypto.randomUUID(),
         created: Date.now()
       },
-      error: err instanceof Error ? err.message : 'Unknown error'
+      error: resolveErrorMessage(err)
     };
   }
 }

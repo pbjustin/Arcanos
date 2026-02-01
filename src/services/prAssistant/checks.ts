@@ -1,3 +1,9 @@
+export { checkDeadCodeRemoval } from './checks/deadCode.js';
+export { checkSimplification } from './checks/simplification.js';
+export { checkOpenAICompatibility } from './checks/openaiCompatibility.js';
+export { checkRailwayReadiness } from './checks/railwayReadiness.js';
+export { runAutomatedValidation } from './checks/automatedValidation.js';
+export { performFinalDoubleCheck } from './checks/finalDoubleCheck.js';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -7,6 +13,7 @@ import { RAILWAY_VALIDATION_PATTERNS } from './constants.js';
 import { runCommand } from './commandUtils.js';
 import type { CheckContext, CheckResult } from './types.js';
 import { collectMatches, getFileLineCount, hasLongFunctionAddition, uniqueStrings } from './utils.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 async function validateEnvDocumentation(context: CheckContext, envVars: string[]): Promise<{ issues: string[]; details: string[]; }> {
   const issues: string[] = [];
@@ -86,7 +93,7 @@ export async function checkDeadCodeRemoval(context: CheckContext, files: string[
     return {
       status: '❌',
       message: 'Error analyzing code quality',
-      details: [`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`]
+      details: [`Analysis failed: ${resolveErrorMessage(error)}`]
     };
   }
 }
@@ -139,7 +146,7 @@ export async function checkSimplification(context: CheckContext, diff: string): 
     return {
       status: '❌',
       message: 'Error analyzing code complexity',
-      details: [`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`]
+      details: [`Analysis failed: ${resolveErrorMessage(error)}`]
     };
   }
 }
@@ -209,7 +216,7 @@ export async function checkOpenAICompatibility(context: CheckContext, diff: stri
     return {
       status: '❌',
       message: 'Error checking OpenAI compatibility',
-      details: [`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`]
+      details: [`Analysis failed: ${resolveErrorMessage(error)}`]
     };
   }
 }
@@ -258,7 +265,7 @@ export async function checkRailwayReadiness(context: CheckContext, files: string
     return {
       status: '❌',
       message: 'Error checking Railway readiness',
-      details: [`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`]
+      details: [`Analysis failed: ${resolveErrorMessage(error)}`]
     };
   }
 }
@@ -303,7 +310,7 @@ export async function runAutomatedValidation(context: CheckContext): Promise<Che
       details
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = resolveErrorMessage(error);
 
     if (errorMessage.includes('test')) {
       return {
@@ -406,7 +413,7 @@ export async function performFinalDoubleCheck(context: CheckContext): Promise<Ch
     return {
       status: '❌',
       message: 'Final validation failed',
-      details: [`Error: ${error instanceof Error ? error.message : 'Unknown error'}`]
+      details: [`Error: ${resolveErrorMessage(error)}`]
     };
   }
 }

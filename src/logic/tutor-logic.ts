@@ -16,6 +16,7 @@ import {
 import { env } from '../utils/env.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const DEFAULT_TOKEN_LIMIT = env.TUTOR_DEFAULT_TOKEN_LIMIT;
 
@@ -154,7 +155,7 @@ async function runTutorPipeline(
     };
   } catch (error: unknown) {
     //audit Assumption: pipeline failure should fallback to mock
-    console.error('Tutor pipeline execution error:', error instanceof Error ? error.message : error);
+    console.error('Tutor pipeline execution error:', resolveErrorMessage(error));
     const mock = generateMockResponse(prompt, 'ask');
     return {
       tutor_response: mock.result || '',
@@ -264,7 +265,7 @@ export async function handleTutorQuery(query: TutorQuery) {
     result = await moduleFn(query.payload || {});
   } catch (error: unknown) {
     //audit Assumption: module failure triggers fallback
-    console.error('Tutor module error:', error instanceof Error ? error.message : error);
+    console.error('Tutor module error:', resolveErrorMessage(error));
     const pipeline = await runTutorPipeline('Fallback tutoring response: summarize the learning request and recommend next steps.');
     result = {
       ...pipeline,

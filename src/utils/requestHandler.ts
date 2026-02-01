@@ -14,6 +14,7 @@ import {
   type AIResponseDTO,
   type ErrorResponseDTO
 } from '../types/dto.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 /**
  * Extract input text from various possible field names in request body
@@ -100,7 +101,7 @@ export function handleAIError(
   res: Response<AIResponseDTO | ErrorResponseDTO>
 ): void {
   //audit Assumption: error message should be safely derived; Handling: stringify
-  const errorMessage = err instanceof Error ? err.message : String(err);
+  const errorMessage = resolveErrorMessage(err);
   console.error(`❌ ${endpointName} processing error:`, errorMessage);
   
   // Return mock response as fallback
@@ -126,6 +127,6 @@ export function logRequestFeedback(input: string, endpointName: string): void {
     fs.writeFileSync('/tmp/last-gpt-request', JSON.stringify(feedbackData));
   } catch (error: unknown) {
     //audit Assumption: feedback logging failures should not break request; Handling: log only
-    console.log('Could not write feedback file:', error instanceof Error ? error.message : 'Unknown error');
+    console.log('Could not write feedback file:', resolveErrorMessage(error));
   }
 }

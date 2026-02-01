@@ -3,6 +3,7 @@ import { getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js
 import { fetchAndClean } from './webFetcher.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 // Use config layer for env access (adapter boundary pattern)
 const FINETUNE_MODEL = getEnv('FINETUNE_MODEL') || getDefaultModel();
@@ -26,7 +27,7 @@ async function buildWebContext(urls: string[]): Promise<{ context: string; sourc
       const snippet = await fetchAndClean(url, 5000);
       sources.push({ url, snippet });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown fetch error';
+      const message = resolveErrorMessage(error, 'Unknown fetch error');
       sources.push({ url, error: message });
     }
   }

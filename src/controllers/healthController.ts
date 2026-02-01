@@ -16,6 +16,7 @@ import {
 } from '../utils/healthChecks.js';
 import { RESILIENCE_CONSTANTS } from '../services/openai/resilience.js';
 import { CircuitBreakerState } from '../utils/circuitBreaker.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 interface HealthResponse {
   status: HealthStatus;
@@ -144,7 +145,7 @@ export class HealthController {
     } catch (error: unknown) {
       //audit Assumption: failure to compute health implies unhealthy; risk: hiding root cause; invariant: health endpoint signals failure; handling: return minimal unhealthy payload.
       //audit Assumption: error may not be an Error instance; risk: losing details; invariant: response includes a message string; handling: normalize to safe string.
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = resolveErrorMessage(error);
       const fallbackOpenAI = buildFallbackOpenAIHealth();
       const fallbackEnv = getEnvironmentInfo();
       const fallbackDbStatus: DatabaseStatusLike = { connected: false, error: 'Service check failed' };

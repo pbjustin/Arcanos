@@ -2,6 +2,7 @@ import { callOpenAI, getDefaultModel, getFallbackModel, generateMockResponse } f
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { DecideInput, RouteExecutionResult, RouteSelection } from './types.js';
 import { getEnvNumber } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 // Use config layer for env access (adapter boundary pattern)
 const PRIMARY_TOKEN_LIMIT = getEnvNumber('AFOL_PRIMARY_TOKEN_LIMIT', 1024);
@@ -78,7 +79,7 @@ async function executeModelRoute(
       }
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'unknown error';
+    const message = resolveErrorMessage(error, 'unknown error');
     recordTraceEvent('afol.route.error', {
       route: route.name,
       error: message

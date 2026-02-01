@@ -6,6 +6,7 @@ import { KNOWN_ENVIRONMENT_FINGERPRINTS, EnvironmentFingerprintRecord } from '..
 import { setAuditSafeMode } from '../persistenceManagerHierarchy.js';
 import { RUNTIME_PROBE_SUMMARY_SCRIPT } from '../config/runtimeProbeScripts.js';
 import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface EnvironmentFingerprint {
   platform: NodeJS.Platform | string;
@@ -185,7 +186,7 @@ export async function executeInSandbox(
       });
     } catch (err) {
       //audit Assumption: spawn can throw synchronously (e.g. EPERM on Windows); Handling: resolve with failure
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = resolveErrorMessage(err);
       finish({
         success: false,
         stdout: '',

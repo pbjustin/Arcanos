@@ -2,6 +2,7 @@ import { getDefaultModel } from '../services/openai.js';
 import { HRC_SYSTEM_PROMPT } from '../config/hrcPrompts.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface HRCResult {
   fidelity: number;
@@ -54,7 +55,7 @@ export class HRCCore {
       return {
         fidelity: 0,
         resilience: 0,
-        verdict: `Evaluation failed: ${err instanceof Error ? err.message : 'unknown error'}`
+        verdict: `Evaluation failed: ${resolveErrorMessage(err, 'unknown error')}`
       };
     }
   }

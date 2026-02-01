@@ -5,6 +5,7 @@ import { loadState, updateState } from './stateManager.js';
 import { getEnv } from '../config/env.js';
 import { DAILY_SUMMARY_PROMPT_LINES } from '../config/dailySummaryTemplates.js';
 import { readJsonFileSafely } from '../utils/jsonFileUtils.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 interface SummarySources {
   systemState: Record<string, unknown>;
@@ -37,7 +38,7 @@ function collectLogsPreview(): string[] {
       previews.push(`${file}: ${raw.slice(0, 400)}`);
     } catch (error: unknown) {
       //audit Assumption: log read failures should be skipped; risk: missing preview; invariant: continue; handling: log and continue.
-      console.error('[DAILY-SUMMARY] Failed to read log file', filePath, error instanceof Error ? error.message : error);
+      console.error('[DAILY-SUMMARY] Failed to read log file', filePath, resolveErrorMessage(error));
     }
   }
   return previews.slice(0, 5);

@@ -6,6 +6,7 @@
 import { Router, Request, Response } from 'express';
 import { PRAssistant } from '../services/prAssistant.js';
 import { validateCustom } from '../middleware/validation.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = Router();
 
@@ -66,7 +67,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
     console.error('❌ PR webhook error:', error);
     res.status(500).json({ 
       error: 'Internal server error processing PR webhook',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: resolveErrorMessage(error)
     });
   }
 });
@@ -147,7 +148,7 @@ router.post('/analyze', validateCustom((data) => {
     console.error('❌ PR analysis error:', error);
     res.status(500).json({
       error: 'Internal server error during PR analysis',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      details: resolveErrorMessage(error)
     });
   }
 });

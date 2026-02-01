@@ -1,19 +1,14 @@
-import express, { Request, Response, NextFunction } from 'express';
-import fs from 'fs';
-import path from 'path';
+import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { getModulesForRegistry } from './modules.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
-import { logger } from '../utils/structuredLogging.js';
 import {
   DAEMON_COMMAND_RETENTION_MS,
-  DAEMON_PENDING_ACTION_TTL_MS,
   DAEMON_RATE_LIMIT_MAX,
   DAEMON_RATE_LIMIT_WINDOW_MS,
   DAEMON_REGISTRY_RATE_LIMIT_MAX,
-  DAEMON_REGISTRY_RATE_LIMIT_WINDOW_MS,
-  DAEMON_TOKENS_FILE
+  DAEMON_REGISTRY_RATE_LIMIT_WINDOW_MS
 } from '../config/daemonConfig.js';
 import {
   DAEMON_REGISTRY_CORE,
@@ -21,95 +16,23 @@ import {
   DAEMON_REGISTRY_TOOLS,
   DAEMON_REGISTRY_VERSION
 } from '../config/daemonRegistry.js';
-import {
-  createDaemonStore,
-  DaemonHeartbeat,
-  PendingDaemonAction
-} from './daemonStore.js';
+import { DaemonHeartbeat } from './daemonStore.js';
+import { daemonLogger, daemonStore } from './api-daemon/context.js';
+import { requireDaemonAuth } from './api-daemon/auth.js';
+
+export { createPendingDaemonActions, consumePendingDaemonActions } from './api-daemon/pending.js';
 
 const router = express.Router();
-const daemonLogger = logger.child({ module: 'api-daemon' });
 
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(DAEMON_RATE_LIMIT_MAX, DAEMON_RATE_LIMIT_WINDOW_MS));
 
-const daemonStore = createDaemonStore({
-  fs,
-  path,
-  logger: daemonLogger.child({ module: 'daemon-store' }),
-  tokensFilePath: DAEMON_TOKENS_FILE,
-  now: () => new Date()
-});
-
-// Load tokens at startup
-daemonStore.loadTokens();
-
-/**
- * Purpose: Extract Bearer token from Authorization header.
- * Inputs/Outputs: request; returns token string or null.
- * Edge cases: returns null for missing or malformed headers.
- */
-function extractBearerToken(req: Request): string | null {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || typeof authHeader !== 'string') {
-    //audit Assumption: authorization header missing or invalid; risk: auth bypass; invariant: null returned; handling: reject.
-    return null;
-  }
-  const parts = authHeader.split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    //audit Assumption: header not Bearer format; risk: malformed auth; invariant: null returned; handling: reject.
-    return null;
-  }
-  return parts[1] || null;
-}
-
-/**
- * Purpose: Enforce daemon Bearer token authentication.
- * Inputs/Outputs: request/response/next; stores token on req or returns 401.
- * Edge cases: missing token returns 401 without calling next.
- */
-function requireDaemonAuth(req: Request, res: Response, next: NextFunction): void {
-  const token = extractBearerToken(req);
-  if (!token) {
-    //audit Assumption: missing token is unauthorized; risk: unauthorized access; invariant: 401 returned; handling: reject.
-    res.status(401).json({
-      error: 'Unauthorized',
-      message: 'Bearer token required in Authorization header'
-    });
-    return;
-  }
-
-  // Store token in request for later use
-  req.daemonToken = token;
-  next();
-}
 
 const REGISTRY_RATE_LIMIT = createRateLimitMiddleware(
   DAEMON_REGISTRY_RATE_LIMIT_MAX,
   DAEMON_REGISTRY_RATE_LIMIT_WINDOW_MS
 );
 
-/**
- * Purpose: Create a pending confirmation bundle for sensitive daemon actions.
- * Inputs/Outputs: instanceId and action list; returns confirmation token ID.
- * Edge cases: Empty action list still creates a token; callers should gate on length.
- */
-export function createPendingDaemonActions(instanceId: string, actions: PendingDaemonAction[]): string {
-  return daemonStore.createPendingActions(instanceId, actions, DAEMON_PENDING_ACTION_TTL_MS);
-}
-
-/**
- * Purpose: Consume a pending confirmation token and queue its daemon actions.
- * Inputs/Outputs: confirmation token, instanceId, daemon token; returns queued count or -1 on invalid.
- * Edge cases: Returns -1 for missing/expired tokens or mismatched instance/token.
- */
-export function consumePendingDaemonActions(
-  confirmationToken: string,
-  instanceId: string,
-  daemonToken: string
-): number {
-  return daemonStore.consumePendingActions(confirmationToken, instanceId, daemonToken);
-}
 
 /**
  * POST /api/daemon/heartbeat

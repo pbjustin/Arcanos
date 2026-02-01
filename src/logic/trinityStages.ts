@@ -31,6 +31,7 @@ import type {
   TrinityDryRunPreview
 } from './trinityTypes.js';
 import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH };
 export { calculateMemoryScoreSummary };
@@ -56,7 +57,7 @@ export async function validateModel(client: OpenAI): Promise<string> {
       operation: 'model-fallback',
       requestedModel: defaultModel,
       fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
-      reason: err instanceof Error ? err.message : 'Unknown error'
+      reason: resolveErrorMessage(err)
     });
     return APPLICATION_CONSTANTS.MODEL_GPT_4;
   }
