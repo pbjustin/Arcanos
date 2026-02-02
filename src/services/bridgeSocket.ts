@@ -4,7 +4,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from '../utils/structuredLogging.js';
 import { isBridgeEnabled } from '../utils/bridgeEnv.js';
 import { getAutomationAuth } from '../config/env.js';
-import { consumeOneTimeToken } from '../lib/tokenStore.js';
+import { consumeOneTimeToken } from '../utils/tokenStore.js';
 import { resolveHeader } from '../utils/requestHeaders.js';
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
