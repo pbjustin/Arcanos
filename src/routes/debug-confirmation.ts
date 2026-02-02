@@ -13,7 +13,7 @@ function requireAutomationSecret(req: Request, res: Response, next: NextFunction
   if (!secret) {
     res.status(403).json({
       ok: false,
-      error: 'Automation secret not configured'
+      error: 'Forbidden'
     });
     return;
   }
