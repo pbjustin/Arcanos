@@ -1,4 +1,4 @@
-import { Express, Request, Response } from 'express';
+﻿import { Express, Request, Response } from 'express';
 import askRouter from './ask.js';
 import arcanosRouter from './arcanos.js';
 import arcanosPipelineRouter from './openai-arcanos-pipeline.js';
@@ -20,6 +20,7 @@ import bridgeRouter from './bridge.js';
 import debugConfirmationRouter from './debug-confirmation.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
+import reusableCodeRouter from './api-reusable-code.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
@@ -70,6 +71,7 @@ export function registerRoutes(app: Express): void {
   app.use('/sdk', sdkRouter);
   app.use('/', bridgeRouter);
   app.use('/', debugConfirmationRouter);
+  app.use('/', reusableCodeRouter);
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);

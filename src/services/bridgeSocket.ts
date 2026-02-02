@@ -1,4 +1,4 @@
-import type { IncomingMessage, Server } from 'http';
+﻿import type { IncomingMessage, Server } from 'http';
 import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from '../utils/structuredLogging.js';

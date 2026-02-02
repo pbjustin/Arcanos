@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+﻿import { randomUUID } from 'crypto';
 import { getEnvNumber } from '../config/env.js';
 
 export interface OneTimeTokenRecord {
