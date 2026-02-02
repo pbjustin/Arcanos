@@ -70,6 +70,8 @@ Required configuration:
 Recommended configuration:
 - `OPENAI_MODEL` or `AI_MODEL` - Model selection
 - `RUN_WORKERS` - Worker process control (default: `false` on Railway)
+- `HOST` - Network binding address (default: `127.0.0.1` in development, `0.0.0.0` in production)
+  - Set to `0.0.0.0` if you need network access in development (Docker, WSL2, testing from other devices)
 
 ### 3. Build Process
 
