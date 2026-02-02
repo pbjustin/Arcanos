@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+﻿import { Router, Request, Response, NextFunction } from 'express';
 import { createOneTimeToken, consumeOneTimeToken, getOneTimeTokenTtlMs } from '../lib/tokenStore.js';
 import { getAutomationAuth } from '../config/env.js';
 import { resolveHeader } from '../utils/requestHeaders.js';
@@ -13,7 +13,7 @@ function requireAutomationSecret(req: Request, res: Response, next: NextFunction
   if (!secret) {
     res.status(403).json({
       ok: false,
-  error: 'Forbidden'
+      error: 'Forbidden'
     });
     return;
   }
