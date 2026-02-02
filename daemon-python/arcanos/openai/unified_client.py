@@ -41,7 +41,7 @@ class ClientOptions:
     ):
         self.api_key = api_key
         self.base_url = base_url
-        self.timeout = timeout or API_TIMEOUT_MS
+        self.timeout = timeout or API_TIMEOUT_MS_DEFAULT
         self.singleton = singleton
 
 
@@ -223,7 +223,7 @@ def create_openai_client(options: Optional[ClientOptions] = None, config: Option
         if not api_key:
             logger.warning(
                 "OpenAI API key not configured - AI endpoints will return mock responses",
-                extra={"operation": "createOpenAIClient", "module": "openai.unified"}
+                extra={"operation": "createOpenAIClient", "component": "openai.unified"}
             )
             record_trace_event("openai.client.create.no_key", {"traceId": trace_id})
             return None
@@ -252,7 +252,7 @@ def create_openai_client(options: Optional[ClientOptions] = None, config: Option
         logger.info(
             "✅ OpenAI client created",
             extra={
-                "module": "openai.unified",
+                "component": "openai.unified",
                 "operation": "createOpenAIClient",
                 "model": config_to_use.OPENAI_MODEL,
                 "source": get_openai_key_source(config_to_use)
@@ -264,7 +264,7 @@ def create_openai_client(options: Optional[ClientOptions] = None, config: Option
         error_message = str(error)
         logger.error(
             "❌ Failed to create OpenAI client",
-            extra={"module": "openai.unified", "operation": "createOpenAIClient"},
+            extra={"component": "openai.unified", "operation": "createOpenAIClient"},
             exc_info=error
         )
         
@@ -295,7 +295,7 @@ def get_or_create_client(config: Optional[Config] = None) -> Optional[OpenAI]:
     if _initialization_attempted:
         logger.warning(
             "OpenAI client initialization already attempted, returning None",
-            extra={"module": "openai.unified", "operation": "getOrCreateClient"}
+            extra={"component": "openai.unified", "operation": "getOrCreateClient"}
         )
         return None
     
@@ -347,10 +347,10 @@ def reset_client() -> None:
     _singleton_client = None
     _initialization_attempted = False
     
-    record_trace_event("openai.client.reset", {"module": "openai.unified"})
+    record_trace_event("openai.client.reset", {"component": "openai.unified"})
     logger.info(
         "OpenAI client reset",
-        extra={"module": "openai.unified", "operation": "resetClient"}
+        extra={"component": "openai.unified", "operation": "resetClient"}
     )
 
 
