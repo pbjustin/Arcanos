@@ -17,6 +17,11 @@ export function isBridgeEnabled(): boolean {
   return Environment.isRailway();
 }
 
+export function isBridgeExplicitlyEnabled(): boolean {
+  return env.BRIDGE_ENABLED === 'true';
+}
+
 export default {
-  isBridgeEnabled
+  isBridgeEnabled,
+  isBridgeExplicitlyEnabled
 };
