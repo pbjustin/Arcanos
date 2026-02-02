@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ARCANOS Configuration
  * Centralized configuration management for environment settings
  */

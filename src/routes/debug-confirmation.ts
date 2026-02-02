@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+﻿import { Router, Request, Response, NextFunction } from 'express';
 import { createOneTimeToken, consumeOneTimeToken, getOneTimeTokenTtlMs } from '../lib/tokenStore.js';
 import { getAutomationAuth } from '../config/env.js';
 import { resolveHeader } from '../utils/requestHeaders.js';
@@ -13,7 +13,7 @@ function requireAutomationSecret(req: Request, res: Response, next: NextFunction
   if (!secret) {
     res.status(403).json({
       ok: false,
-      error: 'Automation secret not configured'
+      error: 'Forbidden'
     });
     return;
   }
@@ -42,7 +42,7 @@ router.post('/debug/create-confirmation-token', requireAutomationSecret, (_req: 
   });
 });
 
-router.post('/debug/consume-confirm-token', (req: Request, res: Response) => {
+router.post('/debug/consume-confirm-token', requireAutomationSecret, (req: Request, res: Response) => {
   const tokenHeaderValue = resolveHeader(req.headers, 'x-arcanos-confirm-token');
   const tokenFromBody = typeof req.body?.token === 'string' ? req.body.token : undefined;
   const token = tokenHeaderValue || tokenFromBody;
