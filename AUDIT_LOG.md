@@ -226,7 +226,7 @@
 #### 3. Environment Configuration ✅
 - **Config Location:** `src/config/index.ts`
 - **PORT:** ✅ Reads from process.env.PORT
-- **HOST:** ✅ Defaults to 0.0.0.0 for Railway
+- **HOST:** ✅ Conditional: 127.0.0.1 (dev) / 0.0.0.0 (prod) with HOST override support
 - **OpenAI API Key:** ✅ Gracefully handles missing key with mock mode
 - **Database:** ✅ PostgreSQL connection with fallback to in-memory
 - **Workers:** ✅ Disabled in Railway production (RUN_WORKERS=false)
@@ -644,7 +644,7 @@ No further autonomous optimizations are required at this time.
 | Check | Status | Details |
 | --- | --- | --- |
 | PORT environment variable | ✅ Configured | `src/config/index.ts:14` - `Number(process.env.PORT) \|\| 8080` |
-| HOST binding | ✅ Configured | Defaults to `0.0.0.0` for Railway compatibility |
+| HOST binding | ✅ Configured | Conditional default: `127.0.0.1` (dev) / `0.0.0.0` (prod). Override with `HOST` env var. |
 | Health check endpoint | ✅ Configured | `/health` in `src/routes/status.ts` with comprehensive checks |
 | Liveness probe | ✅ Configured | `/healthz` in `src/routes/health.ts` |
 | Readiness probe | ✅ Configured | `/readyz` in `src/routes/health.ts` |
