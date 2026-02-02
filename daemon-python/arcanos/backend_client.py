@@ -159,32 +159,71 @@ class BackendApiClient:
 
     def request_vision_analysis(
         self,
-        image_base64: str,
+        image_base64: Optional[str] = None,
+        imageBase64: Optional[str] = None,
         prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         model: Optional[str] = None,
         max_tokens: Optional[int] = None,
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendVisionResult]:
-        return _request_vision_analysis(self, image_base64, prompt, temperature, model, max_tokens, metadata)
+        """
+        Purpose: Call backend /api/vision with base64 image data.
+        Inputs/Outputs: image_base64 (snake) or imageBase64 (camel), optional prompt/temperature/model/max_tokens; returns BackendVisionResult.
+        Edge cases: Returns validation error when both image_base64 and imageBase64 are missing.
+        """
+        resolved_image = image_base64 or imageBase64
+        if not resolved_image:
+            # //audit assumption: image data required; risk: backend 400; invariant: require base64; strategy: return validation error.
+            return BackendResponse(
+                ok=False,
+                error=BackendRequestError(kind="validation", message="imageBase64 is required")
+            )
+        return _request_vision_analysis(self, resolved_image, prompt, temperature, model, max_tokens, metadata)
 
     def request_transcription(
         self,
-        audio_base64: str,
+        audio_base64: Optional[str] = None,
+        audioBase64: Optional[str] = None,
         filename: Optional[str] = None,
         model: Optional[str] = None,
         language: Optional[str] = None,
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendTranscriptionResult]:
-        return _request_transcription(self, audio_base64, filename, model, language, metadata)
+        """
+        Purpose: Call backend /api/transcribe with base64 audio data.
+        Inputs/Outputs: audio_base64 (snake) or audioBase64 (camel), optional filename/model/language; returns BackendTranscriptionResult.
+        Edge cases: Returns validation error when both audio_base64 and audioBase64 are missing.
+        """
+        resolved_audio = audio_base64 or audioBase64
+        if not resolved_audio:
+            # //audit assumption: audio data required; risk: backend 400; invariant: require base64; strategy: return validation error.
+            return BackendResponse(
+                ok=False,
+                error=BackendRequestError(kind="validation", message="audioBase64 is required")
+            )
+        return _request_transcription(self, resolved_audio, filename, model, language, metadata)
 
     def submit_update_event(
         self,
-        update_type: str,
-        data: Mapping[str, Any],
+        update_type: Optional[str] = None,
+        data: Optional[Mapping[str, Any]] = None,
+        updateType: Optional[str] = None,
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[bool]:
-        return _submit_update_event(self, update_type, data, metadata)
+        """
+        Purpose: Call backend /api/update to record update event.
+        Inputs/Outputs: update_type (snake) or updateType (camel), data mapping; returns bool from 'success' response field.
+        Edge cases: Returns validation error when update type or data is missing.
+        """
+        resolved_update_type = update_type or updateType
+        if not resolved_update_type or data is None:
+            # //audit assumption: updateType and data required; risk: backend 400; invariant: require both; strategy: return validation error.
+            return BackendResponse(
+                ok=False,
+                error=BackendRequestError(kind="validation", message="updateType and data are required")
+            )
+        return _submit_update_event(self, resolved_update_type, data, metadata)
 
     def _request_json(
         self,
