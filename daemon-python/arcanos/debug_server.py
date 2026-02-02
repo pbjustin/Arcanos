@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import threading
 import time
@@ -21,9 +20,6 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
     _last_status_code: int = 200
     _request_id: Optional[str] = None
-
-    def _is_localhost(self) -> bool:
-        return (self.client_address[0] if self.client_address else None) == "127.0.0.1"
 
     def _consume_confirmation_token(self, token: str) -> bool:
         backend_url = (get_backend_base_url() or "").rstrip("/")
@@ -113,7 +109,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
             # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: consume before allowing.
             return True
 
-        # If DEBUG_SERVER_TOKEN is configured, prefer explicit token-based auth
+        # If DEBUG_SERVER_TOKEN is configured, check token-based auth
         if Config.DEBUG_SERVER_TOKEN:
             auth_header = self.headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
@@ -130,14 +126,6 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
                 if "token" in params and params["token"]:
                     if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
                         return True
-        else:
-            if not secret and self._is_localhost():
-                logging.getLogger("arcanos.debug").warning(
-                    "ARCANOS_AUTOMATION_SECRET is not set; debug API available only from localhost."
-                )
-                return True
-            if Config.DEBUG_SERVER_ALLOW_UNAUTHENTICATED:
-                return True
 
         if require_auth:
             client_ip = getattr(self, "client_address", ("unknown",))[0]
@@ -204,6 +192,12 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
+            # Require application/json Content-Type on POST to mitigate CSRF
+            content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if content_type != "application/json":
+                self._send_response(415, error="Content-Type must be application/json")
+                return
+
             if not self._check_authentication():
                 return
 

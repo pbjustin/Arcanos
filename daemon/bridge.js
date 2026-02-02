@@ -27,24 +27,6 @@ function resolveBackendBaseUrl() {
   return trimmed.length > 0 ? trimmed.replace(/\/$/, "") : null;
 }
 
-function getAutomationAuth() {
-  const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
-  const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
-  return { headerName, secret };
-}
-
-function resolveBackendBaseUrl() {
-  const raw =
-    process.env.ARCANOS_BACKEND_URL ||
-    process.env.SERVER_URL ||
-    process.env.BACKEND_URL;
-  if (!raw) {
-    return null;
-  }
-  const trimmed = typeof raw === "string" ? raw.trim() : "";
-  return trimmed.length > 0 ? trimmed.replace(/\/$/, "") : null;
-}
-
 function resolveTagPrefix() {
   //audit Assumption: BRIDGE_TAG_PREFIX is a non-empty string; risk: empty prefix breaks routing tags; invariant: prefix defaults when invalid; handling: trim and fallback.
   const envValue = process.env.BRIDGE_TAG_PREFIX;
