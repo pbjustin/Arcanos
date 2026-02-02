@@ -16,15 +16,18 @@ const DEFAULT_TOKEN_TTL_MS = 10 * 60 * 1000;
 
 function resolveTokenTtlMs(): number {
   const ttlMs = getEnvNumber('ARCANOS_CONFIRM_TOKEN_TTL_MS', 0);
+  //audit Assumption: positive TTL overrides default; risk: zero/negative disables override; invariant: ttlMs > 0; handling: return override when valid.
   if (ttlMs > 0) {
     return ttlMs;
   }
 
   const ttlMinutes = getEnvNumber('ARCANOS_CONFIRM_TOKEN_TTL_MINUTES', 0);
+  //audit Assumption: minutes override when provided; risk: misconfigured minutes; invariant: ttlMinutes > 0; handling: convert to ms.
   if (ttlMinutes > 0) {
     return ttlMinutes * 60 * 1000;
   }
 
+  //audit Assumption: default TTL is safe fallback; risk: too long/short; invariant: positive ms; handling: return constant.
   return DEFAULT_TOKEN_TTL_MS;
 }
 
@@ -33,12 +36,18 @@ const pendingTokens = new Map<string, OneTimeTokenRecord>();
 
 function purgeExpiredTokens(now: number = Date.now()): void {
   for (const [token, record] of pendingTokens.entries()) {
+    //audit Assumption: expired tokens should be removed; risk: memory growth; invariant: expiresAt <= now; handling: delete.
     if (record.expiresAt <= now) {
       pendingTokens.delete(token);
     }
   }
 }
 
+/**
+ * Purpose: Create a single-use confirmation token.
+ * Inputs/Outputs: none; returns token record with expiry metadata.
+ * Edge cases: Purges expired tokens before issuance.
+ */
 export function createOneTimeToken(): OneTimeTokenRecord {
   const now = Date.now();
   purgeExpiredTokens(now);
@@ -54,7 +63,13 @@ export function createOneTimeToken(): OneTimeTokenRecord {
   return record;
 }
 
+/**
+ * Purpose: Consume a one-time confirmation token.
+ * Inputs/Outputs: token string; returns ok result with record or failure reason.
+ * Edge cases: Returns missing/invalid/expired without throwing.
+ */
 export function consumeOneTimeToken(token: string | undefined): ConsumeResult {
+  //audit Assumption: empty token is invalid; risk: false positives; invariant: non-empty token required; handling: return missing.
   if (!token || !token.trim()) {
     return { ok: false, reason: 'missing' };
   }
@@ -63,10 +78,12 @@ export function consumeOneTimeToken(token: string | undefined): ConsumeResult {
   purgeExpiredTokens(now);
 
   const record = pendingTokens.get(token);
+  //audit Assumption: unknown token is invalid; risk: replay attempt; invariant: record must exist; handling: return invalid.
   if (!record) {
     return { ok: false, reason: 'invalid' };
   }
 
+  //audit Assumption: expired tokens must be rejected; risk: late execution; invariant: expiresAt > now; handling: delete and return expired.
   if (record.expiresAt <= now) {
     pendingTokens.delete(token);
     return { ok: false, reason: 'expired' };
@@ -76,6 +93,11 @@ export function consumeOneTimeToken(token: string | undefined): ConsumeResult {
   return { ok: true, record };
 }
 
+/**
+ * Purpose: Return configured one-time token TTL (ms).
+ * Inputs/Outputs: none; returns TTL in milliseconds.
+ * Edge cases: Uses default when env overrides are missing.
+ */
 export function getOneTimeTokenTtlMs(): number {
   return tokenTtlMs;
 }
