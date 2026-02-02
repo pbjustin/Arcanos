@@ -21,6 +21,7 @@ import debugConfirmationRouter from './debug-confirmation.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
 import reusableCodeRouter from './api-reusable-code.js';
+import debugConfirmationRouter from './debug-confirmation.js';
 import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
