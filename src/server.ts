@@ -20,6 +20,7 @@ import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
 import { createIdleStateService } from './services/idleStateService.js';
 import { setupBridgeSocket } from './services/bridgeSocket.js';
+import { isBridgeEnabled, isBridgeExplicitlyEnabled } from './utils/bridgeEnv.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -182,11 +183,20 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       instance.on('error', reject);
     });
 
-    // //audit Assumption: bridge IPC should attach after server is listening; risk: upgrade hooks missed if attached too late; invariant: attach once; handling: attach after listen with error guard.
-    try {
-      setupBridgeSocket(server);
-    } catch (error) {
-      serverLogger.warn('Failed to setup bridge socket', undefined, undefined, error as Error);
+    // //audit Assumption: bridge IPC should attach after server is listening; risk: upgrade hooks missed if attached too late; invariant: attach once; handling: only attempt setup when bridge enabled, propagate errors if explicitly enabled to fail startup for critical feature.
+    if (isBridgeEnabled()) {
+      try {
+        setupBridgeSocket(server);
+      } catch (error) {
+        // If bridge was explicitly enabled via BRIDGE_ENABLED=true, fail startup
+        // to alert operators that a critical feature is non-functional
+        if (isBridgeExplicitlyEnabled()) {
+          serverLogger.error('Failed to setup bridge socket (explicitly enabled)', undefined, undefined, error as Error);
+          throw error;
+        }
+        // Otherwise (default-enabled on Railway), log warning but allow startup
+        serverLogger.warn('Failed to setup bridge socket (default-enabled)', undefined, undefined, error as Error);
+      }
     }
 
     logBootSummary(actualPort, workerResults);
