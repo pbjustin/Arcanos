@@ -196,7 +196,6 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       serverLogger.debug('Bridge socket setup failed (bridge is not enabled)', undefined, undefined, error as Error);
     }
 
-
     logBootSummary(actualPort, workerResults);
 
     initializeSystemState(actualPort);
