@@ -1,6 +1,10 @@
-﻿import json
+"""
+Debug HTTP server for the ARCANOS daemon.
+Localhost-only API for IDE agents and scripts to inspect status, logs, audit, and run commands.
+"""
+
+import json
 import logging
-import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -43,27 +47,6 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
             return bool(payload.get("ok"))
         except requests.RequestException:
             return False
-
-    def _check_auth(self) -> bool:
-        header_name, secret = get_automation_auth()
-        provided = self.headers.get(header_name)
-        token_header = self.headers.get("x-arcanos-confirm-token")
-
-        # //audit Assumption: automation secret is the primary gate; risk: unauthorized access; invariant: secret must match when configured; handling: allow only matching header.
-        if secret and provided == secret:
-            return True
-
-        if token_header:
-            # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: call backend consume endpoint.
-            return self._consume_confirmation_token(token_header)
-
-        if not secret and self._is_localhost():
-            logging.getLogger("arcanos.debug").warning(
-                "ARCANOS_AUTOMATION_SECRET is not set; debug API available only from localhost."
-            )
-            return True
-
-        return False
 
     def _send_response(
         self,
@@ -122,6 +105,19 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         if path in ("/debug/health", "/debug/ready", "/debug/metrics"):
             return True
         
+        header_name, secret = get_automation_auth()
+        provided = self.headers.get(header_name)
+        token_header = self.headers.get("x-arcanos-confirm-token")
+
+        # //audit Assumption: automation secret is a trusted gate; risk: unauthorized access; invariant: header must match secret; handling: allow only exact match.
+        if secret and provided == secret:
+            return True
+
+        if token_header:
+            # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: call backend consume endpoint.
+            if self._consume_confirmation_token(token_header):
+                return True
+
         # If no token is configured, require explicit opt-in via Config
         if not Config.DEBUG_SERVER_TOKEN:
             # Allow unauthenticated access only if explicitly enabled (for development)

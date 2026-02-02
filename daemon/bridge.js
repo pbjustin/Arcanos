@@ -9,6 +9,8 @@ const BRIDGE_STATUS_PATH = "/bridge-status";
 const BRIDGE_STATUS_RESPONSE = "active";
 const BRIDGE_NOT_FOUND_RESPONSE = "not found";
 const bridgeEnabled = process.env.BRIDGE_ENABLED === "true";
+const automationHeaderName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
+const automationSecret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
 
 function getAutomationAuth() {
   const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
@@ -77,8 +79,8 @@ export function startBridgeServer() {
       return;
     }
 
-    //audit Assumption: health check path is fixed; risk: misrouted probes; invariant: exact match; handling: return active status.
-    if (req.url === BRIDGE_STATUS_PATH) {
+  //audit Assumption: health check path is fixed; risk: misrouted probes; invariant: exact match; handling: return active status.
+  if (req.url === BRIDGE_STATUS_PATH) {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end(BRIDGE_STATUS_RESPONSE);
       return;
@@ -135,7 +137,6 @@ async function consumeConfirmToken(token) {
   if (!backendUrl) {
     return false;
   }
-
   const url = `${backendUrl}/debug/consume-confirm-token`;
   try {
     const response = await fetch(url, {
