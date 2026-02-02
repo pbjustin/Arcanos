@@ -8,7 +8,12 @@ const router = express.Router();
 router.use('/:gptId', async (req, res, next) => {
   try {
     const gptModuleMap = await getGptModuleMap();
-    const entry = gptModuleMap[req.params.gptId];
+    const incomingGptId = req.params.gptId;
+    const configuredGptIds = Object.keys(gptModuleMap);
+
+    const matchedId = configuredGptIds.find(id => incomingGptId.includes(id));
+    const entry = matchedId ? gptModuleMap[matchedId] : undefined;
+
     if (!entry) {
       return res.status(404).json({ error: 'Unknown GPTID' });
     }
