@@ -42,7 +42,6 @@ router.post('/debug/create-confirmation-token', requireAutomationSecret, (_req: 
   });
 });
 
-<<<<<<< HEAD
 router.post('/debug/consume-confirm-token', requireAutomationSecret, (req: Request, res: Response) => {
   const tokenHeaderValue = resolveHeader(req.headers, 'x-arcanos-confirm-token');
   const tokenFromBody = typeof req.body?.token === 'string' ? req.body.token : undefined;

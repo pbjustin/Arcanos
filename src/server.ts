@@ -183,7 +183,6 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       instance.on('error', reject);
     });
 
-<<<<<<< HEAD
     // //audit Assumption: bridge IPC should attach after server is listening if enabled; risk: silent failure of critical feature when explicitly enabled; invariant: fail fast if bridge is enabled but setup fails; handling: check if bridge is enabled, fail startup if enabled and setup fails, otherwise just warn.
     try {
       setupBridgeSocket(server);
