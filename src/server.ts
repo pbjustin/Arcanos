@@ -20,6 +20,7 @@ import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
 import { createIdleStateService } from './services/idleStateService.js';
 import { setupBridgeSocket } from './services/bridgeSocket.js';
+import { isBridgeEnabled } from './utils/bridgeEnv.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -182,11 +183,17 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       instance.on('error', reject);
     });
 
-    // //audit Assumption: bridge IPC should attach after server is listening; risk: upgrade hooks missed if attached too late; invariant: attach once; handling: attach after listen with error guard.
+    // //audit Assumption: bridge IPC should attach after server is listening; risk: upgrade hooks missed if attached too late; invariant: attach once; handling: check if enabled, fail startup if enabled but setup fails, only warn if disabled.
     try {
       setupBridgeSocket(server);
     } catch (error) {
-      serverLogger.warn('Failed to setup bridge socket', undefined, undefined, error as Error);
+      // If bridge is explicitly enabled, this is a critical failure that should stop server startup
+      if (isBridgeEnabled()) {
+        serverLogger.error('Failed to setup bridge socket (bridge is enabled)', undefined, undefined, error as Error);
+        throw error;
+      }
+      // If bridge is not enabled, log a debug message and continue
+      serverLogger.debug('Bridge socket setup failed (bridge is not enabled)', undefined, undefined, error as Error);
     }
 
     logBootSummary(actualPort, workerResults);
