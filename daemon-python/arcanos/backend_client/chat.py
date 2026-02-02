@@ -49,9 +49,17 @@ def request_chat_completion(
     Inputs/Outputs: messages, optional temperature/model, stream flag; returns BackendChatResult.
     Edge cases: Returns structured error on auth, network, or parsing failures.
     """
-    # //audit assumption: messages sequence should be serializable; risk: invalid payload; invariant: list of mappings; strategy: list() copy.
+    # Extract last user message as the primary 'message' field for backend validation.
+    # The backend /api/ask requires one of: message, prompt, userInput, content, text, query.
+    msgs_list = list(messages)
+    last_user_msg = ""
+    for msg in reversed(msgs_list):
+        if msg.get("role") == "user":
+            last_user_msg = msg.get("content", "")
+            break
     payload: dict[str, Any] = {
-        "messages": list(messages),
+        "message": last_user_msg,
+        "messages": msgs_list,
         "stream": stream
     }
     if temperature is not None:

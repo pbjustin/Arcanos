@@ -268,7 +268,7 @@ def start_timer(
         record_trace_event(f"timer.end.{operation}", {
             "traceId": trace_id["id"],
             "duration": duration,
-            **attributes or {}
+            **(attributes or {})
         })
         record_metric(f"operation.duration.{operation}", duration, {"operation": operation})
     

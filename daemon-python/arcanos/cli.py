@@ -15,6 +15,21 @@ import uuid
 from dataclasses import dataclass, asdict
 from typing import Callable, Optional, Any, Mapping
 
+# Fix Windows console encoding for emoji/Unicode support
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
