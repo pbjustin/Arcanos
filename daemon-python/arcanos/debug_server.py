@@ -1,5 +1,6 @@
-
 import json
+import logging
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -42,27 +43,6 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
             return bool(payload.get("ok"))
         except requests.RequestException:
             return False
-
-    def _check_auth(self) -> bool:
-        header_name, secret = get_automation_auth()
-        provided = self.headers.get(header_name)
-        token_header = self.headers.get("x-arcanos-confirm-token")
-
-        # //audit Assumption: automation secret is the primary gate; risk: unauthorized access; invariant: secret must match when configured; handling: allow only matching header.
-        if secret and provided == secret:
-            return True
-
-        if token_header:
-            # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: call backend consume endpoint.
-            return self._consume_confirmation_token(token_header)
-
-        if not secret and self._is_localhost():
-            logging.getLogger("arcanos.debug").warning(
-                "ARCANOS_AUTOMATION_SECRET is not set; debug API available only from localhost."
-            )
-            return True
-
-        return False
 
     def _send_response(
         self,
@@ -121,36 +101,45 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         if path in ("/debug/health", "/debug/ready", "/debug/metrics"):
             return True
         
-        # If no token is configured, require explicit opt-in via Config
-        if not Config.DEBUG_SERVER_TOKEN:
-            # Allow unauthenticated access only if explicitly enabled (for development)
-            # Use Config class (adapter boundary pattern)
-            if not Config.DEBUG_SERVER_ALLOW_UNAUTHENTICATED:
-                self._send_response(401, error="DEBUG_SERVER_TOKEN not configured. Set DEBUG_SERVER_TOKEN environment variable for security.")
-                return False
+        header_name, secret = get_automation_auth()
+        provided = self.headers.get(header_name)
+        confirm_token = self.headers.get("x-arcanos-confirm-token")
+
+        if secret and provided == secret:
+            # //audit Assumption: automation secret is a trusted gate; risk: unauthorized access; invariant: secret must match; handling: allow when matched.
             return True
-        
-        # Check Authorization header (Bearer token)
-        auth_header = self.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:].strip()
-            if token == Config.DEBUG_SERVER_TOKEN:
-                return True
-        
-        # Check X-Debug-Token header (alternative)
-        token_header = self.headers.get("X-Debug-Token", "").strip()
-        if token_header == Config.DEBUG_SERVER_TOKEN:
+
+        if confirm_token and self._consume_confirmation_token(confirm_token):
+            # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: consume before allowing.
             return True
-        
-        # Check query parameter (disabled by default for security)
-        if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
-            params = self._query_params()
-            if "token" in params and params["token"]:
-                if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
+
+        # If DEBUG_SERVER_TOKEN is configured, prefer explicit token-based auth
+        if Config.DEBUG_SERVER_TOKEN:
+            auth_header = self.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
+                if token == Config.DEBUG_SERVER_TOKEN:
                     return True
-        
+
+            token_header = self.headers.get("X-Debug-Token", "").strip()
+            if token_header == Config.DEBUG_SERVER_TOKEN:
+                return True
+
+            if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
+                params = self._query_params()
+                if "token" in params and params["token"]:
+                    if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
+                        return True
+        else:
+            if not secret and self._is_localhost():
+                logging.getLogger("arcanos.debug").warning(
+                    "ARCANOS_AUTOMATION_SECRET is not set; debug API available only from localhost."
+                )
+                return True
+            if Config.DEBUG_SERVER_ALLOW_UNAUTHENTICATED:
+                return True
+
         if require_auth:
-            # Audit log: auth failure (without logging token)
             client_ip = getattr(self, "client_address", ("unknown",))[0]
             log_audit_event(
                 "auth_failure",
@@ -159,21 +148,29 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
                 path=self._path_without_query(),
                 method=getattr(self, "command", "UNKNOWN")
             )
-            if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
-                error_msg = "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header, X-Debug-Token header, or ?token=<token> query parameter."
+            if Config.DEBUG_SERVER_TOKEN:
+                if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
+                    error_msg = (
+                        "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header, "
+                        "X-Debug-Token header, or ?token=<token> query parameter."
+                    )
+                else:
+                    error_msg = (
+                        "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header or "
+                        "X-Debug-Token header. Query parameter authentication is disabled for security."
+                    )
             else:
-                error_msg = "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header or X-Debug-Token header. Query parameter authentication is disabled for security."
+                error_msg = "Authentication required. Configure DEBUG_SERVER_TOKEN or ARCANOS_AUTOMATION_SECRET for access."
             self._send_response(401, error=error_msg)
             return False
-        
+
         return True
 
     def do_GET(self):
         path = self._path_without_query()
 
         def _inner() -> None:
-            if not self._check_auth():
-                self._send_response(403, error="Forbidden")
+            if not self._check_authentication():
                 return
 
             if path == "/debug/status":
@@ -207,8 +204,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
-            if not self._check_auth():
-                self._send_response(403, error="Forbidden")
+            if not self._check_authentication():
                 return
 
             body = self._read_body()

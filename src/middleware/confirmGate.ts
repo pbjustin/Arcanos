@@ -1,10 +1,14 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import {
   createConfirmationChallenge,
   getChallengeTtlMs,
   verifyConfirmationChallenge,
 } from './confirmationChallengeStore.js';
-import { consumeOneTimeToken } from '../utils/tokenStore.js';
+<<<<<<< HEAD
+import { consumeOneTimeToken } from '../lib/tokenStore.js';
+=======
+import { consumeOneTimeToken } from '../lib/tokenStore.js';
+>>>>>>> origin/main
 import { getDefaultModel } from '../services/openai/credentialProvider.js';
 import { getConfig } from '../config/unifiedConfig.js';
 import { getAutomationAuth, getEnv } from '../config/env.js';

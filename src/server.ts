@@ -20,6 +20,7 @@ import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
 import { createIdleStateService } from './services/idleStateService.js';
 import { setupBridgeSocket } from './services/bridgeSocket.js';
+import { isBridgeEnabled } from './utils/bridgeEnv.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -182,11 +183,20 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       instance.on('error', reject);
     });
 
-    // //audit Assumption: bridge IPC should attach after server is listening; risk: upgrade hooks missed if attached too late; invariant: attach once; handling: attach after listen with error guard.
+<<<<<<< HEAD
+    // //audit Assumption: bridge IPC should attach after server is listening if enabled; risk: silent failure of critical feature when explicitly enabled; invariant: fail fast if bridge is enabled but setup fails; handling: check if bridge is enabled, fail startup if enabled and setup fails, otherwise just warn.
     try {
       setupBridgeSocket(server);
     } catch (error) {
-      serverLogger.warn('Failed to setup bridge socket', undefined, undefined, error as Error);
+      const bridgeEnabled = isBridgeEnabled();
+      if (bridgeEnabled) {
+        // Bridge is explicitly enabled (or enabled by default on Railway), so setup failure is critical
+        serverLogger.error('Failed to setup bridge socket when bridge is enabled', undefined, undefined, error as Error);
+        throw new Error(`Bridge socket setup failed when bridge is enabled: ${error instanceof Error ? error.message : String(error)}`);
+      } else {
+        // Bridge is disabled, so setup failure is expected and not critical
+        serverLogger.warn('Failed to setup bridge socket (bridge is disabled)', undefined, undefined, error as Error);
+      }
     }
 
     logBootSummary(actualPort, workerResults);

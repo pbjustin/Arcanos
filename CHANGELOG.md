@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚠️ BREAKING CHANGES
+
+#### Development Host Binding Change
+- **Default HOST binding in development changed from `0.0.0.0` to `127.0.0.1`**
+  - **Impact**: Development servers now bind to localhost only by default, improving security
+  - **Migration**: To restore network access (e.g., for Docker containers, WSL2, or testing from other devices):
+    - Set `HOST=0.0.0.0` in your `.env` file, or
+    - Export `HOST=0.0.0.0` in your shell before starting the server
+  - **Production**: Production deployments still default to `0.0.0.0` (no change)
+  - **Rationale**: Binding to localhost by default prevents accidental exposure of development endpoints on the local network
+
 ### Changed - CANOS PR Remediation
 - **Trinity module split:** Refactored `src/logic/trinity.ts` into `trinity.ts` (orchestrator), `trinityTypes.ts` (types), and `trinityStages.ts` (stage runners and helpers). Public API unchanged; import only from `trinity.js`.
 - **Config-driven Trinity strings:** Trinity dry-run messages, pattern storage label, and audit endpoint name now come from `config/prompts.json` (trinity section) with fallbacks in code.
