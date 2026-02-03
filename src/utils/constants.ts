@@ -5,9 +5,10 @@
 
 export const APPLICATION_CONSTANTS = {
   // Default values
-  DEFAULT_PORT: 8080,
+  DEFAULT_PORT: 3000,
   DEFAULT_NODE_ENV: 'development',
   DEFAULT_LOG_LEVEL: 'info',
+  DEFAULT_OPENAI_MAX_RETRIES: 2,
   
   // AI Model names (latest stable defaults)
   MODEL_GPT_4: 'gpt-4',
