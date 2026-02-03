@@ -19,6 +19,7 @@ router.use('/:gptId', async (req, res, next) => {
     const normalize = (s: string) => (s || '').toLowerCase().trim();
     const stripNonAlnum = (s: string) => normalize(s).replace(/[^a-z0-9]+/g, '');
 
+    let entry;
     const exact = configuredGptIds.find(id => id === incomingGptId);
     if (exact) {
       entry = gptModuleMap[exact];
