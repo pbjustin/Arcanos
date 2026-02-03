@@ -21,11 +21,13 @@ export function initOpenAI(app: Express): void {
     const unified = getConfig();
     const apiKey = unified.openaiApiKey?.trim() || '';
 
+    //audit Assumption: valid API key enables adapter initialization; risk: missing key leads to mock responses; invariant: adapter only created when key is non-empty; handling: guard and log.
     if (apiKey) {
       const adapterConfig = {
         apiKey,
         baseURL: unified.openaiBaseUrl,
-        timeout: 60000,
+        timeout: unified.workerApiTimeoutMs,
+        maxRetries: unified.openaiMaxRetries,
         defaultModel: unified.defaultModel
       };
       const adapter = getOpenAIAdapter(adapterConfig);
