@@ -45,18 +45,18 @@
  */
 
 import { createCacheKey } from './hashUtils.js';
-import { env } from './env.js';
+import { getEnvNumber } from '../config/env.js';
 
 // Configuration with environment variable overrides
 const DEFAULTS = {
-  IDLE_MEMORY_THRESHOLD_MB: env.IDLE_MEMORY_THRESHOLD_MB,
-  MEMORY_GROWTH_WINDOW_MS: env.MEMORY_GROWTH_WINDOW_MS,
-  INITIAL_IDLE_TIMEOUT_MS: env.INITIAL_IDLE_TIMEOUT_MS,
-  MIN_IDLE_TIMEOUT_MS: env.MIN_IDLE_TIMEOUT_MS,
-  MAX_IDLE_TIMEOUT_MS: env.MAX_IDLE_TIMEOUT_MS,
-  EWMA_DECAY: env.EWMA_DECAY,
-  CACHE_TTL_MS: env.OPENAI_CACHE_TTL_MS,
-  BATCH_WINDOW_MS: env.OPENAI_BATCH_WINDOW_MS,
+  IDLE_MEMORY_THRESHOLD_MB: getEnvNumber('IDLE_MEMORY_THRESHOLD_MB', 150),
+  MEMORY_GROWTH_WINDOW_MS: getEnvNumber('MEMORY_GROWTH_WINDOW_MS', 60000),
+  INITIAL_IDLE_TIMEOUT_MS: getEnvNumber('INITIAL_IDLE_TIMEOUT_MS', 30000),
+  MIN_IDLE_TIMEOUT_MS: getEnvNumber('MIN_IDLE_TIMEOUT_MS', 10000),
+  MAX_IDLE_TIMEOUT_MS: getEnvNumber('MAX_IDLE_TIMEOUT_MS', 120000),
+  EWMA_DECAY: getEnvNumber('EWMA_DECAY', 0.85),
+  CACHE_TTL_MS: getEnvNumber('OPENAI_CACHE_TTL_MS', 60000),
+  BATCH_WINDOW_MS: getEnvNumber('OPENAI_BATCH_WINDOW_MS', 150),
 };
 
 import type OpenAI from 'openai';

@@ -4,10 +4,10 @@
 
 import { Request, Response } from 'express';
 import { getOpenAIServiceHealth } from '../services/openai.js';
-import { getStatus as getDbStatus } from '../db.js';
+import { getStatus as getDbStatus } from '../db/index.js';
 import { getEnvironmentInfo } from '../utils/environmentValidation.js';
 import { buildTimestampedPayload } from '../utils/responseHelpers.js';
-import { env } from '../utils/env.js';
+import { getEnv } from '../config/env.js';
 import {
   assessCoreServiceReadiness,
   mapReadinessToHealthStatus,
@@ -127,7 +127,7 @@ export class HealthController {
       const openaiHealth = getOpenAIServiceHealth();
       const envInfo = getEnvironmentInfo();
       const dbStatus = getDbStatus();
-      const readiness = assessCoreServiceReadiness(dbStatus, openaiHealth, env.DATABASE_URL);
+      const readiness = assessCoreServiceReadiness(dbStatus, openaiHealth, getEnv('DATABASE_URL'));
 
       //audit Assumption: health status derives from core readiness; risk: missing signals from other dependencies; invariant: status reflects core dependency readiness; handling: derive via helper.
       const status = mapReadinessToHealthStatus(readiness);
@@ -136,7 +136,7 @@ export class HealthController {
         openaiHealth,
         envInfo,
         dbStatus,
-        env.DATABASE_URL
+        getEnv('DATABASE_URL')
       );
 
       //audit Assumption: degraded state should still be 200; risk: incorrect status code for degraded; invariant: unhealthy should be 503; handling: map status to HTTP code.
@@ -156,7 +156,7 @@ export class HealthController {
           fallbackOpenAI,
           fallbackEnv,
           fallbackDbStatus,
-          env.DATABASE_URL
+          getEnv('DATABASE_URL')
         ),
         error: errorMessage
       });

@@ -6,7 +6,7 @@ import {
   BOOKING_INSTRUCTIONS_SUFFIX,
   BOOKING_RESPONSE_GUIDELINES
 } from '../../config/prompts.js';
-import { query } from '../../db.js';
+import { query } from '../../db/index.js';
 import { getEnv, getEnvNumber } from '../../config/env.js';
 
 export interface Wrestler {

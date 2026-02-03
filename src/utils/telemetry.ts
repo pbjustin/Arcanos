@@ -10,7 +10,7 @@
 
 import { EventEmitter } from 'events';
 import { generateRequestId } from './idGenerator.js';
-import { env, Environment } from './env.js';
+import { getEnvNumber } from '../config/env.js';
 
 /**
  * Supported telemetry log levels for categorizing events by severity.
@@ -58,8 +58,8 @@ interface TelemetryState {
   traceEvents: TelemetryTraceEvent[];
 }
 
-const MAX_RECENT_LOGS = env.TELEMETRY_RECENT_LOGS_LIMIT;
-const MAX_TRACE_EVENTS = env.TELEMETRY_TRACE_EVENT_LIMIT;
+const MAX_RECENT_LOGS = getEnvNumber('TELEMETRY_RECENT_LOGS_LIMIT', 100);
+const MAX_TRACE_EVENTS = getEnvNumber('TELEMETRY_TRACE_EVENT_LIMIT', 200);
 const RECENT_LOG_BUFFER_LIMIT = Math.max(10, MAX_RECENT_LOGS);
 const TRACE_EVENT_BUFFER_LIMIT = Math.max(25, MAX_TRACE_EVENTS);
 

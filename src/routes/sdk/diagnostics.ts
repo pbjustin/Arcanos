@@ -1,6 +1,6 @@
 import express from 'express';
 import { runSystemDiagnostics } from '../../utils/systemDiagnostics.js';
-import { logExecution, type JobData } from '../../db.js';
+import { logExecution, type JobData } from '../../db/index.js';
 import { confirmGate } from '../../middleware/confirmGate.js';
 import { dispatchArcanosTask, startWorkers } from '../../config/workerConfig.js';
 import { resolveErrorMessage } from '../../lib/errors/index.js';
@@ -117,7 +117,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     // Create job record
     let jobRecord: JobRecord | null = null;
     try {
-      const { createJob } = await import('../../db.js');
+      const { createJob } = await import('../../db/index.js');
       jobRecord = await createJob('worker-1', 'test_job', testJobData);
     } catch (error: unknown) {
       //audit Assumption: DB may be unavailable; Handling: mock record
@@ -153,7 +153,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     //audit Assumption: update job if record exists
     if (jobRecord) {
       try {
-        const { updateJob } = await import('../../db.js');
+        const { updateJob } = await import('../../db/index.js');
         jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
       } catch (error: unknown) {
         //audit Assumption: update failure should not block response

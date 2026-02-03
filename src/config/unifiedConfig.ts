@@ -15,7 +15,7 @@
  */
 
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
-import { Environment } from '../utils/env.js';
+import { getEnv, getEnvNumber, getEnvBoolean } from './env.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 
@@ -90,8 +90,6 @@ export interface ValidationResult {
  * @param fallbacks - Fallback environment variable names (in priority order)
  * @returns Resolved value or undefined if not found
  */
-import { getEnv } from './env.js';
-
 export function getEnvVar(key: string, fallbacks?: string[]): string | undefined {
   // Use env module for consistency (adapter boundary pattern)
   // Check primary key
@@ -145,11 +143,11 @@ export function isRailwayEnvironment(): boolean {
 export function getConfig(): AppConfig {
   const config: AppConfig = {
     // Server Configuration
-    nodeEnv: Environment.get('NODE_ENV', 'development'),
-    port: Environment.getNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT),
-    isDevelopment: Environment.isDevelopment(),
-    isProduction: Environment.isProduction(),
-    isTest: Environment.isTest(),
+    nodeEnv: getEnv('NODE_ENV', 'development') as string,
+    port: getEnvNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT),
+    isDevelopment: getEnv('NODE_ENV', 'development') === 'development',
+    isProduction: getEnv('NODE_ENV') === 'production',
+    isTest: getEnv('NODE_ENV') === 'test',
     isRailway: isRailwayEnvironment(),
 
     // OpenAI Configuration
@@ -177,27 +175,27 @@ export function getConfig(): AppConfig {
 
     // Database Configuration
     databaseUrl: getEnvVar('DATABASE_URL'),
-    pgHost: Environment.get('PGHOST', 'localhost'),
+    pgHost: getEnv('PGHOST', 'localhost') as string,
 
     // Worker Configuration
-    runWorkers: Environment.getBoolean('RUN_WORKERS', !Environment.isTest()),
-    workerApiTimeoutMs: Environment.getNumber('WORKER_API_TIMEOUT_MS', 60000),
+    runWorkers: getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test'),
+    workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', 60000),
 
     // Logging Configuration
-    logPath: Environment.get('ARC_LOG_PATH', '/tmp/arc/log'),
-    logLevel: Environment.get('LOG_LEVEL', 'info'),
+    logPath: getEnv('ARC_LOG_PATH', '/tmp/arc/log') as string,
+    logLevel: getEnv('LOG_LEVEL', 'info') as string,
 
     // Security Configuration
-    adminKey: Environment.get('ADMIN_KEY'),
-    registerKey: Environment.get('REGISTER_KEY'),
+    adminKey: getEnv('ADMIN_KEY'),
+    registerKey: getEnv('REGISTER_KEY'),
 
     // Feature Flags
-    enableGithubActions: Environment.getBoolean('ENABLE_GITHUB_ACTIONS', false),
-    enableGptUserHandler: Environment.getBoolean('ENABLE_GPT_USER_HANDLER', true),
+    enableGithubActions: getEnvBoolean('ENABLE_GITHUB_ACTIONS', false),
+    enableGptUserHandler: getEnvBoolean('ENABLE_GPT_USER_HANDLER', true),
 
     // Railway Configuration
-    railwayEnvironment: Environment.get('RAILWAY_ENVIRONMENT'),
-    railwayProjectId: Environment.get('RAILWAY_PROJECT_ID')
+    railwayEnvironment: getEnv('RAILWAY_ENVIRONMENT'),
+    railwayProjectId: getEnv('RAILWAY_PROJECT_ID')
   };
 
   return config;
