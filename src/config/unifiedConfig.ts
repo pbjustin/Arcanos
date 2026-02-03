@@ -182,8 +182,8 @@ export function getConfig(): AppConfig {
     workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', 60000),
 
     // Logging Configuration
-    logPath: getEnv('ARC_LOG_PATH', '/tmp/arc/log') as string,
-    logLevel: getEnv('LOG_LEVEL', 'info') as string,
+    logPath: getEnv('ARC_LOG_PATH', '/tmp/arc/log'),
+    logLevel: getEnv('LOG_LEVEL', 'info'),
 
     // Security Configuration
     adminKey: getEnv('ADMIN_KEY'),
