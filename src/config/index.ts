@@ -50,7 +50,7 @@ export const config = {
   // AI configuration
   ai: {
     apiKey: getEnv('OPENAI_API_KEY'),
-    model: getEnv('AI_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI,
+    model: getEnv('AI_MODEL') || getEnv('OPENAI_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI,
     fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
     defaultMaxTokens: parseNumber(getEnv('OPENAI_DEFAULT_MAX_TOKENS'), 256, 1),
     defaultTemperature: 0.2
