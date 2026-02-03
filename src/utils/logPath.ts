@@ -13,7 +13,7 @@ import { resolveErrorMessage } from '../lib/errors/index.js';
  * Get the log directory path from environment variable or default
  */
 export function getLogPath(): string {
-  return getEnv('ARC_LOG_PATH', '/tmp/arc/log') as string;
+  return getEnv('ARC_LOG_PATH', '/tmp/arc/log');
 }
 
 /**
