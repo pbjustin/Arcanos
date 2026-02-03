@@ -118,6 +118,7 @@ export function createOpenAIClient(options: ClientOptions = {}): OpenAI | null {
     // Resolve API key with Railway fallbacks
     const apiKey = options.apiKey || resolveOpenAIKey();
     
+    //audit Assumption: missing API key means OpenAI calls must be mocked; risk: real calls without key fail; invariant: return null without key; handling: log and short-circuit.
     if (!apiKey) {
       aiLogger.warn('OpenAI API key not configured - AI endpoints will return mock responses', {
         operation: 'createOpenAIClient',
@@ -130,17 +131,18 @@ export function createOpenAIClient(options: ClientOptions = {}): OpenAI | null {
     // Resolve base URL with Railway fallbacks
     const baseURL = options.baseURL || resolveOpenAIBaseURL();
     const timeout = options.timeout || API_TIMEOUT_MS;
+    const config = getConfig();
 
     // Create client instance
     const client = new OpenAI({
       apiKey,
       timeout,
+      maxRetries: config.openaiMaxRetries,
       ...(baseURL ? { baseURL } : {})
     });
 
     // Configure default model from config (adapter boundary pattern)
-    const config = getConfig();
-    const configuredDefaultModel = config.defaultModel || 'gpt-4o-mini';
+    const configuredDefaultModel = config.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI;
     setDefaultModel(configuredDefaultModel);
 
     const duration = Date.now() - startTime;

@@ -38,6 +38,7 @@ export interface AppConfig {
   fallbackModel: string;
   gpt5Model: string;
   gpt51Model: string;
+  openaiMaxRetries: number;
 
   // Database Configuration
   databaseUrl: string | undefined;
@@ -49,6 +50,7 @@ export interface AppConfig {
 
   // Logging Configuration
   logPath: string;
+  memoryPath: string;
   logLevel: string;
 
   // Security Configuration
@@ -165,13 +167,14 @@ export function getConfig(): AppConfig {
       'AI_MODEL',
       'OPENAI_MODEL',
       'RAILWAY_OPENAI_MODEL'
-    ]) || 'gpt-4o-mini',
+    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI,
     fallbackModel: getEnvVar('FALLBACK_MODEL', [
       'AI_FALLBACK_MODEL',
       'RAILWAY_OPENAI_FALLBACK_MODEL'
-    ]) || 'gpt-4',
+    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4,
     gpt5Model: getEnvVar('GPT5_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5,
     gpt51Model: getEnvVar('GPT51_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5_1,
+    openaiMaxRetries: getEnvNumber('OPENAI_MAX_RETRIES', APPLICATION_CONSTANTS.DEFAULT_OPENAI_MAX_RETRIES),
 
     // Database Configuration
     databaseUrl: getEnvVar('DATABASE_URL'),
@@ -179,10 +182,11 @@ export function getConfig(): AppConfig {
 
     // Worker Configuration
     runWorkers: getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test'),
-    workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', 60000),
+    workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', APPLICATION_CONSTANTS.DEFAULT_API_TIMEOUT),
 
     // Logging Configuration
-    logPath: getEnv('ARC_LOG_PATH', '/tmp/arc/log'),
+    logPath: getEnv('ARC_LOG_PATH', APPLICATION_CONSTANTS.DEFAULT_LOG_PATH),
+    memoryPath: getEnv('ARC_MEMORY_PATH', APPLICATION_CONSTANTS.DEFAULT_MEMORY_PATH),
     logLevel: getEnv('LOG_LEVEL', 'info'),
 
     // Security Configuration
