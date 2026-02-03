@@ -14,7 +14,7 @@ export function isBridgeEnabled(): boolean {
   }
 
   // Default to enabled on Railway deployments so IPC can come online without manual env wiring.
-  return Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+  return isRailwayEnvironment();
 }
 
 export default {
