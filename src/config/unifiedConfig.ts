@@ -175,7 +175,7 @@ export function getConfig(): AppConfig {
 
     // Database Configuration
     databaseUrl: getEnvVar('DATABASE_URL'),
-    pgHost: getEnv('PGHOST', 'localhost') as string,
+    pgHost: getEnv('PGHOST', 'localhost'),
 
     // Worker Configuration
     runWorkers: getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test'),
