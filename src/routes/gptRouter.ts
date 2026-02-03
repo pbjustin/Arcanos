@@ -11,8 +11,17 @@ router.use('/:gptId', async (req, res, next) => {
     const incomingGptId = req.params.gptId;
     const configuredGptIds = Object.keys(gptModuleMap);
 
-    const matchedId = configuredGptIds.find(id => incomingGptId.includes(id));
-    const entry = matchedId ? gptModuleMap[matchedId] : undefined;
+    // Matching strategy:
+    // 1. Prefer exact matches
+    // 2. Prefer longest configured id that appears in the incoming id (reduces accidental short-id matches)
+    let entry;
+    if (configuredGptIds.includes(incomingGptId)) {
+      entry = gptModuleMap[incomingGptId];
+    } else {
+      const sortedIds = configuredGptIds.sort((a, b) => b.length - a.length);
+      const matchedId = sortedIds.find(id => incomingGptId.includes(id));
+      entry = matchedId ? gptModuleMap[matchedId] : undefined;
+    }
 
     if (!entry) {
       return res.status(404).json({ error: 'Unknown GPTID' });
