@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # Helper: set ARCANOS_AUTOMATION_SECRET via Railway CLI
 # Usage: export ARC_SECRET=<secret-value> && ./scripts/railway-set-secret.sh [--project <projectId>] [--service <serviceId>]
 
