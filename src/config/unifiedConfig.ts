@@ -143,7 +143,7 @@ export function isRailwayEnvironment(): boolean {
 export function getConfig(): AppConfig {
   const config: AppConfig = {
     // Server Configuration
-    nodeEnv: getEnv('NODE_ENV', 'development') as string,
+    nodeEnv: getEnv('NODE_ENV', 'development'),
     port: getEnvNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT),
     isDevelopment: getEnv('NODE_ENV', 'development') === 'development',
     isProduction: getEnv('NODE_ENV') === 'production',
