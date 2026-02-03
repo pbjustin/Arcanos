@@ -1,5 +1,5 @@
 import express from 'express';
-import { logExecution, type JobData } from '../../db.js';
+import { logExecution, type JobData } from '../../db/index.js';
 import { confirmGate } from '../../middleware/confirmGate.js';
 import {
   dispatchArcanosTask,
@@ -243,7 +243,7 @@ router.post('/jobs/dispatch', confirmGate, async (req, res) => {
 router.post('/test-job', confirmGate, async (_, res) => {
   try {
     // Import necessary functions
-    const { createJob } = await import('../../db.js');
+    const { createJob } = await import('../../db/index.js');
 
     const jobData = {
       type: 'test_job',
@@ -288,7 +288,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
     //audit Assumption: update job if record exists
     if (jobRecord) {
       try {
-        const { updateJob } = await import('../../db.js');
+        const { updateJob } = await import('../../db/index.js');
         jobRecord = await updateJob(jobRecord.id, 'completed', result);
       } catch (error: unknown) {
         //audit Assumption: update failure should not block response

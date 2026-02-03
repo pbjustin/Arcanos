@@ -25,16 +25,6 @@ export interface ValidationResult {
   suggestions: string[];
 }
 
-// Support legacy environment variable naming
-// Map FINE_TUNED_MODEL_ID -> FINETUNED_MODEL_ID for backward compatibility
-// Note: This modifies process.env directly, which is acceptable here as it's normalization
-// TODO: Move this normalization to config layer
-const fineTunedId = getEnv('FINE_TUNED_MODEL_ID');
-const finetunedId = getEnv('FINETUNED_MODEL_ID');
-if (fineTunedId && !finetunedId) {
-  process.env.FINETUNED_MODEL_ID = fineTunedId;
-}
-
 // Environment variable definitions
 const environmentChecks: EnvironmentCheck[] = [
   {

@@ -3,7 +3,7 @@ import { getDefaultModel, hasValidAPIKey } from './openai.js';
 import { createEmbedding } from './openai/embeddings.js';
 import { fetchAndClean } from './webFetcher.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
-import { saveRagDoc, loadAllRagDocs, initializeDatabase, getStatus } from '../db.js';
+import { saveRagDoc, loadAllRagDocs, initializeDatabaseWithSchema as initializeDatabase, getStatus } from '../db/index.js';
 import { logger } from '../utils/structuredLogging.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 

@@ -3,8 +3,6 @@
  * Centralized configuration for commonly used values across the application
  */
 
-import { getEnv } from '../config/env.js';
-
 export const APPLICATION_CONSTANTS = {
   // Default values
   DEFAULT_PORT: 8080,
@@ -19,7 +17,6 @@ export const APPLICATION_CONSTANTS = {
   MODEL_GPT_5_1: 'gpt-5.1',
   // Legacy models (for reference only, prefer gpt-4o)
   MODEL_GPT_4_TURBO: 'gpt-4-turbo',
-  MODEL_GPT_3_5_TURBO: 'gpt-3.5-turbo',
   
   // Timeout values (in milliseconds)  
   DEFAULT_API_TIMEOUT: 30000,
@@ -64,61 +61,3 @@ export const APPLICATION_CONSTANTS = {
   DEFAULT_TOKEN_LIMIT: 1000,
   EXTENDED_TOKEN_LIMIT: 2000
 } as const;
-
-/**
- * Get environment variable with fallback to application constant
- * @deprecated Use config layer (getConfig() from config/unifiedConfig.js or getEnv() from config/env.js) instead
- * @param envKey - Environment variable key
- * @param constantKey - Key in APPLICATION_CONSTANTS
- * @returns Environment value or default from constants
- */
-export function getConfigValue<T extends keyof typeof APPLICATION_CONSTANTS>(
-  envKey: string, 
-  constantKey: T
-): typeof APPLICATION_CONSTANTS[T] | string {
-  // Use config layer for env access (adapter boundary pattern)
-  // This function is deprecated but kept for backward compatibility
-  const envValue = getEnv(envKey);
-  
-  if (envValue !== undefined) {
-    // Try to parse as number if the constant is a number
-    const constant = APPLICATION_CONSTANTS[constantKey];
-    if (typeof constant === 'number' && !isNaN(Number(envValue))) {
-      return Number(envValue) as typeof APPLICATION_CONSTANTS[T];
-    }
-    return envValue;
-  }
-  return APPLICATION_CONSTANTS[constantKey];
-}
-
-/**
- * Get a numeric configuration value with validation
- * @param envKey - Environment variable key  
- * @param constantKey - Key in APPLICATION_CONSTANTS for numeric values
- * @param min - Minimum allowed value
- * @param max - Maximum allowed value  
- * @returns Validated numeric value
- */
-export function getNumericConfig<T extends keyof typeof APPLICATION_CONSTANTS>(
-  envKey: string,
-  constantKey: T,
-  min?: number,
-  max?: number
-): number {
-  const value = getConfigValue(envKey, constantKey);
-  const numValue = typeof value === 'number' ? value : Number(value);
-  
-  if (isNaN(numValue)) {
-    return APPLICATION_CONSTANTS[constantKey] as number;
-  }
-  
-  if (min !== undefined && numValue < min) {
-    return min;
-  }
-  
-  if (max !== undefined && numValue > max) {
-    return max;
-  }
-  
-  return numValue;
-}

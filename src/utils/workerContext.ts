@@ -3,7 +3,7 @@
  * Provides context object for workers with db, ai, and logging capabilities
  */
 
-import { query as dbQuery, logExecution } from '../db.js';
+import { query as dbQuery, logExecution } from '../db/index.js';
 import { generateMockResponse } from '../services/openai.js';
 import { runThroughBrain } from '../logic/trinity.js';
 import type { QueryResult } from 'pg';

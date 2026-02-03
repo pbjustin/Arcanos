@@ -7,7 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import cron from 'node-cron';
-import { initializeDatabase, getStatus } from '../db.js';
+import { initializeDatabaseWithSchema as initializeDatabase, getStatus } from '../db/index.js';
 import { createWorkerContext } from './workerContext.js';
 import { resolveWorkersDirectory } from './workerPaths.js';
 import { getConfig } from '../config/unifiedConfig.js';
