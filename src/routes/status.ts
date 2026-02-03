@@ -8,7 +8,7 @@ import { loadState, updateState, SystemState } from '../services/stateManager.js
 import { confirmGate } from '../middleware/confirmGate.js';
 import { getOpenAIServiceHealth } from '../services/openai.js';
 import { queryCache, configCache } from '../utils/cache.js';
-import { getStatus as getDbStatus } from '../db.js';
+import { getStatus as getDbStatus } from '../db/index.js';
 import { sendJsonError } from '../utils/responseHelpers.js';
 import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from '../utils/healthChecks.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';

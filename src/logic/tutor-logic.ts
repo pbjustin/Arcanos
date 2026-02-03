@@ -13,12 +13,11 @@ import {
   buildResearchBriefPrompt,
   buildResearchFallbackPrompt
 } from '../config/tutorPrompts.js';
-import { env } from '../utils/env.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
-import { getEnv } from '../config/env.js';
+import { getEnv, getEnvNumber } from '../config/env.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
-const DEFAULT_TOKEN_LIMIT = env.TUTOR_DEFAULT_TOKEN_LIMIT;
+const DEFAULT_TOKEN_LIMIT = getEnvNumber('TUTOR_DEFAULT_TOKEN_LIMIT', 200);
 
 export interface TutorQuery {
   intent?: string;

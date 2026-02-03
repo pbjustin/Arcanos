@@ -130,6 +130,8 @@ export function validateRequiredEnv(): EnvConfig {
  * @param defaultValue - Default value if not set
  * @returns Environment variable value or default
  */
+export function getEnv(key: string, defaultValue: string): string;
+export function getEnv(key: string): string | undefined;
 export function getEnv(key: string, defaultValue?: string): string | undefined {
   return process.env[key] || defaultValue;
 }

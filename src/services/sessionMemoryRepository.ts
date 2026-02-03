@@ -1,6 +1,6 @@
 import type { SessionEntry, SessionMetadata } from '../memory/store.js';
 import memoryStore from '../memory/store.js';
-import { loadMemory, saveMemory } from '../db.js';
+import { loadMemory, saveMemory } from '../db/index.js';
 import { logger } from '../utils/structuredLogging.js';
 import { getEnvNumber } from '../config/env.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
