@@ -28,6 +28,8 @@ export interface OpenAIAdapterConfig {
   baseURL?: string;
   /** Request timeout in milliseconds */
   timeout?: number;
+  /** Max retries for transient errors */
+  maxRetries?: number;
   /** Default model for completions */
   defaultModel?: string;
 }
@@ -80,6 +82,7 @@ export interface OpenAIAdapter {
  * @throws Error if apiKey is missing
  */
 export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter {
+  //audit Assumption: API key must be provided to initialize SDK client; risk: silent mock usage; invariant: non-empty apiKey; handling: throw early.
   if (!config.apiKey || config.apiKey.trim() === '') {
     throw new Error('OpenAI API key is required');
   }
@@ -87,6 +90,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   const client = new OpenAI({
     apiKey: config.apiKey,
     timeout: config.timeout || 60000,
+    maxRetries: config.maxRetries,
     ...(config.baseURL ? { baseURL: config.baseURL } : {})
   });
 

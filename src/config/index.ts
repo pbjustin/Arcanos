@@ -16,7 +16,8 @@ dotenv.config();
 const serverPort = getEnvNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT);
 // //audit Assumption: development should bind to localhost by default; risk: exposing local endpoints; invariant: use 127.0.0.1 in dev unless HOST overrides; handling: conditional default.
 const serverHost = getEnv('HOST') || (process.env.NODE_ENV === 'development' ? '127.0.0.1' : '0.0.0.0');
-const serverBaseUrl = getEnv('SERVER_URL') || `http://127.0.0.1:${serverPort}`;
+//audit Assumption: when SERVER_URL is unset, host/port reflect the externally reachable base URL; risk: reverse proxy uses different public hostname; invariant: internal services can reach base URL; handling: allow SERVER_URL override.
+const serverBaseUrl = getEnv('SERVER_URL') || `http://${serverHost}:${serverPort}`;
 const statusEndpoint = getEnv('BACKEND_STATUS_ENDPOINT') || '/status';
 
 const parseNumber = (value: string | undefined, fallback: number, min: number = 0): number => {
@@ -49,7 +50,7 @@ export const config = {
   // AI configuration
   ai: {
     apiKey: getEnv('OPENAI_API_KEY'),
-    model: getEnv('AI_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_4_TURBO,
+    model: getEnv('AI_MODEL') || getEnv('OPENAI_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI,
     fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
     defaultMaxTokens: parseNumber(getEnv('OPENAI_DEFAULT_MAX_TOKENS'), 256, 1),
     defaultTemperature: 0.2

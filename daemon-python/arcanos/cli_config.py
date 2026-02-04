@@ -12,6 +12,11 @@ SINGLE_ACTION_COUNT = 1
 ZERO_COST_USD = 0.0
 ZERO_TOKENS_USED = 0
 
+DEFAULT_CAMERA_VISION_PROMPT = "What do you see in this image? Describe it in detail."
+DEFAULT_SCREEN_VISION_PROMPT = (
+    "What do you see on this screen? Describe the key elements and what the user appears to be doing."
+)
+
 DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "backstage:booker": [
         "book",
