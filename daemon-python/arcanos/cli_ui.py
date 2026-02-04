@@ -154,22 +154,19 @@ def strip_markdown(text: str) -> str:
     Edge cases: Empty text returns empty string; nested formatting may leave minor artifacts.
     """
     # Remove code block fences (```language ... ```)
-    text = re.sub(r"```[^\n]*\n?", "", text)
+    text = re.sub(r"```\w*\n?", "", text)
     # Remove inline code backticks
     text = re.sub(r"`([^`]+)`", r"\1", text)
     # Remove images ![alt](url) before links
     text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
     # Convert links [text](url) to just text
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    # Remove bold+italic markers *** and ___
-    text = re.sub(r"\*\*\*(.+?)\*\*\*", r"\1", text)
-    text = re.sub(r"___(.+?)___", r"\1", text)
     # Remove bold markers ** and __
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"__(.+?)__", r"\1", text)
     # Remove italic markers * and _ (but not list bullets like "* item")
-    text = re.sub(r"(?<!\w)\*([^\s*].*?)\*(?!\w)", r"\1", text)
-    text = re.sub(r"(?<!\w)_([^\s_].*?)_(?!\w)", r"\1", text)
+    text = re.sub(r"(?<=\s)\*([^\s*].*?)\*(?=\s|$)", r"\1", text)
+    text = re.sub(r"(?<=\s)_([^\s_].*?)_(?=\s|$)", r"\1", text)
     # Remove heading markers
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
     # Remove horizontal rules

@@ -76,7 +76,10 @@ export function getDefaultModel(): string {
 
 export function getFallbackModel(): string {
   const appConfig = getConfig();
-  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4;
+  // Prefer explicit fallback model; if not set, prefer the configured default
+  // (which itself prefers fine-tuned model ids when available). //audit:
+  // assumption=FALLBACK_MODEL optional, failure_risk=low, invariant=fallback exists
+  return appConfig.fallbackModel || appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4;
 }
 
 /** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else OPENAI_COMPLEX_MODEL / vision / gpt-4o. */
