@@ -168,8 +168,8 @@ def strip_markdown(text: str) -> str:
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"__(.+?)__", r"\1", text)
     # Remove italic markers * and _ (but not list bullets like "* item")
-    text = re.sub(r"(?<=\s)\*([^\s*].*?)\*(?=\s|$)", r"\1", text)
-    text = re.sub(r"(?<=\s)_([^\s_].*?)_(?=\s|$)", r"\1", text)
+    text = re.sub(r"(?<!\w)\*([^\s*].*?)\*(?!\w)", r"\1", text)
+    text = re.sub(r"(?<!\w)_([^\s_].*?)_(?!\w)", r"\1", text)
     # Remove heading markers
     text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
     # Remove horizontal rules
