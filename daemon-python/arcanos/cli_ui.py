@@ -2,6 +2,7 @@
 UI content and presentation helpers for the ARCANOS CLI.
 """
 
+import re
 from typing import Any, Mapping
 
 from rich.markdown import Markdown
@@ -144,6 +145,35 @@ def build_stats_table(
     table.add_row("Cost Today", f"${rate_stats.get('cost_today', 0.0):.4f}/${max_cost_per_day:.2f}")
 
     return table
+
+
+def strip_markdown(text: str) -> str:
+    """
+    Purpose: Strip markdown formatting from text to produce clean plain text.
+    Inputs/Outputs: raw markdown text; returns plain text with formatting removed.
+    Edge cases: Empty text returns empty string; nested formatting may leave minor artifacts.
+    """
+    # Remove code block fences (```language ... ```)
+    text = re.sub(r"```\w*\n?", "", text)
+    # Remove inline code backticks
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    # Remove images ![alt](url) before links
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
+    # Convert links [text](url) to just text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Remove bold markers ** and __
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"__(.+?)__", r"\1", text)
+    # Remove italic markers * and _ (but not list bullets like "* item")
+    text = re.sub(r"(?<=\s)\*([^\s*].*?)\*(?=\s|$)", r"\1", text)
+    text = re.sub(r"(?<=\s)_([^\s_].*?)_(?=\s|$)", r"\1", text)
+    # Remove heading markers
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Remove horizontal rules
+    text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
+    # Collapse excessive blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def build_help_panel() -> Panel:

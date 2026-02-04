@@ -63,6 +63,7 @@ from .cli_ui import (
     get_telemetry_description_lines,
     get_telemetry_prompt,
     get_telemetry_section_header,
+    strip_markdown,
 )
 from .cli_debug_helpers import build_debug_marker, resolve_debug_port
 from .cli_daemon import (
@@ -925,8 +926,8 @@ class ArcanosCLI:
             return result
 
         # Display response
-        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
-        
+        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text)}\n")
+
         should_speak = speak_response or Config.SPEAK_RESPONSES
         if should_speak:
             # //audit assumption: TTS optional; risk: noisy output; invariant: speak only when enabled; strategy: gate on flag.
@@ -1015,7 +1016,7 @@ class ArcanosCLI:
         if return_result:
             return {"ok": True, **asdict(result)}
 
-        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {result.response_text}\n")
+        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text)}\n")
 
         if Config.SPEAK_RESPONSES:
             truncated = truncate_for_tts(result.response_text)
@@ -1130,7 +1131,7 @@ class ArcanosCLI:
                 # Vision analysis with speech text as prompt
                 response, tokens, cost = self.vision.analyze_image(img_base64, text)
                 if response:
-                    self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {response}\n")
+                    self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(response)}\n")
                     self._last_response = response
                     self.rate_limiter.record_request(tokens, cost)
                     self.memory.increment_stat("vision_requests")
