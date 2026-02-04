@@ -127,18 +127,18 @@ jobs:
             
             ### 📋 What was checked:
             - Required documentation files
-            - GitHub templates structure  
-            - Content standards (last-updated tags, versions, self-checks)
+            - Standard section structure
+            - Stale terminology checks
             - Terminology consistency
             - Internal link validation
-            - CI integration compatibility
+            - GitHub template/doc path consistency
             
             ${failedChecks != '0' ? `
             ### 🛠️ How to fix:
             1. Run \`./scripts/doc_audit.sh\` locally to see detailed failure reasons
             2. Address each failed check individually
-            3. Update last-updated dates in modified files
-            4. Ensure all required sections are present
+            3. Ensure all required sections are present
+            4. Remove stale terminology or stale doc paths
             5. Push your fixes to re-trigger this check
             ` : ''}
             

@@ -12,7 +12,7 @@ body:
         - [ ] Not a duplicate of existing issues
         - [ ] Environment details are complete
         - [ ] Logs and error messages are included
-        - [ ] OpenAI SDK v5.16.0 compatibility verified
+        - [ ] OpenAI SDK v6.16.0 compatibility verified
 
   - type: textarea
     id: description
@@ -100,7 +100,7 @@ body:
     id: confirmation
     attributes:
       label: Confirmation Gate Related?
-      description: Is this issue related to endpoints requiring X-Confirmation header?
+      description: Is this issue related to endpoints requiring x-confirmed header?
       options:
         - "No"
         - "Yes - Missing confirmation header"

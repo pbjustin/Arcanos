@@ -1,36 +1,42 @@
-# Arcanos Codebase Index
+# Codebase Index
 
-Quick orientation for IDEs and AI/cloud agents. For full architecture see [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) and [docs/](docs/).
+## Overview
+This index maps active runtime entry points and high-value directories for contributors and operators.
 
-## Entry points
+## Prerequisites
+- Repository checked out locally.
+- Familiarity with TypeScript and optional Python daemon components.
 
-| Role | Path |
-|------|------|
-| TypeScript server (source of truth) | `src/start-server.ts` |
-| Route registration | `src/routes/register.ts` |
-| Python daemon CLI | `daemon-python/arcanos/cli.py` |
-| Workers entry | `workers/src/` (memory, openai, memorySync) |
+## Setup
+Use this file with:
+- `README.md` for startup and deployment
+- `docs/ARCHITECTURE.md` for component boundaries
+- `docs/API.md` for endpoint inventory
 
-## Key directories
+## Configuration
+Primary runtime/config files:
+- `src/config/index.ts`
+- `src/config/unifiedConfig.ts`
+- `src/config/env.ts`
+- `.env.example`
+- `railway.json`
 
-| Area | Path | Notes |
-|------|------|--------|
-| API routes | `src/routes/` | `api-ask.ts`, `api-vision.ts`, `api-transcribe.ts`, etc. |
-| Services | `src/services/` | OpenAI, memory, orchestration, PR assistant, research |
-| DB layer | `src/db/` | Client, schema, repositories, audit store |
-| Middleware | `src/middleware/` | Validation, error handling, confirm gate, cost control |
-| Python daemon | `daemon-python/arcanos/` | CLI, backend client, vision, audio, config |
-| Workers | `workers/src/` | Job handlers and worker processes |
-| Config | `src/config/`, `config/` | Prompts, env, fallback messages |
-| Tests | `tests/` | Jest and Python tests |
+## Run locally
+Key executable entry points:
+- Backend startup: `src/start-server.ts`
+- Route registry: `src/routes/register.ts`
+- Python daemon entry: `daemon-python/arcanos/cli.py`
 
-## Where to find
+## Deploy (Railway)
+Deployment sources of truth:
+- `railway.json`
+- `Procfile`
+- `docs/RAILWAY_DEPLOYMENT.md`
 
-- **API contract (server ↔ daemon):** `.cursorrules` (API routes and client methods); `scripts/sync-config.json` for sync mapping.
-- **OpenAI integration:** `src/services/openai.ts`, `src/services/openai/`, `daemon-python/arcanos/gpt_client.py`.
-- **Database:** `src/db/`, `prisma/schema.prisma`.
-- **Coding standards and sync rules:** `AGENTS.md`, `.cursorrules`.
+## Troubleshooting
+If a path in this index becomes stale, update this file in the same PR as the moved/renamed code.
 
-## IDE and cloud agents
-
-Open **`Arcanos.code-workspace`** (in this repo root) in Cursor, VS Code, or GitHub Codespaces so the workspace root is the repo and codebase indexing targets Arcanos. See README section "IDE and cloud agents" for details.
+## References
+- `docs/README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/CI_CD.md`
