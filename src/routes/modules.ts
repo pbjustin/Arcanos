@@ -67,6 +67,27 @@ export function getModulesForRegistry(): Array<{
   }));
 }
 
+/**
+ * Purpose: Look up metadata for a single module by name.
+ * Inputs/Outputs: Module name string; returns metadata or null.
+ * Edge cases: Returns null when module name is not registered.
+ */
+export function getModuleMetadata(moduleName: string): {
+  name: string;
+  description: string | null;
+  route: string | null;
+  actions: string[];
+} | null {
+  const mod = registryByName.get(moduleName);
+  if (!mod) return null;
+  return {
+    name: mod.name,
+    description: mod.description ?? null,
+    route: moduleRoutes.get(mod.name) ?? null,
+    actions: Object.keys(mod.actions),
+  };
+}
+
 const loadedModules = await loadModuleDefinitions();
 for (const { route, definition } of loadedModules) {
   registerModule(route, definition);

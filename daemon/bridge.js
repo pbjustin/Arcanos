@@ -134,7 +134,6 @@ async function consumeConfirmToken(token) {
   if (!backendUrl) {
     return false;
   }
-
   const url = `${backendUrl}/debug/consume-confirm-token`;
   try {
     const response = await fetch(url, {
