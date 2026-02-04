@@ -161,6 +161,9 @@ def strip_markdown(text: str) -> str:
     text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
     # Convert links [text](url) to just text
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Remove bold+italic markers *** and ___
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", r"\1", text)
+    text = re.sub(r"___(.+?)___", r"\1", text)
     # Remove bold markers ** and __
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"__(.+?)__", r"\1", text)
