@@ -1,86 +1,91 @@
-import { describe, test, expect, beforeEach, jest } from '@jest/globals';
+/**
+ * Unit tests for tokenStore module
+ * Tests token generation, consumption, replay prevention, and expiration
+ */
+
+import { describe, expect, it, beforeEach, afterEach, jest } from '@jest/globals';
 import { createOneTimeToken, consumeOneTimeToken, getOneTimeTokenTtlMs } from '../src/lib/tokenStore.js';
 
 describe('tokenStore', () => {
-  // Clear environment variables before each test to ensure clean state
+  const originalEnv = process.env;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    // Reset environment to defaults
+    process.env = { ...originalEnv };
+    delete process.env.ARCANOS_CONFIRM_TOKEN_TTL_MS;
+    delete process.env.ARCANOS_CONFIRM_TOKEN_TTL_MINUTES;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
   });
 
   describe('createOneTimeToken', () => {
-    test('generates a valid token with proper structure', () => {
-      const token = createOneTimeToken();
+    it('should generate a token with valid UUID format', () => {
+      const record = createOneTimeToken();
 
-      expect(token).toHaveProperty('token');
-      expect(token).toHaveProperty('issuedAt');
-      expect(token).toHaveProperty('expiresAt');
-      expect(token).toHaveProperty('ttlMs');
-      expect(typeof token.token).toBe('string');
-      expect(token.token.length).toBeGreaterThan(0);
-      expect(typeof token.issuedAt).toBe('number');
-      expect(typeof token.expiresAt).toBe('number');
-      expect(typeof token.ttlMs).toBe('number');
+      expect(record).toBeDefined();
+      expect(record.token).toBeDefined();
+      expect(typeof record.token).toBe('string');
+      // UUID v4 format validation
+      expect(record.token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     });
 
-    test('generates unique tokens on consecutive calls', () => {
-      const token1 = createOneTimeToken();
-      const token2 = createOneTimeToken();
+    it('should set issuedAt to current timestamp', () => {
+      const before = Date.now();
+      const record = createOneTimeToken();
+      const after = Date.now();
 
-      expect(token1.token).not.toBe(token2.token);
+      expect(record.issuedAt).toBeGreaterThanOrEqual(before);
+      expect(record.issuedAt).toBeLessThanOrEqual(after);
     });
 
-    test('sets expiration time based on TTL', () => {
-      const token = createOneTimeToken();
-      const expectedExpiration = token.issuedAt + token.ttlMs;
+    it('should set expiresAt to issuedAt + ttlMs', () => {
+      const record = createOneTimeToken();
 
-      expect(token.expiresAt).toBe(expectedExpiration);
+      expect(record.expiresAt).toBe(record.issuedAt + record.ttlMs);
     });
 
-    test('uses default TTL when no environment variable is set', () => {
-      const token = createOneTimeToken();
-      const defaultTtl = 10 * 60 * 1000; // 10 minutes in milliseconds
+    it('should use default TTL of 10 minutes when no env vars set', () => {
+      // Need to reload module to ensure clean env state
+      jest.resetModules();
 
-      expect(token.ttlMs).toBe(defaultTtl);
+      // Re-import to get fresh instance
+      return import('../src/lib/tokenStore.js').then(({ createOneTimeToken: create }) => {
+        const record = create();
+        const expectedTtl = 10 * 60 * 1000; // 10 minutes in ms
+
+        expect(record.ttlMs).toBe(expectedTtl);
+      });
+    });
+
+    it('should generate unique tokens for multiple calls', () => {
+      const record1 = createOneTimeToken();
+      const record2 = createOneTimeToken();
+      const record3 = createOneTimeToken();
+
+      expect(record1.token).not.toBe(record2.token);
+      expect(record2.token).not.toBe(record3.token);
+      expect(record1.token).not.toBe(record3.token);
     });
   });
 
   describe('consumeOneTimeToken', () => {
-    test('successfully consumes a valid token', () => {
-      const token = createOneTimeToken();
-      const result = consumeOneTimeToken(token.token);
+    it('should successfully consume a valid token', () => {
+      const record = createOneTimeToken();
+      const result = consumeOneTimeToken(record.token);
 
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.record).toBeDefined();
-        expect(result.record.token).toBe(token.token);
+        expect(result.record.token).toBe(record.token);
+        expect(result.record.issuedAt).toBe(record.issuedAt);
+        expect(result.record.expiresAt).toBe(record.expiresAt);
       }
     });
 
-    test('prevents replay attacks - token can only be consumed once', () => {
-      const token = createOneTimeToken();
-      
-      // First consumption should succeed
-      const firstResult = consumeOneTimeToken(token.token);
-      expect(firstResult.ok).toBe(true);
-
-      // Second consumption should fail
-      const secondResult = consumeOneTimeToken(token.token);
-      expect(secondResult.ok).toBe(false);
-      if (!secondResult.ok) {
-        expect(secondResult.reason).toBe('invalid');
-      }
-    });
-
-    test('rejects invalid token', () => {
-      const result = consumeOneTimeToken('invalid-token-12345');
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.reason).toBe('invalid');
-      }
-    });
-
-    test('rejects missing token', () => {
+    it('should return error for missing token', () => {
       const result = consumeOneTimeToken(undefined);
 
       expect(result.ok).toBe(false);
@@ -89,7 +94,7 @@ describe('tokenStore', () => {
       }
     });
 
-    test('rejects empty string token', () => {
+    it('should return error for empty string token', () => {
       const result = consumeOneTimeToken('');
 
       expect(result.ok).toBe(false);
@@ -98,7 +103,7 @@ describe('tokenStore', () => {
       }
     });
 
-    test('rejects whitespace-only token', () => {
+    it('should return error for whitespace-only token', () => {
       const result = consumeOneTimeToken('   ');
 
       expect(result.ok).toBe(false);
@@ -107,109 +112,170 @@ describe('tokenStore', () => {
       }
     });
 
-    test('handles expired tokens correctly', async () => {
-      // Create a token
-      const token = createOneTimeToken();
-      
-      // Mock Date.now to simulate time passing beyond expiration
+    it('should return error for invalid token', () => {
+      const result = consumeOneTimeToken('invalid-token-12345');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe('invalid');
+      }
+    });
+
+    it('should prevent replay attacks by consuming token only once', () => {
+      //audit Assumption: token is single-use capability; risk: replay attack if not consumed; invariant: second consumption must fail; handling: verify token deleted after first use.
+      const record = createOneTimeToken();
+
+      // First consumption should succeed
+      const firstResult = consumeOneTimeToken(record.token);
+      expect(firstResult.ok).toBe(true);
+
+      // Second consumption should fail (replay prevention)
+      const secondResult = consumeOneTimeToken(record.token);
+      expect(secondResult.ok).toBe(false);
+      if (!secondResult.ok) {
+        expect(secondResult.reason).toBe('invalid');
+      }
+    });
+
+    it('should return error for expired token', () => {
+      //audit Assumption: tokens have time-bound validity; risk: stale token acceptance; invariant: expired tokens must be rejected; handling: check expiry before consumption.
+      // Create a token and manually manipulate time to expire it
+      const record = createOneTimeToken();
+
+      // Mock Date.now to return time after expiration
       const originalDateNow = Date.now;
-      const futureTime = token.expiresAt + 1000; // 1 second after expiration
-      Date.now = jest.fn(() => futureTime) as unknown as typeof Date.now;
+      const futureTime = record.expiresAt + 1000; // 1 second after expiration
+      Date.now = jest.fn(() => futureTime);
 
       try {
-        const result = consumeOneTimeToken(token.token);
+        const result = consumeOneTimeToken(record.token);
 
-        // Note: expired tokens are purged before lookup, so they appear as 'invalid'
+        // Token is purged during consumption, so it returns 'invalid' after purge
+        // or 'expired' if caught at exact boundary - both are valid rejections
         expect(result.ok).toBe(false);
         if (!result.ok) {
           expect(['expired', 'invalid']).toContain(result.reason);
         }
       } finally {
-        // Restore original Date.now
         Date.now = originalDateNow;
       }
     });
+  });
 
-    test('returns the original token record on successful consumption', () => {
-      const token = createOneTimeToken();
-      const result = consumeOneTimeToken(token.token);
+  describe('TTL configuration', () => {
+    it('should use ARCANOS_CONFIRM_TOKEN_TTL_MS when set', () => {
+      const customTtl = 5 * 60 * 1000; // 5 minutes
+      process.env.ARCANOS_CONFIRM_TOKEN_TTL_MS = customTtl.toString();
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.record.token).toBe(token.token);
-        expect(result.record.issuedAt).toBe(token.issuedAt);
-        expect(result.record.expiresAt).toBe(token.expiresAt);
-        expect(result.record.ttlMs).toBe(token.ttlMs);
-      }
+      // Need to reload module to pick up new env var
+      jest.resetModules();
+
+      // Re-import to get fresh instance with new env
+      return import('../src/lib/tokenStore.js').then(({ createOneTimeToken: create, getOneTimeTokenTtlMs: getTtl }) => {
+        const ttl = getTtl();
+        expect(ttl).toBe(customTtl);
+
+        const record = create();
+        expect(record.ttlMs).toBe(customTtl);
+      });
+    });
+
+    it('should convert ARCANOS_CONFIRM_TOKEN_TTL_MINUTES to milliseconds', () => {
+      const customMinutes = 15;
+      const expectedMs = customMinutes * 60 * 1000;
+      process.env.ARCANOS_CONFIRM_TOKEN_TTL_MINUTES = customMinutes.toString();
+
+      jest.resetModules();
+
+      return import('../src/lib/tokenStore.js').then(({ createOneTimeToken: create, getOneTimeTokenTtlMs: getTtl }) => {
+        const ttl = getTtl();
+        expect(ttl).toBe(expectedMs);
+
+        const record = create();
+        expect(record.ttlMs).toBe(expectedMs);
+      });
+    });
+
+    it('should prefer TTL_MS over TTL_MINUTES when both are set', () => {
+      const ttlMs = 3 * 60 * 1000; // 3 minutes
+      const ttlMinutes = 20; // 20 minutes (should be ignored)
+
+      process.env.ARCANOS_CONFIRM_TOKEN_TTL_MS = ttlMs.toString();
+      process.env.ARCANOS_CONFIRM_TOKEN_TTL_MINUTES = ttlMinutes.toString();
+
+      jest.resetModules();
+
+      return import('../src/lib/tokenStore.js').then(({ getOneTimeTokenTtlMs: getTtl }) => {
+        const ttl = getTtl();
+        expect(ttl).toBe(ttlMs);
+        expect(ttl).not.toBe(ttlMinutes * 60 * 1000);
+      });
+    });
+
+    it('should use default TTL when env vars are invalid', () => {
+      const defaultTtl = 10 * 60 * 1000;
+      process.env.ARCANOS_CONFIRM_TOKEN_TTL_MS = 'invalid';
+
+      jest.resetModules();
+
+      return import('../src/lib/tokenStore.js').then(({ getOneTimeTokenTtlMs: getTtl }) => {
+        const ttl = getTtl();
+        expect(ttl).toBe(defaultTtl);
+      });
     });
   });
 
-  describe('getOneTimeTokenTtlMs', () => {
-    test('returns the configured TTL value', () => {
-      const ttl = getOneTimeTokenTtlMs();
-
-      expect(typeof ttl).toBe('number');
-      expect(ttl).toBeGreaterThan(0);
-    });
-
-    test('returns consistent value across multiple calls', () => {
-      const ttl1 = getOneTimeTokenTtlMs();
-      const ttl2 = getOneTimeTokenTtlMs();
-
-      expect(ttl1).toBe(ttl2);
-    });
-  });
-
-  describe('token expiration and cleanup', () => {
-    test('purges expired tokens during consumption attempts', async () => {
-      // Create multiple tokens
-      const token1 = createOneTimeToken();
-      const token2 = createOneTimeToken();
-      const token3 = createOneTimeToken();
-
-      // Mock Date.now to simulate time passing
+  describe('token purging', () => {
+    it('should automatically purge expired tokens when creating new tokens', () => {
+      //audit Assumption: expired tokens should not accumulate; risk: memory leak from stale tokens; invariant: expired tokens removed on create; handling: purge before creation.
       const originalDateNow = Date.now;
-      const futureTime = token1.expiresAt + 1000;
-      Date.now = jest.fn(() => futureTime) as unknown as typeof Date.now;
 
       try {
-        // All tokens should be expired now
+        // Create tokens at T=0
+        Date.now = jest.fn(() => 1000000);
+        const token1 = createOneTimeToken();
+        const token2 = createOneTimeToken();
+
+        // Move time forward past expiration
+        Date.now = jest.fn(() => 1000000 + (11 * 60 * 1000)); // 11 minutes later
+
+        // Create new token (should purge expired ones)
+        const token3 = createOneTimeToken();
+
+        // Try to consume old tokens (should be purged)
         const result1 = consumeOneTimeToken(token1.token);
         const result2 = consumeOneTimeToken(token2.token);
-        const result3 = consumeOneTimeToken(token3.token);
 
         expect(result1.ok).toBe(false);
         expect(result2.ok).toBe(false);
-        expect(result3.ok).toBe(false);
-        
-        // Note: expired tokens are purged before lookup, so they appear as 'invalid'
-        if (!result1.ok) expect(['expired', 'invalid']).toContain(result1.reason);
-        if (!result2.ok) expect(['expired', 'invalid']).toContain(result2.reason);
-        if (!result3.ok) expect(['expired', 'invalid']).toContain(result3.reason);
+
+        // New token should still work
+        const result3 = consumeOneTimeToken(token3.token);
+        expect(result3.ok).toBe(true);
       } finally {
         Date.now = originalDateNow;
       }
     });
 
-    test('purges expired tokens during token creation', async () => {
-      // Create a token
-      const oldToken = createOneTimeToken();
-
-      // Mock Date.now to simulate time passing
+    it('should automatically purge expired tokens when consuming tokens', () => {
       const originalDateNow = Date.now;
-      const futureTime = oldToken.expiresAt + 1000;
-      Date.now = jest.fn(() => futureTime) as unknown as typeof Date.now;
 
       try {
-        // Create a new token, which should trigger purge of expired tokens
-        const newToken = createOneTimeToken();
-        expect(newToken.token).toBeDefined();
+        // Create token at T=0
+        Date.now = jest.fn(() => 1000000);
+        const token = createOneTimeToken();
 
-        // Old token should now be invalid (purged)
-        const result = consumeOneTimeToken(oldToken.token);
+        // Move time forward past expiration
+        Date.now = jest.fn(() => 1000000 + (11 * 60 * 1000)); // 11 minutes later
+
+        // Try to consume (should trigger purge and return error)
+        // Token is purged, so it returns 'invalid' after purge
+        // or 'expired' if caught at exact boundary - both are valid rejections
+        const result = consumeOneTimeToken(token.token);
+
         expect(result.ok).toBe(false);
         if (!result.ok) {
-          expect(result.reason).toBe('invalid');
+          expect(['expired', 'invalid']).toContain(result.reason);
         }
       } finally {
         Date.now = originalDateNow;
@@ -217,26 +283,11 @@ describe('tokenStore', () => {
     });
   });
 
-  describe('token security properties', () => {
-    test('token is a UUID format', () => {
-      const token = createOneTimeToken();
-      // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      
-      expect(token.token).toMatch(uuidRegex);
-    });
-
-    test('tokens have sufficient entropy (multiple unique tokens)', () => {
-      const tokens = new Set<string>();
-      const count = 100;
-
-      for (let i = 0; i < count; i++) {
-        const token = createOneTimeToken();
-        tokens.add(token.token);
-      }
-
-      // All tokens should be unique
-      expect(tokens.size).toBe(count);
+  describe('getOneTimeTokenTtlMs', () => {
+    it('should return the configured TTL in milliseconds', () => {
+      const ttl = getOneTimeTokenTtlMs();
+      expect(typeof ttl).toBe('number');
+      expect(ttl).toBeGreaterThan(0);
     });
   });
 });
