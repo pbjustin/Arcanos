@@ -22,6 +22,9 @@ router.use('/:gptId', async (req, res, next) => {
   try {
     const gptModuleMap = await getGptModuleMap();
     const incomingGptId = req.params.gptId;
+    if (incomingGptId.length > 256) {
+      return res.status(400).json({ error: 'GPTID too long' });
+    }
     const configuredGptIds = Object.keys(gptModuleMap);
 
     // Matching strategy (flexible):
