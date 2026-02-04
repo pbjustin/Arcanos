@@ -1131,7 +1131,7 @@ class ArcanosCLI:
                 # Vision analysis with speech text as prompt
                 response, tokens, cost = self.vision.analyze_image(img_base64, text)
                 if response:
-                    self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(response)}\n")
+                    self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(response).replace('[', '[[')}\n")
                     self._last_response = response
                     self.rate_limiter.record_request(tokens, cost)
                     self.memory.increment_stat("vision_requests")
