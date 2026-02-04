@@ -19,7 +19,7 @@ base_dir = Path('.').absolute()
 # Data files to include
 datas = [
     ('.env.example', '.'),
-    ('assets', 'assets'),
+    ('arcanos/assets', 'assets'),
 ]
 
 # Hidden imports (packages not auto-detected)
@@ -39,16 +39,15 @@ hiddenimports = [
     'pyaudio',
     'pyttsx3',
     'pynput',
-    'win32com.client',
-    'winshell',
     'pystray',
     'rich',
     'psycopg2',
+    'arcanos.debug_server',
 ]
 
 # Analysis
 a = Analysis(
-    ['cli.py'],
+    ['arcanos/cli.py'],
     pathex=[],
     binaries=[],
     datas=datas,
@@ -95,7 +94,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico' if Path('assets/icon.ico').exists() else None,
+    icon='arcanos/assets/icon.ico' if Path('arcanos/assets/icon.ico').exists() else None,
     version_file=None,
     uac_admin=False,  # Don't require admin
 )

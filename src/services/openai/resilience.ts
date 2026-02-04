@@ -1,5 +1,6 @@
 import { CircuitBreaker, ExponentialBackoff } from '../../utils/circuitBreaker.js';
 import { recordTraceEvent, markOperation } from '../../utils/telemetry.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 export const RESILIENCE_CONSTANTS = {
   DEFAULT_MAX_TOKENS: 1024,
@@ -43,7 +44,7 @@ export async function executeWithResilience<T>(operation: () => Promise<T>): Pro
       markOperation('openai.failure');
       recordTraceEvent('openai.resilience.failure', {
         state: circuitBreaker.getState(),
-        error: error instanceof Error ? error.message : 'unknown'
+        error: resolveErrorMessage(error, 'unknown')
       });
       throw error;
     }

@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
 import { createSessionPersistenceAdapter, type SessionPersistenceAdapter } from './sessionPersistence.js';
+import { getEnvNumber } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface SessionMetadata {
   topic?: string;
@@ -25,8 +27,9 @@ interface MemoryStoreOptions {
   capacity?: number;
 }
 
-const DEFAULT_CAPACITY = parseInt(process.env.SESSION_CACHE_CAPACITY || '200', 10);
-const DEFAULT_RETENTION_MINUTES = parseInt(process.env.SESSION_RETENTION_MINUTES || '1440', 10);
+// Use config layer for env access (adapter boundary pattern)
+const DEFAULT_CAPACITY = getEnvNumber('SESSION_CACHE_CAPACITY', 200);
+const DEFAULT_RETENTION_MINUTES = getEnvNumber('SESSION_RETENTION_MINUTES', 1440);
 
 class MemoryStore {
   private sessions = new Map<string, SessionEntry>();
@@ -90,7 +93,7 @@ class MemoryStore {
       void this.persistence.persistSession(merged).catch(error => {
         console.warn('[memory-store] Failed to persist session', {
           sessionId,
-          error: error instanceof Error ? error.message : 'unknown'
+          error: resolveErrorMessage(error, 'unknown')
         });
       });
 
@@ -98,7 +101,7 @@ class MemoryStore {
         void this.persistence.removeSession(removedId).catch(error => {
           console.warn('[memory-store] Failed to remove persisted session', {
             sessionId: removedId,
-            error: error instanceof Error ? error.message : 'unknown'
+            error: resolveErrorMessage(error, 'unknown')
           });
         });
       }
@@ -108,7 +111,7 @@ class MemoryStore {
           .purgeExpired(new Date(Date.now() - this.retentionMs))
           .catch(error =>
             console.warn('[memory-store] Failed to purge expired sessions', {
-              error: error instanceof Error ? error.message : 'unknown'
+              error: resolveErrorMessage(error, 'unknown')
             })
           );
       }
@@ -175,14 +178,14 @@ class MemoryStore {
       await this.persistence.removeSession(sessionId).catch(error => {
         console.warn('[memory-store] Failed to remove expired session from persistence', {
           sessionId,
-          error: error instanceof Error ? error.message : 'unknown'
+          error: resolveErrorMessage(error, 'unknown')
         });
       });
     }
 
     await this.persistence.purgeExpired(new Date(Date.now() - this.retentionMs)).catch(error => {
       console.warn('[memory-store] Failed to purge expired sessions during initialization', {
-        error: error instanceof Error ? error.message : 'unknown'
+        error: resolveErrorMessage(error, 'unknown')
       });
     });
   }

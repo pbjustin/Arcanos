@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { loadModuleDefinitions, ModuleDef } from '../modules/moduleLoader.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 
@@ -29,16 +30,62 @@ function createHandler(mod: ModuleDef) {
       res.json(result);
     } catch (err: unknown) {
       //audit Assumption: module failures should return 500
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+      res.status(500).json({ error: resolveErrorMessage(err) });
     }
   };
 }
 
+/**
+ * Purpose: Register a module definition and mount its handler route.
+ * Inputs/Outputs: route string and ModuleDef; mounts handler and caches module metadata.
+ * Edge cases: Overwrites existing module entries with the same route or name.
+ */
 export function registerModule(route: string, mod: ModuleDef) {
   registryByRoute.set(route, mod);
   registryByName.set(mod.name, mod);
   moduleRoutes.set(mod.name, route);
   router.post(`/modules/${route}`, createHandler(mod));
+}
+
+/**
+ * Purpose: Build a safe module registry snapshot for daemon prompts.
+ * Inputs/Outputs: None; returns list of module metadata without gptIds.
+ * Edge cases: Returns empty list when no modules are loaded.
+ */
+export function getModulesForRegistry(): Array<{
+  id: string;
+  description: string | null;
+  route: string | null;
+  actions: string[];
+}> {
+  //audit Assumption: registryByName holds current modules; risk: stale data; invariant: map values used; handling: map to safe shape.
+  return Array.from(registryByName.values()).map(mod => ({
+    id: mod.name,
+    description: mod.description ?? null,
+    route: moduleRoutes.get(mod.name) ?? null,
+    actions: Object.keys(mod.actions)
+  }));
+}
+
+/**
+ * Purpose: Look up metadata for a single module by name.
+ * Inputs/Outputs: Module name string; returns metadata or null.
+ * Edge cases: Returns null when module name is not registered.
+ */
+export function getModuleMetadata(moduleName: string): {
+  name: string;
+  description: string | null;
+  route: string | null;
+  actions: string[];
+} | null {
+  const mod = registryByName.get(moduleName);
+  if (!mod) return null;
+  return {
+    name: mod.name,
+    description: mod.description ?? null,
+    route: moduleRoutes.get(mod.name) ?? null,
+    actions: Object.keys(mod.actions),
+  };
 }
 
 const loadedModules = await loadModuleDefinitions();
@@ -114,7 +161,7 @@ router.post('/queryroute', async (req: Request, res: Response) => {
     res.json(result);
   } catch (err: unknown) {
     //audit Assumption: module failures should return 500
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+    res.status(500).json({ error: resolveErrorMessage(err) });
   }
 });
 

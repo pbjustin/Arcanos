@@ -1,6 +1,9 @@
 import type { Server } from 'http';
 import type { Express } from 'express';
 import config from './config/index.js';
+import { getConfig } from './config/unifiedConfig.js';
+import { getEnv } from './config/env.js';
+import { APPLICATION_CONSTANTS } from './utils/constants.js';
 import './config/workerConfig.js';
 import './logic/aiCron.js';
 import './logic/assistantSyncCron.js';
@@ -16,6 +19,8 @@ import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, 
 import { logger } from './utils/structuredLogging.js';
 import { SERVER_MESSAGES, SERVER_CONSTANTS, SERVER_TEXT } from './config/serverMessages.js';
 import { createIdleStateService } from './services/idleStateService.js';
+import { setupBridgeSocket } from './services/bridgeSocket.js';
+import { isBridgeEnabled } from './utils/bridgeEnv.js';
 
 const serverLogger = logger.child({ module: 'server' });
 
@@ -49,9 +54,11 @@ function createShutdownHandler(server: Server, onShutdown?: () => void): (signal
   return (signal: string) => {
     const mem = process.memoryUsage();
     const uptimeSeconds = process.uptime().toFixed(1);
+    const appConfig = getConfig();
+    // Railway-specific env vars (optional, for logging only)
     logShutdownEvent(signal, mem, Number(uptimeSeconds), {
-      release: process.env.RAILWAY_RELEASE_ID,
-      deployment: process.env.RAILWAY_DEPLOYMENT_ID
+      release: appConfig.isRailway ? getEnv('RAILWAY_RELEASE_ID') : undefined,
+      deployment: appConfig.isRailway ? getEnv('RAILWAY_DEPLOYMENT_ID') : undefined
     });
     //audit Assumption: optional shutdown hook should not block exit; risk: slow cleanup; invariant: hook is best-effort; handling: guard and invoke.
     if (onShutdown) {
@@ -80,7 +87,7 @@ function initializeSystemState(actualPort: number): void {
   try {
     updateState({
       status: 'running',
-      version: process.env.npm_package_version || SERVER_CONSTANTS.DEFAULT_APP_VERSION,
+      version: getEnv('npm_package_version') || SERVER_CONSTANTS.DEFAULT_APP_VERSION,
       startTime: new Date().toISOString(),
       port: actualPort,
       environment: config.server.environment
@@ -158,7 +165,9 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
   const preferredPort = options.port ?? config.server.port;
 
   //audit Assumption: PORT set implies managed runtime (Railway) requires strict binding; risk: binding wrong port breaks routing; invariant: when PORT is set, use it or fail; handling: disable auto-select.
-  const portFromEnv = typeof process.env.PORT === 'string' && process.env.PORT.trim() !== '';
+  // PORT is validated at startup via validateRequiredEnv(), so it's guaranteed to be set
+  // If PORT was explicitly set (not default), disable auto-select
+  const portFromEnv = getEnv('PORT') !== undefined;
   const enableAutoSelect = !portFromEnv;
   const portResult = await getAvailablePort(preferredPort, host, enableAutoSelect);
 
@@ -173,6 +182,21 @@ export async function createServer(options: ServerFactoryOptions = {}): Promise<
       const instance = app.listen(actualPort, host, () => resolve(instance));
       instance.on('error', reject);
     });
+
+    // //audit Assumption: bridge IPC should attach after server is listening if enabled; risk: silent failure of critical feature when explicitly enabled; invariant: fail fast if bridge is enabled but setup fails; handling: check if bridge is enabled, fail startup if enabled and setup fails, otherwise just warn.
+    try {
+      setupBridgeSocket(server);
+    } catch (error) {
+      const bridgeEnabled = isBridgeEnabled();
+      if (bridgeEnabled) {
+        // Bridge is explicitly enabled (or enabled by default on Railway), so setup failure is critical
+        serverLogger.error('Failed to setup bridge socket when bridge is enabled', undefined, undefined, error as Error);
+        throw new Error(`Bridge socket setup failed when bridge is enabled: ${error instanceof Error ? error.message : String(error)}`);
+      } else {
+        // Bridge is disabled, so setup failure is expected and not critical
+        serverLogger.warn('Failed to setup bridge socket (bridge is disabled)', undefined, undefined, error as Error);
+      }
+    }
 
     logBootSummary(actualPort, workerResults);
 

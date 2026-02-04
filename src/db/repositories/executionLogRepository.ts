@@ -6,6 +6,7 @@
 
 import { isDatabaseConnected } from '../client.js';
 import { query } from '../query.js';
+import { resolveErrorMessage } from '../../lib/errors/index.js';
 
 /**
  * Log single execution entry
@@ -28,7 +29,7 @@ export async function logExecution(
     );
   } catch (error: unknown) {
     //audit Assumption: DB failures should fall back to console logging
-    console.error('[🔌 DB] Failed to log execution:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('[🔌 DB] Failed to log execution:', resolveErrorMessage(error));
     // Fallback to console logging
     console.log(`[${workerId}] ${level.toUpperCase()}: ${message}`);
   }
@@ -64,7 +65,7 @@ export async function logExecutionBatch(
     );
   } catch (error: unknown) {
     //audit Assumption: batch failures should fall back to console logging
-    console.error('[🔌 DB] Failed to batch log execution:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('[🔌 DB] Failed to batch log execution:', resolveErrorMessage(error));
     // Fallback to individual console logging
     entries.forEach(entry => console.log(`[${entry.workerId}] ${entry.level.toUpperCase()}: ${entry.message}`));
   }

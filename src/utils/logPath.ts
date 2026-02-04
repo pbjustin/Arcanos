@@ -6,12 +6,14 @@
 
 import fs from 'fs';
 import path from 'path';
+import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 /**
  * Get the log directory path from environment variable or default
  */
 export function getLogPath(): string {
-  return process.env.ARC_LOG_PATH || '/tmp/arc/log';
+  return getEnv('ARC_LOG_PATH', '/tmp/arc/log');
 }
 
 /**
@@ -74,7 +76,7 @@ export function ensureLogDirectory(): void {
       console.log(`📁 Created log directory: ${logDir}`);
     }
   } catch (error) {
-    console.error(`❌ Failed to create log directory ${logDir}:`, error instanceof Error ? error.message : 'Unknown error');
+    console.error(`❌ Failed to create log directory ${logDir}:`, resolveErrorMessage(error));
     throw error;
   }
 }
@@ -84,7 +86,7 @@ export function ensureLogDirectory(): void {
  * Maintains backward compatibility with existing logic
  */
 export function getEnvironmentLogPath(): string {
-  if (process.env.NODE_ENV === 'production') {
+  if (getEnv('NODE_ENV') === 'production') {
     return getSessionLogPath();
   } else {
     // In development, use local memory directory as fallback

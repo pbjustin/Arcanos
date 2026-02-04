@@ -17,6 +17,8 @@ import type {
 import { resolveWorkersDirectory } from '../utils/workerPaths.js';
 import { buildAutoHealPlan, summarizeAutoHeal } from '../services/autoHealService.js';
 import { loadState, updateState } from '../services/stateManager.js';
+import { getConfig } from '../config/unifiedConfig.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = Router();
 
@@ -50,7 +52,7 @@ async function loadWorkerInventory(): Promise<WorkerInfoDTO[]> {
         description: 'Failed to load worker',
         file: file,
         available: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: resolveErrorMessage(error)
       });
     }
   }
@@ -77,8 +79,8 @@ async function buildStatusPayload(): Promise<WorkerStatusResponseDTO> {
     workers,
     arcanosWorkers,
     system: {
-      model: process.env.AI_MODEL || 'gpt-4o',
-      environment: process.env.NODE_ENV || 'development'
+      model: getConfig().defaultModel || 'gpt-4o',
+      environment: getConfig().nodeEnv
     }
   };
 
@@ -100,7 +102,7 @@ router.get(
     console.error('Error getting worker status:', error);
     res.status(500).json({
       error: 'Failed to get worker status',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: resolveErrorMessage(error)
     });
   }
   }
@@ -158,7 +160,7 @@ router.post('/workers/heal', confirmGate, async (req: Request, res: Response) =>
     console.error('[AUTO-HEAL] Failed to process request', error);
     res.status(500).json({
       error: 'Auto-heal failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: resolveErrorMessage(error)
     });
   }
 });
@@ -293,7 +295,7 @@ router.post('/workers/run/:workerId', confirmGate, async (
       executionTime: '0ms',
       timestamp: new Date().toISOString(),
       error: 'Worker execution failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: resolveErrorMessage(error)
     });
   }
 });

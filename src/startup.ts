@@ -1,12 +1,13 @@
 import config from './config/index.js';
 import { validateEnvironment, printValidationResults, createStartupReport, validateRailwayEnvironment, checkEphemeralFS } from './utils/environmentValidation.js';
 import { logger } from './utils/structuredLogging.js';
-import { initializeDatabase } from './db.js';
+import { initializeDatabaseWithSchema as initializeDatabase } from './db/index.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from './utils/environmentSecurity.js';
 import memoryStore from './memory/store.js';
 import { isRailwayApiConfigured, probeRailwayApi } from './services/railwayClient.js';
+import { resolveErrorMessage } from './lib/errors/index.js';
 
 /**
  * Runs startup checks including environment validation, database init,
@@ -56,7 +57,7 @@ export async function performStartup(): Promise<void> {
     }
   } catch (err: unknown) {
     //audit Assumption: DB init errors should log and fallback
-    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = resolveErrorMessage(err);
     logger.error('❌ DB CHECK - Database initialization failed', { error: errorMessage });
     logger.warn('⚠️ DB CHECK - Continuing with in-memory fallback');
   }

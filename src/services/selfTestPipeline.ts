@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { updateState } from './stateManager.js';
 import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from '../config/selfTestConfig.js';
+import { getBackendBaseUrl, getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface SelfTestResult {
   id: string;
@@ -36,10 +38,9 @@ export interface SelfTestOptions {
 const LOG_FILE = path.join(process.cwd(), 'logs', 'healthcheck.json');
 
 function resolveBaseUrl(): string {
-  if (process.env.SELF_TEST_BASE_URL) return process.env.SELF_TEST_BASE_URL;
-  if (process.env.SERVER_URL) return process.env.SERVER_URL.replace(/\/$/, '');
-  const port = process.env.PORT || '8080';
-  return `http://127.0.0.1:${port}`;
+  const selfTestBaseUrl = getEnv('SELF_TEST_BASE_URL');
+  if (selfTestBaseUrl) return selfTestBaseUrl;
+  return getBackendBaseUrl().toString().replace(/\/$/, '');
 }
 
 function ensureLogFile(): void {
@@ -147,7 +148,7 @@ async function executePrompt(
       statusCode: 0,
       latencyMs: Date.now() - started,
       success: false,
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: resolveErrorMessage(error)
     };
   }
 }
@@ -155,7 +156,8 @@ async function executePrompt(
 export async function runSelfTestPipeline(options: SelfTestOptions = {}): Promise<SelfTestSummary> {
   const baseUrl = options.baseUrl || resolveBaseUrl();
   const prompts = options.prompts && options.prompts.length > 0 ? options.prompts : DEFAULT_SELF_TEST_PROMPTS;
-  const targetModel = options.targetModel || process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || 'gpt-4o';
+  // Use config layer for env access (adapter boundary pattern)
+  const targetModel = options.targetModel || getEnv('FINETUNED_MODEL_ID') || getEnv('AI_MODEL') || 'gpt-4o';
   const triggeredBy = options.triggeredBy || 'cli';
 
   const results: SelfTestResult[] = [];

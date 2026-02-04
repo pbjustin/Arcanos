@@ -1,7 +1,9 @@
 import type { SessionEntry, SessionMetadata } from '../memory/store.js';
 import memoryStore from '../memory/store.js';
-import { loadMemory, saveMemory } from '../db.js';
+import { loadMemory, saveMemory } from '../db/index.js';
 import { logger } from '../utils/structuredLogging.js';
+import { getEnvNumber } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 type ChannelName = string;
 type SessionMessage = Record<string, unknown> | string;
@@ -15,7 +17,8 @@ interface SessionMemoryRepositoryOptions {
   fallbackTtlMs?: number;
 }
 
-const DEFAULT_FALLBACK_TTL_MS = parseInt(process.env.SESSION_CACHE_TTL_MS || '300000', 10);
+// Use config layer for env access (adapter boundary pattern)
+const DEFAULT_FALLBACK_TTL_MS = getEnvNumber('SESSION_CACHE_TTL_MS', 300000);
 
 function cloneMessage<T>(message: T): T {
   if (Array.isArray(message)) {
@@ -85,7 +88,7 @@ class SessionMemoryRepository {
         operation: 'appendMessage',
         sessionId,
         channel,
-        error: error instanceof Error ? error.message : String(error)
+        error: resolveErrorMessage(error)
       });
     }
 
@@ -119,7 +122,7 @@ class SessionMemoryRepository {
           operation: 'getChannel',
           sessionId,
           channel,
-          error: error instanceof Error ? error.message : String(error)
+          error: resolveErrorMessage(error)
         });
         return cloneMessages(cached);
       }

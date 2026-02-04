@@ -1,34 +1,13 @@
 import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
 import { REASONING_SYSTEM_PROMPT, REASONING_TEMPERATURE, REASONING_TOKEN_LIMIT, buildReasoningPrompt } from '../../config/reasoningTemplates.js';
-import { RESILIENCE_CONSTANTS } from './resilience.js';
 import type { ChatCompletionCreateParams } from './types.js';
 
 /**
- * Transform GPT-5 request payload to use correct token parameter names
- * @confidence 0.95 - GPT-5 API may use different parameter names
+ * Prepare GPT-5 request payload. OpenAI API uses max_tokens or max_completion_tokens,
+ * not max_output_tokens; we pass through token params unchanged.
  */
-type GPT5RequestPayload = ChatCompletionCreateParams & {
-  max_output_tokens?: number;
-};
-
 export function prepareGPT5Request(payload: ChatCompletionCreateParams): ChatCompletionCreateParams {
-  //audit Assumption: GPT-5 models need max_output_tokens; Handling: translate
-  if (payload.model && typeof payload.model === 'string' && payload.model.includes('gpt-5')) {
-    const gpt5Payload: GPT5RequestPayload = { ...payload };
-    if (payload.max_tokens) {
-      gpt5Payload.max_output_tokens = payload.max_tokens;
-      delete gpt5Payload.max_tokens;
-    }
-    if (payload.max_completion_tokens) {
-      gpt5Payload.max_output_tokens = payload.max_completion_tokens;
-      delete gpt5Payload.max_completion_tokens;
-    }
-    //audit Assumption: missing token limit should use resilience default
-    if (!gpt5Payload.max_output_tokens) {
-      gpt5Payload.max_output_tokens = RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
-    }
-    return gpt5Payload;
-  }
+  //audit Assumption: OpenAI API accepts max_tokens / max_completion_tokens only; risk: max_output_tokens rejected; invariant: no max_output_tokens; strategy: return payload as-is.
   return payload;
 }
 

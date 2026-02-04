@@ -48,5 +48,13 @@ export const KNOWN_ENVIRONMENT_FINGERPRINTS: EnvironmentFingerprintRecord[] = [
     arch: 'x64',
     nodeMajors: [20],
     releasePrefixes: ['22', '23']
+  },
+  {
+    id: 'dev-windows-node-24',
+    label: 'Local development (Windows, Node 20–24.x)',
+    platform: 'win32',
+    arch: 'x64',
+    nodeMajors: [20, 22, 24],
+    releasePrefixes: ['10']
   }
 ];

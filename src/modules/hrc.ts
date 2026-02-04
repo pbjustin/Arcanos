@@ -1,6 +1,8 @@
-import { getOpenAIClient } from '../services/openai.js';
 import { getDefaultModel } from '../services/openai.js';
 import { HRC_SYSTEM_PROMPT } from '../config/hrcPrompts.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface HRCResult {
   fidelity: number;
@@ -16,21 +18,22 @@ export interface HRCResult {
  */
 export class HRCCore {
   async evaluate(input: string): Promise<HRCResult> {
-    // Get OpenAI client from the centralized service
-    const openai = getOpenAIClient();
-    
-    // If OpenAI client isn't configured, return minimal default result
-    if (!openai) {
+    // Use adapter (adapter boundary pattern)
+    let adapter;
+    try {
+      adapter = getOpenAIAdapter();
+    } catch {
       return {
         fidelity: 0,
         resilience: 0,
-        verdict: 'OpenAI client not configured'
+        verdict: 'OpenAI adapter not configured'
       };
     }
 
     try {
-      const model = process.env.HRC_MODEL || getDefaultModel();
-      const response = await openai.chat.completions.create({
+      // Use config layer for env access (adapter boundary pattern)
+      const model = getEnv('HRC_MODEL') || getDefaultModel();
+      const response = await adapter.chat.completions.create({
         model,
         response_format: { type: 'json_object' },
         messages: [
@@ -52,7 +55,7 @@ export class HRCCore {
       return {
         fidelity: 0,
         resilience: 0,
-        verdict: `Evaluation failed: ${err instanceof Error ? err.message : 'unknown error'}`
+        verdict: `Evaluation failed: ${resolveErrorMessage(err, 'unknown error')}`
       };
     }
   }

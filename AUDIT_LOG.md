@@ -119,6 +119,16 @@
 
 ---
 
+## 2026-01-27: Pass 1 Updates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed `src/services/notionSync.ts` | Notion sync was unused and unreferenced in runtime code. | `rg "notionSync" src` (no matches) |
+| Removed `@notionhq/client` dependency | Only used by removed Notion sync module. | `npm uninstall @notionhq/client` |
+| Removed `utils/tagRequest.js` | Legacy JS duplicate; TypeScript version is used in `src/utils`. | `rg "utils/tagRequest\\.js"` (no matches); `rg "tagRequest" src/utils` (TS helper remains) |
+| Moved `@jest/globals` to `devDependencies` | Test-only dependency should not ship in production. | `npm install --save-dev @jest/globals` |
+| Updated Notion env documentation in `.env.example`, overview, and legacy docs | Avoid stale configuration references after module removal. | Manual review of updated files |
+
 ## Pass 1: Remove Unused Code
 
 ### Changes Made
@@ -216,7 +226,7 @@
 #### 3. Environment Configuration ✅
 - **Config Location:** `src/config/index.ts`
 - **PORT:** ✅ Reads from process.env.PORT
-- **HOST:** ✅ Defaults to 0.0.0.0 for Railway
+- **HOST:** ✅ Conditional: 127.0.0.1 (dev) / 0.0.0.0 (prod) with HOST override support
 - **OpenAI API Key:** ✅ Gracefully handles missing key with mock mode
 - **Database:** ✅ PostgreSQL connection with fallback to in-memory
 - **Workers:** ✅ Disabled in Railway production (RUN_WORKERS=false)
@@ -634,7 +644,7 @@ No further autonomous optimizations are required at this time.
 | Check | Status | Details |
 | --- | --- | --- |
 | PORT environment variable | ✅ Configured | `src/config/index.ts:14` - `Number(process.env.PORT) \|\| 8080` |
-| HOST binding | ✅ Configured | Defaults to `0.0.0.0` for Railway compatibility |
+| HOST binding | ✅ Configured | Conditional default: `127.0.0.1` (dev) / `0.0.0.0` (prod). Override with `HOST` env var. |
 | Health check endpoint | ✅ Configured | `/health` in `src/routes/status.ts` with comprehensive checks |
 | Liveness probe | ✅ Configured | `/healthz` in `src/routes/health.ts` |
 | Readiness probe | ✅ Configured | `/readyz` in `src/routes/health.ts` |
@@ -729,4 +739,3 @@ All autonomous refactoring passes have been successfully executed. The codebase 
 - **Maintainable:** Clean, modular architecture
 
 No further autonomous optimizations are required at this time. The repository is ready for production deployment.
-

@@ -2,8 +2,12 @@ import express, { Request, Response } from 'express';
 import { handleAIRequest, type AskRequest, type AskResponse } from './ask.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
 import { inferHttpMethodIntent } from '../utils/httpMethodIntent.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
-import type { ClientContextDTO, ErrorResponseDTO } from '../types/dto.js';
+import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import type {
+  ClientContextDTO,
+  ConfirmationRequiredResponseDTO,
+  ErrorResponseDTO
+} from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
@@ -43,7 +47,14 @@ interface ChatGPTActionBody {
   metadata?: Record<string, unknown>;
 }
 
-router.post('/api/ask', apiAskValidation, asyncHandler((req: Request<{}, AskResponse | ErrorResponseDTO, ChatGPTActionBody>, res: Response<AskResponse | ErrorResponseDTO>) => {
+router.post(
+  '/api/ask',
+  apiAskValidation,
+  asyncHandler(
+    (
+      req: Request<{}, AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO, ChatGPTActionBody>,
+      res: Response<AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO>
+    ) => {
   const { domain, useRAG, useHRC, sessionId, overrideAuditSafe, metadata } = req.body;
 
   const sourceField =
@@ -126,10 +137,16 @@ router.post('/api/ask', apiAskValidation, asyncHandler((req: Request<{}, AskResp
     metadata
   };
 
-  const typedRequest = req as unknown as Request<{}, AskResponse | ErrorResponseDTO, AskRequest>;
+  const typedRequest = req as unknown as Request<
+    {},
+    AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO,
+    AskRequest
+  >;
   typedRequest.body = normalizedRequest;
 
   return handleAIRequest(typedRequest, res, 'ask');
-}));
+  }
+  )
+);
 
 export default router;

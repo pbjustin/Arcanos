@@ -10,7 +10,9 @@
  * Compatible with OpenAI SDK (chat/completions).
  */
 
-import { getOpenAIClient, getDefaultModel } from './openai.js';
+import { getDefaultModel } from './openai.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
 
@@ -60,9 +62,12 @@ export function saveWithAuditCheck<T>(data: T, validator: (data: T) => boolean):
 }
 
 export async function interpretCommand(userCommand: string) {
-  const client = getOpenAIClient();
-  if (!client) {
-    console.warn('⚠️ OpenAI client not available - using mock response for command interpretation');
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    console.warn('⚠️ OpenAI adapter not available - using mock response for command interpretation');
     // Provide simple command mapping when API is not available
     const normalized = userCommand.toLowerCase();
     if (normalized.includes('strict') || normalized.includes('true') || normalized.includes('enable')) {
@@ -80,7 +85,7 @@ export async function interpretCommand(userCommand: string) {
   }
 
   try {
-    const response = await client.chat.completions.create({
+    const response = await adapter.chat.completions.create({
       model: getDefaultModel(),
       messages: [
         { role: 'system', content: 'You are an AI that maps natural language commands to audit-safe mode toggles.' },
@@ -97,7 +102,7 @@ export async function interpretCommand(userCommand: string) {
       console.warn('⚠️ Unrecognized command. Mode unchanged.');
     }
   } catch (error) {
-    console.error('❌ Error interpreting command:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ Error interpreting command:', resolveErrorMessage(error));
     console.warn('⚠️ Command interpretation failed. Mode unchanged.');
   }
 }

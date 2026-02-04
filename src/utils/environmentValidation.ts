@@ -3,8 +3,11 @@
  * Provides comprehensive environment validation with helpful error messages
  */
 
+import { APPLICATION_CONSTANTS } from './constants.js';
 import { logger } from './structuredLogging.js';
 import type { EnvironmentSecuritySummary } from './environmentSecurity.js';
+import { getConfig } from '../config/unifiedConfig.js';
+import { getEnv } from '../config/env.js';
 
 export interface EnvironmentCheck {
   name: string;
@@ -22,12 +25,6 @@ export interface ValidationResult {
   suggestions: string[];
 }
 
-// Support legacy environment variable naming
-// Map FINE_TUNED_MODEL_ID -> FINETUNED_MODEL_ID for backward compatibility
-if (process.env.FINE_TUNED_MODEL_ID && !process.env.FINETUNED_MODEL_ID) {
-  process.env.FINETUNED_MODEL_ID = process.env.FINE_TUNED_MODEL_ID;
-}
-
 // Environment variable definitions
 const environmentChecks: EnvironmentCheck[] = [
   {
@@ -41,7 +38,7 @@ const environmentChecks: EnvironmentCheck[] = [
     name: 'PORT',
     required: false,
     description: 'Server port number',
-    defaultValue: '8080',
+    defaultValue: String(APPLICATION_CONSTANTS.DEFAULT_PORT),
     validator: (value) => {
       const port = parseInt(value, 10);
       return !isNaN(port) && port > 0 && port < 65536;
@@ -53,7 +50,9 @@ const environmentChecks: EnvironmentCheck[] = [
     description: 'OpenAI API key for AI functionality',
     validator: (value) => {
       // Allow non-production test keys in CI to keep pipelines green without a real secret
-      const allowMockKey = process.env.CI === 'true' || process.env.ALLOW_MOCK_OPENAI === 'true';
+      const ciEnv = getEnv('CI');
+      const allowMockEnv = getEnv('ALLOW_MOCK_OPENAI');
+      const allowMockKey = ciEnv === 'true' || allowMockEnv === 'true';
       if (allowMockKey && value.length > 0) {
         return true;
       }
@@ -157,7 +156,8 @@ export function validateEnvironment(): ValidationResult {
   logger.info('🔍 Starting environment validation');
 
   for (const check of environmentChecks) {
-    const value = process.env[check.name];
+    // Use config layer for env access (adapter boundary pattern)
+    const value = getEnv(check.name);
     
     if (!value || value.trim() === '') {
       if (check.required) {
@@ -238,20 +238,21 @@ export function printValidationResults(result: ValidationResult): void {
  * Gets environment information for health checks
  */
 export function getEnvironmentInfo() {
+  const config = getConfig();
   return {
     nodeVersion: process.version,
     platform: process.platform,
     arch: process.arch,
-    environment: process.env.NODE_ENV || 'development',
+    environment: config.nodeEnv,
     uptime: process.uptime(),
     memoryUsage: process.memoryUsage(),
     versions: process.versions,
     configuredVariables: environmentChecks
-      .filter(check => process.env[check.name])
+      .filter(check => getEnv(check.name))
       .map(check => ({
         name: check.name,
-        hasValue: !!process.env[check.name],
-        isDefault: process.env[check.name] === check.defaultValue
+        hasValue: !!getEnv(check.name),
+        isDefault: getEnv(check.name) === check.defaultValue
       }))
   };
 }
@@ -267,7 +268,8 @@ export function validateRailwayEnvironment(): ValidationResult {
     suggestions: []
   };
 
-  const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID;
+  const config = getConfig();
+  const isRailway = config.isRailway;
   
   if (!isRailway) {
     result.warnings.push('⚠️  Not running on Railway platform');
@@ -282,28 +284,29 @@ export function validateRailwayEnvironment(): ValidationResult {
     'RAILWAY_ENVIRONMENT',
     'RAILWAY_SERVICE_ID'
   ];
-
+  
   for (const check of railwayChecks) {
-    if (!process.env[check]) {
+    const value = getEnv(check);
+    if (!value) {
       result.warnings.push(`⚠️  Railway variable ${check} not found`);
     }
   }
 
-  if (!process.env.RAILWAY_API_TOKEN) {
+  const railwayApiToken = getEnv('RAILWAY_API_TOKEN');
+  if (!railwayApiToken) {
     result.warnings.push('⚠️  Railway API token (RAILWAY_API_TOKEN) not set - management API features disabled');
   } else {
     logger.info('✅ Railway management API token detected');
   }
 
   // Check for Railway PostgreSQL
-  if (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway.app')) {
+  if (config.databaseUrl && config.databaseUrl.includes('railway.app')) {
     logger.info('✅ Railway PostgreSQL detected');
   }
 
   // Check port configuration
-  const port = process.env.PORT;
-  if (port && port !== '8080') {
-    logger.info(`🚄 Railway port override detected: ${port}`);
+  if (config.port && config.port !== APPLICATION_CONSTANTS.DEFAULT_PORT) {
+    logger.info(`🚄 Railway port override detected: ${config.port}`);
   }
 
   return result;
@@ -316,6 +319,7 @@ export function createStartupReport(securitySummary?: EnvironmentSecuritySummary
   const envResult = validateEnvironment();
   const _railwayResult = validateRailwayEnvironment();
   const envInfo = getEnvironmentInfo();
+  const config = getConfig();
 
   const securityLines = securitySummary
     ? [
@@ -351,11 +355,11 @@ export function createStartupReport(securitySummary?: EnvironmentSecuritySummary
     `└─ Configured Variables: ${envInfo.configuredVariables.length}`,
     '',
     '🚄 Railway Status:',
-    process.env.RAILWAY_ENVIRONMENT ?
-      `├─ Project: ${process.env.RAILWAY_PROJECT_ID}` :
+    config.isRailway ?
+      `├─ Project: ${config.railwayProjectId || 'unknown'}` :
       '├─ Platform: Local/Other',
-    `├─ Management API: ${process.env.RAILWAY_API_TOKEN ? 'configured' : 'disabled'}`,
-    process.env.DATABASE_URL?.includes('railway.app') ?
+    `├─ Management API: ${getEnv('RAILWAY_API_TOKEN') ? 'configured' : 'disabled'}`,
+    config.databaseUrl?.includes('railway.app') ?
       '└─ Database: Railway PostgreSQL ✅' :
       '└─ Database: External/Local',
     '',
@@ -377,21 +381,27 @@ export function checkEphemeralFS(): void {
     return persistentPrefixes.some(prefix => path.startsWith(prefix));
   };
   
-  const logPath = process.env.ARC_LOG_PATH;
-  const memoryPath = process.env.ARC_MEMORY_PATH;
+  const config = getConfig();
+  const logPath = config.logPath;
+  const memoryPath = config.memoryPath;
   
+  //audit Assumption: persistent filesystem paths are risky on Railway; risk: data loss; invariant: logPath should prefer /tmp; handling: warn when persistent prefixes detected.
   if (logPath && isPersistentPath(logPath)) {
     console.warn(`⚠️  LOG PATH WARNING: ${logPath} may not persist on Railway ephemeral FS. Consider using /tmp/`);
   }
   
+  //audit Assumption: memory path persistence matters for cache durability; risk: data loss after deploy; invariant: memoryPath should prefer /tmp on Railway; handling: warn on persistent prefixes.
   if (memoryPath && isPersistentPath(memoryPath)) {
     console.warn(`⚠️  MEMORY PATH WARNING: ${memoryPath} may not persist on Railway ephemeral FS. Consider using /tmp/`);
   }
   
   // Check if running on Railway
-  if (process.env.RAILWAY_ENVIRONMENT) {
-    console.log('🚂 Running on Railway - using ephemeral filesystem');
-    console.log('   Files in /tmp/ and database are suitable for persistence');
+  //audit Assumption: Railway runtime implies ephemeral FS; risk: misleading logs off-platform; invariant: log Railway info only when detected; handling: guard with config.isRailway.
+  if (config.isRailway) {
+    logger.info('Running on Railway - using ephemeral filesystem', {
+      module: 'environment',
+      note: 'Files in /tmp/ and database are suitable for persistence'
+    });
   }
 }
 

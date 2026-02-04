@@ -103,7 +103,7 @@ defaults to `gpt-4o` when none are provided:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `8080` | Preferred HTTP port. `startServer()` falls back to the next available port if occupied. |
-| `HOST` | `0.0.0.0` | Bind address. |
+| `HOST` | `127.0.0.1` (dev)<br>`0.0.0.0` (prod) | Bind address. Development mode defaults to localhost for security. Override with `HOST=0.0.0.0` for network access (Docker, WSL2, remote devices). |
 | `SERVER_URL` | `http://127.0.0.1:<port>` | Used when generating status URLs for backend sync. |
 | `NODE_ENV` | `development` | Controls logging verbosity and error payloads. |
 | `LOG_LEVEL` | `info` | Logging level for structured logs. |

@@ -29,6 +29,5 @@ curl -X POST http://localhost:8080/image \
   -H "Content-Type: application/json" \
   -d '{"prompt": "A sunset over the mountains"}'
 
-# Fetch WWE Universe roster from Notion
-curl http://localhost:8080/booker/roster
+# Notion roster endpoint removed (Notion integration is no longer part of the backend).
 ```

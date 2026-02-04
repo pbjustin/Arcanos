@@ -161,6 +161,45 @@ export const errorResponseSchema = z.object({
 export type ErrorResponseDTO = z.infer<typeof errorResponseSchema>;
 
 /**
+ * Schema for daemon pending action summaries in confirmation challenges.
+ * Purpose: Describe queued daemon actions requiring confirmation.
+ * Inputs/Outputs: daemon tool name, payload data, and a human summary.
+ * Edge cases: payload is untyped and may include nested objects.
+ */
+export const daemonPendingActionSchema = z.object({
+  daemon: z.string(),
+  payload: z.record(z.unknown()),
+  summary: z.string()
+});
+
+/**
+ * Schema for confirmation challenge metadata.
+ * Purpose: Convey the confirmation token to the daemon.
+ * Inputs/Outputs: challenge ID string.
+ * Edge cases: ID must be present for confirmation flows.
+ */
+export const confirmationChallengeSchema = z.object({
+  id: z.string()
+});
+
+/**
+ * Schema for confirmation-required responses from /api/ask.
+ * Purpose: Signal that sensitive daemon actions need user confirmation.
+ * Inputs/Outputs: code, confirmation challenge, and pending action summaries.
+ * Edge cases: pending_actions may be empty if backend filters invalid tools.
+ */
+export const confirmationRequiredResponseSchema = z.object({
+  code: z.literal('CONFIRMATION_REQUIRED'),
+  confirmationChallenge: confirmationChallengeSchema,
+  pending_actions: z.array(daemonPendingActionSchema)
+});
+
+/**
+ * Confirmation-required response data transfer object type inferred from the schema.
+ */
+export type ConfirmationRequiredResponseDTO = z.infer<typeof confirmationRequiredResponseSchema>;
+
+/**
  * Schema for individual worker module information.
  * Describes a single background worker's availability, location, and error state.
  */

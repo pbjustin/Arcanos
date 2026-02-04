@@ -123,7 +123,7 @@ Automatically ensures your Python daemon and TypeScript server stay synchronized
 npm run sync:check
 
 # Make changes to Python daemon
-# ... edit daemon-python/backend_client.py ...
+# ... edit daemon-python/arcanos/backend_client.py ...
 
 # Check if server needs updates
 npm run sync:check

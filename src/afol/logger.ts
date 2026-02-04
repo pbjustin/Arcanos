@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { DecisionRecord, AfolLogEntry } from './types.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const defaultLogPath = path.resolve(process.cwd(), 'logs', 'afol-decisions.log');
 
@@ -43,7 +44,7 @@ export function logError(context: string, error: unknown): void {
   const entry: AfolLogEntry = {
     timestamp: new Date().toISOString(),
     context,
-    error: error instanceof Error ? error.message : String(error)
+    error: resolveErrorMessage(error)
   };
   fs.appendFileSync(logFilePath, `${JSON.stringify(entry)}\n`, { encoding: 'utf8' });
 }

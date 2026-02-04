@@ -1,5 +1,6 @@
 import { aiLogger } from '../utils/structuredLogging.js';
 import type { ClearFeedbackPayload } from '../types/reinforcement.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 interface ClearDeliveryResult {
   delivered: boolean;
@@ -116,7 +117,7 @@ export async function sendClearFeedback(payload: ClearFeedbackPayload): Promise<
 
     return {
       delivered: false,
-      message: error instanceof Error ? error.message : 'Unknown transport error'
+      message: resolveErrorMessage(error, 'Unknown transport error')
     };
   }
 }

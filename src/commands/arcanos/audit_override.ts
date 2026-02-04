@@ -1,7 +1,11 @@
+import { getEnv } from '../../config/env.js';
+
 export default function auditOverride(state?: unknown) {
   //audit Assumption: env override should take precedence
-  if (process.env.AUDIT_OVERRIDE) {
-    return process.env.AUDIT_OVERRIDE;
+  // Use config layer for env access (adapter boundary pattern)
+  const override = getEnv('AUDIT_OVERRIDE');
+  if (override) {
+    return override;
   }
   return {
     audit: 'Fallback audit value when override is inactive',

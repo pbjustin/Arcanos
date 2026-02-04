@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import BackstageBooker, { MatchInput, Wrestler } from '../modules/backstage/booker.js';
 import { confirmGate } from '../middleware/confirmGate.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ router.post('/book-event', confirmGate, async (req: Request, res: Response) => {
     res.status(200).json({ success: true, eventID });
   } catch (error: unknown) {
     //audit Assumption: booking failures should return 500
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    res.status(500).json({ success: false, error: resolveErrorMessage(error) });
   }
 });
 
@@ -38,7 +39,7 @@ router.post('/book-gpt', confirmGate, async (req: Request, res: Response) => {
     res.status(200).json({ success: true, storyline });
   } catch (error: unknown) {
     //audit Assumption: booking failures should return 500
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    res.status(500).json({ success: false, error: resolveErrorMessage(error) });
   }
 });
 
@@ -50,7 +51,7 @@ router.post('/simulate-match', confirmGate, async (req: Request, res: Response) 
     res.status(200).json({ success: true, result });
   } catch (error: unknown) {
     //audit Assumption: simulation failures should return 500
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    res.status(500).json({ success: false, error: resolveErrorMessage(error) });
   }
 });
 
@@ -61,7 +62,7 @@ router.post('/update-roster', confirmGate, async (req: Request, res: Response) =
     res.status(200).json({ success: true, roster });
   } catch (error: unknown) {
     //audit Assumption: roster update failures should return 500
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    res.status(500).json({ success: false, error: resolveErrorMessage(error) });
   }
 });
 
@@ -72,7 +73,7 @@ router.post('/track-storyline', confirmGate, async (req: Request, res: Response)
     res.status(200).json({ success: true, storyline });
   } catch (error: unknown) {
     //audit Assumption: storyline failures should return 500
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    res.status(500).json({ success: false, error: resolveErrorMessage(error) });
   }
 });
 

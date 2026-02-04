@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto';
-import { getOpenAIClient, getDefaultModel, hasValidAPIKey } from './openai.js';
+import { getDefaultModel, hasValidAPIKey } from './openai.js';
 import { createEmbedding } from './openai/embeddings.js';
 import { fetchAndClean } from './webFetcher.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
-import { saveRagDoc, loadAllRagDocs, initializeDatabase, getStatus } from '../db.js';
+import { saveRagDoc, loadAllRagDocs, initializeDatabaseWithSchema as initializeDatabase, getStatus } from '../db/index.js';
 import { logger } from '../utils/structuredLogging.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 interface Doc {
   id: string;
@@ -81,7 +82,14 @@ async function ensureStore(): Promise<void> {
 export async function ingestUrl(url: string): Promise<Doc> {
   await ensureStore();
   const content = await fetchAndClean(url);
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    throw new Error('OpenAI adapter not initialized');
+  }
+  const client = adapter.getClient();
   if (!client) {
     throw new Error('OpenAI client not initialized');
   }
@@ -114,7 +122,14 @@ interface IngestContentOptions {
 export async function ingestContent(options: IngestContentOptions): Promise<Doc> {
   const { id, content, source, metadata } = options;
   await ensureStore();
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    throw new Error('OpenAI adapter not initialized');
+  }
+  const client = adapter.getClient();
   if (!client) {
     throw new Error('OpenAI client not initialized');
   }
@@ -205,7 +220,14 @@ export async function recordConversationSnippet(options: ConversationSnippetOpti
 
 export async function answerQuestion(question: string): Promise<{ answer: string; sources: string[]; verification: string; sourceDetails: SourceDetail[] }> {
   await ensureStore();
-  const client = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    throw new Error('OpenAI adapter not initialized');
+  }
+  const client = adapter.getClient();
   if (!client) {
     throw new Error('OpenAI client not initialized');
   }
@@ -224,7 +246,8 @@ export async function answerQuestion(question: string): Promise<{ answer: string
       : '';
     return `${metadataText}${d.content}`;
   }).join('\n---\n');
-  const answerRes = await client.chat.completions.create({
+  // Use adapter for chat completions
+  const answerRes = await adapter.chat.completions.create({
     model: getDefaultModel(),
     messages: [
       { role: 'system', content: 'Answer the question using the provided context.' },
@@ -233,7 +256,7 @@ export async function answerQuestion(question: string): Promise<{ answer: string
   });
   const answer = answerRes.choices[0]?.message?.content || '';
 
-  const verifyRes = await client.chat.completions.create({
+  const verifyRes = await adapter.chat.completions.create({
     model: getDefaultModel(),
     messages: [
       { role: 'system', content: 'Verify if the answer is supported by the context. Reply yes or no with a brief reason.' },

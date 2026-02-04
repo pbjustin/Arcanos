@@ -1,6 +1,6 @@
 > **⚠️ HISTORICAL DOCUMENT**: This document is preserved for historical reference.  
 > **Last Updated:** 2024 (Historical) | **SDK Version at time:** v5.16.0  
-> **Current Version:** See [/README.md](../../../README.md) for latest (OpenAI SDK v6.15.0)
+> **Current Version:** See [/README.md](../../../README.md) for latest (OpenAI SDK v6.16.0)
 
 ---
 
@@ -13,7 +13,7 @@ Arcanos is an AI-controlled TypeScript backend that combines fine-tuned OpenAI m
 - **Intelligent Memory System** with PostgreSQL persistence and in-memory fallback for resilience.
 - **OpenAI SDK v5.16.0** providing streaming, function calling, assistants, and GPT-5.1 compatibility.
 - **Image Generation** through DALL·E with AI-refined prompts.
-- **Notion Database Sync** to import WWE Universe roster data using the official SDK.
+- **Notion Database Sync** to import WWE Universe roster data using the official SDK. (Removed - no longer in backend)
 - **Worker System** for AI-controlled CRON scheduling of maintenance, health checks, and background tasks.
 - **Hallucination-Resistant Core (HRC)** for reliability scoring across generated responses.
 - **Modern TypeScript Architecture** built on Express.js with comprehensive error handling.

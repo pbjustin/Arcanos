@@ -1,9 +1,11 @@
+import { getEnv } from '../config/env.js';
+
 function hasExplicitBridgeFlag(): boolean {
-  return typeof process.env.BRIDGE_ENABLED === 'string';
+  return typeof getEnv('BRIDGE_ENABLED') === 'string';
 }
 
 export function isBridgeEnabled(): boolean {
-  const raw = process.env.BRIDGE_ENABLED;
+  const raw = getEnv('BRIDGE_ENABLED');
   if (raw === 'true') return true;
   if (raw === 'false') return false;
 

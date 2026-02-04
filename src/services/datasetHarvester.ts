@@ -18,6 +18,8 @@
 import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { storeMemory } from './memoryAware.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
+import { getEnv } from '../config/env.js';
 
 /**
  * Confidence levels for harvested dataset references.
@@ -48,7 +50,8 @@ interface HarvestOptions {
   requestId?: string;
 }
 
-const LOG_DIR = process.env.ARC_DATASET_LOG_PATH || join(process.cwd(), 'logs');
+// Use config layer for env access (adapter boundary pattern)
+const LOG_DIR = getEnv('ARC_DATASET_LOG_PATH') || join(process.cwd(), 'logs');
 const LOG_FILE = join(LOG_DIR, 'dataset-harvest.log');
 
 if (!existsSync(LOG_DIR)) {
@@ -163,7 +166,7 @@ function logHarvest(result: DatasetHarvestResult): void {
     const line = `${JSON.stringify(result)}\n`;
     appendFileSync(LOG_FILE, line);
   } catch (error) {
-    console.error('❌ [DATASET-HARVEST] Failed to write harvest log:', error instanceof Error ? error.message : 'Unknown error');
+    console.error('❌ [DATASET-HARVEST] Failed to write harvest log:', resolveErrorMessage(error));
   }
 }
 

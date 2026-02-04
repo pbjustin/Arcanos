@@ -13,9 +13,25 @@ Before you begin, make sure you have:
 
 ## ⚡ Quick Installation
 
-### Option 1: Automated Setup (Recommended)
+### Option 0: Install with pipx (recommended for “type `arcanos` anywhere”)
 
-Open PowerShell in the `arcanos-hybrid` folder and run:
+If you want `arcanos` available from any terminal without activating a venv:
+
+```powershell
+python -m pip install --user pipx
+pipx ensurepath
+pipx install "arcanos @ git+https://github.com/pbjustin/Arcanos.git#subdirectory=daemon-python"
+```
+
+Open a new terminal, then run:
+
+```powershell
+arcanos
+```
+
+### Option 1: Automated Setup (Repo Clone)
+
+Open PowerShell in the repository root and run:
 
 ```powershell
 .\setup.ps1
@@ -24,9 +40,10 @@ Open PowerShell in the `arcanos-hybrid` folder and run:
 The setup wizard will:
 1. Create a Python virtual environment
 2. Install all dependencies
-3. Configure your API key
-4. Set up Windows integration (optional)
-5. Launch ARCANOS
+3. Install the ARCANOS CLI package
+4. Configure your API key
+5. (Optional) Add `arcanos` to your PATH
+6. Launch ARCANOS
 
 ### Option 2: Manual Setup
 
@@ -45,12 +62,17 @@ python -m venv venv
 # 4. Install dependencies
 python -m pip install -r requirements.txt
 
-# 5. Configure .env file
+# 5. Install the ARCANOS CLI package
+python -m pip install -e .
+
+# 6. Configure .env file
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 
-# 6. Run ARCANOS
-python cli.py
+# 7. Run ARCANOS
+arcanos
+# or
+python -m arcanos.cli
 ```
 
 ## 🎯 First Steps
@@ -107,7 +129,11 @@ You'll see:
 
 ## ⚙️ Configuration
 
-Edit `daemon-python/.env` to customize:
+Edit `daemon-python/.env` (repo/venv installs) or your user config file (pipx/global installs) to customize:
+
+- Windows: `%LOCALAPPDATA%\ARCANOS\.env`
+- macOS: `~/Library/Application Support/ARCANOS/.env`
+- Linux: `~/.local/share/ARCANOS/.env`
 
 ```env
 # Required
@@ -128,34 +154,35 @@ TEMPERATURE=0.7
 MAX_TOKENS=500
 ```
 
+## 🧩 Local IDE Debugging (One-Time Tokens)
+
+For IDE debugging, enable the daemon debug server and use one-time confirmation tokens for operator-approved access.
+
+- Set `IDE_AGENT_DEBUG=1` or `DAEMON_DEBUG_PORT=9999` to enable the daemon debug API.
+- Set `ARCANOS_AUTOMATION_SECRET` on the backend to allow token issuance.
+- Request a one-time token via `POST /debug/create-confirmation-token` and send it in the IDE header `x-arcanos-confirm-token`.
+- Tokens are single-use and expire after the configured TTL (default: 10 minutes).
+
+Note: Debug interfaces bind to `127.0.0.1` in development; use dev-only port mappings if you need external access.
+
 ## 🪟 Windows Terminal Integration
 
-To add ARCANOS as a Windows Terminal profile:
+Windows Terminal profile/shortcut integration has been removed in the cross-platform CLI build.
 
-1. Launch ARCANOS: `python cli.py`
-2. On first run, accept Windows integration when prompted
-3. Open Windows Terminal settings
-4. You'll see "ARCANOS" profile with custom theme
+## 🔧 Running the CLI Agent
 
-Or manually:
+The CLI agent runs as the `arcanos` command:
+
 ```powershell
-cd daemon-python
-python -c "from windows_integration import WindowsIntegration; WindowsIntegration().install_all()"
+arcanos
 ```
 
-## 🔧 Building an .exe
-
-Want to distribute ARCANOS as a standalone executable?
+If you are running from source without installing the package:
 
 ```powershell
-# Using the build script
-.\scripts\build.ps1
-
-# Or manually
+# Run the CLI agent
 cd daemon-python
-pyinstaller arcanos.spec
-
-# Output: daemon-python\dist\ARCANOS.exe
+python -m arcanos.cli
 ```
 
 ### Code Signing (Optional)
@@ -218,7 +245,9 @@ npm test
 ## ❓ Troubleshooting
 
 ### "OpenAI API key is required"
-- Make sure you've added your API key to `daemon-python/.env`
+- Make sure you've added your API key to the correct `.env`:
+  - Repo/venv installs: `daemon-python/.env`
+  - pipx/global installs: `%LOCALAPPDATA%\ARCANOS\.env` (Windows), `~/Library/Application Support/ARCANOS/.env` (macOS), `~/.local/share/ARCANOS/.env` (Linux)
 - Format: `OPENAI_API_KEY=sk-...`
 
 ### "Module not found" errors
@@ -249,8 +278,8 @@ npm test
 
 ## 💬 Support
 
-- **Issues:** [GitHub Issues](https://github.com/yourusername/arcanos-hybrid/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourusername/arcanos-hybrid/discussions)
+- **Issues:** [GitHub Issues](https://github.com/pbjustin/Arcanos/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/pbjustin/Arcanos/discussions)
 
 ## 🎉 You're Ready!
 

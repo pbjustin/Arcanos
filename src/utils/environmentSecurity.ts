@@ -5,6 +5,8 @@ import { logger } from './structuredLogging.js';
 import { KNOWN_ENVIRONMENT_FINGERPRINTS, EnvironmentFingerprintRecord } from '../config/environmentFingerprints.js';
 import { setAuditSafeMode } from '../persistenceManagerHierarchy.js';
 import { RUNTIME_PROBE_SUMMARY_SCRIPT } from '../config/runtimeProbeScripts.js';
+import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface EnvironmentFingerprint {
   platform: NodeJS.Platform | string;
@@ -77,7 +79,9 @@ export function collectEnvironmentFingerprint(): EnvironmentFingerprint {
   const arch = os.arch();
   const nodeVersion = process.version;
   const nodeMajor = parseInt(nodeVersion.replace('v', '').split('.')[0] || '0', 10);
-  const packageVersion = process.env.npm_package_version || 'unknown';
+  // Use config layer for env access (adapter boundary pattern)
+  // Note: npm_package_version is set by npm, not a standard env var
+  const packageVersion = getEnv('npm_package_version') || 'unknown';
   const hash = crypto
     .createHash('sha256')
     .update(`${platform}|${arch}|${nodeMajor}|${packageVersion}`)
@@ -158,18 +162,6 @@ export async function executeInSandbox(
   timeoutMs = DEFAULT_SANDBOX_TIMEOUT_MS
 ): Promise<SandboxExecutionResult> {
   return new Promise(resolve => {
-    const child = spawn(process.execPath, ['-e', script], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        NODE_ENV: process.env.NODE_ENV || 'production'
-      }
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let resolved = false;
-    let timedOut = false;
-
     const finish = (result: SandboxExecutionResult) => {
       //audit Assumption: finish should resolve once; Handling: guard with resolved flag
       if (!resolved) {
@@ -177,6 +169,34 @@ export async function executeInSandbox(
         resolve(result);
       }
     };
+
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+    let timedOut = false;
+
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(process.execPath, ['-e', script], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          // Use config layer for env access (adapter boundary pattern)
+          NODE_ENV: getEnv('NODE_ENV') || 'production'
+        }
+      });
+    } catch (err) {
+      //audit Assumption: spawn can throw synchronously (e.g. EPERM on Windows); Handling: resolve with failure
+      const msg = resolveErrorMessage(err);
+      finish({
+        success: false,
+        stdout: '',
+        stderr: msg,
+        exitCode: null,
+        timedOut: false,
+        errorMessage: msg
+      });
+      return;
+    }
 
     const timeoutHandle = setTimeout(() => {
       //audit Assumption: sandbox timeout enforces safety; Handling: kill process
@@ -191,11 +211,11 @@ export async function executeInSandbox(
       });
     }, timeoutMs);
 
-    child.stdout.on('data', data => {
+    child.stdout!.on('data', data => {
       stdout += data.toString();
     });
 
-    child.stderr.on('data', data => {
+    child.stderr!.on('data', data => {
       stderr += data.toString();
     });
 
@@ -229,6 +249,22 @@ export async function executeInSandbox(
 }
 
 async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxExecutionResult }> {
+  // Skip probe when env requests it (e.g. Windows spawn restrictions). Opts into trusting
+  // the runtime without probe validation.
+  // Use config layer for env access (adapter boundary pattern)
+  const skipProbeEnv = getEnv('SKIP_ENV_SECURITY_PROBE');
+  const skipProbe = skipProbeEnv === '1' || skipProbeEnv === 'true';
+  if (skipProbe) {
+    const sandbox: SandboxExecutionResult = {
+      success: true,
+      stdout: JSON.stringify({ nodeVersion: process.version, hasFetch: true, hasIntl: true }),
+      stderr: '',
+      timedOut: false,
+      exitCode: 0
+    };
+    return { issues: [], sandbox };
+  }
+
   const sandbox = await executeInSandbox(
     RUNTIME_PROBE_SUMMARY_SCRIPT.trim()
   );
@@ -260,10 +296,13 @@ async function probeRuntimeApis(): Promise<{ issues: string[]; sandbox: SandboxE
 }
 
 async function enforceSafeMode(): Promise<void> {
+  // Set safe mode flag (this modifies process.env directly, which is acceptable for runtime state)
   process.env[policyEnvelope.safeModeEnvFlag] = 'true';
 
   //audit Assumption: no DB means no persistence required; Handling: early return
-  if (!process.env.DATABASE_URL) {
+  // Use config layer for env access (adapter boundary pattern)
+  const databaseUrl = getEnv('DATABASE_URL');
+  if (!databaseUrl) {
     return;
   }
 

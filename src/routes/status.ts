@@ -8,9 +8,11 @@ import { loadState, updateState, SystemState } from '../services/stateManager.js
 import { confirmGate } from '../middleware/confirmGate.js';
 import { getOpenAIServiceHealth } from '../services/openai.js';
 import { queryCache, configCache } from '../utils/cache.js';
-import { getStatus as getDbStatus } from '../db.js';
+import { getStatus as getDbStatus } from '../db/index.js';
 import { sendJsonError } from '../utils/responseHelpers.js';
 import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from '../utils/healthChecks.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
+import { getConfig } from '../config/unifiedConfig.js';
 
 const router = express.Router();
 
@@ -28,7 +30,7 @@ router.get('/status', (_: Request, res: Response) => {
       res,
       500,
       'Failed to retrieve system state',
-      error instanceof Error ? error.message : 'Unknown error'
+      resolveErrorMessage(error)
     );
   }
 });
@@ -41,12 +43,12 @@ router.get('/health', async (_: Request, res: Response) => {
     const openaiHealth = getOpenAIServiceHealth();
     const dbStatus = await getDbStatus();
     //audit Assumption: readiness depends on database connectivity and OpenAI health; risk: misclassification; invariant: readiness requires critical services; handling: shared readiness helper.
+    const config = getConfig();
     const readiness = assessCoreServiceReadiness(
       dbStatus,
       openaiHealth,
-      process.env.DATABASE_URL
+      config.databaseUrl
     );
-    
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
@@ -62,7 +64,7 @@ router.get('/health', async (_: Request, res: Response) => {
         uptime: process.uptime(),
         memoryUsage: process.memoryUsage(),
         nodeVersion: process.version,
-        environment: process.env.NODE_ENV || 'development'
+        environment: config.nodeEnv
       }
     };
 
@@ -83,7 +85,7 @@ router.get('/health', async (_: Request, res: Response) => {
       res,
       500,
       'Failed to retrieve health status',
-      error instanceof Error ? error.message : 'Unknown error',
+      resolveErrorMessage(error),
       { status: 'unhealthy' }
     );
   }
@@ -116,7 +118,7 @@ router.post('/status', confirmGate, (req: Request, res: Response) => {
       res,
       500,
       'Failed to update system state',
-      error instanceof Error ? error.message : 'Unknown error'
+      resolveErrorMessage(error)
     );
   }
 });

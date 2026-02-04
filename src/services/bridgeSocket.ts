@@ -1,8 +1,11 @@
-import type { IncomingMessage, Server } from 'http';
+﻿import type { IncomingMessage, Server } from 'http';
 import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from '../utils/structuredLogging.js';
 import { isBridgeEnabled } from '../utils/bridgeEnv.js';
+import { getAutomationAuth } from '../config/env.js';
+import { consumeOneTimeToken } from '../lib/tokenStore.js';
+import { resolveHeader } from '../utils/requestHeaders.js';
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
 const bridgeClients = new Set<WebSocket>();
@@ -24,20 +27,37 @@ function isAllowedPath(pathname: string): boolean {
   );
 }
 
-function resolveHeader(req: IncomingMessage, headerName: string): string | undefined {
-  const raw = req.headers[headerName];
-  if (!raw) return undefined;
-  return Array.isArray(raw) ? raw[0] : raw;
-}
-
 function isAutomationAuthorized(req: IncomingMessage): boolean {
-  const secret = (process.env.ARCANOS_AUTOMATION_SECRET || '').trim();
-  if (!secret) {
-    return true;
+  try {
+    // Use config layer for env access (adapter boundary pattern)
+    const { headerName, secret } = getAutomationAuth();
+    if (!secret) {
+      const token = resolveHeader(req.headers, 'x-arcanos-confirm-token');
+      if (!token) {
+        return false;
+      }
+      // //audit Assumption: confirmation token is the capability; risk: replay if not consumed; invariant: consume on success; handling: consume + accept only when valid.
+      return consumeOneTimeToken(token).ok;
+    }
+    const provided = resolveHeader(req.headers, headerName);
+    if (provided === secret) {
+      return true;
+    }
+    const token = resolveHeader(req.headers, 'x-arcanos-confirm-token');
+    if (!token) {
+      return false;
+    }
+    // //audit Assumption: confirmation token can authorize IPC without automation secret; risk: replay; invariant: token must be consumed; handling: consume + accept when valid.
+    return consumeOneTimeToken(token).ok;
+  } catch (error: unknown) {
+    bridgeLogger.warn(
+      'Bridge IPC authorization check failed.',
+      { path: resolvePath(req.url) },
+      undefined,
+      error instanceof Error ? error : undefined
+    );
+    return false;
   }
-  const headerName = (process.env.ARCANOS_AUTOMATION_HEADER || 'x-arcanos-automation').toLowerCase();
-  const provided = resolveHeader(req, headerName);
-  return provided === secret;
 }
 
 function rejectUpgrade(socket: Duplex, status: number, message: string): void {

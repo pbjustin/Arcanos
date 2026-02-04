@@ -4,6 +4,9 @@
   "build": {
     "builder": "NIXPACKS",
     "buildCommand": "npm ci --include=dev && npm run build",
+    "cache": {
+      "npm": true
+    },
     "env": {
       "NODE_ENV": "production",
       "NODE_OPTIONS": "--max_old_space_size=2048"

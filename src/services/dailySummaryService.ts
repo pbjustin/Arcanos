@@ -2,6 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import { callOpenAI, getDefaultModel } from './openai.js';
 import { loadState, updateState } from './stateManager.js';
+import { getEnv } from '../config/env.js';
+import { DAILY_SUMMARY_PROMPT_LINES } from '../config/dailySummaryTemplates.js';
+import { readJsonFileSafely } from '../utils/jsonFileUtils.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 interface SummarySources {
   systemState: Record<string, unknown>;
@@ -20,22 +24,9 @@ export interface DailySummaryResult {
 
 const MEMORY_DIR = path.join(process.cwd(), 'memory');
 
-function readJsonFile(filePath: string): Record<string, unknown> | undefined {
-  try {
-    if (!fs.existsSync(filePath)) {
-      return undefined;
-    }
-    const raw = fs.readFileSync(filePath, 'utf8');
-    return raw ? (JSON.parse(raw) as Record<string, unknown>) : undefined;
-  } catch (error: unknown) {
-    //audit Assumption: read failures should fall back to undefined
-    console.error(`[DAILY-SUMMARY] Failed to read ${filePath}`, error instanceof Error ? error.message : error);
-    return undefined;
-  }
-}
-
 function collectLogsPreview(): string[] {
   const logsDir = path.join(process.cwd(), 'logs');
+  //audit Assumption: missing logs directory means no previews; risk: false empty; invariant: return array; handling: guard.
   if (!fs.existsSync(logsDir)) return [];
 
   const previews: string[] = [];
@@ -46,8 +37,8 @@ function collectLogsPreview(): string[] {
       const raw = fs.readFileSync(filePath, 'utf8');
       previews.push(`${file}: ${raw.slice(0, 400)}`);
     } catch (error: unknown) {
-      //audit Assumption: log read failures should be skipped
-      console.error('[DAILY-SUMMARY] Failed to read log file', filePath, error instanceof Error ? error.message : error);
+      //audit Assumption: log read failures should be skipped; risk: missing preview; invariant: continue; handling: log and continue.
+      console.error('[DAILY-SUMMARY] Failed to read log file', filePath, resolveErrorMessage(error));
     }
   }
   return previews.slice(0, 5);
@@ -55,8 +46,8 @@ function collectLogsPreview(): string[] {
 
 async function buildSummarySources(): Promise<SummarySources> {
   const systemState = loadState() as Record<string, unknown>;
-  const memoryState = readJsonFile(path.join(MEMORY_DIR, 'state.json'));
-  const healthHistory = readJsonFile(path.join(process.cwd(), 'logs', 'healthcheck.json'));
+  const memoryState = readJsonFileSafely<Record<string, unknown>>(path.join(MEMORY_DIR, 'state.json'));
+  const healthHistory = readJsonFileSafely<Record<string, unknown>>(path.join(process.cwd(), 'logs', 'healthcheck.json'));
   const logsPreview = collectLogsPreview();
 
   return {
@@ -68,6 +59,7 @@ async function buildSummarySources(): Promise<SummarySources> {
 }
 
 function ensureSummaryDir(): void {
+  //audit Assumption: missing memory dir requires creation; risk: mkdir failure; invariant: path exists after; handling: mkdir with recursive.
   if (!fs.existsSync(MEMORY_DIR)) {
     fs.mkdirSync(MEMORY_DIR, { recursive: true });
   }
@@ -80,18 +72,26 @@ function resolveSummaryFile(date: Date): string {
 }
 
 function buildPrompt(model: string, sources: SummarySources): string {
+  //audit Assumption: prompt lines are safe to concatenate; risk: large payload; invariant: string output; handling: join with newlines.
+  //audit Assumption: untrusted data is delimited; risk: prompt injection; invariant: data treated as content; handling: explicit delimiters and instructions.
   return [
-    `You are the ARCANOS daily journal running on the fine-tuned model ${model}.`,
-    'Summarize the following state into JSON with keys summary, highlights (array of strings), risks (array), and nextSteps (array).',
-    'Keep entries factual and reference observed data only. Include model provenance metadata.',
-    'Data:',
-    JSON.stringify(sources)
+    DAILY_SUMMARY_PROMPT_LINES.intro(model),
+    ...DAILY_SUMMARY_PROMPT_LINES.instructions,
+    JSON.stringify(sources),
+    DAILY_SUMMARY_PROMPT_LINES.dataEnd
   ].join('\n');
 }
 
+/**
+ * Generate a daily JSON summary of system state.
+ * Purpose: Synthesize system, memory, and log snapshots into a structured summary.
+ * Inputs/Outputs: triggeredBy optional string; returns DailySummaryResult with metadata.
+ * Edge cases: OpenAI failure falls back to a heuristic summary.
+ */
 export async function generateDailySummary(triggeredBy: string = 'cli'): Promise<DailySummaryResult> {
   const sources = await buildSummarySources();
-  const model = process.env.DAILY_SUMMARY_MODEL || getDefaultModel();
+  // Use config layer for env access (adapter boundary pattern)
+  const model = getEnv('DAILY_SUMMARY_MODEL') || getDefaultModel();
   const prompt = buildPrompt(model, sources);
 
   let parsed: Record<string, unknown> = {};
@@ -100,8 +100,10 @@ export async function generateDailySummary(triggeredBy: string = 'cli'): Promise
       responseFormat: { type: 'json_object' },
       metadata: { route: 'daily-summary', triggeredBy }
     });
+    //audit Assumption: OpenAI returns JSON string; risk: parse failure; invariant: parsed object; handling: try/catch.
     parsed = JSON.parse(result.output || '{}');
   } catch (error) {
+    //audit Assumption: OpenAI failure should trigger fallback summary; risk: degraded accuracy; invariant: return valid summary; handling: fallback values.
     console.error('[DAILY-SUMMARY] Failed to generate via OpenAI, falling back to heuristic summary', error);
     parsed = {
       summary: 'Daily summary fallback',
@@ -149,10 +151,12 @@ export async function generateDailySummary(triggeredBy: string = 'cli'): Promise
 }
 
 function getHealthHistoryLength(healthHistory: unknown): number {
+  //audit Assumption: non-object means no history; risk: false zero; invariant: number return; handling: guard.
   if (!healthHistory || typeof healthHistory !== 'object') {
     return 0;
   }
   const record = healthHistory as Record<string, unknown>;
   const history = record.history;
+  //audit Assumption: history array holds entries; risk: non-array; invariant: return length or 0; handling: Array.isArray.
   return Array.isArray(history) ? history.length : 0;
 }

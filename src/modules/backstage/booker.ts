@@ -6,7 +6,8 @@ import {
   BOOKING_INSTRUCTIONS_SUFFIX,
   BOOKING_RESPONSE_GUIDELINES
 } from '../../config/prompts.js';
-import { query } from '../../db.js';
+import { query } from '../../db/index.js';
+import { getEnv, getEnvNumber } from '../../config/env.js';
 
 export interface Wrestler {
   name: string;
@@ -269,11 +270,12 @@ export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
  * Ensures the response contains no meta-data or self reflections.
  */
 export async function generateBooking(prompt: string): Promise<string> {
-  const model = process.env.USER_GPT_ID;
+  // Use config layer for env access (adapter boundary pattern)
+  const model = getEnv('USER_GPT_ID');
   if (!model) {
     throw new Error('USER_GPT_ID not configured');
   }
-  const tokenLimit = parseInt(process.env.BOOKER_TOKEN_LIMIT ?? '512', 10);
+  const tokenLimit = getEnvNumber('BOOKER_TOKEN_LIMIT', 512);
   const instructions = await buildStructuredBookingPrompt(prompt);
   try {
     const { output } = await callOpenAI(model, instructions, tokenLimit, false);

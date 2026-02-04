@@ -3,16 +3,18 @@
  * Consolidates common error handling, validation, and response patterns
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { Request, Response } from 'express';
 import fs from 'fs';
-import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
+import { generateMockResponse, hasValidAPIKey } from '../services/openai.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 import {
   aiRequestSchema,
   type AIRequestDTO,
   type AIResponseDTO,
   type ErrorResponseDTO
 } from '../types/dto.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 /**
  * Extract input text from various possible field names in request body
@@ -65,7 +67,17 @@ export function validateAIRequest(
     return null;
   }
 
-  const openai = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    console.log(`🤖 Returning mock response for /${endpointName} (adapter init failed)`);
+    const mockResponse = generateMockResponse(input, endpointName);
+    res.json({ ...(mockResponse as AIResponseDTO), clientContext });
+    return null;
+  }
+  const openai = adapter.getClient();
   //audit Assumption: client init failure should return mock response; Handling: fallback
   if (!openai) {
     console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);
@@ -89,7 +101,7 @@ export function handleAIError(
   res: Response<AIResponseDTO | ErrorResponseDTO>
 ): void {
   //audit Assumption: error message should be safely derived; Handling: stringify
-  const errorMessage = err instanceof Error ? err.message : String(err);
+  const errorMessage = resolveErrorMessage(err);
   console.error(`❌ ${endpointName} processing error:`, errorMessage);
   
   // Return mock response as fallback
@@ -115,6 +127,6 @@ export function logRequestFeedback(input: string, endpointName: string): void {
     fs.writeFileSync('/tmp/last-gpt-request', JSON.stringify(feedbackData));
   } catch (error: unknown) {
     //audit Assumption: feedback logging failures should not break request; Handling: log only
-    console.log('Could not write feedback file:', error instanceof Error ? error.message : 'Unknown error');
+    console.log('Could not write feedback file:', resolveErrorMessage(error));
   }
 }

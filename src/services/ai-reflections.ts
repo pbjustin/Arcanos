@@ -12,9 +12,11 @@ import {
   buildFallbackPatchContent
 } from '../config/aiReflectionTemplates.js';
 import { parseEnvInt, parseEnvFloat, parseEnvBoolean } from '../utils/envParsers.js';
+import { getEnv, getEnvNumber } from '../config/env.js';
 
+// Use config layer for env access (adapter boundary pattern)
 const DEFAULT_REFLECTION_SYSTEM_PROMPT =
-  process.env.AI_REFLECTION_SYSTEM_PROMPT || AI_REFLECTION_DEFAULT_SYSTEM_PROMPT;
+  getEnv('AI_REFLECTION_SYSTEM_PROMPT') || AI_REFLECTION_DEFAULT_SYSTEM_PROMPT;
 
 export interface PatchSetOptions {
   useMemory?: boolean;
@@ -88,16 +90,17 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
     systemAnalysis = true
   } = options;
 
-  const reflectionModel = options.model || process.env.AI_REFLECTION_MODEL || getDefaultModel();
-  const tokenLimit = options.tokenLimit ?? parseEnvInt(process.env.AI_REFLECTION_TOKEN_LIMIT, 200);
-  const temperature = options.temperature ?? parseEnvFloat(process.env.AI_REFLECTION_TEMPERATURE, 0.2);
-  const topP = options.topP ?? parseEnvFloat(process.env.AI_REFLECTION_TOP_P, 1);
+  // Use config layer for env access (adapter boundary pattern)
+  const reflectionModel = options.model || getEnv('AI_REFLECTION_MODEL') || getDefaultModel();
+  const tokenLimit = options.tokenLimit ?? getEnvNumber('AI_REFLECTION_TOKEN_LIMIT', 200);
+  const temperature = options.temperature ?? parseFloat(getEnv('AI_REFLECTION_TEMPERATURE') || '0.2');
+  const topP = options.topP ?? parseFloat(getEnv('AI_REFLECTION_TOP_P') || '1');
   const frequencyPenalty =
-    options.frequencyPenalty ?? parseEnvFloat(process.env.AI_REFLECTION_FREQUENCY_PENALTY, 0);
+    options.frequencyPenalty ?? parseFloat(getEnv('AI_REFLECTION_FREQUENCY_PENALTY') || '0');
   const presencePenalty =
-    options.presencePenalty ?? parseEnvFloat(process.env.AI_REFLECTION_PRESENCE_PENALTY, 0);
+    options.presencePenalty ?? parseFloat(getEnv('AI_REFLECTION_PRESENCE_PENALTY') || '0');
   const systemPrompt = options.systemPrompt || DEFAULT_REFLECTION_SYSTEM_PROMPT;
-  const useCache = options.useCache ?? parseEnvBoolean(process.env.AI_REFLECTION_CACHE, true);
+  const useCache = options.useCache ?? (getEnv('AI_REFLECTION_CACHE') !== 'false');
 
   // If useMemory is false, bypass memory orchestration
   //audit Assumption: stateless mode should skip memory coordination; risk: reduced context; invariant: log when bypassing; handling: informational log.

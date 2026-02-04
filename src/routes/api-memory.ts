@@ -1,11 +1,12 @@
 import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import { getSessionLogPath } from '../utils/logPath.js';
-import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db.js';
+import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db/index.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { requireField } from '../utils/validation.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { createRateLimitMiddleware } from '../utils/security.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 const router = express.Router();
 
@@ -134,7 +135,7 @@ router.get("/view", asyncHandler(async (_: Request, res: Response) => {
       }
     });
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = resolveErrorMessage(err);
     res.status(500).json({
       status: 'error',
       message: 'Cannot read memory file',
@@ -176,7 +177,7 @@ router.post("/bulk", confirmGate, asyncHandler(async (req: Request, res: Respons
       results.push({ 
         key: op.key, 
         status: 'error', 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+        error: resolveErrorMessage(error) 
       });
     }
   }

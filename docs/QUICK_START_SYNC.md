@@ -66,7 +66,7 @@ npm run sync:check
 ### Scenario 3: You Work on Daemon
 
 ```python
-# You modify: daemon-python/backend_client.py
+# You modify: daemon-python/arcanos/backend_client.py
 ```
 
 **Run:**

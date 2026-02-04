@@ -1,11 +1,13 @@
 import { createIdleManager, IdleManager } from '../utils/idleManager.js';
 import { updateState } from './stateManager.js';
 import { logger } from '../utils/structuredLogging.js';
+import { getEnvNumber } from '../config/env.js';
 
 const idleStateLogger = logger.child({ module: 'idle-state-service' });
 
+// Use config layer for env access (adapter boundary pattern)
 const DEFAULTS = {
-  IDLE_CHECK_INTERVAL_MS: parseInt(process.env.IDLE_CHECK_INTERVAL_MS || '5000', 10)
+  IDLE_CHECK_INTERVAL_MS: getEnvNumber('IDLE_CHECK_INTERVAL_MS', 5000)
 };
 
 export interface IdleStateService {

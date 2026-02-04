@@ -1,9 +1,3 @@
-import OpenAI from 'openai';
-
-// Type for the Chat Completions API parameters (non-streaming)
-type ChatCompletionCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParams & { stream?: false };
-type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-
 /**
  * Enhanced logging for ARCANOS routing stages
  */
@@ -26,42 +20,4 @@ export function logGPT5Invocation(reason: string, input: string) {
 export function logRoutingSummary(arcanosModel: string, gpt5Used: boolean, finalStage: string) {
   const timestamp = new Date().toISOString();
   console.log(`📊 [ROUTING SUMMARY] ${timestamp} - ARCANOS: ${arcanosModel} | GPT-5.1 Used: ${gpt5Used} | Final Stage: ${finalStage}`);
-}
-
-/**
- * Wrapper around OpenAI Chat Completions API that provides comprehensive logging
- * 
- * This function logs all AI interactions for debugging, auditing, and analysis:
- * - Logs input prompts (truncated for readability)
- * - Tracks model usage and token consumption
- * - Records AI responses for debugging
- * - Maintains consistent logging format across ARCANOS
- * 
- * @param client - OpenAI client instance
- * @param params - Chat completion parameters (without streaming)
- * @returns Promise<OpenAI.Chat.Completions.ChatCompletion> - The AI response with full metadata
- */
-export async function createResponseWithLogging(
-  client: OpenAI,
-  params: ChatCompletionCreateParams
-): Promise<OpenAI.Chat.Completions.ChatCompletion> {
-  const { model, messages } = params;
-  const logInput = messages
-    //audit Assumption: log input for diagnostics; Handling: stringify non-string content
-    .map((m: ChatCompletionMessageParam) => {
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      return `[${m.role}] ${content}`;
-    })
-    .join(' | ');
-
-  console.log(`📝 AI Request => model: ${model} | input: ${logInput}`);
-
-  const response: OpenAI.Chat.Completions.ChatCompletion =
-    await client.chat.completions.create({ ...params, stream: false });
-  const output = response.choices[0]?.message?.content || '';
-  const tokens = response.usage?.total_tokens ?? 0;
-
-  console.log(`🧠 AI Response => model: ${model} | tokens: ${tokens} | output: ${output}`);
-
-  return response;
 }

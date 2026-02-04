@@ -2,6 +2,8 @@ import path from 'path';
 import { createSessionCacheStore, type SessionCacheStore, type SessionCacheStoreConfig } from '../db/sessionCacheStore.js';
 import { logger } from '../utils/structuredLogging.js';
 import type { SessionEntry } from './store.js';
+import { getEnv } from '../config/env.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface SessionPersistenceAdapter {
   initialize(): Promise<void>;
@@ -70,19 +72,20 @@ function safeParse(payload: string): SessionEntry | null {
     //audit assumption: JSON parse errors are expected in corrupted cache rows; risk: log noise; invariant: invalid payload returns null.
     logger.warn('Failed to parse session cache payload', {
       module: 'sessionPersistence',
-      error: error instanceof Error ? error.message : 'unknown'
+      error: resolveErrorMessage(error, 'unknown')
     });
     return null;
   }
 }
 
 function resolvePersistenceConfig(): PersistenceConfig | null {
-  let client = (process.env.SESSION_PERSISTENCE_CLIENT || '').toLowerCase();
-  const sqlitePath = process.env.SESSION_PERSISTENCE_SQLITE_PATH;
+  // Use config layer for env access (adapter boundary pattern)
+  let client = (getEnv('SESSION_PERSISTENCE_CLIENT') || '').toLowerCase();
+  const sqlitePath = getEnv('SESSION_PERSISTENCE_SQLITE_PATH');
 
   if (!client) {
     //audit assumption: DATABASE_URL implies Postgres; risk: wrong auto-detect; invariant: client resolved when env is set.
-    if (process.env.DATABASE_URL) {
+    if (getEnv('DATABASE_URL')) {
       client = 'pg';
     } else if (sqlitePath) {
       client = 'better-sqlite3';
@@ -95,7 +98,7 @@ function resolvePersistenceConfig(): PersistenceConfig | null {
   }
 
   if (client === 'pg') {
-    const connection = process.env.SESSION_PERSISTENCE_URL || process.env.DATABASE_URL;
+    const connection = getEnv('SESSION_PERSISTENCE_URL') || getEnv('DATABASE_URL');
     if (!connection) {
       //audit assumption: connection string is required; risk: missing persistence; invariant: warn and disable.
       logger.warn('Session persistence configured for Postgres but no connection string provided');
@@ -137,7 +140,7 @@ export function createSessionPersistenceAdapter(): SessionPersistenceAdapter | n
     //audit assumption: initialization failures are recoverable; risk: sessions not persisted; invariant: warning logged.
     logger.warn('Session persistence adapter initialization failed, continuing with in-memory store', {
       module: 'sessionPersistence',
-      error: error instanceof Error ? error.message : 'unknown'
+      error: resolveErrorMessage(error, 'unknown')
     });
     return null;
   }

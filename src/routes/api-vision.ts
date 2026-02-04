@@ -1,11 +1,13 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse } from '../utils/errorResponse.js';
-import { getOpenAIClient } from '../services/openai/clientFactory.js';
+import { buildValidationErrorResponse, resolveErrorMessage } from '../lib/errors/index.js';
+import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import type { ErrorResponseDTO } from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import config from '../config/index.js';
+import { buildVisionRequest } from '../services/openai/requestBuilders.js';
 
 const router = express.Router();
 
@@ -54,7 +56,8 @@ function resolveVisionModel(override?: string): string {
   if (override && override.trim().length > 0) {
     return override.trim();
   }
-  return process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || 'gpt-4o';
+  // Default vision model (config can be extended later)
+  return 'gpt-4o';
 }
 
 function calculateVisionCost(inputTokens: number, outputTokens: number): number {
@@ -89,9 +92,10 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       );
     }
 
-    const client = getOpenAIClient();
-    if (!client) {
-      aiLogger.warn('OpenAI client not available for vision request');
+    // Get adapter from app locals (injected at startup)
+    const adapter = req.app.locals.openaiAdapter as OpenAIAdapter | null;
+    if (!adapter) {
+      aiLogger.warn('OpenAI adapter not available for vision request');
       return res.status(503).json({
         error: 'Service Unavailable',
         details: 'OpenAI service is not configured'
@@ -115,26 +119,15 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       imageBytes: imageBuffer.length
     });
 
-    const completion = await client.chat.completions.create({
+    const requestPayload = buildVisionRequest({
+      prompt: visionPrompt,
+      imageBase64: base64,
+      mimeType,
       model: visionModel,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: visionPrompt },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${mimeType};base64,${base64}`,
-                detail: 'auto'
-              }
-            }
-          ]
-        }
-      ],
       temperature: visionTemperature,
-      ...(maxTokens ? { max_tokens: maxTokens } : {})
+      maxTokens: maxTokens || 1024
     });
+    const completion = await adapter.chat.completions.create(requestPayload);
 
     const responseText = completion.choices[0]?.message?.content || '';
     const tokens = completion.usage?.total_tokens || 0;
@@ -164,7 +157,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
   } catch (error: unknown) {
     aiLogger.error('Vision request failed', { operation: 'vision' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('openai.vision.error', {
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: resolveErrorMessage(error)
     });
 
     return res.status(500).json({

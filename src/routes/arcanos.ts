@@ -1,9 +1,10 @@
 import express, { Request, Response } from 'express';
-import { getOpenAIClient, generateMockResponse, hasValidAPIKey } from '../services/openai.js';
+import { generateMockResponse, hasValidAPIKey } from '../services/openai.js';
 import { runARCANOS } from '../logic/arcanos.js';
 import { handleAIError } from '../utils/requestHandler.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import type { AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 
 const router = express.Router();
 
@@ -76,7 +77,16 @@ router.post('/arcanos', confirmGate, async (
     return res.json(mockResponse as ArcanosResponse);
   }
 
-  const openai = getOpenAIClient();
+  // Use adapter (adapter boundary pattern)
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    console.log('🤖 Returning mock response for /arcanos (adapter init failed)');
+    const mockResponse = generateMockResponse(userInput, 'arcanos');
+    return res.json(mockResponse as ArcanosResponse);
+  }
+  const openai = adapter.getClient();
   if (!openai) {
     console.log('🤖 Returning mock response for /arcanos (client init failed)');
     const mockResponse = generateMockResponse(userInput, 'arcanos');

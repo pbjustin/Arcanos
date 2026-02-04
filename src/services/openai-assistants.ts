@@ -1,9 +1,10 @@
 import type OpenAI from 'openai';
 import fs from 'fs/promises';
-import { getOpenAIClient } from './openai.js';
 import config from '../config/index.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { writeJsonFile } from '../utils/fileStorage.js';
+import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface AssistantInfo {
   id: string;
@@ -24,19 +25,28 @@ type AssistantEntry = AssistantListPage['data'][number];
 
 const LOG_CONTEXT = { module: 'assistant-sync' } as const;
 const REGISTRY_PATH = config.assistantSync.registryPath;
+const ASSISTANT_LIST_PAGE_LIMIT = 20;
 
 /**
  * Fetch all assistants from OpenAI with pagination support.
  */
 export async function getAllAssistants(): Promise<AssistantInfo[]> {
-  const client = getOpenAIClient();
+  // Use adapter (assistants API not yet in adapter, so use getClient())
+  let adapter;
+  try {
+    adapter = getOpenAIAdapter();
+  } catch {
+    throw new Error('OpenAI adapter not initialized');
+  }
+  const client = adapter.getClient();
+  //audit Assumption: adapter provides initialized client before assistant sync; risk: runtime call without client fails; invariant: client exists when adapter init succeeds; handling: throw explicit error.
   if (!client) throw new Error('OpenAI client not initialized');
 
   const assistants: AssistantInfo[] = [];
   let cursor: string | undefined = undefined;
 
   while (true) {
-    const resp: AssistantListPage = await client.beta.assistants.list({ limit: 20, after: cursor });
+    const resp: AssistantListPage = await client.beta.assistants.list({ limit: ASSISTANT_LIST_PAGE_LIMIT, after: cursor });
     resp.data.forEach((a: AssistantEntry) => {
       assistants.push({
         id: a.id,
@@ -105,7 +115,7 @@ export async function loadAssistantRegistry(): Promise<AssistantRegistry> {
     if (!isNodeError(error) || error.code !== 'ENOENT') {
       aiLogger.warn('[AI-ASSISTANT-SYNC] Failed to read assistant registry', LOG_CONTEXT, {
         path: REGISTRY_PATH,
-        message: error instanceof Error ? error.message : String(error)
+        message: resolveErrorMessage(error)
       });
     } else {
       await saveAssistantRegistry({});
@@ -185,7 +195,8 @@ export async function syncAssistantRegistry(): Promise<AssistantRegistry> {
  * Call an assistant by its name with a single message.
  */
 export async function callAssistantByName(name: string, message: string) {
-  const client = getOpenAIClient();
+  const adapter = getOpenAIAdapter();
+  const client = adapter.getClient();
   //audit Assumption: OpenAI client required to call assistant
   if (!client) throw new Error('OpenAI client not initialized');
 

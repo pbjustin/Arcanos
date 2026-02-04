@@ -6,6 +6,7 @@
 import { type NextFunction, type Request, type Response } from 'express';
 import { generateRequestId } from './idGenerator.js';
 import { recordLogEvent, recordTraceEvent } from './telemetry.js';
+import { getEnv } from '../config/env.js';
 
 export enum LogLevel {
   DEBUG = 'debug',
@@ -35,6 +36,30 @@ export interface LogEntry {
     message: string;
     stack?: string;
   };
+}
+
+// Helper to recursively sanitize potentially sensitive fields before logging
+function sanitize(data: any): any {
+  if (data === null || typeof data !== 'object') {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    return data.map(item => sanitize(item));
+  }
+
+  const SENSITIVE_KEYS = ['authorization', 'cookie', 'token', 'password', 'apikey', 'secret'];
+  const sanitized: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(data)) {
+    if (SENSITIVE_KEYS.some(sensitiveKey => key.toLowerCase().includes(sensitiveKey))) {
+      sanitized[key] = '[REDACTED]';
+    } else {
+      sanitized[key] = sanitize(value);
+    }
+  }
+
+  return sanitized;
 }
 
 class StructuredLogger {
@@ -88,34 +113,41 @@ class StructuredLogger {
   }
 
   private log(entry: LogEntry): void {
-    const isProduction = process.env.NODE_ENV === 'production';
+    // Use config layer for env access (adapter boundary pattern)
+    const isProduction = getEnv('NODE_ENV') === 'production';
+
+    const sanitizedEntry = {
+      ...entry,
+      context: entry.context ? sanitize(entry.context) : undefined,
+      metadata: entry.metadata ? sanitize(entry.metadata) : undefined,
+    };
 
     //audit Assumption: production logs should be structured JSON
     if (isProduction) {
       // In production, output structured JSON for log aggregation
-      console.log(JSON.stringify(entry));
+      console.log(JSON.stringify(sanitizedEntry));
     } else {
       // In development, output human-readable format
-      const contextStr = entry.context ? ` [${Object.entries(entry.context).map(([k, v]) => `${k}:${v}`).join(',')}]` : '';
-      const durationStr = entry.duration ? ` (${entry.duration}ms)` : '';
-      const metadataStr = entry.metadata ? ` ${JSON.stringify(entry.metadata)}` : '';
+      const contextStr = sanitizedEntry.context ? ` [${Object.entries(sanitizedEntry.context).map(([k, v]) => `${k}:${v}`).join(',')}]` : '';
+      const durationStr = sanitizedEntry.duration ? ` (${sanitizedEntry.duration}ms)` : '';
+      const metadataStr = sanitizedEntry.metadata ? ` ${JSON.stringify(sanitizedEntry.metadata)}` : '';
 
-      console.log(`[${entry.timestamp}] ${entry.level.toUpperCase()}${contextStr}: ${entry.message}${durationStr}${metadataStr}`);
+      console.log(`[${sanitizedEntry.timestamp}] ${sanitizedEntry.level.toUpperCase()}${contextStr}: ${sanitizedEntry.message}${durationStr}${metadataStr}`);
 
       //audit Assumption: error stacks are useful in dev; Handling: log if present
-      if (entry.error && entry.error.stack) {
-        console.log(entry.error.stack);
+      if (sanitizedEntry.error && sanitizedEntry.error.stack) {
+        console.log(sanitizedEntry.error.stack);
       }
     }
 
     //audit Assumption: telemetry records should mirror log entries
     recordLogEvent({
-      timestamp: entry.timestamp,
-      level: entry.level,
-      message: entry.message,
-      context: entry.context,
-      metadata: entry.metadata,
-      duration: entry.duration
+      timestamp: sanitizedEntry.timestamp,
+      level: sanitizedEntry.level,
+      message: sanitizedEntry.message,
+      context: sanitizedEntry.context,
+      metadata: sanitizedEntry.metadata,
+      duration: sanitizedEntry.duration
     });
   }
 
@@ -188,17 +220,6 @@ export const dbLogger = new StructuredLogger({ module: 'database' });
 export const aiLogger = new StructuredLogger({ module: 'openai' });
 export const workerLogger = new StructuredLogger({ module: 'worker' });
 
-// Helper to sanitize potentially sensitive fields before logging
-function sanitize(obj: Record<string, unknown>): Record<string, unknown> {
-  const SENSITIVE_KEYS = ['authorization', 'cookie', 'token', 'password'];
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    //audit Assumption: sensitive keys should be redacted; Handling: replace with token
-    sanitized[key] = SENSITIVE_KEYS.includes(key.toLowerCase()) ? '[REDACTED]' : value;
-  }
-  return sanitized;
-}
-
 /**
  * Safely serialize log payloads to avoid circular reference and BigInt crashes.
  */
@@ -269,7 +290,7 @@ export function requestLoggingMiddleware(req: RequestWithLogger, res: Response, 
   //audit Assumption: request metadata should avoid sensitive data; Handling: sanitize
   requestLogger.info('Request started', {
     ip: req.ip,
-    query: Object.keys(req.query).length > 0 ? sanitizeRecord(req.query) : undefined,
+    query: Object.keys(req.query).length > 0 ? sanitize(req.query) : undefined,
     headers: sanitize({
       authorization: req.headers['authorization'],
       cookie: req.headers['cookie']
@@ -347,14 +368,6 @@ class HealthMetrics {
       metrics: this.getMetrics()
     };
   }
-}
-
-function sanitizeRecord(value: unknown): Record<string, unknown> | undefined {
-  //audit Assumption: only objects can be sanitized; Handling: return undefined otherwise
-  if (!value || typeof value !== 'object') {
-    return undefined;
-  }
-  return sanitize(value as Record<string, unknown>);
 }
 
 export const healthMetrics = new HealthMetrics();

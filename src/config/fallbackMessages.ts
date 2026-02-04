@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { logger } from '../utils/structuredLogging.js';
+import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export type FallbackMessagesConfig = Record<string, string> & { default: string };
 
@@ -34,7 +36,7 @@ function loadConfigFile(): Partial<FallbackMessagesConfig> | null {
       logger.error('Failed to load fallback messages configuration', {
         module: 'fallbackMessages',
         operation: 'loadConfigFile',
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: resolveErrorMessage(error)
       });
     }
   }
@@ -72,7 +74,29 @@ function applyTemplate(message: string, prompt?: string): string {
 export function getFallbackMessage(endpoint: string, prompt?: string): string {
   const messages = getFallbackMessages();
   const template = messages[endpoint] ?? messages.default;
-  const truncatedPrompt = prompt?.slice(0, 200);
+  const truncatedPrompt = prompt?.slice(0, APPLICATION_CONSTANTS.FALLBACK_PROMPT_SNIPPET_LENGTH);
 
   return applyTemplate(template, truncatedPrompt);
 }
+
+export const FALLBACK_LOG_MESSAGES = {
+  degraded: (endpoint: string, reason: string): string =>
+    `🔄 Fallback mode activated for ${endpoint} - ${reason}`,
+  preemptive: (endpoint: string): string =>
+    `🔄 Preemptive fallback mode activated for ${endpoint} - OpenAI client unavailable`
+} as const;
+
+export const FALLBACK_LOG_REASON = {
+  unknown: 'unknown',
+  unavailable: 'OpenAI client unavailable'
+} as const;
+
+export const FALLBACK_RESPONSE_MESSAGES = {
+  cacheUnavailable: 'Service temporarily unavailable - returning cached response',
+  cachedResponsePlaceholder: 'Cached response available',
+  degradedMode: 'AI services temporarily unavailable - operating in degraded mode',
+  fallbackTestPrompt: 'Test degraded mode functionality',
+  fallbackTestMessage: 'Fallback system test - this endpoint simulates degraded mode',
+  defaultPrompt: 'No input provided',
+  healthCheckPrompt: 'Health check triggered fallback'
+} as const;

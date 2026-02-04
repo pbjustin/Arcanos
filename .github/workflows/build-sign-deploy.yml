@@ -50,57 +50,13 @@ jobs:
           cd backend-typescript
           npm test
 
-  build-exe:
-    needs: [test-python]
-    runs-on: windows-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          cd daemon-python
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Build executable
-        run: |
-          cd daemon-python
-          pyinstaller arcanos.spec
-
-      - name: Sign executable (if certificate available)
-        if: secrets.CODE_SIGNING_CERT != ''
-        run: |
-          # Decode certificate from base64
-          $cert = [System.Convert]::FromBase64String("${{ secrets.CODE_SIGNING_CERT }}")
-          [System.IO.File]::WriteAllBytes("cert.pfx", $cert)
-          
-          # Sign executable
-          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign `
-            /f cert.pfx `
-            /p "${{ secrets.CERT_PASSWORD }}" `
-            /tr http://timestamp.digicert.com `
-            /td sha256 `
-            /fd sha256 `
-            daemon-python\dist\ARCANOS.exe
-          
-          # Remove certificate file
-          Remove-Item cert.pfx
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ARCANOS-Windows
-          path: daemon-python/dist/ARCANOS.exe
+  # Windows executable build job disabled - Windows builds deprecated
+  # CLI agent now runs as Python application
+  # build-exe:
+  #   (Windows build steps removed)
 
   create-release:
-    needs: [build-exe]
+    needs: [test-python]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -114,7 +70,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: ARCANOS.exe
+          # Windows executables removed - CLI agent runs as Python application
+          # files: (removed - Windows builds deprecated)
           generate_release_notes: true
           draft: false
           prerelease: false
