@@ -4,13 +4,10 @@ Human-like AI assistant with rich terminal UI.
 """
 
 import json
-import os
 import sys
-import tempfile
 import threading
 import base64
 import time
-import urllib.request
 import uuid
 from dataclasses import dataclass, asdict
 from typing import Callable, Optional, Any, Mapping
@@ -33,28 +30,24 @@ if sys.platform == "win32":
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
-from rich import print as rprint
 from collections import deque
 
 from .config import Config, validate_required_config
 from .cli_types import DaemonCommand
 from .backend_client import BackendApiClient, BackendResponse, BackendRequestError
 from .cli_config import (
-    CAMERA_INTENT_PATTERN,
     DEFAULT_ACTIVITY_HISTORY_LIMIT,
-    DEFAULT_COMMAND_POLL_INTERVAL_SECONDS,
     DEFAULT_DEBUG_SERVER_PORT,
-    DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+    DEFAULT_CAMERA_VISION_PROMPT,
     DEFAULT_QUEUED_ACTIONS_COUNT,
+    DEFAULT_SCREEN_VISION_PROMPT,
     DOMAIN_KEYWORDS,
     MIN_REGISTRY_CACHE_TTL_MINUTES,
-    RUN_COMMAND_PATTERNS,
-    SCREEN_INTENT_PATTERN,
     SINGLE_ACTION_COUNT,
     ZERO_COST_USD,
     ZERO_TOKENS_USED,
 )
-from .cli_intents import detect_domain_intent, detect_run_see_intent, truncate_for_tts
+from .cli_intents import detect_domain_intent, truncate_for_tts
 from .cli_ui import (
     build_help_panel,
     build_stats_table,
@@ -73,6 +66,7 @@ from .cli_daemon import (
     handle_daemon_command,
     stop_daemon_service
 )
+from .cli_runner import run_debug_mode, run_interactive_mode
 from .daemon_system_definition import (
     build_daemon_system_prompt,
     DEFAULT_BACKEND_BLOCK,
@@ -633,11 +627,7 @@ class ArcanosCLI:
         )
 
         # Include daemon metadata
-        metadata = {
-            "source": "daemon",
-            "client": self.client_id,
-            "instanceId": self.instance_id
-        }
+        metadata = self._build_backend_metadata()
 
         # Use /api/ask endpoint with domain hint for natural language routing
         # The backend dispatcher will route to modules based on domain
@@ -714,11 +704,7 @@ class ArcanosCLI:
             return None
 
         # Include daemon metadata
-        metadata = {
-            "source": "daemon",
-            "client": self.client_id,
-            "instanceId": self.instance_id
-        }
+        metadata = self._build_backend_metadata()
 
         response = self._request_with_auth_retry(
             lambda: self.backend_client.request_transcription(
@@ -750,13 +736,11 @@ class ArcanosCLI:
         # //audit assumption: camera flag controls capture mode; risk: wrong capture source; invariant: mode respected; strategy: branch on flag.
         if use_camera:
             image_base64 = self.vision.capture_camera(camera_index=0, save=True)
-            default_prompt = "What do you see in this image? Describe it in detail."
+            default_prompt = DEFAULT_CAMERA_VISION_PROMPT
             mode_label = "camera"
         else:
             image_base64 = self.vision.capture_screenshot(save=True)
-            default_prompt = (
-                "What do you see on this screen? Describe the key elements and what the user appears to be doing."
-            )
+            default_prompt = DEFAULT_SCREEN_VISION_PROMPT
             mode_label = "screen"
 
         if not image_base64:
@@ -764,11 +748,7 @@ class ArcanosCLI:
             return None
 
         # Include daemon metadata
-        metadata = {
-            "source": "daemon",
-            "client": self.client_id,
-            "instanceId": self.instance_id
-        }
+        metadata = self._build_backend_metadata()
 
         response = self._request_with_auth_retry(
             lambda: self.backend_client.request_vision_analysis(
@@ -794,6 +774,18 @@ class ArcanosCLI:
             source="backend"
         )
 
+    def _build_backend_metadata(self) -> dict[str, str]:
+        """
+        Purpose: Build shared metadata for backend requests and update events.
+        Inputs/Outputs: None; returns metadata dictionary.
+        Edge cases: None.
+        """
+        return {
+            "source": "daemon",
+            "client": self.client_id,
+            "instanceId": self.instance_id,
+        }
+
     def _send_backend_update(self, update_type: str, data: Mapping[str, Any]) -> None:
         """
         Purpose: Send usage update events to the backend if enabled.
@@ -808,11 +800,7 @@ class ArcanosCLI:
             return
 
         # Include daemon metadata
-        metadata = {
-            "source": "daemon",
-            "client": self.client_id,
-            "instanceId": self.instance_id
-        }
+        metadata = self._build_backend_metadata()
 
         # Use REST API for updates
         response = self._request_with_auth_retry(
@@ -1292,152 +1280,9 @@ class ArcanosCLI:
         Edge cases: None.
         """
         if debug_mode:
-            self._run_debug_mode()
+            run_debug_mode(self)
         else:
-            self._run_interactive_mode()
-
-    def _run_debug_mode(self) -> None:
-        """Run in non-interactive debug mode, using the logging module for robust output."""
-        import logging
-
-        log_file_path = os.path.join(os.path.dirname(__file__), 'debug_log.txt')
-        cmd_file_path = os.path.join(os.path.dirname(__file__), 'debug_cmd.in')
-
-        # Announce startup on the actual terminal
-        self.console.print("Daemon starting in robust debug mode...")
-        self.console.print(f"All output will be in: {log_file_path}")
-
-        # --- Set up robust logging ---
-        # Clear previous log handlers
-        for handler in logging.root.handlers[:]:
-            logging.root.removeHandler(handler)
-        
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            filename=log_file_path,
-            filemode='w'
-        )
-
-        try:
-            logging.info("Robust debug mode initialized.")
-            
-            # Re-initialize console to use the logger's stream if possible, or just log
-            # For simplicity, we will just use the logger directly.
-            logging.info(f"Command file to watch: {cmd_file_path}")
-
-            while True:
-                if os.path.exists(cmd_file_path):
-                    try:
-                        with open(cmd_file_path, 'r') as f:
-                            user_input = f.read().strip()
-                        os.remove(cmd_file_path)
-
-                        logging.info(f"EXECUTING COMMAND: {user_input}")
-                        if user_input.lower() in ["exit", "quit"]:
-                            logging.info("Exit command received. Shutting down.")
-                            break
-                        
-                        # We can't use self.console here as it prints to stdout
-                        # Instead, we will have to trust the handlers we've set up
-                        # or temporarily redirect for rich output (too complex for now).
-                        # We will call the process function and let it log errors.
-                        self._process_input(user_input)
-                        logging.info(f"COMMAND FINISHED: {user_input}")
-
-                    except Exception as e:
-                        logging.error(f"Error in command processing loop: {e}", exc_info=True)
-
-                time.sleep(1)  # Poll for command file every second
-
-        except KeyboardInterrupt:
-            logging.info("Debug mode interrupted by user.")
-        except Exception as e:
-            logging.critical(f"A critical error occurred in the debug mode runner: {e}", exc_info=True)
-        finally:
-            logging.info("Stopping daemon service and shutting down.")
-            self._stop_daemon_service()
-            logging.shutdown()
-    
-    def _run_interactive_mode(self) -> None:
-        """Run in standard interactive CLI mode."""
-        self.show_welcome()
-        try:
-            while True:
-                try:
-                    user_input = input("\n?? You: ").strip()
-                    if not user_input:
-                        continue
-                    
-                    if user_input.lower() in ["exit", "quit", "bye"]:
-                        self.console.print("[cyan]?? Goodbye![/cyan]")
-                        break
-
-                    self._process_input(user_input)
-
-                except KeyboardInterrupt:
-                    self.console.print("\n[cyan]?? Goodbye![/cyan]")
-                    break
-                except Exception as e:
-                    self._last_error = str(e) or type(e).__name__
-                    self._append_activity("error", self._last_error)
-                    error_msg = ErrorHandler.handle_exception(e, "main loop")
-                    self.console.print(f"[red]{error_msg}[/red]")
-        finally:
-            self._stop_daemon_service()
-
-    def _process_input(self, user_input: str) -> None:
-        """Process a single command or conversational input."""
-        parts = user_input.split(maxsplit=1)
-        command = parts[0].lower()
-        args = parts[1] if len(parts) > 1 else ""
-
-        # Handle commands
-        if command == "help":
-            self.handle_help()
-        elif command in ["deep", "backend"]:
-            if not args:
-                self.console.print("[red]No prompt provided for backend request.[/red]")
-            else:
-                self.handle_ask(args, route_override="backend")
-        elif command == "see":
-            self.handle_see(args.split())
-        elif command == "voice":
-            self.handle_voice(args.split())
-        elif command == "ptt":
-            self.handle_ptt()
-        elif command == "run":
-            self.handle_run(args)
-        elif command == "speak":
-            self.handle_speak()
-        elif command == "stats":
-            self.handle_stats()
-        elif command == "clear":
-            self.handle_clear()
-        elif command == "reset":
-            self.handle_reset()
-        elif command == "update":
-            self.handle_update()
-        else:
-            # Natural conversation
-            intent = detect_run_see_intent(
-                user_input,
-                RUN_COMMAND_PATTERNS,
-                CAMERA_INTENT_PATTERN,
-                SCREEN_INTENT_PATTERN,
-            )
-            if intent:
-                intent_name, intent_payload = intent
-                if intent_name == "run" and intent_payload:
-                    self.handle_run(intent_payload)
-                elif intent_name == "see_screen":
-                    self.handle_see([])
-                elif intent_name == "see_camera":
-                    self.handle_see(["camera"])
-                else:
-                    self.handle_ask(user_input)
-            else:
-                self.handle_ask(user_input)
+            run_interactive_mode(self)
 
 
 def main() -> None:
