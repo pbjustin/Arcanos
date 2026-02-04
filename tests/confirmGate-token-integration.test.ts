@@ -8,7 +8,7 @@ process.env.ARCANOS_AUTOMATION_SECRET = 'test-secret';
 process.env.ARCANOS_AUTOMATION_HEADER = 'x-automation-secret';
 
 // Import modules after env setup
-const { confirmGate, ConfirmationContext } = await import('../src/middleware/confirmGate.js');
+const { confirmGate } = await import('../src/middleware/confirmGate.js');
 const tokenStore = await import('../src/lib/tokenStore.js');
 
 describe('confirmGate middleware - one-time token integration', () => {

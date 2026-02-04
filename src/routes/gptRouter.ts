@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Response } from 'express';
 import modulesRouter, { getModuleMetadata } from './modules.js';
 import getGptModuleMap from '../config/gptRouterConfig.js';
 import {
