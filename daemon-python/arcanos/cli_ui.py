@@ -154,7 +154,7 @@ def strip_markdown(text: str) -> str:
     Edge cases: Empty text returns empty string; nested formatting may leave minor artifacts.
     """
     # Remove code block fences (```language ... ```)
-    text = re.sub(r"```\w*\n?", "", text)
+    text = re.sub(r"```[^\n]*\n?", "", text)
     # Remove inline code backticks
     text = re.sub(r"`([^`]+)`", r"\1", text)
     # Remove images ![alt](url) before links
