@@ -3,7 +3,7 @@
  * Registers, retrieves, and validates memory state entries.
  */
 
-import { query } from '../db.js';
+import { query } from '../db/index.js';
 import { getDefaultModel } from './openai.js';
 import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
 

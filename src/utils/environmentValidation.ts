@@ -25,16 +25,6 @@ export interface ValidationResult {
   suggestions: string[];
 }
 
-// Support legacy environment variable naming
-// Map FINE_TUNED_MODEL_ID -> FINETUNED_MODEL_ID for backward compatibility
-// Note: This modifies process.env directly, which is acceptable here as it's normalization
-// TODO: Move this normalization to config layer
-const fineTunedId = getEnv('FINE_TUNED_MODEL_ID');
-const finetunedId = getEnv('FINETUNED_MODEL_ID');
-if (fineTunedId && !finetunedId) {
-  process.env.FINETUNED_MODEL_ID = fineTunedId;
-}
-
 // Environment variable definitions
 const environmentChecks: EnvironmentCheck[] = [
   {
@@ -393,17 +383,20 @@ export function checkEphemeralFS(): void {
   
   const config = getConfig();
   const logPath = config.logPath;
-  const memoryPath = getEnv('ARC_MEMORY_PATH'); // Not in config yet
+  const memoryPath = config.memoryPath;
   
+  //audit Assumption: persistent filesystem paths are risky on Railway; risk: data loss; invariant: logPath should prefer /tmp; handling: warn when persistent prefixes detected.
   if (logPath && isPersistentPath(logPath)) {
     console.warn(`⚠️  LOG PATH WARNING: ${logPath} may not persist on Railway ephemeral FS. Consider using /tmp/`);
   }
   
+  //audit Assumption: memory path persistence matters for cache durability; risk: data loss after deploy; invariant: memoryPath should prefer /tmp on Railway; handling: warn on persistent prefixes.
   if (memoryPath && isPersistentPath(memoryPath)) {
     console.warn(`⚠️  MEMORY PATH WARNING: ${memoryPath} may not persist on Railway ephemeral FS. Consider using /tmp/`);
   }
   
   // Check if running on Railway
+  //audit Assumption: Railway runtime implies ephemeral FS; risk: misleading logs off-platform; invariant: log Railway info only when detected; handling: guard with config.isRailway.
   if (config.isRailway) {
     logger.info('Running on Railway - using ephemeral filesystem', {
       module: 'environment',

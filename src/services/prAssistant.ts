@@ -3,7 +3,7 @@
  * Focused on codebase integrity and platform alignment
  */
 
-import { getNumericConfig } from '../utils/constants.js';
+import { getEnvNumber } from '../config/env.js';
 import { logger } from '../utils/structuredLogging.js';
 import { REPORT_TEMPLATE } from '../config/prAssistantTemplates.js';
 import { formatChecksMarkdown, getStatusMessage } from './prAssistant/checkResults.js';
@@ -21,7 +21,7 @@ export class PRAssistant {
     this.workingDir = workingDir;
     this.validationConstants = {
       ...VALIDATION_CONSTANTS,
-      DEFAULT_PORT: getNumericConfig('DEFAULT_PORT', 'DEFAULT_PORT') || VALIDATION_CONSTANTS.DEFAULT_PORT
+      DEFAULT_PORT: getEnvNumber('DEFAULT_PORT', VALIDATION_CONSTANTS.DEFAULT_PORT)
     };
   }
 

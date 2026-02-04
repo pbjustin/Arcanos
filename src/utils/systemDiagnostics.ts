@@ -4,7 +4,7 @@
  * Provides comprehensive system status in YAML format
  */
 
-import { getStatus, query } from '../db.js';
+import { getStatus, query } from '../db/index.js';
 import { getWorkerRuntimeStatus, type WorkerRuntimeStatus } from '../config/workerConfig.js';
 import {
   DIAGNOSTIC_JOBS,
@@ -283,7 +283,7 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
     // Get latest job record if database is connected
     let latestJob: JobDataEntry | null = null;
     try {
-      const { getLatestJob } = await import('../db.js');
+      const { getLatestJob } = await import('../db/index.js');
       const rawJob = await getLatestJob();
       if (rawJob) {
         latestJob = {

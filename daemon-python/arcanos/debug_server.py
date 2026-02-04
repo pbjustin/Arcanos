@@ -1,10 +1,5 @@
-"""
-Debug HTTP server for the ARCANOS daemon.
-Localhost-only API for IDE agents and scripts to inspect status, logs, audit, and run commands.
-"""
-
 import json
-import logging
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -25,9 +20,6 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
     _last_status_code: int = 200
     _request_id: Optional[str] = None
-
-    def _is_localhost(self) -> bool:
-        return (self.client_address[0] if self.client_address else None) == "127.0.0.1"
 
     def _consume_confirmation_token(self, token: str) -> bool:
         backend_url = (get_backend_base_url() or "").rstrip("/")
@@ -107,47 +99,35 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         
         header_name, secret = get_automation_auth()
         provided = self.headers.get(header_name)
-        token_header = self.headers.get("x-arcanos-confirm-token")
+        confirm_token = self.headers.get("x-arcanos-confirm-token")
 
-        # //audit Assumption: automation secret is a trusted gate; risk: unauthorized access; invariant: header must match secret; handling: allow only exact match.
         if secret and provided == secret:
+            # //audit Assumption: automation secret is a trusted gate; risk: unauthorized access; invariant: secret must match; handling: allow when matched.
             return True
 
-        if token_header:
-            # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: call backend consume endpoint.
-            if self._consume_confirmation_token(token_header):
-                return True
+        if confirm_token and self._consume_confirmation_token(confirm_token):
+            # //audit Assumption: confirmation token is single-use; risk: replay without consumption; invariant: token must be consumed via backend; handling: consume before allowing.
+            return True
 
-        # If no token is configured, require explicit opt-in via Config
-        if not Config.DEBUG_SERVER_TOKEN:
-            # Allow unauthenticated access only if explicitly enabled (for development)
-            # Use Config class (adapter boundary pattern)
-            if not Config.DEBUG_SERVER_ALLOW_UNAUTHENTICATED:
-                self._send_response(401, error="DEBUG_SERVER_TOKEN not configured. Set DEBUG_SERVER_TOKEN environment variable for security.")
-                return False
-            return True
-        
-        # Check Authorization header (Bearer token)
-        auth_header = self.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:].strip()
-            if token == Config.DEBUG_SERVER_TOKEN:
-                return True
-        
-        # Check X-Debug-Token header (alternative)
-        token_header = self.headers.get("X-Debug-Token", "").strip()
-        if token_header == Config.DEBUG_SERVER_TOKEN:
-            return True
-        
-        # Check query parameter (disabled by default for security)
-        if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
-            params = self._query_params()
-            if "token" in params and params["token"]:
-                if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
+        # If DEBUG_SERVER_TOKEN is configured, check token-based auth
+        if Config.DEBUG_SERVER_TOKEN:
+            auth_header = self.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:].strip()
+                if token == Config.DEBUG_SERVER_TOKEN:
                     return True
-        
+
+            token_header = self.headers.get("X-Debug-Token", "").strip()
+            if token_header == Config.DEBUG_SERVER_TOKEN:
+                return True
+
+            if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
+                params = self._query_params()
+                if "token" in params and params["token"]:
+                    if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
+                        return True
+
         if require_auth:
-            # Audit log: auth failure (without logging token)
             client_ip = getattr(self, "client_address", ("unknown",))[0]
             log_audit_event(
                 "auth_failure",
@@ -156,13 +136,22 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
                 path=self._path_without_query(),
                 method=getattr(self, "command", "UNKNOWN")
             )
-            if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
-                error_msg = "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header, X-Debug-Token header, or ?token=<token> query parameter."
+            if Config.DEBUG_SERVER_TOKEN:
+                if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
+                    error_msg = (
+                        "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header, "
+                        "X-Debug-Token header, or ?token=<token> query parameter."
+                    )
+                else:
+                    error_msg = (
+                        "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header or "
+                        "X-Debug-Token header. Query parameter authentication is disabled for security."
+                    )
             else:
-                error_msg = "Authentication required. Provide DEBUG_SERVER_TOKEN via Authorization: Bearer <token> header or X-Debug-Token header. Query parameter authentication is disabled for security."
+                error_msg = "Authentication required. Configure DEBUG_SERVER_TOKEN or ARCANOS_AUTOMATION_SECRET for access."
             self._send_response(401, error=error_msg)
             return False
-        
+
         return True
 
     def do_GET(self):
@@ -203,6 +192,12 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         path = self._path_without_query()
 
         def _inner() -> None:
+            # Require application/json Content-Type on POST to mitigate CSRF
+            content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if content_type != "application/json":
+                self._send_response(415, error="Content-Type must be application/json")
+                return
+
             if not self._check_authentication():
                 return
 

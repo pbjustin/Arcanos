@@ -390,7 +390,7 @@ export async function checkDatabaseHealth(): Promise<HealthCheckResult> {
 
   // Check database connectivity using db client
   try {
-    const { getStatus } = await import('../../db.js');
+    const { getStatus } = await import('../../db/index.js');
     const dbStatus = getStatus();
     
     return {

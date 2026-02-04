@@ -14,16 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed - BREAKING: Development Host Binding
-- **Development server binding changed from `0.0.0.0` to `127.0.0.1`** (localhost only)
-  - **Why:** Improves security by not exposing development endpoints on all network interfaces by default
-  - **Impact:** Existing development setups that rely on network access will lose connectivity
-  - **Migration:** Set `HOST=0.0.0.0` environment variable to restore network access if needed for:
-    - Testing from other devices on your network (mobile, tablets, etc.)
-    - Docker containers that need to access the host
-    - WSL2 environments requiring host network access
-  - **Production:** No impact - production defaults to `0.0.0.0` (all interfaces)
-  - See `config/env/core.env.example` and `config/env/development.env.example` for configuration details
+### ⚠️ BREAKING CHANGES
+
+#### Development Host Binding Change
+- **Default HOST binding in development changed from `0.0.0.0` to `127.0.0.1`**
+  - **Impact**: Development servers now bind to localhost only by default, improving security
+  - **Migration**: To restore network access (e.g., for Docker containers, WSL2, or testing from other devices):
+    - Set `HOST=0.0.0.0` in your `.env` file, or
+    - Export `HOST=0.0.0.0` in your shell before starting the server
+  - **Production**: Production deployments still default to `0.0.0.0` (no change)
+  - **Rationale**: Binding to localhost by default prevents accidental exposure of development endpoints on the local network
 
 ### Changed - CANOS PR Remediation
 - **Trinity module split:** Refactored `src/logic/trinity.ts` into `trinity.ts` (orchestrator), `trinityTypes.ts` (types), and `trinityStages.ts` (stage runners and helpers). Public API unchanged; import only from `trinity.js`.

@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import { getSessionLogPath } from '../utils/logPath.js';
-import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db.js';
+import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db/index.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { requireField } from '../utils/validation.js';
 import { confirmGate } from '../middleware/confirmGate.js';

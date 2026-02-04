@@ -25,7 +25,7 @@ sourced from `src/utils/env.ts`, `src/config/index.ts`, `src/services/openai/con
 | --- | --- | --- |
 | `NODE_ENV` | `development` | Controls logging and worker defaults. |
 | `PORT` | `8080` | HTTP port (Railway overrides with `PORT`). |
-| `HOST` | `127.0.0.1` (dev) / `0.0.0.0` (prod) | Bind address for the HTTP server. In development, defaults to localhost for security. Set to `0.0.0.0` to allow network access (e.g., Docker, WSL2, testing from other devices). |
+| `HOST` | `127.0.0.1` (dev)<br>`0.0.0.0` (prod) | Bind address for the HTTP server. Development defaults to localhost for security. Set `HOST=0.0.0.0` to allow network access (Docker, WSL2, remote testing). |
 | `SERVER_URL` | `http://127.0.0.1:<port>` | Base URL used for internal callbacks. |
 | `BACKEND_STATUS_ENDPOINT` | `/status` | Status endpoint path for internal checks. |
 | `LOG_LEVEL` | `info` | Logging verbosity for the structured logger. |

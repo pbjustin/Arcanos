@@ -1,5 +1,5 @@
 import express from 'express';
-import { logExecution } from '../../db.js';
+import { logExecution } from '../../db/index.js';
 import { confirmGate } from '../../middleware/confirmGate.js';
 import {
   getWorkerRuntimeStatus,

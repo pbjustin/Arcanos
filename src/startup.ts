@@ -1,7 +1,7 @@
 import config from './config/index.js';
 import { validateEnvironment, printValidationResults, createStartupReport, validateRailwayEnvironment, checkEphemeralFS } from './utils/environmentValidation.js';
 import { logger } from './utils/structuredLogging.js';
-import { initializeDatabase } from './db.js';
+import { initializeDatabaseWithSchema as initializeDatabase } from './db/index.js';
 import { validateAPIKeyAtStartup, getDefaultModel } from './services/openai.js';
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from './utils/environmentSecurity.js';
