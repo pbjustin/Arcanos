@@ -48,10 +48,16 @@ describe('tokenStore', () => {
     });
 
     it('should use default TTL of 10 minutes when no env vars set', () => {
-      const record = createOneTimeToken();
-      const expectedTtl = 10 * 60 * 1000; // 10 minutes in ms
+      // Need to reload module to ensure clean env state
+      jest.resetModules();
 
-      expect(record.ttlMs).toBe(expectedTtl);
+      // Re-import to get fresh instance
+      return import('../src/lib/tokenStore.js').then(({ createOneTimeToken: create }) => {
+        const record = create();
+        const expectedTtl = 10 * 60 * 1000; // 10 minutes in ms
+
+        expect(record.ttlMs).toBe(expectedTtl);
+      });
     });
 
     it('should generate unique tokens for multiple calls', () => {
