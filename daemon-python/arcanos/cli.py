@@ -1016,7 +1016,7 @@ class ArcanosCLI:
         if return_result:
             return {"ok": True, **asdict(result)}
 
-        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text)}\n")
+        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text).replace('[', '[[')}\n")
 
         if Config.SPEAK_RESPONSES:
             truncated = truncate_for_tts(result.response_text)
