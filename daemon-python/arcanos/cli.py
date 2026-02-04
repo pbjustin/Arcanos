@@ -926,7 +926,7 @@ class ArcanosCLI:
             return result
 
         # Display response
-        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text)}\n")
+        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text).replace('[', '[[')}\n")
 
         should_speak = speak_response or Config.SPEAK_RESPONSES
         if should_speak:
