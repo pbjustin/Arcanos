@@ -4,17 +4,141 @@ CLI mode runners for ARCANOS.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import secrets
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable
 
 from .cli_config import CAMERA_INTENT_PATTERN, RUN_COMMAND_PATTERNS, SCREEN_INTENT_PATTERN
 from .cli_intents import detect_run_see_intent
+from .config import Config
 from .error_handler import ErrorHandler
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
+
+DEBUG_MODE_LOGGER_NAME = "arcanos.cli.debug_mode"
+DEBUG_MODE_DIR_NAME = "debug_mode"
+DEBUG_MODE_POLL_SECONDS = 1.0
+DEBUG_MODE_TOKEN_ENV = "ARCANOS_DEBUG_CMD_TOKEN"
+DEBUG_MODE_COMMAND_FILE_ENV = "ARCANOS_DEBUG_CMD_FILE"
+EXIT_COMMANDS = {"exit", "quit"}
+
+
+def _build_debug_logger(log_file_path: Path) -> logging.Logger:
+    """
+    Purpose: Build an isolated logger for debug mode without mutating the root logger.
+    Inputs/Outputs: Log path; returns configured logger instance.
+    Edge cases: Existing handlers are replaced to avoid duplicate lines across reruns.
+    """
+    logger = logging.getLogger(DEBUG_MODE_LOGGER_NAME)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    for handler in list(logger.handlers):
+        handler.close()
+        logger.removeHandler(handler)
+
+    handler = logging.FileHandler(log_file_path, mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
+def _resolve_debug_token() -> str:
+    """
+    Purpose: Resolve debug command token from environment or generate a one-time token.
+    Inputs/Outputs: Reads environment; returns token string.
+    Edge cases: Empty env value falls back to generated token.
+    """
+    configured_token = os.getenv(DEBUG_MODE_TOKEN_ENV, "").strip()
+    if configured_token:
+        return configured_token
+    return secrets.token_urlsafe(18)
+
+
+def _resolve_command_file_path(debug_dir: Path, token: str) -> Path:
+    """
+    Purpose: Determine the command file location for debug mode.
+    Inputs/Outputs: Debug directory and token; returns file path.
+    Edge cases: Relative env path is resolved under debug_dir for portability.
+    """
+    configured_path = os.getenv(DEBUG_MODE_COMMAND_FILE_ENV, "").strip()
+    if configured_path:
+        path = Path(configured_path).expanduser()
+        return path if path.is_absolute() else debug_dir / path
+    return debug_dir / f"debug_cmd_{token[:12]}.json"
+
+
+def _read_command_payload(cmd_file_path: Path, logger: logging.Logger) -> tuple[str, str] | None:
+    """
+    Purpose: Read and validate a tokenized command payload from disk.
+    Inputs/Outputs: Command file path and logger; returns (token, command) or None.
+    Edge cases: Rejects symlinks, non-JSON payloads, and empty commands.
+    """
+    if cmd_file_path.is_symlink():
+        logger.warning("Rejected command payload because file is a symlink: %s", cmd_file_path)
+        cmd_file_path.unlink(missing_ok=True)
+        return None
+
+    raw_payload = cmd_file_path.read_text(encoding="utf-8").strip()
+    cmd_file_path.unlink(missing_ok=True)
+    if not raw_payload:
+        return None
+
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        logger.warning("Rejected command payload because JSON parsing failed.")
+        return None
+
+    if not isinstance(payload, dict):
+        logger.warning("Rejected command payload because payload is not a JSON object.")
+        return None
+
+    token = str(payload.get("token", "")).strip()
+    command = str(payload.get("command", "")).strip()
+    if not command:
+        logger.warning("Rejected command payload because command is empty.")
+        return None
+    return token, command
+
+
+def _summarize_command(command: str) -> str:
+    """
+    Purpose: Produce a safe command summary that avoids logging raw arguments.
+    Inputs/Outputs: Raw command string; returns redacted summary.
+    Edge cases: Empty commands map to placeholder marker.
+    """
+    parts = command.split(maxsplit=1)
+    if not parts:
+        return "<empty>"
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]} <args:{len(parts[1])} chars>"
+
+
+def _build_command_handlers(cli: "ArcanosCLI", args: str) -> dict[str, Callable[[], None]]:
+    """
+    Purpose: Build a command-to-handler dispatch table for direct CLI commands.
+    Inputs/Outputs: CLI instance and argument string; returns handler map.
+    Edge cases: Argument parsing stays command-specific via lightweight lambdas.
+    """
+    return {
+        "help": cli.handle_help,
+        "see": lambda: cli.handle_see(args.split()),
+        "voice": lambda: cli.handle_voice(args.split()),
+        "ptt": cli.handle_ptt,
+        "run": lambda: cli.handle_run(args),
+        "speak": cli.handle_speak,
+        "stats": cli.handle_stats,
+        "clear": cli.handle_clear,
+        "reset": cli.handle_reset,
+        "update": cli.handle_update,
+    }
 
 
 def run_debug_mode(cli: "ArcanosCLI") -> None:
@@ -23,55 +147,66 @@ def run_debug_mode(cli: "ArcanosCLI") -> None:
     Inputs/Outputs: CLI instance; reads commands from a file and logs output.
     Edge cases: Stops on "exit"/"quit" commands or fatal errors.
     """
-    log_file_path = os.path.join(os.path.dirname(__file__), "debug_log.txt")
-    cmd_file_path = os.path.join(os.path.dirname(__file__), "debug_cmd.in")
+    debug_dir = Config.LOG_DIR / DEBUG_MODE_DIR_NAME
+    debug_dir.mkdir(parents=True, exist_ok=True)
 
-    cli.console.print("Daemon starting in robust debug mode...")
+    debug_token = _resolve_debug_token()
+    log_file_path = debug_dir / "debug_log.txt"
+    cmd_file_path = _resolve_command_file_path(debug_dir, debug_token)
+    logger = _build_debug_logger(log_file_path)
+
+    cli.console.print("Daemon starting in authenticated debug mode...")
     cli.console.print(f"All output will be in: {log_file_path}")
-
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        filename=log_file_path,
-        filemode="w",
-    )
+    cli.console.print(f"Command file path: {cmd_file_path}")
+    cli.console.print('Command payload format: {"token":"...","command":"..."}')
+    if os.getenv(DEBUG_MODE_TOKEN_ENV):
+        cli.console.print(f"Using debug token from {DEBUG_MODE_TOKEN_ENV}.")
+    else:
+        cli.console.print(f"[yellow]Generated one-time debug token:[/yellow] {debug_token}")
 
     try:
-        logging.info("Robust debug mode initialized.")
-        logging.info("Command file to watch: %s", cmd_file_path)
+        logger.info("Authenticated debug mode initialized.")
+        logger.info("Command file to watch: %s", cmd_file_path)
 
         while True:
             # //audit assumption: command file presence indicates pending work; risk: missed command; invariant: poll loop; strategy: check file.
-            if os.path.exists(cmd_file_path):
+            if cmd_file_path.exists():
                 try:
-                    with open(cmd_file_path, "r", encoding="utf-8") as command_file:
-                        user_input = command_file.read().strip()
-                    os.remove(cmd_file_path)
+                    payload = _read_command_payload(cmd_file_path, logger)
+                    if not payload:
+                        time.sleep(DEBUG_MODE_POLL_SECONDS)
+                        continue
+                    provided_token, user_input = payload
 
-                    logging.info("EXECUTING COMMAND: %s", user_input)
-                    if user_input.lower() in ["exit", "quit"]:
+                    if provided_token != debug_token:
+                        logger.warning("Rejected command due to invalid debug token.")
+                        time.sleep(DEBUG_MODE_POLL_SECONDS)
+                        continue
+
+                    safe_summary = _summarize_command(user_input)
+                    logger.info("EXECUTING COMMAND: %s", safe_summary)
+                    if user_input.lower() in EXIT_COMMANDS:
                         # //audit assumption: exit commands should stop loop; risk: lingering process; invariant: break loop; strategy: stop.
-                        logging.info("Exit command received. Shutting down.")
+                        logger.info("Exit command received. Shutting down.")
                         break
 
                     process_input(cli, user_input)
-                    logging.info("COMMAND FINISHED: %s", user_input)
+                    logger.info("COMMAND FINISHED: %s", safe_summary)
                 except Exception as exc:
                     # //audit assumption: command processing can fail; risk: lost debug session; invariant: error logged; strategy: continue loop.
-                    logging.error("Error in command processing loop: %s", exc, exc_info=True)
+                    logger.error("Error in command processing loop: %s", exc, exc_info=True)
 
-            time.sleep(1)
+            time.sleep(DEBUG_MODE_POLL_SECONDS)
     except KeyboardInterrupt:
-        logging.info("Debug mode interrupted by user.")
+        logger.info("Debug mode interrupted by user.")
     except Exception as exc:
-        logging.critical("A critical error occurred in the debug mode runner: %s", exc, exc_info=True)
+        logger.critical("A critical error occurred in the debug mode runner: %s", exc, exc_info=True)
     finally:
-        logging.info("Stopping daemon service and shutting down.")
+        logger.info("Stopping daemon service and shutting down.")
         cli._stop_daemon_service()
-        logging.shutdown()
+        for handler in list(logger.handlers):
+            handler.close()
+            logger.removeHandler(handler)
 
 
 def run_interactive_mode(cli: "ArcanosCLI") -> None:
@@ -115,55 +250,44 @@ def process_input(cli: "ArcanosCLI", user_input: str) -> None:
     Edge cases: Falls back to natural conversation when no command matches.
     """
     parts = user_input.split(maxsplit=1)
+    if not parts:
+        return
     command = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
 
-    # //audit assumption: first token determines routing; risk: mis-parse; invariant: only one branch; strategy: if/elif chain.
-    if command == "help":
-        cli.handle_help()
-    elif command in ["deep", "backend"]:
+    # //audit assumption: backend requests need arguments; risk: empty prompt; invariant: warn; strategy: check args.
+    if command in ["deep", "backend"]:
         # //audit assumption: backend requests need arguments; risk: empty prompt; invariant: warn; strategy: check args.
         if not args:
             cli.console.print("[red]No prompt provided for backend request.[/red]")
         else:
             cli.handle_ask(args, route_override="backend")
-    elif command == "see":
-        cli.handle_see(args.split())
-    elif command == "voice":
-        cli.handle_voice(args.split())
-    elif command == "ptt":
-        cli.handle_ptt()
-    elif command == "run":
-        cli.handle_run(args)
-    elif command == "speak":
-        cli.handle_speak()
-    elif command == "stats":
-        cli.handle_stats()
-    elif command == "clear":
-        cli.handle_clear()
-    elif command == "reset":
-        cli.handle_reset()
-    elif command == "update":
-        cli.handle_update()
-    else:
-        # //audit assumption: fallback routes use intent parsing; risk: misclassification; invariant: either intent or chat; strategy: parse then default.
-        intent = detect_run_see_intent(
-            user_input,
-            RUN_COMMAND_PATTERNS,
-            CAMERA_INTENT_PATTERN,
-            SCREEN_INTENT_PATTERN,
-        )
-        # //audit assumption: intent detection returns tuple or None; risk: false negatives; invariant: fallback to chat; strategy: branch on intent.
-        if intent:
-            intent_name, intent_payload = intent
-            if intent_name == "run" and intent_payload:
-                # //audit assumption: run intent with payload should execute command; risk: empty payload; invariant: execute when present; strategy: guard.
-                cli.handle_run(intent_payload)
-            elif intent_name == "see_screen":
-                cli.handle_see([])
-            elif intent_name == "see_camera":
-                cli.handle_see(["camera"])
-            else:
-                cli.handle_ask(user_input)
+        return
+
+    handlers = _build_command_handlers(cli, args)
+    handler = handlers.get(command)
+    if handler:
+        handler()
+        return
+
+    # //audit assumption: fallback routes use intent parsing; risk: misclassification; invariant: either intent or chat; strategy: parse then default.
+    intent = detect_run_see_intent(
+        user_input,
+        RUN_COMMAND_PATTERNS,
+        CAMERA_INTENT_PATTERN,
+        SCREEN_INTENT_PATTERN,
+    )
+    # //audit assumption: intent detection returns tuple or None; risk: false negatives; invariant: fallback to chat; strategy: branch on intent.
+    if intent:
+        intent_name, intent_payload = intent
+        if intent_name == "run" and intent_payload:
+            # //audit assumption: run intent with payload should execute command; risk: empty payload; invariant: execute when present; strategy: guard.
+            cli.handle_run(intent_payload)
+        elif intent_name == "see_screen":
+            cli.handle_see([])
+        elif intent_name == "see_camera":
+            cli.handle_see(["camera"])
         else:
             cli.handle_ask(user_input)
+    else:
+        cli.handle_ask(user_input)
