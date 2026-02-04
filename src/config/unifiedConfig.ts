@@ -38,7 +38,6 @@ export interface AppConfig {
   fallbackModel: string;
   gpt5Model: string;
   gpt51Model: string;
-  openaiMaxRetries: number;
 
   // Database Configuration
   databaseUrl: string | undefined;
@@ -50,7 +49,6 @@ export interface AppConfig {
 
   // Logging Configuration
   logPath: string;
-  memoryPath: string;
   logLevel: string;
 
   // Security Configuration
@@ -162,19 +160,11 @@ export function getConfig(): AppConfig {
       'OPENAI_API_BASE_URL',
       'OPENAI_API_BASE'
     ]),
-    defaultModel: getEnvVar('FINETUNED_MODEL_ID', [
-      'FINE_TUNED_MODEL_ID',
-      'AI_MODEL',
-      'OPENAI_MODEL',
-      'RAILWAY_OPENAI_MODEL'
-    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI,
-    fallbackModel: getEnvVar('FALLBACK_MODEL', [
-      'AI_FALLBACK_MODEL',
-      'RAILWAY_OPENAI_FALLBACK_MODEL'
-    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4,
+    defaultModel: undefined as unknown as string, // placeholder, set below
+    // fallbackModel computed below after defaultModel is resolved
+    fallbackModel: undefined as unknown as string,
     gpt5Model: getEnvVar('GPT5_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5,
     gpt51Model: getEnvVar('GPT51_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5_1,
-    openaiMaxRetries: getEnvNumber('OPENAI_MAX_RETRIES', APPLICATION_CONSTANTS.DEFAULT_OPENAI_MAX_RETRIES),
 
     // Database Configuration
     databaseUrl: getEnvVar('DATABASE_URL'),
@@ -182,11 +172,10 @@ export function getConfig(): AppConfig {
 
     // Worker Configuration
     runWorkers: getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test'),
-    workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', APPLICATION_CONSTANTS.DEFAULT_API_TIMEOUT),
+    workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', 60000),
 
     // Logging Configuration
-    logPath: getEnv('ARC_LOG_PATH', APPLICATION_CONSTANTS.DEFAULT_LOG_PATH),
-    memoryPath: getEnv('ARC_MEMORY_PATH', APPLICATION_CONSTANTS.DEFAULT_MEMORY_PATH),
+    logPath: getEnv('ARC_LOG_PATH', '/tmp/arc/log'),
     logLevel: getEnv('LOG_LEVEL', 'info'),
 
     // Security Configuration
@@ -201,6 +190,23 @@ export function getConfig(): AppConfig {
     railwayEnvironment: getEnv('RAILWAY_ENVIRONMENT'),
     railwayProjectId: getEnv('RAILWAY_PROJECT_ID')
   };
+
+  // Resolve defaultModel with Railway fallbacks (prefer fine-tuned id)
+  const resolvedDefaultModel = getEnvVar('FINETUNED_MODEL_ID', [
+    'FINE_TUNED_MODEL_ID',
+    'AI_MODEL',
+    'OPENAI_MODEL',
+    'RAILWAY_OPENAI_MODEL'
+  ]) || 'gpt-4o-mini';
+
+  // Assign resolved values
+  config.defaultModel = resolvedDefaultModel;
+
+  // Fallback model: prefer explicit FALLBACK_MODEL, else use resolved defaultModel, else final literal
+  config.fallbackModel = getEnvVar('FALLBACK_MODEL', [
+    'AI_FALLBACK_MODEL',
+    'RAILWAY_OPENAI_FALLBACK_MODEL'
+  ]) || resolvedDefaultModel || 'gpt-4';
 
   return config;
 }
