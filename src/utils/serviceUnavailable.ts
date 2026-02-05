@@ -9,10 +9,10 @@ export function sendOpenAIServiceUnavailable<T>(
   details: string = OPENAI_SERVICE_UNAVAILABLE_DETAILS,
   error: string = 'Service Unavailable'
 ): void {
-  res.status(503).json({
+  res.status(503).json(buildTimestampedPayload({
     error,
     details
-  } as T);
+  }) as T);
 }
 
 export function sendOpenAIProcessingFailed<T>(
@@ -20,10 +20,10 @@ export function sendOpenAIProcessingFailed<T>(
   details: string,
   error: string = OPENAI_PROCESSING_FAILED_ERROR
 ): void {
-  res.status(500).json({
+  res.status(500).json(buildTimestampedPayload({
     error,
     details
-  } as T);
+  }) as T);
 }
 
 export function sendTimestampedStatus<T, P extends object>(
