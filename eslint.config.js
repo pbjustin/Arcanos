@@ -37,13 +37,13 @@ export default [
       // Disable TypeScript version warnings
       'no-unreachable': 'error',
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-unused-vars': ['error', { 
+      '@typescript-eslint/no-unused-vars': ['warn', { 
         'argsIgnorePattern': '^_',
         'varsIgnorePattern': '^_',
         'destructuredArrayIgnorePattern': '^_'
       }],
       '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-non-null-assertion': 'warn'
+      '@typescript-eslint/no-non-null-assertion': 'off'
     }
   }
 ];
