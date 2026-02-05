@@ -13,7 +13,7 @@ import {
   buildResearchBriefPrompt,
   buildResearchFallbackPrompt
 } from '../config/tutorPrompts.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import { getEnv, getEnvNumber } from '../config/env.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
@@ -64,13 +64,7 @@ async function runTutorPipeline(
     temperature?: number;
   } = {}
 ): Promise<TutorPipelineOutput> {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    adapter = null;
-  }
+  const { adapter } = getOpenAIClientOrAdapter();
   // Use config layer for env access (adapter boundary pattern)
   const testMode = getEnv('OPENAI_API_KEY') === 'test_key_for_mocking';
 

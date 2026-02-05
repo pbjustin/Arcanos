@@ -128,6 +128,37 @@ const ERROR_CODES = {
   'VALIDATION_ERROR': { python: 'ValueError', node: 'ValidationError' }
 };
 
+// Support both legacy module layout and current package layout.
+const DAEMON_CLIENT_FILE_CANDIDATES = [
+  path.join('daemon-python', 'arcanos', 'backend_client.py'),
+  path.join('daemon-python', 'arcanos', 'backend_client', '__init__.py')
+];
+
+function daemonClientPathHint() {
+  return DAEMON_CLIENT_FILE_CANDIDATES.join(' or ');
+}
+
+function toDaemonRelativePath(repoRelativePath) {
+  return repoRelativePath.replace(/^daemon-python[\\/]/, '');
+}
+
+async function resolveDaemonClientPath() {
+  for (const repoRelativePath of DAEMON_CLIENT_FILE_CANDIDATES) {
+    const absolutePath = path.join(ROOT, repoRelativePath);
+    try {
+      await fs.access(absolutePath);
+      return {
+        repoRelativePath,
+        daemonRelativePath: toDaemonRelativePath(repoRelativePath),
+        absolutePath
+      };
+    } catch {
+      // Try next candidate.
+    }
+  }
+  return null;
+}
+
 /**
  * Read and parse package.json
  */
@@ -350,12 +381,23 @@ async function checkAPIContract(clientFile, endpoint) {
  */
 async function checkAPIContracts() {
   console.log('\n🔍 Checking API contract alignment...\n');
+
+  const daemonClientPath = await resolveDaemonClientPath();
+  if (!daemonClientPath) {
+    return [{
+      type: 'file_not_found',
+      file: daemonClientPathHint(),
+      severity: 'error',
+      message: `Client file not found: ${daemonClientPathHint()}`,
+      fix: `Ensure ${daemonClientPathHint()} exists`
+    }];
+  }
   
   const contractChecks = [
-    { endpoint: '/api/ask', clientFile: path.join('arcanos', 'backend_client.py') },
-    { endpoint: '/api/vision', clientFile: path.join('arcanos', 'backend_client.py') },
-    { endpoint: '/api/transcribe', clientFile: path.join('arcanos', 'backend_client.py') },
-    { endpoint: '/api/update', clientFile: path.join('arcanos', 'backend_client.py') }
+    { endpoint: '/api/ask', clientFile: daemonClientPath.daemonRelativePath },
+    { endpoint: '/api/vision', clientFile: daemonClientPath.daemonRelativePath },
+    { endpoint: '/api/transcribe', clientFile: daemonClientPath.daemonRelativePath },
+    { endpoint: '/api/update', clientFile: daemonClientPath.daemonRelativePath }
   ];
 
   const allIssues = [];
@@ -564,7 +606,8 @@ async function detectBreakingChanges() {
   // Check if server routes have changed but daemon hasn't been updated
   // Check src/routes (source of truth)
   const routesDir = path.join(ROOT, 'src', 'routes');
-  const clientFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_client.py');
+  const daemonClientPath = await resolveDaemonClientPath();
+  const clientFile = daemonClientPath?.absolutePath;
   
   try {
     // Check src/routes (source of truth)
@@ -581,10 +624,12 @@ async function detectBreakingChanges() {
     );
     
     let clientContent = '';
-    try {
-      clientContent = await fs.readFile(clientFile, 'utf-8');
-    } catch {
-      // Client file might not exist
+    if (clientFile) {
+      try {
+        clientContent = await fs.readFile(clientFile, 'utf-8');
+      } catch {
+        // Client file might not be readable.
+      }
     }
     
     for (const routeFile of apiRoutes) {
@@ -613,7 +658,7 @@ async function detectBreakingChanges() {
               source: 'server',
               target: 'daemon',
               message: `⚠️ SERVER (source of truth) has ${endpoint}, but DAEMON (extension) is missing method '${contract.clientMethod}'`,
-              fix: `Update daemon: Add ${contract.clientMethod}() method to backend_client.py to match server`,
+              fix: `Update daemon: Add ${contract.clientMethod}() method to ${daemonClientPath?.repoRelativePath ?? 'daemon-python/arcanos/backend_client/__init__.py'} to match server`,
               priority: 'high',
               action: 'daemon_must_follow_server'
             });
@@ -648,7 +693,8 @@ async function detectDaemonChangesNotMatchingServer() {
   
   const issues = [];
   
-  const daemonClientFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_client.py');
+  const daemonClientPath = await resolveDaemonClientPath();
+  const daemonClientFile = daemonClientPath?.absolutePath;
   const daemonAuthFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_auth_client.py');
   // Check src/routes (source of truth)
   const routesDir = path.join(ROOT, 'src', 'routes');
@@ -657,6 +703,16 @@ async function detectDaemonChangesNotMatchingServer() {
     let daemonClientContent = '';
     let daemonAuthContent = '';
     
+    if (!daemonClientFile) {
+      issues.push({
+        type: 'daemon_file_missing',
+        severity: 'error',
+        message: 'Daemon client file not found',
+        fix: `Ensure ${daemonClientPathHint()} exists`
+      });
+      return issues;
+    }
+
     try {
       daemonClientContent = await fs.readFile(daemonClientFile, 'utf-8');
     } catch {
@@ -664,7 +720,7 @@ async function detectDaemonChangesNotMatchingServer() {
         type: 'daemon_file_missing',
         severity: 'error',
         message: 'Daemon client file not found',
-        fix: 'Ensure daemon-python/arcanos/backend_client.py exists'
+        fix: `Ensure ${daemonClientPathHint()} exists`
       });
       return issues;
     }
@@ -881,13 +937,24 @@ async function detectServerChangesRequiringDaemonUpdates() {
   
   // Check API routes in server
   const routesDir = path.join(ROOT, 'src', 'routes');
-  const daemonClientFile = path.join(ROOT, 'daemon-python', 'arcanos', 'backend_client.py');
+  const daemonClientPath = await resolveDaemonClientPath();
+  const daemonClientFile = daemonClientPath?.absolutePath;
   
   try {
     const routeFiles = await fs.readdir(routesDir);
     const apiRouteFiles = routeFiles.filter(f => f.startsWith('api-') && f.endsWith('.ts'));
     
     let daemonContent = '';
+    if (!daemonClientFile) {
+      issues.push({
+        type: 'daemon_file_missing',
+        severity: 'error',
+        message: 'Daemon client file not found - daemon cannot follow server',
+        fix: `Ensure ${daemonClientPathHint()} exists`
+      });
+      return issues;
+    }
+
     try {
       daemonContent = await fs.readFile(daemonClientFile, 'utf-8');
     } catch {
@@ -895,7 +962,7 @@ async function detectServerChangesRequiringDaemonUpdates() {
         type: 'daemon_file_missing',
         severity: 'error',
         message: 'Daemon client file not found - daemon cannot follow server',
-        fix: 'Ensure daemon-python/arcanos/backend_client.py exists'
+        fix: `Ensure ${daemonClientPathHint()} exists`
       });
       return issues;
     }
@@ -924,7 +991,7 @@ async function detectServerChangesRequiringDaemonUpdates() {
               source: 'server',
               target: 'daemon',
               message: `🔴 SERVER (source of truth) defines ${endpoint}, but DAEMON (extension) is missing '${contract.clientMethod}()'`,
-              fix: `Update daemon: Add ${contract.clientMethod}() method to daemon-python/arcanos/backend_client.py`,
+              fix: `Update daemon: Add ${contract.clientMethod}() method to ${daemonClientPath?.repoRelativePath ?? 'daemon-python/arcanos/backend_client/__init__.py'}`,
               priority: 'high',
               action: 'daemon_must_follow_server'
             });

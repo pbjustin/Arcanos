@@ -1,6 +1,6 @@
 import { getDefaultModel, getGPT5Model } from './openai.js';
 import { ARCANOS_PROMPTS, buildMockArcanosResponse } from '../config/arcanosPrompts.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 // Use centralized model configuration
 const FT_MODEL = getDefaultModel();
@@ -22,14 +22,7 @@ function buildReasoningMessages(fineTunedOutput: string) {
 
 export async function arcanosQuery(prompt: string): Promise<string> {
   try {
-    // Get OpenAI adapter (adapter boundary pattern)
-    let adapter;
-    try {
-      adapter = getOpenAIAdapter();
-    } catch {
-      // Return mock response when no API key is configured
-      return buildMockArcanosResponse(prompt, FT_MODEL);
-    }
+    const { adapter } = getOpenAIClientOrAdapter();
 
     if (!adapter) {
       // Return mock response when no API key is configured

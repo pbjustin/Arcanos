@@ -1,10 +1,10 @@
 import type OpenAI from 'openai';
 import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
-import { getOpenAIAdapter } from '../../adapters/openai.adapter.js';
 import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
 import type { ChatCompletion } from './types.js';
 import type { TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 import { buildEmbeddingRequest } from './requestBuilders.js';
+import { getOpenAIClientOrAdapter } from './clientBridge.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 
@@ -44,12 +44,11 @@ export async function createEmbedding(
       getClient: () => client
     };
   } else {
-    // Get singleton adapter
-    try {
-      adapter = getOpenAIAdapter();
-    } catch {
+    const { adapter: sharedAdapter } = getOpenAIClientOrAdapter();
+    if (!sharedAdapter) {
       throw new Error('OpenAI adapter not initialized');
     }
+    adapter = sharedAdapter;
   }
 
   const requestParams = buildEmbeddingRequest({ input, model: DEFAULT_EMBEDDING_MODEL });

@@ -11,7 +11,7 @@
  */
 
 import { getDefaultModel } from './openai.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
@@ -62,11 +62,8 @@ export function saveWithAuditCheck<T>(data: T, validator: (data: T) => boolean):
 }
 
 export async function interpretCommand(userCommand: string) {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
+  const { adapter } = getOpenAIClientOrAdapter();
+  if (!adapter) {
     console.warn('⚠️ OpenAI adapter not available - using mock response for command interpretation');
     // Provide simple command mapping when API is not available
     const normalized = userCommand.toLowerCase();

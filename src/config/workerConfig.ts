@@ -4,7 +4,7 @@ import { runARCANOS } from '../logic/arcanos.js';
 import { logger } from '../utils/structuredLogging.js';
 import { getConfig } from './unifiedConfig.js';
 import { getEnvNumber, getEnv } from './env.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { requireOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
 // ✅ Environment setup
@@ -115,15 +115,12 @@ export const workerTaskQueue = new WorkerTaskQueue();
 
 // ✅ GPT-5.1 reasoning function using centralized helper
 export async function gpt5Reasoning(prompt: string): Promise<string> {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
+  let client;
   try {
-    adapter = getOpenAIAdapter();
+    ({ client } = requireOpenAIClientOrAdapter('OpenAI adapter unavailable'));
   } catch {
     return '[Fallback: GPT-5.1 unavailable]';
   }
-  const client = adapter.getClient();
-  if (!client) return '[Fallback: GPT-5.1 unavailable]';
 
   const result = await createGPT5Reasoning(
     client,
@@ -156,16 +153,11 @@ export type WorkerResult = Partial<ArcanosResult> & {
 
 // ✅ ARCANOS core logic alias for compatibility with problem statement
 export async function arcanosCoreLogic(input: string): Promise<WorkerResult> {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
+  let client;
   try {
-    adapter = getOpenAIAdapter();
+    ({ client } = requireOpenAIClientOrAdapter('OpenAI adapter unavailable'));
   } catch {
     return { error: 'OpenAI adapter unavailable' } as WorkerResult;
-  }
-  const client = adapter.getClient();
-  if (!client) {
-    return { error: 'OpenAI client unavailable' } as WorkerResult;
   }
 
   const logicOutput = await runARCANOS(client, input);
@@ -333,4 +325,3 @@ export function getWorkerRuntimeStatus(): WorkerRuntimeStatus {
 if (workerSettings.runWorkers) {
   startWorkers();
 }
-

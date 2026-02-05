@@ -1,7 +1,7 @@
 import { getPrompt } from '../config/prompts.js';
 import { getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js';
 import { fetchAndClean } from './webFetcher.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { getEnv } from '../config/env.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
@@ -49,11 +49,8 @@ const gamingPrompts = {
 };
 
 export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
+  const { adapter } = getOpenAIClientOrAdapter();
+  if (!adapter) {
     const mock = generateMockResponse(userPrompt, 'guide');
     return {
       gaming_response: mock.result,

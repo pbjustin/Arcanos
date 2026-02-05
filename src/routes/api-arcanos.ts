@@ -6,6 +6,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import type { IdleStateService } from '../services/idleStateService.js';
 import type OpenAI from 'openai';
+import { sendAIStatusError } from '../utils/requestHandler.js';
 
 const router = express.Router();
 
@@ -149,8 +150,8 @@ function createArcanosAskHandler(deps: {
       //audit Assumption: stream option is boolean; risk: incorrect streaming path; invariant: stream true triggers SSE; handling: branch on options.stream.
       if (options.stream) {
         const response = await createCompletion(messages, {
-temperature: typeof options.temperature === 'number' ? options.temperature : 0.7,
-max_tokens: typeof options.max_tokens === 'number' ? Math.min(options.max_tokens, 4096) : 2048,
+          temperature: typeof options.temperature === 'number' ? options.temperature : 0.7,
+          max_tokens: typeof options.max_tokens === 'number' ? Math.min(options.max_tokens, 4096) : 2048,
           stream: true
         });
 
@@ -206,30 +207,33 @@ max_tokens: typeof options.max_tokens === 'number' ? Math.min(options.max_tokens
 
       //audit Assumption: ENOTFOUND/ECONNREFUSED imply network failure; risk: misclassification; invariant: 503 on connectivity issue; handling: check message.
       if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
-        return res.status(503).json({
-          success: false,
-          error: 'Network connectivity issue - unable to reach AI services'
-        });
+        return sendAIStatusError(
+          res,
+          503,
+          'Network connectivity issue - unable to reach AI services'
+        );
       }
 
       //audit Assumption: timeout strings imply upstream delay; risk: missed timeout types; invariant: 504 on timeout; handling: message check.
       if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
-        return res.status(504).json({
-          success: false,
-          error: 'Request timeout - AI service did not respond in time'
-        });
+        return sendAIStatusError(
+          res,
+          504,
+          'Request timeout - AI service did not respond in time'
+        );
       }
 
       //audit Assumption: auth failures contain 401/unauthorized; risk: false positives; invariant: 503 with auth message; handling: message check.
       if (errorMessage.includes('API key') || errorMessage.includes('unauthorized') || errorMessage.includes('401')) {
-        return res.status(503).json({
-          success: false,
-          error: 'AI service configuration issue - authentication failed'
-        });
+        return sendAIStatusError(
+          res,
+          503,
+          'AI service configuration issue - authentication failed'
+        );
       }
 
       //audit Assumption: unknown errors should surface; risk: leaking details; invariant: 500 with error message; handling: fallback.
-return res.status(500).json({ success: false, error: 'An internal server error occurred' });
+      return sendAIStatusError(res, 500, 'An internal server error occurred');
     }
   });
 }

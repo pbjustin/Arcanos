@@ -5,7 +5,7 @@ import { fetchAndClean } from './webFetcher.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
 import { saveRagDoc, loadAllRagDocs, initializeDatabaseWithSchema as initializeDatabase, getStatus } from '../db/index.js';
 import { logger } from '../utils/structuredLogging.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 interface Doc {
   id: string;
@@ -82,17 +82,7 @@ async function ensureStore(): Promise<void> {
 export async function ingestUrl(url: string): Promise<Doc> {
   await ensureStore();
   const content = await fetchAndClean(url);
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    throw new Error('OpenAI adapter not initialized');
-  }
-  const client = adapter.getClient();
-  if (!client) {
-    throw new Error('OpenAI client not initialized');
-  }
+  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
   const doc: Doc = {
     id: url,
     url,
@@ -122,17 +112,7 @@ interface IngestContentOptions {
 export async function ingestContent(options: IngestContentOptions): Promise<Doc> {
   const { id, content, source, metadata } = options;
   await ensureStore();
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    throw new Error('OpenAI adapter not initialized');
-  }
-  const client = adapter.getClient();
-  if (!client) {
-    throw new Error('OpenAI client not initialized');
-  }
+  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
 
   const docId = (id && id.trim()) || randomUUID();
   const sourceLabel = (source && source.trim()) || docId;
@@ -220,17 +200,7 @@ export async function recordConversationSnippet(options: ConversationSnippetOpti
 
 export async function answerQuestion(question: string): Promise<{ answer: string; sources: string[]; verification: string; sourceDetails: SourceDetail[] }> {
   await ensureStore();
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    throw new Error('OpenAI adapter not initialized');
-  }
-  const client = adapter.getClient();
-  if (!client) {
-    throw new Error('OpenAI client not initialized');
-  }
+  const { adapter, client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
   const qEmbedding = await createEmbedding(question, client);
   const docs = vectorStore || [];
   const scored = docs.map((doc) => ({
