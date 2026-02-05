@@ -13,8 +13,9 @@ Recommended reading order:
 2. `docs/RUN_LOCAL.md`
 3. `docs/CONFIGURATION.md`
 4. `docs/API.md`
-5. `docs/RAILWAY_DEPLOYMENT.md`
-6. `docs/CI_CD.md`
+5. `docs/CUSTOM_GPTS.md`
+6. `docs/RAILWAY_DEPLOYMENT.md`
+7. `docs/CI_CD.md`
 
 ## Configuration
 Configuration source files:
