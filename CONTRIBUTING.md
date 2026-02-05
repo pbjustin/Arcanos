@@ -1,275 +1,65 @@
-# Contributing to ARCANOS
+# Contributing to Arcanos
 
-Thank you for your interest in contributing to ARCANOS! This document provides guidelines and instructions for contributing.
+## Overview
+This guide covers the current contribution workflow for the TypeScript backend and optional Python daemon.
 
-## 🚀 Getting Started
-
-### Prerequisites
-- Windows 10/11
-- Python 3.11+
-- Node.js 18+
+## Prerequisites
 - Git
-- VS Code (recommended)
+- Node.js 18+, npm 8+
+- Optional: Python 3.10+ for daemon changes
 
-### Development Setup
-
-1. **Fork and clone**:
+## Setup
 ```bash
-git clone https://github.com/yourusername/arcanos-hybrid.git
-cd arcanos-hybrid
+git clone https://github.com/pbjustin/Arcanos.git
+cd Arcanos
+npm install
+cp .env.example .env
 ```
 
-2. **Python daemon setup**:
+Optional daemon setup:
 ```bash
 cd daemon-python
 python -m venv venv
+# Windows PowerShell
 .\venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-dev.txt
+python -m pip install -e .
+cp .env.example .env
 ```
 
-3. **TypeScript backend setup**:
+## Configuration
+- Backend contributors should set `PORT` and `OPENAI_API_KEY` in root `.env`.
+- Daemon contributors should set `OPENAI_API_KEY` in `daemon-python/.env`.
+- Keep secrets out of git; use `.env.example` placeholders only.
+
+## Run locally
+Backend quality checks:
 ```bash
-npm install
+npm run type-check
+npm run lint
+npm test
 npm run build
 ```
 
-4. **Create `.env` file**:
+Daemon debug tests (from `daemon-python/` with venv active):
 ```bash
-cp daemon-python/.env.example daemon-python/.env
-# Add your OPENAI_API_KEY
+pytest tests/test_debug_server.py -q
 ```
 
-## 🏗️ Project Structure
-
-```
-arcanos-hybrid/
-├── daemon-python/          # Main Python daemon
-│   ├── cli.py              # CLI interface
-│   ├── gpt_client.py       # OpenAI integration
-│   ├── vision.py           # Screen/camera capture
-│   ├── audio.py            # Speech recognition/TTS
-│   ├── terminal.py         # Command execution
-│   ├── push_to_talk.py     # PTT system
-│   ├── config.py           # Configuration
-│   ├── schema.py           # Data models
-│   ├── error_handler.py    # Error handling
-│   ├── rate_limiter.py     # Rate limiting
-│   └── ...
-├── src/                    # Express backend (source of truth)
-│   ├── start-server.ts    # Server entry
-│   ├── routes/            # API routes
-│   │   ├── api-ask.ts     # Chat endpoint
-│   │   ├── api-vision.ts  # Vision endpoint
-│   │   ├── api-transcribe.ts # Transcription endpoint
-│   │   └── api-update.ts  # Update endpoint
-│   └── services/          # OpenAI services
-├── tests/                  # Test suites
-├── scripts/                # Build/deploy scripts
-└── docs/                   # Documentation
-```
-
-## 🧪 Testing
-
-### Run Python tests:
+## Deploy (Railway)
+Contributors should validate Railway readiness before merge:
 ```bash
-cd daemon-python
-pytest tests/ -v --cov
+npm run validate:railway
 ```
 
-### Run TypeScript tests:
-```bash
-npm test
-```
+Production deploy process is documented in `docs/RAILWAY_DEPLOYMENT.md`.
 
-### Write new tests:
-- Python: Add to `tests/test_*.py`
-- TypeScript: Add to `src/__tests__/*.test.ts`
+## Troubleshooting
+- Missing npm script errors: run `npm run` and align commands with `package.json`.
+- Failing daemon tests: ensure daemon dependencies installed in active venv.
+- Route/documentation drift: update `docs/API.md` in the same PR.
 
-## 💻 Code Style
-
-### Python
-- **Formatter**: Black
-- **Linter**: Flake8
-- **Type hints**: Required for all functions
-
-```bash
-black daemon-python/
-flake8 daemon-python/
-mypy daemon-python/
-```
-
-### TypeScript
-- **Formatter**: Prettier
-- **Linter**: ESLint
-- **Style**: Airbnb config
-
-```bash
-npm run format
-npm run lint
-```
-
-## 📝 Commit Guidelines
-
-Use conventional commits:
-
-```
-feat: add voice activity detection to PTT
-fix: resolve crash when API key missing
-docs: update installation instructions
-test: add unit tests for rate limiter
-refactor: simplify error handling logic
-style: format code with black
-chore: update dependencies
-```
-
-## 🔀 Pull Request Process
-
-1. **Create feature branch**:
-```bash
-git checkout -b feature/your-feature-name
-```
-
-2. **Make changes**:
-   - Write code
-   - Add tests
-   - Update documentation
-
-3. **Run quality checks**:
-```bash
-# Python
-black daemon-python/
-flake8 daemon-python/
-pytest tests/ -v
-
-# TypeScript
-npm run lint
-npm run format
-npm test
-```
-
-4. **Commit and push**:
-```bash
-git add .
-git commit -m "feat: your feature description"
-git push origin feature/your-feature-name
-```
-
-5. **Create Pull Request**:
-   - Fill out PR template
-   - Link related issues
-   - Request review
-
-### PR Requirements
-- ✅ All tests passing
-- ✅ Code formatted
-- ✅ No linter errors
-- ✅ Documentation updated
-- ✅ Changelog entry added
-
-## 🐛 Bug Reports
-
-Use GitHub Issues with the bug report template:
-
-```markdown
-**Describe the bug**
-A clear description of the bug.
-
-**To Reproduce**
-Steps to reproduce:
-1. Run command '...'
-2. Click on '...'
-3. See error
-
-**Expected behavior**
-What should happen.
-
-**Screenshots**
-If applicable.
-
-**Environment**
-- OS: Windows 11
-- Python: 3.11.5
-- ARCANOS: v1.0.0
-```
-
-## ✨ Feature Requests
-
-Use GitHub Issues with the feature request template:
-
-```markdown
-**Is your feature request related to a problem?**
-Clear description of the problem.
-
-**Describe the solution**
-What you'd like to happen.
-
-**Alternatives considered**
-Other solutions you've considered.
-
-**Additional context**
-Any other context or screenshots.
-```
-
-## 📚 Documentation
-
-Update documentation when:
-- Adding new features
-- Changing APIs
-- Modifying configuration
-- Adding dependencies
-
-Documentation locations:
-- `README.md`: User-facing docs
-- `docs/`: Detailed guides
-- Docstrings: Code documentation
-- `CONTRIBUTING.md`: This file
-
-## 🔐 Security
-
-Report security vulnerabilities privately:
-- Email: security@arcanos.example.com
-- Do NOT create public issues
-
-## 🎯 Areas to Contribute
-
-### High Priority
-- [ ] Auto-start on Windows login
-- [ ] Settings UI (web dashboard)
-- [ ] Plugin system
-- [ ] Multi-language support
-- [ ] Performance optimizations
-
-### Good First Issues
-- [ ] Add more unit tests
-- [ ] Improve error messages
-- [ ] Add logging to modules
-- [ ] Update documentation
-- [ ] Fix typos
-
-### Advanced
-- [ ] WebSocket support
-- [ ] Custom model integration
-- [ ] Browser extension
-- [ ] Mobile app companion
-
-## 🏆 Recognition
-
-Contributors will be:
-- Listed in `README.md`
-- Mentioned in release notes
-- Invited to contributor Discord
-
-## 📞 Questions?
-
-- **Discord**: [Join our server](https://discord.gg/arcanos)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/arcanos-hybrid/discussions)
-- **Email**: contributors@arcanos.example.com
-
-## 📜 Code of Conduct
-
-Be respectful, inclusive, and professional. We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
-
----
-
-Thank you for contributing to ARCANOS! 🌌
+## References
+- Code of conduct: `CODE_OF_CONDUCT.md`
+- Security policy: `SECURITY.md`
+- Docs standards: `docs/README.md`
+- PR templates: `.github/PULL_REQUEST_TEMPLATE.md`

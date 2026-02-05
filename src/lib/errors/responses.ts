@@ -4,6 +4,7 @@
  */
 
 import type { Response } from 'express';
+import { buildTimestampedPayload } from '../../utils/responseHelpers.js';
 
 export interface ValidationErrorOptions {
   acceptedFields?: readonly string[];
@@ -30,11 +31,11 @@ export function buildValidationErrorResponse(
   details: string[],
   options: ValidationErrorOptions = {}
 ): ValidationErrorPayload {
-  const response: ValidationErrorPayload = {
+  //audit Assumption: timestamp helper yields ISO string; risk: inconsistent timestamps; invariant: payload includes ISO timestamp; handling: buildTimestampedPayload.
+  const response: ValidationErrorPayload = buildTimestampedPayload({
     error: 'Validation failed',
-    details,
-    timestamp: new Date().toISOString()
-  };
+    details
+  });
 
   //audit Assumption: acceptedFields is optional; risk: leaking extra metadata; invariant: only include when provided; handling: conditional assignment.
   if (options.acceptedFields) {
@@ -106,11 +107,14 @@ export function sendServerError(
   message: string,
   error?: Error
 ): void {
-  const response: StandardErrorPayload = {
+  //audit Assumption: error details are safe for clients; risk: leaking sensitive info; invariant: details omitted when error is absent; handling: conditional mapping.
+  const details = error ? [error.message] : undefined;
+
+  //audit Assumption: timestamp helper yields ISO string; risk: inconsistent timestamps; invariant: payload includes ISO timestamp; handling: buildTimestampedPayload.
+  const response: StandardErrorPayload = buildTimestampedPayload({
     error: message,
-    details: error ? [error.message] : undefined,
-    timestamp: new Date().toISOString()
-  };
+    details
+  });
 
   res.status(500).json(response);
 }
@@ -126,10 +130,10 @@ export function sendNotFoundError(
   res: Response,
   resource: string
 ): void {
-  const response: NotFoundErrorPayload = {
-    error: `${resource} not found`,
-    timestamp: new Date().toISOString()
-  };
+  //audit Assumption: resource is safe to echo; risk: leaking internal identifiers; invariant: response includes ISO timestamp; handling: buildTimestampedPayload.
+  const response: NotFoundErrorPayload = buildTimestampedPayload({
+    error: `${resource} not found`
+  });
 
   res.status(404).json(response);
 }
@@ -145,10 +149,10 @@ export function sendUnauthorizedError(
   res: Response,
   message: string = 'Unauthorized'
 ): void {
-  const response: UnauthorizedErrorPayload = {
-    error: message,
-    timestamp: new Date().toISOString()
-  };
+  //audit Assumption: message is safe to echo; risk: leaking auth context; invariant: response includes ISO timestamp; handling: buildTimestampedPayload.
+  const response: UnauthorizedErrorPayload = buildTimestampedPayload({
+    error: message
+  });
 
   res.status(401).json(response);
 }
