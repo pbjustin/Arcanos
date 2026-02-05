@@ -1,11 +1,11 @@
 /**
  * OpenAI Adapter
  * 
- * Single adapter boundary for all OpenAI SDK usage.
- * This is the ONLY module that should import 'openai' package.
+ * Primary adapter boundary for application OpenAI SDK usage.
+ * Route/service call sites should use this adapter instead of instantiating SDK clients directly.
  * 
  * Rules:
- * - All OpenAI SDK calls must go through this adapter
+ * - Route/service OpenAI SDK calls must go through this adapter
  * - Adapter receives config via arguments (no process.env access)
  * - Modern SDK usage only (no legacy ChatCompletion.create)
  * - Single client factory pattern

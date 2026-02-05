@@ -14,8 +14,9 @@ dotenv.config();
 
 // Use validated env for PORT (validated at startup via validateRequiredEnv)
 const serverPort = getEnvNumber('PORT', APPLICATION_CONSTANTS.DEFAULT_PORT);
+const nodeEnv = getEnv('NODE_ENV') || 'development';
 // //audit Assumption: development should bind to localhost by default; risk: exposing local endpoints; invariant: use 127.0.0.1 in dev unless HOST overrides; handling: conditional default.
-const serverHost = getEnv('HOST') || (process.env.NODE_ENV === 'development' ? '127.0.0.1' : '0.0.0.0');
+const serverHost = getEnv('HOST') || (nodeEnv === 'development' ? '127.0.0.1' : '0.0.0.0');
 //audit Assumption: when SERVER_URL is unset, host/port reflect the externally reachable base URL; risk: reverse proxy uses different public hostname; invariant: internal services can reach base URL; handling: allow SERVER_URL override.
 const serverBaseUrl = getEnv('SERVER_URL') || `http://${serverHost}:${serverPort}`;
 const statusEndpoint = getEnv('BACKEND_STATUS_ENDPOINT') || '/status';
@@ -42,7 +43,7 @@ export const config = {
   server: {
     port: serverPort,
     host: serverHost,
-    environment: getEnv('NODE_ENV') || 'development',
+    environment: nodeEnv,
     baseUrl: serverBaseUrl,
     statusEndpoint
   },
@@ -58,7 +59,7 @@ export const config = {
 
   // CORS configuration
   cors: {
-    origin: getEnv('NODE_ENV') === 'development' ? true : getEnv('ALLOWED_ORIGINS')?.split(','),
+    origin: nodeEnv === 'development' ? true : getEnv('ALLOWED_ORIGINS')?.split(','),
     credentials: true
   },
 

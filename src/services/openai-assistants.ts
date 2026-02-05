@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import config from '../config/index.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { writeJsonFile } from '../utils/fileStorage.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
 export interface AssistantInfo {
@@ -31,16 +31,7 @@ const ASSISTANT_LIST_PAGE_LIMIT = 20;
  * Fetch all assistants from OpenAI with pagination support.
  */
 export async function getAllAssistants(): Promise<AssistantInfo[]> {
-  // Use adapter (assistants API not yet in adapter, so use getClient())
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    throw new Error('OpenAI adapter not initialized');
-  }
-  const client = adapter.getClient();
-  //audit Assumption: adapter provides initialized client before assistant sync; risk: runtime call without client fails; invariant: client exists when adapter init succeeds; handling: throw explicit error.
-  if (!client) throw new Error('OpenAI client not initialized');
+  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
 
   const assistants: AssistantInfo[] = [];
   let cursor: string | undefined = undefined;
@@ -195,10 +186,7 @@ export async function syncAssistantRegistry(): Promise<AssistantRegistry> {
  * Call an assistant by its name with a single message.
  */
 export async function callAssistantByName(name: string, message: string) {
-  const adapter = getOpenAIAdapter();
-  const client = adapter.getClient();
-  //audit Assumption: OpenAI client required to call assistant
-  if (!client) throw new Error('OpenAI client not initialized');
+  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
 
   const normalized = normalizeAssistantName(name);
   const registry = await getAssistantRegistry();

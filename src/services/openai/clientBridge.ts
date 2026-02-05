@@ -48,3 +48,18 @@ export function getOpenAIClientOrAdapter(): { adapter: OpenAIAdapter | null; cli
     return { adapter, client };
   }
 }
+
+/**
+ * Strict helper for flows that require both adapter and client.
+ * Throws when OpenAI is unavailable so callers can handle a single failure mode.
+ */
+export function requireOpenAIClientOrAdapter(errorMessage = 'OpenAI adapter not initialized'): {
+  adapter: OpenAIAdapter;
+  client: OpenAI;
+} {
+  const { adapter, client } = getOpenAIClientOrAdapter();
+  if (!adapter || !client) {
+    throw new Error(errorMessage);
+  }
+  return { adapter, client };
+}
