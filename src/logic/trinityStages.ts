@@ -3,7 +3,7 @@
  * Internal implementation; consumers should use runThroughBrain from trinity.js only.
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { logGPT5Invocation } from '../utils/aiLogger.js';
 import { getDefaultModel, getGPT5Model, getComplexModel, createChatCompletionWithFallback, createGPT5Reasoning } from '../services/openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';

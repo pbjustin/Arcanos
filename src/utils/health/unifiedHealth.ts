@@ -24,6 +24,7 @@ import { isOpenAIAdapterInitialized } from '../../adapters/openai.adapter.js';
 import { getConfig } from '../../config/unifiedConfig.js';
 import { assessCoreServiceReadiness, HealthStatus as ServiceHealthStatus } from '../healthChecks.js';
 import { resolveErrorMessage } from '../../lib/errors/index.js';
+import { sendTimestampedStatus } from '../serviceUnavailable.js';
 
 /**
  * Health check function type
@@ -275,9 +276,8 @@ export function buildHealthEndpoint(checks: HealthChecker[]): (req: Request, res
         duration
       });
 
-      res.status(503).json({
+      sendTimestampedStatus(res, 503, {
         status: 'unhealthy',
-        timestamp: new Date().toISOString(),
         error: errorMessage,
         duration
       });
@@ -334,10 +334,9 @@ export function buildReadinessEndpoint(checks: HealthChecker[]): (req: Request, 
       const duration = Date.now() - startTime;
       const errorMessage = resolveErrorMessage(error);
 
-      res.status(503).json({
+      sendTimestampedStatus(res, 503, {
         ready: false,
         status: 'unhealthy',
-        timestamp: new Date().toISOString(),
         error: errorMessage,
         duration
       });

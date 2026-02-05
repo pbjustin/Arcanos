@@ -7,7 +7,7 @@ import type OpenAI from 'openai';
 import { Request, Response } from 'express';
 import fs from 'fs';
 import { generateMockResponse, hasValidAPIKey } from '../services/openai.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import {
   aiRequestSchema,
   type AIRequestDTO,
@@ -22,6 +22,50 @@ import { resolveErrorMessage } from '../lib/errors/index.js';
 export function extractInput(body: AIRequestDTO): string | null {
   //audit Assumption: known fields cover all input variants; Handling: first match
   return body.prompt || body.userInput || body.content || body.text || body.query || null;
+}
+
+export function createMockAIResponse(
+  input: string,
+  endpointName: string,
+  options: {
+    clientContext?: AIRequestDTO['clientContext'];
+    error?: string;
+  } = {}
+): AIResponseDTO {
+  const mockResponse = generateMockResponse(input, endpointName) as AIResponseDTO;
+  return {
+    ...mockResponse,
+    ...(options.clientContext ? { clientContext: options.clientContext } : {}),
+    ...(options.error ? { error: options.error } : {})
+  };
+}
+
+export function sendMockAIResponse<T extends AIResponseDTO | ErrorResponseDTO>(
+  res: Response<T>,
+  input: string,
+  endpointName: string,
+  reason: string,
+  options: {
+    clientContext?: AIRequestDTO['clientContext'];
+    error?: string;
+  } = {}
+): null {
+  console.log(`🤖 Returning mock response for /${endpointName} (${reason})`);
+  const payload = createMockAIResponse(input, endpointName, options);
+  res.json(payload as T);
+  return null;
+}
+
+export function sendAIStatusError<T extends { success: boolean; error?: string }>(
+  res: Response<T>,
+  statusCode: number,
+  error: string
+): null {
+  res.status(statusCode).json({
+    success: false,
+    error
+  } as T);
+  return null;
 }
 
 /**
@@ -61,29 +105,18 @@ export function validateAIRequest(
   // Check if we have a valid API key
   //audit Assumption: missing API key should trigger mock path; Handling: fallback
   if (!hasValidAPIKey()) {
-    console.log(`🤖 Returning mock response for /${endpointName} (no API key)`);
-    const mockResponse = generateMockResponse(input, endpointName);
-    res.json({ ...(mockResponse as AIResponseDTO), clientContext });
-    return null;
+    return sendMockAIResponse(res, input, endpointName, 'no API key', { clientContext });
   }
 
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    console.log(`🤖 Returning mock response for /${endpointName} (adapter init failed)`);
-    const mockResponse = generateMockResponse(input, endpointName);
-    res.json({ ...(mockResponse as AIResponseDTO), clientContext });
-    return null;
+  const { adapter, client: openai } = getOpenAIClientOrAdapter();
+
+  if (!adapter) {
+    return sendMockAIResponse(res, input, endpointName, 'adapter init failed', { clientContext });
   }
-  const openai = adapter.getClient();
+
   //audit Assumption: client init failure should return mock response; Handling: fallback
   if (!openai) {
-    console.log(`🤖 Returning mock response for /${endpointName} (client init failed)`);
-    const mockResponse = generateMockResponse(input, endpointName);
-    res.json({ ...(mockResponse as AIResponseDTO), clientContext });
-    return null;
+    return sendMockAIResponse(res, input, endpointName, 'client init failed', { clientContext });
   }
 
   req.body = parsed.data;
@@ -103,15 +136,10 @@ export function handleAIError(
   //audit Assumption: error message should be safely derived; Handling: stringify
   const errorMessage = resolveErrorMessage(err);
   console.error(`❌ ${endpointName} processing error:`, errorMessage);
-  
-  // Return mock response as fallback
   //audit Assumption: mock response is acceptable fallback; Handling: include error
-  console.log(`🤖 Returning mock response for /${endpointName} (processing failed)`);
-  const mockResponse = generateMockResponse(input, endpointName);
-  res.json({
-    ...mockResponse,
+  sendMockAIResponse(res, input, endpointName, 'processing failed', {
     error: `AI service failure: ${errorMessage}`
-  } as AIResponseDTO & { error: string });
+  });
 }
 
 /**

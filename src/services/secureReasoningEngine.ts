@@ -6,7 +6,7 @@
  * and compliance standards as specified in the requirements.
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { getDefaultModel, createChatCompletionWithFallback } from './openai.js';
 import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import { generateRequestId } from '../utils/idGenerator.js';

@@ -13,7 +13,7 @@
  * @module trinity
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from '../utils/aiLogger.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { getTrinityMessages } from '../config/prompts.js';

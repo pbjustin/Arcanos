@@ -1,6 +1,6 @@
 import { getDefaultModel } from '../services/openai.js';
 import { HRC_SYSTEM_PROMPT } from '../config/hrcPrompts.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import { getEnv } from '../config/env.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
@@ -18,11 +18,8 @@ export interface HRCResult {
  */
 export class HRCCore {
   async evaluate(input: string): Promise<HRCResult> {
-    // Use adapter (adapter boundary pattern)
-    let adapter;
-    try {
-      adapter = getOpenAIAdapter();
-    } catch {
+    const { adapter } = getOpenAIClientOrAdapter();
+    if (!adapter) {
       return {
         fidelity: 0,
         resilience: 0,

@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { getDefaultModel, getGPT5Model } from './openai.js';
 import { ARCANOS_PIPELINE_PROMPTS } from '../config/arcanosPipelinePrompts.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 const ARC_V2 = getDefaultModel();
 const ARC_V2_FALLBACK = 'gpt-4o-mini';
@@ -23,17 +23,7 @@ export interface PipelineResult {
 export async function executeArcanosPipeline(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]
 ): Promise<PipelineResult> {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    throw new Error('OpenAI adapter not available');
-  }
-
-  if (!adapter) {
-    throw new Error('OpenAI adapter not available');
-  }
+  const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not available');
 
   try {
     const arcFirst = await adapter.chat.completions.create({

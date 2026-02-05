@@ -25,6 +25,7 @@ import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import devopsRouter from './devops.js';
+import { sendTimestampedStatus } from '../utils/serviceUnavailable.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -39,17 +40,15 @@ export function registerRoutes(app: Express): void {
       const report = runHealthCheck();
       const statusCode = report.status === 'ok' ? 200 : 503;
 
-      res.status(statusCode).json({
+      sendTimestampedStatus(res, statusCode, {
         status: report.status,
-        timestamp: new Date().toISOString(),
         components: report.components,
         summary: report.summary
       });
     } catch (error) {
       console.error('[Railway Healthcheck] Error generating health report', error);
-      res.status(503).json({
+      sendTimestampedStatus(res, 503, {
         status: 'error',
-        timestamp: new Date().toISOString(),
         message: resolveErrorMessage(error)
       });
     }

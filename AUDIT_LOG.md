@@ -739,3 +739,448 @@ All autonomous refactoring passes have been successfully executed. The codebase 
 - **Maintainable:** Clean, modular architecture
 
 No further autonomous optimizations are required at this time. The repository is ready for production deployment.
+
+---
+
+## 2026-02-05 Refactoring Pass 7
+
+### Pass 0: Inventory & Dead Code Flags
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged `src/services/openai/responsePayload.ts` as dead code | No imports or symbol usage anywhere in runtime code. | `rg "buildResponseRequestPayload\|extractResponseOutput" -n src workers` |
+| Flagged value imports of `OpenAI` in Trinity and secure reasoning modules | Imports were type-only usage, but pulled runtime `openai` dependency into extra modules. | `rg "^import OpenAI from 'openai'" -n src/logic/trinity.ts src/logic/trinityStages.ts src/services/secureReasoningEngine.ts` |
+| Flagged direct `process.env.NODE_ENV` read in `src/config/index.ts` | Bypassed centralized environment access in `src/config/env.ts`. | `rg "process\.env\.NODE_ENV" -n src/config/index.ts` |
+
+### Pass 1: Remove Unused File
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed `src/services/openai/responsePayload.ts` | File was unreferenced and not part of active OpenAI request path. Prefer deletion over rewrite. | `rg "buildResponseRequestPayload\|extractResponseOutput" -n src workers` returns no matches |
+
+### Pass 2: OpenAI SDK Integration Cleanup
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Confirmed installed SDK is current (`openai@6.16.0`) | Ensures compatibility target matches latest OpenAI Node.js SDK release. | `npm view openai version` and `npm ls openai --depth=0` |
+| Switched `OpenAI` imports to type-only in `src/logic/trinity.ts`, `src/logic/trinityStages.ts`, and `src/services/secureReasoningEngine.ts` | Keeps runtime OpenAI SDK surface centralized while preserving strong typing. | `rg "^import OpenAI from 'openai'" -n src/logic/trinity.ts src/logic/trinityStages.ts src/services/secureReasoningEngine.ts` returns no matches |
+
+### Pass 3: Railway/Env Hardening
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Replaced direct `process.env.NODE_ENV` reads with `nodeEnv` derived via `getEnv('NODE_ENV')` in `src/config/index.ts` | Centralizes environment access and removes config drift risk between local and Railway runtime. | `rg "process\.env\.NODE_ENV" -n src/config/index.ts` returns no matches |
+| Added `RAILWAY_API_TOKEN=` to `.env.example` | Railway validator expects token documentation for automation use-cases; this keeps deploy validation green. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Updated adapter header comments in `src/adapters/openai.adapter.ts` to reflect actual architecture | Removed inaccurate "only module importing openai" claim after centralization cleanup. | Manual review of `src/adapters/openai.adapter.ts` |
+| Ran static validation after pruning | Confirm changes are type-safe and production build inputs remain valid. | `npm run type-check` |
+
+---
+
+## 2026-02-05 Refactoring Pass 8
+
+### Pass 0: Inventory & Reusable Pattern Discovery
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged repeated adapter/client acquisition blocks in `src/services/webRag.ts` and `src/config/workerConfig.ts` | Same error-prone logic appeared multiple times; good candidate for shared helper extraction. | `git diff -- src/services/webRag.ts src/config/workerConfig.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated OpenAI initialization blocks in `src/services/webRag.ts` (3 call sites) | De-duplicates repeated setup logic and keeps behavior consistent. | Manual diff review of `src/services/webRag.ts` |
+| Removed duplicated OpenAI initialization blocks in `src/config/workerConfig.ts` (2 call sites) | Reduces boilerplate and centralizes fallback handling through one path. | Manual diff review of `src/config/workerConfig.ts` |
+| Removed duplicated OpenAI initialization blocks in `src/services/openai-assistants.ts` (2 call sites) | Reuses the same strict client acquisition path for assistant sync and invocation flows. | Manual diff review of `src/services/openai-assistants.ts` |
+
+### Pass 2: OpenAI SDK Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Added `requireOpenAIClientOrAdapter()` in `src/services/openai/clientBridge.ts` and reused it | Establishes a reusable pattern for strict adapter+client availability checks while keeping SDK access centralized. | `rg "requireOpenAIClientOrAdapter" -n src` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway compatibility validation | Ensures refactor did not regress deployment assumptions. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript validation after modularization | Confirms no API/type regressions from helper extraction. | `npm run type-check` |
+| Re-ran full build pipeline (including workers) | Ensures refactor remains production-buildable across main app + worker bundle. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 9
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged repeated `getOpenAIAdapter()` access patterns in prompt/pipeline/query/sync services | Same adapter-acquisition boilerplate persisted across multiple files; candidate for shared client bridge usage. | `rg "getOpenAIAdapter\\(" -n src/services/arcanosPrompt.ts src/services/arcanosQuery.ts src/services/arcanosPipeline.ts src/services/gptSync.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated adapter acquisition blocks in `src/services/arcanosPrompt.ts` | Fallback behavior preserved while deleting repeated try/catch boilerplate. | `git diff -- src/services/arcanosPrompt.ts` |
+| Removed duplicated adapter acquisition blocks in `src/services/arcanosQuery.ts` | Mock-mode behavior preserved with a single optional bridge call. | `git diff -- src/services/arcanosQuery.ts` |
+| Removed redundant adapter-null check path in `src/services/arcanosPipeline.ts` | Strict bridge helper already guarantees adapter+client availability or throws. | `git diff -- src/services/arcanosPipeline.ts` |
+| Removed local adapter-wrapper helper complexity in `src/services/gptSync.ts` | Replaced with centralized strict bridge pattern. | `git diff -- src/services/gptSync.ts` |
+
+### Pass 2: OpenAI SDK Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Migrated these modules to `clientBridge` helpers (`getOpenAIClientOrAdapter` / `requireOpenAIClientOrAdapter`) | Further centralizes OpenAI client acquisition and reduces direct adapter coupling at call sites. | `rg "clientBridge" -n src/services/arcanosPrompt.ts src/services/arcanosQuery.ts src/services/arcanosPipeline.ts src/services/gptSync.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway compatibility checks post-refactor | Ensures deployment assumptions unchanged after service-layer modularization. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran type safety validation | Confirms refactor compiles cleanly. | `npm run type-check` |
+| Re-ran full build pipeline | Confirms production artifacts still build (main + workers). | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 10
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged remaining route/middleware adapter acquisition boilerplate | Routes and middleware still repeated manual `getOpenAIAdapter()` + `getClient()` checks. | `rg "getOpenAIAdapter\\(" -n src/middleware/fallbackHandler.ts src/routes/api-reusable-code.ts src/routes/arcanos.ts src/utils/requestHandler.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated adapter/client checks in `src/routes/api-reusable-code.ts` | Replaced repeated blocks with shared bridge call while keeping 503 behavior unchanged. | `git diff -- src/routes/api-reusable-code.ts` |
+| Removed duplicated adapter/client checks in `src/routes/arcanos.ts` | Preserved existing mock fallback behavior with centralized client bridge. | `git diff -- src/routes/arcanos.ts` |
+| Removed duplicated adapter/client checks in `src/utils/requestHandler.ts` | Keeps shared request validation path lean and consistent for downstream routes. | `git diff -- src/utils/requestHandler.ts` |
+| Removed duplicated adapter/client checks in `src/middleware/fallbackHandler.ts` | Centralized health/preemptive fallback service availability checks via bridge helper. | `git diff -- src/middleware/fallbackHandler.ts` |
+
+### Pass 2: OpenAI SDK Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Migrated route/middleware/util call-sites to `getOpenAIClientOrAdapter()` | Improves reuse of OpenAI access pattern and reduces direct adapter coupling in request path code. | `rg "getOpenAIClientOrAdapter" -n src/middleware/fallbackHandler.ts src/routes/api-reusable-code.ts src/routes/arcanos.ts src/utils/requestHandler.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway compatibility validation after route/middleware refactor | Confirms deployment configuration behavior remains stable. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript validation | Confirms no type regressions. | `npm run type-check` |
+| Re-ran production build pipeline | Confirms app and worker artifacts compile after refactor. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 11
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged remaining service/module/util adapter boilerplate for migration | Repeated optional adapter acquisition still existed in multiple non-core runtime files. | `rg "getOpenAIAdapter\\(" -n src/services/auditSafeToggle.ts src/services/gaming.ts src/services/memoryState.ts src/services/sessionResolver.ts src/services/research.ts src/logic/tutor-logic.ts src/utils/workerContext.ts src/modules/hrc.ts src/services/orchestrationShell.ts src/services/openai/embeddings.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated adapter acquisition blocks from `src/services/auditSafeToggle.ts`, `src/services/gaming.ts`, `src/services/memoryState.ts` | Preserved existing mock/fallback semantics while deleting repeated try/catch boilerplate. | `git diff -- src/services/auditSafeToggle.ts src/services/gaming.ts src/services/memoryState.ts` |
+| Removed duplicated adapter acquisition blocks from `src/services/sessionResolver.ts`, `src/services/research.ts`, `src/logic/tutor-logic.ts`, `src/utils/workerContext.ts`, `src/modules/hrc.ts` | Consolidates service-layer OpenAI availability checks into a reusable path. | `git diff -- src/services/sessionResolver.ts src/services/research.ts src/logic/tutor-logic.ts src/utils/workerContext.ts src/modules/hrc.ts` |
+| Removed duplicated adapter acquisition checks in `src/services/orchestrationShell.ts` and `src/services/openai/embeddings.ts` | Keeps orchestration/embedding flows aligned with centralized bridge behavior. | `git diff -- src/services/orchestrationShell.ts src/services/openai/embeddings.ts` |
+
+### Pass 2: OpenAI SDK Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Migrated these files to `getOpenAIClientOrAdapter()` bridge usage | Leaves direct `getOpenAIAdapter()` references only in adapter initialization/core bridge internals. | `rg "getOpenAIAdapter\\(" -n src` and `rg "requireOpenAIClientOrAdapter|getOpenAIClientOrAdapter" -n src` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validation post-service migration | Confirms deployment behavior remains unchanged after deep service refactor. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms type stability after migration. | `npm run type-check` |
+| Re-ran full build (including workers) | Confirms production build remains healthy. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 12
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged repeated mock-response fallback blocks in request utilities and ARCANOS route | `generateMockResponse` + logging + response serialization was duplicated across request-path code. | `rg "generateMockResponse\\(|adapter init failed|client init failed|no API key" -n src/utils/requestHandler.ts src/routes/arcanos.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated mock-response return blocks in `src/utils/requestHandler.ts` | Consolidates fallback response generation to one reusable helper path. | `git diff -- src/utils/requestHandler.ts` |
+| Removed duplicated mock-response return blocks in `src/routes/arcanos.ts` | Route now reuses centralized helper and preserves all fallback reasons/messages. | `git diff -- src/routes/arcanos.ts` |
+
+### Pass 2: OpenAI SDK/Runtime Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Added reusable helpers `createMockAIResponse()` and generic `sendMockAIResponse()` in `src/utils/requestHandler.ts` | Standardizes mock fallback payload shape and logging for HTTP AI endpoints. | `rg "createMockAIResponse|sendMockAIResponse" -n src` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validator after fallback-path refactor | Confirms deployment/readiness expectations remain unchanged. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms helper extraction is type-safe. | `npm run type-check` |
+| Re-ran full build (main + workers) | Confirms production build artifacts still compile. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 13
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged duplicate 503 OpenAI-unavailable payload construction in reusable-code route | Service-unavailable responses repeated the same timestamp/message shape in multiple branches. | `rg "res\\.status\\(503\\)\\.json\\(" -n src/routes/api-reusable-code.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated inline 503 payload blocks in `src/routes/api-reusable-code.ts` | Replaced repeated response literals with helper calls to reduce drift risk. | `git diff -- src/routes/api-reusable-code.ts` |
+
+### Pass 2: OpenAI SDK/Runtime Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Added `sendCodegenServiceUnavailable()` and `sendCodegenHealthUnavailable()` route-local helpers | Standardizes OpenAI unavailable response shape for POST and health endpoints in the same module. | `rg "sendCodegenServiceUnavailable|sendCodegenHealthUnavailable" -n src/routes/api-reusable-code.ts` |
+| Reused `sendMockAIResponse()` from request handler in `src/routes/arcanos.ts` | Extends centralized mock fallback handling to ARCANOS route entrypoint. | `rg "sendMockAIResponse" -n src/routes/arcanos.ts src/utils/requestHandler.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validator after fallback/503 response refactor | Confirms deploy readiness and env expectations unchanged. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms helper extraction remains type-safe. | `npm run type-check` |
+| Re-ran full build (main + workers) | Confirms production artifact compilation remains healthy. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 14
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged duplicate 503 OpenAI-unavailable response builders across routes | Reusable-code, vision, and transcribe routes each built service-unavailable payloads separately. | `rg "res\\.status\\(503\\)\\.json\\(" -n src/routes/api-reusable-code.ts src/routes/api-vision.ts src/routes/api-transcribe.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated inline 503 payload literals in `src/routes/api-reusable-code.ts` | Route now delegates service-unavailable responses to shared helper functions. | `git diff -- src/routes/api-reusable-code.ts` |
+| Removed duplicated inline OpenAI-unavailable payload literals in `src/routes/api-vision.ts` and `src/routes/api-transcribe.ts` | Keeps media endpoints aligned on one shared 503 contract helper. | `git diff -- src/routes/api-vision.ts src/routes/api-transcribe.ts` |
+
+### Pass 2: OpenAI SDK/Runtime Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Added shared helper module `src/utils/serviceUnavailable.ts` | Centralizes reusable 503 contracts for OpenAI-unavailable and timestamped service-unavailable responses. | `rg "sendOpenAIServiceUnavailable|sendTimestampedServiceUnavailable" -n src` |
+| Rewired reusable-code route to use `sendTimestampedServiceUnavailable()` | Keeps route-specific timestamped unavailable responses consistent without repeated literals. | `rg "sendTimestampedServiceUnavailable" -n src/routes/api-reusable-code.ts` |
+| Rewired vision/transcribe routes to use `sendOpenAIServiceUnavailable()` | Standardizes OpenAI service-unavailable JSON shape across media endpoints. | `rg "sendOpenAIServiceUnavailable" -n src/routes/api-vision.ts src/routes/api-transcribe.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validator after shared 503 helper migration | Confirms deployment health/env behavior unchanged. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms helper migration is type-safe. | `npm run type-check` |
+| Re-ran full build (main + workers) | Confirms production build artifacts remain valid. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 18
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged direct OpenAI adapter access in media routes (`api-vision`, `api-transcribe`) | These routes still relied on `req.app.locals.openaiAdapter` instead of centralized bridge helpers. | `rg "app\\.locals\\.openaiAdapter" -n src/routes/api-vision.ts src/routes/api-transcribe.ts` |
+| Flagged duplicate utility module `src/utils/errorResponse.ts` as dead code | Runtime imports are already consolidated on `src/lib/errors/responses.ts` via `lib/errors/index.ts`. | `rg "utils/errorResponse" -n src` |
+
+### Pass 1: Remove Unused Files/Modules (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Deleted `src/utils/errorResponse.ts` | File duplicated `src/lib/errors/responses.ts` and had no runtime references. | `git diff -- src/utils/errorResponse.ts` |
+
+### Pass 2: OpenAI SDK/Runtime Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Replaced route-local `req.app.locals.openaiAdapter` access with `getOpenAIClientOrAdapter()` in `src/routes/api-vision.ts` and `src/routes/api-transcribe.ts` | Centralizes OpenAI client/adapter resolution through the bridge layer and removes endpoint-specific adapter wiring. | `rg "getOpenAIClientOrAdapter|app\\.locals\\.openaiAdapter" -n src/routes/api-vision.ts src/routes/api-transcribe.ts` |
+| Reused shared OpenAI response helpers for unavailable and processing-failure branches in both media routes | Keeps 503/500 payload contracts consistent and removes repeated inline error literals. | `rg "sendOpenAIServiceUnavailable|sendOpenAIProcessingFailed" -n src/routes/api-vision.ts src/routes/api-transcribe.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validator after route cleanup | Confirms Railway deployment assumptions remain intact after OpenAI path centralization. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms route refactor and file deletion are type-safe. | `npm run type-check` |
+| Re-ran full build (main + workers) | Confirms production build remains healthy after cleanup. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 17
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged remaining mixed 503 response construction in health/fallback surfaces | `healthController` and `fallbackHandler` still emitted direct `res.status(503).json(...)` payloads. | `rg "res\\.status\\(503\\)\\.json\\(" -n src/controllers/healthController.ts src/middleware/fallbackHandler.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed direct 503 payload emission in `src/controllers/healthController.ts` catch branch | Replaced with shared timestamped status sender to reduce duplication and preserve response shape. | `git diff -- src/controllers/healthController.ts` |
+| Removed direct 503 payload emission in `src/middleware/fallbackHandler.ts` degraded branches | Reused shared timestamped sender for degraded-mode responses while preserving payload content. | `git diff -- src/middleware/fallbackHandler.ts` |
+
+### Pass 2: OpenAI/Runtime Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Relaxed `sendTimestampedStatus()` payload typing in `src/utils/serviceUnavailable.ts` (`Record<string, unknown>` → `object`) | Allows typed payload interfaces (e.g., `DegradedResponse`) to reuse shared sender without per-call casts. | `git diff -- src/utils/serviceUnavailable.ts` |
+| Reused `sendTimestampedStatus()` in fallback + controller layers | Extends shared status-response contract beyond route-level OpenAI endpoints. | `rg "sendTimestampedStatus" -n src/controllers/healthController.ts src/middleware/fallbackHandler.ts src/utils/serviceUnavailable.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validator after health/fallback response helper migration | Confirms deployment and healthcheck expectations remain compatible with Railway. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms helper migration is type-safe after payload-typing adjustment. | `npm run type-check` |
+| Re-ran full build (main + workers) | Confirms production artifacts compile cleanly. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 15
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged remaining non-OpenAI 503 payload construction in health-related routes/utilities | Railway health and unified health endpoints repeated timestamped 503 JSON payload assembly. | `rg "res\\.status\\(503\\)\\.json\\(" -n src/routes/register.ts src/utils/health/unifiedHealth.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated timestamped healthcheck response literals in `src/routes/register.ts` | Replaced repeated timestamp/manual status payload code with shared sender. | `git diff -- src/routes/register.ts` |
+| Removed duplicated timestamped 503 payload literals in `src/utils/health/unifiedHealth.ts` | Consolidated two unhealthy error branches to one reusable sender path. | `git diff -- src/utils/health/unifiedHealth.ts` |
+
+### Pass 2: OpenAI/Runtime Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Added `sendTimestampedStatus()` in `src/utils/serviceUnavailable.ts` and reused existing `sendTimestampedServiceUnavailable()` through it | Establishes one generic timestamped-response sender for service-unavailable style responses. | `rg "sendTimestampedStatus|sendTimestampedServiceUnavailable" -n src/utils/serviceUnavailable.ts src/routes/register.ts src/utils/health/unifiedHealth.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validator after shared timestamped-status migration | Confirms healthcheck/deployment behavior remains compatible with Railway. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms refactor is type-safe. | `npm run type-check` |
+| Re-ran full build (main + workers) | Confirms production build remains healthy. | `npm run build` |
+
+---
+
+## 2026-02-05 Refactoring Pass 16
+
+### Pass 0: Inventory & Reusable Pattern Candidates
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Flagged ad-hoc 503/504/500 error payload construction in `src/routes/api-arcanos.ts` | Catch block repeated inline `res.status(...).json({ success: false, error })` branches with only status/message differences. | `rg "res\\.status\\((503|504|500)\\)\\.json" -n src/routes/api-arcanos.ts` |
+
+### Pass 1: Remove Repeated Logic (Deletion-First)
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Removed duplicated inline status-error payload branches from `src/routes/api-arcanos.ts` | Replaced repetitive literals with reusable helper calls, preserving status codes and messages. | `git diff -- src/routes/api-arcanos.ts` |
+
+### Pass 2: OpenAI/Runtime Pattern Centralization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Added `sendAIStatusError()` to `src/utils/requestHandler.ts` | Centralizes standard `{ success: false, error }` response construction for AI routes. | `rg "sendAIStatusError" -n src/utils/requestHandler.ts src/routes/api-arcanos.ts` |
+| Refactored `src/routes/api-arcanos.ts` to use `sendAIStatusError()` for network, timeout, auth, and generic error paths | Keeps API behavior unchanged while reducing repeated error-response boilerplate. | `rg "sendAIStatusError" -n src/routes/api-arcanos.ts` |
+
+### Pass 3: Railway Hardening Validation
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran Railway validator after API error-path helper migration | Confirms deployment checks and startup assumptions remain stable. | `npm run validate:railway` |
+
+### Pass 4: Finalization
+
+| Change | Reason | Verification |
+| --- | --- | --- |
+| Re-ran TypeScript checks | Confirms helper migration is type-safe. | `npm run type-check` |
+| Re-ran full build (main + workers) | Confirms production build artifacts remain valid. | `npm run build` |

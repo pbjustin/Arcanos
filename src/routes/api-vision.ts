@@ -1,13 +1,13 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
 import { buildValidationErrorResponse, resolveErrorMessage } from '../lib/errors/index.js';
-import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
 import { aiLogger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import type { ErrorResponseDTO } from '../types/dto.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import config from '../config/index.js';
 import { buildVisionRequest } from '../services/openai/requestBuilders.js';
+import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
+import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from '../utils/serviceUnavailable.js';
 
 const router = express.Router();
 
@@ -92,14 +92,11 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       );
     }
 
-    // Get adapter from app locals (injected at startup)
-    const adapter = req.app.locals.openaiAdapter as OpenAIAdapter | null;
+    const { adapter } = getOpenAIClientOrAdapter();
     if (!adapter) {
       aiLogger.warn('OpenAI adapter not available for vision request');
-      return res.status(503).json({
-        error: 'Service Unavailable',
-        details: 'OpenAI service is not configured'
-      });
+      sendOpenAIServiceUnavailable(res);
+      return;
     }
 
     const imageBuffer = Buffer.from(base64, 'base64');
@@ -160,10 +157,8 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       error: resolveErrorMessage(error)
     });
 
-    return res.status(500).json({
-      error: 'Internal Server Error',
-      details: 'Failed to process vision request'
-    });
+    sendOpenAIProcessingFailed(res, 'Failed to process vision request');
+    return;
   }
 }));
 

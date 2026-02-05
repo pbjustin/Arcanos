@@ -8,14 +8,10 @@ import { getTokenParameter } from '../utils/tokenParameterHelper.js';
 import config from '../config/index.js';
 import { GPT_SYNC_CONFIG } from '../config/gptSyncConfig.js';
 import { GPT_SYNC_ERRORS, GPT_SYNC_LOG_MESSAGES, GPT_SYNC_STRINGS } from '../config/gptSyncMessages.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 function getRequiredAdapter() {
-  try {
-    return getOpenAIAdapter();
-  } catch {
-    throw new Error(GPT_SYNC_ERRORS.clientUnavailable);
-  }
+  return requireOpenAIClientOrAdapter(GPT_SYNC_ERRORS.clientUnavailable).adapter;
 }
 
 function logSyncInfo(message: string, data?: unknown): void {

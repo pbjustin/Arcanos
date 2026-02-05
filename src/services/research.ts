@@ -5,7 +5,7 @@ import {
   createCentralizedCompletion,
   getDefaultModel
 } from './openai.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { setMemory } from './memory.js';
 import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from '../config/researchPrompts.js';
 import { getEnvNumber, getEnv } from '../config/env.js';
@@ -99,13 +99,7 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   }
 
   const generatedAt = new Date().toISOString();
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    adapter = null;
-  }
+  const { adapter } = getOpenAIClientOrAdapter();
   // Use config for mock detection (adapter boundary pattern)
   const apiKey = getEnv('OPENAI_API_KEY');
   const useMock = !adapter || apiKey === 'test_key_for_mocking';
