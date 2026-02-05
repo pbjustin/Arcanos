@@ -52,5 +52,5 @@ Deployment workflows are repository-specific; verify current trigger and require
 - `../railway.json`
 - `RAILWAY_DEPLOYMENT.md`
 
-## TODO (verified)
-- `ci-cd.yml` currently references `npm run audit:sdk-compliance`, but that npm script is not present in `package.json`. Add script or update workflow.
+## Workflow and npm script alignment
+- Ensure that any npm scripts referenced in `.github/workflows/ci-cd.yml` (for example, `npm run audit:sdk-compliance`) are defined in `package.json`, or update the workflow to remove or replace them.
