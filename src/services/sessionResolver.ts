@@ -1,7 +1,7 @@
 import { getCachedSessions } from './sessionMemoryService.js';
 import { cosineSimilarity } from '../utils/vectorUtils.js';
 import { createEmbedding } from './openai/embeddings.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { getEnv } from '../config/env.js';
 
 interface ConversationMessage {
@@ -48,14 +48,7 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   });
 
   // 2. If none found, use embeddings for semantic match
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    // No adapter available, skip semantic matching
-    adapter = null;
-  }
+  const { adapter } = getOpenAIClientOrAdapter();
   //audit Assumption: embeddings require API key and adapter; Handling: guard
   const apiKey = getEnv('OPENAI_API_KEY');
   if (candidates.length === 0 && adapter && apiKey) {

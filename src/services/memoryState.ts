@@ -5,7 +5,7 @@
 
 import { query } from '../db/index.js';
 import { getDefaultModel } from './openai.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 /**
  * Register or update memory state in PostgreSQL
@@ -55,11 +55,8 @@ export async function validateMemory(
   entryData: unknown,
   stateVersion: string
 ): Promise<string> {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
+  const { adapter } = getOpenAIClientOrAdapter();
+  if (!adapter) {
     //audit Assumption: missing adapter returns mock validation
     console.warn('⚠️ OpenAI adapter not available - returning mock validation');
     return 'OpenAI adapter unavailable';

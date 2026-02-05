@@ -6,7 +6,7 @@
 import { Request, Response, NextFunction } from 'express';
 import config from '../config/index.js';
 import { responseCache } from '../utils/cache.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import { ARCANOS_SYSTEM_PROMPTS } from '../config/prompts.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import {
@@ -16,6 +16,7 @@ import {
   getFallbackMessage
 } from '../config/fallbackMessages.js';
 import { logger } from '../utils/structuredLogging.js';
+import { sendTimestampedStatus } from '../utils/serviceUnavailable.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -119,7 +120,7 @@ export function createFallbackMiddleware() {
     const degradedResponse = generateDegradedResponse(prompt, endpoint);
 
     // Set appropriate HTTP status for degraded mode
-    res.status(503).json(degradedResponse);
+    sendTimestampedStatus(res, 503, degradedResponse);
   };
 }
 
@@ -127,14 +128,7 @@ export function createFallbackMiddleware() {
  * Health check for fallback system readiness
  */
 export function getFallbackSystemHealth() {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    adapter = null;
-  }
-  const client = adapter?.getClient() || null;
+  const { client } = getOpenAIClientOrAdapter();
   const cacheStats = {
     size: getCacheSize(responseCache),
     hitRate: 0 // Cache doesn't expose hit rate directly
@@ -190,14 +184,7 @@ export function createHealthCheckMiddleware() {
       return next();
     }
 
-    // Use adapter (adapter boundary pattern)
-    let adapter;
-    try {
-      adapter = getOpenAIAdapter();
-    } catch {
-      adapter = null;
-    }
-    const client = adapter?.getClient() || null;
+    const { client } = getOpenAIClientOrAdapter();
     const strictEnvs = config.fallback.strictEnvironments;
     const enforcePreemptive = config.fallback.preemptive || strictEnvs.includes(config.server.environment);
 
@@ -211,7 +198,8 @@ export function createHealthCheckMiddleware() {
       });
 
       const degradedResponse = generateDegradedResponse(prompt, endpoint);
-      return res.status(503).json(degradedResponse);
+      sendTimestampedStatus(res, 503, degradedResponse);
+      return;
     }
 
     next();

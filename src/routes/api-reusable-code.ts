@@ -7,9 +7,11 @@ import {
   ReusableCodeGenerationRequest,
   ReusableCodeTarget
 } from '../services/reusableCodeGeneration.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
+import { sendTimestampedServiceUnavailable } from '../utils/serviceUnavailable.js';
 
 const router = Router();
+const OPENAI_CODEGEN_SETUP_MESSAGE = 'Configure OPENAI_API_KEY or RAILWAY_OPENAI_API_KEY to enable code generation.';
 
 const reusableCodeRequestSchema: ValidationSchema = {
   target: {
@@ -28,6 +30,20 @@ const reusableCodeRequestSchema: ValidationSchema = {
   }
 };
 
+function sendCodegenServiceUnavailable(res: Response, reason: 'adapter' | 'client'): void {
+  sendTimestampedServiceUnavailable(res, {
+    error: reason === 'adapter' ? 'OpenAI adapter unavailable' : 'OpenAI client unavailable',
+    message: OPENAI_CODEGEN_SETUP_MESSAGE
+  });
+}
+
+function sendCodegenHealthUnavailable(res: Response, reason: 'adapter' | 'client'): void {
+  sendTimestampedServiceUnavailable(res, {
+    status: 'unavailable',
+    message: reason === 'adapter' ? 'OpenAI adapter not initialized' : 'OpenAI client not initialized'
+  });
+}
+
 /**
  * POST /api/reusables
  * Generates reusable utility code via the OpenAI SDK.
@@ -40,27 +56,15 @@ router.post(
   '/api/reusables',
   createValidationMiddleware(reusableCodeRequestSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    // Use adapter (adapter boundary pattern)
-    let adapter;
-    try {
-      adapter = getOpenAIAdapter();
-    } catch {
-      res.status(503).json({
-        error: 'OpenAI adapter unavailable',
-        message: 'Configure OPENAI_API_KEY or RAILWAY_OPENAI_API_KEY to enable code generation.',
-        timestamp: new Date().toISOString()
-      });
+    const { adapter, client } = getOpenAIClientOrAdapter();
+    if (!adapter) {
+      sendCodegenServiceUnavailable(res, 'adapter');
       return;
     }
-    const client = adapter.getClient();
 
     //audit Assumption: OpenAI client must be available; risk: missing API key; invariant: client required for generation; handling: return 503.
     if (!client) {
-      res.status(503).json({
-        error: 'OpenAI client unavailable',
-        message: 'Configure OPENAI_API_KEY or RAILWAY_OPENAI_API_KEY to enable code generation.',
-        timestamp: new Date().toISOString()
-      });
+      sendCodegenServiceUnavailable(res, 'client');
       return;
     }
 
@@ -92,27 +96,15 @@ router.post(
  * @edgeCases Returns 503 when OpenAI client is not initialized.
  */
 router.get('/api/reusables/health', (_req: Request, res: Response) => {
-  // Use adapter (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
-    res.status(503).json({
-      status: 'unavailable',
-      message: 'OpenAI adapter not initialized',
-      timestamp: new Date().toISOString()
-    });
+  const { adapter, client } = getOpenAIClientOrAdapter();
+  if (!adapter) {
+    sendCodegenHealthUnavailable(res, 'adapter');
     return;
   }
-  const client = adapter.getClient();
 
   //audit Assumption: client presence maps to readiness; risk: false positives; invariant: client required; handling: status based on client.
   if (!client) {
-    res.status(503).json({
-      status: 'unavailable',
-      message: 'OpenAI client not initialized',
-      timestamp: new Date().toISOString()
-    });
+    sendCodegenHealthUnavailable(res, 'client');
     return;
   }
 

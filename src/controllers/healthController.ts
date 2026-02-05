@@ -7,6 +7,7 @@ import { getOpenAIServiceHealth } from '../services/openai.js';
 import { getStatus as getDbStatus } from '../db/index.js';
 import { getEnvironmentInfo } from '../utils/environmentValidation.js';
 import { buildTimestampedPayload } from '../utils/responseHelpers.js';
+import { sendTimestampedStatus } from '../utils/serviceUnavailable.js';
 import { getEnv } from '../config/env.js';
 import {
   assessCoreServiceReadiness,
@@ -149,7 +150,7 @@ export class HealthController {
       const fallbackOpenAI = buildFallbackOpenAIHealth();
       const fallbackEnv = getEnvironmentInfo();
       const fallbackDbStatus: DatabaseStatusLike = { connected: false, error: 'Service check failed' };
-      res.status(503).json({
+      sendTimestampedStatus(res, 503, {
         //audit Assumption: spreading response payload is safe; risk: overriding fields; invariant: unhealthy response includes error message; handling: append error after payload.
         ...buildHealthResponsePayload(
           'unhealthy',

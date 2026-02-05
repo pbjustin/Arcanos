@@ -5,7 +5,7 @@
  */
 
 import { getGPT5Model, call_gpt5_strict } from './openai.js';
-import { getOpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { getEnv } from '../config/env.js';
 import {
@@ -47,11 +47,8 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
   logs.push("🔄 Starting GPT-5.1 Orchestration Shell purge...");
   console.log("🔄 Starting GPT-5.1 Orchestration Shell purge...");
 
-  // Get OpenAI adapter using existing infrastructure (adapter boundary pattern)
-  let adapter;
-  try {
-    adapter = getOpenAIAdapter();
-  } catch {
+  const { adapter } = getOpenAIClientOrAdapter();
+  if (!adapter) {
     const errorResult: OrchestrationResult = {
       success: false,
       message: "OpenAI adapter not available - check OPENAI_API_KEY configuration",
@@ -187,8 +184,7 @@ export async function getOrchestrationShellStatus(): Promise<{
   lastReset?: string;
   memoryEntries: number;
 }> {
-  const adapter = getOpenAIAdapter();
-  const client = adapter.getClient();
+  const { client } = getOpenAIClientOrAdapter();
   const memoryContext = await getMemoryContext('orchestration');
   
   return {
