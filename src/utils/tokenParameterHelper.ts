@@ -128,6 +128,12 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
 
   // GPT-5.1 models require max_completion_tokens
   //audit Assumption: GPT-5 requires max_completion_tokens; Handling: switch param
+  // Also treat Google's Gemini family as using max_completion_tokens
+  //audit Assumption: gemini models use the newer token parameter; Handling: switch param
+  if (lowerModelName.includes('gemini')) {
+    return 'max_completion_tokens';
+  }
+
   if (lowerModelName.includes(APPLICATION_CONSTANTS.MODEL_GPT_5)) {
     return 'max_completion_tokens';
   }

@@ -117,7 +117,7 @@ function loadPromptsConfig(): PromptsConfig {
       configPath
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+     
     return promptsConfig!;
   } catch (error) {
     logger.error('Failed to load prompts configuration', {
