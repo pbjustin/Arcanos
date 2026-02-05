@@ -4,6 +4,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { buildTimestampedPayload } from '../utils/responseHelpers.js';
 
 // JSON Schema definitions for different endpoints
 export const schemas: Record<string, JsonSchema> = {
@@ -259,29 +260,29 @@ export function validateSchema(schemaName: keyof typeof schemas) {
     const schema = schemas[schemaName];
     //audit Assumption: schema name must exist
     if (!schema) {
-      return res.status(500).json({
+      //audit Assumption: schema lookup failures are server errors; risk: leaking endpoint metadata; invariant: payload includes ISO timestamp; handling: buildTimestampedPayload.
+      return res.status(500).json(buildTimestampedPayload({
         error: 'Internal validation error',
         details: {
           code: 'SCHEMA_NOT_FOUND',
           expected: `Valid schema name (${Object.keys(schemas).join(', ')})`
         },
-        timestamp: new Date().toISOString(),
         endpoint: req.path
-      });
+      }));
     }
 
     const validation = JSONSchemaValidator.validate(req.body, schema);
     
     if (!validation.valid) {
-      const errorResponse: ValidationErrorResponse = {
+      //audit Assumption: validation errors should return 400; risk: noisy payload; invariant: payload includes ISO timestamp; handling: buildTimestampedPayload.
+      const errorResponse: ValidationErrorResponse = buildTimestampedPayload({
         error: 'Validation failed',
         details: {
           code: 'VALIDATION_ERROR',
           expected: validation.errors.join('; ')
         },
-        timestamp: new Date().toISOString(),
         endpoint: req.path
-      };
+      });
 
       return res.status(400).json(errorResponse);
     }
@@ -298,15 +299,15 @@ export function validateCustom(validator: (data: unknown) => { valid: boolean; e
     const validation = validator(req.body);
     
     if (!validation.valid) {
-      const errorResponse: ValidationErrorResponse = {
+      //audit Assumption: validation errors should return 400; risk: noisy payload; invariant: payload includes ISO timestamp; handling: buildTimestampedPayload.
+      const errorResponse: ValidationErrorResponse = buildTimestampedPayload({
         error: 'Validation failed',
         details: {
           code: 'VALIDATION_ERROR',
           expected: validation.errors.join('; ')
         },
-        timestamp: new Date().toISOString(),
         endpoint: req.path
-      };
+      });
 
       return res.status(400).json(errorResponse);
     }

@@ -41,11 +41,13 @@ body:
         - README.md
         - CONTRIBUTING.md
         - CODE_OF_CONDUCT.md
-        - API Documentation (docs/api/)
+        - API Guide (docs/API.md)
         - Configuration Guide (docs/CONFIGURATION.md)
-        - Deployment Guide (docs/deployment/)
-        - AI Guides (docs/ai-guides/)
-        - Architecture Documentation
+        - Railway Deployment (docs/RAILWAY_DEPLOYMENT.md)
+        - Local Runbook (docs/RUN_LOCAL.md)
+        - Troubleshooting (docs/TROUBLESHOOTING.md)
+        - Architecture (docs/ARCHITECTURE.md)
+        - CI/CD (docs/CI_CD.md)
         - Issue Templates
         - PR Templates
         - Other
@@ -131,7 +133,7 @@ body:
         - label: I have checked the latest version of the documentation
         - label: I have searched for existing documentation issues
         - label: I have tested any code examples mentioned
-        - label: I have verified this affects the current software version (OpenAI SDK v5.16.0)
+        - label: I have verified this affects the current software version (OpenAI SDK v6.16.0)
 
   - type: textarea
     id: related_files
