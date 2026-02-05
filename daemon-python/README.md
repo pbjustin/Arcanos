@@ -1,39 +1,59 @@
-# ARCANOS CLI (Python)
+# Arcanos Python CLI
 
-Cross-platform ARCANOS CLI daemon with voice, vision, and backend sync.
+## Overview
+The daemon CLI is an optional companion client that supports local chat, voice, vision, terminal execution, and optional backend routing.
 
-## Install (pipx)
+## Prerequisites
+- Python 3.10+
+- OpenAI API key
+- Optional backend URL/token if using backend or hybrid routing
 
-```bash
-pipx install "arcanos @ git+https://github.com/pbjustin/Arcanos.git#subdirectory=daemon-python"
-# or, once published:
-# pipx install arcanos
-```
-
-Config file locations for pipx/global installs:
-- Windows: `%LOCALAPPDATA%\ARCANOS\.env`
-- macOS: `~/Library/Application Support/ARCANOS/.env`
-- Linux: `~/.local/share/ARCANOS/.env`
-
-## Install (dev)
-
+## Setup
+From repository root:
 ```bash
 cd daemon-python
 python -m venv venv
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-# .\venv\Scripts\Activate.ps1
-pip install -e .
+# Windows PowerShell
+.\venv\Scripts\Activate.ps1
+python -m pip install -e .
 cp .env.example .env
-# Set OPENAI_API_KEY (and optional BACKEND_URL/BACKEND_TOKEN)
 ```
 
-## Run
+## Configuration
+Minimum:
+```env
+OPENAI_API_KEY=sk-...
+```
 
+Optional backend routing:
+```env
+BACKEND_URL=http://localhost:3000
+BACKEND_ROUTING_MODE=hybrid
+```
+
+Optional debug server hardening:
+```env
+DEBUG_SERVER_ENABLED=true
+DEBUG_SERVER_TOKEN=<strong-random-token>
+```
+
+## Run locally
 ```bash
 arcanos
 # or
 python -m arcanos.cli
 ```
+
+## Deploy (Railway)
+The daemon itself is local/client software. Deploy only the backend to Railway using `../docs/RAILWAY_DEPLOYMENT.md`.
+
+## Troubleshooting
+- Immediate exit with config error: ensure `OPENAI_API_KEY` is set.
+- Backend route failures: verify `BACKEND_URL` and backend health.
+- Debug server auth errors: verify `DEBUG_SERVER_TOKEN` and request headers.
+
+## References
+- `../README.md`
+- `../docs/RUN_LOCAL.md`
+- `../docs/API.md`
+- `DEBUG_SERVER_README.md`
