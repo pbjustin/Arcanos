@@ -18,7 +18,7 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 ## Setup: Connect a Custom GPT to the Backend
 
 ### 1) Confirm the target module and GPT IDs
-Each module declares a name, description, and `gptIds`. The router auto-discovers these modules and binds GPT IDs to their routes (unless overridden). Confirm the module name and the GPT ID you plan to use.
+Each module declares a name, description, and `gptIds`. The router auto-discovers these modules and binds GPT IDs to their routes (unless overridden). Confirm the module name and the GPT ID you plan to use. Note that module routes are derived from their filenames; for files prefixed with `arcanos-`, the prefix is stripped to create the route name (e.g., `arcanos-gaming.ts` becomes `gaming`).
 - Module discovery and routes: `src/modules/moduleLoader.ts`.
 - GPT ID routing map: `src/config/gptRouterConfig.ts`.
 - Module definitions (examples below): `src/modules/*.ts`.
