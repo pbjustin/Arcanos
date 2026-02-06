@@ -116,11 +116,11 @@ router.post(
   if (dispatchRerouteInfo) {
     const reason =
       typeof dispatchRerouteInfo.reason === 'string' && dispatchRerouteInfo.reason
-        ? dispatchRerouteInfo.reason
+        ? dispatchRerouteInfo.reason.replace(/[\r\n]/g, ' ').trim()
         : 'unknown';
     const originalRoute =
       typeof dispatchRerouteInfo.originalRoute === 'string' && dispatchRerouteInfo.originalRoute
-        ? dispatchRerouteInfo.originalRoute
+        ? dispatchRerouteInfo.originalRoute.replace(/[\r\n]/g, ' ').trim()
         : 'unknown';
     contextDirectives.push(`Dispatch reroute active: ${originalRoute} (${reason})`);
   }
