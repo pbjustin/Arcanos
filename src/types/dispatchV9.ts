@@ -31,7 +31,7 @@ export interface DispatchPatternBindingV9 {
   intentHints?: string[];
   sensitivity: DispatchSensitivityV9;
   conflictPolicy: DispatchConflictPolicyV9;
-  rerouteTarget?: '/api/ask';
+  rerouteTarget?: string;
   expectedRoute: string;
 }
 

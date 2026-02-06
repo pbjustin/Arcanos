@@ -25,6 +25,7 @@ export const DISPATCH_PATTERN_BINDINGS: DispatchPatternBindingV9[] = [
     pathRegexes: ['^/api/gpt(?:/.*)?$', '^/gpt(?:/.*)?$'],
     intentHints: ['gpt', 'module', 'route'],
     sensitivity: 'sensitive',
+    // strict_block policies always block on conflict and never reroute, so rerouteTarget is intentionally omitted.
     conflictPolicy: 'strict_block',
     expectedRoute: '/gpt/:gptId'
   },
