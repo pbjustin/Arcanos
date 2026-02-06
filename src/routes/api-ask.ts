@@ -27,7 +27,8 @@ const actionSchema = {
   useHRC: { type: 'boolean' as const, required: false },
   sessionId: { type: 'string' as const, required: false, maxLength: 100, sanitize: true },
   overrideAuditSafe: { type: 'string' as const, required: false, maxLength: 50, sanitize: true },
-  metadata: { type: 'object' as const, required: false }
+  metadata: { type: 'object' as const, required: false },
+  dispatchReroute: { type: 'object' as const, required: false }
 };
 
 const apiAskValidation = createValidationMiddleware(actionSchema);
@@ -45,6 +46,11 @@ interface ChatGPTActionBody {
   sessionId?: string;
   overrideAuditSafe?: string;
   metadata?: Record<string, unknown>;
+  dispatchReroute?: {
+    originalRoute?: string;
+    reason?: string;
+    memoryVersion?: string;
+  };
 }
 
 router.post(
@@ -73,6 +79,11 @@ router.post(
     req.body.text ||
     req.body.query;
 
+  const dispatchRerouteInfo =
+    req.dispatchRerouted && req.dispatchDecision === 'reroute' && req.body.dispatchReroute
+      ? req.body.dispatchReroute
+      : undefined;
+
   if (!basePrompt) {
     //audit Assumption: at least one text field is required; risk: rejecting new aliases; invariant: prompt content must exist; handling: return standardized validation error.
     return res
@@ -99,6 +110,19 @@ router.post(
   if (metadata && Object.keys(metadata).length > 0) {
     metadataKeys = Object.keys(metadata).slice(0, 10);
     contextDirectives.push(`Metadata keys: ${metadataKeys.join(', ')}`);
+  }
+
+  //audit Assumption: rerouted requests should preserve conflict context; risk: hidden reroute semantics; invariant: reroute directive appended; handling: add dispatch context.
+  if (dispatchRerouteInfo) {
+    const reason =
+      typeof dispatchRerouteInfo.reason === 'string' && dispatchRerouteInfo.reason
+        ? dispatchRerouteInfo.reason.replace(/[\r\n]/g, ' ').trim()
+        : 'unknown';
+    const originalRoute =
+      typeof dispatchRerouteInfo.originalRoute === 'string' && dispatchRerouteInfo.originalRoute
+        ? dispatchRerouteInfo.originalRoute.replace(/[\r\n]/g, ' ').trim()
+        : 'unknown';
+    contextDirectives.push(`Dispatch reroute active: ${originalRoute} (${reason})`);
   }
 
   const httpMethodIntent = inferHttpMethodIntent(basePrompt) || undefined;

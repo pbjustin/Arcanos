@@ -20,6 +20,11 @@ declare module 'express-serve-static-core' {
 // Forward any request under /gpt/:gptId to the appropriate module route
 router.use('/:gptId', async (req, res, next) => {
   try {
+    //audit Assumption: rerouted requests should skip GPT-specific dispatch; risk: double-routing; invariant: rerouted flow continues to safe target; handling: next.
+    if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+      return next();
+    }
+
     const gptModuleMap = await getGptModuleMap();
     const incomingGptId = req.params.gptId;
     if (incomingGptId.length > 256) {
@@ -75,7 +80,7 @@ router.use('/:gptId', async (req, res, next) => {
             const n = A.length, m = B.length;
             if (n === 0) return m;
             if (m === 0) return n;
-            const d: number[][] = Array.from({ length: n + 1 }, (_, i) => Array(m + 1).fill(0));
+            const d: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
             for (let i = 0; i <= n; i++) d[i][0] = i;
             for (let j = 0; j <= m; j++) d[0][j] = j;
             for (let i = 1; i <= n; i++) {
