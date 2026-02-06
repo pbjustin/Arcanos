@@ -14,8 +14,11 @@ import reusableCodeRouter from '../api-reusable-code.js';
 import prAnalysisRouter from '../pr-analysis.js';
 import openaiRouter from '../openai.js';
 import afolRouter from '../afol.js';
+import { memoryConsistencyGate } from '../../middleware/memoryConsistencyGate.js';
 
 const router = Router();
+
+router.use(memoryConsistencyGate);
 
 router.use('/', apiAskRouter);
 router.use('/api/arcanos', apiArcanosRouter);
