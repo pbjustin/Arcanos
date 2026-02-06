@@ -145,6 +145,8 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
   };
 
   const storeLogger = logger.child({ module: 'dispatch-v9.snapshot-store' });
+  // NOTE: This cache is process-local and not shared across worker processes or cluster instances.
+  // In multi-process deployments, each worker maintains its own independent cache.
   let cache: SnapshotCacheEntry | null = null;
 
   const setCache = (record: RouteMemorySnapshotRecord): void => {
@@ -168,9 +170,20 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
     };
 
     await deps.saveMemoryEntry(deps.snapshotKey, persistedSnapshot);
-    // Use the save timestamp as the memory version to avoid race conditions
-    // between separate save and read operations
-    const memoryVersion = nowIso;
+
+    // Read back the actual updated_at from the database to ensure memory_version
+    // reflects the true persisted timestamp, avoiding race conditions
+    let memoryVersion = nowIso;
+    try {
+      const dbUpdatedAt = await readMemoryUpdatedAt(deps.snapshotKey, deps.queryRunner, nowIso);
+      memoryVersion = dbUpdatedAt;
+    } catch {
+      storeLogger.warn('Failed to read back updated_at after save; using local timestamp', {
+        operation: 'persistSnapshot',
+        snapshotKey: deps.snapshotKey
+      });
+    }
+
     const normalizedSnapshot: DispatchMemorySnapshotV9 = {
       ...persistedSnapshot,
       memory_version: memoryVersion
@@ -269,7 +282,7 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
       options: { hardConflict?: boolean; updatedBy?: string } = {}
     ): Promise<RouteMemorySnapshotRecord> {
       const current = await this.getSnapshot({ forceRefresh: true });
-      const MAX_ROUTES = 5000;
+      const MAX_ROUTES = Number(process.env.ROUTE_MEMORY_MAX_ROUTES ?? '5000') || 5000;
       const EVICTION_COUNT = 500;
       const routeState = current.snapshot.route_state;
 

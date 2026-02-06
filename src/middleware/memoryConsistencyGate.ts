@@ -549,6 +549,26 @@ export function createMemoryConsistencyGate(
         }
       };
 
+      //audit Assumption: rerouted request body must contain a message for the target handler; risk: target receives invalid payload; invariant: message is non-empty string; handling: restore + failsafe on invalid.
+      if (typeof req.body.message !== 'string' || !req.body.message.trim()) {
+        restoreRequestState(req, stateSnapshot);
+        setRequestDispatchContext(req, 'block', memoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
+        setDispatchHeaders(res, 'block', memoryVersion, bindingId);
+        emitDecision('block', bindingId, memoryVersion, {
+          conflictReason: validation.reason,
+          logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+        });
+        res.status(503).json(
+          buildFailsafePayload({
+            routeAttempted: attempt.routeAttempted,
+            memoryVersion,
+            bindingId,
+            reason: 'reroute_payload_invalid'
+          })
+        );
+        return;
+      }
+
       setRequestDispatchContext(req, 'reroute', memoryVersion, true, DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT);
       setDispatchHeaders(res, 'reroute', memoryVersion, bindingId);
       emitDecision('reroute', bindingId, memoryVersion, {
