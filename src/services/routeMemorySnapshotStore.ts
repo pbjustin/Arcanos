@@ -270,8 +270,29 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
     ): Promise<RouteMemorySnapshotRecord> {
       const current = await this.getSnapshot({ forceRefresh: true });
       const MAX_ROUTES = 5000;
-      if (!current.snapshot.route_state[routeAttempted] && Object.keys(current.snapshot.route_state).length >= MAX_ROUTES) {
-        return current;
+      const EVICTION_COUNT = 500;
+      const routeState = current.snapshot.route_state;
+
+      // When limit is reached and this is a new route, evict the oldest entries
+      // to prevent an attacker from exhausting the limit and blocking all new routes
+      if (!routeState[routeAttempted] && Object.keys(routeState).length >= MAX_ROUTES) {
+        const sortedEntries = Object.entries(routeState)
+          .sort(([, a], [, b]) => {
+            const timeA = Date.parse(a.last_validated_at) || 0;
+            const timeB = Date.parse(b.last_validated_at) || 0;
+            return timeA - timeB;
+          });
+
+        const keysToEvict = sortedEntries.slice(0, EVICTION_COUNT).map(([key]) => key);
+        for (const key of keysToEvict) {
+          delete routeState[key];
+        }
+
+        storeLogger.warn('Route state limit reached; evicted oldest entries', {
+          operation: 'upsertRouteState',
+          evictedCount: keysToEvict.length,
+          remainingCount: Object.keys(routeState).length
+        });
       }
       const nowIso = deps.now().toISOString();
 

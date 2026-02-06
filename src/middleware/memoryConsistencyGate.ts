@@ -66,12 +66,15 @@ function normalizePath(path: string): string {
 function cloneJsonSafe<T>(value: T): T {
   try {
     const serialized = JSON.stringify(value);
-    if (serialized && serialized.length > 1_000_000) {
-      return value;
-    }
+    // Always parse back to guarantee a true deep clone, even for large payloads
     return JSON.parse(serialized) as T;
   } catch {
-    return value;
+    // structuredClone handles circular refs and non-JSON types that JSON.stringify cannot
+    try {
+      return structuredClone(value);
+    } catch {
+      return value;
+    }
   }
 }
 
@@ -123,8 +126,9 @@ function isExemptRoute(req: Request): boolean {
     if (exemption.exactPath && normalizePath(exemption.exactPath) === path) {
       return true;
     }
-    //audit Assumption: prefix exemptions cover read-only route families; risk: broad bypass; invariant: prefix bounded by config; handling: return true on match.
-    if (exemption.prefixPath && path.startsWith(normalizePath(exemption.prefixPath))) {
+    //audit Assumption: prefix exemptions cover read-only route families; risk: broad bypass; invariant: prefix bounded by path boundary; handling: return true on exact or slash-delimited match.
+    const normalizedPrefix = exemption.prefixPath ? normalizePath(exemption.prefixPath) : undefined;
+    if (normalizedPrefix && (path === normalizedPrefix || path.startsWith(normalizedPrefix + '/'))) {
       return true;
     }
   }
