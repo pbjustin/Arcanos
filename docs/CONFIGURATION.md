@@ -54,10 +54,9 @@ cp .env.example .env
 
 ### OpenAI API key resolution
 
+*Without an API key, AI routes return mock responses by design.*
+
 The OpenAI client resolves keys in this order, skipping placeholders:
-=======
-*Without an API key, AI routes return mock responses by design.
->>>>>>> 7e6de62257e7864cbfdc09916f7ac7bf0063cf21
 
 ### OpenAI key resolution order
 1. `OPENAI_API_KEY`
