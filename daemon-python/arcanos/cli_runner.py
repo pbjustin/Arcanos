@@ -219,19 +219,18 @@ def run_interactive_mode(cli: "ArcanosCLI") -> None:
     try:
         while True:
             try:
-                user_input = input("\n?? You: ").strip()
+                user_input = input("\nYou: ").strip()
                 if not user_input:
                     # //audit assumption: empty input is non-actionable; risk: busy loop; invariant: skip; strategy: continue.
                     continue
 
                 if user_input.lower() in ["exit", "quit", "bye"]:
-                    # //audit assumption: exit commands should quit; risk: user stuck; invariant: break loop; strategy: break.
-                    cli.console.print("[cyan]?? Goodbye![/cyan]")
+                    cli.console.print("[cyan]See you later![/cyan]")
                     break
 
                 process_input(cli, user_input)
             except KeyboardInterrupt:
-                cli.console.print("\n[cyan]?? Goodbye![/cyan]")
+                cli.console.print("\n[cyan]See you later![/cyan]")
                 break
             except Exception as exc:
                 # //audit assumption: interactive loop should survive errors; risk: crash; invariant: error surfaced; strategy: handle and continue.

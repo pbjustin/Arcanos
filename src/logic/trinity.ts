@@ -17,6 +17,7 @@ import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from '../utils/aiLogger.js';
 import { generateRequestId } from '../utils/idGenerator.js';
 import { getTrinityMessages } from '../config/prompts.js';
+import { MidLayerTranslator } from '../services/midLayerTranslator.js';
 import {
   getAuditSafeConfig,
   applyAuditSafeConstraints,
@@ -217,7 +218,10 @@ export async function runThroughBrain(
   logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
   const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output);
-  const finalText = finalOutput.output;
+
+  // Mid-layer translation: strip system/audit artifacts, humanize the response
+  const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
+  const finalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
 
   const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
   if (!finalProcessedSafely) {
