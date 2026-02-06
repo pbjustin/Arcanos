@@ -74,6 +74,12 @@ export const config = {
     preemptive: getEnv('ENABLE_PREEMPTIVE_FALLBACK') === 'true'
   },
 
+  dispatchV9: {
+    enabled: getEnv('DISPATCH_V9_ENABLED') === 'true',
+    shadowOnly: getEnv('DISPATCH_V9_SHADOW_ONLY') === 'true',
+    snapshotCacheTtlMs: parseNumber(getEnv('DISPATCH_V9_SNAPSHOT_CACHE_TTL_MS'), 3000, 0)
+  },
+
   // Logging configuration
   logging: {
     level: getEnv('LOG_LEVEL') || 'info',

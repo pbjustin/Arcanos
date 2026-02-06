@@ -10,6 +10,15 @@ const moduleRoutes = new Map<string, string>();
 
 function createHandler(mod: ModuleDef) {
   return async (req: Request, res: Response) => {
+    //audit Assumption: rerouted requests should not execute module actions; risk: conflicting side effects; invariant: module execution skipped; handling: return safe error.
+    if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+      return res.status(409).json({
+        error: 'Dispatch rerouted to safe default dispatcher',
+        code: 'DISPATCH_REROUTED',
+        target: '/api/ask'
+      });
+    }
+
     const { module, action, payload } = req.body as {
       module?: string;
       action?: string;
@@ -137,6 +146,15 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
 });
 
 router.post('/queryroute', async (req: Request, res: Response) => {
+  //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: return safe error.
+  if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+    return res.status(409).json({
+      error: 'Dispatch rerouted to safe default dispatcher',
+      code: 'DISPATCH_REROUTED',
+      target: '/api/ask'
+    });
+  }
+
   const { module: moduleName, action, payload } = req.body as {
     module?: string;
     action?: string;
