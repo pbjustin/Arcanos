@@ -37,7 +37,6 @@ cp .env.example .env
 | `RAILWAY_ENVIRONMENT` | No | none | Set by Railway and used for environment detection. |
 | `RAILWAY_API_TOKEN` | No | none | Only required for Railway management/API tooling, not normal app runtime. |
 
-<<<<<<< HEAD
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `NODE_ENV` | `development` | Controls logging and worker defaults. |
@@ -54,10 +53,9 @@ cp .env.example .env
 
 ### OpenAI API key resolution
 
+*Without an API key, AI routes return mock responses by design.*
+
 The OpenAI client resolves keys in this order, skipping placeholders:
-=======
-*Without an API key, AI routes return mock responses by design.
->>>>>>> 7e6de62257e7864cbfdc09916f7ac7bf0063cf21
 
 ### OpenAI key resolution order
 1. `OPENAI_API_KEY`

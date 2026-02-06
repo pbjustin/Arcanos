@@ -56,7 +56,6 @@ from .cli_ui import (
     get_telemetry_description_lines,
     get_telemetry_prompt,
     get_telemetry_section_header,
-    strip_markdown,
 )
 from .cli_debug_helpers import build_debug_marker, resolve_debug_port
 from .cli_daemon import (
@@ -275,7 +274,7 @@ class ArcanosCLI:
 
         self.console.print(Panel(
             Markdown(welcome_text),
-            title="?? ARCANOS",
+            title="ARCANOS",
             border_style="cyan"
         ))
 
@@ -590,7 +589,6 @@ class ArcanosCLI:
         )
 
         if not response:
-            # //audit assumption: response required; risk: empty response; invariant: non-empty response; strategy: return None.
             return None
 
         return _ConversationResult(
@@ -600,6 +598,41 @@ class ArcanosCLI:
             model=Config.OPENAI_MODEL,
             source="local"
         )
+
+    def _perform_local_conversation_streaming(self, message: str) -> Optional[_ConversationResult]:
+        """
+        Purpose: Execute a local GPT conversation with streaming output.
+        Inputs/Outputs: message string; streams to console and returns ConversationResult.
+        Edge cases: Falls back to non-streaming on error.
+        """
+        history = self.memory.get_recent_conversations(limit=5)
+        try:
+            stream = self.gpt_client.ask_stream(
+                user_message=message,
+                system_prompt=self.system_prompt,
+                conversation_history=history
+            )
+
+            self.console.print()  # blank line before response
+            collected_chunks = []
+            for chunk in stream:
+                self.console.print(chunk, end="", highlight=False)
+                collected_chunks.append(chunk)
+            self.console.print()  # newline after streaming
+
+            response_text = "".join(collected_chunks)
+            if not response_text.strip():
+                return None
+
+            return _ConversationResult(
+                response_text=response_text,
+                tokens_used=0,
+                cost_usd=0.0,
+                model=Config.OPENAI_MODEL,
+                source="local"
+            )
+        except Exception:
+            return self._perform_local_conversation(message)
 
     def _perform_backend_conversation(self, message: str, domain: Optional[str] = None, from_debug: bool = False) -> Optional[_ConversationResult]:
         """
@@ -865,28 +898,29 @@ class ArcanosCLI:
 
         result: Optional[_ConversationResult] = None
 
-        # Show thinking indicator
-        with self.console.status("Thinking...", spinner="dots"):
-            if route_decision.route == "backend":
-                # //audit assumption: backend route requested; risk: backend unavailable; invariant: backend attempt; strategy: call backend.
-                result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain, from_debug=from_debug)
-                if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
-                    # //audit assumption: fallback allowed when backend fails; risk: unwanted fallback on confirmation; invariant: skip when confirmation handled; strategy: gate on flag.
-                    # #region agent log
-                    try:
-                        import json as _json
-                        _debug_log_path = Config.DEBUG_LOG_PATH
-                        _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-                        with _debug_log_path.open("a", encoding="utf-8") as _lf:
-                            _lf.write(_json.dumps({"kind": "suspicious", "location": "cli.py:handle_ask:fallback", "message": "Backend unavailable; falling back to local", "data": {"message_length": len(route_decision.normalized_message)}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": "FALLBACK"}) + "\n")
-                    except (OSError, IOError) as _e:
-                        error_logger.debug("Debug log write failed: %s", _e)
-                    # #endregion
-                    self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
+        # Use streaming for local conversations when enabled (feels like ChatGPT typing)
+        use_streaming = Config.STREAM_RESPONSES and route_decision.route == "local" and not return_result
+
+        if use_streaming:
+            result = self._perform_local_conversation_streaming(route_decision.normalized_message)
+        else:
+            # Show thinking indicator for non-streaming requests
+            with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
+                if route_decision.route == "backend":
+                    result = self._perform_backend_conversation(route_decision.normalized_message, domain=domain, from_debug=from_debug)
+                    if result is None and Config.BACKEND_FALLBACK_TO_LOCAL and not self._last_confirmation_handled:
+                        try:
+                            import json as _json
+                            _debug_log_path = Config.DEBUG_LOG_PATH
+                            _debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+                            with _debug_log_path.open("a", encoding="utf-8") as _lf:
+                                _lf.write(_json.dumps({"kind": "suspicious", "location": "cli.py:handle_ask:fallback", "message": "Backend unavailable; falling back to local", "data": {"message_length": len(route_decision.normalized_message)}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": "FALLBACK"}) + "\n")
+                        except (OSError, IOError) as _e:
+                            error_logger.debug("Debug log write failed: %s", _e)
+                        self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
+                        result = self._perform_local_conversation(route_decision.normalized_message)
+                else:
                     result = self._perform_local_conversation(route_decision.normalized_message)
-            else:
-                # //audit assumption: local route requested; risk: none; invariant: local model used; strategy: call local GPT.
-                result = self._perform_local_conversation(route_decision.normalized_message)
 
         if not result:
             # //audit assumption: result required; risk: no response; invariant: message shown; strategy: return without updates.
@@ -913,8 +947,12 @@ class ArcanosCLI:
         if return_result:
             return result
 
-        # Display response
-        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text).replace('[', '[[')}\n")
+        # Display response — render markdown for rich formatting (like ChatGPT)
+        # Skip display for streaming responses (already printed inline)
+        if not use_streaming:
+            self.console.print()
+            self.console.print(Markdown(result.response_text))
+            self.console.print()
 
         should_speak = speak_response or Config.SPEAK_RESPONSES
         if should_speak:
@@ -1004,7 +1042,9 @@ class ArcanosCLI:
         if return_result:
             return {"ok": True, **asdict(result)}
 
-        self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(result.response_text).replace('[', '[[')}\n")
+        self.console.print()
+        self.console.print(Markdown(result.response_text))
+        self.console.print()
 
         if Config.SPEAK_RESPONSES:
             truncated = truncate_for_tts(result.response_text)
@@ -1013,7 +1053,7 @@ class ArcanosCLI:
 
         if Config.SHOW_STATS:
             self.console.print(f"[dim]Tokens: {result.tokens_used} | Cost: ${result.cost_usd:.4f}[/dim]")
-        
+
         return None
 
     @handle_errors("voice input")
@@ -1119,7 +1159,9 @@ class ArcanosCLI:
                 # Vision analysis with speech text as prompt
                 response, tokens, cost = self.vision.analyze_image(img_base64, text)
                 if response:
-                    self.console.print(f"\n[bold cyan]ARCANOS:[/bold cyan] {strip_markdown(response).replace('[', '[[')}\n")
+                    self.console.print()
+                    self.console.print(Markdown(response))
+                    self.console.print()
                     self._last_response = response
                     self.rate_limiter.record_request(tokens, cost)
                     self.memory.increment_stat("vision_requests")

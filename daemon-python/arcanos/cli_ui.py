@@ -17,13 +17,13 @@ def build_welcome_markdown(version: str) -> str:
     Edge cases: version may be empty, which will still render a generic header.
     """
     return f"""
-# ?? Welcome to ARCANOS v{version}
+# Hey! Welcome to ARCANOS v{version}
 
-**Your AI-powered terminal companion**
+I'm your AI assistant, right here in the terminal.
 
-I can chat, see your screen, hear your voice, and help with commands!
+I can have conversations, see your screen, listen to your voice, run commands, and more.
 
-Type **help** for available commands or just start chatting naturally.
+Just type what's on your mind, or type **help** to see what I can do.
     """
 
 
@@ -73,44 +73,39 @@ def get_help_markdown() -> str:
     Edge cases: Returns a non-empty string even if commands change.
     """
     return """
-# ?? ARCANOS Commands
+# What I can do
 
-### Conversation
-- Just type naturally to chat with ARCANOS
-- **help** - Show this help message
-- **exit** / **quit** - Exit ARCANOS
-- **deep <prompt>** / **backend <prompt>** - Force backend routing
-- **deep:** / **backend:** - Prefix for backend routing in hybrid mode
+### Chat
+Just type naturally — ask me anything, and I'll do my best to help.
 
-### Vision
-- **see** - Analyze screenshot
-- **see camera** - Analyze webcam image
-- **see backend** - Analyze screenshot via backend
-- **see camera backend** - Analyze webcam image via backend
+- **deep <prompt>** — Send a question to the backend for deeper analysis
+- **help** — Show this menu
+- **exit** / **quit** / **bye** — End our conversation
 
-### Voice
-- **voice** - Use voice input (one-time)
-- **voice backend** - Use backend transcription
-- **ptt** - Start push-to-talk mode (hold SPACEBAR)
-- **speak** - Replay the last response (TTS)
+### See things
+- **see** — I'll look at your screen and tell you what I see
+- **see camera** — Same thing, but with your webcam
 
-### Terminal
-- **run <command>** - Execute shell command (PowerShell on Windows, bash/sh on macOS/Linux)
-  Examples: `run Get-Process` (Windows), `run ls -la` (macOS/Linux)
+### Listen & speak
+- **voice** — Talk to me (one-shot microphone capture)
+- **ptt** — Push-to-talk mode (hold SPACEBAR)
+- **speak** — I'll read my last response out loud
 
-### System
-- **stats** - Show usage statistics
-- **clear** - Clear conversation history
-- **reset** - Reset statistics
-- **update** - Check for updates and download installer (if GITHUB_RELEASES_REPO is set)
+### Run commands
+- **run <command>** — I'll execute a shell command for you
+  Example: `run Get-Process` or `run ls -la`
 
-### Examples
+### Housekeeping
+- **stats** — See usage stats
+- **clear** — Clear conversation history
+- **update** — Check for updates
+
+### Try it out
 ```
-You: hey arcanos, what's the weather like today?
+You: what's the best way to learn Python?
 You: see
 You: run Get-Date
-You: voice
-You: ptt
+You: deep explain quantum computing
 ```
     """
 
@@ -189,6 +184,6 @@ def build_help_panel() -> Panel:
     # //audit assumption: markdown is valid; risk: render issues; invariant: panel returned; strategy: pass through Rich Markdown.
     return Panel(
         Markdown(help_markdown),
-        title="?? ARCANOS Help",
+        title="ARCANOS Help",
         border_style="cyan",
     )
