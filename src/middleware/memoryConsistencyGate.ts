@@ -67,11 +67,19 @@ function cloneJsonSafe<T>(value: T): T {
   try {
     const serialized = JSON.stringify(value);
     if (serialized && serialized.length > 1_000_000) {
-      return value;
+      try {
+        return structuredClone(value);
+      } catch {
+        return value;
+      }
     }
     return JSON.parse(serialized) as T;
   } catch {
-    return value;
+    try {
+      return structuredClone(value);
+    } catch {
+      return value;
+    }
   }
 }
 
@@ -123,8 +131,9 @@ function isExemptRoute(req: Request): boolean {
     if (exemption.exactPath && normalizePath(exemption.exactPath) === path) {
       return true;
     }
-    //audit Assumption: prefix exemptions cover read-only route families; risk: broad bypass; invariant: prefix bounded by config; handling: return true on match.
-    if (exemption.prefixPath && path.startsWith(normalizePath(exemption.prefixPath))) {
+    //audit Assumption: prefix exemptions cover read-only route families; risk: broad bypass; invariant: prefix bounded by path boundary; handling: return true on exact or slash-delimited match.
+    const normalizedPrefix = exemption.prefixPath ? normalizePath(exemption.prefixPath) : undefined;
+    if (normalizedPrefix && (path === normalizedPrefix || path.startsWith(normalizedPrefix + '/'))) {
       return true;
     }
   }
@@ -545,6 +554,25 @@ export function createMemoryConsistencyGate(
         }
       };
 
+      //audit Assumption: rerouted request body must contain a message for the target handler; risk: target receives invalid payload; invariant: message is non-empty string; handling: restore + failsafe on invalid.
+      if (typeof req.body.message !== 'string' || !req.body.message.trim()) {
+        restoreRequestState(req, stateSnapshot);
+        setRequestDispatchContext(req, 'block', memoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
+        setDispatchHeaders(res, 'block', memoryVersion, bindingId);
+        emitDecision('block', bindingId, memoryVersion, {
+          conflictReason: validation.reason,
+          logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+        });
+        res.status(503).json(
+          buildFailsafePayload({
+            routeAttempted: attempt.routeAttempted,
+            memoryVersion,
+            bindingId,
+            reason: 'reroute_payload_invalid'
+          })
+        );
+        return;
+      }
       setRequestDispatchContext(req, 'reroute', memoryVersion, true, DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT);
       setDispatchHeaders(res, 'reroute', memoryVersion, bindingId);
       emitDecision('reroute', bindingId, memoryVersion, {

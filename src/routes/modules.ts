@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { loadModuleDefinitions, ModuleDef } from '../modules/moduleLoader.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
+import { logger } from '../utils/structuredLogging.js';
 
 const router = express.Router();
 
@@ -10,8 +11,13 @@ const moduleRoutes = new Map<string, string>();
 
 function createHandler(mod: ModuleDef) {
   return async (req: Request, res: Response) => {
-    //audit Assumption: rerouted requests should not execute module actions; risk: conflicting side effects; invariant: module execution skipped; handling: return safe error.
+    //audit Assumption: rerouted requests should not execute module actions; risk: conflicting side effects; invariant: module execution skipped; handling: log warning + return safe error.
     if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+      logger.warn('Rerouted request reached module handler unexpectedly', {
+        module: 'modules',
+        url: req.url,
+        originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
+      });
       return res.status(409).json({
         error: 'Dispatch rerouted to safe default dispatcher',
         code: 'DISPATCH_REROUTED',
@@ -146,8 +152,13 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
 });
 
 router.post('/queryroute', async (req: Request, res: Response) => {
-  //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: return safe error.
+  //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: log warning + return safe error.
   if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+    logger.warn('Rerouted request reached queryroute handler unexpectedly', {
+      module: 'modules',
+      url: req.url,
+      originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
+    });
     return res.status(409).json({
       error: 'Dispatch rerouted to safe default dispatcher',
       code: 'DISPATCH_REROUTED',

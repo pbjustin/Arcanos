@@ -145,6 +145,8 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
   };
 
   const storeLogger = logger.child({ module: 'dispatch-v9.snapshot-store' });
+  // NOTE: This cache is process-local and not shared across worker processes or cluster instances.
+  // In multi-process deployments, each worker maintains its own independent cache.
   let cache: SnapshotCacheEntry | null = null;
 
   const setCache = (record: RouteMemorySnapshotRecord): void => {
@@ -168,9 +170,19 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
     };
 
     await deps.saveMemoryEntry(deps.snapshotKey, persistedSnapshot);
-    // Use the save timestamp as the memory version to avoid race conditions
-    // between separate save and read operations
-    const memoryVersion = nowIso;
+
+    // Read back the actual updated_at from the database to ensure memory_version
+    // reflects the true persisted timestamp, avoiding race conditions
+    let memoryVersion = nowIso;
+    try {
+      const dbUpdatedAt = await readMemoryUpdatedAt(deps.snapshotKey, deps.queryRunner, nowIso);
+      memoryVersion = dbUpdatedAt;
+    } catch {
+      storeLogger.warn('Failed to read back updated_at after save; using local timestamp', {
+        operation: 'persistSnapshot',
+        snapshotKey: deps.snapshotKey
+      });
+    }
     const normalizedSnapshot: DispatchMemorySnapshotV9 = {
       ...persistedSnapshot,
       memory_version: memoryVersion
@@ -269,9 +281,30 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
       options: { hardConflict?: boolean; updatedBy?: string } = {}
     ): Promise<RouteMemorySnapshotRecord> {
       const current = await this.getSnapshot({ forceRefresh: true });
-      const MAX_ROUTES = 5000;
-      if (!current.snapshot.route_state[routeAttempted] && Object.keys(current.snapshot.route_state).length >= MAX_ROUTES) {
-        return current;
+      const MAX_ROUTES = Number(process.env.ROUTE_MEMORY_MAX_ROUTES ?? '5000') || 5000;
+      const EVICTION_COUNT = 500;
+      const routeState = current.snapshot.route_state;
+
+      // When limit is reached and this is a new route, evict the oldest entries
+      // to prevent an attacker from exhausting the limit and blocking all new routes
+      if (!routeState[routeAttempted] && Object.keys(routeState).length >= MAX_ROUTES) {
+        const sortedEntries = Object.entries(routeState)
+          .sort(([, a], [, b]) => {
+            const timeA = Date.parse(a.last_validated_at) || 0;
+            const timeB = Date.parse(b.last_validated_at) || 0;
+            return timeA - timeB;
+          });
+
+        const keysToEvict = sortedEntries.slice(0, EVICTION_COUNT).map(([key]) => key);
+        for (const key of keysToEvict) {
+          delete routeState[key];
+        }
+
+        storeLogger.warn('Route state limit reached; evicted oldest entries', {
+          operation: 'upsertRouteState',
+          evictedCount: keysToEvict.length,
+          remainingCount: Object.keys(routeState).length
+        });
       }
       const nowIso = deps.now().toISOString();
 

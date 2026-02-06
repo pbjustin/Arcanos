@@ -31,15 +31,11 @@ describe('routeMemorySnapshotStore', () => {
   let memoryUpdatedAt: string;
   let nowCounter: number;
 
-  const timestamps = [
-    '2026-02-06T01:00:00.000Z',
-    '2026-02-06T01:00:01.000Z',
-    '2026-02-06T01:00:02.000Z',
-    '2026-02-06T01:00:03.000Z',
-    '2026-02-06T01:00:04.000Z',
-    '2026-02-06T01:00:05.000Z',
-    '2026-02-06T01:00:06.000Z'
-  ];
+  // Use stable past dates as test fixtures representing sequential "now" values
+  const baseTimestamp = new Date('2000-01-01T00:00:00.000Z');
+  const timestamps = Array.from({ length: 7 }, (_v, i) =>
+    new Date(baseTimestamp.getTime() + i * 1000).toISOString()
+  );
 
   const now = () => {
     const index = Math.min(nowCounter, timestamps.length - 1);
@@ -95,8 +91,8 @@ describe('routeMemorySnapshotStore', () => {
   });
 
   it('extracts memory_version from memory row updated_at metadata', async () => {
-    const dbVersion = '2026-02-06T02:30:00.000Z';
-    dbValue = createSnapshotFixture('2026-02-06T01:59:59.000Z', 'POST /api/ask', 'POST /api/ask');
+    const dbVersion = '2000-01-01T01:30:00.000Z';
+    dbValue = createSnapshotFixture('2000-01-01T00:59:59.000Z', 'POST /api/ask', 'POST /api/ask');
     memoryUpdatedAt = dbVersion;
 
     const store = createRouteMemorySnapshotStore({
@@ -114,7 +110,51 @@ describe('routeMemorySnapshotStore', () => {
     expect(record.memoryVersion).toBe(dbVersion);
     expect(record.snapshot.memory_version).toBe(dbVersion);
   });
+  it('evicts oldest routes when MAX_ROUTES limit is reached', async () => {
+    // Build a snapshot with route_state at the limit
+    const MAX_ROUTES = 5000;
+    const routeState: Record<string, { expected_route: string; last_validated_at: string; hard_conflict: boolean }> = {};
+    for (let i = 0; i < MAX_ROUTES; i++) {
+      const route = `POST /api/route-${i}`;
+      routeState[route] = {
+        expected_route: route,
+        last_validated_at: new Date(baseTimestamp.getTime() + i * 100).toISOString(),
+        hard_conflict: false
+      };
+    }
 
+    dbValue = {
+      schema_version: 'v9',
+      bindings_version: 'bindings-v9-test',
+      memory_version: timestamps[0],
+      route_state: routeState,
+      updated_at: timestamps[0],
+      updated_by: 'test'
+    };
+
+    const store = createRouteMemorySnapshotStore({
+      snapshotKey: DISPATCH_V9_SNAPSHOT_KEY,
+      bindingsVersion: 'bindings-v9-test',
+      cacheTtlMs: 0,
+      loadMemoryEntry,
+      saveMemoryEntry,
+      queryRunner,
+      now
+    });
+
+    // Upsert a new route beyond the limit — should trigger eviction
+    const result = await store.upsertRouteState('POST /api/new-route', 'POST /api/new-route', {
+      updatedBy: 'test'
+    });
+
+    // The new route should exist in the snapshot
+    expect(result.snapshot.route_state['POST /api/new-route']).toBeDefined();
+    // Oldest routes should have been evicted (500 evicted, 1 added = 4501 total)
+    const routeCount = Object.keys(result.snapshot.route_state).length;
+    expect(routeCount).toBeLessThanOrEqual(MAX_ROUTES - 500 + 1);
+    // The oldest route (route-0) should have been evicted
+    expect(result.snapshot.route_state['POST /api/route-0']).toBeUndefined();
+  });
   it('recreates default snapshot when payload is missing or corrupt', async () => {
     dbValue = 'not-a-valid-snapshot';
 

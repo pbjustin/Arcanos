@@ -38,7 +38,8 @@ const environmentChecks: EnvironmentCheck[] = [
     name: 'PORT',
     required: false,
     description: 'Server port number',
-    defaultValue: String(APPLICATION_CONSTANTS.DEFAULT_PORT),
+    // For Railway compatibility and test environments, default to 8080 when not provided
+    defaultValue: '8080',
     validator: (value) => {
       const port = parseInt(value, 10);
       return !isNaN(port) && port > 0 && port < 65536;
