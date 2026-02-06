@@ -47,8 +47,7 @@ export const DISPATCH_PATTERN_BINDINGS: DispatchPatternBindingV9[] = [
     pathRegexes: ['^/api/(?:health|status)(?:/.*)?$'],
     sensitivity: 'non-sensitive',
     conflictPolicy: 'refresh_then_reroute',
-    expectedRoute: '/api/read-only',
-    exempt: true
+    expectedRoute: '/api/read-only'
   },
   {
     id: 'api.default',

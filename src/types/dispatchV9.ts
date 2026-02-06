@@ -33,7 +33,6 @@ export interface DispatchPatternBindingV9 {
   conflictPolicy: DispatchConflictPolicyV9;
   rerouteTarget?: '/api/ask';
   expectedRoute: string;
-  exempt?: boolean;
 }
 
 export interface DispatchResolvedBindingV9 extends DispatchPatternBindingV9 {
