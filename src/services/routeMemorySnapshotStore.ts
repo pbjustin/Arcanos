@@ -168,7 +168,9 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
     };
 
     await deps.saveMemoryEntry(deps.snapshotKey, persistedSnapshot);
-    const memoryVersion = await readMemoryUpdatedAt(deps.snapshotKey, deps.queryRunner, nowIso);
+    // Use the save timestamp as the memory version to avoid race conditions
+    // between separate save and read operations
+    const memoryVersion = nowIso;
     const normalizedSnapshot: DispatchMemorySnapshotV9 = {
       ...persistedSnapshot,
       memory_version: memoryVersion
@@ -267,6 +269,10 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
       options: { hardConflict?: boolean; updatedBy?: string } = {}
     ): Promise<RouteMemorySnapshotRecord> {
       const current = await this.getSnapshot({ forceRefresh: true });
+      const MAX_ROUTES = 5000;
+      if (!current.snapshot.route_state[routeAttempted] && Object.keys(current.snapshot.route_state).length >= MAX_ROUTES) {
+        return current;
+      }
       const nowIso = deps.now().toISOString();
 
       const existingState = current.snapshot.route_state[routeAttempted];

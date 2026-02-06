@@ -65,7 +65,11 @@ function normalizePath(path: string): string {
 
 function cloneJsonSafe<T>(value: T): T {
   try {
-    return JSON.parse(JSON.stringify(value)) as T;
+    const serialized = JSON.stringify(value);
+    if (serialized && serialized.length > 1_000_000) {
+      return value;
+    }
+    return JSON.parse(serialized) as T;
   } catch {
     return value;
   }
@@ -236,12 +240,8 @@ function runFailsafeChecks(
   if (Number.isNaN(Date.parse(memoryVersion))) {
     return { ok: false, reason: 'memory_version_invalid' };
   }
-  //audit Assumption: reroute target must be registered allowlist route; risk: open redirect-like path mutation; invariant: safe target; handling: fail-fast.
-  if (!rerouteTarget || rerouteTarget !== '/api/ask') {
-    return { ok: false, reason: 'reroute_target_unregistered' };
-  }
-  //audit Assumption: reroute target must correspond to a registered binding path; risk: dead-end rewrite target; invariant: target is registered; handling: fail-fast.
-  if (!isRegisteredTarget) {
+  //audit Assumption: reroute target must correspond to a registered binding path; risk: open redirect-like path mutation; invariant: target is registered; handling: fail-fast.
+  if (!rerouteTarget || !isRegisteredTarget) {
     return { ok: false, reason: 'reroute_target_unregistered' };
   }
   return { ok: true };
@@ -357,7 +357,7 @@ export function createMemoryConsistencyGate(
       setRequestDispatchContext(req, 'block', fallbackMemoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
       setDispatchHeaders(res, 'block', fallbackMemoryVersion, fallbackBindingId);
       emitDecision('block', fallbackBindingId, fallbackMemoryVersion, {
-        conflictReason: binding ? 'none' : 'missing_binding',
+        conflictReason: 'none',
         logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
       });
       dispatchLogger.error(
