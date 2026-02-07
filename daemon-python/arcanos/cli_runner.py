@@ -229,7 +229,7 @@ def run_interactive_mode(cli: "ArcanosCLI") -> None:
                     break
 
                 process_input(cli, user_input)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, EOFError):
                 cli.console.print("\n[cyan]See you later![/cyan]")
                 break
             except Exception as exc:

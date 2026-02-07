@@ -638,8 +638,8 @@ class ArcanosCLI:
 
     def _perform_local_conversation_streaming(self, message: str) -> Optional[_ConversationResult]:
         """
-        Purpose: Execute a local GPT conversation with streaming output.
-        Inputs/Outputs: message string; returns ConversationResult with collected streamed text.
+        Purpose: Execute a local GPT conversation with real-time streaming output.
+        Inputs/Outputs: message string; streams to console and returns ConversationResult.
         Edge cases: Falls back to non-streaming on error.
         """
         history = self.memory.get_recent_conversations(limit=5)
@@ -650,9 +650,29 @@ class ArcanosCLI:
                 conversation_history=history
             )
 
-            collected_chunks = []
+            collected_chunks: list[str] = []
+            tokens_used = 0
+            cost_usd = 0.0
+            first_chunk = True
+            # Show a brief thinking indicator while waiting for the first token
+            self.console.print()
+            print("\033[2mThinking...\033[0m", end="\r", flush=True)
             for chunk in stream:
-                collected_chunks.append(chunk)
+                if isinstance(chunk, str):
+                    if first_chunk:
+                        # Clear the thinking indicator
+                        print(" " * 20, end="\r", flush=True)
+                        first_chunk = False
+                    collected_chunks.append(chunk)
+                    print(chunk, end="", flush=True)
+                else:
+                    # Usage object from final stream chunk
+                    tokens_used = getattr(chunk, "total_tokens", 0) or 0
+                    input_t = getattr(chunk, "prompt_tokens", 0) or 0
+                    output_t = getattr(chunk, "completion_tokens", 0) or 0
+                    cost_usd = (input_t * 0.15 / 1_000_000) + (output_t * 0.60 / 1_000_000)
+            print()  # final newline after stream completes
+            self.console.print()  # blank line after response
 
             response_text = "".join(collected_chunks)
             if not response_text.strip():
@@ -660,10 +680,10 @@ class ArcanosCLI:
 
             return _ConversationResult(
                 response_text=response_text,
-                tokens_used=0,
-                cost_usd=0.0,
+                tokens_used=tokens_used,
+                cost_usd=cost_usd,
                 model=Config.OPENAI_MODEL,
-                source="local"
+                source="local",
             )
         except Exception:
             return self._perform_local_conversation(message)
@@ -969,25 +989,16 @@ class ArcanosCLI:
             translated, show = translate(
                 message,
                 result.response_text,
-                debug=from_debug
+                source=result.source,
+                debug=from_debug,
             )
-            # //audit assumption: translated output is the only candidate for user rendering; risk: rendering suppressed artifacts; invariant: boundary checks before print; strategy: guard on translate result.
             if show and translated:
-                response_for_user = apply_voice_boundary(
-                    translated,
-                    persona=self._voice_persona,
-                    user_text=message,
-                    memory=self.memory,
-                    debug_voice=from_debug,
-                )
-                self.speak_to_user(
-                    translated,
-                    persona=self._voice_persona,
-                    user_text=message,
-                    memory=self.memory,
-                    debug_voice=from_debug,
-                    filtered_text=response_for_user,
-                )
+                response_for_user = translated
+                if not use_streaming:
+                    # Non-streamed: render the translated response with Markdown
+                    self.console.print()
+                    self.console.print(Markdown(translated))
+                    self.console.print()
 
         update_payload = {
             "eventId": str(uuid.uuid4()),
