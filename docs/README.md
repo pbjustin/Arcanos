@@ -14,8 +14,9 @@ Recommended reading order:
 3. `docs/CONFIGURATION.md`
 4. `docs/API.md`
 5. `docs/CUSTOM_GPTS.md`
-6. `docs/RAILWAY_DEPLOYMENT.md`
-7. `docs/CI_CD.md`
+6. `docs/FINE_TUNING.md`
+7. `docs/RAILWAY_DEPLOYMENT.md`
+8. `docs/CI_CD.md`
 
 ## Configuration
 Configuration source files:
