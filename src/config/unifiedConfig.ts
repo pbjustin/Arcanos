@@ -167,14 +167,14 @@ export function getConfig(): AppConfig {
       'AI_MODEL',
       'OPENAI_MODEL',
       'RAILWAY_OPENAI_MODEL'
-    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI,
+    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
     fallbackModel: getEnvVar('FALLBACK_MODEL', [
       'AI_FALLBACK_MODEL',
       'RAILWAY_OPENAI_FALLBACK_MODEL',
       // Allow fine-tuned model identifiers to act as fallback when explicitly provided
       'FINETUNED_MODEL_ID',
       'FINE_TUNED_MODEL_ID'
-    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4,
+    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4_1,
     gpt5Model: getEnvVar('GPT5_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5,
     gpt51Model: getEnvVar('GPT51_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5_1,
     openaiMaxRetries: getEnvNumber('OPENAI_MAX_RETRIES', APPLICATION_CONSTANTS.DEFAULT_OPENAI_MAX_RETRIES),

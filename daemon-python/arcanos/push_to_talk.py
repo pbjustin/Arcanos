@@ -12,10 +12,14 @@ from .audio import AudioSystem
 from .error_handler import handle_errors
 
 try:
-    from .vad_processor import VADProcessor
-    VAD_AVAILABLE = True
+    # Import the module and read its VAD_AVAILABLE flag so we don't assume
+    # availability just because the module imported successfully.
+    from . import vad_processor as _vad_module
+    VAD_AVAILABLE = getattr(_vad_module, "VAD_AVAILABLE", False)
+    VADProcessor = getattr(_vad_module, "VADProcessor", None)
 except ImportError:
     VAD_AVAILABLE = False
+    VADProcessor = None
 
 try:
     from .ptt_indicator import PTTIndicator
@@ -47,8 +51,8 @@ class AdvancedPushToTalkManager:
         self.ptt_hotkey = keyboard.Key.space
         self.screenshot_hotkey = keyboard.Key.f9
 
-        # VAD processor
-        self.vad_processor = VADProcessor() if VAD_AVAILABLE else None
+        # VAD processor (guard against VAD_AVAILABLE being True but VADProcessor missing)
+        self.vad_processor = VADProcessor() if (VAD_AVAILABLE and VADProcessor) else None
 
         # System tray indicator
         self.indicator = PTTIndicator() if INDICATOR_AVAILABLE else None
