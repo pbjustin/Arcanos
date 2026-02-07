@@ -183,13 +183,18 @@ class GPTClient:
                 temperature=temperature or Config.TEMPERATURE,
                 max_tokens=max_tokens or Config.MAX_TOKENS,
                 timeout=Config.REQUEST_TIMEOUT,
-                stream=True
+                stream=True,
+                stream_options={"include_usage": True},
             )
 
             for chunk in stream:
-                delta = chunk.choices[0].delta.content if chunk.choices else None
-                if delta:
-                    yield delta
+                if chunk.choices:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+                # Final chunk carries usage stats (no choices)
+                if chunk.usage:
+                    yield chunk.usage
 
         except AuthenticationError:
             raise ValueError("Invalid OpenAI API key. Check your .env file.")
