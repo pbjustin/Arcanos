@@ -667,9 +667,9 @@ class ArcanosCLI:
                     print(chunk, end="", flush=True)
                 else:
                     # Usage object from final stream chunk
-                    tokens_used = getattr(chunk, "total_tokens", 0) or 0
-                    input_t = getattr(chunk, "prompt_tokens", 0) or 0
-                    output_t = getattr(chunk, "completion_tokens", 0) or 0
+                    tokens_used = chunk.total_tokens
+                    input_t = chunk.prompt_tokens
+                    output_t = chunk.completion_tokens
                     cost_usd = (input_t * 0.15 / 1_000_000) + (output_t * 0.60 / 1_000_000)
             print()  # final newline after stream completes
             self.console.print()  # blank line after response
