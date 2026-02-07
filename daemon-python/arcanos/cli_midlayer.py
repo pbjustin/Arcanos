@@ -14,6 +14,7 @@ Design guarantees:
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 # ────────────────────────────────────────────
 # Intent detection
@@ -291,19 +292,23 @@ def _finalize(text: str, intent: str) -> str:
 
     if intent == "fact" and len(text) >= 200:
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-        if len(paragraphs) > 1:
-            # Only truncate if extra paragraphs look like system/audit artifacts
-            extra = "\n\n".join(paragraphs[1:])
-            if any(p.search(extra) for p in _STRUCTURAL_PATTERNS) or any(
-                p.search(extra) for p in _SYSTEM_LINE_INDICATORS
-            ):
-                return _capitalize(paragraphs[0])
-        # Otherwise preserve all content
+<<<<<<< HEAD
+            if len(paragraphs) > 1:
+                # Only truncate if extra paragraphs look like system/audit artifacts
+                extra = "\n\n".join(paragraphs[1:])
+                if any(p.search(extra) for p in _STRUCTURAL_PATTERNS) or any(
+                    p.search(extra) for p in _SYSTEM_LINE_INDICATORS
+                ):
+                    return _capitalize(paragraphs[0])
+            # Otherwise preserve all content
+=======
+>>>>>>> origin/main
         if paragraphs:
             return _capitalize(paragraphs[0])
 
     if intent == "greeting":
         sentences = re.findall(r"[^.!?]+[.!?]+", text)
+<<<<<<< HEAD
         if len(sentences) > 3:
             # Only truncate if the extra sentences look like structural/system artifacts
             extra = "".join(sentences[2:]).strip()
@@ -311,6 +316,15 @@ def _finalize(text: str, intent: str) -> str:
                 p.search(extra) for p in _SYSTEM_LINE_INDICATORS
             ):
                 return _capitalize("".join(sentences[:2]).strip())
+=======
+        if len(sentences) > 3:
+            # Only truncate if the extra sentences look like structural/system artifacts
+            extra = "".join(sentences[2:]).strip()
+            if any(p.search(extra) for p in _STRUCTURAL_PATTERNS) or any(
+                p.search(extra) for p in _SYSTEM_LINE_INDICATORS
+            ):
+                return _capitalize("".join(sentences[:2]).strip())
+>>>>>>> origin/main
 
     return _capitalize(text)
 
