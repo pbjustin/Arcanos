@@ -1108,7 +1108,8 @@ class ArcanosCLI:
 
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
         self.memory.increment_stat("vision_requests")
-        self._last_response = response_for_user if not return_result else self._last_response
+        if not return_result:
+            self._last_response = response_for_user
         
         update_payload = {
             "eventId": str(uuid.uuid4()),
