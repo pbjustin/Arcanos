@@ -950,9 +950,18 @@ class ArcanosCLI:
         # Display response — render markdown for rich formatting (like ChatGPT)
         # Skip display for streaming responses (already printed inline)
         if not use_streaming:
-            self.console.print()
-            self.console.print(Markdown(result.response_text))
-            self.console.print()
+            from .cli_midlayer import translate
+
+            translated, show = translate(
+                message,
+                result.response_text,
+                debug=from_debug
+            )
+
+            if show and translated:
+                self.console.print()
+                self.console.print(Markdown(translated))
+                self.console.print()
 
         should_speak = speak_response or Config.SPEAK_RESPONSES
         if should_speak:
