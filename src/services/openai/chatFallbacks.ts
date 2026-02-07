@@ -10,7 +10,7 @@ const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 
 type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'> & {
   model?: string;
-  max_completion_tokens?: number;
+  max_completion_tokens?: number | null;
 };
 
 type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
@@ -34,17 +34,10 @@ async function attemptModelCall(
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
   console.log(`${logPrefix} Attempting with model: ${model}`);
   // Support both adapter and legacy client
+  const payload = ({ ...(params as any), model, stream: false } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
   const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-    ? await clientOrAdapter.chat.completions.create({
-        ...params,
-        model,
-        stream: false,
-      }) as ChatCompletionResponse
-    : await (clientOrAdapter as OpenAI).chat.completions.create({
-        ...params,
-        model,
-        stream: false,
-      }) as ChatCompletionResponse;
+    ? await clientOrAdapter.chat.completions.create(payload) as ChatCompletionResponse
+    : await (clientOrAdapter as OpenAI).chat.completions.create(payload) as ChatCompletionResponse;
   console.log(`✅ ${logPrefix} Success with ${model}`);
   return { response, model };
 }
@@ -64,15 +57,10 @@ async function attemptGPT5Call(
   });
 
   // Support both adapter and legacy client
+  const payload = ({ ...(gpt5Payload as any), stream: false } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
   const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-    ? await clientOrAdapter.chat.completions.create({
-        ...gpt5Payload,
-        stream: false,
-      }) as ChatCompletionResponse
-    : await (clientOrAdapter as OpenAI).chat.completions.create({
-        ...gpt5Payload,
-        stream: false,
-      }) as ChatCompletionResponse;
+    ? await clientOrAdapter.chat.completions.create(payload) as ChatCompletionResponse
+    : await (clientOrAdapter as OpenAI).chat.completions.create(payload) as ChatCompletionResponse;
   console.log(`✅ [GPT-5.1 FALLBACK] Success with ${gpt5Model}`);
   return { response, model: gpt5Model };
 }
