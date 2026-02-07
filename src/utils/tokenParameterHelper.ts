@@ -12,10 +12,11 @@ import type OpenAI from 'openai';
 import { APPLICATION_CONSTANTS } from './constants.js';
 
 // Known models that require max_completion_tokens instead of max_tokens
+// Store lowercase variants to ensure detection is case-insensitive
 const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
   APPLICATION_CONSTANTS.MODEL_GPT_5,
   APPLICATION_CONSTANTS.MODEL_GPT_5_1
-]);
+].map(m => (m || '').toLowerCase()));
 
 // Cache for model capability testing to avoid repeated API calls
 const modelCapabilityCache = new Map<string, 'max_tokens' | 'max_completion_tokens'>();
@@ -67,9 +68,12 @@ export function getTokenParameter(
       : { max_completion_tokens: tokenLimit };
   }
 
+  // Normalize model name for consistent comparisons and cache keys
+  const normalizedModelName = (modelName || '').toLowerCase().trim();
+
   // Check cache first
   //audit Assumption: cached capability remains valid; Risk: model behavior changes
-  const cachedParameter = modelCapabilityCache.get(modelName);
+  const cachedParameter = modelCapabilityCache.get(normalizedModelName);
   if (cachedParameter) {
     console.log(`[📊 TOKEN-AUDIT] Model: ${modelName}, Parameter: ${cachedParameter} (cached), Tokens: ${tokenLimit}`);
     return cachedParameter === 'max_tokens'
@@ -79,11 +83,11 @@ export function getTokenParameter(
 
   // Determine parameter based on model name patterns and known limitations
   //audit Assumption: naming conventions map to capability; Risk: mis-detection
-  const parameterToUse = determineTokenParameter(modelName);
+  const parameterToUse = determineTokenParameter(normalizedModelName);
   
-  // Cache the result for future calls
+  // Cache the result for future calls using normalized name
   //audit Assumption: storing capability improves consistency; Handling: cache set
-  modelCapabilityCache.set(modelName, parameterToUse);
+  modelCapabilityCache.set(normalizedModelName, parameterToUse);
 
   // Log for audit tracking
   console.log(`[📊 TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterToUse}, Tokens: ${tokenLimit}`);
@@ -106,7 +110,7 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
   }
 
   // Model name pattern analysis
-  const lowerModelName = modelName.toLowerCase();
+  const lowerModelName = modelName; // already normalized by caller
 
   // Fine-tuned models typically use max_tokens
   //audit Assumption: fine-tuned models follow max_tokens; Risk: vendor variation
@@ -130,7 +134,8 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
   //audit Assumption: GPT-5 requires max_completion_tokens; Handling: switch param
   // Also treat Google's Gemini family as using max_completion_tokens
   //audit Assumption: gemini models use the newer token parameter; Handling: switch param
-  if (lowerModelName.includes('gemini')) {
+  // Match 'gemini' as a whole word or hyphenated vendor/model like 'gemini-1' or 'gpt-gemini'
+  if (/\bgemini\b|gemini[-_\d]/.test(lowerModelName)) {
     return 'max_completion_tokens';
   }
 
