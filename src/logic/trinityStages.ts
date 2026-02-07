@@ -38,7 +38,7 @@ export { calculateMemoryScoreSummary };
 
 /**
  * Validates the availability of the configured AI model.
- * Falls back to GPT-4 if the primary model is unavailable.
+ * Falls back to GPT-4.1-mini if the primary model is unavailable.
  */
 export async function validateModel(client: OpenAI): Promise<string> {
   const defaultModel = getDefaultModel();

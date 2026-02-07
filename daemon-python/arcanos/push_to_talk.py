@@ -51,8 +51,8 @@ class AdvancedPushToTalkManager:
         self.ptt_hotkey = keyboard.Key.space
         self.screenshot_hotkey = keyboard.Key.f9
 
-        # VAD processor
-        self.vad_processor = VADProcessor() if VAD_AVAILABLE else None
+        # VAD processor (guard against VAD_AVAILABLE being True but VADProcessor missing)
+        self.vad_processor = VADProcessor() if (VAD_AVAILABLE and VADProcessor) else None
 
         # System tray indicator
         self.indicator = PTTIndicator() if INDICATOR_AVAILABLE else None

@@ -76,14 +76,19 @@ export function getDefaultModel(): string {
 
 export function getFallbackModel(): string {
   const appConfig = getConfig();
-  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
+  // Ensure the fallback model is a distinct, more capable model than the default mini variant
+  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1;
 }
 
 /** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else gpt-4.1 for deep analysis. */
 export function getComplexModel(): string {
   const appConfig = getConfig();
-  // Prefer default model, fallback to gpt-4.1 for deep analysis
-  return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1;
+  // Prefer a specifically configured default model if it differs from the lightweight mini model.
+  // Otherwise, use GPT-4.1 for complex/deep-analysis tasks.
+  if (appConfig.defaultModel && appConfig.defaultModel !== APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI) {
+    return appConfig.defaultModel;
+  }
+  return APPLICATION_CONSTANTS.MODEL_GPT_4_1;
 }
 
 export function getGPT5Model(): string {
