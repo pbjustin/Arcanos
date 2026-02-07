@@ -14,9 +14,12 @@ export const APPLICATION_CONSTANTS = {
   MODEL_GPT_4: 'gpt-4',
   MODEL_GPT_4O: 'gpt-4o',
   MODEL_GPT_4O_MINI: 'gpt-4o-mini',
+  MODEL_GPT_4_1: 'gpt-4.1',
+  MODEL_GPT_4_1_MINI: 'gpt-4.1-mini',
+  MODEL_GPT_4_1_NANO: 'gpt-4.1-nano',
   MODEL_GPT_5: 'gpt-5',
   MODEL_GPT_5_1: 'gpt-5.1',
-  // Legacy models (for reference only, prefer gpt-4o)
+  // Legacy models (for reference only, prefer gpt-4.1)
   MODEL_GPT_4_TURBO: 'gpt-4-turbo',
   
   // Timeout values (in milliseconds)  
