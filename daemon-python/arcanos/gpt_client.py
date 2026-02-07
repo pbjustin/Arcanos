@@ -5,7 +5,7 @@ Handles all OpenAI API interactions with retry logic and caching.
 
 import time
 from io import BytesIO
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union, Generator
 from openai import OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError, NotFoundError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .config import Config
@@ -160,9 +160,14 @@ class GPTClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         conversation_history: Optional[list] = None
-    ):
+    ) -> Generator[Union[str, Any], None, None]:
         """
-        Stream a response from GPT, yielding text chunks.
+        Stream a response from GPT, yielding text chunks and a final usage object.
+        
+        Yields:
+            str: Text content deltas as they arrive
+            Usage object: Final chunk with token usage statistics (has .total_tokens, 
+                         .prompt_tokens, .completion_tokens attributes)
         """
         try:
             messages = []

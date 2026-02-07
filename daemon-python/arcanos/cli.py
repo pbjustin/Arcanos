@@ -656,22 +656,22 @@ class ArcanosCLI:
             first_chunk = True
             # Show a brief thinking indicator while waiting for the first token
             self.console.print()
-            print("\033[2mThinking...\033[0m", end="\r", flush=True)
+            self.console.print("[dim]Thinking...[/dim]", end="\r")
             for chunk in stream:
                 if isinstance(chunk, str):
                     if first_chunk:
                         # Clear the thinking indicator
-                        print(" " * 20, end="\r", flush=True)
+                        self.console.print(" " * 20, end="\r")
                         first_chunk = False
                     collected_chunks.append(chunk)
-                    print(chunk, end="", flush=True)
+                    self.console.print(chunk, end="")
                 else:
                     # Usage object from final stream chunk
                     tokens_used = chunk.total_tokens
                     input_t = chunk.prompt_tokens
                     output_t = chunk.completion_tokens
                     cost_usd = (input_t * 0.15 / 1_000_000) + (output_t * 0.60 / 1_000_000)
-            print()  # final newline after stream completes
+            self.console.print()  # final newline after stream completes
             self.console.print()  # blank line after response
 
             response_text = "".join(collected_chunks)
@@ -993,11 +993,15 @@ class ArcanosCLI:
                 debug=from_debug,
             )
             if show and translated:
-                response_for_user = translated
+                # Apply voice-boundary filtering before rendering or storing, at least for backend responses.
+                sanitized = translated
+                if result.source == "backend":
+                    sanitized = apply_voice_boundary(translated)
+                response_for_user = sanitized
                 if not use_streaming:
-                    # Non-streamed: render the translated response with Markdown
+                    # Non-streamed: render the translated (and sanitized) response with Markdown
                     self.console.print()
-                    self.console.print(Markdown(translated))
+                    self.console.print(Markdown(sanitized))
                     self.console.print()
 
         update_payload = {
