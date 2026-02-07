@@ -15,7 +15,7 @@ let cachedDefaultModel: string | null = null;
 /** Backend prefers fine-tuned model when set; otherwise OPENAI_MODEL then fallback. */
 function computeDefaultModelFromConfig(): string {
   const appConfig = getConfig();
-  return appConfig.defaultModel || 'gpt-4o-mini';
+  return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
 }
 
 export function resolveOpenAIBaseURL(): string | undefined {
@@ -76,14 +76,14 @@ export function getDefaultModel(): string {
 
 export function getFallbackModel(): string {
   const appConfig = getConfig();
-  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4;
+  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
 }
 
-/** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else OPENAI_COMPLEX_MODEL / vision / gpt-4o. */
+/** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else gpt-4.1 for deep analysis. */
 export function getComplexModel(): string {
   const appConfig = getConfig();
-  // Prefer default model, fallback to gpt-4o
-  return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4O;
+  // Prefer default model, fallback to gpt-4.1 for deep analysis
+  return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1;
 }
 
 export function getGPT5Model(): string {

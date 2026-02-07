@@ -52,14 +52,14 @@ export async function validateModel(client: OpenAI): Promise<string> {
     });
     return defaultModel;
   } catch (err) {
-    logger.warn('Model unavailable, falling back to GPT-4', {
+    logger.warn('Model unavailable, falling back to GPT-4.1-mini', {
       module: 'trinity',
       operation: 'model-fallback',
       requestedModel: defaultModel,
-      fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
+      fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
       reason: resolveErrorMessage(err)
     });
-    return APPLICATION_CONSTANTS.MODEL_GPT_4;
+    return APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
   }
 }
 
