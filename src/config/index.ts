@@ -77,7 +77,9 @@ export const config = {
   dispatchV9: {
     enabled: getEnv('DISPATCH_V9_ENABLED') === 'true',
     shadowOnly: getEnv('DISPATCH_V9_SHADOW_ONLY') === 'true',
-    snapshotCacheTtlMs: parseNumber(getEnv('DISPATCH_V9_SNAPSHOT_CACHE_TTL_MS'), 3000, 0)
+    snapshotCacheTtlMs: parseNumber(getEnv('DISPATCH_V9_SNAPSHOT_CACHE_TTL_MS'), 3000, 0),
+    defaultRerouteTarget: getEnv('DISPATCH_V9_DEFAULT_REROUTE_TARGET') || '/api/ask',
+    readonlyBindingId: getEnv('DISPATCH_V9_READONLY_BINDING_ID') || 'api.readonly'
   },
 
   // Logging configuration

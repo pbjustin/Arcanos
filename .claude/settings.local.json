@@ -2,8 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(git checkout:*)",
-      "Bash(gh pr create:*)",
-      "Bash(git status:*)"
+  "Bash(gh pr create:*)",
+  "Bash(git status:*)"
     ]
   }
 }
