@@ -87,6 +87,7 @@ from .terminal import TerminalController
 from .rate_limiter import RateLimiter
 from .error_handler import handle_errors, ErrorHandler, logger as error_logger
 from .update_checker import check_for_updates
+from .voice_boundary import Persona, apply_voice_boundary
 
 try:
     from .push_to_talk import AdvancedPushToTalkManager
@@ -108,6 +109,9 @@ class _ConversationResult:
     cost_usd: float
     model: str
     source: str
+
+
+_UNSET_FILTER: object = object()
 
 
 class ArcanosCLI:
@@ -153,6 +157,7 @@ class ArcanosCLI:
         self.audio = AudioSystem(self.gpt_client)
         self.terminal = TerminalController()
         self._last_response: Optional[str] = None
+        self._voice_persona = Persona.CALM
 
         self.backend_client: Optional[BackendApiClient] = None
         if Config.BACKEND_URL:
@@ -250,6 +255,38 @@ class ArcanosCLI:
                 "kind": kind,
                 "detail": detail
             })
+
+    def speak_to_user(
+        self,
+        raw_text: str,
+        *,
+        persona: Persona,
+        user_text: str,
+        memory: Any,
+        debug_voice: bool = False,
+        filtered_text: Any = _UNSET_FILTER,
+    ) -> Optional[str]:
+        """
+        Purpose: Apply the voice boundary and render safe markdown at a single output choke point.
+        Inputs/Outputs: raw text + persona/user context + memory adapter -> rendered safe text or None.
+        Edge cases: Returns None when boundary suppression is triggered.
+        """
+        # //audit assumption: prefiltered text is optional optimization; risk: double-decay on repeated filtering; invariant: single boundary decision; strategy: honor caller-provided filtered text.
+        filtered = filtered_text
+        if filtered is _UNSET_FILTER:
+            filtered = apply_voice_boundary(
+                raw_text,
+                persona=persona,
+                user_text=user_text,
+                memory=memory,
+                debug_voice=debug_voice,
+            )
+        # //audit assumption: empty/None response should remain silent; risk: leakage via fallback print; invariant: print only safe non-empty text; strategy: guard before render.
+        if filtered:
+            self.console.print()
+            self.console.print(Markdown(filtered))
+            self.console.print()
+        return filtered
 
     def _get_or_create_instance_id(self) -> str:
         """Get or create persistent instance ID for this daemon installation"""
@@ -602,7 +639,7 @@ class ArcanosCLI:
     def _perform_local_conversation_streaming(self, message: str) -> Optional[_ConversationResult]:
         """
         Purpose: Execute a local GPT conversation with streaming output.
-        Inputs/Outputs: message string; streams to console and returns ConversationResult.
+        Inputs/Outputs: message string; returns ConversationResult with collected streamed text.
         Edge cases: Falls back to non-streaming on error.
         """
         history = self.memory.get_recent_conversations(limit=5)
@@ -613,12 +650,9 @@ class ArcanosCLI:
                 conversation_history=history
             )
 
-            self.console.print()  # blank line before response
             collected_chunks = []
             for chunk in stream:
-                self.console.print(chunk, end="", highlight=False)
                 collected_chunks.append(chunk)
-            self.console.print()  # newline after streaming
 
             response_text = "".join(collected_chunks)
             if not response_text.strip():
@@ -928,10 +962,32 @@ class ArcanosCLI:
                 self.console.print("[red]No response generated.[/red]")
             return None
 
-        # Record request and update state BEFORE returning or printing
-        self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
-        self.memory.add_conversation(route_decision.normalized_message, result.response_text, result.tokens_used, result.cost_usd)
-        self._last_response = result.response_text
+        response_for_user: Optional[str] = None
+        if not return_result:
+            from .cli_midlayer import translate
+
+            translated, show = translate(
+                message,
+                result.response_text,
+                debug=from_debug
+            )
+            # //audit assumption: translated output is the only candidate for user rendering; risk: rendering suppressed artifacts; invariant: boundary checks before print; strategy: guard on translate result.
+            if show and translated:
+                response_for_user = apply_voice_boundary(
+                    translated,
+                    persona=self._voice_persona,
+                    user_text=message,
+                    memory=self.memory,
+                    debug_voice=from_debug,
+                )
+                self.speak_to_user(
+                    translated,
+                    persona=self._voice_persona,
+                    user_text=message,
+                    memory=self.memory,
+                    debug_voice=from_debug,
+                    filtered_text=response_for_user,
+                )
 
         update_payload = {
             "eventId": str(uuid.uuid4()),
@@ -941,32 +997,29 @@ class ArcanosCLI:
             "model": result.model,
             "messageLength": len(route_decision.normalized_message)
         }
+
+        # Record request and update state after voice-boundary filtering so memory never stores suppressed internals.
+        self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
+        conversation_response = result.response_text if return_result else (response_for_user or "")
+        self.memory.add_conversation(
+            route_decision.normalized_message,
+            conversation_response,
+            result.tokens_used,
+            result.cost_usd,
+        )
+        if not return_result:
+            self._last_response = response_for_user
+
         self._send_backend_update("conversation_usage", update_payload)
 
 
         if return_result:
             return result
 
-        # Display response — render markdown for rich formatting (like ChatGPT)
-        # Skip display for streaming responses (already printed inline)
-        if not use_streaming:
-            from .cli_midlayer import translate
-
-            translated, show = translate(
-                message,
-                result.response_text,
-                debug=from_debug
-            )
-
-            if show and translated:
-                self.console.print()
-                self.console.print(Markdown(translated))
-                self.console.print()
-
         should_speak = speak_response or Config.SPEAK_RESPONSES
         if should_speak:
             # //audit assumption: TTS optional; risk: noisy output; invariant: speak only when enabled; strategy: gate on flag.
-            truncated = truncate_for_tts(result.response_text)
+            truncated = truncate_for_tts(response_for_user or "")
             if truncated:
                 # //audit assumption: truncated text may be empty; risk: silence; invariant: speak non-empty; strategy: guard.
                 self.audio.speak(truncated, wait=True)
@@ -1034,9 +1087,28 @@ class ArcanosCLI:
                 self.console.print("[red]No vision response generated.[/red]")
             return {"ok": False, "error": "No vision response generated."} if return_result else None
 
+        response_for_user: Optional[str] = None
+        if not return_result:
+            # //audit assumption: vision output is user-facing text; risk: diagnostic leakage from backend/local vision; invariant: boundary-filtered before render; strategy: apply VBL then speak_to_user.
+            response_for_user = apply_voice_boundary(
+                result.response_text,
+                persona=self._voice_persona,
+                user_text=" ".join(args),
+                memory=self.memory,
+                debug_voice=False,
+            )
+            self.speak_to_user(
+                result.response_text,
+                persona=self._voice_persona,
+                user_text=" ".join(args),
+                memory=self.memory,
+                debug_voice=False,
+                filtered_text=response_for_user,
+            )
+
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
         self.memory.increment_stat("vision_requests")
-        self._last_response = result.response_text
+        self._last_response = response_for_user if not return_result else self._last_response
         
         update_payload = {
             "eventId": str(uuid.uuid4()),
@@ -1051,12 +1123,8 @@ class ArcanosCLI:
         if return_result:
             return {"ok": True, **asdict(result)}
 
-        self.console.print()
-        self.console.print(Markdown(result.response_text))
-        self.console.print()
-
         if Config.SPEAK_RESPONSES:
-            truncated = truncate_for_tts(result.response_text)
+            truncated = truncate_for_tts(response_for_user or "")
             if truncated:
                 self.audio.speak(truncated, wait=True)
 
@@ -1168,13 +1236,25 @@ class ArcanosCLI:
                 # Vision analysis with speech text as prompt
                 response, tokens, cost = self.vision.analyze_image(img_base64, text)
                 if response:
-                    self.console.print()
-                    self.console.print(Markdown(response))
-                    self.console.print()
-                    self._last_response = response
+                    response_for_user = apply_voice_boundary(
+                        response,
+                        persona=self._voice_persona,
+                        user_text=text,
+                        memory=self.memory,
+                        debug_voice=False,
+                    )
+                    self.speak_to_user(
+                        response,
+                        persona=self._voice_persona,
+                        user_text=text,
+                        memory=self.memory,
+                        debug_voice=False,
+                        filtered_text=response_for_user,
+                    )
+                    self._last_response = response_for_user
                     self.rate_limiter.record_request(tokens, cost)
                     self.memory.increment_stat("vision_requests")
-                    truncated = truncate_for_tts(response)
+                    truncated = truncate_for_tts(response_for_user or "")
                     if truncated:
                         # //audit assumption: PTT expects spoken response; risk: noisy output; invariant: speak response; strategy: TTS when available.
                         self.audio.speak(truncated, wait=True)
