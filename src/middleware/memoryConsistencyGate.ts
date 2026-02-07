@@ -28,6 +28,8 @@ interface MemoryConsistencyGateDependencies {
   shadowOnly: boolean;
   bindings: DispatchPatternBindingV9[];
   bindingsVersion: string;
+  defaultRerouteTarget: string;
+  readonlyBindingId: string;
   now: () => Date;
   recordTrace: typeof recordTraceEvent;
   dispatchLogger: typeof logger;
@@ -55,6 +57,10 @@ interface RequestStateSnapshot {
   dispatchConflictCode?: string;
 }
 
+const MAX_BODY_SERIALIZATION_BYTES = 1_000_000;
+const STATUS_CONFLICT = 409;
+const STATUS_SERVICE_UNAVAILABLE = 503;
+
 function normalizePath(path: string): string {
   const trimmed = path.trim();
   if (!trimmed) {
@@ -66,7 +72,7 @@ function normalizePath(path: string): string {
 function cloneJsonSafe<T>(value: T): T {
   try {
     const serialized = JSON.stringify(value);
-    if (serialized && serialized.length > 1_000_000) {
+    if (serialized && serialized.length > MAX_BODY_SERIALIZATION_BYTES) {
       try {
         return structuredClone(value);
       } catch {
@@ -163,6 +169,25 @@ function setRequestDispatchContext(
   req.memoryVersion = memoryVersion;
   req.dispatchRerouted = rerouted;
   req.dispatchConflictCode = conflictCode;
+}
+
+function applyDispatchDecisionContext(options: {
+  req: Request;
+  res: Response;
+  decision: DispatchDecisionV9;
+  memoryVersion: string;
+  bindingId: string;
+  rerouted: boolean;
+  conflictCode?: string;
+}): void {
+  setRequestDispatchContext(
+    options.req,
+    options.decision,
+    options.memoryVersion,
+    options.rerouted,
+    options.conflictCode
+  );
+  setDispatchHeaders(options.res, options.decision, options.memoryVersion, options.bindingId);
 }
 
 function buildDispatchDecisionPayload(options: {
@@ -290,6 +315,209 @@ function buildFailsafePayload(options: {
   };
 }
 
+function respondWithFailsafe(options: {
+  req: Request;
+  res: Response;
+  emitDecision: (
+    decision: DispatchDecisionV9,
+    bindingId: string,
+    memoryVersion: string,
+    options?: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string }
+  ) => void;
+  memoryVersion: string;
+  bindingId: string;
+  routeAttempted: string;
+  conflictReason: DispatchConflictReasonV9;
+  reason: string;
+  logMessage: string;
+}): void {
+  applyDispatchDecisionContext({
+    req: options.req,
+    res: options.res,
+    decision: 'block',
+    memoryVersion: options.memoryVersion,
+    bindingId: options.bindingId,
+    rerouted: false,
+    conflictCode: DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE
+  });
+  options.emitDecision('block', options.bindingId, options.memoryVersion, {
+    conflictReason: options.conflictReason,
+    logMessage: options.logMessage
+  });
+  options.res.status(STATUS_SERVICE_UNAVAILABLE).json(
+    buildFailsafePayload({
+      routeAttempted: options.routeAttempted,
+      memoryVersion: options.memoryVersion,
+      bindingId: options.bindingId,
+      reason: options.reason
+    })
+  );
+}
+
+function respondWithConflict(options: {
+  req: Request;
+  res: Response;
+  emitDecision: (
+    decision: DispatchDecisionV9,
+    bindingId: string,
+    memoryVersion: string,
+    options?: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string }
+  ) => void;
+  memoryVersion: string;
+  bindingId: string;
+  routeAttempted: string;
+  reason: DispatchConflictReasonV9;
+  logMessage: string;
+}): void {
+  applyDispatchDecisionContext({
+    req: options.req,
+    res: options.res,
+    decision: 'block',
+    memoryVersion: options.memoryVersion,
+    bindingId: options.bindingId,
+    rerouted: false,
+    conflictCode: DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT
+  });
+  options.emitDecision('block', options.bindingId, options.memoryVersion, {
+    conflictReason: options.reason,
+    logMessage: options.logMessage
+  });
+  options.res.status(STATUS_CONFLICT).json(
+    buildConflictResponsePayload({
+      routeAttempted: options.routeAttempted,
+      memoryVersion: options.memoryVersion,
+      bindingId: options.bindingId,
+      reason: options.reason
+    })
+  );
+}
+
+async function handleRerouteDecision(options: {
+  req: Request;
+  res: Response;
+  next: NextFunction;
+  binding: DispatchPatternBindingV9 | null;
+  attempt: DispatchAttemptV9;
+  validation: ReturnType<typeof validateAgainstSnapshot>;
+  rerouteTarget: string;
+  snapshotLoaded: boolean;
+  memoryVersion: string;
+  bindingId: string;
+  deps: MemoryConsistencyGateDependencies;
+  emitDecision: (
+    decision: DispatchDecisionV9,
+    bindingId: string,
+    memoryVersion: string,
+    options?: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string }
+  ) => void;
+  dispatchLogger: typeof logger;
+}): Promise<void> {
+  const checks = runFailsafeChecks(
+    options.binding,
+    options.snapshotLoaded,
+    options.memoryVersion,
+    options.rerouteTarget,
+    options.deps.bindings.some(candidate =>
+      (candidate.exactPaths || []).some(path => normalizePath(path) === normalizePath(options.rerouteTarget))
+    )
+  );
+  //audit Assumption: reroute preconditions must pass before mutation; risk: invalid reroute state; invariant: checks pass; handling: failsafe response on failure.
+  if (!checks.ok) {
+    respondWithFailsafe({
+      req: options.req,
+      res: options.res,
+      emitDecision: options.emitDecision,
+      memoryVersion: options.memoryVersion,
+      bindingId: options.bindingId,
+      routeAttempted: options.attempt.routeAttempted,
+      conflictReason: options.validation.reason,
+      reason: checks.reason || 'failsafe_check_failed',
+      logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+    });
+    return;
+  }
+
+  const stateSnapshot = snapshotRequestState(options.req);
+  try {
+    const rerouteMessage = buildRerouteMessage(
+      options.req,
+      options.attempt.routeAttempted,
+      options.validation.reason
+    );
+    const body = isObjectBody(options.req.body) ? options.req.body : {};
+
+    options.req.method = 'POST';
+    options.req.url = options.rerouteTarget;
+    options.req.body = {
+      ...body,
+      message: rerouteMessage,
+      dispatchReroute: {
+        originalRoute: options.attempt.routeAttempted,
+        reason: options.validation.reason,
+        memoryVersion: options.memoryVersion
+      }
+    };
+
+    //audit Assumption: rerouted request body must contain a message for the target handler; risk: target receives invalid payload; invariant: message is non-empty string; handling: restore + failsafe on invalid.
+    if (typeof options.req.body.message !== 'string' || !options.req.body.message.trim()) {
+      restoreRequestState(options.req, stateSnapshot);
+      respondWithFailsafe({
+        req: options.req,
+        res: options.res,
+        emitDecision: options.emitDecision,
+        memoryVersion: options.memoryVersion,
+        bindingId: options.bindingId,
+        routeAttempted: options.attempt.routeAttempted,
+        conflictReason: options.validation.reason,
+        reason: 'reroute_payload_invalid',
+        logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+      });
+      return;
+    }
+    applyDispatchDecisionContext({
+      req: options.req,
+      res: options.res,
+      decision: 'reroute',
+      memoryVersion: options.memoryVersion,
+      bindingId: options.bindingId,
+      rerouted: true,
+      conflictCode: DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT
+    });
+    options.emitDecision('reroute', options.bindingId, options.memoryVersion, {
+      conflictReason: options.validation.reason,
+      rerouteTarget: options.rerouteTarget,
+      logMessage: DISPATCH_V9_LOG_MESSAGES.rerouted
+    });
+
+    options.next();
+    return;
+  } catch (error) {
+    //audit Assumption: reroute mutation failures should restore original request state; risk: partial state commit; invariant: request restored; handling: restore + failsafe.
+    restoreRequestState(options.req, stateSnapshot);
+    options.dispatchLogger.error(
+      DISPATCH_V9_LOG_MESSAGES.failsafe,
+      {
+        route_attempted: options.attempt.routeAttempted,
+        reason: 'reroute_execution_failed'
+      },
+      undefined,
+      error instanceof Error ? error : undefined
+    );
+    respondWithFailsafe({
+      req: options.req,
+      res: options.res,
+      emitDecision: options.emitDecision,
+      memoryVersion: options.memoryVersion,
+      bindingId: options.bindingId,
+      routeAttempted: options.attempt.routeAttempted,
+      conflictReason: options.validation.reason,
+      reason: 'reroute_execution_failed',
+      logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+    });
+    return;
+  }
+}
+
 /**
  * Purpose: Create memory consistency middleware for dispatch-v9 governance.
  * Inputs/Outputs: optional dependency overrides; returns Express middleware.
@@ -303,6 +531,8 @@ export function createMemoryConsistencyGate(
     shadowOnly: overrides.shadowOnly ?? config.dispatchV9.shadowOnly,
     bindings: overrides.bindings ?? DISPATCH_PATTERN_BINDINGS,
     bindingsVersion: overrides.bindingsVersion ?? DISPATCH_BINDINGS_VERSION,
+    defaultRerouteTarget: overrides.defaultRerouteTarget ?? config.dispatchV9.defaultRerouteTarget,
+    readonlyBindingId: overrides.readonlyBindingId ?? config.dispatchV9.readonlyBindingId,
     now: overrides.now ?? (() => new Date()),
     recordTrace: overrides.recordTrace ?? recordTraceEvent,
     dispatchLogger: overrides.dispatchLogger ?? logger,
@@ -344,9 +574,15 @@ export function createMemoryConsistencyGate(
     //audit Assumption: read-only endpoints should bypass consistency checks; risk: unnecessary latency on health paths; invariant: exemption list enforced; handling: allow + audit.
     if (isExemptRoute(req)) {
       const memoryVersion = deps.now().toISOString();
-      setRequestDispatchContext(req, 'allow', memoryVersion, false);
-      setDispatchHeaders(res, 'allow', memoryVersion, 'api.readonly');
-      emitDecision('allow', 'api.readonly', memoryVersion, {
+      applyDispatchDecisionContext({
+        req,
+        res,
+        decision: 'allow',
+        memoryVersion,
+        bindingId: deps.readonlyBindingId,
+        rerouted: false
+      });
+      emitDecision('allow', deps.readonlyBindingId, memoryVersion, {
         conflictReason: 'none'
       });
       return next();
@@ -363,12 +599,6 @@ export function createMemoryConsistencyGate(
       //audit Assumption: snapshot load errors should fail safely; risk: executing without governance state; invariant: fail-safe response; handling: return 503.
       const fallbackMemoryVersion = deps.now().toISOString();
       const fallbackBindingId = binding?.id || 'unknown';
-      setRequestDispatchContext(req, 'block', fallbackMemoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
-      setDispatchHeaders(res, 'block', fallbackMemoryVersion, fallbackBindingId);
-      emitDecision('block', fallbackBindingId, fallbackMemoryVersion, {
-        conflictReason: 'none',
-        logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
-      });
       dispatchLogger.error(
         DISPATCH_V9_LOG_MESSAGES.failsafe,
         {
@@ -378,14 +608,17 @@ export function createMemoryConsistencyGate(
         undefined,
         error instanceof Error ? error : undefined
       );
-      res.status(503).json(
-        buildFailsafePayload({
-          routeAttempted: attempt.routeAttempted,
-          memoryVersion: fallbackMemoryVersion,
-          bindingId: fallbackBindingId,
-          reason: 'snapshot_load_failed'
-        })
-      );
+      respondWithFailsafe({
+        req,
+        res,
+        emitDecision,
+        memoryVersion: fallbackMemoryVersion,
+        bindingId: fallbackBindingId,
+        routeAttempted: attempt.routeAttempted,
+        conflictReason: 'none',
+        reason: 'snapshot_load_failed',
+        logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+      });
       return;
     }
 
@@ -417,12 +650,6 @@ export function createMemoryConsistencyGate(
           binding?.conflictPolicy || 'strict_block'
         );
       } catch (error) {
-        setRequestDispatchContext(req, 'block', snapshotRecord.memoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
-        setDispatchHeaders(res, 'block', snapshotRecord.memoryVersion, binding?.id || 'unknown');
-        emitDecision('block', binding?.id || 'unknown', snapshotRecord.memoryVersion, {
-          conflictReason: validation.reason,
-          logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
-        });
         dispatchLogger.error(
           DISPATCH_V9_LOG_MESSAGES.failsafe,
           {
@@ -432,14 +659,17 @@ export function createMemoryConsistencyGate(
           undefined,
           error instanceof Error ? error : undefined
         );
-        res.status(503).json(
-          buildFailsafePayload({
-            routeAttempted: attempt.routeAttempted,
-            memoryVersion: snapshotRecord.memoryVersion,
-            bindingId: binding?.id || 'unknown',
-            reason: 'snapshot_refresh_failed'
-          })
-        );
+        respondWithFailsafe({
+          req,
+          res,
+          emitDecision,
+          memoryVersion: snapshotRecord.memoryVersion,
+          bindingId: binding?.id || 'unknown',
+          routeAttempted: attempt.routeAttempted,
+          conflictReason: validation.reason,
+          reason: 'snapshot_refresh_failed',
+          logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+        });
         return;
       }
     }
@@ -449,8 +679,16 @@ export function createMemoryConsistencyGate(
 
     //audit Assumption: shadow mode must not mutate request flow; risk: accidental enforcement in rollout; invariant: always allow in shadow; handling: log + continue.
     if (deps.shadowOnly) {
-      setRequestDispatchContext(req, 'allow', memoryVersion, false, validation.reason === 'none' ? undefined : DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT);
-      setDispatchHeaders(res, 'allow', memoryVersion, bindingId);
+      applyDispatchDecisionContext({
+        req,
+        res,
+        decision: 'allow',
+        memoryVersion,
+        bindingId,
+        rerouted: false,
+        conflictCode:
+          validation.reason === 'none' ? undefined : DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT
+      });
       emitDecision('allow', bindingId, memoryVersion, {
         conflictReason: validation.reason,
         logMessage: DISPATCH_V9_LOG_MESSAGES.shadowAllow
@@ -460,8 +698,14 @@ export function createMemoryConsistencyGate(
 
     //audit Assumption: valid route checks should seed missing route_state entries; risk: snapshot drift; invariant: route state eventually populated; handling: best-effort upsert.
     if (decision === 'allow') {
-      setRequestDispatchContext(req, 'allow', memoryVersion, false);
-      setDispatchHeaders(res, 'allow', memoryVersion, bindingId);
+      applyDispatchDecisionContext({
+        req,
+        res,
+        decision: 'allow',
+        memoryVersion,
+        bindingId,
+        rerouted: false
+      });
       emitDecision('allow', bindingId, memoryVersion, {
         conflictReason: validation.reason
       });
@@ -490,126 +734,36 @@ export function createMemoryConsistencyGate(
     }
 
     if (decision === 'block') {
-      setRequestDispatchContext(req, 'block', memoryVersion, false, DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT);
-      setDispatchHeaders(res, 'block', memoryVersion, bindingId);
-      emitDecision('block', bindingId, memoryVersion, {
-        conflictReason: validation.reason,
+      respondWithConflict({
+        req,
+        res,
+        emitDecision,
+        memoryVersion,
+        bindingId,
+        routeAttempted: attempt.routeAttempted,
+        reason: validation.reason,
         logMessage: DISPATCH_V9_LOG_MESSAGES.blocked
       });
-      res.status(409).json(
-        buildConflictResponsePayload({
-          routeAttempted: attempt.routeAttempted,
-          memoryVersion,
-          bindingId,
-          reason: validation.reason
-        })
-      );
       return;
     }
 
-    const rerouteTarget = binding?.rerouteTarget || '/api/ask';
-    const isRegisteredRerouteTarget = deps.bindings.some(candidate =>
-      (candidate.exactPaths || []).some(path => normalizePath(path) === normalizePath(rerouteTarget))
-    );
-    const checks = runFailsafeChecks(
+    const rerouteTarget = binding?.rerouteTarget || deps.defaultRerouteTarget;
+    await handleRerouteDecision({
+      req,
+      res,
+      next,
       binding,
+      attempt,
+      validation,
+      rerouteTarget,
       snapshotLoaded,
       memoryVersion,
-      rerouteTarget,
-      isRegisteredRerouteTarget
-    );
-    //audit Assumption: reroute preconditions must pass before mutation; risk: invalid reroute state; invariant: checks pass; handling: failsafe response on failure.
-    if (!checks.ok) {
-      setRequestDispatchContext(req, 'block', memoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
-      setDispatchHeaders(res, 'block', memoryVersion, bindingId);
-      emitDecision('block', bindingId, memoryVersion, {
-        conflictReason: validation.reason,
-        logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
-      });
-      res.status(503).json(
-        buildFailsafePayload({
-          routeAttempted: attempt.routeAttempted,
-          memoryVersion,
-          bindingId,
-          reason: checks.reason || 'failsafe_check_failed'
-        })
-      );
-      return;
-    }
-
-    const stateSnapshot = snapshotRequestState(req);
-    try {
-      const rerouteMessage = buildRerouteMessage(req, attempt.routeAttempted, validation.reason);
-      const body = isObjectBody(req.body) ? req.body : {};
-
-      req.method = 'POST';
-      req.url = rerouteTarget;
-      req.body = {
-        ...body,
-        message: rerouteMessage,
-        dispatchReroute: {
-          originalRoute: attempt.routeAttempted,
-          reason: validation.reason,
-          memoryVersion
-        }
-      };
-
-      //audit Assumption: rerouted request body must contain a message for the target handler; risk: target receives invalid payload; invariant: message is non-empty string; handling: restore + failsafe on invalid.
-      if (typeof req.body.message !== 'string' || !req.body.message.trim()) {
-        restoreRequestState(req, stateSnapshot);
-        setRequestDispatchContext(req, 'block', memoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
-        setDispatchHeaders(res, 'block', memoryVersion, bindingId);
-        emitDecision('block', bindingId, memoryVersion, {
-          conflictReason: validation.reason,
-          logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
-        });
-        res.status(503).json(
-          buildFailsafePayload({
-            routeAttempted: attempt.routeAttempted,
-            memoryVersion,
-            bindingId,
-            reason: 'reroute_payload_invalid'
-          })
-        );
-        return;
-      }
-      setRequestDispatchContext(req, 'reroute', memoryVersion, true, DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT);
-      setDispatchHeaders(res, 'reroute', memoryVersion, bindingId);
-      emitDecision('reroute', bindingId, memoryVersion, {
-        conflictReason: validation.reason,
-        rerouteTarget,
-        logMessage: DISPATCH_V9_LOG_MESSAGES.rerouted
-      });
-
-      return next();
-    } catch (error) {
-      //audit Assumption: reroute mutation failures should restore original request state; risk: partial state commit; invariant: request restored; handling: restore + failsafe.
-      restoreRequestState(req, stateSnapshot);
-      dispatchLogger.error(
-        DISPATCH_V9_LOG_MESSAGES.failsafe,
-        {
-          route_attempted: attempt.routeAttempted,
-          reason: 'reroute_execution_failed'
-        },
-        undefined,
-        error instanceof Error ? error : undefined
-      );
-      setRequestDispatchContext(req, 'block', memoryVersion, false, DISPATCH_V9_ERROR_CODES.DISPATCH_FAILSAFE);
-      setDispatchHeaders(res, 'block', memoryVersion, bindingId);
-      emitDecision('block', bindingId, memoryVersion, {
-        conflictReason: validation.reason,
-        logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
-      });
-      res.status(503).json(
-        buildFailsafePayload({
-          routeAttempted: attempt.routeAttempted,
-          memoryVersion,
-          bindingId,
-          reason: 'reroute_execution_failed'
-        })
-      );
-      return;
-    }
+      bindingId,
+      deps,
+      emitDecision,
+      dispatchLogger
+    });
+    return;
   };
 }
 
