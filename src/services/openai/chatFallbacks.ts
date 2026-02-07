@@ -18,7 +18,7 @@ const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 
 type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'> & {
   model?: string;
-  max_completion_tokens?: number;
+  max_completion_tokens?: number | null;
 };
 
 type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
