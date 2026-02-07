@@ -36,21 +36,16 @@ const getTokensFromParams = (params: ChatCompletionParams): number =>
 
 const executeChatCompletionRequest = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
-  payload: ChatCompletionParams,
+  payload: ChatCompletionParams & { model: string },
 ): Promise<ChatCompletionResponse> => {
+  const requestPayload = { ...payload, stream: false as const };
   const usesAdapter = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object';
   //audit Assumption: adapter shape is detectable via chat property; risk: mis-detection calls wrong client; invariant: completion request must be sent once; handling: branch on adapter presence.
   if (usesAdapter) {
-    return await clientOrAdapter.chat.completions.create({
-      ...payload,
-      stream: false,
-    }) as ChatCompletionResponse;
+    return await clientOrAdapter.chat.completions.create(requestPayload) as ChatCompletionResponse;
   }
 
-  return await (clientOrAdapter as OpenAI).chat.completions.create({
-    ...payload,
-    stream: false,
-  }) as ChatCompletionResponse;
+  return await (clientOrAdapter as OpenAI).chat.completions.create(requestPayload) as ChatCompletionResponse;
 };
 
 async function attemptModelCall(
@@ -80,7 +75,7 @@ async function attemptGPT5Call(
     ...params,
     model: gpt5Model,
     ...tokenParams,
-  });
+  }) as ChatCompletionParams & { model: string };
 
   const response = await executeChatCompletionRequest(clientOrAdapter, gpt5Payload);
   console.log(buildGpt5SuccessLog(gpt5Model));
