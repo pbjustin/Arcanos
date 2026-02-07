@@ -28,7 +28,7 @@ export const buildMemoryValidationMessages = (
     { role: 'system', content: MEMORY_VALIDATION_SYSTEM_PROMPT },
     {
       role: 'user',
-      content: `Entry Key: ${entryKey}\nVersion: ${stateVersion}\nData: ${serializedEntryData}`,
+      content: `Entry Key: <<${entryKey}>>\nVersion: <<${stateVersion}>>\nData: ${serializedEntryData}`,
     },
   ];
 };
