@@ -1000,7 +1000,7 @@ class ArcanosCLI:
 
         # Record request and update state after voice-boundary filtering so memory never stores suppressed internals.
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
-        conversation_response = response_for_user if response_for_user is not null else ""
+        conversation_response = result.response_text if return_result else (response_for_user or "")
         self.memory.add_conversation(
             route_decision.normalized_message,
             conversation_response,
@@ -1108,8 +1108,7 @@ class ArcanosCLI:
 
         self.rate_limiter.record_request(result.tokens_used, result.cost_usd)
         self.memory.increment_stat("vision_requests")
-        if not return_result:
-            self._last_response = response_for_user
+        self._last_response = response_for_user if not return_result else self._last_response
         
         update_payload = {
             "eventId": str(uuid.uuid4()),
