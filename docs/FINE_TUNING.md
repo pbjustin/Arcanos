@@ -40,10 +40,26 @@ We fine-tune our base AI model to deliver consistent, domain-specific behavior t
 - We re-evaluate at scheduled intervals to ensure the model remains aligned with updated policies and product goals.
 
 ## Decision Checkpoints (//audit)
-- `//audit Assumption: fine-tuning improves domain accuracy; Risk: overfitting reduces generalization; Invariant: model must pass baseline QA; Handling: compare against baseline eval set before release.`
-- `//audit Assumption: structured outputs are required for integrations; Risk: schema drift breaks clients; Invariant: schema remains stable; Handling: validate outputs with contract tests.`
-- `//audit Assumption: training data is policy-compliant; Risk: sensitive data leaks; Invariant: data is sanitized; Handling: enforce data review and redaction gates.`
-- `//audit Assumption: fine-tuning reduces cost; Risk: model becomes too specialized and slower; Invariant: latency targets met; Handling: benchmark before rollout.`
+- `//audit`
+  - **Assumption**: fine-tuning improves domain accuracy
+  - **Risk**: overfitting reduces generalization
+  - **Invariant**: model must pass baseline QA
+  - **Handling**: compare against baseline eval set before release.
+- `//audit`
+  - **Assumption**: structured outputs are required for integrations
+  - **Risk**: schema drift breaks clients
+  - **Invariant**: schema remains stable
+  - **Handling**: validate outputs with contract tests.
+- `//audit`
+  - **Assumption**: training data is policy-compliant
+  - **Risk**: sensitive data leaks
+  - **Invariant**: data is sanitized
+  - **Handling**: enforce data review and redaction gates.
+- `//audit`
+  - **Assumption**: fine-tuning reduces cost
+  - **Risk**: model becomes too specialized and slower
+  - **Invariant**: latency targets met
+  - **Handling**: benchmark before rollout.
 
 ## Minimal Test Plan
 - **Happy path:** Run standard evaluation prompts and verify domain-specific outputs match expected formats.
