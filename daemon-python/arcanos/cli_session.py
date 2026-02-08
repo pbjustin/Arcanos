@@ -60,8 +60,8 @@ class SessionContext:
     conversation_goal: Optional[str] = None
     current_intent: Optional[str] = None
     intent_confidence: float = 0.0
-    phase: str = "init"          # init | active | refining | review
-    tone: str = "neutral"        # neutral | precise | creative | critical
+    phase: Literal["init", "active", "refining", "review"] = "init"
+    tone: Literal["neutral", "precise", "creative", "critical"] = "neutral"
     turn_count: int = 0
     short_term_summary: Optional[str] = None
     last_summary_turn: int = 0
