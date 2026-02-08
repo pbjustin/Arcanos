@@ -47,7 +47,7 @@ export function getTokenParameter(
   // Safety: Validate token limit is a number and within safe bounds
   //audit Assumption: invalid limits should fall back; Risk: unintended model usage
   if (typeof tokenLimit !== 'number' || !isFinite(tokenLimit) || tokenLimit <= 0) {
-    aiLogger.warn(`[TOKEN-SAFETY] Invalid token limit: ${tokenLimit}, using default`);
+    aiLogger.warn(`[TOKEN-SAFETY] Invalid token limit: ${tokenLimit}, using default ${APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT}`);
     tokenLimit = APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT;
   }
   
