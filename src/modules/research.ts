@@ -1,5 +1,6 @@
 import { ResearchResult } from '../services/research.js';
 import { connectResearchBridge, ResearchHubRequest } from '../services/researchHub.js';
+import { withHRC } from './hrcWrapper.js';
 
 export { researchTopic } from '../services/research.js';
 export { connectResearchBridge, observeResearchEvents } from '../services/researchHub.js';
@@ -31,9 +32,10 @@ export const ArcanosResearch = {
     'Multi-source research module that fetches URLs, summarizes them with the fine-tuned ARCANOS model, and stores reusable briefs.',
   gptIds: ['arcanos-research', 'research'],
   actions: {
-    async query(payload: { topic?: string; urls?: string[]; metadata?: Record<string, unknown> }): Promise<ResearchResult> {
+    async query(payload: { topic?: string; urls?: string[]; metadata?: Record<string, unknown> }) {
       const normalized = normalizePayload(payload);
-      return bridge.requestResearch(normalized);
+      const result = await bridge.requestResearch(normalized);
+      return withHRC(result as ResearchResult & Record<string, unknown>, r => r.insight);
     }
   }
 };
