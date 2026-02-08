@@ -46,12 +46,16 @@ def chat_completion(
     Inputs/Outputs: prompt + optional generation settings; returns OpenAI chat completion response.
     Edge cases: Uses Config defaults when optional values are omitted.
     """
+    # //audit assumption: callers may intentionally pass explicit zero values; risk: truthy fallback overrides 0/0.0; invariant: only None should trigger defaults; handling: explicit None checks before request build.
+    resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
+    resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+
     request_payload: Dict[str, Any] = build_chat_completion_request(
         prompt=user_message,
         system_prompt=system_prompt,
         model=model or Config.OPENAI_MODEL,
-        max_tokens=max_tokens or Config.MAX_TOKENS,
-        temperature=temperature or Config.TEMPERATURE,
+        max_tokens=resolved_max_tokens,
+        temperature=resolved_temperature,
         conversation_history=conversation_history,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
@@ -71,12 +75,16 @@ def chat_stream(
     Inputs/Outputs: prompt + optional generation settings; returns iterable stream chunks.
     Edge cases: Includes usage stats in final stream chunk for token accounting.
     """
+    # //audit assumption: stream callers may pass explicit zero values for deterministic tests/limits; risk: truthy fallback masks explicit intent; invariant: only None resolves to defaults; handling: explicit None checks.
+    resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
+    resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+
     request_payload: Dict[str, Any] = build_chat_completion_request(
         prompt=user_message,
         system_prompt=system_prompt,
         model=model or Config.OPENAI_MODEL,
-        max_tokens=max_tokens or Config.MAX_TOKENS,
-        temperature=temperature or Config.TEMPERATURE,
+        max_tokens=resolved_max_tokens,
+        temperature=resolved_temperature,
         conversation_history=conversation_history,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
@@ -97,12 +105,16 @@ def vision_completion(
     Inputs/Outputs: text prompt + base64 image + optional generation settings; returns OpenAI chat completion response.
     Edge cases: Defaults to configured vision model when model override is omitted.
     """
+    # //audit assumption: vision callers may explicitly pass 0/0.0 values; risk: truthy fallback erases explicit values; invariant: defaults apply only when parameter is omitted (None); handling: explicit None checks.
+    resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
+    resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+
     request_payload = build_vision_request(
         prompt=user_message,
         image_base64=image_base64,
         model=model or Config.OPENAI_VISION_MODEL,
-        max_tokens=max_tokens or Config.MAX_TOKENS,
-        temperature=temperature or Config.TEMPERATURE,
+        max_tokens=resolved_max_tokens,
+        temperature=resolved_temperature,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
     return _require_client().chat.completions.create(**request_payload)
@@ -146,4 +158,3 @@ def embeddings(
         user=user,
     )
     return _require_client().embeddings.create(**request_payload)
-
