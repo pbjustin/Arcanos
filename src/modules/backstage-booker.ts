@@ -400,6 +400,10 @@ export const BackstageBookerModule = {
       return withHRC(result as typeof result & Record<string, unknown>, r => r.match);
     },
     async generateBooking(payload: { prompt: string }) {
+      // Maintain backward-compatible behavior: return the raw storyline string.
+      return BackstageBooker.generateBooking(payload.prompt);
+    },
+    async generateBookingWithHRC(payload: { prompt: string }) {
       const storyline = await BackstageBooker.generateBooking(payload.prompt);
       const hrc = await evaluateWithHRC(storyline);
       return { storyline, hrc };
