@@ -23,7 +23,7 @@ I'm your AI assistant, right here in the terminal.
 
 I can have conversations, see your screen, listen to your voice, run commands, and more.
 
-Just type what's on your mind, or type **help** to see what I can do.
+Just type what's on your mind, or type **/help** to see what I can do.
     """
 
 
@@ -78,34 +78,34 @@ def get_help_markdown() -> str:
 ### Chat
 Just type naturally — ask me anything, and I'll do my best to help.
 
-- **deep <prompt>** — Send a question to the backend for deeper analysis
-- **help** — Show this menu
+- **/deep <prompt>** — Send a question to the backend for deeper analysis
+- **/help** — Show this menu
 - **exit** / **quit** / **bye** — End our conversation
 
 ### See things
-- **see** — I'll look at your screen and tell you what I see
-- **see camera** — Same thing, but with your webcam
+- **/see** — I'll look at your screen and tell you what I see
+- **/see camera** — Same thing, but with your webcam
 
 ### Listen & speak
-- **voice** — Talk to me (one-shot microphone capture)
-- **ptt** — Push-to-talk mode (hold SPACEBAR)
-- **speak** — I'll read my last response out loud
+- **/voice** — Talk to me (one-shot microphone capture)
+- **/ptt** — Push-to-talk mode (hold SPACEBAR)
+- **/speak** — I'll read my last response out loud
 
 ### Run commands
-- **run <command>** — I'll execute a shell command for you
-  Example: `run Get-Process` or `run ls -la`
+- **/run <command>** — I'll execute a shell command for you
+  Example: `/run Get-Process` or `/run ls -la`
 
 ### Housekeeping
-- **stats** — See usage stats
-- **clear** — Clear conversation history
-- **update** — Check for updates
+- **/stats** — See usage stats
+- **/clear** — Clear conversation history
+- **/update** — Check for updates
 
 ### Try it out
 ```
 You: what's the best way to learn Python?
-You: see
-You: run Get-Date
-You: deep explain quantum computing
+You: /see
+You: /run Get-Date
+You: /deep explain quantum computing
 ```
     """
 

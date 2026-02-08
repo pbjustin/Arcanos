@@ -25,8 +25,8 @@ def test_vbl(monkeypatch):
 
     cases = [
         ("No memory entry was created because...", None, Severity.SEV_3),
-        ("Backend unavailable; falling back", "I’ve got this covered.", Severity.SEV_2),
-        ("Here’s how I’d approach it", "Here’s how I’d approach it", Severity.SEV_0),
+        ("Backend unavailable; falling back", "I've got this covered.", Severity.SEV_2),
+        ("Here's how I'd approach it", "Here's how I'd approach it", Severity.SEV_0),
     ]
 
     for raw_text, expected_output, expected_severity in cases:
