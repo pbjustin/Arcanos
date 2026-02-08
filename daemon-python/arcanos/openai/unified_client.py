@@ -172,7 +172,7 @@ def resolve_openai_base_url(config: Optional[Config] = None) -> Optional[str]:
     # Config was checked and no URL is set — return None without
     # falling back to the deprecated env shim (avoids noisy warning
     # on every startup when no custom base URL is configured).
-    if config_to_use is not None:
+    if config is not None:
         return None
     return _resolve_openai_base_url_from_env_deprecated()
 
