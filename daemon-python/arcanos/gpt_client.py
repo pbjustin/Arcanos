@@ -14,8 +14,8 @@ from .openai.openai_adapter import chat_completion, chat_stream, transcribe, vis
 # OpenAI pricing per token (USD)
 GPT4O_MINI_INPUT_COST = 0.15 / 1_000_000
 GPT4O_MINI_OUTPUT_COST = 0.60 / 1_000_000
-GPT4O_INPUT_COST = 2.50 / 1_000_000
-GPT4O_OUTPUT_COST = 10.00 / 1_000_000
+GPT4O_INPUT_COST = 5.00 / 1_000_000
+GPT4O_OUTPUT_COST = 15.00 / 1_000_000
 
 
 def _is_mock_api_key(api_key: str) -> bool:
