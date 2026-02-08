@@ -88,7 +88,6 @@ def test_transcribe_wraps_audio_bytes_as_named_file(monkeypatch):
     assert len(calls) == 1
     assert calls[0]["file"].name == "sample.wav"
     assert calls[0]["model"] is not None
-    assert calls[0]["model"]
 
 
 def test_chat_completion_preserves_explicit_zero_generation_values(monkeypatch):
