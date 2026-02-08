@@ -1,5 +1,6 @@
 import { runGaming } from '../services/gaming.js';
 import { extractTextPrompt, normalizeStringList } from '../utils/payloadNormalization.js';
+import { withHRC } from './hrcWrapper.js';
 
 export const ArcanosGaming = {
   name: 'ARCANOS:GAMING',
@@ -21,7 +22,8 @@ export const ArcanosGaming = {
         getPayloadValue(payload, 'guideUrls')
       );
 
-      return runGaming(prompt, guideUrl, normalizedGuides);
+      const result = await runGaming(prompt, guideUrl, normalizedGuides);
+      return withHRC(result, r => r.gaming_response ?? '');
     },
   },
 };

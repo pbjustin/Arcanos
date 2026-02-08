@@ -3,6 +3,7 @@ import { HRC_SYSTEM_PROMPT } from '../config/hrcPrompts.js';
 import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import { getEnv } from '../config/env.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
+import type { ModuleDef } from './moduleLoader.js';
 
 export interface HRCResult {
   fidelity: number;
@@ -59,3 +60,22 @@ export class HRCCore {
 }
 
 export const hrcCore = new HRCCore();
+
+const HRCModule: ModuleDef = {
+  name: 'HRC',
+  description: 'Hallucination-Resistant Core – scores text for fidelity and resilience.',
+  gptIds: ['hrc'],
+  actions: {
+    async evaluate(payload: unknown) {
+      const input = typeof payload === 'string'
+        ? payload
+        : (payload as Record<string, unknown>)?.message;
+      if (typeof input !== 'string' || !input.trim()) {
+        throw new Error('HRC evaluate requires a text input');
+      }
+      return hrcCore.evaluate(input);
+    }
+  }
+};
+
+export default HRCModule;
