@@ -14,9 +14,15 @@
  * @module unifiedClient
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { aiLogger } from '../../utils/structuredLogging.js';
 import { recordTraceEvent } from '../../utils/telemetry.js';
+import {
+  createOpenAIAdapter,
+  getOpenAIAdapter,
+  isOpenAIAdapterInitialized,
+  resetOpenAIAdapter
+} from '../../adapters/openai.adapter.js';
 import {
   resolveOpenAIKey,
   resolveOpenAIBaseURL,
@@ -134,13 +140,24 @@ export function createOpenAIClient(options: ClientOptions = {}): OpenAI | null {
     const timeout = options.timeout || API_TIMEOUT_MS;
     const config = getConfig();
 
-    // Create client instance
-    const client = new OpenAI({
-      apiKey,
-      timeout,
-      maxRetries: config.openaiMaxRetries,
-      ...(baseURL ? { baseURL } : {})
-    });
+    //audit Assumption: adapter is the only OpenAI constructor boundary; risk: duplicated client factories; invariant: client creation routes through adapter; handling: instantiate/get adapter then read client.
+    const adapter = options.singleton === false
+      ? createOpenAIAdapter({
+        apiKey,
+        baseURL,
+        timeout,
+        maxRetries: config.openaiMaxRetries,
+        defaultModel: config.defaultModel
+      })
+      : getOpenAIAdapter({
+        apiKey,
+        baseURL,
+        timeout,
+        maxRetries: config.openaiMaxRetries,
+        defaultModel: config.defaultModel
+      });
+
+    const client = adapter.getClient();
 
     // Configure default model from config (adapter boundary pattern)
     const configuredDefaultModel = config.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI;
@@ -192,6 +209,13 @@ export function createOpenAIClient(options: ClientOptions = {}): OpenAI | null {
  */
 export function getOrCreateClient(): OpenAI | null {
   if (singletonClient) {
+    return singletonClient;
+  }
+
+  //audit Assumption: adapter may already be initialized in startup flows; risk: duplicate singleton state; invariant: unified client mirrors adapter singleton; handling: reuse adapter client.
+  if (isOpenAIAdapterInitialized()) {
+    singletonClient = getOpenAIAdapter().getClient();
+    initializationAttempted = true;
     return singletonClient;
   }
 
@@ -268,6 +292,8 @@ export function validateClientHealth(): HealthStatus {
 export function resetClient(): void {
   singletonClient = null;
   initializationAttempted = false;
+  //audit Assumption: reset should clear both wrapper and adapter singletons; risk: stale OpenAI client reuse in tests; invariant: all singleton state reset; handling: reset adapter singleton.
+  resetOpenAIAdapter();
   recordTraceEvent('openai.client.reset', {
     module: 'openai.unified'
   });
@@ -283,6 +309,10 @@ export function resetClient(): void {
  * @returns Current singleton client or null if not initialized
  */
 export function getClient(): OpenAI | null {
+  if (!singletonClient && isOpenAIAdapterInitialized()) {
+    //audit Assumption: adapter may be initialized outside unifiedClient; risk: false-null client state; invariant: getClient reflects active adapter; handling: hydrate cached singleton from adapter.
+    singletonClient = getOpenAIAdapter().getClient();
+  }
   return singletonClient;
 }
 

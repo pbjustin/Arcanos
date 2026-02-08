@@ -1,14 +1,22 @@
 # Arcanos Backend
 
 ## Overview
-Arcanos is a TypeScript/Express backend that centralizes OpenAI interactions, API routing, and optional background workers. The backend starts from `src/start-server.ts`, mounts routes in `src/routes/register.ts`, and can be paired with the optional Python CLI daemon in `daemon-python/`.
+Arcanos is a TypeScript/Express backend with optional workers and an optional Python CLI daemon (`daemon-python/`).
+
+OpenAI usage is adapter-first across stacks:
+- TypeScript runtime constructor boundary: `src/adapters/openai.adapter.ts`
+- TypeScript lifecycle bridge: `src/services/openai/unifiedClient.ts`
+- Worker constructor boundary: `workers/src/infrastructure/sdk/openai.ts`
+- Worker env/config boundary: `workers/src/infrastructure/sdk/openaiConfig.ts`
+- Python daemon constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
+- Python daemon adapter boundary: `daemon-python/arcanos/openai/openai_adapter.py`
 
 ## Prerequisites
-- Node.js 18+ and npm 8+ (`package.json` engines).
-- `PORT` set in environment (required at startup; Railway injects this automatically).
-- `OPENAI_API_KEY` for live OpenAI responses (otherwise mock responses are used).
-- Optional PostgreSQL (`DATABASE_URL`) for persistent storage.
-- Optional Python 3.10+ if you also run the daemon CLI.
+- Node.js 18+ and npm 8+
+- `PORT` set in runtime env (required at startup; Railway injects this)
+- `OPENAI_API_KEY` for live calls (mock responses are used when absent)
+- Optional PostgreSQL `DATABASE_URL`
+- Optional Python 3.10+ for daemon work
 
 ## Setup
 ```bash
@@ -16,85 +24,107 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and set at minimum:
-- `PORT=3000` (or another free local port)
-- `OPENAI_API_KEY=...`
+Minimum local `.env` values:
+- `PORT=3000`
+- `OPENAI_API_KEY=your-openai-api-key-here`
 
 ## Configuration
-Primary runtime variables:
+Primary backend runtime variables:
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `PORT` | Yes | none | Process exits on startup if missing. |
-| `OPENAI_API_KEY` | No* | none | Needed for real OpenAI calls. Without it, mock mode is used. |
-| `OPENAI_MODEL` | No | `gpt-4o-mini` | Main model override. |
+| `PORT` | Yes | none | Fail-fast startup validation in `src/config/env.ts`. |
+| `OPENAI_API_KEY` | No* | none | Missing key keeps OpenAI routes in mock/degraded mode. |
+| `OPENAI_MODEL` | No | `gpt-4o-mini` | Default chat model override. |
+| `OPENAI_BASE_URL` | No | none | Optional custom provider endpoint. |
+| `OPENAI_MAX_RETRIES` | No | `2` | Retry count for transient failures. |
 | `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
-| `RUN_WORKERS` | No | `true` (non-test) | Set `false` if you only want API serving. |
-| `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime log path (ephemeral on Railway). |
-| `ARC_MEMORY_PATH` | No | `/tmp/arc/memory` | Runtime memory/cache path (ephemeral on Railway). |
+| `RUN_WORKERS` | No | `true` (non-test) | Set `false` for API-only runtime. |
+| `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime logs (ephemeral on Railway). |
+| `ARC_MEMORY_PATH` | No | `/tmp/arc/memory` | Runtime memory/cache path. |
 
-*Operationally required for production-quality AI responses.
+*Operationally required for non-mock responses.
 
-## Run locally
+## Run Locally
 ```bash
 npm run build
 npm start
 ```
 
-Health checks (default local port shown):
+Health checks:
 ```bash
 curl http://localhost:3000/health
 curl http://localhost:3000/healthz
 curl http://localhost:3000/readyz
 ```
 
+## Validation Commands
+Required local validation for this refactor:
+```bash
+npm run build
+npm test
+npm run validate:railway
+npm run guard:commit
+npm run validate:backend-cli:offline
+python daemon-python/tests/test_telemetry_sanitization.py
+python daemon-python/scripts/continuous_audit.py --max-depth=1 --no-recursive --no-railway-check
+```
+
+## CI and Branch Protection
+The authoritative required workflow is `.github/workflows/ci-cd.yml`.
+
+Required CI behavior:
+- Uses mock-only OpenAI execution (`OPENAI_API_KEY=mock-api-key`) for required checks.
+- Runs `npm run guard:commit`.
+- Runs offline daemon validation (`daemon-python/validate_backend_cli_offline.py`).
+
 ## Deploy (Railway)
-Railway deploy settings are source-controlled in `railway.json`:
+Railway settings are source-controlled in `railway.json`:
 - Build: `npm ci --include=dev && npm run build`
 - Start: `node --max-old-space-size=7168 dist/start-server.js`
 - Health check: `GET /health`
 
-Use the full runbook in `docs/RAILWAY_DEPLOYMENT.md`.
+Railway remains build-phase-first. Start does not run a build.
 
-## Troubleshooting
-- Startup fails with `PORT is required`: set `PORT` in `.env` locally.
-- AI endpoints return mock responses: set a valid `OPENAI_API_KEY`.
-- Database shows degraded in `/health`: set `DATABASE_URL` or accept in-memory fallback.
-- Protected endpoints return 403: provide `x-confirmed: yes` or a valid confirmation token flow.
+## Adapter-First Usage Examples
+TypeScript:
+```ts
+import { createOpenAIAdapter } from "./src/adapters/openai.adapter.js";
 
-## References
-- Docs index: `docs/README.md`
-- Local runbook: `docs/RUN_LOCAL.md`
-- API catalog: `docs/API.md`
-- Railway deploy guide: `docs/RAILWAY_DEPLOYMENT.md`
-- Configuration matrix: `docs/CONFIGURATION.md`
-- CI/CD and secrets: `docs/CI_CD.md`
-
-OpenAI SDK examples matching repository patterns:
-
-```js
-import OpenAI from "openai";
-
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const response = await client.chat.completions.create({
-  model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-  messages: [{ role: "user", content: "Summarize Arcanos health status." }],
+const adapter = createOpenAIAdapter({
+  apiKey: process.env.OPENAI_API_KEY ?? "",
+  defaultModel: "gpt-4o-mini",
 });
 
-console.log(response.choices[0].message.content);
+const response = await adapter.chat.completions.create(
+  {
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: "Summarize Arcanos health status." }],
+  },
+  { headers: { "x-trace-id": "local-demo" } },
+);
 ```
 
+Python daemon:
 ```python
-from openai import OpenAI
-import os
+from arcanos.openai import chat_completion
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-response = client.chat.completions.create(
-    model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-    messages=[{"role": "user", "content": "Summarize Arcanos health status."}],
+response = chat_completion(
+    user_message="Summarize Arcanos health status.",
+    model="gpt-4o-mini",
 )
-
 print(response.choices[0].message.content)
 ```
+
+## Security and Logging
+- Runtime env access is centralized (`src/config/env.ts`, `daemon-python/arcanos/env.py`).
+- Structured logs redact secret-like keys and token-like values.
+- Commit guardrails block staged artifacts and obvious secret literals.
+
+## References
+- `docs/README.md`
+- `docs/RUN_LOCAL.md`
+- `docs/API.md`
+- `docs/RAILWAY_DEPLOYMENT.md`
+- `RAILWAY_COMPATIBILITY_GUIDE.md`
+- `OPENAI_ADAPTER_MIGRATION.md`

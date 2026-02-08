@@ -15,7 +15,7 @@ import OpenAI from 'openai';
 import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
-import type { FileObject } from 'openai/resources/files.js';
+import type { ImageGenerateParamsNonStreaming, ImagesResponse } from 'openai/resources/images.js';
 
 /**
  * OpenAI adapter configuration
@@ -35,6 +35,17 @@ export interface OpenAIAdapterConfig {
 }
 
 /**
+ * Supported per-request options for adapter methods.
+ * Limited to runtime-safe fields consumed by callers today.
+ */
+export interface OpenAIAdapterRequestOptions {
+  /** AbortSignal for request cancellation */
+  signal?: AbortSignal;
+  /** Extra request headers */
+  headers?: Record<string, string>;
+}
+
+/**
  * OpenAI adapter interface
  * Provides type-safe access to OpenAI functionality
  */
@@ -44,7 +55,10 @@ export interface OpenAIAdapter {
    */
   chat: {
     completions: {
-      create: (params: ChatCompletionCreateParams) => Promise<ChatCompletion>;
+      create: (
+        params: ChatCompletionCreateParams,
+        options?: OpenAIAdapterRequestOptions
+      ) => Promise<ChatCompletion>;
     };
   };
 
@@ -53,6 +67,16 @@ export interface OpenAIAdapter {
    */
   embeddings: {
     create: (params: EmbeddingCreateParams) => Promise<CreateEmbeddingResponse>;
+  };
+
+  /**
+   * Generate images
+   */
+  images: {
+    generate: (
+      params: ImageGenerateParamsNonStreaming,
+      options?: OpenAIAdapterRequestOptions
+    ) => Promise<ImagesResponse>;
   };
 
   /**
@@ -97,10 +121,14 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   return {
     chat: {
       completions: {
-        create: async (params: ChatCompletionCreateParams): Promise<ChatCompletion> => {
+        create: async (
+          params: ChatCompletionCreateParams,
+          options?: OpenAIAdapterRequestOptions
+        ): Promise<ChatCompletion> => {
           // Ensure stream is false for non-streaming completions
           const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
-          const result = await client.chat.completions.create(nonStreamingParams);
+          //audit Assumption: request-level signal/headers may be provided by callers; risk: dropped cancellation/tracing; invariant: options forwarded; handling: pass through to SDK.
+          const result = await client.chat.completions.create(nonStreamingParams, options);
           // Type assertion needed because SDK can return Stream | ChatCompletion
           return result as ChatCompletion;
         }
@@ -109,6 +137,15 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     embeddings: {
       create: async (params: EmbeddingCreateParams): Promise<CreateEmbeddingResponse> => {
         return client.embeddings.create(params);
+      }
+    },
+    images: {
+      generate: async (
+        params: ImageGenerateParamsNonStreaming,
+        options?: OpenAIAdapterRequestOptions
+      ): Promise<ImagesResponse> => {
+        //audit Assumption: image generation should support trace/cancel request options; risk: untracked long-running calls; invariant: options forwarded; handling: pass through to SDK.
+        return client.images.generate(params, options);
       }
     },
     audio: {
@@ -158,4 +195,13 @@ export function resetOpenAIAdapter(): void {
  */
 export function isOpenAIAdapterInitialized(): boolean {
   return adapterInstance !== null;
+}
+
+/**
+ * Escape hatch for advanced APIs that are not adapter-modeled yet.
+ * Prefer adapter methods for regular chat/image/embed/audio flows.
+ */
+export function getClient(): OpenAI {
+  //audit Assumption: escape hatch should only be used after adapter init; risk: runtime null usage; invariant: initialized adapter required; handling: delegate to getOpenAIAdapter() throw path.
+  return getOpenAIAdapter().getClient();
 }

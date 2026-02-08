@@ -3,6 +3,11 @@
 ## Overview
 The daemon can expose a local debug HTTP server for operator tooling and IDE integrations.
 
+Security defaults:
+- Local bind only (`127.0.0.1`)
+- Token-auth required for sensitive endpoints
+- Structured debug/audit payload sanitization before log output
+
 ## Prerequisites
 - Daemon installed and runnable.
 - Localhost access only (`127.0.0.1`).
@@ -51,8 +56,10 @@ Not applicable. Debug server is local daemon functionality.
 - Connection refused: daemon not running or debug server not enabled.
 - 401 responses: missing/invalid token headers.
 - No debug logs: confirm `LOG_DIR` path and file permissions.
+- Redacted fields in logs: expected behavior for secrets/tokens.
 
 ## References
 - `arcanos/debug_server.py`
 - `arcanos/config.py`
+- `arcanos/debug/logging.py`
 - `README.md`

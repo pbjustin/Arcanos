@@ -31,6 +31,64 @@ interface ValidationResult {
   warnings: string[];
 }
 
+const SYSTEM_ENV_ALLOWLIST = new Set([
+  'NODE_ENV',
+  'RAILWAY_ENVIRONMENT',
+  'RAILWAY_PROJECT_ID',
+  'RAILWAY_SERVICE_NAME',
+  'CI',
+  'GITHUB_ACTIONS'
+]);
+
+/**
+ * Read runtime environment variables for application configuration.
+ *
+ * @param key - Environment variable key.
+ * @param defaultValue - Optional fallback value.
+ * @returns Environment variable value or fallback.
+ */
+export function readRuntimeEnv(key: string, defaultValue?: string): string | undefined {
+  const value = process.env[key];
+  //audit Assumption: blank or whitespace-only env values should be treated as unset for runtime config defaults; risk: accidental empty strings bypassing fallback contracts; invariant: returned value is non-empty or default/undefined; handling: normalize whitespace-only values to default.
+  if (value === undefined || value.trim().length === 0) {
+    return defaultValue;
+  }
+  return value;
+}
+
+/**
+ * Read allowlisted system-detection environment variables.
+ *
+ * @param key - Environment variable key.
+ * @returns Environment variable value or undefined.
+ */
+export function readSystemEnv(key: string): string | undefined {
+  //audit Assumption: system env reads should be constrained to known detection keys; risk: accidental secret reads outside config boundary; invariant: only allowlisted keys are readable; handling: throw on disallowed key.
+  if (!SYSTEM_ENV_ALLOWLIST.has(key)) {
+    throw new Error(`System env key "${key}" is not allowlisted`);
+  }
+  return process.env[key];
+}
+
+/**
+ * Write runtime env value intentionally (test/runtime mutation only).
+ *
+ * @param key - Environment variable key.
+ * @param value - Environment variable value.
+ */
+export function writeRuntimeEnv(key: string, value: string): void {
+  process.env[key] = value;
+}
+
+/**
+ * Unset runtime env value intentionally (test/runtime mutation only).
+ *
+ * @param key - Environment variable key.
+ */
+export function unsetRuntimeEnv(key: string): void {
+  delete process.env[key];
+}
+
 /**
  * Required environment variables for Railway deployment
  */
@@ -133,7 +191,7 @@ export function validateRequiredEnv(): EnvConfig {
 export function getEnv(key: string, defaultValue: string): string;
 export function getEnv(key: string): string | undefined;
 export function getEnv(key: string, defaultValue?: string): string | undefined {
-  return process.env[key] || defaultValue;
+  return readRuntimeEnv(key, defaultValue);
 }
 
 /**
@@ -144,7 +202,7 @@ export function getEnv(key: string, defaultValue?: string): string | undefined {
  * @returns Parsed number or default
  */
 export function getEnvNumber(key: string, defaultValue: number): number {
-  const value = process.env[key];
+  const value = readRuntimeEnv(key);
   if (!value) return defaultValue;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : defaultValue;
@@ -158,7 +216,7 @@ export function getEnvNumber(key: string, defaultValue: number): number {
  * @returns Parsed boolean or default
  */
 export function getEnvBoolean(key: string, defaultValue: boolean): boolean {
-  const value = process.env[key];
+  const value = readRuntimeEnv(key);
   if (!value) return defaultValue;
   const normalized = value.toLowerCase().trim();
   return normalized === 'true' || normalized === '1' || normalized === 'yes';

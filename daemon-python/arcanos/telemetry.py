@@ -5,6 +5,7 @@ Opt-in anonymous analytics and crash reporting.
 
 import uuid
 import platform
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -15,6 +16,51 @@ try:
     SENTRY_AVAILABLE = True
 except ImportError:
     SENTRY_AVAILABLE = False
+
+
+_SENSITIVE_KEY_PATTERNS = (
+    "api_key",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "credential",
+)
+_SENSITIVE_VALUE_PATTERNS = [
+    re.compile(r"\bsk-[a-zA-Z0-9]{20,}\b"),
+    re.compile(r"\bbearer\s+[a-zA-Z0-9._-]{12,}\b", re.IGNORECASE),
+    re.compile(r"\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b"),
+    re.compile(r"\b(?:postgres|postgresql|mysql|mongodb):\/\/[^@\s]+:[^@\s]+@", re.IGNORECASE),
+]
+
+
+def _sanitize_payload(payload: Any) -> Any:
+    """
+    Recursively sanitize telemetry payloads.
+
+    Args:
+        payload: Arbitrary telemetry payload.
+
+    Returns:
+        Sanitized payload with secret-like keys/values redacted.
+    """
+    if isinstance(payload, dict):
+        sanitized: Dict[str, Any] = {}
+        for key, value in payload.items():
+            key_lower = str(key).lower()
+            #audit Assumption: key names containing secret hints should always be redacted; risk: credential leakage; invariant: sensitive keys replaced; strategy: redact by key pattern.
+            if any(hint in key_lower for hint in _SENSITIVE_KEY_PATTERNS):
+                sanitized[key] = "[REDACTED]"
+            else:
+                sanitized[key] = _sanitize_payload(value)
+        return sanitized
+    if isinstance(payload, list):
+        return [_sanitize_payload(item) for item in payload]
+    if isinstance(payload, str):
+        #audit Assumption: token-like literals in strings are sensitive; risk: secret leakage in telemetry files; invariant: sensitive strings redacted; strategy: pattern-match and replace.
+        if any(pattern.search(payload) for pattern in _SENSITIVE_VALUE_PATTERNS):
+            return "[REDACTED]"
+    return payload
 
 
 class Telemetry:
@@ -91,7 +137,7 @@ class Telemetry:
                             # Keep only filename, not full path
                             frame['abs_path'] = Path(frame['abs_path']).name
 
-        return event
+        return _sanitize_payload(event)
 
     def track_event(self, event_name: str, properties: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -112,6 +158,7 @@ class Telemetry:
                 "user_id": self.user_id,
                 "properties": properties or {}
             }
+            event_data = _sanitize_payload(event_data)
 
             # Log to file (for local debugging)
             log_file = Config.TELEMETRY_DIR / "events.log"
@@ -123,7 +170,7 @@ class Telemetry:
                 sentry_sdk.add_breadcrumb(
                     category=event_name,
                     message=f"Event: {event_name}",
-                    data=properties,
+                    data=_sanitize_payload(properties or {}),
                     level="info"
                 )
 
@@ -143,7 +190,7 @@ class Telemetry:
         try:
             with sentry_sdk.push_scope() as scope:
                 if context:
-                    scope.set_context("error_context", context)
+                    scope.set_context("error_context", _sanitize_payload(context))
 
                 sentry_sdk.capture_exception(error)
 
