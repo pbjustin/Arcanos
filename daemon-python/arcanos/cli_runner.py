@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
@@ -26,6 +27,46 @@ DEBUG_MODE_POLL_SECONDS = 1.0
 DEBUG_MODE_TOKEN_ENV = "ARCANOS_DEBUG_CMD_TOKEN"
 DEBUG_MODE_COMMAND_FILE_ENV = "ARCANOS_DEBUG_CMD_FILE"
 EXIT_COMMANDS = {"exit", "quit"}
+CONFIRM_ACCEPT_VALUES = {"y", "yes"}
+
+
+class UnknownSlashCommandError(ValueError):
+    """
+    Purpose: Signal that a slash-prefixed command is unknown and should fall back to chat.
+    Inputs/Outputs: Inherits ValueError semantics; used for explicit control flow.
+    Edge cases: Distinguishes unknown command routing from runtime command failures.
+    """
+
+
+def _allow_slash_run_command(cli: "ArcanosCLI", command: str) -> bool:
+    """
+    Purpose: Enforce security guardrails before running `/run` commands from chat-first mode.
+    Inputs/Outputs: CLI instance and raw command text; returns True when execution is allowed.
+    Edge cases: Blocks execution in non-interactive sessions when confirmation is required.
+    """
+    # //audit assumption: preflight safety checks must mirror terminal policy; risk: bypassing blacklist/whitelist; invariant: unsafe commands blocked; strategy: validate via terminal controller before execution.
+    is_safe, reason = cli.terminal.is_command_safe(command)
+    if not is_safe:
+        cli.console.print(f"[red]{reason or 'Command blocked by security policy.'}[/red]")
+        return False
+
+    if not Config.CONFIRM_SENSITIVE_ACTIONS:
+        # //audit assumption: operator explicitly disabled confirmations; risk: accidental command execution; invariant: config controls prompt behavior; strategy: skip prompt by policy.
+        return True
+
+    # //audit assumption: confirmation prompt requires interactive stdin; risk: non-tty auto-execution; invariant: block when prompt cannot be shown; strategy: reject non-tty runs.
+    if not sys.stdin or not sys.stdin.isatty():
+        cli.console.print("[red]/run blocked: confirmation required but no interactive terminal is available.[/red]")
+        return False
+
+    command_summary = _summarize_command(command)
+    confirmation = input(f"Confirm /run command '{command_summary}'? (y/N): ").strip().lower()
+    if confirmation not in CONFIRM_ACCEPT_VALUES:
+        # //audit assumption: only explicit yes should execute; risk: accidental acceptance; invariant: default deny; strategy: require allowlist response.
+        cli.console.print("[yellow]Cancelled /run command.[/yellow]")
+        return False
+
+    return True
 
 
 def _build_debug_logger(log_file_path: Path) -> logging.Logger:
@@ -234,8 +275,8 @@ def run_interactive_mode(cli: "ArcanosCLI") -> None:
                     if command_text:
                         try:
                             _dispatch_command(cli, command_text)
-                        except Exception:
-                            # Unknown or failed slash command — fall back to chat
+                        except UnknownSlashCommandError:
+                            # Unknown slash command — fall back to chat
                             cli.handle_ask(user_input)
                 else:
                     # Chat-first: everything without "/" goes straight to conversation
@@ -269,14 +310,23 @@ def _dispatch_command(cli: "ArcanosCLI", command_text: str) -> None:
             cli.handle_ask(args, route_override="backend")
         return
 
+    if command == "run":
+        # //audit assumption: slash-run is sensitive; risk: command misuse; invariant: require safety preflight + optional confirmation; strategy: guard before execution.
+        if not args:
+            cli.console.print("[red]No command specified for /run.[/red]")
+            return
+        if _allow_slash_run_command(cli, args):
+            cli.handle_run(args)
+        return
+
     handlers = _build_command_handlers(cli, args)
     handler = handlers.get(command)
     if handler:
         handler()
         return
 
-    # Unknown slash command — raise so caller falls back to chat
-    raise ValueError(f"Unknown command: {command}")
+    # Unknown slash command — raise typed error so caller can fall back to chat
+    raise UnknownSlashCommandError(f"Unknown command: {command}")
 
 
 def process_input(cli: "ArcanosCLI", user_input: str) -> None:
