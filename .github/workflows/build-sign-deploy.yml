@@ -45,6 +45,16 @@ jobs:
           cd backend-typescript
           npm install
 
+      - name: Lint code
+        run: |
+          cd backend-typescript
+          npm run lint
+
+      - name: Build project
+        run: |
+          cd backend-typescript
+          npm run build
+
       - name: Run tests
         run: |
           cd backend-typescript
