@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import BackstageBooker, { MatchInput, Wrestler } from '../modules/backstage/booker.js';
+import { BackstageBooker, MatchInput, Wrestler } from '../modules/backstage-booker.js';
 import { confirmGate } from '../middleware/confirmGate.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
