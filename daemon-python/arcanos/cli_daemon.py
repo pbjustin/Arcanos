@@ -9,16 +9,27 @@ from .config import Config
 from .error_handler import logger as error_logger
 
 
+_PLACEHOLDER_TOKENS = {"REPLACE_WITH_BACKEND_TOKEN", ""}
+
+
 def start_daemon_threads(self) -> None:
     """
     Purpose: Launch daemon background threads for heartbeat and polling.
     Inputs/Outputs: None; starts threads when backend is configured.
-    Edge cases: Returns early when already running or backend missing.
+    Edge cases: Returns early when already running, backend missing, or token is placeholder.
     """
     if self._daemon_running:
         return
-    
+
     if not self.backend_client:
+        return
+
+    # Skip daemon threads when the backend token is an obvious placeholder —
+    # unauthenticated heartbeat/poll requests will just get 429'd.
+    if (Config.BACKEND_TOKEN or "") in _PLACEHOLDER_TOKENS:
+        error_logger.info(
+            "[DAEMON] Skipping daemon threads: BACKEND_TOKEN is not configured."
+        )
         return
 
     self._daemon_running = True
@@ -46,6 +57,8 @@ def heartbeat_loop(self) -> None:
     Inputs/Outputs: None; communicates with backend while running.
     Edge cases: Applies backoff on 429 responses and stops on shutdown.
     """
+    # Stagger the first heartbeat so it doesn't race with command poll on startup.
+    time.sleep(2)
     last_request_time = time.time()
     consecutive_429_count = 0
 

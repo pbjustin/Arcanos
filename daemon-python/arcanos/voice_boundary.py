@@ -91,6 +91,7 @@ SEVERITY_RULES = {
         "logic trace:",
         "retrieval context:",
         "boot_snapshot",
+        "no memory entry was created",
     ],
     Severity.SEV_2: [
         "rate limit exceeded",

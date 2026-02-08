@@ -298,7 +298,10 @@ class ArcanosCLI:
         # Start daemon threads for HTTP-based heartbeat and command polling
         if Config.BACKEND_URL and self.backend_client:
             self._start_daemon_threads()
-            self.console.print(f"[green]?[/green] Backend connection active (heartbeat + command polling)")
+            if self._daemon_running:
+                self.console.print(f"[green]?[/green] Backend connection active (heartbeat + command polling)")
+            else:
+                self.console.print(f"[yellow]?[/yellow] Backend configured but daemon threads skipped (check BACKEND_TOKEN)")
 
         # PTT Manager
         self.ptt_manager = None
