@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import secrets
 import sys
 import time
@@ -16,6 +15,7 @@ from typing import TYPE_CHECKING, Callable
 from .cli_config import CAMERA_INTENT_PATTERN, RUN_COMMAND_PATTERNS, SCREEN_INTENT_PATTERN
 from .cli_intents import detect_run_see_intent
 from .config import Config
+from .env import get_env
 from .error_handler import ErrorHandler
 
 if TYPE_CHECKING:
@@ -95,7 +95,7 @@ def _resolve_debug_token() -> str:
     Inputs/Outputs: Reads environment; returns token string.
     Edge cases: Empty env value falls back to generated token.
     """
-    configured_token = os.getenv(DEBUG_MODE_TOKEN_ENV, "").strip()
+    configured_token = (get_env(DEBUG_MODE_TOKEN_ENV, "") or "").strip()
     if configured_token:
         return configured_token
     return secrets.token_urlsafe(18)
@@ -107,7 +107,7 @@ def _resolve_command_file_path(debug_dir: Path, token: str) -> Path:
     Inputs/Outputs: Debug directory and token; returns file path.
     Edge cases: Relative env path is resolved under debug_dir for portability.
     """
-    configured_path = os.getenv(DEBUG_MODE_COMMAND_FILE_ENV, "").strip()
+    configured_path = (get_env(DEBUG_MODE_COMMAND_FILE_ENV, "") or "").strip()
     if configured_path:
         path = Path(configured_path).expanduser()
         return path if path.is_absolute() else debug_dir / path
@@ -200,7 +200,7 @@ def run_debug_mode(cli: "ArcanosCLI") -> None:
     cli.console.print(f"All output will be in: {log_file_path}")
     cli.console.print(f"Command file path: {cmd_file_path}")
     cli.console.print('Command payload format: {"token":"...","command":"..."}')
-    if os.getenv(DEBUG_MODE_TOKEN_ENV):
+    if get_env(DEBUG_MODE_TOKEN_ENV):
         cli.console.print(f"Using debug token from {DEBUG_MODE_TOKEN_ENV}.")
     else:
         cli.console.print(f"[yellow]Generated one-time debug token:[/yellow] {debug_token}")

@@ -38,8 +38,29 @@ export interface LogEntry {
   };
 }
 
+const SENSITIVE_KEYS = ['authorization', 'cookie', 'token', 'password', 'apikey', 'secret', 'privatekey', 'connectionstring'];
+const SENSITIVE_VALUE_PATTERNS = [
+  /\bsk-[a-zA-Z0-9]{20,}\b/,
+  /\bBearer\s+[a-zA-Z0-9._-]{12,}\b/i,
+  /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
+  /\b(?:postgres|postgresql|mysql|mongodb):\/\/[^@\s]+:[^@\s]+@/i,
+  /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[a-zA-Z0-9._-]{12,}/i
+];
+
+function sanitizeStringValue(value: string): string {
+  //audit Assumption: token-like literal patterns inside log strings are sensitive; risk: credential leakage in aggregated logs; invariant: redact sensitive literals before output; handling: pattern-match and replace with sentinel.
+  if (SENSITIVE_VALUE_PATTERNS.some(pattern => pattern.test(value))) {
+    return '[REDACTED]';
+  }
+  return value;
+}
+
 // Helper to recursively sanitize potentially sensitive fields before logging
 function sanitize(data: any): any {
+  if (typeof data === 'string') {
+    return sanitizeStringValue(data);
+  }
+
   if (data === null || typeof data !== 'object') {
     return data;
   }
@@ -48,7 +69,6 @@ function sanitize(data: any): any {
     return data.map(item => sanitize(item));
   }
 
-  const SENSITIVE_KEYS = ['authorization', 'cookie', 'token', 'password', 'apikey', 'secret'];
   const sanitized: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(data)) {

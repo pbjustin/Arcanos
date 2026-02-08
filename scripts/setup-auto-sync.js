@@ -37,7 +37,13 @@ async function setupGitHooks() {
     console.log('  ✓ Pre-commit hook already exists');
   } catch {
     const preCommitContent = `#!/bin/sh
-# ARCANOS Pre-Commit Sync Check
+# ARCANOS Pre-Commit Guard + Sync Check
+npm run guard:commit
+if [ $? -ne 0 ]; then
+  echo "❌ Commit guard failed. Remove staged artifacts/secrets before committing."
+  exit 1
+fi
+
 npm run sync:check
 if [ $? -ne 0 ]; then
   echo "❌ Sync check failed. Fix issues before committing."

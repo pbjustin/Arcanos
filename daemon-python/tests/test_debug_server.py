@@ -4,6 +4,7 @@ import threading
 import time
 from collections import deque
 from http.server import HTTPServer
+from io import BytesIO
 from socketserver import ThreadingMixIn
 from unittest.mock import MagicMock, patch
 
@@ -20,36 +21,85 @@ class TestServer(ThreadingMixIn, HTTPServer):
 
 
 def make_request(handler_class, method: str, path: str, body: bytes = None) -> tuple[int, dict]:
-    """Helper to make a test request."""
-    from io import BytesIO
-    
-    class MockRequest:
-        def __init__(self, path: str, method: str, body: bytes = None):
-            self.path = path
-            self.command = method
-            self.headers = {}
-            if body:
-                self.headers["Content-Length"] = str(len(body))
-            self.rfile = BytesIO(body or b"")
-            self.wfile = BytesIO()
-            self._last_status_code = 200
-            self._request_id = None
-    
-    req = MockRequest(path, method, body)
-    handler = handler_class(req, ("127.0.0.1", 0), TestServer(("127.0.0.1", 0), handler_class))
-    
-    if method == "GET":
-        handler.do_GET()
-    elif method == "POST":
-        handler.do_POST()
-    
-    status = handler._last_status_code
-    response_data = handler.wfile.getvalue().decode("utf-8")
+    """
+    Helper to execute DebugAPIHandler using a socket-like in-memory request.
+
+    Purpose: exercise BaseHTTPRequestHandler lifecycle without opening a real port.
+    Inputs/Outputs: HTTP method/path/body -> (status, parsed response payload).
+    Edge cases: text/plain responses (metrics) are returned under `raw`.
+    """
+
+    class MockSocket:
+        """
+        Minimal socket-like object for BaseHTTPRequestHandler setup/finish.
+
+        Purpose: provide makefile/sendall hooks expected by stdlib HTTP handler.
+        Inputs/Outputs: raw request bytes in, raw response bytes accumulated.
+        Edge cases: settimeout/setsockopt no-op for test harness compatibility.
+        """
+
+        def __init__(self, request_bytes: bytes):
+            self._rfile = BytesIO(request_bytes)
+            self._wfile = BytesIO()
+
+        def makefile(self, mode: str, *_args, **_kwargs):
+            #audit Assumption: HTTP handler requests one read and one write file stream; risk: wrong stream wiring; invariant: reads come from request buffer and writes go to response buffer; handling: branch by mode.
+            if "r" in mode:
+                return self._rfile
+            return self._wfile
+
+        def sendall(self, data: bytes) -> None:
+            self._wfile.write(data)
+
+        def settimeout(self, _timeout: float) -> None:
+            return
+
+        def setsockopt(self, *_args, **_kwargs) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+        @property
+        def response_bytes(self) -> bytes:
+            return self._wfile.getvalue()
+
+    headers = {
+        "Host": "127.0.0.1",
+        "Connection": "close",
+        "x-arcanos-automation": "test-automation-secret",
+    }
+    if method == "POST":
+        headers["Content-Type"] = "application/json"
+    if body is not None:
+        headers["Content-Length"] = str(len(body))
+
+    header_blob = "".join(f"{k}: {v}\r\n" for k, v in headers.items()).encode("utf-8")
+    request_line = f"{method} {path} HTTP/1.1\r\n".encode("utf-8")
+    request_bytes = request_line + header_blob + b"\r\n" + (body or b"")
+
+    mock_socket = MockSocket(request_bytes)
+    server = MagicMock()
+    server.timeout = None
+
+    with patch("arcanos.debug_server.get_automation_auth", return_value=("x-arcanos-automation", "test-automation-secret")):
+        handler_class(mock_socket, ("127.0.0.1", 0), server)
+
+    raw_response = mock_socket.response_bytes
+    head, _, body_blob = raw_response.partition(b"\r\n\r\n")
+    status_line = head.split(b"\r\n", 1)[0].decode("utf-8", errors="ignore")
     try:
-        data = json.loads(response_data)
+        status = int(status_line.split()[1])
+    except (IndexError, ValueError):
+        #audit Assumption: malformed HTTP response should fail test deterministically; risk: silent false positives; invariant: status code integer required; handling: default 500 for parse failure.
+        status = 500
+
+    response_text = body_blob.decode("utf-8", errors="replace")
+    try:
+        data = json.loads(response_text)
     except json.JSONDecodeError:
-        data = {"raw": response_data}
-    
+        data = {"raw": response_text}
+
     return status, data
 
 
@@ -73,7 +123,7 @@ class TestHealthChecks:
     def test_readiness_without_backend(self, mock_cli_instance):
         """Readiness should pass if backend not configured."""
         mock_cli_instance.backend_client = None
-        with patch("arcanos.debug_health.Config") as mock_config:
+        with patch("arcanos.debug.health.Config") as mock_config:
             mock_config.BACKEND_URL = None
             result = readiness(mock_cli_instance)
             assert result["checks"]["backend_healthy"] is True
