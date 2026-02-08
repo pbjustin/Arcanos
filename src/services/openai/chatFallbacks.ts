@@ -5,6 +5,7 @@ import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialPro
 import { RESILIENCE_CONSTANTS } from './resilience.js';
 import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
 import { formatErrorMessage } from '../../lib/errors/reusable.js';
+import { aiLogger } from '../../utils/structuredLogging.js';
 import {
   buildFailureContext,
   buildFinalFallbackReason,
@@ -54,12 +55,12 @@ async function attemptModelCall(
   model: string,
   logPrefix: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
-  console.log(`${logPrefix} Attempting with model: ${model}`);
+  aiLogger.info(`${logPrefix} Attempting with model: ${model}`);
   const response = await executeChatCompletionRequest(clientOrAdapter, {
     ...params,
     model,
   });
-  console.log(`✅ ${logPrefix} Success with ${model}`);
+  aiLogger.info(`${logPrefix} Success with ${model}`);
   return { response, model };
 }
 
@@ -68,7 +69,7 @@ async function attemptGPT5Call(
   params: ChatCompletionParams,
   gpt5Model: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
-  console.log(buildGpt5AttemptLog(gpt5Model));
+  aiLogger.info(buildGpt5AttemptLog(gpt5Model));
 
   const tokenParams = getTokenParameter(gpt5Model, getTokensFromParams(params));
   const gpt5Payload = prepareGPT5Request({
@@ -78,7 +79,7 @@ async function attemptGPT5Call(
   }) as ChatCompletionParams & { model: string };
 
   const response = await executeChatCompletionRequest(clientOrAdapter, gpt5Payload);
-  console.log(buildGpt5SuccessLog(gpt5Model));
+  aiLogger.info(buildGpt5SuccessLog(gpt5Model));
   return { response, model: gpt5Model };
 }
 
@@ -134,11 +135,11 @@ const executeModelFallbacks = async <T>(
     } catch (error: unknown) {
       //audit Assumption: failed attempts should continue to next fallback; risk: error masking; invariant: only one attempt succeeds; handling: capture error and proceed.
       lastError = error;
-      console.warn(`⚠️ ${label} Failed: ${formatErrorMessage(error)}`);
+      aiLogger.warn(`${label} Failed: ${formatErrorMessage(error)}`);
     }
   }
 
-  console.error(`❌ ${failureContext}`);
+  aiLogger.error(`${failureContext}`);
   //audit Assumption: lastError may hold context; risk: losing root cause; invariant: thrown error includes context; handling: wrap and rethrow if possible.
   if (lastError instanceof Error) {
     throw new Error(`${failureContext}: ${formatErrorMessage(lastError)}`);
