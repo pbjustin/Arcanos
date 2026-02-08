@@ -1,4 +1,5 @@
 import tutorLogic, { type TutorQuery } from '../logic/tutor-logic.js';
+import { withHRC } from './hrcWrapper.js';
 
 export const ArcanosTutor = {
   name: 'ARCANOS:TUTOR',
@@ -7,7 +8,8 @@ export const ArcanosTutor = {
   gptIds: ['arcanos-tutor', 'tutor'],
   actions: {
     async query(payload: TutorQuery) {
-      return tutorLogic.dispatch(payload);
+      const result = await tutorLogic.dispatch(payload);
+      return withHRC(result, r => r.arcanos_tutor);
     },
   },
 };
