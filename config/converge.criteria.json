@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "requiredTools": {
+    "node": {
+      "command": "node",
+      "minVersion": "18.0.0"
+    },
+    "npm": {
+      "command": "npm",
+      "minVersion": "8.0.0"
+    },
+    "python": {
+      "commands": ["python", "python3"],
+      "minVersion": "3.10.0"
+    }
+  },
+  "stagnationThreshold": 2,
+  "criteria": [
+    {
+      "id": "build",
+      "description": "Compile backend and workers",
+      "command": "npm run build",
+      "estimatedMinutes": 3
+    },
+    {
+      "id": "type-check",
+      "description": "Validate TypeScript correctness",
+      "command": "npm run type-check",
+      "estimatedMinutes": 1
+    },
+    {
+      "id": "lint",
+      "description": "Run ESLint",
+      "command": "npm run lint",
+      "estimatedMinutes": 2
+    },
+    {
+      "id": "node-tests",
+      "description": "Run Node.js test suite",
+      "command": "npm test -- --runInBand",
+      "estimatedMinutes": 4
+    },
+    {
+      "id": "railway-validation",
+      "description": "Validate Railway deployment settings",
+      "command": "npm run validate:railway",
+      "estimatedMinutes": 1
+    },
+    {
+      "id": "workers-build",
+      "description": "Build worker package",
+      "command": "npm --prefix workers run build:workers",
+      "estimatedMinutes": 1
+    },
+    {
+      "id": "python-tests",
+      "description": "Run daemon Python tests",
+      "command": "python -m pytest -q daemon-python/tests",
+      "estimatedMinutes": 2
+    }
+  ],
+  "autoFixers": [
+    {
+      "id": "audit-fix",
+      "command": "npm run audit:fix"
+    },
+    {
+      "id": "audit-python-fix",
+      "command": "npm run audit:python:fix"
+    }
+  ]
+}
