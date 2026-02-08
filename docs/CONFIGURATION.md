@@ -129,7 +129,7 @@ These directories are created at runtime or during builds and must **not** be co
 | `backups/` | `scripts/backup.ps1` | Workspace backups |
 | `dist_new/` | Legacy build scripts | Deprecated build artifacts |
 | `converge-artifacts/` | `npm run converge:ci` | CI convergence gate output |
-| `.pytest_cache/` | pytest | Python test cache |
+| `**/.pytest_cache/` | pytest | Python test cache |
 
 ## References
 - `../.env.example`
