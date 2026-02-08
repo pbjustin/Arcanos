@@ -26,6 +26,7 @@ class Persona(Enum):
     CALM = "calm"  # default
     DIRECT = "direct"  # minimal
     EXPLORATORY = "exploratory"
+    FOCUSED = "focused"  # precise / analytical
 
 
 # =========================
@@ -127,25 +128,32 @@ def classify(text: str) -> Severity:
 PERSONA_REWRITES = {
     Severity.SEV_2: {
         Persona.CALM: [
-            "I’ve got this covered.",
-            "I’ll take care of it.",
+            "I've got this covered.",
+            "I'll take care of it.",
         ],
         Persona.DIRECT: [
             "Handled.",
         ],
         Persona.EXPLORATORY: [
-            "I’ll handle this and we can keep going.",
+            "I'll handle this and we can keep going.",
+        ],
+        Persona.FOCUSED: [
+            "Noted. Continuing.",
+            "Already accounted for.",
         ],
     },
     Severity.SEV_1: {
         Persona.CALM: [
-            "Here’s how I’m thinking about it.",
+            "Here's how I'm thinking about it.",
         ],
         Persona.DIRECT: [
-            "Here’s the reasoning.",
+            "Here's the reasoning.",
         ],
         Persona.EXPLORATORY: [
-            "Let’s think through this together.",
+            "Let's think through this together.",
+        ],
+        Persona.FOCUSED: [
+            "Here's the analysis.",
         ],
     },
 }
