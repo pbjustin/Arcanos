@@ -224,3 +224,7 @@ PR_BODY.md
 # Validation results (temporary; do not commit - run: git rm --cached daemon-python/validation_results.json if already tracked)
 daemon-python/validation_results.json
 daemon-python/validation_report.html
+
+# Convergence loop artifacts
+converge-artifacts/**
+!converge-artifacts/.gitkeep

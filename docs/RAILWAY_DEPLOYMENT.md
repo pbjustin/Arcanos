@@ -79,4 +79,5 @@ Rollback:
 - `../Procfile`
 - `CONFIGURATION.md`
 - `CI_CD.md`
+- `RAILWAY_RATIONALE.md`
 - Railway docs: https://docs.railway.app/
