@@ -36,6 +36,10 @@ jobs:
       - name: Run dependency audit
         run: npm audit --production
 
+      # 3.5️⃣ Lint
+      - name: Lint code
+        run: npm run lint
+
       # 4️⃣ Run Tests
       - name: Run unit tests
         run: npm test
