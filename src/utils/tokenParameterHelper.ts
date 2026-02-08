@@ -10,6 +10,7 @@
 
 import type OpenAI from 'openai';
 import { APPLICATION_CONSTANTS } from './constants.js';
+import { aiLogger } from './structuredLogging.js';
 
 // Known models that require max_completion_tokens instead of max_tokens
 // Store lowercase variants to ensure detection is case-insensitive
@@ -46,15 +47,15 @@ export function getTokenParameter(
   // Safety: Validate token limit is a number and within safe bounds
   //audit Assumption: invalid limits should fall back; Risk: unintended model usage
   if (typeof tokenLimit !== 'number' || !isFinite(tokenLimit) || tokenLimit <= 0) {
-    console.warn(`[🔒 TOKEN-SAFETY] Invalid token limit: ${tokenLimit}, using default 1000`);
-    tokenLimit = 1000;
+    aiLogger.warn(`[TOKEN-SAFETY] Invalid token limit: ${tokenLimit}, using default`);
+    tokenLimit = APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT;
   }
   
   // Safety: Cap token limit to reasonable maximum (8000 for most models)
   //audit Assumption: cap prevents excessive usage; Handling: clamp to max
-  const maxSafeTokens = 8000;
+  const maxSafeTokens = APPLICATION_CONSTANTS.MAX_SAFE_TOKENS;
   if (tokenLimit > maxSafeTokens) {
-    console.warn(`[🔒 TOKEN-SAFETY] Token limit ${tokenLimit} exceeds safe maximum ${maxSafeTokens}, capping`);
+    aiLogger.warn(`[TOKEN-SAFETY] Token limit ${tokenLimit} exceeds safe maximum ${maxSafeTokens}, capping`);
     tokenLimit = maxSafeTokens;
   }
 
@@ -62,7 +63,7 @@ export function getTokenParameter(
   //audit Assumption: forced parameter is authoritative; Risk: API mismatch
   if (options.forceParameter) {
     const parameterUsed = options.forceParameter;
-    console.log(`[📊 TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterUsed} (forced), Tokens: ${tokenLimit}`);
+    aiLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterUsed} (forced), Tokens: ${tokenLimit}`);
     return parameterUsed === 'max_tokens' 
       ? { max_tokens: tokenLimit }
       : { max_completion_tokens: tokenLimit };
@@ -75,7 +76,7 @@ export function getTokenParameter(
   //audit Assumption: cached capability remains valid; Risk: model behavior changes
   const cachedParameter = modelCapabilityCache.get(normalizedModelName);
   if (cachedParameter) {
-    console.log(`[📊 TOKEN-AUDIT] Model: ${modelName}, Parameter: ${cachedParameter} (cached), Tokens: ${tokenLimit}`);
+    aiLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${cachedParameter} (cached), Tokens: ${tokenLimit}`);
     return cachedParameter === 'max_tokens'
       ? { max_tokens: tokenLimit }
       : { max_completion_tokens: tokenLimit };
@@ -90,7 +91,7 @@ export function getTokenParameter(
   modelCapabilityCache.set(normalizedModelName, parameterToUse);
 
   // Log for audit tracking
-  console.log(`[📊 TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterToUse}, Tokens: ${tokenLimit}`);
+  aiLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterToUse}, Tokens: ${tokenLimit}`);
 
   return parameterToUse === 'max_tokens'
     ? { max_tokens: tokenLimit }
@@ -160,7 +161,7 @@ export async function testModelTokenParameter(
   modelName: string
 ): Promise<'max_tokens' | 'max_completion_tokens'> {
   
-  console.log(`[🔬 TOKEN-TEST] Testing token parameter capability for model: ${modelName}`);
+  aiLogger.info(`[TOKEN-TEST] Testing token parameter capability for model: ${modelName}`);
 
   // Try max_tokens first (most common)
   try {
@@ -173,7 +174,7 @@ export async function testModelTokenParameter(
     
     // If successful, cache and return max_tokens
     modelCapabilityCache.set(modelName, 'max_tokens');
-    console.log(`[✅ TOKEN-TEST] Model ${modelName} supports max_tokens`);
+    aiLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_tokens`);
     return 'max_tokens';
     
   } catch (error: unknown) {
@@ -193,13 +194,13 @@ export async function testModelTokenParameter(
         
         // If successful, cache and return max_completion_tokens
         modelCapabilityCache.set(modelName, 'max_completion_tokens');
-        console.log(`[✅ TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
+        aiLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
         return 'max_completion_tokens';
         
       } catch (fallbackError: unknown) {
         //audit Assumption: both params failed; Handling: default to max_tokens
-        console.warn(
-          `[⚠️ TOKEN-TEST] Model ${modelName} failed both token parameters, defaulting to max_tokens: ${getErrorMessage(fallbackError)}`
+        aiLogger.warn(
+          `[TOKEN-TEST] Model ${modelName} failed both token parameters, defaulting to max_tokens: ${getErrorMessage(fallbackError)}`
         );
         modelCapabilityCache.set(modelName, 'max_tokens');
         return 'max_tokens';
@@ -207,7 +208,7 @@ export async function testModelTokenParameter(
     } else {
       // Error not related to token parameters, assume max_tokens works
       //audit Assumption: non-token error implies max_tokens support; Risk: false
-      console.log(`[✅ TOKEN-TEST] Model ${modelName} error unrelated to tokens, assuming max_tokens support`);
+      aiLogger.info(`[TOKEN-TEST] Model ${modelName} error unrelated to tokens, assuming max_tokens support`);
       modelCapabilityCache.set(modelName, 'max_tokens');
       return 'max_tokens';
     }
@@ -257,7 +258,7 @@ export function createChatCompletionParams(
 export function clearModelCapabilityCache(): void {
   //audit Assumption: cache invalidation is intentional; Handling: clear map
   modelCapabilityCache.clear();
-  console.log(`[🔄 TOKEN-CACHE] Model capability cache cleared`);
+  aiLogger.info(`[TOKEN-CACHE] Model capability cache cleared`);
 }
 
 /**
