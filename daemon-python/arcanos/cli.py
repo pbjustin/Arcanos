@@ -96,6 +96,50 @@ except ImportError:
     PTT_AVAILABLE = False
 
 
+@dataclass
+class SessionContext:
+    session_id: str
+    conversation_goal: Optional[str] = None
+    current_intent: Optional[str] = None
+    intent_confidence: float = 0.0
+    phase: str = "init"          # init | active | refining | review
+    tone: str = "neutral"        # neutral | precise | creative | critical
+    turn_count: int = 0
+    short_term_summary: Optional[str] = None
+    last_summary_turn: int = 0
+
+
+def infer_phase(turn_count: int, intent_confidence: float) -> str:
+    if turn_count < 2:
+        return "init"
+    if intent_confidence >= 0.55:
+        return "refining"
+    return "active"
+
+
+def infer_tone(intent: Optional[str]) -> str:
+    if not intent:
+        return "neutral"
+    # Analytical / fact-seeking domains
+    if intent in {"research", "debug", "analysis", "review"}:
+        return "precise"
+    # Creative / open-ended domains
+    if intent in {"design", "brainstorm", "gaming", "arcanos:gaming"}:
+        return "creative"
+    # Teaching / structured domains
+    if intent in {"tutor", "arcanos:tutor"}:
+        return "precise"
+    return "neutral"
+
+
+TONE_TO_PERSONA = {
+    "neutral": Persona.CALM,
+    "precise": Persona.FOCUSED,
+    "creative": Persona.EXPLORATORY,
+    "critical": Persona.DIRECT,
+}
+
+
 @dataclass(frozen=True)
 class _ConversationResult:
     """
@@ -193,6 +237,9 @@ class ArcanosCLI:
                 self.audio,
                 self.handle_ptt_speech
             )
+
+        # Session context for conversation tracking
+        self.session = SessionContext(session_id=self.instance_id)
 
         # System prompt for AI personality and daemon capabilities
         self.system_prompt = self._build_system_prompt()
@@ -297,6 +344,38 @@ class ArcanosCLI:
             self.memory.set_setting("instance_id", instance_id)
             self.console.print(f"[green]?[/green] Generated daemon instance ID: {instance_id[:8]}...")
         return instance_id
+
+    def _resolve_persona(self) -> Persona:
+        return TONE_TO_PERSONA.get(self.session.tone, Persona.CALM)
+
+    def _update_short_term_summary(self) -> None:
+        if (
+            self.session.turn_count - self.session.last_summary_turn < 4
+            or self.session.phase == "init"
+        ):
+            return
+
+        history = self.memory.get_recent_conversations(limit=6)
+        if not history:
+            return
+
+        summary_prompt = (
+            "Summarize the conversation so far in 1\u20132 sentences, focusing on:\n"
+            "- the user's goal\n"
+            "- what has already been decided\n"
+            "- what remains to be done\n\n"
+            "Do NOT include implementation details or meta commentary."
+        )
+
+        summary, _, _ = self.gpt_client.ask(
+            user_message=summary_prompt,
+            system_prompt=self.system_prompt,
+            conversation_history=history,
+        )
+
+        if summary:
+            self.session.short_term_summary = summary.strip()
+            self.session.last_summary_turn = self.session.turn_count
 
     def show_welcome(self) -> None:
         """
@@ -499,12 +578,40 @@ class ArcanosCLI:
 
     def _build_system_prompt(self) -> str:
         """
-        Purpose: Build the daemon system prompt with a registry-aware backend block.
+        Purpose: Build the daemon system prompt with session context and backend block.
         Inputs/Outputs: None; returns system prompt string.
         Edge cases: Falls back to default backend block when registry is missing.
         """
         backend_block = self._get_backend_block()
-        return build_daemon_system_prompt(backend_block)
+
+        session_block = f"""
+Conversation goal:
+- {self.session.conversation_goal or "Exploratory"}
+
+Conversation summary:
+- {self.session.short_term_summary or "N/A"}
+
+Current intent:
+- {self.session.current_intent or "Exploring"} (confidence: {self.session.intent_confidence:.2f})
+
+Conversation phase:
+- {self.session.phase}
+
+Tone:
+- {self.session.tone}
+
+Guidelines:
+- Avoid repeating established context
+- Ask clarifying questions only if necessary
+- Do not mention internal systems unless explicitly asked
+"""
+
+        identity = (
+            "You are ARCANOS, a conversational operating intelligence.\n"
+            "You respond naturally, clearly, and concisely.\n"
+        )
+
+        return f"{identity}\n{backend_block}\n{session_block}"
 
     def _confirm_pending_actions(self, confirmation_token: str) -> Optional[_ConversationResult]:
         """
@@ -656,37 +763,22 @@ class ArcanosCLI:
             first_chunk = True
             # Show a brief thinking indicator while waiting for the first token
             self.console.print()
-<<<<<<< HEAD
             self.console.print("[dim]Thinking...[/dim]", end="\r")
-=======
-            print("\033[2mThinking...\033[0m", end="\r", flush=True)
->>>>>>> origin/main
             for chunk in stream:
                 if isinstance(chunk, str):
                     if first_chunk:
                         # Clear the thinking indicator
-<<<<<<< HEAD
                         self.console.print(" " * 20, end="\r")
                         first_chunk = False
                     collected_chunks.append(chunk)
                     self.console.print(chunk, end="")
-=======
-                        print(" " * 20, end="\r", flush=True)
-                        first_chunk = False
-                    collected_chunks.append(chunk)
-                    print(chunk, end="", flush=True)
->>>>>>> origin/main
                 else:
                     # Usage object from final stream chunk
                     tokens_used = chunk.total_tokens
                     input_t = chunk.prompt_tokens
                     output_t = chunk.completion_tokens
                     cost_usd = (input_t * 0.15 / 1_000_000) + (output_t * 0.60 / 1_000_000)
-<<<<<<< HEAD
             self.console.print()  # final newline after stream completes
-=======
-            print()  # final newline after stream completes
->>>>>>> origin/main
             self.console.print()  # blank line after response
 
             response_text = "".join(collected_chunks)
@@ -939,6 +1031,33 @@ class ArcanosCLI:
             self.console.print(f"[red]Rate limit: {deny_reason}[/red]")
             return None if return_result else None
 
+        # ---- Session update (pre-routing) ----
+        self.session.turn_count += 1
+
+        detected_intent = detect_domain_intent(message, DOMAIN_KEYWORDS)
+        if detected_intent:
+            self.session.current_intent = detected_intent
+            self.session.intent_confidence = min(1.0, self.session.intent_confidence + 0.3)
+        else:
+            self.session.intent_confidence *= 0.85
+
+        self.session.phase = infer_phase(
+            self.session.turn_count,
+            self.session.intent_confidence
+        )
+
+        self.session.tone = infer_tone(self.session.current_intent)
+
+        if (
+            self.session.conversation_goal is None
+            and self.session.turn_count >= 2
+            and self.session.intent_confidence >= 0.4
+        ):
+            self.session.conversation_goal = self.session.current_intent
+
+        # Rebuild system prompt with updated session context
+        self.system_prompt = self._build_system_prompt()
+
         route_decision = determine_conversation_route(
             user_message=message,
             routing_mode=Config.BACKEND_ROUTING_MODE,
@@ -1008,23 +1127,22 @@ class ArcanosCLI:
                 debug=from_debug,
             )
             if show and translated:
-<<<<<<< HEAD
-                # Apply voice-boundary filtering before rendering or storing, at least for backend responses.
+                # Apply voice-boundary filtering before rendering or storing
+                persona = self._resolve_persona()
                 sanitized = translated
                 if result.source == "backend":
-                    sanitized = apply_voice_boundary(translated)
+                    sanitized = apply_voice_boundary(
+                        translated,
+                        persona=persona,
+                        user_text=message,
+                        memory=self.memory,
+                        debug_voice=from_debug,
+                    )
                 response_for_user = sanitized
                 if not use_streaming:
                     # Non-streamed: render the translated (and sanitized) response with Markdown
                     self.console.print()
                     self.console.print(Markdown(sanitized))
-=======
-                response_for_user = translated
-                if not use_streaming:
-                    # Non-streamed: render the translated response with Markdown
-                    self.console.print()
-                    self.console.print(Markdown(translated))
->>>>>>> origin/main
                     self.console.print()
 
         update_payload = {
@@ -1050,6 +1168,8 @@ class ArcanosCLI:
 
         self._send_backend_update("conversation_usage", update_payload)
 
+        # ---- Post-response summarization ----
+        self._update_short_term_summary()
 
         if return_result:
             return result
@@ -1064,18 +1184,17 @@ class ArcanosCLI:
 
         # Show stats
         if Config.SHOW_STATS:
-            stats = self.rate_limiter.get_usage_stats()
-                # Apply voice-boundary filtering before rendering or storing, at least for backend responses.
-                sanitized = translated
-                if result.source == "backend":
-                    sanitized = apply_voice_boundary(translated)
-                response_for_user = sanitized
-                if not use_streaming:
-                    # Non-streamed: render the translated (and sanitized) response with Markdown
-                    self.console.print()
-                    self.console.print(Markdown(sanitized))
-                    self.console.print()
-        
+            stats = self.memory.get_statistics()
+            rate_stats = self.rate_limiter.get_usage_stats()
+            table = build_stats_table(
+                stats=stats,
+                rate_stats=rate_stats,
+                max_requests_per_hour=Config.MAX_REQUESTS_PER_HOUR,
+                max_tokens_per_day=Config.MAX_TOKENS_PER_DAY,
+                max_cost_per_day=Config.MAX_COST_PER_DAY,
+            )
+            self.console.print(table)
+
         return None
 
     @handle_errors("vision analysis")

@@ -211,7 +211,7 @@ def run_debug_mode(cli: "ArcanosCLI") -> None:
 
 def run_interactive_mode(cli: "ArcanosCLI") -> None:
     """
-    Purpose: Run the CLI in standard interactive mode.
+    Purpose: Run the CLI in chat-first interactive mode.
     Inputs/Outputs: CLI instance; reads input from stdin and processes it.
     Edge cases: Exits cleanly on KeyboardInterrupt or "exit"/"quit"/"bye".
     """
@@ -219,27 +219,64 @@ def run_interactive_mode(cli: "ArcanosCLI") -> None:
     try:
         while True:
             try:
-                user_input = input("\nYou: ").strip()
+                user_input = input("> ").strip()
                 if not user_input:
-                    # //audit assumption: empty input is non-actionable; risk: busy loop; invariant: skip; strategy: continue.
                     continue
 
-                if user_input.lower() in ["exit", "quit", "bye"]:
+                lower_input = user_input.lower()
+                if lower_input in ("exit", "quit", "bye") or lower_input in ("/exit", "/quit", "/bye"):
                     cli.console.print("[cyan]See you later![/cyan]")
                     break
 
-                process_input(cli, user_input)
+                if user_input.startswith("/"):
+                    # Slash command: strip the "/" and dispatch
+                    command_text = user_input[1:]
+                    if command_text:
+                        try:
+                            _dispatch_command(cli, command_text)
+                        except Exception:
+                            # Unknown or failed slash command — fall back to chat
+                            cli.handle_ask(user_input)
+                else:
+                    # Chat-first: everything without "/" goes straight to conversation
+                    cli.handle_ask(user_input)
             except (KeyboardInterrupt, EOFError):
                 cli.console.print("\n[cyan]See you later![/cyan]")
                 break
             except Exception as exc:
-                # //audit assumption: interactive loop should survive errors; risk: crash; invariant: error surfaced; strategy: handle and continue.
                 cli._last_error = str(exc) or type(exc).__name__
                 cli._append_activity("error", cli._last_error)
                 error_msg = ErrorHandler.handle_exception(exc, "main loop")
                 cli.console.print(f"[red]{error_msg}[/red]")
     finally:
         cli._stop_daemon_service()
+
+
+def _dispatch_command(cli: "ArcanosCLI", command_text: str) -> None:
+    """
+    Purpose: Dispatch a slash command (without the leading '/').
+    Inputs/Outputs: CLI instance + command text; raises if command is unknown.
+    Edge cases: 'deep'/'backend' commands require arguments.
+    """
+    parts = command_text.split(maxsplit=1)
+    command = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+
+    if command in ("deep", "backend"):
+        if not args:
+            cli.console.print("[red]No prompt provided for backend request.[/red]")
+        else:
+            cli.handle_ask(args, route_override="backend")
+        return
+
+    handlers = _build_command_handlers(cli, args)
+    handler = handlers.get(command)
+    if handler:
+        handler()
+        return
+
+    # Unknown slash command — raise so caller falls back to chat
+    raise ValueError(f"Unknown command: {command}")
 
 
 def process_input(cli: "ArcanosCLI", user_input: str) -> None:
