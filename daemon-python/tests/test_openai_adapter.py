@@ -87,4 +87,4 @@ def test_transcribe_wraps_audio_bytes_as_named_file(monkeypatch):
     assert response.text == "ok"
     assert len(calls) == 1
     assert calls[0]["file"].name == "sample.wav"
-    assert calls[0]["model"]
+    assert calls[0]["model"] is not None
