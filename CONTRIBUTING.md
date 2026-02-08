@@ -13,7 +13,31 @@ OpenAI integrations are adapter-first and centralized. New runtime code should n
 - Node.js 18+, npm 8+
 - Optional: Python 3.10+ for daemon changes
 
-## Setup
+## Quick Start (Full Stack)
+```bash
+# Clone and install everything
+git clone https://github.com/pbjustin/Arcanos.git
+cd Arcanos
+npm install
+cp .env.example .env
+
+# Python daemon (optional — needed for CLI work)
+cd daemon-python
+python -m venv venv
+# Windows PowerShell:  .\venv\Scripts\Activate.ps1
+# macOS/Linux:         source venv/bin/activate
+python -m pip install -e .
+cp .env.example .env
+cd ..
+
+# Build and verify
+npm run build
+npm test
+```
+
+If you only work on the TypeScript backend, skip the Python steps above.
+
+## Setup (Step by Step)
 ```bash
 git clone https://github.com/pbjustin/Arcanos.git
 cd Arcanos

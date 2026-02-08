@@ -12,5 +12,14 @@ export default {
   },
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1'
-  }
+  },
+  collectCoverage: true,
+  coverageDirectory: 'coverage',
+  coverageReporters: ['lcov', 'text-summary'],
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    'workers/src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!**/node_modules/**'
+  ]
 };
