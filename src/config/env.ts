@@ -49,8 +49,11 @@ const SYSTEM_ENV_ALLOWLIST = new Set([
  */
 export function readRuntimeEnv(key: string, defaultValue?: string): string | undefined {
   const value = process.env[key];
-  //audit Assumption: explicit default values are safe for non-secret runtime config; risk: undefined lookups causing branch divergence; invariant: return env or fallback; handling: fallback when unset.
-  return value ?? defaultValue;
+  //audit Assumption: blank or whitespace-only env values should be treated as unset for runtime config defaults; risk: accidental empty strings bypassing fallback contracts; invariant: returned value is non-empty or default/undefined; handling: normalize whitespace-only values to default.
+  if (value === undefined || value.trim().length === 0) {
+    return defaultValue;
+  }
+  return value;
 }
 
 /**

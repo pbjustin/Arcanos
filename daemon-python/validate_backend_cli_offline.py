@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Callable, List
+from typing import List
 
 # Ensure local package import works when invoked from repository root.
 sys.path.insert(0, str(Path(__file__).parent))
