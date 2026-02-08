@@ -1,5 +1,6 @@
 # Arcanos Backend
 
+[![CI/CD Pipeline](https://github.com/pbjustin/Arcanos/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/pbjustin/Arcanos/actions/workflows/ci-cd.yml)
 [![codecov](https://codecov.io/gh/pbjustin/Arcanos/branch/main/graph/badge.svg)](https://codecov.io/gh/pbjustin/Arcanos)
 
 ## Overview
@@ -12,6 +13,28 @@ OpenAI usage is adapter-first across stacks:
 - Worker env/config boundary: `workers/src/infrastructure/sdk/openaiConfig.ts`
 - Python daemon constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
 - Python daemon adapter boundary: `daemon-python/arcanos/openai/openai_adapter.py`
+
+## Quick Start
+
+**Backend (TypeScript):**
+```bash
+npm install
+cp .env.example .env        # set PORT=3000 and OPENAI_API_KEY
+npm run build
+npm test                     # run tests
+npm start                    # http://localhost:3000/health
+```
+
+**CLI Daemon (Python):**
+```bash
+cd daemon-python
+pip install -r requirements.txt
+cp .env.example .env         # set OPENAI_API_KEY
+pytest tests/ -q             # run tests
+python -m arcanos.cli        # start daemon
+```
+
+See [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md) for detailed setup, or use `make install && make test` with the root [Makefile](Makefile).
 
 ## Prerequisites
 - Node.js 18+ and npm 8+
