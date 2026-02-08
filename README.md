@@ -1,5 +1,7 @@
 # Arcanos Backend
 
+[![codecov](https://codecov.io/gh/pbjustin/Arcanos/branch/main/graph/badge.svg)](https://codecov.io/gh/pbjustin/Arcanos)
+
 ## Overview
 Arcanos is a TypeScript/Express backend with optional workers and an optional Python CLI daemon (`daemon-python/`).
 
