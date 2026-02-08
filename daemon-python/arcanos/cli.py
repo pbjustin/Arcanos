@@ -81,7 +81,7 @@ from .conversation_routing import (
 from .media_routing import parse_vision_route_args, parse_voice_route_args
 from .credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
 from .schema import Memory
-from .gpt_client import GPTClient
+from .gpt_client import GPTClient, GPT4O_MINI_INPUT_COST, GPT4O_MINI_OUTPUT_COST
 from .vision import VisionSystem
 from .audio import AudioSystem
 from .terminal import TerminalController
@@ -854,7 +854,7 @@ Guidelines:
                     tokens_used = chunk.total_tokens
                     input_t = chunk.prompt_tokens
                     output_t = chunk.completion_tokens
-                    cost_usd = (input_t * 0.15 / 1_000_000) + (output_t * 0.60 / 1_000_000)
+                    cost_usd = (input_t * GPT4O_MINI_INPUT_COST) + (output_t * GPT4O_MINI_OUTPUT_COST)
             self.console.print()  # final newline after stream completes
             self.console.print()  # blank line after response
 

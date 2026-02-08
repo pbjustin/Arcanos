@@ -11,6 +11,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from .config import Config
 from .openai.unified_client import get_or_create_client
 
+# OpenAI pricing per token (USD)
+GPT4O_MINI_INPUT_COST = 0.15 / 1_000_000
+GPT4O_MINI_OUTPUT_COST = 0.60 / 1_000_000
+GPT4O_INPUT_COST = 2.50 / 1_000_000
+GPT4O_OUTPUT_COST = 10.00 / 1_000_000
+
 
 def _is_mock_api_key(api_key: str) -> bool:
     normalized = api_key.strip().lower()
@@ -120,10 +126,9 @@ class GPTClient:
             response_text = response.choices[0].message.content
             tokens_used = response.usage.total_tokens
 
-            # Calculate cost (GPT-4o Mini: $0.15/1M input, $0.60/1M output)
             input_tokens = response.usage.prompt_tokens
             output_tokens = response.usage.completion_tokens
-            cost = (input_tokens * 0.15 / 1_000_000) + (output_tokens * 0.60 / 1_000_000)
+            cost = (input_tokens * GPT4O_MINI_INPUT_COST) + (output_tokens * GPT4O_MINI_OUTPUT_COST)
 
             # Cache response
             self._request_cache[cache_key] = (response_text, time.time())
@@ -263,10 +268,9 @@ class GPTClient:
             response_text = response.choices[0].message.content
             tokens_used = response.usage.total_tokens
 
-            # Calculate cost (GPT-4o: $2.50/1M input, $10.00/1M output)
             input_tokens = response.usage.prompt_tokens
             output_tokens = response.usage.completion_tokens
-            cost = (input_tokens * 2.50 / 1_000_000) + (output_tokens * 10.00 / 1_000_000)
+            cost = (input_tokens * GPT4O_INPUT_COST) + (output_tokens * GPT4O_OUTPUT_COST)
 
             return response_text, tokens_used, cost
 
