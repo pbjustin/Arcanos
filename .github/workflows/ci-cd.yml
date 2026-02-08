@@ -96,6 +96,16 @@ jobs:
         if: matrix.test-type == 'unit'
         run: npm test
 
+      - name: 📊 Upload Node coverage to Codecov
+        if: matrix.test-type == 'unit'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          flags: node
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
       - name: 🔌 Run integration tests
         if: matrix.test-type == 'integration'
         run: |
@@ -252,9 +262,19 @@ jobs:
       - name: 🧪 Validate CLI offline contract
         run: python daemon-python/validate_backend_cli_offline.py
 
-      - name: 🧪 Run Python unit tests
+      - name: 🧪 Run Python unit tests with coverage
         run: |
-          pytest daemon-python/tests/test_debug_server.py -q
+          pip install pytest-cov
+          pytest daemon-python/tests/ -q --cov=daemon-python/arcanos --cov-report=xml:coverage-python.xml
+
+      - name: 📊 Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-python.xml
+          flags: python
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   all-checks-complete:
     name: All Checks Complete
