@@ -115,7 +115,7 @@ def sanitize_summary_for_prompt(candidate_summary: str) -> Optional[str]:
         return None
 
     # //audit assumption: markdown/control delimiters are low-signal for summary content; risk: delimiter-based instruction smuggling; invariant: keep plain-text summary; strategy: strip control delimiters.
-    normalized_summary = normalized_summary.replace("`", "").replace("{", "").replace("}", "")
+    normalized_summary = re.sub(r"[`{}[\\\]()#*_-]", "", normalized_summary)
 
     # //audit assumption: instruction-like tokens indicate prompt-injection risk; risk: persistent role hijack via session summary; invariant: never embed unsafe summary text; strategy: replace with static fallback.
     if SUMMARY_INJECTION_PATTERN.search(normalized_summary):
