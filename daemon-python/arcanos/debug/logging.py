@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..config import Config
+from ..utils.telemetry import sanitize_sensitive_data
 
 _logger_lock = threading.Lock()
 _logger: Optional[logging.Logger] = None
@@ -31,7 +32,9 @@ class JsonLogFormatter(logging.Formatter):
             if value is not None:
                 payload[key] = value
 
-        return json.dumps(payload, ensure_ascii=False)
+        #audit Assumption: structured debug logs may include credential-like values in extras; risk: secret leakage to local files; invariant: payload sanitized before serialization; handling: apply shared telemetry sanitizer.
+        sanitized_payload = sanitize_sensitive_data(payload)
+        return json.dumps(sanitized_payload, ensure_ascii=False)
 
 
 def _ensure_log_dir() -> Path:
@@ -84,13 +87,7 @@ def log_audit_event(event_type: str, **kwargs: Any) -> None:
     Edge cases: All kwargs are sanitized to prevent credential leakage.
     """
     logger = get_debug_logger()
-    # Sanitize kwargs to prevent credential leakage
-    try:
-        from ..utils.telemetry import sanitize_sensitive_data
-        sanitized_kwargs = sanitize_sensitive_data(kwargs) if kwargs else {}
-    except ImportError:
-        # Fallback if telemetry not available
-        sanitized_kwargs = kwargs
+    sanitized_kwargs = sanitize_sensitive_data(kwargs) if kwargs else {}
     logger.info(
         f"audit.{event_type}",
         extra={"event_type": event_type, **sanitized_kwargs}

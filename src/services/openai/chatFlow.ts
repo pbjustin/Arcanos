@@ -250,11 +250,8 @@ async function makeOpenAIRequest(
       throw new Error('OpenAI adapter not available');
     }
 
-    // Use adapter for OpenAI calls (adapter boundary pattern)
-    // Note: Adapter doesn't support signal/headers yet, so we use getClient() for now
-    // TODO: Extend adapter interface to support signal/headers
-    const client = adapter.getClient();
-    const response = await client.chat.completions.create(nonStreamingPayload, {
+    //audit Assumption: non-stream chat path should stay adapter-first with request options; risk: direct client bypass drifts from canonical interface; invariant: adapter handles call + options forwarding; handling: invoke adapter chat surface.
+    const response = await adapter.chat.completions.create(nonStreamingPayload, {
       signal: controller.signal,
       // Add request ID for tracing
       headers: {
@@ -496,8 +493,8 @@ export async function createCentralizedCompletion(
     presence_penalty?: number;
   } = {}
 ): Promise<ChatCompletion | AsyncIterable<unknown>> {
-  const { client } = getOpenAIClientOrAdapter();
-  if (!client) {
+  const { adapter, client } = getOpenAIClientOrAdapter();
+  if (!adapter && !client) {
     throw new Error('OpenAI client not initialized - API key required');
   }
 
@@ -532,7 +529,27 @@ export async function createCentralizedCompletion(
   };
 
   try {
-    const response = await client.chat.completions.create(requestPayload);
+    const requestOptions = {
+      headers: {
+        [REQUEST_ID_HEADER]: crypto.randomUUID()
+      }
+    };
+
+    let response: ChatCompletion | AsyncIterable<unknown>;
+    if (requestPayload.stream) {
+      //audit Assumption: streaming is not modeled on adapter chat surface yet; risk: feature regression; invariant: streaming remains available via explicit client escape hatch; handling: use underlying client for stream=true.
+      const streamClient = client ?? adapter?.getClient();
+      if (!streamClient) {
+        throw new Error('OpenAI client not initialized - streaming unavailable');
+      }
+      response = await streamClient.chat.completions.create(requestPayload, requestOptions);
+    } else if (adapter) {
+      response = await adapter.chat.completions.create(requestPayload, requestOptions);
+    } else if (client) {
+      response = await client.chat.completions.create(requestPayload, requestOptions);
+    } else {
+      throw new Error('OpenAI client not initialized');
+    }
     
     if (!options.stream && 'usage' in response) {
       logOpenAIEvent('info', OPENAI_LOG_MESSAGES.ARCANOS.COMPLETION_SUCCESS, {

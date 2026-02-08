@@ -1,11 +1,11 @@
 import type { JobHandler } from '../jobs/index.js';
-import openaiClient from '../infrastructure/sdk/openai.js';
-
-const client = openaiClient;
+import { getWorkerOpenAIAdapter } from '../infrastructure/sdk/openai.js';
 
 export const openaiCompletionHandler: JobHandler<'OPENAI_COMPLETION'> = async ({ payload }) => {
-  const response = await client.chat.completions.create({
-    model: payload.model ?? 'gpt-4-turbo',
+  const adapter = getWorkerOpenAIAdapter();
+  const { chatModel } = adapter.getDefaults();
+  const response = await adapter.chat.completions.create({
+    model: payload.model ?? chatModel,
     messages: [{ role: 'user', content: payload.prompt }]
   });
 
@@ -13,8 +13,10 @@ export const openaiCompletionHandler: JobHandler<'OPENAI_COMPLETION'> = async ({
 };
 
 export const openaiEmbeddingHandler: JobHandler<'OPENAI_EMBEDDING'> = async ({ payload }) => {
-  const response = await client.embeddings.create({
-    model: payload.model ?? 'text-embedding-3-large',
+  const adapter = getWorkerOpenAIAdapter();
+  const { embeddingModel } = adapter.getDefaults();
+  const response = await adapter.embeddings.create({
+    model: payload.model ?? embeddingModel,
     input: payload.input
   });
 
