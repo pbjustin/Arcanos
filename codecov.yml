@@ -1,0 +1,25 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+
+ignore:
+  - "dist/"
+  - "scripts/"
+  - "docs/"
+  - "*.config.*"
+  - "daemon-python/scripts/"
+
+flags:
+  node:
+    paths:
+      - src/
+      - workers/src/
+  python:
+    paths:
+      - daemon-python/arcanos/
