@@ -1,8 +1,5 @@
 import type OpenAI from 'openai';
 import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
-import type { CreateEmbeddingResponse } from 'openai/resources/embeddings.js';
-import type { ChatCompletion } from './types.js';
-import type { TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 import { buildEmbeddingRequest } from './requestBuilders.js';
 import { getOpenAIClientOrAdapter } from './clientBridge.js';
 
@@ -12,46 +9,20 @@ export async function createEmbedding(
   input: string,
   clientOrAdapter?: OpenAI | OpenAIAdapter | null
 ): Promise<number[]> {
-  // Use adapter if provided, otherwise get singleton adapter
-  let adapter: OpenAIAdapter;
-  if (clientOrAdapter && 'embeddings' in clientOrAdapter && typeof clientOrAdapter.embeddings === 'object') {
-    adapter = clientOrAdapter as OpenAIAdapter;
-  } else if (clientOrAdapter && typeof (clientOrAdapter as OpenAI).embeddings === 'object') {
-    // Legacy client - wrap it
-    const client = clientOrAdapter as OpenAI;
-    adapter = {
-      chat: { 
-        completions: { 
-          create: async (params) => {
-            const nonStreamingParams = { ...params, stream: false } as typeof params & { stream: false };
-            const result = await client.chat.completions.create(nonStreamingParams);
-            return result as import('./types.js').ChatCompletion;
-          }
-        } 
-      },
-      embeddings: { 
-        create: async (params) => {
-          return client.embeddings.create(params) as Promise<CreateEmbeddingResponse>;
-        }
-      },
-      audio: { 
-        transcriptions: { 
-          create: async (params: TranscriptionCreateParamsNonStreaming) => {
-            return client.audio.transcriptions.create(params);
-          }
-        } 
-      },
-      getClient: () => client
-    };
-  } else {
-    const { adapter: sharedAdapter } = getOpenAIClientOrAdapter();
-    if (!sharedAdapter) {
-      throw new Error('OpenAI adapter not initialized');
-    }
-    adapter = sharedAdapter;
+  const requestParams = buildEmbeddingRequest({ input, model: DEFAULT_EMBEDDING_MODEL });
+
+  if (clientOrAdapter) {
+    //audit Assumption: backward compatibility path may pass a raw OpenAI client; risk: abrupt runtime breakage; invariant: embeddings remain callable for legacy callers; handling: use direct embeddings surface when adapter type not available.
+    const embeddingClient = clientOrAdapter as OpenAI;
+    const embeddingRes = await embeddingClient.embeddings.create(requestParams);
+    return embeddingRes.data[0]?.embedding || [];
   }
 
-  const requestParams = buildEmbeddingRequest({ input, model: DEFAULT_EMBEDDING_MODEL });
+  const { adapter } = getOpenAIClientOrAdapter();
+  if (!adapter) {
+    throw new Error('OpenAI adapter not initialized');
+  }
+
   const embeddingRes = await adapter.embeddings.create(requestParams);
 
   // embeddingRes is CreateEmbeddingResponse which has a data array

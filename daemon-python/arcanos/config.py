@@ -4,78 +4,28 @@ Loads and validates environment variables with sensible defaults.
 Uses a user-writable data dir for configuration, logs, and crash reports.
 """
 
-import os
+import sys
 from pathlib import Path
 from typing import Optional
 
-from .config_paths import _resolve_base_dir, _get_primary_env_path, _get_fallback_env_path
-
-try:
-    from dotenv import load_dotenv
-except ModuleNotFoundError:
-    load_dotenv = None
+from .env import (
+    bootstrap_runtime_env,
+    get_env,
+    get_env_bool,
+    get_env_float,
+    get_env_int,
+    get_env_path,
+    get_fallback_env_path,
+    get_primary_env_path,
+    get_runtime_base_dir,
+)
 
 # Note: Removed PyInstaller frozen EXE detection - CLI agent runs as Python application
+bootstrap_runtime_env()
 
-
-BASE_DIR: Path = _resolve_base_dir()
-
-
-def _load_dotenv_fallback(path: Path) -> None:
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if not key:
-                    continue
-                if (value.startswith('"') and value.endswith('"')) or (
-                    value.startswith("'") and value.endswith("'")
-                ):
-                    value = value[1:-1]
-                if key not in os.environ:
-                    os.environ[key] = value
-    except FileNotFoundError:
-        return
-    except OSError:
-        print("Warning: Failed to read .env file; environment variables may be missing.")
-
-
-def _load_dotenv_override(path: Path) -> None:
-    """Load .env and set env vars, overwriting existing (for ARCANOS_ENV_PATH)."""
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if not key:
-                    continue
-                if (value.startswith('"') and value.endswith('"')) or (
-                    value.startswith("'") and value.endswith("'")
-                ):
-                    value = value[1:-1]
-                os.environ[key] = value
-    except FileNotFoundError:
-        return
-    except OSError:
-        print("Warning: Failed to read ARCANOS_ENV_PATH file.")
-
-
-# Load .env file if python-dotenv is available.
-PRIMARY_ENV_PATH = _get_primary_env_path(BASE_DIR)
-FALLBACK_ENV_PATH = _get_fallback_env_path()
+BASE_DIR: Path = get_runtime_base_dir()
+PRIMARY_ENV_PATH = get_primary_env_path()
+FALLBACK_ENV_PATH = get_fallback_env_path()
 ENV_PATHS = [PRIMARY_ENV_PATH] + (
     [FALLBACK_ENV_PATH]
     if FALLBACK_ENV_PATH and FALLBACK_ENV_PATH != PRIMARY_ENV_PATH
@@ -83,40 +33,12 @@ ENV_PATHS = [PRIMARY_ENV_PATH] + (
 )
 ENV_PATH = PRIMARY_ENV_PATH
 
-if load_dotenv is not None:
-    for env_path in ENV_PATHS:
-        load_dotenv(dotenv_path=env_path)
-    # Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
-    _env_override = os.environ.get("ARCANOS_ENV_PATH")
-    if _env_override:
-        _override_path = Path(_env_override)
-        if _override_path.is_file():
-            load_dotenv(dotenv_path=_override_path, override=True)
-else:
-    for env_path in ENV_PATHS:
-        _load_dotenv_fallback(env_path)
-    _env_override = os.environ.get("ARCANOS_ENV_PATH")
-    if _env_override:
-        _override_path = Path(_env_override)
-        if _override_path.is_file():
-            _load_dotenv_override(_override_path)
-
-# Allow explicit .env path so CLI can use project backend when run from AppData/shortcut (override=True so BACKEND_URL/TOKEN win).
-_env_override = os.environ.get("ARCANOS_ENV_PATH")
-if _env_override:
-    _override_path = Path(_env_override)
-    if _override_path.is_file():
-        if load_dotenv is not None:
-            load_dotenv(dotenv_path=_override_path, override=True)
-        else:
-            _load_dotenv_override(_override_path)
-
 
 def get_backend_base_url() -> Optional[str]:
     raw = (
-        os.getenv("ARCANOS_BACKEND_URL")
-        or os.getenv("SERVER_URL")
-        or os.getenv("BACKEND_URL")
+        get_env("ARCANOS_BACKEND_URL")
+        or get_env("SERVER_URL")
+        or get_env("BACKEND_URL")
     )
     if not raw:
         return None
@@ -127,9 +49,12 @@ def get_backend_base_url() -> Optional[str]:
 
 
 def get_automation_auth() -> tuple[str, str]:
-    header_name = os.getenv("ARCANOS_AUTOMATION_HEADER", "x-arcanos-automation").lower()
-    secret = os.getenv("ARCANOS_AUTOMATION_SECRET", "").strip()
+    header_name = (get_env("ARCANOS_AUTOMATION_HEADER", "x-arcanos-automation") or "x-arcanos-automation").lower()
+    secret = (get_env("ARCANOS_AUTOMATION_SECRET", "") or "").strip()
     return header_name, secret
+
+
+_DEBUG_LOG_PATH_OVERRIDE = get_env_path("DEBUG_LOG_PATH")
 
 
 class Config:
@@ -142,78 +67,80 @@ class Config:
     # ============================================
     # Required Settings
     # ============================================
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_KEY: str = get_env("OPENAI_API_KEY", "") or ""
 
     # ============================================
     # Backend Settings
     # ============================================
     BACKEND_URL: Optional[str] = get_backend_base_url()
-    BACKEND_TOKEN: Optional[str] = os.getenv("BACKEND_TOKEN")
-    BACKEND_LOGIN_EMAIL: Optional[str] = os.getenv("BACKEND_LOGIN_EMAIL")
-    BACKEND_ALLOW_HTTP: bool = os.getenv("BACKEND_ALLOW_HTTP", "false").lower() == "true"
-    BACKEND_JWT_SECRET: Optional[str] = os.getenv("BACKEND_JWT_SECRET") or None
-    BACKEND_JWT_PUBLIC_KEY: Optional[str] = os.getenv("BACKEND_JWT_PUBLIC_KEY") or None
-    BACKEND_JWT_JWKS_URL: Optional[str] = os.getenv("BACKEND_JWT_JWKS_URL") or None
-    BACKEND_ROUTING_MODE: str = os.getenv("BACKEND_ROUTING_MODE", "hybrid").lower()
+    BACKEND_TOKEN: Optional[str] = get_env("BACKEND_TOKEN")
+    BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
+    BACKEND_ALLOW_HTTP: bool = get_env_bool("BACKEND_ALLOW_HTTP", False)
+    BACKEND_JWT_SECRET: Optional[str] = get_env("BACKEND_JWT_SECRET") or None
+    BACKEND_JWT_PUBLIC_KEY: Optional[str] = get_env("BACKEND_JWT_PUBLIC_KEY") or None
+    BACKEND_JWT_JWKS_URL: Optional[str] = get_env("BACKEND_JWT_JWKS_URL") or None
+    BACKEND_ROUTING_MODE: str = (get_env("BACKEND_ROUTING_MODE", "hybrid") or "hybrid").lower()
     # //audit assumption: prefixes are comma-separated; risk: empty tokens; invariant: trimmed list; strategy: strip and filter.
     BACKEND_DEEP_PREFIXES: list[str] = [
         prefix.strip()
-        for prefix in os.getenv("BACKEND_DEEP_PREFIXES", "deep:,backend:").split(",")
+        for prefix in (get_env("BACKEND_DEEP_PREFIXES", "deep:,backend:") or "deep:,backend:").split(",")
         if prefix.strip()
     ]
-    BACKEND_FALLBACK_TO_LOCAL: bool = os.getenv("BACKEND_FALLBACK_TO_LOCAL", "true").lower() == "true"
-    BACKEND_REQUEST_TIMEOUT: int = int(os.getenv("BACKEND_REQUEST_TIMEOUT", "15"))
-    BACKEND_SEND_UPDATES: bool = os.getenv("BACKEND_SEND_UPDATES", "true").lower() == "true"
-    BACKEND_CHAT_MODEL: Optional[str] = os.getenv("BACKEND_CHAT_MODEL") or None
-    BACKEND_VISION_MODEL: Optional[str] = os.getenv("BACKEND_VISION_MODEL") or None
-    BACKEND_TRANSCRIBE_MODEL: Optional[str] = os.getenv("BACKEND_TRANSCRIBE_MODEL") or None
-    BACKEND_HISTORY_LIMIT: int = int(os.getenv("BACKEND_HISTORY_LIMIT", "8"))
-    BACKEND_VISION_ENABLED: bool = os.getenv("BACKEND_VISION_ENABLED", "false").lower() == "true"
-    BACKEND_TRANSCRIBE_ENABLED: bool = os.getenv("BACKEND_TRANSCRIBE_ENABLED", "false").lower() == "true"
+    BACKEND_FALLBACK_TO_LOCAL: bool = get_env_bool("BACKEND_FALLBACK_TO_LOCAL", True)
+    BACKEND_REQUEST_TIMEOUT: int = get_env_int("BACKEND_REQUEST_TIMEOUT", 15)
+    BACKEND_SEND_UPDATES: bool = get_env_bool("BACKEND_SEND_UPDATES", True)
+    BACKEND_CHAT_MODEL: Optional[str] = get_env("BACKEND_CHAT_MODEL") or None
+    BACKEND_VISION_MODEL: Optional[str] = get_env("BACKEND_VISION_MODEL") or None
+    BACKEND_TRANSCRIBE_MODEL: Optional[str] = get_env("BACKEND_TRANSCRIBE_MODEL") or None
+    BACKEND_HISTORY_LIMIT: int = get_env_int("BACKEND_HISTORY_LIMIT", 8)
+    BACKEND_VISION_ENABLED: bool = get_env_bool("BACKEND_VISION_ENABLED", False)
+    BACKEND_TRANSCRIBE_ENABLED: bool = get_env_bool("BACKEND_TRANSCRIBE_ENABLED", False)
     # When backend would be chosen, route to backend only if confidence >= threshold; else local. 0.0=always local, 1.0=always backend when otherwise chosen.
-    BACKEND_CONFIDENCE_THRESHOLD: float = float(os.getenv("BACKEND_CONFIDENCE_THRESHOLD", "0.5"))
-    REGISTRY_CACHE_TTL_MINUTES: int = int(os.getenv("REGISTRY_CACHE_TTL_MINUTES", "10"))
+    BACKEND_CONFIDENCE_THRESHOLD: float = get_env_float("BACKEND_CONFIDENCE_THRESHOLD", 0.5)
+    REGISTRY_CACHE_TTL_MINUTES: int = get_env_int("REGISTRY_CACHE_TTL_MINUTES", 10)
 
     # ============================================
     # Rate Limiting
     # ============================================
-    MAX_REQUESTS_PER_HOUR: int = int(os.getenv("MAX_REQUESTS_PER_HOUR", "60"))
-    MAX_TOKENS_PER_DAY: int = int(os.getenv("MAX_TOKENS_PER_DAY", "100000"))
-    MAX_COST_PER_DAY: float = float(os.getenv("MAX_COST_PER_DAY", "10.0"))
+    MAX_REQUESTS_PER_HOUR: int = get_env_int("MAX_REQUESTS_PER_HOUR", 60)
+    MAX_TOKENS_PER_DAY: int = get_env_int("MAX_TOKENS_PER_DAY", 100000)
+    MAX_COST_PER_DAY: float = get_env_float("MAX_COST_PER_DAY", 10.0)
 
     # ============================================
     # Feature Flags
     # ============================================
-    TELEMETRY_ENABLED: bool = os.getenv("TELEMETRY_ENABLED", "false").lower() == "true"
-    SENTRY_DSN: Optional[str] = os.getenv("SENTRY_DSN")
-    AUTO_START: bool = os.getenv("AUTO_START", "false").lower() == "true"
-    VOICE_ENABLED: bool = os.getenv("VOICE_ENABLED", "true").lower() == "true"
-    VISION_ENABLED: bool = os.getenv("VISION_ENABLED", "true").lower() == "true"
-    SPEAK_RESPONSES: bool = os.getenv("SPEAK_RESPONSES", "false").lower() == "true"
-    STREAM_RESPONSES: bool = os.getenv("STREAM_RESPONSES", "true").lower() == "true"
+    TELEMETRY_ENABLED: bool = get_env_bool("TELEMETRY_ENABLED", False)
+    SENTRY_DSN: Optional[str] = get_env("SENTRY_DSN")
+    AUTO_START: bool = get_env_bool("AUTO_START", False)
+    VOICE_ENABLED: bool = get_env_bool("VOICE_ENABLED", True)
+    VISION_ENABLED: bool = get_env_bool("VISION_ENABLED", True)
+    SPEAK_RESPONSES: bool = get_env_bool("SPEAK_RESPONSES", False)
+    STREAM_RESPONSES: bool = get_env_bool("STREAM_RESPONSES", True)
 
     # ============================================
     # AI Model Settings
     # ============================================
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-    OPENAI_VISION_MODEL: str = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")
-    OPENAI_TRANSCRIBE_MODEL: str = os.getenv("OPENAI_TRANSCRIBE_MODEL", "whisper-1")
-    OPENAI_IMAGE_MODEL: str = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")
-    TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))
-    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "2048"))
-    REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "30"))
+    OPENAI_MODEL: str = get_env("OPENAI_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini"
+    OPENAI_VISION_MODEL: str = get_env("OPENAI_VISION_MODEL", "gpt-4o") or "gpt-4o"
+    OPENAI_TRANSCRIBE_MODEL: str = get_env("OPENAI_TRANSCRIBE_MODEL", "whisper-1") or "whisper-1"
+    OPENAI_IMAGE_MODEL: str = get_env("OPENAI_IMAGE_MODEL", "dall-e-3") or "dall-e-3"
+    TEMPERATURE: float = get_env_float("TEMPERATURE", 0.7)
+    MAX_TOKENS: int = get_env_int("MAX_TOKENS", 2048)
+    REQUEST_TIMEOUT: int = get_env_int("REQUEST_TIMEOUT", 30)
 
     # ============================================
     # Storage Paths
     # ============================================
     BASE_DIR: Path = BASE_DIR  # module-level resolved base dir (frozen/user data or project root fallback)
-    MEMORY_FILE: Path = BASE_DIR / os.getenv("MEMORY_FILE", "memories.json")
-    LOG_DIR: Path = BASE_DIR / os.getenv("LOG_DIR", "logs")
+    MEMORY_FILE: Path = BASE_DIR / (get_env("MEMORY_FILE", "memories.json") or "memories.json")
+    LOG_DIR: Path = BASE_DIR / (get_env("LOG_DIR", "logs") or "logs")
     # Debug log for instrumentation; override with DEBUG_LOG_PATH env (absolute path) for portability.
     DEBUG_LOG_PATH: Path = (
-        Path(os.environ["DEBUG_LOG_PATH"]) if os.environ.get("DEBUG_LOG_PATH") else (BASE_DIR / os.getenv("LOG_DIR", "logs") / "debug.log")
+        _DEBUG_LOG_PATH_OVERRIDE
+        if _DEBUG_LOG_PATH_OVERRIDE
+        else (BASE_DIR / (get_env("LOG_DIR", "logs") or "logs") / "debug.log")
     )
-    SCREENSHOT_DIR: Path = BASE_DIR / os.getenv("SCREENSHOT_DIR", "screenshots")
+    SCREENSHOT_DIR: Path = BASE_DIR / (get_env("SCREENSHOT_DIR", "screenshots") or "screenshots")
     CRASH_REPORTS_DIR: Path = BASE_DIR / "crash_reports"
     TELEMETRY_DIR: Path = BASE_DIR / "telemetry"
 
@@ -221,15 +148,15 @@ class Config:
     # Security Settings
     # ============================================
     # Run shell commands with elevation (UAC on Windows, sudo on Unix) so admin-required tasks work. Prompt per run when True.
-    RUN_ELEVATED: bool = os.getenv("RUN_ELEVATED", "false").lower() == "true"
+    RUN_ELEVATED: bool = get_env_bool("RUN_ELEVATED", False)
     # Prompt "Do you confirm this action?" before sensitive daemon commands (run, mouse, keyboard, etc.). Set false to skip.
-    CONFIRM_SENSITIVE_ACTIONS: bool = os.getenv("CONFIRM_SENSITIVE_ACTIONS", "true").strip().lower() in ("true", "1", "yes")
-    ALLOW_DANGEROUS_COMMANDS: bool = os.getenv("ALLOW_DANGEROUS_COMMANDS", "false").lower() == "true"
+    CONFIRM_SENSITIVE_ACTIONS: bool = (get_env("CONFIRM_SENSITIVE_ACTIONS", "true") or "true").strip().lower() in ("true", "1", "yes")
+    ALLOW_DANGEROUS_COMMANDS: bool = get_env_bool("ALLOW_DANGEROUS_COMMANDS", False)
     COMMAND_WHITELIST: list[str] = [
-        cmd.strip() for cmd in os.getenv("COMMAND_WHITELIST", "").split(",") if cmd.strip()
+        cmd.strip() for cmd in (get_env("COMMAND_WHITELIST", "") or "").split(",") if cmd.strip()
     ]
     COMMAND_BLACKLIST: list[str] = [
-        cmd.strip() for cmd in os.getenv("COMMAND_BLACKLIST", "format,cipher,takeown").split(",") if cmd.strip()
+        cmd.strip() for cmd in (get_env("COMMAND_BLACKLIST", "format,cipher,takeown") or "format,cipher,takeown").split(",") if cmd.strip()
     ]
 
     # Default dangerous commands
@@ -241,9 +168,9 @@ class Config:
     # ============================================
     # UI Settings
     # ============================================
-    COLOR_SCHEME: str = os.getenv("COLOR_SCHEME", "dark")
-    SHOW_WELCOME: bool = os.getenv("SHOW_WELCOME", "true").lower() == "true"
-    SHOW_STATS: bool = os.getenv("SHOW_STATS", "true").lower() == "true"
+    COLOR_SCHEME: str = get_env("COLOR_SCHEME", "dark") or "dark"
+    SHOW_WELCOME: bool = get_env_bool("SHOW_WELCOME", True)
+    SHOW_STATS: bool = get_env_bool("SHOW_STATS", True)
 
     # ============================================
     # Version & Update checker
@@ -251,45 +178,45 @@ class Config:
     VERSION: str = "1.1.2"
     APP_NAME: str = "ARCANOS"
     # GitHub "owner/repo" for releases. If set, the app checks for updates on startup.
-    GITHUB_RELEASES_REPO: Optional[str] = os.getenv("GITHUB_RELEASES_REPO") or None
+    GITHUB_RELEASES_REPO: Optional[str] = get_env("GITHUB_RELEASES_REPO") or None
 
     # ============================================
     # Developer/Debug Settings
     # ============================================
-    IDE_AGENT_DEBUG: bool = os.getenv("IDE_AGENT_DEBUG","").lower() in ("1","true","yes")
-    DAEMON_DEBUG_PORT: int = int(os.getenv("DAEMON_DEBUG_PORT", "0"))
+    IDE_AGENT_DEBUG: bool = (get_env("IDE_AGENT_DEBUG", "") or "").lower() in ("1", "true", "yes")
+    DAEMON_DEBUG_PORT: int = get_env_int("DAEMON_DEBUG_PORT", 0)
     # New debug server config (prefer these over legacy envs when set)
-    DEBUG_SERVER_ENABLED: bool = os.getenv("DEBUG_SERVER_ENABLED", "").lower() in ("1", "true", "yes")
-    DEBUG_SERVER_PORT: int = int(os.getenv("DEBUG_SERVER_PORT", "9999"))
-    DEBUG_SERVER_LOG_LEVEL: str = os.getenv("DEBUG_SERVER_LOG_LEVEL", "INFO")
-    DEBUG_SERVER_RATE_LIMIT: int = int(os.getenv("DEBUG_SERVER_RATE_LIMIT", "60"))
-    DEBUG_SERVER_METRICS_ENABLED: bool = os.getenv("DEBUG_SERVER_METRICS_ENABLED", "true").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_ENABLED: bool = (get_env("DEBUG_SERVER_ENABLED", "") or "").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_PORT: int = get_env_int("DEBUG_SERVER_PORT", 9999)
+    DEBUG_SERVER_LOG_LEVEL: str = get_env("DEBUG_SERVER_LOG_LEVEL", "INFO") or "INFO"
+    DEBUG_SERVER_RATE_LIMIT: int = get_env_int("DEBUG_SERVER_RATE_LIMIT", 60)
+    DEBUG_SERVER_METRICS_ENABLED: bool = get_env_bool("DEBUG_SERVER_METRICS_ENABLED", True)
     # WARNING: Enabling CORS on unauthenticated debug server is a security risk.
     # Only enable if you have implemented authentication or are in a secure development environment.
-    DEBUG_SERVER_CORS_ENABLED: bool = os.getenv("DEBUG_SERVER_CORS_ENABLED", "false").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_CORS_ENABLED: bool = get_env_bool("DEBUG_SERVER_CORS_ENABLED", False)
     # Security: Disable token-in-query by default (headers-only auth). Set to true to allow ?token= for development.
-    DEBUG_SERVER_ALLOW_QUERY_TOKEN: bool = os.getenv("DEBUG_SERVER_ALLOW_QUERY_TOKEN", "false").lower() in ("1", "true", "yes")
-    DEBUG_SERVER_LOG_RETENTION_DAYS: int = int(os.getenv("DEBUG_SERVER_LOG_RETENTION_DAYS", "7"))
+    DEBUG_SERVER_ALLOW_QUERY_TOKEN: bool = get_env_bool("DEBUG_SERVER_ALLOW_QUERY_TOKEN", False)
+    DEBUG_SERVER_LOG_RETENTION_DAYS: int = get_env_int("DEBUG_SERVER_LOG_RETENTION_DAYS", 7)
     # Security: Authentication token for debug server (required for non-read-only endpoints)
     # Generate a secure random token: python -c "import secrets; print(secrets.token_urlsafe(32))"
-    DEBUG_SERVER_TOKEN: Optional[str] = os.getenv("DEBUG_SERVER_TOKEN") or None
+    DEBUG_SERVER_TOKEN: Optional[str] = get_env("DEBUG_SERVER_TOKEN") or None
     # Security: Allow unauthenticated access to debug server (default: false, only for development)
-    DEBUG_SERVER_ALLOW_UNAUTHENTICATED: bool = os.getenv("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", "false").lower() in ("1", "true", "yes")
+    DEBUG_SERVER_ALLOW_UNAUTHENTICATED: bool = get_env_bool("DEBUG_SERVER_ALLOW_UNAUTHENTICATED", False)
     
     # ============================================
     # Daemon Settings
     # ============================================
     # Heartbeat interval for daemon (seconds)
-    DAEMON_HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_HEARTBEAT_INTERVAL_SECONDS", "60"))
+    DAEMON_HEARTBEAT_INTERVAL_SECONDS: int = get_env_int("DAEMON_HEARTBEAT_INTERVAL_SECONDS", 60)
     # Command poll interval for daemon (seconds)
-    DAEMON_COMMAND_POLL_INTERVAL_SECONDS: int = int(os.getenv("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", "30"))
+    DAEMON_COMMAND_POLL_INTERVAL_SECONDS: int = get_env_int("DAEMON_COMMAND_POLL_INTERVAL_SECONDS", 30)
     # Shell override for terminal commands
-    ARCANOS_SHELL: Optional[str] = os.getenv("ARCANOS_SHELL") or None
+    ARCANOS_SHELL: Optional[str] = get_env("ARCANOS_SHELL") or None
     
     # ============================================
     # OpenAI Base URL (for custom endpoints)
     # ============================================
-    OPENAI_BASE_URL: Optional[str] = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE_URL") or os.getenv("OPENAI_API_BASE") or None
+    OPENAI_BASE_URL: Optional[str] = get_env("OPENAI_BASE_URL") or get_env("OPENAI_API_BASE_URL") or get_env("OPENAI_API_BASE") or None
 
     @classmethod
     def validate(cls) -> tuple[bool, list[str]]:

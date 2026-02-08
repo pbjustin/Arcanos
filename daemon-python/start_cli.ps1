@@ -7,7 +7,14 @@ $cliModule = "arcanos.cli"
 
 if (Test-Path $pythonPath) {
     Write-Host "Starting ARCANOS CLI Agent..." -ForegroundColor Cyan
-    Write-Host "Backend: REDACTED_BACKEND_URL" -ForegroundColor Green
+    $backendUrl = $env:ARCANOS_BACKEND_URL
+    if (-not $backendUrl) { $backendUrl = $env:BACKEND_URL }
+    if (-not $backendUrl) { $backendUrl = $env:SERVER_URL }
+    if ($backendUrl) {
+        Write-Host "Backend routing configured: $backendUrl" -ForegroundColor Green
+    } else {
+        Write-Host "Backend routing: local/default (set BACKEND_URL to enable remote routing)" -ForegroundColor DarkGray
+    }
     Write-Host ""
     
     # Start in new window

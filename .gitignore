@@ -71,6 +71,7 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+tmpclaude-*
 
 # NPM log directory
 npm_logs/
@@ -159,6 +160,12 @@ daemon-python/telemetry/
 daemon-python/backups/
 daemon-python/screenshots/
 *.db
+# CLI/runtime dump artifacts (never commit)
+cli.err
+debug_log.txt
+daemon-python/cli.err
+daemon-python/debug_log.txt
+daemon-python/logs/debug_mode/
 # Sensitive runtime artifacts
 daemon-python/.env
 **/*.local
