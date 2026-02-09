@@ -70,7 +70,7 @@ router.get('/agents/:agentId', async (req: Request, res: Response) => {
     }
     res.json(agent);
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] Get failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('Get failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to get agent' });
   }
 });
