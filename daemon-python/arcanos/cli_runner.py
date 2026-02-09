@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Callable
 
 from .cli_config import CAMERA_INTENT_PATTERN, RUN_COMMAND_PATTERNS, SCREEN_INTENT_PATTERN
 from .cli_intents import detect_run_see_intent
+from .completer import install_completion
 from .config import Config
 from .env import get_env
 from .error_handler import ErrorHandler
@@ -256,6 +257,7 @@ def run_interactive_mode(cli: "ArcanosCLI") -> None:
     Inputs/Outputs: CLI instance; reads input from stdin and processes it.
     Edge cases: Exits cleanly on KeyboardInterrupt or "exit"/"quit"/"bye".
     """
+    install_completion()
     cli.show_welcome()
     try:
         while True:
