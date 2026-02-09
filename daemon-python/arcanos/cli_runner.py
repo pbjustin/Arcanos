@@ -176,6 +176,7 @@ def _build_command_handlers(cli: "ArcanosCLI", args: str) -> dict[str, Callable[
         "ptt": cli.handle_ptt,
         "run": lambda: cli.handle_run(args),
         "speak": cli.handle_speak,
+        "status": cli.handle_status,
         "stats": cli.handle_stats,
         "clear": cli.handle_clear,
         "reset": cli.handle_reset,
