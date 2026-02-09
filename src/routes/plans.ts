@@ -164,7 +164,7 @@ router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Expire failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Expire failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to expire plan' });
   }
 });
