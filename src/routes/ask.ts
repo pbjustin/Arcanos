@@ -186,9 +186,9 @@ function parseJsonContent(rawContent: string): unknown {
   return JSON.parse(jsonText);
 }
 
-function buildSystemStateResponse(): SystemStateResponse {
+function buildSystemStateResponse(sessionId?: string): SystemStateResponse {
   const now = nowIso();
-  const activeIntent = getActiveIntentSnapshot();
+  const activeIntent = getActiveIntentSnapshot(sessionId);
   const lastTouchedAt = activeIntent?.lastTouchedAt ?? null;
   const isIntentFresh =
     !!lastTouchedAt && Date.now() - Date.parse(lastTouchedAt) <= 15 * 60 * 1000;
@@ -206,7 +206,7 @@ function buildSystemStateResponse(): SystemStateResponse {
     },
     routing: {
       preferred: 'backend',
-      lastUsed: getLastRoutingUsed(),
+      lastUsed: getLastRoutingUsed(sessionId),
       confidenceGate: 0.75
     },
     backend: {
@@ -303,13 +303,18 @@ export const handleAIRequest = async (
   const mode = getMode(req.body);
 
   function hasAuthHeader(): boolean {
-    const hdr = req.get('authorization') || req.get('x-api-key');
-    return typeof hdr === 'string' && hdr.trim().length > 0;
+    const auth = req.get('authorization') || req.get('x-api-key');
+    if (typeof auth !== 'string') return false;
+    const trimmed = auth.trim();
+    // Accept either `Bearer <token>` or a reasonably long API key
+    if (/^Bearer\s+\S+/i.test(trimmed)) return true;
+    if (/^[A-Za-z0-9\-_.~+/]+=*$/.test(trimmed) && trimmed.length >= 16) return true;
+    return false;
   }
 
   function canBypassSystemAuth(): boolean {
-    //audit Assumption: tests should exercise system modes without secrets; risk: accidental auth bypass; invariant: bypass only in test env; handling: gate on NODE_ENV.
-    return process.env.NODE_ENV === 'test';
+    //audit Assumption: tests should exercise system modes without secrets; risk: accidental auth bypass; invariant: bypass only when explicitly allowed in test env; handling: require explicit env allow flag.
+    return process.env.NODE_ENV === 'test' && process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS === '1';
   }
 
   if (mode === 'system_state') {
@@ -331,18 +336,20 @@ export const handleAIRequest = async (
     if (stateRequest.data.expectedVersion !== undefined && stateRequest.data.patch) {
       const updateResult = updateIntentWithOptimisticLock(
         stateRequest.data.expectedVersion,
-        stateRequest.data.patch
+        stateRequest.data.patch,
+        typeof req.body.sessionId === 'string' ? req.body.sessionId : undefined
       );
       //audit Assumption: optimistic lock mismatch must return conflict; failure risk: stale write accepted; expected invariant: 409 on version mismatch; handling strategy: return conflict payload.
       if (!updateResult.ok) {
-        return res.status(409).json(updateResult.conflict);
+        const conflict = (updateResult as { ok: false; conflict: IntentConflict }).conflict;
+        return res.status(409).json(conflict);
       }
     }
 
     //audit Assumption: SYSTEM_STATE_PROMPT exists as governance artifact only; failure risk: accidental model usage; expected invariant: mode serves backend facts directly; handling strategy: never call model here.
     void SYSTEM_STATE_PROMPT;
 
-    const stateResponse = buildSystemStateResponse();
+    const stateResponse = buildSystemStateResponse(typeof req.body.sessionId === 'string' ? req.body.sessionId : undefined);
     const strictState = systemStateSchema.safeParse(stateResponse);
     //audit Assumption: system_state responses must be schema-valid before send; failure risk: CLI drift on malformed payload; expected invariant: strict response contract; handling strategy: hard fail invalid payloads.
     if (!strictState.success) {
@@ -370,12 +377,13 @@ export const handleAIRequest = async (
     let reviewInput = validation.input;
 
     // Sanitize user input to reduce prompt-injection surface
-    function sanitizeForPrompt(input: string): string {
+    const sanitizeForPrompt = (input: string): string => {
       // remove non-printable/control characters and limit length
       const cleaned = input.replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 20000);
-      // escape triple backticks
-      return cleaned.replace(/```/g, "\u200B```");
-    }
+      // escape triple backticks (avoid literal backticks in source)
+      const triples = String.fromCharCode(96, 96, 96);
+      return cleaned.replace(new RegExp(triples.replace(/([\\^$.*+?()[\]{}|])/g, '\\$1'), 'g'), "\u200B" + triples);
+    };
 
     try {
       const modelResponse = await client.chat.completions.create({
@@ -389,9 +397,9 @@ export const handleAIRequest = async (
               '',
               'Input:',
               '',
-              '```',
+              String.fromCharCode(96,96,96),
               sanitizeForPrompt(reviewInput),
-              '```',
+              String.fromCharCode(96,96,96),
               ''
             ].join('\n')
           }
@@ -447,8 +455,8 @@ export const handleAIRequest = async (
   const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
 
   //audit Assumption: intent tracking should happen for valid chat requests even when mock responses are used; risk: stale system_state intent; invariant: intent recorded for leniently validated chat inputs; handling: record before API key checks.
-  recordChatIntent(normalizedPrompt);
-  setLastRoutingUsed('backend');
+  recordChatIntent(normalizedPrompt, sessionId);
+  setLastRoutingUsed('backend', sessionId);
 
   // Use shared validation logic
   const validation = validateAIRequest(req, res, endpointName);
