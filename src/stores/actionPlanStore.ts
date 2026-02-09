@@ -28,7 +28,19 @@ function getPrisma(): PrismaClient {
 }
 
 // --- In-memory cache ---
+
+/** Maximum number of plans to hold in memory. Prevents unbounded growth in long-running Railway deployments. */
+const MAX_CACHE_SIZE = 200;
+
 const planCache = new Map<string, ActionPlanRecord>();
+
+/** Evict oldest entries when cache exceeds MAX_CACHE_SIZE. Map iterates in insertion order. */
+function evictIfNeeded(): void {
+  while (planCache.size > MAX_CACHE_SIZE) {
+    const oldest = planCache.keys().next().value;
+    if (oldest) planCache.delete(oldest);
+  }
+}
 
 // --- Helpers ---
 
@@ -100,6 +112,7 @@ export async function createPlan(input: ActionPlanInput): Promise<ActionPlanReco
 
   const record = plan as unknown as ActionPlanRecord;
   planCache.set(record.id, record);
+  evictIfNeeded();
 
   aiLogger.info('ActionPlan created', {
     module: 'actionPlanStore',
@@ -127,6 +140,7 @@ export async function getPlan(planId: string): Promise<ActionPlanRecord | null> 
 
   const record = plan as unknown as ActionPlanRecord;
   planCache.set(planId, record);
+  evictIfNeeded();
   return record;
 }
 
@@ -298,7 +312,7 @@ export async function warmCache(): Promise<void> {
         status: { in: ['planned', 'awaiting_confirmation', 'approved', 'in_progress'] },
       },
       include: { actions: true, clearScore: true },
-      take: 200,
+      take: MAX_CACHE_SIZE,
     });
 
     for (const plan of activePlans) {
