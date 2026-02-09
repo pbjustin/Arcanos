@@ -526,7 +526,6 @@ class ArcanosCLI:
             self.session.intent_confidence = max(0.0, min(1.0, float(confidence)))
 
         phase = intent_payload.get("phase")
-        phase = intent_payload.get("phase")
         phase_map = {
             "exploration": "active",
             "execution": "refining",
