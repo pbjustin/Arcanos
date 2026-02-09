@@ -40,7 +40,7 @@ router.post('/agents/register', async (req: Request, res: Response) => {
     const agent = await registerAgent(parsed.data);
     res.status(201).json(agent);
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] Register failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('Register failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to register agent' });
   }
 });
