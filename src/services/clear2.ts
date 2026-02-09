@@ -118,6 +118,40 @@ export function evaluateClear2Decision(
   return 'block';
 }
 
+// --- Heuristic Scoring Constants ---
+
+/** Clarity: baseline and bonuses for explicit intent, bounded actions, known origin */
+const CLARITY_BASELINE = 0.5;
+const CLARITY_ORIGIN_BONUS = 0.15;
+const CLARITY_BOUND_ACTIONS_BONUS = 0.2;
+const CLARITY_PARAMS_BONUS = 0.15;
+
+/** Leverage: action count thresholds and adjustments */
+const LEVERAGE_FOCUSED_BONUS = 0.2;     // Bonus for 1–5 actions (focused plan)
+const LEVERAGE_BLOATED_PENALTY = 0.2;   // Penalty for >10 actions (bloated plan)
+const LEVERAGE_MAX_FOCUSED_ACTIONS = 5;
+const LEVERAGE_BLOATED_THRESHOLD = 10;
+
+/** Efficiency: baseline, single-action bonus, excess-action penalty */
+const EFFICIENCY_BASELINE = 0.6;
+const EFFICIENCY_SINGLE_ACTION_BONUS = 0.2;
+const EFFICIENCY_EXCESS_PENALTY_PER_ACTION = 0.1;
+const EFFICIENCY_EXCESS_THRESHOLD = 5;
+const EFFICIENCY_MAX_PENALTY_ACTIONS = 4;
+const EFFICIENCY_CAPABILITIES_BONUS = 0.1;
+
+/** Alignment: baseline, registered-agents bonus, confidence weight */
+const ALIGNMENT_BASELINE = 0.5;
+const ALIGNMENT_REGISTERED_BONUS = 0.2;
+const ALIGNMENT_CONFIDENCE_WEIGHT = 0.3;
+
+/** Resilience: baseline, rollback bonus, timeout bonus, compact plan bonus */
+const RESILIENCE_BASELINE = 0.4;
+const RESILIENCE_ROLLBACK_BONUS = 0.3;
+const RESILIENCE_TIMEOUT_BONUS = 0.15;
+const RESILIENCE_COMPACT_BONUS = 0.15;
+const RESILIENCE_COMPACT_THRESHOLD = 3;
+
 // --- Heuristic Scoring ---
 
 /**
@@ -129,32 +163,32 @@ export function computeClear2PrincipleScores(input: Clear2EvaluationInput): Clea
   const { actions, origin, confidence, hasRollbacks, capabilitiesKnown, agentsRegistered } = input;
 
   // Clarity: explicit intent, bounded actions, known origin
-  let clarity = 0.5;
-  if (origin && origin.length > 0) clarity += 0.15;
-  if (actions.length > 0 && actions.every(a => a.capability && a.agent_id)) clarity += 0.2;
-  if (actions.every(a => a.params && Object.keys(a.params).length > 0)) clarity += 0.15;
+  let clarity = CLARITY_BASELINE;
+  if (origin && origin.length > 0) clarity += CLARITY_ORIGIN_BONUS;
+  if (actions.length > 0 && actions.every(a => a.capability && a.agent_id)) clarity += CLARITY_BOUND_ACTIONS_BONUS;
+  if (actions.every(a => a.params && Object.keys(a.params).length > 0)) clarity += CLARITY_PARAMS_BONUS;
 
   // Leverage: does this advance the goal meaningfully
   let leverage = confidence;
-  if (actions.length >= 1 && actions.length <= 5) leverage = Math.min(1, leverage + 0.2);
-  if (actions.length > 10) leverage = Math.max(0, leverage - 0.2);
+  if (actions.length >= 1 && actions.length <= LEVERAGE_MAX_FOCUSED_ACTIONS) leverage = Math.min(1, leverage + LEVERAGE_FOCUSED_BONUS);
+  if (actions.length > LEVERAGE_BLOATED_THRESHOLD) leverage = Math.max(0, leverage - LEVERAGE_BLOATED_PENALTY);
 
   // Efficiency: lowest-cost path
-  let efficiency = 0.6;
-  if (actions.length === 1) efficiency += 0.2;
-  if (actions.length > 5) efficiency -= 0.1 * Math.min(actions.length - 5, 4);
-  if (capabilitiesKnown) efficiency += 0.1;
+  let efficiency = EFFICIENCY_BASELINE;
+  if (actions.length === 1) efficiency += EFFICIENCY_SINGLE_ACTION_BONUS;
+  if (actions.length > EFFICIENCY_EXCESS_THRESHOLD) efficiency -= EFFICIENCY_EXCESS_PENALTY_PER_ACTION * Math.min(actions.length - EFFICIENCY_EXCESS_THRESHOLD, EFFICIENCY_MAX_PENALTY_ACTIONS);
+  if (capabilitiesKnown) efficiency += EFFICIENCY_CAPABILITIES_BONUS;
 
   // Alignment: matches user intent, policy, system role
-  let alignment = 0.5;
-  if (agentsRegistered) alignment += 0.2;
-  alignment += confidence * 0.3;
+  let alignment = ALIGNMENT_BASELINE;
+  if (agentsRegistered) alignment += ALIGNMENT_REGISTERED_BONUS;
+  alignment += confidence * ALIGNMENT_CONFIDENCE_WEIGHT;
 
   // Resilience: recovery capability
-  let resilience = 0.4;
-  if (hasRollbacks) resilience += 0.3;
-  if (actions.every(a => a.timeout_ms && a.timeout_ms > 0)) resilience += 0.15;
-  if (actions.length <= 3) resilience += 0.15;
+  let resilience = RESILIENCE_BASELINE;
+  if (hasRollbacks) resilience += RESILIENCE_ROLLBACK_BONUS;
+  if (actions.every(a => a.timeout_ms && a.timeout_ms > 0)) resilience += RESILIENCE_TIMEOUT_BONUS;
+  if (actions.length <= RESILIENCE_COMPACT_THRESHOLD) resilience += RESILIENCE_COMPACT_BONUS;
 
   // Clamp all to [0, 1]
   const clamp = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 100) / 100;
