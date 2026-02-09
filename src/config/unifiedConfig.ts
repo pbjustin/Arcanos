@@ -60,6 +60,9 @@ export interface AppConfig {
   // Feature Flags
   enableGithubActions: boolean;
   enableGptUserHandler: boolean;
+  enableActionPlans: boolean;
+  enableClear2: boolean;
+  migrationDryRun: boolean;
 
   // Railway Configuration
   railwayEnvironment: string | undefined;
@@ -199,6 +202,9 @@ export function getConfig(): AppConfig {
     // Feature Flags
     enableGithubActions: getEnvBoolean('ENABLE_GITHUB_ACTIONS', false),
     enableGptUserHandler: getEnvBoolean('ENABLE_GPT_USER_HANDLER', true),
+    enableActionPlans: getEnvBoolean('ENABLE_ACTION_PLANS', false),
+    enableClear2: getEnvBoolean('ENABLE_CLEAR_2', false),
+    migrationDryRun: getEnvBoolean('MIGRATION_DRY_RUN', false),
 
     // Railway Configuration
     railwayEnvironment: getEnv('RAILWAY_ENVIRONMENT'),
