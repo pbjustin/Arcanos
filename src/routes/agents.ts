@@ -87,7 +87,7 @@ router.post('/agents/:agentId/heartbeat', async (req: Request, res: Response) =>
     }
     res.json({ status: 'ok', agent });
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] Heartbeat failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('Heartbeat failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to update heartbeat' });
   }
 });
