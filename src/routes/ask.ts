@@ -186,9 +186,9 @@ function parseJsonContent(rawContent: string): unknown {
   return JSON.parse(jsonText);
 }
 
-function buildSystemStateResponse(): SystemStateResponse {
+function buildSystemStateResponse(sessionId?: string): SystemStateResponse {
   const now = nowIso();
-  const activeIntent = getActiveIntentSnapshot();
+  const activeIntent = getActiveIntentSnapshot(sessionId);
   const lastTouchedAt = activeIntent?.lastTouchedAt ?? null;
   const isIntentFresh =
     !!lastTouchedAt && Date.now() - Date.parse(lastTouchedAt) <= 15 * 60 * 1000;
@@ -206,7 +206,7 @@ function buildSystemStateResponse(): SystemStateResponse {
     },
     routing: {
       preferred: 'backend',
-      lastUsed: getLastRoutingUsed(),
+      lastUsed: getLastRoutingUsed(sessionId),
       confidenceGate: 0.75
     },
     backend: {
@@ -302,6 +302,21 @@ export const handleAIRequest = async (
 ) => {
   const mode = getMode(req.body);
 
+  function hasAuthHeader(): boolean {
+    const auth = req.get('authorization') || req.get('x-api-key');
+    if (typeof auth !== 'string') return false;
+    const trimmed = auth.trim();
+    // Accept either `Bearer <token>` or a reasonably long API key
+    if (/^Bearer\s+\S+/i.test(trimmed)) return true;
+    if (/^[A-Za-z0-9\-_.~+/]+=*$/.test(trimmed) && trimmed.length >= 16) return true;
+    return false;
+  }
+
+  function canBypassSystemAuth(): boolean {
+    //audit Assumption: tests should exercise system modes without secrets; risk: accidental auth bypass; invariant: bypass only when explicitly allowed in test env; handling: require explicit env allow flag.
+    return process.env.NODE_ENV === 'test' && process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS === '1';
+  }
+
   if (mode === 'system_state') {
     const stateRequest = systemStateUpdateSchema.safeParse(req.body);
     //audit Assumption: system mode requests are strictly validated; failure risk: ambiguous mode behavior; expected invariant: strict contract before execution; handling strategy: hard fail on validation errors.
@@ -312,21 +327,29 @@ export const handleAIRequest = async (
       });
     }
 
+    // Require an authorization header for state mutation/read operations
+    //audit Assumption: system_state should be protected outside tests; risk: unauthorized access; invariant: auth required unless test env; handling: explicit bypass check.
+    if (!hasAuthHeader() && !canBypassSystemAuth()) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', details: ['Authorization required for system_state operations'] });
+    }
+
     if (stateRequest.data.expectedVersion !== undefined && stateRequest.data.patch) {
       const updateResult = updateIntentWithOptimisticLock(
         stateRequest.data.expectedVersion,
-        stateRequest.data.patch
+        stateRequest.data.patch,
+        typeof req.body.sessionId === 'string' ? req.body.sessionId : undefined
       );
       //audit Assumption: optimistic lock mismatch must return conflict; failure risk: stale write accepted; expected invariant: 409 on version mismatch; handling strategy: return conflict payload.
       if (!updateResult.ok) {
-        return res.status(409).json(updateResult.conflict);
+        const conflict = (updateResult as { ok: false; conflict: IntentConflict }).conflict;
+        return res.status(409).json(conflict);
       }
     }
 
     //audit Assumption: SYSTEM_STATE_PROMPT exists as governance artifact only; failure risk: accidental model usage; expected invariant: mode serves backend facts directly; handling strategy: never call model here.
     void SYSTEM_STATE_PROMPT;
 
-    const stateResponse = buildSystemStateResponse();
+    const stateResponse = buildSystemStateResponse(typeof req.body.sessionId === 'string' ? req.body.sessionId : undefined);
     const strictState = systemStateSchema.safeParse(stateResponse);
     //audit Assumption: system_state responses must be schema-valid before send; failure risk: CLI drift on malformed payload; expected invariant: strict response contract; handling strategy: hard fail invalid payloads.
     if (!strictState.success) {
@@ -340,30 +363,27 @@ export const handleAIRequest = async (
   }
 
   if (mode === 'system_review') {
-    const reviewInput = extractTextInput(req.body);
-    //audit Assumption: review mode requires explicit input text; failure risk: speculative review; expected invariant: deterministic review subject; handling strategy: reject empty review requests.
-    if (!reviewInput) {
-      return res.status(400).json({
-        error: 'SYSTEM_REVIEW_REQUEST_INVALID',
-        details: ['system_review requires text input via prompt/message/userInput/content/text/query']
-      });
+    // Require caller authentication before initiating expensive model calls
+    //audit Assumption: system_review should be protected outside tests; risk: unauthorized access; invariant: auth required unless test env; handling: explicit bypass check.
+    if (!hasAuthHeader() && !canBypassSystemAuth()) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', details: ['Authorization required for system_review mode'] });
     }
 
-    if (!hasValidAPIKey()) {
-      //audit Assumption: system_review cannot fall back to chat/mock; failure risk: non-deterministic fallback behavior; expected invariant: hard failure without model access; handling strategy: return explicit service error.
-      return res.status(503).json({
-        error: 'SYSTEM_REVIEW_MODEL_UNAVAILABLE',
-        details: ['OpenAI API key is not configured for strict system_review mode']
-      });
-    }
+    // Normalize and validate via shared AI request path to get a client and input
+    const validation = validateAIRequest(req as Request, res as Response, endpointName);
+    if (!validation) return; // validateAIRequest has already sent a response
 
-    const { client } = getOpenAIClientOrAdapter();
-    if (!client) {
-      return res.status(503).json({
-        error: 'SYSTEM_REVIEW_MODEL_UNAVAILABLE',
-        details: ['OpenAI client initialization failed for strict system_review mode']
-      });
-    }
+    const { client } = validation;
+    let reviewInput = validation.input;
+
+    // Sanitize user input to reduce prompt-injection surface
+    const sanitizeForPrompt = (input: string): string => {
+      // remove non-printable/control characters and limit length
+      const cleaned = input.replace(/[\x00-\x1F\x7F]/g, ' ').trim().slice(0, 20000);
+      // escape triple backticks (avoid literal backticks in source)
+      const triples = String.fromCharCode(96, 96, 96);
+      return cleaned.replace(new RegExp(triples.replace(/([\\^$.*+?()[\]{}|])/g, '\\$1'), 'g'), "\u200B" + triples);
+    };
 
     try {
       const modelResponse = await client.chat.completions.create({
@@ -372,7 +392,16 @@ export const handleAIRequest = async (
           { role: 'system', content: SYSTEM_REVIEW_PROMPT },
           {
             role: 'user',
-            content: `Subject: intent_system\n\nInput:\n${reviewInput}`
+            content: [
+              'Subject: intent_system',
+              '',
+              'Input:',
+              '',
+              String.fromCharCode(96,96,96),
+              sanitizeForPrompt(reviewInput),
+              String.fromCharCode(96,96,96),
+              ''
+            ].join('\n')
           }
         ],
         temperature: 0,
@@ -425,9 +454,9 @@ export const handleAIRequest = async (
   const { sessionId, overrideAuditSafe, metadata } = req.body;
   const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
 
-  //audit Assumption: backend-owned intent should persist independently of model availability; failure risk: missing state when model is unavailable; expected invariant: chat requests update intent record before model call; handling strategy: record prompt immediately after lenient validation.
-  recordChatIntent(normalizedPrompt);
-  setLastRoutingUsed('backend');
+  //audit Assumption: intent tracking should happen for valid chat requests even when mock responses are used; risk: stale system_state intent; invariant: intent recorded for leniently validated chat inputs; handling: record before API key checks.
+  recordChatIntent(normalizedPrompt, sessionId);
+  setLastRoutingUsed('backend', sessionId);
 
   // Use shared validation logic
   const validation = validateAIRequest(req, res, endpointName);

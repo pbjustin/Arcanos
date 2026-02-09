@@ -31,8 +31,16 @@ export interface IntentConflict {
   currentVersion: number;
 }
 
-let activeIntent: StoredIntent | null = null;
-let lastRoutingUsed: 'local' | 'backend' = 'backend';
+// Use a session-scoped in-memory store to avoid global singletons in multi-user deployments.
+const intentStore: Map<string, { intent: StoredIntent | null; lastRouting: 'local' | 'backend' }> = new Map();
+
+function getStoreForSession(sessionId?: string) {
+  const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__';
+  if (!intentStore.has(key)) {
+    intentStore.set(key, { intent: null, lastRouting: 'backend' });
+  }
+  return intentStore.get(key)!;
+}
 
 const DEFAULT_INTENT_CONFIDENCE = 0.5;
 
@@ -45,11 +53,30 @@ function clampConfidence(value: number): number {
 }
 
 function normalizeLabelFromPrompt(prompt: string): string {
-  const compact = prompt.trim().replace(/\s+/g, ' ');
+  //audit Assumption: label must be safe for inclusion in system prompts; failure risk: prompt injection via stored label; expected invariant: label contains only safe printable chars and is reasonably short; handling strategy: produce slug + short hash.
+  const compact = String(prompt || '').trim().replace(/\s+/g, ' ');
   if (!compact) {
     return 'intent_system';
   }
-  return compact.slice(0, 160);
+  // Create a short, safe slug from the start of the prompt and append an 8-char hash.
+  const slug = compact
+    .slice(0, 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+  // compute short hash
+  try {
+    // lazy import to stay compatible with various bundlers
+    // @ts-ignore
+    const { createHash } = require('crypto');
+    const hash = createHash('sha256').update(compact).digest('hex').slice(0, 8);
+    const label = `${slug || 'intent'}-${hash}`.slice(0, 160);
+    return label;
+  } catch (e) {
+    // Fallback: safe truncated slug
+    return (slug || 'intent_system').slice(0, 160);
+  }
 }
 
 function createIntentFromPrompt(prompt: string): StoredIntent {
@@ -70,9 +97,10 @@ function createIntentFromPrompt(prompt: string): StoredIntent {
  * Inputs/Outputs: no input; returns StoredIntent clone or null.
  * Edge cases: returns null when no chat activity has established intent yet.
  */
-export function getActiveIntentSnapshot(): StoredIntent | null {
+export function getActiveIntentSnapshot(sessionId?: string): StoredIntent | null {
   //audit Assumption: store must stay immutable to callers; failure risk: external mutation; expected invariant: internal state only changes through helpers; handling strategy: return clone.
-  return activeIntent ? { ...activeIntent } : null;
+  const s = getStoreForSession(sessionId);
+  return s.intent ? { ...s.intent } : null;
 }
 
 /**
@@ -80,22 +108,23 @@ export function getActiveIntentSnapshot(): StoredIntent | null {
  * Inputs/Outputs: chat prompt string; returns updated StoredIntent clone.
  * Edge cases: empty prompts still refresh timestamps using a stable fallback label.
  */
-export function recordChatIntent(prompt: string): StoredIntent {
-  //audit Assumption: first chat turn establishes intent; failure risk: null state; expected invariant: active intent always exists after chat record; handling strategy: lazy initialize.
-  if (!activeIntent) {
-    activeIntent = createIntentFromPrompt(prompt);
-    return { ...activeIntent };
+export function recordChatIntent(prompt: string, sessionId?: string): StoredIntent {
+  //audit Assumption: first chat turn establishes intent; failure risk: null state; expected invariant: active intent always exists after chat record; handling strategy: lazy initialize per-session.
+  const s = getStoreForSession(sessionId);
+  if (!s.intent) {
+    s.intent = createIntentFromPrompt(prompt);
+    return { ...s.intent };
   }
 
   const nextLabel = normalizeLabelFromPrompt(prompt);
-  activeIntent = {
-    ...activeIntent,
+  s.intent = {
+    ...s.intent,
     label: nextLabel,
     status: 'active',
     lastTouchedAt: nowIso(),
-    version: activeIntent.version + 1
+    version: s.intent.version + 1
   };
-  return { ...activeIntent };
+  return { ...s.intent };
 }
 
 /**
@@ -105,10 +134,12 @@ export function recordChatIntent(prompt: string): StoredIntent {
  */
 export function updateIntentWithOptimisticLock(
   expectedVersion: number,
-  patch: IntentPatch
+  patch: IntentPatch,
+  sessionId?: string
 ): { ok: true; intent: StoredIntent } | { ok: false; conflict: IntentConflict } {
   //audit Assumption: updates require an existing record; failure risk: patching null state; expected invariant: conflict returned when missing; handling strategy: reject with currentVersion=0.
-  if (!activeIntent) {
+  const s = getStoreForSession(sessionId);
+  if (!s.intent) {
     return {
       ok: false,
       conflict: { error: 'INTENT_VERSION_CONFLICT', currentVersion: 0 }
@@ -116,12 +147,12 @@ export function updateIntentWithOptimisticLock(
   }
 
   //audit Assumption: optimistic lock prevents stale writes; failure risk: lost update; expected invariant: version must match; handling strategy: reject with currentVersion.
-  if (expectedVersion !== activeIntent.version) {
+  if (expectedVersion !== s.intent.version) {
     return {
       ok: false,
       conflict: {
         error: 'INTENT_VERSION_CONFLICT',
-        currentVersion: activeIntent.version
+        currentVersion: s.intent.version
       }
     };
   }
@@ -129,19 +160,19 @@ export function updateIntentWithOptimisticLock(
   const nextConfidence =
     typeof patch.confidence === 'number'
       ? clampConfidence(patch.confidence)
-      : activeIntent.confidence;
+      : s.intent.confidence;
 
   const nextIntent: StoredIntent = {
-    ...activeIntent,
-    label: patch.label ?? activeIntent.label,
-    status: patch.status ?? activeIntent.status,
-    phase: patch.phase ?? activeIntent.phase,
+    ...s.intent,
+    label: patch.label ?? s.intent.label,
+    status: patch.status ?? s.intent.status,
+    phase: patch.phase ?? s.intent.phase,
     confidence: nextConfidence,
     lastTouchedAt: nowIso(),
-    version: activeIntent.version + 1
+    version: s.intent.version + 1
   };
 
-  activeIntent = nextIntent;
+  s.intent = nextIntent;
   return { ok: true, intent: { ...nextIntent } };
 }
 
@@ -150,8 +181,9 @@ export function updateIntentWithOptimisticLock(
  * Inputs/Outputs: routing source label; no return value.
  * Edge cases: invalid inputs are narrowed by TypeScript union at compile time.
  */
-export function setLastRoutingUsed(route: 'local' | 'backend'): void {
-  lastRoutingUsed = route;
+export function setLastRoutingUsed(route: 'local' | 'backend', sessionId?: string): void {
+  const s = getStoreForSession(sessionId);
+  s.lastRouting = route;
 }
 
 /**
@@ -159,7 +191,8 @@ export function setLastRoutingUsed(route: 'local' | 'backend'): void {
  * Inputs/Outputs: no input; returns routing label.
  * Edge cases: defaults to "backend" before first write to avoid null handling.
  */
-export function getLastRoutingUsed(): 'local' | 'backend' {
-  return lastRoutingUsed;
+export function getLastRoutingUsed(sessionId?: string): 'local' | 'backend' {
+  const s = getStoreForSession(sessionId);
+  return s.lastRouting;
 }
 
