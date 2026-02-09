@@ -16,7 +16,7 @@ import {
 } from '../stores/agentRegistry.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '../config/unifiedConfig.js';
-import { aiLogger } from '../utils/structuredLogging.js';
+import { apiLogger } from '../utils/structuredLogging.js';
 
 const router = express.Router();
 
