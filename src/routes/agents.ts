@@ -16,7 +16,7 @@ import {
 } from '../stores/agentRegistry.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '../config/unifiedConfig.js';
-import { aiLogger } from '../utils/structuredLogging.js';
+import { apiLogger } from '../utils/structuredLogging.js';
 
 const router = express.Router();
 
@@ -40,7 +40,7 @@ router.post('/agents/register', async (req: Request, res: Response) => {
     const agent = await registerAgent(parsed.data);
     res.status(201).json(agent);
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] Register failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('Register failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to register agent' });
   }
 });
@@ -53,7 +53,7 @@ router.get('/agents', async (_: Request, res: Response) => {
     const agents = await listAgents();
     res.json({ agents, count: agents.length });
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] List failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('List failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to list agents' });
   }
 });
@@ -70,7 +70,7 @@ router.get('/agents/:agentId', async (req: Request, res: Response) => {
     }
     res.json(agent);
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] Get failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('Get failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to get agent' });
   }
 });
@@ -87,7 +87,7 @@ router.post('/agents/:agentId/heartbeat', async (req: Request, res: Response) =>
     }
     res.json({ status: 'ok', agent });
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] Heartbeat failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('Heartbeat failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to update heartbeat' });
   }
 });
