@@ -23,7 +23,11 @@ export async function searchScholarly(
 ): Promise<ScholarlySource[]> {
   const scholarlyConfig = getScholarlyApiConfig();
   //audit Assumption: caller may omit rows; risk: undefined rows causing API defaults; invariant: rows is a positive integer; handling: use config defaultRows.
-  const requestedRows = Number.isInteger(rows) && rows > 0 ? rows : scholarlyConfig.defaultRows;
+  //audit Assumption: rows can be undefined or invalid; risk: invalid values bypass defaults; invariant: requestedRows is a positive integer; handling: validate type before range check.
+  const requestedRows =
+    typeof rows === 'number' && Number.isInteger(rows) && rows > 0
+      ? rows
+      : scholarlyConfig.defaultRows;
   try {
     const response = await axios.get(scholarlyConfig.endpoint, {
       params: { query, rows: requestedRows },
