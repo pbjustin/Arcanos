@@ -130,7 +130,7 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Approve failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Approve failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to approve plan' });
   }
 });
