@@ -63,7 +63,7 @@ router.get('/clear/:planId', async (req: Request, res: Response) => {
     }
     res.json(score);
   } catch (error: unknown) {
-    aiLogger.error('[CLEAR] Get score failed', { module: 'clear', error: resolveErrorMessage(error) });
+    apiLogger.error('Get score failed', { module: 'clear', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to get CLEAR score' });
   }
 });
