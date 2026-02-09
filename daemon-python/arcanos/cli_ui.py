@@ -187,3 +187,45 @@ def build_help_panel() -> Panel:
         title="ARCANOS Help",
         border_style="cyan",
     )
+
+
+def build_clear_summary_table(
+    clarity: float,
+    leverage: float,
+    efficiency: float,
+    alignment: float,
+    resilience: float,
+    overall: float,
+    decision: str,
+    plan_id: str = "",
+) -> Table:
+    """
+    Purpose: Build a CLEAR 2.0 score summary table for display.
+    Inputs/Outputs: CLEAR dimension scores, overall, decision, plan_id; returns Rich Table.
+    Edge cases: Scores outside 0-1 range still render but with red coloring.
+    """
+    title = f"CLEAR 2.0 — Plan {plan_id[:8]}..." if plan_id else "CLEAR 2.0 Score"
+    table = Table(title=title, show_header=True)
+    table.add_column("Dimension", style="cyan")
+    table.add_column("Score", justify="right")
+
+    dimensions = [
+        ("C – Clarity", clarity),
+        ("L – Leverage", leverage),
+        ("E – Efficiency", efficiency),
+        ("A – Alignment", alignment),
+        ("R – Resilience", resilience),
+    ]
+
+    for name, value in dimensions:
+        color = "green" if value >= 0.7 else "yellow" if value >= 0.4 else "red"
+        table.add_row(name, f"[{color}]{value:.2f}[/{color}]")
+
+    decision_upper = decision.upper()
+    decision_color = "green" if decision_upper == "ALLOW" else "yellow" if decision_upper == "CONFIRM" else "red"
+    table.add_row(
+        "[bold]Overall[/bold]",
+        f"[bold {decision_color}]{overall:.3f} → {decision_upper}[/bold {decision_color}]",
+    )
+
+    return table
