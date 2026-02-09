@@ -147,7 +147,7 @@ router.post('/plans/:planId/block', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Block failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Block failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to block plan' });
   }
 });
