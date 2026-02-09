@@ -3,6 +3,7 @@ ARCANOS CLI - Main Command Line Interface
 Human-like AI assistant with rich terminal UI.
 """
 
+import argparse
 import json
 import sys
 import threading
@@ -1575,6 +1576,25 @@ def main() -> None:
     Inputs/Outputs: None; runs the CLI loop and exits on fatal errors.
     Edge cases: Exits with status 1 when credential bootstrap fails.
     """
+    # Shell-level argument completion (argcomplete).
+    parser = argparse.ArgumentParser(
+        prog="arcanos",
+        description="ARCANOS CLI - Human-like AI assistant with rich terminal UI.",
+    )
+    parser.add_argument(
+        "--debug-mode",
+        action="store_true",
+        help="Run in non-interactive debug mode with file-based command input.",
+    )
+
+    try:
+        import argcomplete
+        argcomplete.autocomplete(parser)
+    except ImportError:  # argcomplete not installed — skip shell completion
+        pass
+
+    args = parser.parse_args()
+
     # //audit assumption: bootstrap runs before CLI; risk: missing credentials; invariant: credentials ready; strategy: bootstrap then run.
     try:
         bootstrap_credentials()
@@ -1587,10 +1607,8 @@ def main() -> None:
     # Fail-fast validation after bootstrap (ensures all required config is valid)
     validate_required_config(exit_on_error=True)
 
-    # //audit assumption: debug flag toggles mode; risk: unexpected behavior; invariant: boolean flag; strategy: parse argv.
-    debug_mode = "--debug-mode" in sys.argv
     cli = ArcanosCLI()
-    cli.run(debug_mode=debug_mode)
+    cli.run(debug_mode=args.debug_mode)
 
 
 # //audit assumption: module used as entrypoint; risk: unexpected import side effects; invariant: main guard; strategy: only run on direct execution.

@@ -141,7 +141,7 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
     return 'max_completion_tokens';
   }
 
-  if (lowerModelName.includes(APPLICATION_CONSTANTS.MODEL_GPT_5)) {
+  if (APPLICATION_CONSTANTS.MODEL_GPT_5 && lowerModelName.includes(APPLICATION_CONSTANTS.MODEL_GPT_5.toLowerCase())) {
     return 'max_completion_tokens';
   }
 
@@ -161,6 +161,7 @@ export async function testModelTokenParameter(
   modelName: string
 ): Promise<'max_tokens' | 'max_completion_tokens'> {
   
+  const normalizedModelName = (modelName || '').toLowerCase().trim();
   aiLogger.info(`[TOKEN-TEST] Testing token parameter capability for model: ${modelName}`);
 
   // Try max_tokens first (most common)
@@ -173,7 +174,7 @@ export async function testModelTokenParameter(
     });
     
     // If successful, cache and return max_tokens
-    modelCapabilityCache.set(modelName, 'max_tokens');
+    modelCapabilityCache.set(normalizedModelName, 'max_tokens');
     aiLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_tokens`);
     return 'max_tokens';
     
@@ -193,7 +194,7 @@ export async function testModelTokenParameter(
         });
         
         // If successful, cache and return max_completion_tokens
-        modelCapabilityCache.set(modelName, 'max_completion_tokens');
+        modelCapabilityCache.set(normalizedModelName, 'max_completion_tokens');
         aiLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
         return 'max_completion_tokens';
         
@@ -202,14 +203,14 @@ export async function testModelTokenParameter(
         aiLogger.warn(
           `[TOKEN-TEST] Model ${modelName} failed both token parameters, defaulting to max_tokens: ${getErrorMessage(fallbackError)}`
         );
-        modelCapabilityCache.set(modelName, 'max_tokens');
+        modelCapabilityCache.set(normalizedModelName, 'max_tokens');
         return 'max_tokens';
       }
     } else {
       // Error not related to token parameters, assume max_tokens works
       //audit Assumption: non-token error implies max_tokens support; Risk: false
       aiLogger.info(`[TOKEN-TEST] Model ${modelName} error unrelated to tokens, assuming max_tokens support`);
-      modelCapabilityCache.set(modelName, 'max_tokens');
+      modelCapabilityCache.set(normalizedModelName, 'max_tokens');
       return 'max_tokens';
     }
   }
