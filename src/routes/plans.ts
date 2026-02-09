@@ -246,7 +246,7 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'Actions already executed (replay protection)' });
       return;
     }
-    aiLogger.error('[PLANS] Execute failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Execute failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to execute plan' });
   }
 });
