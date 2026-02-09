@@ -11,6 +11,11 @@ from .error_handler import logger as error_logger
 
 _PLACEHOLDER_TOKENS = {"REPLACE_WITH_BACKEND_TOKEN", ""}
 
+# Timing constants for daemon background threads
+_INITIAL_HEARTBEAT_DELAY_S = 2       # Stagger first heartbeat to avoid race with command poll
+_MAX_BACKOFF_S = 120                 # Maximum backoff time (2 minutes) for rate-limited requests
+_MAX_BACKOFF_EXPONENT = 4            # Cap exponential backoff at 2^4 = 16x the base interval
+
 
 def start_daemon_threads(self) -> None:
     """
@@ -58,7 +63,7 @@ def heartbeat_loop(self) -> None:
     Edge cases: Applies backoff on 429 responses and stops on shutdown.
     """
     # Stagger the first heartbeat so it doesn't race with command poll on startup.
-    time.sleep(2)
+    time.sleep(_INITIAL_HEARTBEAT_DELAY_S)
     last_request_time = time.time()
     consecutive_429_count = 0
 
@@ -93,7 +98,7 @@ def heartbeat_loop(self) -> None:
             if status_code == 429:
                 consecutive_429_count += 1
                 # 429 = rate limit; back off and log as warning (not connection failure)
-                backoff_time = min(120, self._heartbeat_interval * (2 ** min(consecutive_429_count, 4)))
+                backoff_time = min(_MAX_BACKOFF_S, self._heartbeat_interval * (2 ** min(consecutive_429_count, _MAX_BACKOFF_EXPONENT)))
                 if retry_after:
                     try:
                         backoff_time = max(backoff_time, int(retry_after))
@@ -193,7 +198,7 @@ def command_poll_loop(self) -> None:
             elif status_code == 429:
                 consecutive_429_count += 1
                 # 429 = rate limit; back off and log as warning (not connection failure)
-                backoff_time = min(120, self._command_poll_interval * (2 ** min(consecutive_429_count, 4)))
+                backoff_time = min(_MAX_BACKOFF_S, self._command_poll_interval * (2 ** min(consecutive_429_count, _MAX_BACKOFF_EXPONENT)))
                 if retry_after:
                     try:
                         backoff_time = max(backoff_time, int(retry_after))
