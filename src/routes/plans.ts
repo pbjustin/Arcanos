@@ -79,7 +79,7 @@ router.get('/plans', async (req: Request, res: Response) => {
     const plans = await listPlans({ status: status as PlanStatus | undefined, createdBy, limit });
     res.json({ plans, count: plans.length });
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] List failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('List failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to list plans' });
   }
 });
