@@ -26,8 +26,8 @@ import { validateCapability } from '../stores/agentRegistry.js';
 import { buildClear2Summary } from '../services/clear2.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '../config/unifiedConfig.js';
-import { aiLogger } from '../utils/structuredLogging.js';
-import type { ClearDecision, PlanStatus } from '../types/actionPlan.js';
+import { apiLogger } from '../utils/structuredLogging.js';
+import type { ClearDecision, PlanStatus, ActionPlanRecord } from '../types/actionPlan.js';
 
 const router = express.Router();
 
@@ -56,7 +56,7 @@ router.post('/plans', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'Plan with this idempotency_key already exists' });
       return;
     }
-    aiLogger.error('[PLANS] Create failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Create failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to create plan' });
   }
 });
@@ -79,7 +79,7 @@ router.get('/plans', async (req: Request, res: Response) => {
     const plans = await listPlans({ status: status as PlanStatus | undefined, createdBy, limit });
     res.json({ plans, count: plans.length });
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] List failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('List failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to list plans' });
   }
 });
@@ -96,7 +96,7 @@ router.get('/plans/:planId', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Get failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Get failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to get plan' });
   }
 });
@@ -130,7 +130,7 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Approve failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Approve failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to approve plan' });
   }
 });
@@ -147,7 +147,7 @@ router.post('/plans/:planId/block', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Block failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Block failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to block plan' });
   }
 });
@@ -164,13 +164,13 @@ router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Expire failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Expire failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to expire plan' });
   }
 });
 
 /** Validate all actions have registered agent capabilities. Returns the first failing action or null. */
-async function findMissingCapability(plan: import('../types/actionPlan.js').ActionPlanRecord) {
+async function findMissingCapability(plan: ActionPlanRecord) {
   for (const action of plan.actions) {
     const hasCapability = await validateCapability(action.agentId, action.capability);
     if (!hasCapability) return action;
@@ -179,7 +179,7 @@ async function findMissingCapability(plan: import('../types/actionPlan.js').Acti
 }
 
 /** Build CLEAR 2.0 re-evaluation input from an existing plan record. */
-function buildClearRecheckInput(plan: import('../types/actionPlan.js').ActionPlanRecord) {
+function buildClearRecheckInput(plan: ActionPlanRecord) {
   return {
     actions: plan.actions.map(a => ({
       action_id: a.id,
@@ -246,7 +246,7 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'Actions already executed (replay protection)' });
       return;
     }
-    aiLogger.error('[PLANS] Execute failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Execute failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to execute plan' });
   }
 });
@@ -259,7 +259,7 @@ router.get('/plans/:planId/results', async (req: Request, res: Response) => {
     const results = await getExecutionResults(req.params.planId);
     res.json({ plan_id: req.params.planId, results });
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Results failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Results failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to get execution results' });
   }
 });

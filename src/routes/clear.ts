@@ -11,7 +11,7 @@ import { buildClear2Summary } from '../services/clear2.js';
 import { getClearScore } from '../stores/actionPlanStore.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '../config/unifiedConfig.js';
-import { aiLogger } from '../utils/structuredLogging.js';
+import { apiLogger } from '../utils/structuredLogging.js';
 
 const router = express.Router();
 
@@ -46,7 +46,7 @@ router.post('/clear/evaluate', async (req: Request, res: Response) => {
 
     res.json(score);
   } catch (error: unknown) {
-    aiLogger.error('[CLEAR] Evaluate failed', { module: 'clear', error: resolveErrorMessage(error) });
+    apiLogger.error('Evaluate failed', { module: 'clear', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to evaluate CLEAR score' });
   }
 });
@@ -63,7 +63,7 @@ router.get('/clear/:planId', async (req: Request, res: Response) => {
     }
     res.json(score);
   } catch (error: unknown) {
-    aiLogger.error('[CLEAR] Get score failed', { module: 'clear', error: resolveErrorMessage(error) });
+    apiLogger.error('Get score failed', { module: 'clear', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to get CLEAR score' });
   }
 });
