@@ -526,12 +526,13 @@ class ArcanosCLI:
             self.session.intent_confidence = max(0.0, min(1.0, float(confidence)))
 
         phase = intent_payload.get("phase")
-        if phase == "exploration":
-            # //audit assumption: exploration maps to active local phase; risk: phase taxonomy mismatch; invariant: local phase remains valid literal; strategy: deterministic map.
-            self.session.phase = "active"
-        elif phase == "execution":
-            # //audit assumption: execution maps to refining local phase; risk: phase taxonomy mismatch; invariant: local phase remains valid literal; strategy: deterministic map.
-            self.session.phase = "refining"
+        phase_map = {
+            "exploration": "active",
+            "execution": "refining",
+        }
+        if phase in phase_map:
+            # //audit assumption: phase taxonomy is shared between backend and CLI; risk: mismatch; invariant: local phase remains valid literal; strategy: deterministic map.
+            self.session.phase = phase_map[phase]
 
     def _render_system_state_table(self, state_payload: Mapping[str, Any]) -> None:
         """
@@ -1157,41 +1158,42 @@ Guidelines:
 
         # ---- Session update (pre-routing) ----
         self.session.turn_count += 1
-
-        # //audit assumption: intent-history questions should resolve from backend system state, not model chat; risk: fabricated recap; invariant: response derives from system_state payload; strategy: short-circuit with deterministic answer.
-        if self.backend_client and self._is_working_context_query(message):
-            state_payload = self._request_backend_system_state_payload()
-            if state_payload:
-                self._hydrate_session_from_backend_state(state_payload)
-                intent_payload = state_payload.get("intent") if isinstance(state_payload.get("intent"), Mapping) else {}
-                label = intent_payload.get("label")
-                status = intent_payload.get("status")
-                answer_label = label if isinstance(label, str) and label.strip() else "No active intent"
-                answer_status = status if isinstance(status, str) and status.strip() else "null"
-                answer_text = f"{answer_label} (status: {answer_status})"
-
-                if return_result:
-                    return _ConversationResult(
-                        response_text=answer_text,
-                        tokens_used=ZERO_TOKENS_USED,
-                        cost_usd=ZERO_COST_USD,
-                        model=Config.BACKEND_CHAT_MODEL or "backend",
-                        source="backend",
-                    )
-
-                table = Table(title="Current Work Context")
-                table.add_column("Field", style="cyan")
-                table.add_column("Value", style="green")
-                table.add_row("intent", answer_label)
-                table.add_row("status", answer_status)
-                self.console.print(table)
-                return None
-
+        # Fetch backend system state once and reuse to avoid redundant network requests
         if self.backend_client:
             state_payload = self._request_backend_system_state_payload()
-            if state_payload:
-                # //audit assumption: backend state is authoritative for intent/session context; risk: stale local inference; invariant: local cache follows backend; strategy: hydrate before routing.
-                self._hydrate_session_from_backend_state(state_payload)
+        else:
+            state_payload = None
+
+        # //audit assumption: intent-history questions should resolve from backend system state, not model chat; risk: fabricated recap; invariant: response derives from system_state payload; strategy: short-circuit with deterministic answer.
+        if state_payload and self._is_working_context_query(message):
+            self._hydrate_session_from_backend_state(state_payload)
+            intent_payload = state_payload.get("intent") if isinstance(state_payload.get("intent"), Mapping) else {}
+            label = intent_payload.get("label")
+            status = intent_payload.get("status")
+            answer_label = label if isinstance(label, str) and label.strip() else "No active intent"
+            answer_status = status if isinstance(status, str) and status.strip() else "null"
+            answer_text = f"{answer_label} (status: {answer_status})"
+
+            if return_result:
+                return _ConversationResult(
+                    response_text=answer_text,
+                    tokens_used=ZERO_TOKENS_USED,
+                    cost_usd=ZERO_COST_USD,
+                    model=Config.BACKEND_CHAT_MODEL or "backend",
+                    source="backend",
+                )
+
+            table = Table(title="Current Work Context")
+            table.add_column("Field", style="cyan")
+            table.add_column("Value", style="green")
+            table.add_row("intent", answer_label)
+            table.add_row("status", answer_status)
+            self.console.print(table)
+            return None
+
+        if state_payload:
+            # //audit assumption: backend state is authoritative for intent/session context; risk: stale local inference; invariant: local cache follows backend; strategy: hydrate before routing.
+            self._hydrate_session_from_backend_state(state_payload)
 
         # Rebuild system prompt with updated session context
         self.system_prompt = self._build_system_prompt()
