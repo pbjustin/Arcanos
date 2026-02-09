@@ -56,7 +56,7 @@ router.post('/plans', async (req: Request, res: Response) => {
       res.status(409).json({ error: 'Plan with this idempotency_key already exists' });
       return;
     }
-    aiLogger.error('[PLANS] Create failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Create failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to create plan' });
   }
 });
