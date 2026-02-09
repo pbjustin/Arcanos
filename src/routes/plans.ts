@@ -259,7 +259,7 @@ router.get('/plans/:planId/results', async (req: Request, res: Response) => {
     const results = await getExecutionResults(req.params.planId);
     res.json({ plan_id: req.params.planId, results });
   } catch (error: unknown) {
-    aiLogger.error('[PLANS] Results failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Results failed', { module: 'plans', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to get execution results' });
   }
 });
