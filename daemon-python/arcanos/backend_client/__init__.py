@@ -12,6 +12,10 @@ from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
 from .daemon import request_confirm_daemon_actions as _request_confirm_daemon_actions
+from .plans import fetch_plan as _fetch_plan
+from .plans import approve_plan as _approve_plan
+from .plans import submit_execution_result as _submit_execution_result
+from .plans import block_plan as _block_plan
 from .registry import request_registry as _request_registry
 from .transcribe import request_transcription as _request_transcription
 from .updates import submit_update_event as _submit_update_event
@@ -402,6 +406,20 @@ class BackendApiClient:
 
     def request_registry(self) -> BackendResponse[dict[str, Any]]:
         return _request_registry(self)
+
+    def fetch_plan(self, plan_id: str) -> BackendResponse[dict[str, Any]]:
+        return _fetch_plan(self, plan_id)
+
+    def approve_plan(self, plan_id: str) -> BackendResponse[dict[str, Any]]:
+        return _approve_plan(self, plan_id)
+
+    def submit_execution_result(
+        self, plan_id: str, result_data: dict[str, Any]
+    ) -> BackendResponse[dict[str, Any]]:
+        return _submit_execution_result(self, plan_id, result_data)
+
+    def block_plan(self, plan_id: str) -> BackendResponse[dict[str, Any]]:
+        return _block_plan(self, plan_id)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
         # Support both "result" (production backend) and "response" (legacy) field names

@@ -25,6 +25,9 @@ import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
 import { runHealthCheck } from '../utils/diagnostics.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import devopsRouter from './devops.js';
+import plansRouter from './plans.js';
+import clearRouter from './clear.js';
+import agentsRouter from './agents.js';
 import { sendTimestampedStatus } from '../utils/serviceUnavailable.js';
 
 /**
@@ -77,7 +80,12 @@ export function registerRoutes(app: Express): void {
   app.use('/', researchRouter);
   app.use('/', reinforcementRouter);
   app.use('/', devopsRouter);
-  
+
+  // ActionPlan orchestration + CLEAR 2.0 governance
+  app.use('/', plansRouter);
+  app.use('/', clearRouter);
+  app.use('/', agentsRouter);
+
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
     res.json({ 
