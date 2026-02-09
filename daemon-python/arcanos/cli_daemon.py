@@ -272,6 +272,21 @@ def handle_daemon_command(self, command: DaemonCommand) -> None:
         else:
             self.console.print("[yellow]Notify command missing message[/yellow]")
 
+    elif command_name == "action_plan":
+        # ActionPlan orchestration: CLEAR 2.0 gated execution
+        if isinstance(command_payload, dict):
+            from .action_plan_handler import handle_action_plan
+            handle_action_plan(
+                plan_data=command_payload,
+                console=self.console,
+                backend_client=self.backend_client,
+                instance_id=self.instance_id,
+                run_handler=self.handle_run,
+                confirm_prompt=lambda msg: self._confirm_action(msg),
+            )
+        else:
+            self.console.print("[yellow]action_plan command missing payload[/yellow]")
+
     else:
         # //audit assumption: unsupported commands should be logged; risk: unexpected behavior; invariant: error logged; strategy: warn.
         self.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
