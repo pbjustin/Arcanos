@@ -11,6 +11,7 @@ import requests
 from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
+from .chat import request_system_state as _request_system_state
 from .daemon import request_confirm_daemon_actions as _request_confirm_daemon_actions
 from .plans import fetch_plan as _fetch_plan
 from .plans import approve_plan as _approve_plan
@@ -149,6 +150,19 @@ class BackendApiClient:
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendChatResult]:
         return _request_chat_completion(self, messages, temperature, model, stream, metadata)
+
+    def request_system_state(
+        self,
+        metadata: Optional[Mapping[str, Any]] = None,
+        expected_version: Optional[int] = None,
+        patch: Optional[Mapping[str, Any]] = None,
+    ) -> BackendResponse[dict[str, Any]]:
+        """
+        Purpose: Request backend system state through /ask mode=system_state.
+        Inputs/Outputs: optional metadata and optimistic-lock patch fields; returns raw state payload.
+        Edge cases: returns structured validation errors for partial update payloads.
+        """
+        return _request_system_state(self, metadata, expected_version, patch)
 
     def request_vision_analysis(
         self,
