@@ -53,7 +53,7 @@ router.get('/agents', async (_: Request, res: Response) => {
     const agents = await listAgents();
     res.json({ agents, count: agents.length });
   } catch (error: unknown) {
-    aiLogger.error('[AGENTS] List failed', { module: 'agents', error: resolveErrorMessage(error) });
+    apiLogger.error('List failed', { module: 'agents', error: resolveErrorMessage(error) });
     res.status(500).json({ error: 'Failed to list agents' });
   }
 });
