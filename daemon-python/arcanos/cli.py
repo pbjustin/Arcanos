@@ -31,6 +31,7 @@ if sys.platform == "win32":
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.table import Table
 from collections import deque
 
 from .config import Config, validate_required_config
@@ -52,15 +53,9 @@ from .cli_config import (
 )
 from .cli_session import (
     SessionContext,
-    SESSION_CONFIDENCE_DECAY_ON_MISS,
-    SESSION_CONFIDENCE_GAIN_ON_HIT,
-    SESSION_GOAL_LOCK_CONFIDENCE_THRESHOLD,
-    SESSION_GOAL_LOCK_MIN_TURNS,
     SESSION_SUMMARY_HISTORY_LIMIT,
     SESSION_SUMMARY_TURN_INTERVAL,
     TONE_TO_PERSONA,
-    infer_phase,
-    infer_tone,
     sanitize_summary_for_prompt,
 )
 from .cli_intents import detect_domain_intent, truncate_for_tts
@@ -83,12 +78,10 @@ from .cli_daemon import (
 )
 from .cli_runner import run_debug_mode, run_interactive_mode
 from .daemon_system_definition import (
-    build_daemon_system_prompt,
     DEFAULT_BACKEND_BLOCK,
     format_registry_for_prompt,
 )
 from .conversation_routing import (
-    compute_backend_confidence,
     determine_conversation_route,
     build_conversation_messages,
     ConversationRouteDecision,
@@ -217,6 +210,13 @@ class ArcanosCLI:
 
         # Session context for conversation tracking
         self.session = SessionContext(session_id=self.instance_id)
+        self._backend_routing_preferred: str = "backend"
+
+        if self.backend_client:
+            # //audit assumption: startup should hydrate from backend source of truth; risk: stale local intent inference; invariant: backend state seeds session when available; strategy: best-effort hydration.
+            state_payload = self._request_backend_system_state_payload()
+            if state_payload:
+                self._hydrate_session_from_backend_state(state_payload)
 
         # System prompt for AI personality and daemon capabilities
         self.system_prompt = self._build_system_prompt()
@@ -470,6 +470,148 @@ class ArcanosCLI:
             self._report_backend_error(action_label, response.error)
 
         return response
+
+    def _request_backend_system_state_payload(self) -> Optional[dict[str, Any]]:
+        """
+        Purpose: Fetch backend-owned system state through /ask mode=system_state.
+        Inputs/Outputs: None; returns parsed state payload dict or None.
+        Edge cases: Returns None when backend is unavailable or request fails.
+        """
+        if not self.backend_client:
+            # //audit assumption: backend client may be missing; risk: attempted state call without backend; invariant: no request attempted; strategy: return None.
+            return None
+
+        metadata = self._build_backend_metadata()
+        response = self._request_with_auth_retry(
+            lambda: self.backend_client.request_system_state(metadata=metadata),
+            "system state",
+        )
+        if not response.ok or not response.value:
+            # //audit assumption: failed state calls should not hydrate local session; risk: stale/partial state; invariant: None on failure; strategy: return None.
+            return None
+
+        return response.value
+
+    def _hydrate_session_from_backend_state(self, state_payload: Mapping[str, Any]) -> None:
+        """
+        Purpose: Hydrate local session fields from backend state without mutating backend data.
+        Inputs/Outputs: backend state payload mapping; updates local session cache and routing preference.
+        Edge cases: Missing or malformed fields are ignored safely.
+        """
+        routing_payload = state_payload.get("routing")
+        if isinstance(routing_payload, Mapping):
+            preferred = routing_payload.get("preferred")
+            # //audit assumption: routing preference is constrained to local/backend; risk: invalid route values; invariant: only valid values applied; strategy: allowlist check.
+            if preferred in ("local", "backend"):
+                self._backend_routing_preferred = str(preferred)
+
+        intent_payload = state_payload.get("intent")
+        if not isinstance(intent_payload, Mapping):
+            # //audit assumption: missing intent payload means no active intent; risk: stale local intent display; invariant: retain existing local cache; strategy: return early.
+            return
+
+        intent_id = intent_payload.get("intentId")
+        if not isinstance(intent_id, str) or not intent_id.strip():
+            # //audit assumption: null/empty intent id means no active intent; risk: overwriting with empty fields; invariant: local intent unchanged; strategy: guard by intentId presence.
+            return
+
+        label = intent_payload.get("label")
+        if isinstance(label, str) and label.strip():
+            self.session.current_intent = label.strip()
+            self.session.conversation_goal = label.strip()
+
+        confidence = intent_payload.get("confidence")
+        if isinstance(confidence, (int, float)):
+            # //audit assumption: confidence is normalized to [0,1]; risk: malformed values; invariant: bounded local confidence; strategy: clamp.
+            self.session.intent_confidence = max(0.0, min(1.0, float(confidence)))
+
+        phase = intent_payload.get("phase")
+        phase = intent_payload.get("phase")
+        phase_map = {
+            "exploration": "active",
+            "execution": "refining",
+        }
+        if phase in phase_map:
+            # //audit assumption: phase taxonomy is shared between backend and CLI; risk: mismatch; invariant: local phase remains valid literal; strategy: deterministic map.
+            self.session.phase = phase_map[phase]
+
+    def _render_system_state_table(self, state_payload: Mapping[str, Any]) -> None:
+        """
+        Purpose: Render backend system state in table-only format for `arcanos status`.
+        Inputs/Outputs: backend state payload; prints a Rich table.
+        Edge cases: Missing fields are rendered as safe placeholders.
+        """
+        intent_payload = state_payload.get("intent") if isinstance(state_payload.get("intent"), Mapping) else {}
+        routing_payload = state_payload.get("routing") if isinstance(state_payload.get("routing"), Mapping) else {}
+        backend_payload = state_payload.get("backend") if isinstance(state_payload.get("backend"), Mapping) else {}
+        freshness_payload = (
+            state_payload.get("stateFreshness") if isinstance(state_payload.get("stateFreshness"), Mapping) else {}
+        )
+
+        table = Table(title="ARCANOS System State")
+        table.add_column("Field", style="cyan", no_wrap=True)
+        table.add_column("Value", style="green")
+
+        table.add_row("mode", str(state_payload.get("mode", "unknown")))
+        table.add_row("intent.intentId", str(intent_payload.get("intentId", "null")))
+        table.add_row("intent.label", str(intent_payload.get("label", "null")))
+        table.add_row("intent.status", str(intent_payload.get("status", "null")))
+        table.add_row("intent.phase", str(intent_payload.get("phase", "null")))
+        table.add_row("intent.confidence", str(intent_payload.get("confidence", 0.0)))
+        table.add_row("intent.version", str(intent_payload.get("version", 0)))
+        table.add_row("intent.lastTouchedAt", str(intent_payload.get("lastTouchedAt", "null")))
+        table.add_row("routing.preferred", str(routing_payload.get("preferred", "unknown")))
+        table.add_row("routing.lastUsed", str(routing_payload.get("lastUsed", "unknown")))
+        table.add_row("routing.confidenceGate", str(routing_payload.get("confidenceGate", "unknown")))
+        table.add_row("backend.connected", str(backend_payload.get("connected", False)))
+        table.add_row("backend.registryAvailable", str(backend_payload.get("registryAvailable", False)))
+        table.add_row("backend.lastHeartbeatAt", str(backend_payload.get("lastHeartbeatAt", "unknown")))
+        table.add_row("freshness.intent", str(freshness_payload.get("intent", "unknown")))
+        table.add_row("freshness.backend", str(freshness_payload.get("backend", "unknown")))
+        table.add_row("generatedAt", str(state_payload.get("generatedAt", "unknown")))
+
+        self.console.print(table)
+
+    def _is_working_context_query(self, message: str) -> bool:
+        """
+        Purpose: Detect user prompts asking for current work context/intent.
+        Inputs/Outputs: user message string; returns True when system-state answer should be used.
+        Edge cases: Empty messages return False.
+        """
+        normalized = (message or "").strip().lower()
+        if not normalized:
+            return False
+
+        # //audit assumption: narrow phrase matching avoids false positives; risk: missing uncommon phrasing; invariant: deterministic trigger set; strategy: substring allowlist.
+        phrases = (
+            "what was i working on",
+            "what am i working on",
+            "what's my current intent",
+            "what is my current intent",
+            "current intent",
+        )
+        return any(phrase in normalized for phrase in phrases)
+
+    def handle_status(self) -> bool:
+        """
+        Purpose: Show backend-owned governed status using /ask mode=system_state.
+        Inputs/Outputs: None; renders a table and returns success flag.
+        Edge cases: Returns False when backend is not configured or state fetch fails.
+        """
+        if not self.backend_client:
+            # //audit assumption: status requires backend source-of-truth; risk: stale local-only status; invariant: fail when backend missing; strategy: print error and return False.
+            self.console.print("[red]Backend is not configured.[/red]")
+            return False
+
+        state_payload = self._request_backend_system_state_payload()
+        if not state_payload:
+            # //audit assumption: failed state fetch cannot be substituted locally; risk: fabricated status; invariant: no synthetic state output; strategy: fail closed.
+            self.console.print("[red]Failed to fetch backend system state.[/red]")
+            return False
+
+        self._hydrate_session_from_backend_state(state_payload)
+        self._render_system_state_table(state_payload)
+        return True
 
     def _registry_cache_is_valid(self) -> bool:
         """
@@ -807,10 +949,10 @@ Guidelines:
         # Include daemon metadata
         metadata = self._build_backend_metadata()
 
-        # Use /api/ask endpoint with domain hint for natural language routing
+        # Use /ask endpoint with domain hint for natural language routing
         # The backend dispatcher will route to modules based on domain
         if domain:
-            # Call /api/ask with domain hint for module routing
+            # Call /ask with domain hint for module routing
             response = self._request_with_auth_retry(
                 lambda: self.backend_client.request_ask_with_domain(
                     message=message,
@@ -1017,33 +1159,42 @@ Guidelines:
 
         # ---- Session update (pre-routing) ----
         self.session.turn_count += 1
-
-        detected_intent = detect_domain_intent(message, DOMAIN_KEYWORDS)
-        # //audit assumption: intent hit should strengthen confidence; risk: overfitting on transient terms; invariant: confidence stays within [0,1]; strategy: bounded increment on hits.
-        if detected_intent:
-            self.session.current_intent = detected_intent
-            self.session.intent_confidence = min(
-                1.0,
-                self.session.intent_confidence + SESSION_CONFIDENCE_GAIN_ON_HIT
-            )
+        # Fetch backend system state once and reuse to avoid redundant network requests
+        if self.backend_client:
+            state_payload = self._request_backend_system_state_payload()
         else:
-            # //audit assumption: missing intent should decay confidence gradually; risk: stale intent lock-in; invariant: confidence decays but remains non-negative; strategy: multiplicative decay.
-            self.session.intent_confidence *= SESSION_CONFIDENCE_DECAY_ON_MISS
+            state_payload = None
 
-        self.session.phase = infer_phase(
-            self.session.turn_count,
-            self.session.intent_confidence
-        )
+        # //audit assumption: intent-history questions should resolve from backend system state, not model chat; risk: fabricated recap; invariant: response derives from system_state payload; strategy: short-circuit with deterministic answer.
+        if state_payload and self._is_working_context_query(message):
+            self._hydrate_session_from_backend_state(state_payload)
+            intent_payload = state_payload.get("intent") if isinstance(state_payload.get("intent"), Mapping) else {}
+            label = intent_payload.get("label")
+            status = intent_payload.get("status")
+            answer_label = label if isinstance(label, str) and label.strip() else "No active intent"
+            answer_status = status if isinstance(status, str) and status.strip() else "null"
+            answer_text = f"{answer_label} (status: {answer_status})"
 
-        self.session.tone = infer_tone(self.session.current_intent)
+            if return_result:
+                return _ConversationResult(
+                    response_text=answer_text,
+                    tokens_used=ZERO_TOKENS_USED,
+                    cost_usd=ZERO_COST_USD,
+                    model=Config.BACKEND_CHAT_MODEL or "backend",
+                    source="backend",
+                )
 
-        if (
-            self.session.conversation_goal is None
-            and self.session.turn_count >= SESSION_GOAL_LOCK_MIN_TURNS
-            and self.session.intent_confidence >= SESSION_GOAL_LOCK_CONFIDENCE_THRESHOLD
-        ):
-            # //audit assumption: goal lock should occur only after stable evidence; risk: premature goal fixation; invariant: goal set once when threshold reached; strategy: gated assignment.
-            self.session.conversation_goal = self.session.current_intent
+            table = Table(title="Current Work Context")
+            table.add_column("Field", style="cyan")
+            table.add_column("Value", style="green")
+            table.add_row("intent", answer_label)
+            table.add_row("status", answer_status)
+            self.console.print(table)
+            return None
+
+        if state_payload:
+            # //audit assumption: backend state is authoritative for intent/session context; risk: stale local inference; invariant: local cache follows backend; strategy: hydrate before routing.
+            self._hydrate_session_from_backend_state(state_payload)
 
         # Rebuild system prompt with updated session context
         self.system_prompt = self._build_system_prompt()
@@ -1060,16 +1211,13 @@ Guidelines:
                 normalized_message=message.strip() or message,
                 used_prefix=None
             )
-
-        # //audit: when route would be backend, apply confidence threshold; if below, keep local so “simple” stays on daemon.
-        if route_decision.route == "backend":
-            conf = compute_backend_confidence(route_decision.normalized_message)
-            if conf < Config.BACKEND_CONFIDENCE_THRESHOLD:
-                route_decision = ConversationRouteDecision(
-                    route="local",
-                    normalized_message=route_decision.normalized_message,
-                    used_prefix=None,
-                )
+        elif self.backend_client and self._backend_routing_preferred == "backend":
+            # //audit assumption: backend preference from system_state should drive default route; risk: local drift from backend-owned intent; invariant: backend route selected unless explicit override; strategy: enforce backend preference.
+            route_decision = ConversationRouteDecision(
+                route="backend",
+                normalized_message=message.strip() or message,
+                used_prefix=None,
+            )
 
         # Detect domain intent for natural language routing
         domain = detect_domain_intent(message, DOMAIN_KEYWORDS) if route_decision.route == "backend" else None
@@ -1157,6 +1305,12 @@ Guidelines:
             self._last_response = response_for_user
 
         self._send_backend_update("conversation_usage", update_payload)
+
+        if result.source == "backend" and self.backend_client:
+            refreshed_state = self._request_backend_system_state_payload()
+            if refreshed_state:
+                # //audit assumption: backend chat may advance intent/version; risk: stale local session cache after response; invariant: hydrate from latest backend state; strategy: refresh after successful backend turn.
+                self._hydrate_session_from_backend_state(refreshed_state)
 
         # ---- Post-response summarization ----
         self._update_short_term_summary()
@@ -1582,6 +1736,12 @@ def main() -> None:
         description="ARCANOS CLI - Human-like AI assistant with rich terminal UI.",
     )
     parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["status"],
+        help="Run a one-shot command such as `status` and exit.",
+    )
+    parser.add_argument(
         "--debug-mode",
         action="store_true",
         help="Run in non-interactive debug mode with file-based command input.",
@@ -1608,6 +1768,12 @@ def main() -> None:
     validate_required_config(exit_on_error=True)
 
     cli = ArcanosCLI()
+
+    if args.command == "status":
+        # //audit assumption: status command should be non-interactive and backend-sourced; risk: entering chat loop unexpectedly; invariant: execute once then exit; strategy: call status handler and return process code.
+        succeeded = cli.handle_status()
+        sys.exit(0 if succeeded else 1)
+
     cli.run(debug_mode=args.debug_mode)
 
 
