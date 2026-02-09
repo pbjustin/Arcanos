@@ -170,7 +170,7 @@ router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
 });
 
 /** Validate all actions have registered agent capabilities. Returns the first failing action or null. */
-async function findMissingCapability(plan: import('../types/actionPlan.js').ActionPlanRecord) {
+async function findMissingCapability(plan: ActionPlanRecord) {
   for (const action of plan.actions) {
     const hasCapability = await validateCapability(action.agentId, action.capability);
     if (!hasCapability) return action;
@@ -179,7 +179,7 @@ async function findMissingCapability(plan: import('../types/actionPlan.js').Acti
 }
 
 /** Build CLEAR 2.0 re-evaluation input from an existing plan record. */
-function buildClearRecheckInput(plan: import('../types/actionPlan.js').ActionPlanRecord) {
+function buildClearRecheckInput(plan: ActionPlanRecord) {
   return {
     actions: plan.actions.map(a => ({
       action_id: a.id,
