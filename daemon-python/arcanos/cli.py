@@ -11,6 +11,7 @@ import base64
 import time
 import uuid
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Callable, Optional, Any, Mapping
 
 # Fix Windows console encoding for emoji/Unicode support
@@ -86,6 +87,18 @@ from .conversation_routing import (
     build_conversation_messages,
     ConversationRouteDecision,
 )
+
+# Governance layer imports
+import sys as _sys
+_cli_root = str(Path(__file__).resolve().parents[2])
+if _cli_root not in _sys.path:
+    _sys.path.insert(0, _cli_root)
+from cli.trust_state import TrustState
+from cli.governance import GovernanceError
+from cli.audit import record as audit_record
+from cli.execute import execute as governed_execute
+from cli.idempotency import command_fingerprint, IdempotencyGuard
+from cli.startup import startup_sequence
 from .media_routing import parse_vision_route_args, parse_voice_route_args
 from .credential_bootstrap import CredentialBootstrapError, bootstrap_credentials
 from .schema import Memory
@@ -141,7 +154,14 @@ class ArcanosCLI:
         self._activity: deque = deque(maxlen=DEFAULT_ACTIVITY_HISTORY_LIMIT)
         self._activity_lock = threading.Lock()
 
-        # Initialize components
+        # Startup ordering guard: verify persistence BEFORE memory loads or session hydration
+        try:
+            startup_sequence(Config.MEMORY_FILE)
+        except RuntimeError as exc:
+            self.console.print(f"[red]{exc}[/red]")
+            sys.exit(1)
+
+        # Initialize components (safe now — persistence verified)
         self.memory = Memory()
         self.rate_limiter = RateLimiter()
 
@@ -212,6 +232,11 @@ class ArcanosCLI:
         self.session = SessionContext(session_id=self.instance_id)
         self._backend_routing_preferred: str = "backend"
 
+        # Governance layer: trust state + idempotency guard
+        self._trust_state = TrustState.DEGRADED
+        self._idempotency_guard = IdempotencyGuard()
+        self._recompute_trust_state()
+
         if self.backend_client:
             # //audit assumption: startup should hydrate from backend source of truth; risk: stale local intent inference; invariant: backend state seeds session when available; strategy: best-effort hydration.
             state_payload = self._request_backend_system_state_payload()
@@ -279,6 +304,23 @@ class ArcanosCLI:
                 "kind": kind,
                 "detail": detail
             })
+
+    def _set_trust_state(self, new_state: TrustState) -> None:
+        """Update trust state and emit audit record on change."""
+        old = self._trust_state
+        if old != new_state:
+            self._trust_state = new_state
+            audit_record("trust_state_change", old=old.name, new=new_state.name)
+
+    def _recompute_trust_state(self) -> None:
+        """Derive trust state from backend reachability and registry freshness."""
+        if not self.backend_client:
+            self._set_trust_state(TrustState.DEGRADED)
+            return
+        if self._registry_cache_is_valid():
+            self._set_trust_state(TrustState.FULL)
+        else:
+            self._set_trust_state(TrustState.DEGRADED)
 
     def speak_to_user(
         self,
@@ -664,6 +706,7 @@ class ArcanosCLI:
             return
 
         self._refresh_registry_cache()
+        self._recompute_trust_state()
         if self._registry_cache_is_valid():
             # //audit assumption: refreshed cache should update prompt; risk: stale prompt; invariant: prompt rebuilt; strategy: rebuild.
             self.system_prompt = self._build_system_prompt()
@@ -984,6 +1027,14 @@ Guidelines:
 
         if response.error and response.error.kind == "confirmation":
             # //audit assumption: backend requires confirmation; risk: bypassing prompt; invariant: confirmation handled; strategy: prompt or auto-confirm.
+            # Backend responded, so it's reachable — recompute trust to reflect current state
+            self._recompute_trust_state()
+            # Governance: confirmation-required action needs FULL trust (contract invariant)
+            if self._trust_state != TrustState.FULL:
+                self._set_trust_state(TrustState.UNSAFE)
+                audit_record("governance_denial", command="backend_confirm", reason="confirmation requires FULL trust; registry stale", trust=self._trust_state.name)
+                self.console.print("[red]Action requires FULL trust for confirmation; registry stale.[/red]")
+                return None
             self._last_confirmation_handled = True
             return self._handle_confirmation_required(response.error, from_debug=from_debug)
 
@@ -1149,6 +1200,9 @@ Guidelines:
         Edge cases: Falls back to local when backend fails if configured.
         """
         self._append_activity("ask", message)
+        # Recompute trust state before routing
+        self._recompute_trust_state()
+        audit_record("execute_attempt", command="ask", trust=self._trust_state.name)
         # Check rate limits
         can_request, deny_reason = self.rate_limiter.can_make_request()
         if not can_request:
@@ -1242,6 +1296,7 @@ Guidelines:
                                 _lf.write(_json.dumps({"kind": "suspicious", "location": "cli.py:handle_ask:fallback", "message": "Backend unavailable; falling back to local", "data": {"message_length": len(route_decision.normalized_message)}, "timestamp": int(time.time() * 1000), "sessionId": "debug-session", "hypothesisId": "FALLBACK"}) + "\n")
                         except (OSError, IOError) as _e:
                             error_logger.debug("Debug log write failed: %s", _e)
+                        self._set_trust_state(TrustState.DEGRADED)
                         self.console.print("[yellow]Backend unavailable; falling back to local model.[/yellow]")
                         result = self._perform_local_conversation(route_decision.normalized_message)
                 else:
@@ -1304,6 +1359,7 @@ Guidelines:
             self._last_response = response_for_user
 
         self._send_backend_update("conversation_usage", update_payload)
+        audit_record("execute_success", command="ask", trust=self._trust_state.name, source=result.source)
 
         if result.source == "backend" and self.backend_client:
             refreshed_state = self._request_backend_system_state_payload()
@@ -1582,15 +1638,40 @@ Guidelines:
                 self.console.print("[red]⚠️  No command specified[/red]")
             return {"ok": False, "error": "No command specified"} if return_result else None
 
-        if not return_result:
-            self.console.print(f"[cyan]▶️  Running:[/cyan] {command}")
+        # Idempotency check (reject duplicate fingerprints within dedup window)
+        fp = command_fingerprint("run", {"command": command})
+        audit_record("retry_check", command="run", fingerprint=fp)
+        if not self._idempotency_guard.check_and_record(fp):
+            audit_record("retry_duplicate_rejected", command="run", fingerprint=fp)
+            self.console.print("[yellow]Duplicate command rejected (idempotency).[/yellow]")
+            return {"ok": False, "error": "Duplicate command rejected"} if return_result else None
 
-        # Execute command
-        stdout, stderr, return_code = self.terminal.execute(
-            command, elevated=Config.RUN_ELEVATED
-        )
+        # Recompute trust before governance check
+        self._recompute_trust_state()
 
-        self.memory.increment_stat("terminal_commands")
+        # Governance choke point: /run is confirmation-required
+        try:
+            def _do_run():
+                if not return_result:
+                    self.console.print(f"[cyan]▶️  Running:[/cyan] {command}")
+
+                stdout, stderr, return_code = self.terminal.execute(
+                    command, elevated=Config.RUN_ELEVATED
+                )
+                self.memory.increment_stat("terminal_commands")
+                return stdout, stderr, return_code
+
+            stdout, stderr, return_code = governed_execute(
+                "run",
+                _do_run,
+                trust_state=self._trust_state,
+                requires_confirmation=True,
+                payload={"command": command},
+            )
+        except GovernanceError as exc:
+            audit_record("governance_denial", command="run", reason=str(exc), trust=self._trust_state.name)
+            self.console.print(f"[red]{exc}[/red]")
+            return {"ok": False, "error": str(exc)} if return_result else None
 
         if return_result:
             return {
@@ -1610,7 +1691,7 @@ Guidelines:
             self.console.print(f"[dim]? Exit code: {return_code}[/dim]")
         else:
             self.console.print(f"[dim red]? Exit code: {return_code}[/dim red]")
-        
+
         return None
 
     @handle_errors("speaking response")
