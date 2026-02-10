@@ -1,10 +1,11 @@
 import type OpenAI from 'openai';
+import { z } from 'zod';
 import { getDefaultModel } from '../../services/openai.js';
 import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
-import config from '../../config/index.js';
-import { getEnv } from '../../config/env.js';
 import { createPendingDaemonActions, queueDaemonCommandForInstance } from '../api-daemon.js';
 import type { AskResponse } from './types.js';
+import { parseToolArgumentsWithSchema } from '../../services/safety/aiOutputBoundary.js';
+import { emitSafetyAuditEvent } from '../../services/safety/auditEvents.js';
 
 type DaemonMetadata = {
   source?: string;
@@ -54,7 +55,7 @@ const DAEMON_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
 ];
 
 const DAEMON_TOOL_SYSTEM_PROMPT = [
-  'You are ARCANOS in daemon mode. You may use run_command and capture_screen when the user asks; run_command is sensitive and will require user confirmation.',
+  'You are ARCANOS in daemon mode. You may use run_command and capture_screen when the user asks; run_command is sensitive and always requires deterministic user confirmation.',
   'A daemon is connected to the user machine. Accept natural or vague language for all daemon actions; infer intent.',
   'When the user says "take control", "you drive", "handle it", or similar, treat it as permission to use daemon tools and to chain multiple tool calls in one turn. You may emit multiple tool calls in one response when the task requires several actions.',
   'For run_command: when the user wants to run a command, open a file, execute something, or perform an action on their machine, call run_command with the appropriate command string.',
@@ -62,15 +63,13 @@ const DAEMON_TOOL_SYSTEM_PROMPT = [
   'If none of the above applies, respond normally without tool calls.'
 ].join(' ');
 
-// Security: Default to requiring confirmation for sensitive daemon actions
-// preemptive=true means "preemptively execute without confirmation" (skip confirmation)
-// preemptive=false/undefined means "require confirmation" (default secure behavior)
-// This ensures security by default - confirmation gate is enabled unless explicitly disabled
-// Also check direct env var for backward compatibility
-const explicitConfirm = getEnv('CONFIRM_SENSITIVE_DAEMON_ACTIONS');
-const CONFIRM_SENSITIVE_DAEMON_ACTIONS = explicitConfirm !== undefined 
-  ? explicitConfirm !== 'false' 
-  : !config.fallback?.preemptive;
+const runCommandArgsSchema = z.object({
+  command: z.string().trim().min(1).max(8000)
+});
+
+const captureScreenArgsSchema = z.object({
+  use_camera: z.boolean().optional().default(false)
+});
 
 function extractDaemonMetadata(metadata?: Record<string, unknown>): DaemonMetadata {
   if (!metadata || typeof metadata !== 'object') {
@@ -128,44 +127,64 @@ export async function tryDispatchDaemonTools(
 
     const toolName = call.function.name;
     const rawArgs = call.function.arguments || '{}';
-    let args: Record<string, unknown> = {};
-    try {
-      args = JSON.parse(rawArgs) as Record<string, unknown>;
-    } catch {
-      //audit Assumption: tool args must be JSON; risk: invalid payload; invariant: skip invalid; handling: count error.
-      toolErrors += 1;
-      continue;
-    }
 
     if (toolName === 'run_command') {
-      const command = typeof args.command === 'string' ? args.command.trim() : '';
-      if (!command) {
+      let parsedArgs: z.infer<typeof runCommandArgsSchema>;
+      try {
+        parsedArgs = parseToolArgumentsWithSchema(
+          rawArgs,
+          runCommandArgsSchema,
+          'daemonTools.run_command'
+        );
+      } catch (error) {
+        toolErrors += 1;
+        emitSafetyAuditEvent({
+          event: 'daemon_tool_invalid_run_command_args',
+          severity: 'warn',
+          details: {
+            instanceId,
+            message: error instanceof Error ? error.message : String(error)
+          }
+        });
+        continue;
+      }
+
+      const command = parsedArgs.command.trim();
+      if (!command.length) {
         //audit Assumption: command required; risk: empty execution; invariant: skip; handling: count error.
         toolErrors += 1;
         continue;
       }
-      if (CONFIRM_SENSITIVE_DAEMON_ACTIONS) {
-        //audit Assumption: sensitive commands require confirmation; risk: auto-execution; invariant: pending action created; handling: defer.
-        pendingActions.push({
-          daemon: 'run',
-          payload: { command },
-          summary: `run: ${command}`
-        });
-      } else {
-        //audit Assumption: confirmation disabled; risk: unsafe execution; invariant: queue immediately; handling: enqueue.
-        const commandId = queueDaemonCommandForInstance(instanceId, 'run', { command });
-        if (!commandId) {
-          //audit Assumption: missing token prevents queueing; risk: orphan instanceId; invariant: skip; handling: count error.
-          toolErrors += 1;
-          continue;
-        }
-        queuedIds.push(commandId);
-      }
+      //audit Assumption: irreversible run_command actions must always require deterministic confirmation; risk: model output directly mutates host state; invariant: run commands are deferred via confirmation token; handling: queue pending action only.
+      pendingActions.push({
+        daemon: 'run',
+        payload: { command },
+        summary: `run: ${command}`
+      });
       continue;
     }
 
     if (toolName === 'capture_screen') {
-      const useCamera = Boolean(args.use_camera);
+      let parsedArgs: z.input<typeof captureScreenArgsSchema>;
+      try {
+        parsedArgs = parseToolArgumentsWithSchema(
+          rawArgs,
+          captureScreenArgsSchema,
+          'daemonTools.capture_screen'
+        );
+      } catch (error) {
+        toolErrors += 1;
+        emitSafetyAuditEvent({
+          event: 'daemon_tool_invalid_capture_screen_args',
+          severity: 'warn',
+          details: {
+            instanceId,
+            message: error instanceof Error ? error.message : String(error)
+          }
+        });
+        continue;
+      }
+      const useCamera = parsedArgs.use_camera ?? false;
       const commandId = queueDaemonCommandForInstance(instanceId, 'see', { use_camera: useCamera });
       if (!commandId) {
         //audit Assumption: missing token prevents queueing; risk: orphan instanceId; invariant: skip; handling: count error.

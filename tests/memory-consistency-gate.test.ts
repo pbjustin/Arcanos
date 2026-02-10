@@ -32,7 +32,10 @@ function createSnapshotRecord(
     snapshot: {
       schema_version: 'v9',
       bindings_version: 'bindings-v9-test',
+      version_id: `snapshot-${memoryVersion}`,
+      monotonic_ts_ms: Date.parse(memoryVersion) || 1700000000000,
       memory_version: memoryVersion,
+      trusted_snapshot_id: `snapshot-${memoryVersion}`,
       route_state: routeState,
       updated_at: memoryVersion,
       updated_by: 'test'
@@ -87,6 +90,8 @@ const TEST_BINDINGS: DispatchPatternBindingV9[] = [
 function createTestApp(options: {
   getSnapshot: jest.Mock;
   upsertRouteState?: jest.Mock;
+  rollbackToTrustedSnapshot?: jest.Mock;
+  getCachedSnapshot?: jest.Mock;
   recordTrace?: (name: string, attributes: Record<string, unknown>) => unknown;
 }) {
   const app = express();
@@ -111,6 +116,8 @@ function createTestApp(options: {
         })),
       snapshotStore: {
         getSnapshot: options.getSnapshot,
+        getCachedSnapshot: options.getCachedSnapshot,
+        rollbackToTrustedSnapshot: options.rollbackToTrustedSnapshot,
         upsertRouteState:
           options.upsertRouteState || (jest.fn(async () => undefined) as unknown as typeof options.getSnapshot)
       }
@@ -369,6 +376,83 @@ describe('memoryConsistencyGate', () => {
     expect(req.body).toEqual(requestBody);
     expect(req.dispatchDecision).toBe('block');
     expect(responseHeaders['x-dispatch-decision']).toBe('block');
+  });
+
+  it('rolls back to trusted snapshot on baseline mismatch and re-evaluates once', async () => {
+    const staleVersion = '2026-02-06T05:50:00.000Z';
+    const staleSnapshot = createSnapshotRecord(staleVersion, {
+      'POST /api/commands/execute': {
+        expected_route: 'POST /api/commands/execute',
+        last_validated_at: staleVersion,
+        hard_conflict: false
+      }
+    });
+    staleSnapshot.snapshot.monotonic_ts_ms = 100;
+
+    const trustedVersion = '2026-02-06T05:50:01.000Z';
+    const trustedSnapshot = createSnapshotRecord(trustedVersion, {
+      'POST /api/commands/execute': {
+        expected_route: 'POST /api/commands/execute',
+        last_validated_at: trustedVersion,
+        hard_conflict: false
+      }
+    });
+    trustedSnapshot.snapshot.monotonic_ts_ms = 250;
+
+    const getSnapshot = jest
+      .fn()
+      .mockResolvedValueOnce(staleSnapshot)
+      .mockResolvedValueOnce(staleSnapshot);
+    const rollbackToTrustedSnapshot = jest.fn(async () => trustedSnapshot);
+
+    const app = createTestApp({
+      getSnapshot,
+      rollbackToTrustedSnapshot
+    });
+
+    const response = await request(app)
+      .post('/api/commands/execute')
+      .set('x-memory-baseline-ts', '200')
+      .send({ message: 'trusted rollback' });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-dispatch-decision']).toBe('allow');
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+    expect(rollbackToTrustedSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks with unsafe contract when baseline mismatch persists without trusted snapshot', async () => {
+    const staleVersion = '2026-02-06T05:52:00.000Z';
+    const staleSnapshot = createSnapshotRecord(staleVersion, {
+      'POST /api/commands/execute': {
+        expected_route: 'POST /api/commands/execute',
+        last_validated_at: staleVersion,
+        hard_conflict: false
+      }
+    });
+    staleSnapshot.snapshot.monotonic_ts_ms = 100;
+
+    const getSnapshot = jest
+      .fn()
+      .mockResolvedValueOnce(staleSnapshot)
+      .mockResolvedValueOnce(staleSnapshot);
+    const rollbackToTrustedSnapshot = jest.fn(async () => null);
+
+    const app = createTestApp({
+      getSnapshot,
+      rollbackToTrustedSnapshot
+    });
+
+    const response = await request(app)
+      .post('/api/commands/execute')
+      .set('x-memory-baseline-ts', '200')
+      .send({ message: 'block unsafe' });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('UNSAFE_TO_PROCEED');
+    expect(Array.isArray(response.body.conditions)).toBe(true);
+    expect(response.body.conditions).toContain('MEMORY_VERSION_MISMATCH');
+    expect(rollbackToTrustedSnapshot).toHaveBeenCalledTimes(1);
   });
 });
 

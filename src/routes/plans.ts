@@ -28,6 +28,8 @@ import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '../config/unifiedConfig.js';
 import { apiLogger } from '../utils/structuredLogging.js';
 import type { ClearDecision, PlanStatus, ActionPlanRecord } from '../types/actionPlan.js';
+import { acquireExecutionLock } from '../services/safety/executionLock.js';
+import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
 
 const router = express.Router();
 
@@ -234,11 +236,33 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       return;
     }
 
-    // Dispatch: create execution results (actual execution is handled by agents)
-    const clearDecision = (plan.clearScore?.decision ?? 'block') as ClearDecision;
-    const results = await Promise.all(
-      plan.actions.map(action => createExecutionResult(plan.id, action.id, action.agentId, 'success', clearDecision))
-    );
+    const lock = await acquireExecutionLock(`policy-task:${plan.id}`);
+    //audit Assumption: policy task execution must be single-active per plan; failure risk: duplicate execution and conflicting writes; expected invariant: duplicate starts suppressed; handling strategy: return 409 and emit audit.
+    if (!lock) {
+      emitSafetyAuditEvent({
+        event: 'policy_task_duplicate_suppressed',
+        severity: 'warn',
+        details: {
+          planId: plan.id
+        }
+      });
+      res.status(409).json({
+        error: 'Policy task execution suppressed due to duplicate lock',
+        planId: plan.id
+      });
+      return;
+    }
+
+    let results: Awaited<ReturnType<typeof createExecutionResult>>[];
+    try {
+      // Dispatch: create execution results (actual execution is handled by agents)
+      const clearDecision = (plan.clearScore?.decision ?? 'block') as ClearDecision;
+      results = await Promise.all(
+        plan.actions.map(action => createExecutionResult(plan.id, action.id, action.agentId, 'success', clearDecision))
+      );
+    } finally {
+      await lock.release();
+    }
 
     res.json({ plan_id: plan.id, status: 'executed', results });
   } catch (error: unknown) {

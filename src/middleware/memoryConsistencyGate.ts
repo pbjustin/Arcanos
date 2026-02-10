@@ -12,6 +12,12 @@ import {
   validateAgainstSnapshot
 } from '../services/dispatchControllerV9.js';
 import { routeMemorySnapshotStore } from '../services/routeMemorySnapshotStore.js';
+import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
+import { interpreterSupervisor } from '../services/safety/interpreterSupervisor.js';
+import {
+  activateUnsafeCondition,
+  buildUnsafeToProceedPayload
+} from '../services/safety/runtimeState.js';
 import { logger } from '../utils/structuredLogging.js';
 import { recordTraceEvent } from '../utils/telemetry.js';
 import { resolveHeader } from '../utils/requestHeaders.js';
@@ -28,6 +34,7 @@ interface MemoryConsistencyGateDependencies {
   shadowOnly: boolean;
   bindings: DispatchPatternBindingV9[];
   bindingsVersion: string;
+  policyTimeoutMs: number;
   defaultRerouteTarget: string;
   readonlyBindingId: string;
   now: () => Date;
@@ -44,6 +51,18 @@ interface MemoryConsistencyGateDependencies {
       expectedRoute: string,
       options?: { hardConflict?: boolean; updatedBy?: string }
     ) => Promise<unknown>;
+    getCachedSnapshot?: () => {
+      snapshot: DispatchMemorySnapshotV9;
+      memoryVersion: string;
+      loadedFrom: 'cache' | 'db' | 'created';
+    } | null;
+    getCachedTrustedSnapshot?: () => DispatchMemorySnapshotV9 | null;
+    rememberTrustedSnapshot?: (snapshot: DispatchMemorySnapshotV9) => Promise<void>;
+    rollbackToTrustedSnapshot?: (updatedBy?: string) => Promise<{
+      snapshot: DispatchMemorySnapshotV9;
+      memoryVersion: string;
+      loadedFrom: 'cache' | 'db' | 'created';
+    } | null>;
   };
 }
 
@@ -60,6 +79,7 @@ interface RequestStateSnapshot {
 const MAX_BODY_SERIALIZATION_BYTES = 1_000_000;
 const STATUS_CONFLICT = 409;
 const STATUS_SERVICE_UNAVAILABLE = 503;
+const POLICY_SUPERVISOR_ENTITY_ID = 'dispatch-v9-policy-gate';
 
 function normalizePath(path: string): string {
   const trimmed = path.trim();
@@ -85,6 +105,51 @@ function cloneJsonSafe<T>(value: T): T {
       return structuredClone(value);
     } catch {
       return value;
+    }
+  }
+}
+
+function resolveExpectedBaselineMonotonicTs(
+  headers: Record<string, string | string[] | undefined>,
+  clientMemoryVersion?: string
+): number | undefined {
+  const baselineHeader = resolveHeader(headers, 'x-memory-baseline-ts');
+  if (baselineHeader) {
+    const parsed = Number(baselineHeader);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.floor(parsed);
+    }
+  }
+
+  if (clientMemoryVersion) {
+    const parsedVersionTime = Date.parse(clientMemoryVersion);
+    if (!Number.isNaN(parsedVersionTime)) {
+      return parsedVersionTime;
+    }
+  }
+
+  return undefined;
+}
+
+async function withTimeout<T>(
+  timeoutMs: number,
+  operation: () => Promise<T>
+): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return { timedOut: false, value: await operation() };
+  }
+
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  try {
+    const timeoutPromise = new Promise<{ timedOut: true }>(resolve => {
+      timeoutHandle = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+    });
+    const operationPromise = operation().then(value => ({ timedOut: false as const, value }));
+    const result = await Promise.race([operationPromise, timeoutPromise]);
+    return result;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
     }
   }
 }
@@ -197,6 +262,7 @@ function buildDispatchDecisionPayload(options: {
   bindingId: string;
   decision: DispatchDecisionV9;
   clientMemoryVersion?: string;
+  expectedBaselineTsMs?: number;
   rerouteTarget?: string;
   conflictReason?: DispatchConflictReasonV9;
 }): Record<string, unknown> {
@@ -207,6 +273,7 @@ function buildDispatchDecisionPayload(options: {
     binding_id: options.bindingId,
     decision: options.decision,
     client_memory_version: options.clientMemoryVersion,
+    expected_baseline_ts_ms: options.expectedBaselineTsMs,
     reroute_target: options.rerouteTarget,
     conflict_reason: options.conflictReason
   };
@@ -392,6 +459,36 @@ function respondWithConflict(options: {
   );
 }
 
+function respondWithUnsafe(options: {
+  req: Request;
+  res: Response;
+  emitDecision: (
+    decision: DispatchDecisionV9,
+    bindingId: string,
+    memoryVersion: string,
+    options?: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string }
+  ) => void;
+  bindingId: string;
+  memoryVersion: string;
+  conflictReason: DispatchConflictReasonV9;
+  logMessage: string;
+}): void {
+  applyDispatchDecisionContext({
+    req: options.req,
+    res: options.res,
+    decision: 'block',
+    memoryVersion: options.memoryVersion,
+    bindingId: options.bindingId,
+    rerouted: false,
+    conflictCode: 'UNSAFE_TO_PROCEED'
+  });
+  options.emitDecision('block', options.bindingId, options.memoryVersion, {
+    conflictReason: options.conflictReason,
+    logMessage: options.logMessage
+  });
+  options.res.status(STATUS_SERVICE_UNAVAILABLE).json(buildUnsafeToProceedPayload());
+}
+
 async function handleRerouteDecision(options: {
   req: Request;
   res: Response;
@@ -531,6 +628,7 @@ export function createMemoryConsistencyGate(
     shadowOnly: overrides.shadowOnly ?? config.dispatchV9.shadowOnly,
     bindings: overrides.bindings ?? DISPATCH_PATTERN_BINDINGS,
     bindingsVersion: overrides.bindingsVersion ?? DISPATCH_BINDINGS_VERSION,
+    policyTimeoutMs: overrides.policyTimeoutMs ?? config.dispatchV9.policyTimeoutMs,
     defaultRerouteTarget: overrides.defaultRerouteTarget ?? config.dispatchV9.defaultRerouteTarget,
     readonlyBindingId: overrides.readonlyBindingId ?? config.dispatchV9.readonlyBindingId,
     now: overrides.now ?? (() => new Date()),
@@ -548,62 +646,378 @@ export function createMemoryConsistencyGate(
     }
 
     const attempt = buildRouteAttempt(req);
-    const clientMemoryVersion = resolveHeader(req.headers as Record<string, string | string[] | undefined>, 'x-memory-version');
-
-    const emitDecision = (
-      decision: DispatchDecisionV9,
-      bindingId: string,
-      memoryVersion: string,
-      options: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string } = {}
-    ): void => {
-      const timestamp = deps.now().toISOString();
-      const payload = buildDispatchDecisionPayload({
-        timestamp,
-        routeAttempted: attempt.routeAttempted,
-        memoryVersion,
-        bindingId,
-        decision,
-        clientMemoryVersion,
-        rerouteTarget: options.rerouteTarget,
-        conflictReason: options.conflictReason
-      });
-      dispatchLogger.info(options.logMessage || DISPATCH_V9_LOG_MESSAGES.decision, payload);
-      deps.recordTrace('dispatch.v9.decision', payload);
+    const policyCycleId = interpreterSupervisor.beginCycle(POLICY_SUPERVISOR_ENTITY_ID, {
+      category: 'policy',
+      metadata: {
+        routeAttempted: attempt.routeAttempted
+      }
+    });
+    let cycleSettled = false;
+    const completeCycle = (): void => {
+      if (!cycleSettled) {
+        interpreterSupervisor.completeCycle(policyCycleId);
+        cycleSettled = true;
+      }
+    };
+    const failCycle = (reason: string): void => {
+      if (!cycleSettled) {
+        interpreterSupervisor.failCycle(policyCycleId, reason);
+        cycleSettled = true;
+      }
+    };
+    const heartbeatCycle = (): void => {
+      interpreterSupervisor.heartbeat(policyCycleId);
     };
 
-    //audit Assumption: read-only endpoints should bypass consistency checks; risk: unnecessary latency on health paths; invariant: exemption list enforced; handling: allow + audit.
-    if (isExemptRoute(req)) {
-      const memoryVersion = deps.now().toISOString();
-      applyDispatchDecisionContext({
+    try {
+      const requestHeaders = req.headers as Record<string, string | string[] | undefined>;
+      const clientMemoryVersion = resolveHeader(requestHeaders, 'x-memory-version');
+      const expectedBaselineTsMs = resolveExpectedBaselineMonotonicTs(
+        requestHeaders,
+        clientMemoryVersion
+      );
+
+      const emitDecision = (
+        decision: DispatchDecisionV9,
+        bindingId: string,
+        memoryVersion: string,
+        options: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string } = {}
+      ): void => {
+        const timestamp = deps.now().toISOString();
+        const payload = buildDispatchDecisionPayload({
+          timestamp,
+          routeAttempted: attempt.routeAttempted,
+          memoryVersion,
+          bindingId,
+          decision,
+          clientMemoryVersion,
+          expectedBaselineTsMs,
+          rerouteTarget: options.rerouteTarget,
+          conflictReason: options.conflictReason
+        });
+        dispatchLogger.info(options.logMessage || DISPATCH_V9_LOG_MESSAGES.decision, payload);
+        deps.recordTrace('dispatch.v9.decision', payload);
+      };
+
+      //audit Assumption: read-only endpoints should bypass consistency checks; risk: unnecessary latency on health paths; invariant: exemption list enforced; handling: allow + audit.
+      if (isExemptRoute(req)) {
+        const memoryVersion = deps.now().toISOString();
+        applyDispatchDecisionContext({
+          req,
+          res,
+          decision: 'allow',
+          memoryVersion,
+          bindingId: deps.readonlyBindingId,
+          rerouted: false
+        });
+        emitDecision('allow', deps.readonlyBindingId, memoryVersion, {
+          conflictReason: 'none'
+        });
+        completeCycle();
+        next();
+        return;
+      }
+
+      const binding = resolveBinding(attempt, deps.bindings);
+      const evaluateDecision = (snapshot: DispatchMemorySnapshotV9) => {
+        const validationResult = validateAgainstSnapshot(
+          binding,
+          attempt,
+          snapshot,
+          clientMemoryVersion,
+          expectedBaselineTsMs
+        );
+        const decisionResult = decideAction(
+          validationResult,
+          binding?.sensitivity || 'sensitive',
+          binding?.conflictPolicy || 'strict_block'
+        );
+        return { validation: validationResult, decision: decisionResult };
+      };
+
+      const loadSnapshotRecord = async (
+        options: { forceRefresh?: boolean } = {}
+      ): Promise<
+        Awaited<ReturnType<MemoryConsistencyGateDependencies['snapshotStore']['getSnapshot']>> | null
+      > => {
+        const timeoutResult = await withTimeout(deps.policyTimeoutMs, () =>
+          deps.snapshotStore.getSnapshot(options)
+        );
+        if (!timeoutResult.timedOut) {
+          return timeoutResult.value;
+        }
+
+        const cachedSnapshot = deps.snapshotStore.getCachedSnapshot?.() || null;
+        //audit Assumption: timeout fallback must use deterministic cached snapshot when available; risk: policy deadlock; invariant: cached snapshot drives temporary continuation; handling: fallback to cache and audit.
+        if (cachedSnapshot) {
+          emitSafetyAuditEvent({
+            event: 'policy_timeout_using_cached_snapshot',
+            severity: 'warn',
+            details: {
+              routeAttempted: attempt.routeAttempted,
+              forceRefresh: Boolean(options.forceRefresh)
+            }
+          });
+          return cachedSnapshot;
+        }
+
+        activateUnsafeCondition({
+          code: 'POLICY_ENGINE_TIMEOUT_NO_FALLBACK',
+          message: 'Policy evaluation timed out without cached snapshot fallback',
+          metadata: {
+            routeAttempted: attempt.routeAttempted,
+            timeoutMs: deps.policyTimeoutMs
+          }
+        });
+        emitSafetyAuditEvent({
+          event: 'policy_timeout_no_fallback',
+          severity: 'error',
+          details: {
+            routeAttempted: attempt.routeAttempted,
+            timeoutMs: deps.policyTimeoutMs
+          }
+        });
+        return null;
+      };
+
+      heartbeatCycle();
+      const initialSnapshotRecord = await loadSnapshotRecord();
+      if (!initialSnapshotRecord) {
+        failCycle('policy_timeout_no_fallback');
+        respondWithUnsafe({
+          req,
+          res,
+          emitDecision,
+          bindingId: binding?.id || 'unknown',
+          memoryVersion: deps.now().toISOString(),
+          conflictReason: 'none',
+          logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+        });
+        return;
+      }
+
+      let snapshotRecord = initialSnapshotRecord;
+      let snapshotLoaded = true;
+      let { validation, decision } = evaluateDecision(snapshotRecord.snapshot);
+
+      //audit Assumption: one forced refresh can resolve transient staleness; risk: repeated DB load cost; invariant: max one refresh attempt; handling: refresh once on invalid.
+      if (!validation.valid) {
+        heartbeatCycle();
+        const refreshedSnapshotRecord = await loadSnapshotRecord({ forceRefresh: true });
+        if (!refreshedSnapshotRecord) {
+          failCycle('policy_timeout_no_fallback');
+          respondWithUnsafe({
+            req,
+            res,
+            emitDecision,
+            bindingId: binding?.id || 'unknown',
+            memoryVersion: snapshotRecord.memoryVersion,
+            conflictReason: validation.reason,
+            logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+          });
+          return;
+        }
+        snapshotRecord = refreshedSnapshotRecord;
+        const refreshed = evaluateDecision(snapshotRecord.snapshot);
+        validation = refreshed.validation;
+        decision = refreshed.decision;
+      }
+
+      //audit Assumption: stale version mismatch requires trusted rollback and one re-evaluation; risk: acting on stale memory baseline; invariant: rollback attempted once then re-evaluate; handling: unsafe block if unresolved.
+      if (validation.reason === 'stale_version') {
+        emitSafetyAuditEvent({
+          event: 'memory_version_mismatch_detected',
+          severity: 'warn',
+          details: {
+            routeAttempted: attempt.routeAttempted,
+            expectedBaselineTsMs,
+            snapshotMonotonicTsMs: snapshotRecord.snapshot.monotonic_ts_ms
+          }
+        });
+
+        const rolledBackSnapshot = deps.snapshotStore.rollbackToTrustedSnapshot
+          ? await deps.snapshotStore.rollbackToTrustedSnapshot('memory-consistency-gate')
+          : null;
+
+        if (!rolledBackSnapshot) {
+          activateUnsafeCondition({
+            code: 'MEMORY_VERSION_MISMATCH',
+            message: 'Memory version mismatch with no trusted rollback snapshot available',
+            metadata: {
+              routeAttempted: attempt.routeAttempted
+            }
+          });
+          failCycle('memory_version_mismatch_no_trusted_snapshot');
+          respondWithUnsafe({
+            req,
+            res,
+            emitDecision,
+            bindingId: binding?.id || 'unknown',
+            memoryVersion: snapshotRecord.memoryVersion,
+            conflictReason: validation.reason,
+            logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+          });
+          return;
+        }
+
+        emitSafetyAuditEvent({
+          event: 'memory_rollback_to_trusted_snapshot',
+          severity: 'warn',
+          details: {
+            routeAttempted: attempt.routeAttempted,
+            rolledBackVersionId: rolledBackSnapshot.snapshot.version_id
+          }
+        });
+
+        snapshotRecord = rolledBackSnapshot;
+        const postRollback = evaluateDecision(snapshotRecord.snapshot);
+        validation = postRollback.validation;
+        decision = postRollback.decision;
+
+        if (validation.reason === 'stale_version') {
+          activateUnsafeCondition({
+            code: 'MEMORY_VERSION_MISMATCH',
+            message: 'Memory version mismatch persisted after trusted rollback',
+            metadata: {
+              routeAttempted: attempt.routeAttempted,
+              expectedBaselineTsMs,
+              snapshotMonotonicTsMs: snapshotRecord.snapshot.monotonic_ts_ms
+            }
+          });
+          failCycle('memory_version_mismatch_persisted');
+          respondWithUnsafe({
+            req,
+            res,
+            emitDecision,
+            bindingId: binding?.id || 'unknown',
+            memoryVersion: snapshotRecord.memoryVersion,
+            conflictReason: validation.reason,
+            logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
+          });
+          return;
+        }
+      }
+
+      const memoryVersion = snapshotRecord.memoryVersion;
+      const bindingId = binding?.id || 'unknown';
+
+      //audit Assumption: shadow mode must not mutate request flow; risk: accidental enforcement in rollout; invariant: always allow in shadow; handling: log + continue.
+      if (deps.shadowOnly) {
+        applyDispatchDecisionContext({
+          req,
+          res,
+          decision: 'allow',
+          memoryVersion,
+          bindingId,
+          rerouted: false,
+          conflictCode:
+            validation.reason === 'none' ? undefined : DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT
+        });
+        emitDecision('allow', bindingId, memoryVersion, {
+          conflictReason: validation.reason,
+          logMessage: DISPATCH_V9_LOG_MESSAGES.shadowAllow
+        });
+        completeCycle();
+        next();
+        return;
+      }
+
+      //audit Assumption: valid route checks should seed missing route_state entries; risk: snapshot drift; invariant: route state eventually populated; handling: best-effort upsert.
+      if (decision === 'allow') {
+        applyDispatchDecisionContext({
+          req,
+          res,
+          decision: 'allow',
+          memoryVersion,
+          bindingId,
+          rerouted: false
+        });
+        emitDecision('allow', bindingId, memoryVersion, {
+          conflictReason: validation.reason
+        });
+
+        if (deps.snapshotStore.rememberTrustedSnapshot) {
+          try {
+            await deps.snapshotStore.rememberTrustedSnapshot(snapshotRecord.snapshot);
+          } catch (error) {
+            dispatchLogger.warn(
+              'Failed to persist trusted snapshot after allow decision',
+              {
+                route_attempted: attempt.routeAttempted,
+                binding_id: bindingId
+              },
+              undefined,
+              error instanceof Error ? error : undefined
+            );
+          }
+        }
+
+        if (validation.requiresSnapshotUpdate) {
+          try {
+            await deps.snapshotStore.upsertRouteState(
+              attempt.routeAttempted,
+              attempt.routeAttempted,
+              { updatedBy: 'middleware' }
+            );
+          } catch (error) {
+            dispatchLogger.warn(
+              'Dispatch v9 failed to upsert route state after allow decision',
+              {
+                route_attempted: attempt.routeAttempted,
+                binding_id: bindingId
+              },
+              undefined,
+              error instanceof Error ? error : undefined
+            );
+          }
+        }
+
+        completeCycle();
+        next();
+        return;
+      }
+
+      if (decision === 'block') {
+        completeCycle();
+        respondWithConflict({
+          req,
+          res,
+          emitDecision,
+          memoryVersion,
+          bindingId,
+          routeAttempted: attempt.routeAttempted,
+          reason: validation.reason,
+          logMessage: DISPATCH_V9_LOG_MESSAGES.blocked
+        });
+        return;
+      }
+
+      const rerouteTarget = binding?.rerouteTarget || deps.defaultRerouteTarget;
+      heartbeatCycle();
+      await handleRerouteDecision({
         req,
         res,
-        decision: 'allow',
+        next,
+        binding,
+        attempt,
+        validation,
+        rerouteTarget,
+        snapshotLoaded,
         memoryVersion,
-        bindingId: deps.readonlyBindingId,
-        rerouted: false
+        bindingId,
+        deps,
+        emitDecision,
+        dispatchLogger
       });
-      emitDecision('allow', deps.readonlyBindingId, memoryVersion, {
-        conflictReason: 'none'
-      });
-      return next();
-    }
-
-    const binding = resolveBinding(attempt, deps.bindings);
-    let snapshotRecord: Awaited<ReturnType<MemoryConsistencyGateDependencies['snapshotStore']['getSnapshot']>> | null = null;
-    let snapshotLoaded = false;
-
-    try {
-      snapshotRecord = await deps.snapshotStore.getSnapshot();
-      snapshotLoaded = true;
+      completeCycle();
+      return;
     } catch (error) {
-      //audit Assumption: snapshot load errors should fail safely; risk: executing without governance state; invariant: fail-safe response; handling: return 503.
-      const fallbackMemoryVersion = deps.now().toISOString();
-      const fallbackBindingId = binding?.id || 'unknown';
+      failCycle(error instanceof Error ? error.message : String(error));
       dispatchLogger.error(
         DISPATCH_V9_LOG_MESSAGES.failsafe,
         {
           route_attempted: attempt.routeAttempted,
-          reason: 'snapshot_load_failed'
+          reason: 'middleware_unhandled_error'
         },
         undefined,
         error instanceof Error ? error : undefined
@@ -611,159 +1025,37 @@ export function createMemoryConsistencyGate(
       respondWithFailsafe({
         req,
         res,
-        emitDecision,
-        memoryVersion: fallbackMemoryVersion,
-        bindingId: fallbackBindingId,
+        emitDecision: (
+          decision: DispatchDecisionV9,
+          bindingId: string,
+          memoryVersion: string,
+          options?: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string }
+        ) => {
+          const timestamp = deps.now().toISOString();
+          const payload = buildDispatchDecisionPayload({
+            timestamp,
+            routeAttempted: attempt.routeAttempted,
+            memoryVersion,
+            bindingId,
+            decision,
+            conflictReason: options?.conflictReason
+          });
+          dispatchLogger.info(options?.logMessage || DISPATCH_V9_LOG_MESSAGES.decision, payload);
+          deps.recordTrace('dispatch.v9.decision', payload);
+        },
+        memoryVersion: deps.now().toISOString(),
+        bindingId: 'unknown',
         routeAttempted: attempt.routeAttempted,
         conflictReason: 'none',
-        reason: 'snapshot_load_failed',
+        reason: 'middleware_unhandled_error',
         logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
       });
       return;
-    }
-
-    let validation = validateAgainstSnapshot(
-      binding,
-      attempt,
-      snapshotRecord.snapshot,
-      clientMemoryVersion
-    );
-    let decision = decideAction(
-      validation,
-      binding?.sensitivity || 'sensitive',
-      binding?.conflictPolicy || 'strict_block'
-    );
-
-    //audit Assumption: one forced refresh can resolve transient staleness; risk: repeated DB load cost; invariant: max one refresh attempt; handling: refresh once on invalid.
-    if (!validation.valid) {
-      try {
-        snapshotRecord = await deps.snapshotStore.getSnapshot({ forceRefresh: true });
-        validation = validateAgainstSnapshot(
-          binding,
-          attempt,
-          snapshotRecord.snapshot,
-          clientMemoryVersion
-        );
-        decision = decideAction(
-          validation,
-          binding?.sensitivity || 'sensitive',
-          binding?.conflictPolicy || 'strict_block'
-        );
-      } catch (error) {
-        dispatchLogger.error(
-          DISPATCH_V9_LOG_MESSAGES.failsafe,
-          {
-            route_attempted: attempt.routeAttempted,
-            reason: 'snapshot_refresh_failed'
-          },
-          undefined,
-          error instanceof Error ? error : undefined
-        );
-        respondWithFailsafe({
-          req,
-          res,
-          emitDecision,
-          memoryVersion: snapshotRecord.memoryVersion,
-          bindingId: binding?.id || 'unknown',
-          routeAttempted: attempt.routeAttempted,
-          conflictReason: validation.reason,
-          reason: 'snapshot_refresh_failed',
-          logMessage: DISPATCH_V9_LOG_MESSAGES.failsafe
-        });
-        return;
+    } finally {
+      if (!cycleSettled) {
+        completeCycle();
       }
     }
-
-    const memoryVersion = snapshotRecord.memoryVersion;
-    const bindingId = binding?.id || 'unknown';
-
-    //audit Assumption: shadow mode must not mutate request flow; risk: accidental enforcement in rollout; invariant: always allow in shadow; handling: log + continue.
-    if (deps.shadowOnly) {
-      applyDispatchDecisionContext({
-        req,
-        res,
-        decision: 'allow',
-        memoryVersion,
-        bindingId,
-        rerouted: false,
-        conflictCode:
-          validation.reason === 'none' ? undefined : DISPATCH_V9_ERROR_CODES.MEMORY_ROUTE_CONFLICT
-      });
-      emitDecision('allow', bindingId, memoryVersion, {
-        conflictReason: validation.reason,
-        logMessage: DISPATCH_V9_LOG_MESSAGES.shadowAllow
-      });
-      return next();
-    }
-
-    //audit Assumption: valid route checks should seed missing route_state entries; risk: snapshot drift; invariant: route state eventually populated; handling: best-effort upsert.
-    if (decision === 'allow') {
-      applyDispatchDecisionContext({
-        req,
-        res,
-        decision: 'allow',
-        memoryVersion,
-        bindingId,
-        rerouted: false
-      });
-      emitDecision('allow', bindingId, memoryVersion, {
-        conflictReason: validation.reason
-      });
-
-      if (validation.requiresSnapshotUpdate) {
-        try {
-          await deps.snapshotStore.upsertRouteState(
-            attempt.routeAttempted,
-            attempt.routeAttempted,
-            { updatedBy: 'middleware' }
-          );
-        } catch (error) {
-          dispatchLogger.warn(
-            'Dispatch v9 failed to upsert route state after allow decision',
-            {
-              route_attempted: attempt.routeAttempted,
-              binding_id: bindingId
-            },
-            undefined,
-            error instanceof Error ? error : undefined
-          );
-        }
-      }
-
-      return next();
-    }
-
-    if (decision === 'block') {
-      respondWithConflict({
-        req,
-        res,
-        emitDecision,
-        memoryVersion,
-        bindingId,
-        routeAttempted: attempt.routeAttempted,
-        reason: validation.reason,
-        logMessage: DISPATCH_V9_LOG_MESSAGES.blocked
-      });
-      return;
-    }
-
-    const rerouteTarget = binding?.rerouteTarget || deps.defaultRerouteTarget;
-    await handleRerouteDecision({
-      req,
-      res,
-      next,
-      binding,
-      attempt,
-      validation,
-      rerouteTarget,
-      snapshotLoaded,
-      memoryVersion,
-      bindingId,
-      deps,
-      emitDecision,
-      dispatchLogger
-    });
-    return;
   };
 }
 

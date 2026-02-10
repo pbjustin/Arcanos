@@ -1,5 +1,9 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import {
+  createVersionedMemoryEnvelope,
+  unwrapVersionedMemoryEnvelope
+} from './safety/memoryEnvelope.js';
 
 const MEMORY_ROOT = path.resolve('memory');
 
@@ -30,14 +34,19 @@ async function ensureDirectory(filePath: string): Promise<void> {
 export async function setMemory(key: string, value: unknown): Promise<void> {
   const filePath = resolveMemoryPath(key);
   await ensureDirectory(filePath);
-  await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf-8');
+  const envelope = createVersionedMemoryEnvelope(value, {
+    prefix: 'file-memory'
+  });
+  await fs.writeFile(filePath, JSON.stringify(envelope, null, 2), 'utf-8');
 }
 
 export async function getMemory<T = unknown>(key: string): Promise<T | null> {
   const filePath = resolveMemoryPath(key);
   try {
     const raw = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(raw) as T;
+    const parsed = JSON.parse(raw);
+    //audit Assumption: file-backed memory may contain legacy non-envelope payloads; risk: read regression; invariant: return plain payload for both shapes; handling: unwrap when envelope detected.
+    return unwrapVersionedMemoryEnvelope<T>(parsed).payload;
   } catch (error: unknown) {
     //audit Assumption: missing files indicate no memory entry
     if (isNodeError(error) && error.code === 'ENOENT') {

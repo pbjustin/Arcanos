@@ -7,6 +7,10 @@
 import { isDatabaseConnected } from '../client.js';
 import type { MemoryEntry } from '../schema.js';
 import { query } from '../query.js';
+import {
+  createVersionedMemoryEnvelope,
+  unwrapVersionedMemoryEnvelope
+} from '../../services/safety/memoryEnvelope.js';
 
 /**
  * Save or update memory entry
@@ -16,13 +20,17 @@ export async function saveMemory(key: string, value: unknown): Promise<MemoryEnt
     throw new Error('Database not configured');
   }
 
+  const envelopedValue = createVersionedMemoryEnvelope(value, {
+    prefix: 'db-memory'
+  });
+
   const result = await query(
     `INSERT INTO memory (key, value, updated_at) 
      VALUES ($1, $2, NOW()) 
      ON CONFLICT (key) 
      DO UPDATE SET value = $2, updated_at = NOW() 
      RETURNING *`,
-    [key, JSON.stringify(value)]
+    [key, JSON.stringify(envelopedValue)]
   );
   
   return result.rows[0];
@@ -46,8 +54,10 @@ export async function loadMemory(key: string): Promise<unknown | null> {
   if (result.rows.length === 0) {
     return null;
   }
-  
-  return result.rows[0].value;
+
+  //audit Assumption: legacy rows may not have envelope metadata yet; risk: backward compatibility break; invariant: callers receive raw payload for both formats; handling: unwrap envelope when present, passthrough otherwise.
+  const unwrapped = unwrapVersionedMemoryEnvelope(result.rows[0].value);
+  return unwrapped.payload;
 }
 
 /**
