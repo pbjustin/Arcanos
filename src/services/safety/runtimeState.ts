@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createVersionId, getMonotonicTimestampMs } from './monotonicClock.js';
 import { emitSafetyAuditEvent } from './auditEvents.js';
+import crypto from 'crypto';
 
 export type UnsafeConditionCode =
   | 'MEMORY_VERSION_MISMATCH'
@@ -83,6 +84,10 @@ interface QuarantineInput {
 }
 
 const SAFETY_STATE_FILE = path.join(process.cwd(), 'memory', 'safety-runtime-state.json');
+const SAVE_DEBOUNCE_MS = 100;
+const MAX_ENTITY_KEYS = 1000;
+
+let pendingSaveTimeout: NodeJS.Timeout | null = null;
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -239,6 +244,31 @@ function normalizeQuarantine(raw: unknown): SafetyQuarantineRecord | null {
   };
 }
 
+function normalizeEntityKey(entityId: string): string {
+  if (typeof entityId !== 'string' || !entityId.trim()) {
+    return 'unknown';
+  }
+  const trimmed = entityId.trim();
+  if (trimmed.length <= 128) {
+    return trimmed;
+  }
+  // long/attacker-controlled keys are hashed to prevent unbounded memory growth
+  const hash = crypto.createHash('sha256').update(trimmed).digest('hex');
+  return `h:${hash}`;
+}
+
+function canAcceptEntityKey(key: string): boolean {
+  const existingKeys = new Set<string>([
+    ...Object.keys(runtimeSnapshot.counters.healthyCycles),
+    ...Object.keys(runtimeSnapshot.counters.heartbeatMisses),
+    ...Object.keys(runtimeSnapshot.counters.workerFailures)
+  ]);
+  if (existingKeys.has(key)) {
+    return true;
+  }
+  return existingKeys.size < MAX_ENTITY_KEYS;
+}
+
 function readStateFromDisk(): SafetyRuntimeSnapshot {
   try {
     if (!fs.existsSync(SAFETY_STATE_FILE)) {
@@ -285,15 +315,43 @@ function readStateFromDisk(): SafetyRuntimeSnapshot {
 
 let runtimeSnapshot: SafetyRuntimeSnapshot = readStateFromDisk();
 
-function saveState(reason: string): void {
+async function flushStateToDisk(reason?: string): Promise<void> {
+  try {
+    ensureStateDirectory();
+    await fs.promises.writeFile(SAFETY_STATE_FILE, JSON.stringify(runtimeSnapshot, null, 2), 'utf8');
+    emitSafetyAuditEvent({
+      event: 'runtime_state_persisted',
+      severity: 'info',
+      details: { reason: reason || 'scheduled_flush', updatedAt: runtimeSnapshot.updatedAt }
+    });
+  } catch (err) {
+    emitSafetyAuditEvent({
+      event: 'runtime_state_persist_failed',
+      severity: 'error',
+      details: { reason: reason || 'scheduled_flush', error: String(err) }
+    });
+  }
+}
+
+function scheduleSave(reason: string): void {
   runtimeSnapshot.updatedAt = new Date().toISOString();
-  ensureStateDirectory();
-  fs.writeFileSync(SAFETY_STATE_FILE, JSON.stringify(runtimeSnapshot, null, 2), 'utf8');
+  if (pendingSaveTimeout) {
+    clearTimeout(pendingSaveTimeout);
+  }
+  pendingSaveTimeout = setTimeout(() => {
+    void flushStateToDisk(reason);
+    pendingSaveTimeout = null;
+  }, SAVE_DEBOUNCE_MS);
   emitSafetyAuditEvent({
-    event: 'runtime_state_persisted',
-    severity: 'info',
+    event: 'runtime_state_persist_scheduled',
+    severity: 'debug',
     details: { reason, updatedAt: runtimeSnapshot.updatedAt }
   });
+}
+
+function saveState(reason: string): void {
+  // non-blocking coalesced persistence to reduce sync I/O DoS risk
+  scheduleSave(reason);
 }
 
 function isConditionActive(condition: UnsafeConditionRecord): boolean {
@@ -589,11 +647,21 @@ export function incrementWorkerFailure(
   windowMs: number
 ): { count: number; exceeded: boolean } {
   const nowMs = getMonotonicTimestampMs();
-  const existing = runtimeSnapshot.counters.workerFailures[workerId];
+  const key = normalizeEntityKey(workerId);
+  if (!canAcceptEntityKey(key)) {
+    emitSafetyAuditEvent({
+      event: 'entity_key_limit_reached',
+      severity: 'warn',
+      details: { entityId: key, threshold: MAX_ENTITY_KEYS }
+    });
+    return { count: 0, exceeded: false };
+  }
+
+  const existing = runtimeSnapshot.counters.workerFailures[key];
 
   //audit Assumption: failures outside restart window should reset count; failure risk: stale failures causing false quarantine; expected invariant: window-bounded counters; handling strategy: reset when expired.
   if (!existing || nowMs - existing.windowStartedMs > windowMs) {
-    runtimeSnapshot.counters.workerFailures[workerId] = {
+    runtimeSnapshot.counters.workerFailures[key] = {
       count: 1,
       windowStartedMs: nowMs,
       lastFailureMs: nowMs
@@ -604,7 +672,7 @@ export function incrementWorkerFailure(
   }
 
   saveState('incrementWorkerFailure');
-  const count = runtimeSnapshot.counters.workerFailures[workerId].count;
+  const count = runtimeSnapshot.counters.workerFailures[key].count;
   return { count, exceeded: count >= threshold };
 }
 
@@ -614,9 +682,10 @@ export function incrementWorkerFailure(
  * Edge cases: No-op when counters do not exist.
  */
 export function resetFailureSignals(entityId: string): void {
-  delete runtimeSnapshot.counters.workerFailures[entityId];
-  delete runtimeSnapshot.counters.heartbeatMisses[entityId];
-  runtimeSnapshot.counters.healthyCycles[entityId] = 0;
+  const key = normalizeEntityKey(entityId);
+  delete runtimeSnapshot.counters.workerFailures[key];
+  delete runtimeSnapshot.counters.heartbeatMisses[key];
+  runtimeSnapshot.counters.healthyCycles[key] = 0;
   saveState('resetFailureSignals');
 }
 
@@ -629,10 +698,20 @@ export function incrementHeartbeatMiss(
   entityId: string,
   threshold: number
 ): { count: number; exceeded: boolean } {
-  const current = runtimeSnapshot.counters.heartbeatMisses[entityId] || 0;
+  const key = normalizeEntityKey(entityId);
+  if (!canAcceptEntityKey(key)) {
+    emitSafetyAuditEvent({
+      event: 'entity_key_limit_reached',
+      severity: 'warn',
+      details: { entityId: key, threshold: MAX_ENTITY_KEYS }
+    });
+    return { count: 0, exceeded: false };
+  }
+
+  const current = runtimeSnapshot.counters.heartbeatMisses[key] || 0;
   const next = current + 1;
-  runtimeSnapshot.counters.heartbeatMisses[entityId] = next;
-  runtimeSnapshot.counters.healthyCycles[entityId] = 0;
+  runtimeSnapshot.counters.heartbeatMisses[key] = next;
+  runtimeSnapshot.counters.healthyCycles[key] = 0;
   saveState('incrementHeartbeatMiss');
   return { count: next, exceeded: next >= threshold };
 }
@@ -643,8 +722,18 @@ export function incrementHeartbeatMiss(
  * Edge cases: Missing entity counter starts at one.
  */
 export function incrementHealthyCycle(entityId: string): number {
-  const next = (runtimeSnapshot.counters.healthyCycles[entityId] || 0) + 1;
-  runtimeSnapshot.counters.healthyCycles[entityId] = next;
+  const key = normalizeEntityKey(entityId);
+  if (!canAcceptEntityKey(key)) {
+    emitSafetyAuditEvent({
+      event: 'entity_key_limit_reached',
+      severity: 'warn',
+      details: { entityId: key, threshold: MAX_ENTITY_KEYS }
+    });
+    return 0;
+  }
+
+  const next = (runtimeSnapshot.counters.healthyCycles[key] || 0) + 1;
+  runtimeSnapshot.counters.healthyCycles[key] = next;
   saveState('incrementHealthyCycle');
   return next;
 }
