@@ -68,6 +68,7 @@ from . import (
     ui_ops,
 )
 from .context import ConversationResult, _UNSET_FILTER, get_or_create_instance_id, resolve_persona
+from .cli_midlayer import translate
 
 try:
     from ..push_to_talk import AdvancedPushToTalkManager
@@ -324,6 +325,20 @@ class ArcanosCLI:
 
     def _build_backend_metadata(self) -> dict[str, str]:
         return backend_ops.build_backend_metadata(self)
+
+    def _confirm_action(self, message: str) -> bool:
+        """
+        Purpose: Prompt the operator for a yes/no confirmation.
+        Inputs/Outputs: message text; returns True when confirmed, False otherwise.
+        Edge cases: Non-interactive stdin rejects by default.
+        """
+        # //audit: ensure confirmations require a TTY to avoid accidental approvals; fail closed when non-interactive
+        if not sys.stdin.isatty():
+            self.console.print("[red]Action rejected.[/red]")
+            return False
+
+        response = self.console.input(f"{message} [y/N]: ").strip().lower()
+        return response in ("y", "yes")
 
     def _send_backend_update(self, update_type: str, data: Mapping[str, Any]) -> None:
         return backend_ops.send_backend_update(self, update_type, data)

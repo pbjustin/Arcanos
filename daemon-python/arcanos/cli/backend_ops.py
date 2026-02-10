@@ -447,7 +447,7 @@ def request_daemon_heartbeat(cli: "ArcanosCLI", uptime: float):
     if not cli.backend_client:
         raise RuntimeError("Backend client is not configured")
 
-    return cli.backend_client._make_request(
+    return cli.backend_client.make_raw_request(
         "POST",
         "/api/daemon/heartbeat",
         json={
@@ -470,7 +470,7 @@ def request_daemon_commands(cli: "ArcanosCLI"):
     if not cli.backend_client:
         raise RuntimeError("Backend client is not configured")
 
-    return cli.backend_client._make_request(
+    return cli.backend_client.make_raw_request(
         "GET",
         f"/api/daemon/commands?instance_id={cli.instance_id}",
     )
@@ -485,7 +485,7 @@ def acknowledge_daemon_commands(cli: "ArcanosCLI", command_ids: list[str]):
     if not cli.backend_client:
         raise RuntimeError("Backend client is not configured")
 
-    return cli.backend_client._make_request(
+    return cli.backend_client.make_raw_request(
         "POST",
         "/api/daemon/commands/ack",
         json={
