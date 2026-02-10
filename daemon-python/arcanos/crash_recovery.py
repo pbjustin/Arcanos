@@ -81,12 +81,10 @@ Message: {str(exception)}
         # Restart using same command
         try:
             python_exe = sys.executable
-            script_path = Path(__file__).parent / "cli.py"
-
-            # Start new process
+            # Start new process via package entrypoint (supports modular cli package layout)
             subprocess.Popen(
-                [python_exe, str(script_path)],
-                cwd=str(Path(__file__).parent),
+                [python_exe, "-m", "arcanos.cli"],
+                cwd=str(Path(__file__).parent.parent),
                 start_new_session=True
             )
 
