@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import type fs from 'fs';
 import type path from 'path';
 import { logger } from '../utils/structuredLogging.js';
+import { assertProtectedConfigIntegrity } from '../services/safety/configIntegrity.js';
 import type {
   DaemonCommand,
   DaemonHeartbeat,
@@ -72,6 +73,10 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
         });
         return;
       }
+
+      assertProtectedConfigIntegrity('daemon_tokens', parsed, {
+        source: deps.tokensFilePath
+      });
 
       for (const [instanceId, token] of Object.entries(parsed)) {
         if (typeof token === 'string') {

@@ -24,7 +24,10 @@ function createSnapshot(routeAttempted: string, expectedRoute: string): Dispatch
   return {
     schema_version: 'v9',
     bindings_version: 'bindings-v1',
+    version_id: 'snapshot-v1',
+    monotonic_ts_ms: 1700000000000,
     memory_version: now,
+    trusted_snapshot_id: 'snapshot-v1',
     route_state: {
       [routeAttempted]: {
         expected_route: expectedRoute,
@@ -94,6 +97,40 @@ describe('dispatchControllerV9', () => {
 
     expect(validation.valid).toBe(false);
     expect(validation.reason).toBe('stale_version');
+  });
+
+  it('uses monotonic baseline comparison when provided', () => {
+    const binding: DispatchPatternBindingV9 = {
+      id: 'api.ask',
+      priority: 10,
+      methods: ['POST'],
+      exactPaths: ['/api/ask'],
+      sensitivity: 'non-sensitive',
+      conflictPolicy: 'refresh_then_reroute',
+      rerouteTarget: '/api/ask',
+      expectedRoute: '/api/ask'
+    };
+    const attempt = createAttempt('POST', '/api/ask');
+    const snapshot = createSnapshot('POST /api/ask', 'POST /api/ask');
+
+    const validWithBaseline = validateAgainstSnapshot(
+      binding,
+      attempt,
+      snapshot,
+      '1999-01-01T00:00:00.000Z',
+      snapshot.monotonic_ts_ms - 1
+    );
+    expect(validWithBaseline.valid).toBe(true);
+
+    const staleWithBaseline = validateAgainstSnapshot(
+      binding,
+      attempt,
+      snapshot,
+      snapshot.memory_version,
+      snapshot.monotonic_ts_ms + 1
+    );
+    expect(staleWithBaseline.valid).toBe(false);
+    expect(staleWithBaseline.reason).toBe('stale_version');
   });
 
   it('classifies route drift conflicts', () => {
