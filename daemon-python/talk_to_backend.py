@@ -25,8 +25,6 @@ if env_path.exists():
     load_dotenv(env_path)
 
 # Make sure we can import the arcanos package from this folder
-sys.path.insert(0, str(BASE_DIR))
-
 from arcanos.config import Config  # type: ignore
 from arcanos.backend_client import (  # type: ignore
     BackendApiClient,
