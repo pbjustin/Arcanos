@@ -133,6 +133,14 @@ class BackendApiClient:
         except requests.RequestException as exc:
             raise BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
 
+    def make_raw_request(self, method: str, path: str, json: Optional[Mapping[str, Any]] = None) -> requests.Response:
+        """
+        Purpose: Public wrapper to perform a raw backend request and return the underlying requests.Response.
+        Inputs/Outputs: method, path, optional json payload; returns requests.Response or raises BackendRequestError.
+        Edge cases: Mirrors behavior of _make_request but exposes a sanctioned public API to avoid private access.
+        """
+        return self._make_request(method, path, json)
+
     def request_ask_with_domain(
         self,
         message: str,

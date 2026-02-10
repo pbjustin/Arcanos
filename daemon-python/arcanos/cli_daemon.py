@@ -77,7 +77,7 @@ def heartbeat_loop(self) -> None:
             time_since_last = request_start - last_request_time
 
             # Send heartbeat via backend client
-            response = self.backend_client._make_request(
+            response = self.backend_client.make_raw_request(
                 "POST",
                 "/api/daemon/heartbeat",
                 json={
@@ -142,7 +142,7 @@ def command_poll_loop(self) -> None:
             time_since_last = request_start - last_request_time
 
             # Poll for commands
-            response = self.backend_client._make_request(
+            response = self.backend_client.make_raw_request(
                 "GET",
                 f"/api/daemon/commands?instance_id={self.instance_id}"
             )
@@ -177,7 +177,7 @@ def command_poll_loop(self) -> None:
                     # Acknowledge processed commands
                     if command_ids:
                         try:
-                            ack_response = self.backend_client._make_request(
+                            ack_response = self.backend_client.make_raw_request(
                                 "POST",
                                 "/api/daemon/commands/ack",
                                 json={
