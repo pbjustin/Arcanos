@@ -344,7 +344,6 @@ function scheduleSave(reason: string): void {
   }, SAVE_DEBOUNCE_MS);
   emitSafetyAuditEvent({
     event: 'runtime_state_persist_scheduled',
-    severity: 'debug',
     details: { reason, updatedAt: runtimeSnapshot.updatedAt }
   });
 }
