@@ -3,12 +3,32 @@ import request from 'supertest';
 import askRouter from '../src/routes/ask.js';
 
 let app: Express;
+let previousNodeEnv: string | undefined;
+let previousSystemModeBypass: string | undefined;
 
 beforeAll(() => {
+  //audit Assumption: system mode auth bypass is required for deterministic test execution; failure risk: unexpected 401 responses; expected invariant: bypass enabled only within this suite; handling strategy: set and restore env vars in lifecycle hooks.
+  previousNodeEnv = process.env.NODE_ENV;
+  previousSystemModeBypass = process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS;
   process.env.NODE_ENV = 'test';
+  process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS = '1';
   app = express();
   app.use(express.json({ limit: '10mb' }));
   app.use('/', askRouter);
+});
+
+afterAll(() => {
+  if (previousNodeEnv === undefined) {
+    delete process.env.NODE_ENV;
+  } else {
+    process.env.NODE_ENV = previousNodeEnv;
+  }
+
+  if (previousSystemModeBypass === undefined) {
+    delete process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS;
+  } else {
+    process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS = previousSystemModeBypass;
+  }
 });
 
 describe('/ask governed system modes', () => {
@@ -37,7 +57,10 @@ describe('/ask governed system modes', () => {
     const stateRes = await request(app).post('/ask').send({ mode: 'system_state' });
     expect(stateRes.status).toBe(200);
     expect(stateRes.body.intent.intentId).toBeTruthy();
-    expect(stateRes.body.intent.label).toContain('Implement governed backend mode dispatch in /ask');
+    //audit Assumption: intent labels are normalized for safe persistence; failure risk: brittle exact-text assertions; expected invariant: label preserves semantic prefix with optional hash suffix; handling strategy: assert normalized pattern.
+    expect(String(stateRes.body.intent.label)).toMatch(
+      /^implement-governed-backend-mode-dispatch(?:-[a-f0-9]{8})?$/
+    );
     expect(stateRes.body.intent.status).toBe('active');
   });
 
