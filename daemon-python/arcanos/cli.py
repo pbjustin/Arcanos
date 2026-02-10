@@ -88,11 +88,7 @@ from .conversation_routing import (
     ConversationRouteDecision,
 )
 
-# Governance layer imports
-import sys as _sys
-_cli_root = str(Path(__file__).resolve().parents[2])
-if _cli_root not in _sys.path:
-    _sys.path.insert(0, _cli_root)
+# Governance layer imports (installed package: `cli`)
 from cli.trust_state import TrustState
 from cli.governance import GovernanceError
 from cli.audit import record as audit_record
