@@ -29,6 +29,7 @@ import plansRouter from './plans.js';
 import clearRouter from './clear.js';
 import agentsRouter from './agents.js';
 import { sendTimestampedStatus } from '../utils/serviceUnavailable.js';
+import safetyRouter from './safety.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -58,6 +59,7 @@ export function registerRoutes(app: Express): void {
   });
 
   app.use('/', healthGroupRouter);
+  app.use('/', safetyRouter);
   app.use('/', askRouter);
   app.use('/', apiRouter);
   app.use('/', arcanosRouter);

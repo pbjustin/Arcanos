@@ -6,6 +6,14 @@ import { getConfig } from './unifiedConfig.js';
 import { getEnvNumber, getEnv } from './env.js';
 import { requireOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
+import appConfig from './index.js';
+import { acquireExecutionLock } from '../services/safety/executionLock.js';
+import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
+import { interpreterSupervisor } from '../services/safety/interpreterSupervisor.js';
+import {
+  activateUnsafeCondition,
+  incrementWorkerFailure
+} from '../services/safety/runtimeState.js';
 
 // ✅ Environment setup
 // Use config layer for env access (adapter boundary pattern)
@@ -200,24 +208,39 @@ export interface WorkerBootstrapSummary {
 
 function createWorkerHandler(workerId: string) {
   return async (input: string): Promise<WorkerResult> => {
+    const cycleId = interpreterSupervisor.beginCycle(`worker:${workerId}`, {
+      category: 'worker',
+      metadata: {
+        source: 'worker-task-queue'
+      }
+    });
     logger.info('[WORKER] Dispatching task', {
       workerId,
       inputPreview: input.slice(0, 120)
     });
 
-    const result = await workerTask(input);
+    try {
+      interpreterSupervisor.heartbeat(cycleId);
+      const result = await workerTask(input);
+      interpreterSupervisor.heartbeat(cycleId);
+      interpreterSupervisor.completeCycle(cycleId);
 
-    logger.info('[WORKER] Task processed', {
-      workerId,
-      requiresReasoning: result.requiresReasoning,
-      error: result.error
-    });
+      logger.info('[WORKER] Task processed', {
+        workerId,
+        requiresReasoning: result.requiresReasoning,
+        error: result.error
+      });
 
-    return { ...result, workerId };
+      return { ...result, workerId };
+    } catch (error) {
+      const message = resolveErrorMessage(error);
+      interpreterSupervisor.failCycle(cycleId, message);
+      throw error;
+    }
   };
 }
 
-export function startWorkers(force = false): WorkerBootstrapSummary {
+function startWorkersUnsafe(force = false): WorkerBootstrapSummary {
   if (!workerSettings.runWorkers && !force) {
     return {
       started: false,
@@ -271,6 +294,65 @@ export function startWorkers(force = false): WorkerBootstrapSummary {
   };
 }
 
+export async function startWorkers(force = false): Promise<WorkerBootstrapSummary> {
+  const lock = await acquireExecutionLock('worker-runtime:start');
+  //audit Assumption: worker runtime spawn/restart must be single-active; failure risk: duplicate listeners and double execution; expected invariant: lock collision suppresses duplicate start; handling strategy: return duplicate-suppressed summary.
+  if (!lock) {
+    emitSafetyAuditEvent({
+      event: 'worker_start_duplicate_suppressed',
+      severity: 'warn',
+      details: {
+        force
+      }
+    });
+    return {
+      started: false,
+      alreadyRunning: runtimeState.started,
+      runWorkers: workerSettings.runWorkers,
+      workerCount: runtimeState.workerIds.length,
+      workerIds: runtimeState.workerIds,
+      model: workerSettings.model,
+      startedAt: runtimeState.startedAt,
+      message: 'Worker start suppressed by execution lock.'
+    };
+  }
+
+  try {
+    //audit Assumption: repeated forced restarts inside threshold window indicate unstable worker runtime; failure risk: restart storm and conflicting state writes; expected invariant: threshold breach blocks further restarts; handling strategy: activate unsafe condition and fail closed.
+    if (force) {
+      const restartCounter = incrementWorkerFailure(
+        'worker-runtime:start',
+        appConfig.safety.workerRestartThreshold,
+        appConfig.safety.workerRestartWindowMs
+      );
+      if (restartCounter.exceeded) {
+        activateUnsafeCondition({
+          code: 'WORKER_RESTART_THRESHOLD',
+          message: 'Worker restart threshold exceeded',
+          metadata: {
+            count: restartCounter.count,
+            threshold: appConfig.safety.workerRestartThreshold
+          }
+        });
+        return {
+          started: false,
+          alreadyRunning: runtimeState.started,
+          runWorkers: workerSettings.runWorkers,
+          workerCount: runtimeState.workerIds.length,
+          workerIds: runtimeState.workerIds,
+          model: workerSettings.model,
+          startedAt: runtimeState.startedAt,
+          message: 'Worker restart threshold exceeded; execution blocked.'
+        };
+      }
+    }
+
+    return startWorkersUnsafe(force);
+  } finally {
+    await lock.release();
+  }
+}
+
 export async function dispatchArcanosTask(
   input: string,
   options: { attempts?: number; backoffMs?: number } = {}
@@ -278,7 +360,7 @@ export async function dispatchArcanosTask(
   const inputPreview = input.slice(0, 120);
   logger.info('[WORKER] Incoming dispatch', { inputPreview });
 
-  const bootstrap = startWorkers();
+  const bootstrap = await startWorkers();
 
   let results: WorkerResult[];
 
@@ -323,5 +405,5 @@ export function getWorkerRuntimeStatus(): WorkerRuntimeStatus {
 }
 
 if (workerSettings.runWorkers) {
-  startWorkers();
+  void startWorkers();
 }

@@ -322,8 +322,9 @@ router.post('/test-job', confirmGate, async (_, res) => {
  */
 router.post('/init-all', confirmGate, async (_, res) => {
   try {
+    const workerBootstrap = await startWorkers();
     const results: InitAllResults = {
-      workers: startWorkers(),
+      workers: workerBootstrap,
       routes: null,
       scheduler: null,
       diagnostics: null
