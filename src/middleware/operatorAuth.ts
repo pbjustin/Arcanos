@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { getConfig } from '../config/unifiedConfig.js';
 import { resolveHeader } from '../utils/requestHeaders.js';
+import { timingSafeEqual } from 'crypto';
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -53,7 +54,17 @@ export function operatorAuth(req: Request, res: Response, next: NextFunction): v
   }
 
   //audit Assumption: operator token must match ADMIN_KEY exactly; failure risk: privilege escalation; expected invariant: strict equality check; handling strategy: reject with 403.
-  if (presentedToken !== adminKey) {
+  try {
+    const presented = Buffer.from(presentedToken, 'utf8');
+    const expected = Buffer.from(adminKey, 'utf8');
+    if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) {
+      res.status(403).json({
+        error: 'FORBIDDEN',
+        details: ['Operator credentials are invalid']
+      });
+      return;
+    }
+  } catch {
     res.status(403).json({
       error: 'FORBIDDEN',
       details: ['Operator credentials are invalid']

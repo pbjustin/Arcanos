@@ -668,36 +668,38 @@ export function createMemoryConsistencyGate(
     const heartbeatCycle = (): void => {
       interpreterSupervisor.heartbeat(policyCycleId);
     };
+    let clientMemoryVersion: string | undefined;
+    let expectedBaselineTsMs: number | undefined;
+
+    const emitDecision = (
+      decision: DispatchDecisionV9,
+      bindingId: string,
+      memoryVersion: string,
+      options: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string } = {}
+    ): void => {
+      const timestamp = deps.now().toISOString();
+      const payload = buildDispatchDecisionPayload({
+        timestamp,
+        routeAttempted: attempt.routeAttempted,
+        memoryVersion,
+        bindingId,
+        decision,
+        clientMemoryVersion,
+        expectedBaselineTsMs,
+        rerouteTarget: options.rerouteTarget,
+        conflictReason: options.conflictReason
+      });
+      dispatchLogger.info(options.logMessage || DISPATCH_V9_LOG_MESSAGES.decision, payload);
+      deps.recordTrace('dispatch.v9.decision', payload);
+    };
 
     try {
       const requestHeaders = req.headers as Record<string, string | string[] | undefined>;
-      const clientMemoryVersion = resolveHeader(requestHeaders, 'x-memory-version');
-      const expectedBaselineTsMs = resolveExpectedBaselineMonotonicTs(
+      clientMemoryVersion = resolveHeader(requestHeaders, 'x-memory-version');
+      expectedBaselineTsMs = resolveExpectedBaselineMonotonicTs(
         requestHeaders,
         clientMemoryVersion
       );
-
-      const emitDecision = (
-        decision: DispatchDecisionV9,
-        bindingId: string,
-        memoryVersion: string,
-        options: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string } = {}
-      ): void => {
-        const timestamp = deps.now().toISOString();
-        const payload = buildDispatchDecisionPayload({
-          timestamp,
-          routeAttempted: attempt.routeAttempted,
-          memoryVersion,
-          bindingId,
-          decision,
-          clientMemoryVersion,
-          expectedBaselineTsMs,
-          rerouteTarget: options.rerouteTarget,
-          conflictReason: options.conflictReason
-        });
-        dispatchLogger.info(options.logMessage || DISPATCH_V9_LOG_MESSAGES.decision, payload);
-        deps.recordTrace('dispatch.v9.decision', payload);
-      };
 
       //audit Assumption: read-only endpoints should bypass consistency checks; risk: unnecessary latency on health paths; invariant: exemption list enforced; handling: allow + audit.
       if (isExemptRoute(req)) {
@@ -1025,24 +1027,7 @@ export function createMemoryConsistencyGate(
       respondWithFailsafe({
         req,
         res,
-        emitDecision: (
-          decision: DispatchDecisionV9,
-          bindingId: string,
-          memoryVersion: string,
-          options?: { rerouteTarget?: string; conflictReason?: DispatchConflictReasonV9; logMessage?: string }
-        ) => {
-          const timestamp = deps.now().toISOString();
-          const payload = buildDispatchDecisionPayload({
-            timestamp,
-            routeAttempted: attempt.routeAttempted,
-            memoryVersion,
-            bindingId,
-            decision,
-            conflictReason: options?.conflictReason
-          });
-          dispatchLogger.info(options?.logMessage || DISPATCH_V9_LOG_MESSAGES.decision, payload);
-          deps.recordTrace('dispatch.v9.decision', payload);
-        },
+        emitDecision,
         memoryVersion: deps.now().toISOString(),
         bindingId: 'unknown',
         routeAttempted: attempt.routeAttempted,
