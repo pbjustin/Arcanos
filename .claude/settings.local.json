@@ -11,7 +11,10 @@
       "Bash(npm install:*)",
       "Bash(npx prisma generate:*)",
       "Bash(npx --package=prisma@5 prisma generate:*)",
-      "Bash(npx vitest run:*)"
+      "Bash(npx vitest run:*)",
+      "Bash(python -c:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(findstr:*)"
     ]
   }
 }
