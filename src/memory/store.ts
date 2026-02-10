@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { createSessionPersistenceAdapter, type SessionPersistenceAdapter } from './sessionPersistence.js';
 import { getEnvNumber } from '../config/env.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
+import { createVersionStamp } from '../services/safety/monotonicClock.js';
 
 export interface SessionMetadata {
   topic?: string;
@@ -15,6 +16,8 @@ export interface SessionEntry {
   conversations_core: unknown[];
   metadata?: SessionMetadata;
   updatedAt: number;
+  versionId: string;
+  monotonicTimestampMs: number;
 }
 
 export interface SessionUpsert {
@@ -77,11 +80,14 @@ class MemoryStore {
   saveSession(entry: SessionUpsert): SessionEntry {
     const sessionId = entry.sessionId || randomUUID();
     const existing = this.sessions.get(sessionId);
+    const stamp = createVersionStamp('session');
     const merged: SessionEntry = {
       sessionId,
       conversations_core: (entry.conversations_core ?? existing?.conversations_core ?? []) as unknown[],
       metadata: this.mergeMetadata(existing?.metadata, entry.metadata),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      versionId: stamp.versionId,
+      monotonicTimestampMs: stamp.monotonicTimestampMs
     };
 
     this.sessions.set(sessionId, merged);

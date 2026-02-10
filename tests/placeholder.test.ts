@@ -1,7 +1,8 @@
-import { describe, beforeAll, afterAll, it, expect } from '@jest/globals';
+import { describe, beforeAll, beforeEach, afterAll, it, expect } from '@jest/globals';
 import type { AddressInfo } from 'net';
 import type { Server } from 'http';
 import { createApp } from '../src/app.js';
+import { resetSafetyRuntimeStateForTests } from '../src/services/safety/runtimeState.js';
 
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalApiKeyAlias = process.env.API_KEY;
@@ -13,6 +14,7 @@ describe('AI endpoints in mock mode', () => {
   beforeAll(async () => {
     process.env.OPENAI_API_KEY = '';
     process.env.API_KEY = '';
+    resetSafetyRuntimeStateForTests();
     const app = createApp();
     server = await new Promise<Server>((resolve, reject) => {
       const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
@@ -22,9 +24,14 @@ describe('AI endpoints in mock mode', () => {
     baseUrl = `http://127.0.0.1:${port}`;
   });
 
+  beforeEach(() => {
+    resetSafetyRuntimeStateForTests();
+  });
+
   afterAll(async () => {
     process.env.OPENAI_API_KEY = originalApiKey;
     process.env.API_KEY = originalApiKeyAlias;
+    resetSafetyRuntimeStateForTests();
     await new Promise<void>((resolve, reject) => {
       if (!server) {
         resolve();

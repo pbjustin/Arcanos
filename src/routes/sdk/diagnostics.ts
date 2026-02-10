@@ -89,7 +89,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     };
 
     // 1. Initialize 4 workers with specified environment
-    const workerBootstrap = startWorkers();
+    const workerBootstrap = await startWorkers();
     results.workers = workerBootstrap;
 
     // 2. Register SDK routes

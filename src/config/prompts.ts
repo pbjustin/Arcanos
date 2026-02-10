@@ -10,6 +10,7 @@ import { dirname } from 'path';
 import { logger } from '../utils/structuredLogging.js';
 import { APPLICATION_CONSTANTS } from '../utils/constants.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
+import { assertProtectedConfigIntegrity } from '../services/safety/configIntegrity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -108,7 +109,11 @@ function loadPromptsConfig(): PromptsConfig {
     }
 
     const configData = readFileSync(configPath, 'utf-8');
-    promptsConfig = JSON.parse(configData);
+    const parsedConfig = JSON.parse(configData) as PromptsConfig;
+    assertProtectedConfigIntegrity('prompts_config', parsedConfig, {
+      source: configPath
+    });
+    promptsConfig = parsedConfig;
 
     logger.info('Loaded prompts configuration', {
       module: 'prompts',
