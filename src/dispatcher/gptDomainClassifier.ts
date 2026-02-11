@@ -64,5 +64,9 @@ export async function gptFallbackClassifier(
     return label as CognitiveDomain;
   }
 
+  console.warn(
+    '[gptFallbackClassifier] Received invalid domain label from GPT classifier, falling back to "natural":',
+    label || '<empty>'
+  );
   return 'natural';
 }
