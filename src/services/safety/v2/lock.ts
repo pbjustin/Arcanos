@@ -79,7 +79,11 @@ export class DistributedLock {
       const redis = await getRedis();
       await redis.eval(script, { keys: [this.key], arguments: [this.ownerId] });
     } catch {
-      // best-effort release
+      // best-effort release — log for diagnostics
+      try {
+        // eslint-disable-next-line no-console
+        console.error(`[v2/lock] failed to release lock ${this.key}`);
+      } catch {}
     }
   }
 
@@ -87,19 +91,32 @@ export class DistributedLock {
     this.heartbeatTimer = setInterval(async () => {
       if (this.released) return;
       try {
-        // Only extend if we still own the lock
+        // Atomically extend TTL only if we still own the lock to avoid race
         const redis = await getRedis();
-        const current = await redis.get(this.key);
-        if (current !== this.ownerId) {
+        const script = `
+          if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("pexpire", KEYS[1], ARGV[2])
+          else
+            return 0
+          end
+        `;
+        const res = await redis.eval(script, {
+          keys: [this.key],
+          arguments: [this.ownerId, String(this.ttlMs)],
+        });
+        if (!res) {
           // Lock was stolen or expired — notify caller
           this.released = true;
           this.stopHeartbeat();
           this.onLockLost?.(this.key);
           return;
         }
-        await redis.pExpire(this.key, this.ttlMs);
       } catch {
-        console.error(`[v2/lock] heartbeat failed for ${this.key}`);
+        // Log and notify owner lost — heartbeat is best-effort
+        try {
+          // eslint-disable-next-line no-console
+          console.error(`[v2/lock] heartbeat failed for ${this.key}`);
+        } catch {}
         this.released = true;
         this.stopHeartbeat();
         this.onLockLost?.(this.key);

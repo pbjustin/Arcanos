@@ -28,6 +28,14 @@ else
 end
 """
 
+_EXTEND_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("expire", KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
+
 
 class DistributedLock:
     def __init__(
@@ -83,14 +91,13 @@ class DistributedLock:
                     return
                 try:
                     client = get_redis()
-                    # Verify we still own the lock before extending
-                    current = client.get(self._key)
-                    if current != self._owner_id:
+                    # Atomically extend TTL only if we still own the lock
+                    res = client.eval(_EXTEND_SCRIPT, 1, self._key, self._owner_id, self._ttl_sec)
+                    if not res:
                         self._released = True
                         if self._on_lock_lost:
                             self._on_lock_lost(self._key)
                         return
-                    client.expire(self._key, self._ttl_sec)
                 except Exception:
                     logger.error("Heartbeat failed for %s", self._key)
                     self._released = True
