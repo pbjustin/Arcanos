@@ -20,7 +20,7 @@ export function detectCognitiveDomain(prompt: string): DomainDetectionResult {
     return { domain: 'diagnostic', confidence: 0.9 };
   }
 
-  if (/\b(execute|run|delete file|create file|modify file|deploy|restart)\b/.test(p)) {
+  if (/(^|[^\w])(execute|run|delete file|create file|modify file|deploy|restart)(?=$|[^\w])/.test(p)) {
     return { domain: 'execution', confidence: 0.85 };
   }
 
