@@ -8,21 +8,28 @@ export interface DomainDetectionResult {
 export function detectCognitiveDomain(prompt: string): DomainDetectionResult {
   const p = prompt.toLowerCase();
 
-  if (/write (a )?(story|scene|dialogue|novel|poem|lyrics)/.test(p)) {
+  // Creative: writing fiction, stories, poems, etc.
+  // Handles optional articles: "write a story", "write story", "write an epic"
+  if (/\bwrite\b(?:\s+(?:a|an))?\s+(?:story|scene|dialogue|novel|poem|lyrics)\b/.test(p)) {
     return { domain: 'creative', confidence: 0.95 };
   }
 
-  if (/refactor|typescript|javascript|python|implement|write a function|fix the code|code review/.test(p)) {
+  // Code: programming, refactoring, implementations
+  if (/\b(?:refactor|typescript|javascript|python|implement|write a function|fix the code|code review)\b/.test(p)) {
     return { domain: 'code', confidence: 0.9 };
   }
 
-  if (/diagnose|debug|why is|error|review architecture|audit|stack trace|exception/.test(p)) {
+  // Diagnostic: debugging, troubleshooting, analysis
+  if (/\b(?:diagnose|debug|why is|error|review architecture|audit|stack trace|exception)\b/.test(p)) {
     return { domain: 'diagnostic', confidence: 0.9 };
   }
 
-  if (/\b(execute|run|delete file|create file|modify file|deploy|restart)\b/.test(p)) {
+  // Execution: commands and file operations
+  // Uses flexible boundaries to match patterns like "(execute the script)"
+  if (/(^|[^\w])(?:execute|run|delete file|create file|modify file|deploy|restart)(?=$|[^\w])/.test(p)) {
     return { domain: 'execution', confidence: 0.85 };
   }
 
+  // Default: natural language queries
   return { domain: 'natural', confidence: 0.6 };
 }

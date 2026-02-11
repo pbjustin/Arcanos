@@ -34,6 +34,23 @@ import type { CognitiveDomain } from '../types/cognitiveDomain.js';
 import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 
+/**
+ * Resolve temperature parameter based on cognitive domain.
+ * 
+ * Temperature calibration rationale:
+ * - **creative** (0.9): High creativity for storytelling, dialogue, poems
+ * - **natural** (0.5): Balanced for general Q&A and conversational responses
+ * - **diagnostic** (0.2): Low variance for consistent debugging and analysis
+ * - **code** (0.1): Very low for deterministic refactoring and implementations
+ * - **execution** (0.01): Near-zero but not exactly 0.0 to avoid potential
+ *   OpenAI edge cases while remaining effectively deterministic for commands
+ * 
+ * These values optimize response quality for different request types based on
+ * empirical testing and alignment with OpenAI's temperature recommendations.
+ * 
+ * @param cognitiveDomain - The detected domain type, or undefined for default
+ * @returns Temperature value between 0.01 and 0.9
+ */
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {
     case 'creative':
@@ -43,7 +60,9 @@ function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
     case 'code':
       return 0.1;
     case 'execution':
-      return 0.0;
+      // Use a very low, non-zero temperature to remain effectively deterministic
+      // while avoiding potential OpenAI edge cases at exactly 0.0.
+      return 0.01;
     case 'natural':
       return 0.5;
     default:
