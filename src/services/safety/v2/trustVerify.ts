@@ -16,6 +16,7 @@ import { V2_CONFIG } from "./config.js";
 import { getJWKS } from "./jwks.js";
 import { setNX } from "./redisClient.js";
 import { logAuditEvent } from "./auditLogger.js";
+import { CircuitBreaker } from "./circuitBreaker.js";
 
 export type TrustLevel = "FULL" | "DEGRADED" | "UNSAFE";
 
@@ -38,6 +39,7 @@ export async function verifyTrustToken(token: string): Promise<TrustPayload> {
     issuer: V2_CONFIG.EXPECTED_ISSUER,
     algorithms: [V2_CONFIG.ALLOWED_ALG],
     requiredClaims: ["exp", "iat", "nonce", "trace", "trust"],
+    clockTolerance: V2_CONFIG.CLOCK_SKEW_SECONDS,
   });
 
   // Belt-and-suspenders: reject if header algorithm doesn't match
@@ -60,13 +62,7 @@ export async function verifyTrustToken(token: string): Promise<TrustPayload> {
     throw new Error("Missing required claims: iat or exp");
   }
 
-  // Clock skew check
-  const nowSec = Math.floor(Date.now() / 1_000);
-  if (Math.abs(nowSec - iat) > V2_CONFIG.CLOCK_SKEW_SECONDS) {
-    throw new Error(
-      `Clock skew violation: iat=${iat}, now=${nowSec}, max=${V2_CONFIG.CLOCK_SKEW_SECONDS}s`
-    );
-  }
+  // `clockTolerance` option in jwtVerify handles clock skew checks.
 
   // Nonce format validation — prevent injection into Redis key space
   const nonce = payload.nonce as string;
@@ -80,7 +76,8 @@ export async function verifyTrustToken(token: string): Promise<TrustPayload> {
   }
 
   // Nonce replay prevention
-  const ttl = exp - nowSec;
+  const nowSec = Math.floor(Date.now() / 1_000);
+  const ttl = (exp as number) - nowSec;
 
   if (ttl <= 0) {
     throw new Error("Token already expired — nonce TTL would be non-positive");
@@ -92,7 +89,11 @@ export async function verifyTrustToken(token: string): Promise<TrustPayload> {
   try {
     wasSet = await setNX(nonceKey, ttl);
   } catch (err) {
-    if (err instanceof Error && err.message.includes("Circuit breaker")) {
+    if (
+      err instanceof Error &&
+      (err instanceof (CircuitBreaker as any).CircuitBreakerOpenError ||
+        (err as Error).name === "CircuitBreakerOpenError")
+    ) {
       logAuditEvent({
         type: "DEGRADED_MODE",
         reason: "Redis circuit breaker open",

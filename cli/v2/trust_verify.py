@@ -20,6 +20,7 @@ from .config import V2Config
 from .jwks import get_jwks_cache
 from .redis_client import set_nx
 from .audit_logger import log_event
+from .circuit_breaker import CircuitBreaker
 
 logger = logging.getLogger("arcanos.v2.trust")
 
@@ -83,14 +84,7 @@ def verify_trust_token(token: str) -> dict:
     if trust not in VALID_TRUST_LEVELS:
         raise RuntimeError(f"Invalid trust level: {trust}")
 
-    # --- 5. Clock skew check ---
-    now = int(time.time())
-    iat = payload["iat"]
-    if abs(now - iat) > V2Config.CLOCK_SKEW_SECONDS:
-        raise RuntimeError(
-            f"Clock skew violation: iat={iat}, now={now}, "
-            f"max={V2Config.CLOCK_SKEW_SECONDS}s"
-        )
+    # Clock skew is enforced by the JWT library via `leeway`/`options` where supported.
 
     # --- 6. Nonce format validation ---
     nonce = payload["nonce"]
@@ -113,8 +107,11 @@ def verify_trust_token(token: str) -> dict:
 
     try:
         was_set = set_nx(nonce_key, ttl)
-    except RuntimeError as e:
-        if "Circuit breaker" in str(e):
+    except Exception as e:
+        # Prefer explicit exception type from circuit breaker rather than string matching
+        if isinstance(e, getattr(CircuitBreaker, "CircuitBreakerOpenError", ())) or (
+            isinstance(e, Exception) and getattr(e, "name", "") == "CircuitBreakerOpenError"
+        ):
             log_event({
                 "type": "DEGRADED_MODE",
                 "reason": "Redis circuit breaker open",

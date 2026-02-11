@@ -17,6 +17,15 @@ T = TypeVar("T")
 
 
 class CircuitBreaker:
+    """Circuit breaker preventing cascading failures.
+
+    Raises `CircuitBreakerOpenError` when the breaker is open so callers
+    can handle the condition explicitly.
+    """
+
+    class CircuitBreakerOpenError(RuntimeError):
+        """Raised when the circuit breaker is OPEN or rejects probes."""
+        pass
     def __init__(
         self,
         failure_threshold: int = V2Config.CB_FAILURE_THRESHOLD,
@@ -35,6 +44,13 @@ class CircuitBreaker:
 
     @property
     def state(self) -> str:
+        # Return current state without side-effects. Use internal
+        # transition helper from callers that intend to mutate state.
+        with self._lock:
+            return self._state
+
+    def _transition_open_if_needed(self) -> None:
+        """Transition OPEN -> HALF_OPEN when reset timeout elapses."""
         with self._lock:
             if (
                 self._state == "OPEN"
@@ -42,26 +58,21 @@ class CircuitBreaker:
             ):
                 self._state = "HALF_OPEN"
                 self._half_open_calls = 0
-            return self._state
 
     def call(self, fn: Callable[[], T]) -> T:
-        # Acquire lock for pre-call checks and state transitions
+        # Ensure time-based transition is applied before checks
+        self._transition_open_if_needed()
         with self._lock:
             current = self._state
-            if (
-                current == "OPEN"
-                and time.monotonic() - self._last_failure_time >= self._reset_timeout_sec
-            ):
-                current = "HALF_OPEN"
-                self._state = "HALF_OPEN"
-                self._half_open_calls = 0
 
             if current == "OPEN":
-                raise RuntimeError("Circuit breaker OPEN — failing fast")
+                raise CircuitBreaker.CircuitBreakerOpenError("Circuit breaker OPEN — failing fast")
 
             if current == "HALF_OPEN":
                 if self._half_open_calls >= self._half_open_max_calls:
-                    raise RuntimeError("Circuit breaker HALF_OPEN — max probe calls reached")
+                    raise CircuitBreaker.CircuitBreakerOpenError(
+                        "Circuit breaker HALF_OPEN — max probe calls reached"
+                    )
                 self._half_open_calls += 1
 
             self._in_flight += 1

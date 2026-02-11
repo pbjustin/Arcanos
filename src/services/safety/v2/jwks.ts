@@ -18,6 +18,10 @@ export function getJWKS() {
   }
 
   if (!jwks) {
+    if (!V2_CONFIG.JWKS_URL.startsWith("https://")) {
+      throw new Error(`JWKS URL must use HTTPS (got: ${V2_CONFIG.JWKS_URL})`);
+    }
+
     jwks = createRemoteJWKSet(new URL(V2_CONFIG.JWKS_URL), {
       cacheMaxAge: 60_000,
       cooldownDuration: 30_000,

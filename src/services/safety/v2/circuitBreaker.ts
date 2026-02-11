@@ -11,6 +11,14 @@ import { V2_CONFIG } from "./config.js";
 type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export class CircuitBreaker {
+  // Error thrown when circuit is open to allow callers to handle explicitly
+  static CircuitBreakerOpenError = class CircuitBreakerOpenError extends Error {
+    constructor(message?: string) {
+      super(message);
+      this.name = "CircuitBreakerOpenError";
+    }
+  };
+
   private state: CircuitState = "CLOSED";
   private failureCount = 0;
   private lastFailureTime = 0;
@@ -35,6 +43,13 @@ export class CircuitBreaker {
   }
 
   getState(): CircuitState {
+    // Return current state without causing side-effects. Use
+    // `_transitionOpenIfNeeded` from callers that intend to mutate state.
+    return this.state;
+  }
+
+  // Internal: transition from OPEN -> HALF_OPEN when reset timeout elapses.
+  private _transitionOpenIfNeeded(): void {
     if (
       this.state === "OPEN" &&
       performance.now() - this.lastFailureTime >= this.resetTimeoutMs
@@ -42,19 +57,24 @@ export class CircuitBreaker {
       this.state = "HALF_OPEN";
       this.halfOpenCalls = 0;
     }
-    return this.state;
   }
 
   async call<T>(fn: () => Promise<T>): Promise<T> {
-    const currentState = this.getState();
+    // Refresh time-based transitions before making decisions
+    this._transitionOpenIfNeeded();
+    const currentState = this.state;
 
     if (currentState === "OPEN") {
-      throw new Error("Circuit breaker OPEN — failing fast");
+      throw new CircuitBreaker.CircuitBreakerOpenError(
+        "Circuit breaker OPEN — failing fast"
+      );
     }
 
     if (currentState === "HALF_OPEN") {
       if (this.halfOpenCalls >= this.halfOpenMaxCalls) {
-        throw new Error("Circuit breaker HALF_OPEN — max probe calls reached");
+        throw new CircuitBreaker.CircuitBreakerOpenError(
+          "Circuit breaker HALF_OPEN — max probe calls reached"
+        );
       }
       this.halfOpenCalls++;
     }
