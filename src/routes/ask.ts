@@ -518,7 +518,17 @@ export const handleAIRequest = async (
       });
     }
 
-    // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing
+    // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
+    //
+    // NOTE: This /ask route (and its /brain alias) is currently the only entrypoint that performs
+    // cognitive domain detection (via detectCognitiveDomain / gptFallbackClassifier earlier in
+    // this handler) and passes an explicit `cognitiveDomain` hint into runThroughBrain.
+    //
+    // Other endpoints that call runThroughBrain (e.g. /siri, /write, /guide, /audit, /sim, and
+    // arcanosPrompt flows) do *not* perform this detection and therefore rely on the default
+    // TRINITY_STAGE_TEMPERATURE configuration inside runThroughBrain. This asymmetry is
+    // intentional for now: /ask is the primary, fully context-routed chat endpoint, while the
+    // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe, { cognitiveDomain: finalDomain });
     return res.json({
       ...(output as AskResponse),
