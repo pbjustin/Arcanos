@@ -6,6 +6,8 @@
  * Edge cases: version mismatches return conflict metadata instead of mutating state.
  */
 
+import type { CognitiveDomain } from '../../types/cognitiveDomain.js';
+
 export type IntentStatus = 'active' | 'paused' | 'completed';
 export type IntentPhase = 'exploration' | 'execution';
 
@@ -17,6 +19,8 @@ export interface StoredIntent {
   confidence: number;
   version: number;
   lastTouchedAt: string;
+  cognitiveDomain?: CognitiveDomain;
+  domainConfidence?: number;
 }
 
 export interface IntentPatch {
@@ -24,6 +28,8 @@ export interface IntentPatch {
   status?: IntentStatus;
   phase?: IntentPhase;
   confidence?: number;
+  cognitiveDomain?: CognitiveDomain;
+  domainConfidence?: number;
 }
 
 export interface IntentConflict {
@@ -168,6 +174,10 @@ export function updateIntentWithOptimisticLock(
     status: patch.status ?? s.intent.status,
     phase: patch.phase ?? s.intent.phase,
     confidence: nextConfidence,
+    cognitiveDomain: patch.cognitiveDomain ?? s.intent.cognitiveDomain,
+    domainConfidence: typeof patch.domainConfidence === 'number'
+      ? clampConfidence(patch.domainConfidence)
+      : s.intent.domainConfidence,
     lastTouchedAt: nowIso(),
     version: s.intent.version + 1
   };

@@ -29,6 +29,8 @@ import {
   type IntentConflict,
   updateIntentWithOptimisticLock
 } from './ask/intent_store.js';
+import { detectCognitiveDomain } from '../dispatcher/detectCognitiveDomain.js';
+import { gptFallbackClassifier } from '../dispatcher/gptDomainClassifier.js';
 
 const router = express.Router();
 
@@ -455,8 +457,13 @@ export const handleAIRequest = async (
   const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
 
   //audit Assumption: intent tracking should happen for valid chat requests even when mock responses are used; risk: stale system_state intent; invariant: intent recorded for leniently validated chat inputs; handling: record before API key checks.
-  recordChatIntent(normalizedPrompt, sessionId);
+  const activeIntent = recordChatIntent(normalizedPrompt, sessionId);
   setLastRoutingUsed('backend', sessionId);
+
+  // Domain Detection
+  const detection = detectCognitiveDomain(normalizedPrompt);
+  let finalDomain = detection.domain;
+  let finalConfidence = detection.confidence;
 
   // Use shared validation logic
   const validation = validateAIRequest(req, res, endpointName);
@@ -464,7 +471,30 @@ export const handleAIRequest = async (
 
   const { client: openai, input: prompt } = validation;
 
-  console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}`);
+  // Hybrid fallback: use GPT classifier when heuristic confidence is low
+  if (finalConfidence < 0.85) {
+    try {
+      finalDomain = await gptFallbackClassifier(openai, prompt);
+      finalConfidence = 0.9;
+    } catch {
+      // Keep heuristic result on classifier failure
+    }
+  }
+
+  // Update intent state with cognitive domain
+  const domainUpdate = updateIntentWithOptimisticLock(
+    activeIntent.version,
+    {
+      cognitiveDomain: finalDomain,
+      domainConfidence: finalConfidence
+    },
+    sessionId
+  );
+  if (!domainUpdate.ok) {
+    console.warn(`[⚠️ DOMAIN] Intent version conflict during domain update (expected=${activeIntent.version}, current=${domainUpdate.conflict.currentVersion})`);
+  }
+
+  console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}, domain: ${finalDomain} (${finalConfidence})`);
 
   // Log request for feedback loop
   logRequestFeedback(prompt, endpointName);
@@ -489,7 +519,7 @@ export const handleAIRequest = async (
     }
 
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing
-    const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe);
+    const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe, { cognitiveDomain: finalDomain });
     return res.json({
       ...(output as AskResponse),
       clientContext: req.body.clientContext,
