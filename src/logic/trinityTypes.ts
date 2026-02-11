@@ -1,3 +1,5 @@
+import type { CognitiveDomain } from '../types/cognitiveDomain.js';
+
 /**
  * Trinity pipeline type definitions.
  * Used by trinity.ts and trinityStages.ts; consumers should import from trinity.js only.
@@ -58,7 +60,7 @@ export interface TrinityResult {
 export interface TrinityRunOptions {
   dryRun?: boolean;
   dryRunReason?: string;
-  cognitiveDomain?: import('../types/cognitiveDomain.js').CognitiveDomain;
+  cognitiveDomain?: CognitiveDomain;
 }
 
 export interface TrinityDryRunPreview {
