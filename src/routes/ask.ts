@@ -34,6 +34,9 @@ import { gptFallbackClassifier } from '../dispatcher/gptDomainClassifier.js';
 
 const router = express.Router();
 
+// Confidence threshold for triggering GPT fallback classifier
+const DOMAIN_CONFIDENCE_THRESHOLD = 0.85;
+
 // Apply security middleware
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
@@ -471,17 +474,31 @@ export const handleAIRequest = async (
 
   const { client: openai, input: prompt } = validation;
 
-  // Hybrid fallback: use GPT classifier when heuristic confidence is low
-  if (finalConfidence < 0.85) {
+  // Hybrid fallback: use GPT classifier when heuristic confidence is low.
+  // Use the same normalized prompt for both heuristic and GPT-based classification
+  // to ensure consistency in domain detection.
+  if (finalConfidence < DOMAIN_CONFIDENCE_THRESHOLD) {
     try {
-      finalDomain = await gptFallbackClassifier(openai, prompt);
-      finalConfidence = 0.9;
-    } catch {
-      // Keep heuristic result on classifier failure
+      finalDomain = await gptFallbackClassifier(openai, normalizedPrompt);
+      // Keep heuristic confidence when using GPT fallback to reflect that the
+      // need for fallback indicates uncertainty. The heuristic returned 0.6 for
+      // 'natural', which is more honest than claiming high confidence.
+      // (Previously hardcoded to 0.9, which overstated certainty)
+    } catch (error) {
+      // Keep heuristic result on classifier failure, but log for observability
+      console.warn('[⚠️ DOMAIN] GPT fallback classifier failed; using heuristic result instead.', error);
     }
   }
 
-  // Update intent state with cognitive domain
+  // Update intent state with cognitive domain.
+  //
+  // NOTE: There is a temporal gap between recordChatIntent (line 463, which updates
+  // lastTouchedAt and increments version) and this domain update. During async GPT
+  // classifier calls, the intent has an updated timestamp but no domain info yet.
+  // This is acceptable for the current use case: domain detection is supplementary
+  // metadata and the optimistic lock (below) guards against concurrent modifications.
+  // If stricter atomicity is needed, consider a specialized method that combines
+  // intent creation/update with domain detection in a single operation.
   const domainUpdate = updateIntentWithOptimisticLock(
     activeIntent.version,
     {
@@ -518,7 +535,17 @@ export const handleAIRequest = async (
       });
     }
 
-    // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing
+    // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
+    //
+    // NOTE: This /ask route (and its /brain alias) is currently the only entrypoint that performs
+    // cognitive domain detection (via detectCognitiveDomain / gptFallbackClassifier earlier in
+    // this handler) and passes an explicit `cognitiveDomain` hint into runThroughBrain.
+    //
+    // Other endpoints that call runThroughBrain (e.g. /siri, /write, /guide, /audit, /sim, and
+    // arcanosPrompt flows) do *not* perform this detection and therefore rely on the default
+    // TRINITY_STAGE_TEMPERATURE configuration inside runThroughBrain. This asymmetry is
+    // intentional for now: /ask is the primary, fully context-routed chat endpoint, while the
+    // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe, { cognitiveDomain: finalDomain });
     return res.json({
       ...(output as AskResponse),
