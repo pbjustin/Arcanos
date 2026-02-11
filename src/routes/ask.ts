@@ -474,7 +474,8 @@ export const handleAIRequest = async (
   // Hybrid fallback: use GPT classifier when heuristic confidence is low
   if (finalConfidence < 0.85) {
     try {
-      finalDomain = await gptFallbackClassifier(openai, prompt);
+      // Use the same normalized prompt for both heuristic and GPT-based domain classification
+      finalDomain = await gptFallbackClassifier(openai, normalizedPrompt);
       finalConfidence = 0.9;
     } catch (error) {
       // Keep heuristic result on classifier failure, but log for observability
