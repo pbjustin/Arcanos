@@ -63,6 +63,9 @@ Output must conform exactly to the system_review schema.`;
 const SYSTEM_STATE_PROMPT = `⚠️ Do not use the model yet.
 Return backend data directly.`;
 
+// Confidence threshold below which we call the GPT fallback classifier
+const GPT_FALLBACK_CONFIDENCE_THRESHOLD = 0.85;
+
 const systemReviewSchema = z.object({
   mode: z.literal('system_review'),
   subject: z.literal('intent_system'),
@@ -472,11 +475,12 @@ export const handleAIRequest = async (
   const { client: openai, input: prompt } = validation;
 
   // Hybrid fallback: use GPT classifier when heuristic confidence is low
-  if (finalConfidence < 0.85) {
+  if (finalConfidence < GPT_FALLBACK_CONFIDENCE_THRESHOLD) {
     try {
       finalDomain = await gptFallbackClassifier(openai, prompt);
       finalConfidence = 0.9;
-    } catch {
+    } catch (error) {
+      console.warn('[⚠️ DOMAIN] GPT fallback classifier failed. Using heuristic result.', error);
       // Keep heuristic result on classifier failure
     }
   }
