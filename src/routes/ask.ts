@@ -476,8 +476,9 @@ export const handleAIRequest = async (
     try {
       finalDomain = await gptFallbackClassifier(openai, prompt);
       finalConfidence = 0.9;
-    } catch {
-      // Keep heuristic result on classifier failure
+    } catch (error) {
+      // Keep heuristic result on classifier failure, but log for observability
+      console.warn('[⚠️ DOMAIN] GPT fallback classifier failed; using heuristic result instead.', error);
     }
   }
 
