@@ -8,7 +8,7 @@ export interface DomainDetectionResult {
 export function detectCognitiveDomain(prompt: string): DomainDetectionResult {
   const p = prompt.toLowerCase();
 
-  if (/write (a )?(story|scene|dialogue|novel|poem|lyrics)/.test(p)) {
+  if (/\bwrite\b(?:\s+(?:a|an))?\s+(story|scene|dialogue|novel|poem|lyrics)\b/.test(p)) {
     return { domain: 'creative', confidence: 0.95 };
   }
 
