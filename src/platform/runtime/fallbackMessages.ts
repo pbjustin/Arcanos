@@ -3,7 +3,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { resolveErrorMessage } from "@shared/errorUtils.js";
 
 export type FallbackMessagesConfig = Record<string, string> & { default: string };
 

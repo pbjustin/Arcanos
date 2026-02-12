@@ -175,7 +175,7 @@ export async function runThroughBrain(
   const memoryContext = getMemoryContext(prompt, sessionId);
   console.log(`[🧠 TRINITY MEMORY] Retrieved ${memoryContext.relevantEntries.length} relevant entries`);
 
-  const relevanceScores = memoryContext.relevantEntries.map((entry: any) => entry.relevanceScore ?? 0);
+  const relevanceScores = memoryContext.relevantEntries.map(entry => entry.relevanceScore ?? 0);
   const memoryScoreSummary = calculateMemoryScoreSummary(relevanceScores);
 
   if (options.dryRun) {
