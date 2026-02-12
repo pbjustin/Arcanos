@@ -122,7 +122,7 @@ router.post('/workers/heal', confirmGate, async (req: Request, res: Response) =>
 
     let execution: Record<string, unknown> | undefined;
     if (shouldExecute) {
-      const restartSummary = startWorkers(true);
+      const restartSummary = await startWorkers(true);
       execution = {
         restart: restartSummary,
         autoExecuted: autoExecutionAllowed && !requestedExecution,

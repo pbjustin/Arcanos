@@ -4,7 +4,6 @@
  */
 
 import { Response } from 'express';
-import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 
 // Input validation schemas
 export interface ValidationRule {
@@ -51,6 +50,26 @@ export interface ValidationResult<T = Record<string, unknown>> {
   isValid: boolean;
   errors: string[];
   sanitized: T;
+}
+
+interface ValidationErrorPayload {
+  error: string;
+  details: string[];
+  timestamp: string;
+}
+
+/**
+ * Build a validation error payload without cross-layer dependencies.
+ * Purpose: Keep platform validation responses deterministic and serializable.
+ * Inputs/Outputs: Accepts validation messages, returns standardized payload object.
+ * Edge cases: Empty arrays still produce a valid payload shape.
+ */
+function buildValidationErrorPayload(errors: string[]): ValidationErrorPayload {
+  return {
+    error: 'Validation failed',
+    details: errors,
+    timestamp: new Date().toISOString()
+  };
 }
 
 /**
@@ -157,7 +176,7 @@ export function createValidationMiddleware(schema: ValidationSchema) {
     
     if (!validation.isValid) {
       //audit Assumption: validation errors map directly to client payload; risk: leaking schema details; invariant: only include validation errors; handling: standardized payload.
-      res.status(400).json(buildValidationErrorResponse(validation.errors));
+      res.status(400).json(buildValidationErrorPayload(validation.errors));
       return;
     }
     

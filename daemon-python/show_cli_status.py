@@ -10,9 +10,6 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent / ".env"
 if env_path.exists():
     load_dotenv(env_path)
-
-sys.path.insert(0, str(Path(__file__).parent))
-
 from arcanos.config import Config
 from arcanos.backend_client import BackendApiClient
 

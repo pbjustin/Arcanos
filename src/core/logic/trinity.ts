@@ -175,7 +175,7 @@ export async function runThroughBrain(
   const memoryContext = getMemoryContext(prompt, sessionId);
   console.log(`[🧠 TRINITY MEMORY] Retrieved ${memoryContext.relevantEntries.length} relevant entries`);
 
-  const relevanceScores = memoryContext.relevantEntries.map((entry: any) => entry.relevanceScore ?? 0);
+  const relevanceScores = memoryContext.relevantEntries.map(entry => entry.relevanceScore ?? 0);
   const memoryScoreSummary = calculateMemoryScoreSummary(relevanceScores);
 
   if (options.dryRun) {
@@ -206,7 +206,9 @@ export async function runThroughBrain(
 
   const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
 
-  const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary);
+  const cognitiveDomain = options.cognitiveDomain;
+
+  const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain);
   const framedRequest = intakeOutput.framedRequest;
   const actualModel = intakeOutput.activeModel;
 
@@ -217,7 +219,7 @@ export async function runThroughBrain(
 
   logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
   routingStages.push('ARCANOS-FINAL');
-  const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output);
+  const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain);
 
   // Mid-layer translation: strip system/audit artifacts, humanize the response
   const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);

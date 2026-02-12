@@ -19,3 +19,73 @@ model User {
   name      String?
   createdAt DateTime @default(now())
 }
+
+model ActionPlan {
+  id                   String            @id @default(uuid())
+  createdBy            String
+  origin               String
+  status               String            @default("planned")
+  confidence           Float             @default(0)
+  requiresConfirmation Boolean           @default(true)
+  idempotencyKey       String            @unique
+  expiresAt            DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  actions              Action[]
+  clearScore           ClearScore?
+  executionResults     ExecutionResult[]
+}
+
+model Action {
+  id             String     @id @default(uuid())
+  planId         String
+  plan           ActionPlan @relation(fields: [planId], references: [id])
+  agentId        String
+  capability     String
+  params         Json
+  timeoutMs      Int        @default(30000)
+  rollbackAction Json?
+  sortOrder      Int        @default(0)
+}
+
+model Agent {
+  id            String   @id @default(uuid())
+  role          String   @default("executor")
+  capabilities  String[]
+  publicKey     String?
+  status        String   @default("idle")
+  lastHeartbeat DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model ExecutionResult {
+  id            String     @id @default(uuid())
+  planId        String
+  plan          ActionPlan @relation(fields: [planId], references: [id])
+  actionId      String
+  agentId       String
+  status        String
+  output        Json?
+  error         Json?
+  signature     String?
+  clearDecision String
+  createdAt     DateTime   @default(now())
+
+  @@unique([planId, actionId])
+}
+
+model ClearScore {
+  id         String     @id @default(uuid())
+  planId     String     @unique
+  plan       ActionPlan @relation(fields: [planId], references: [id])
+  clarity    Float
+  leverage   Float
+  efficiency Float
+  alignment  Float
+  resilience Float
+  overall    Float
+  decision   String
+  notes      String?
+  createdAt  DateTime   @default(now())
+}

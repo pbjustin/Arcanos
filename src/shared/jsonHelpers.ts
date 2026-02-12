@@ -3,8 +3,7 @@
  * Centralized JSON parsing, validation, and schema utilities
  */
 
-import { logger } from "@platform/logging/structuredLogging.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { resolveErrorMessage } from "@shared/errorUtils.js";
 
 export interface JSONParseResult<T = unknown> {
   success: boolean;
@@ -17,13 +16,37 @@ export interface SchemaValidationResult {
   errors: string[];
 }
 
+export interface JsonHelpersLogger {
+  warn: (message: string, metadata: Record<string, unknown>) => void;
+}
+
+export interface JsonHelpersDependencies {
+  logger?: JsonHelpersLogger;
+}
+
+const defaultJsonHelpersLogger: JsonHelpersLogger = {
+  warn: (message: string, metadata: Record<string, unknown>): void => {
+    console.warn(message, metadata);
+  }
+};
+
+function resolveJsonHelpersLogger(dependencies: JsonHelpersDependencies): JsonHelpersLogger {
+  return dependencies.logger ?? defaultJsonHelpersLogger;
+}
+
 /**
  * Safe JSON parsing with detailed error handling
  * @param input - String to parse as JSON
  * @param context - Optional context for logging
  * @returns Parse result with success flag and data or error
  */
-export function safeJSONParse<T = unknown>(input: string, context?: string): JSONParseResult<T> {
+export function safeJSONParse<T = unknown>(
+  input: string,
+  context?: string,
+  dependencies: JsonHelpersDependencies = {}
+): JSONParseResult<T> {
+  const activeLogger = resolveJsonHelpersLogger(dependencies);
+
   try {
     const data = JSON.parse(input);
     return { success: true, data };
@@ -31,7 +54,7 @@ export function safeJSONParse<T = unknown>(input: string, context?: string): JSO
     //audit Assumption: parse errors should not bubble; Handling: log + safe result
     const errorMsg = resolveErrorMessage(error, 'Unknown parsing error');
     
-    logger.warn('JSON parsing failed', {
+    activeLogger.warn('JSON parsing failed', {
       module: 'jsonHelpers',
       operation: 'safeJSONParse',
       context: context || 'unknown',
@@ -52,14 +75,20 @@ export function safeJSONParse<T = unknown>(input: string, context?: string): JSO
  * @param context - Optional context for logging
  * @returns Stringified JSON or null on error
  */
-export function safeJSONStringify(data: unknown, context?: string): string | null {
+export function safeJSONStringify(
+  data: unknown,
+  context?: string,
+  dependencies: JsonHelpersDependencies = {}
+): string | null {
+  const activeLogger = resolveJsonHelpersLogger(dependencies);
+
   try {
     return JSON.stringify(data);
   } catch (error: unknown) {
     //audit Assumption: stringify errors should not crash; Handling: log + null
     const errorMsg = resolveErrorMessage(error, 'Unknown stringify error');
     
-    logger.warn('JSON stringification failed', {
+    activeLogger.warn('JSON stringification failed', {
       module: 'jsonHelpers',
       operation: 'safeJSONStringify',
       context: context || 'unknown',

@@ -78,8 +78,28 @@ export const config = {
     enabled: getEnv('DISPATCH_V9_ENABLED') === 'true',
     shadowOnly: getEnv('DISPATCH_V9_SHADOW_ONLY') === 'true',
     snapshotCacheTtlMs: parseNumber(getEnv('DISPATCH_V9_SNAPSHOT_CACHE_TTL_MS'), 3000, 0),
+    policyTimeoutMs: parseNumber(getEnv('DISPATCH_V9_POLICY_TIMEOUT_MS'), 5000, 1),
     defaultRerouteTarget: getEnv('DISPATCH_V9_DEFAULT_REROUTE_TARGET') || '/api/ask',
     readonlyBindingId: getEnv('DISPATCH_V9_READONLY_BINDING_ID') || 'api.readonly'
+  },
+
+  safety: {
+    heartbeatTimeoutMs: parseNumber(getEnv('SAFETY_HEARTBEAT_TIMEOUT_MS'), 15000, 1000),
+    heartbeatMissThreshold: parseNumber(getEnv('SAFETY_HEARTBEAT_MISS_THRESHOLD'), 3, 1),
+    healthyCyclesToRecover: parseNumber(getEnv('SAFETY_HEALTHY_CYCLES_TO_RECOVER'), 3, 1),
+    quarantineCooldownMs: parseNumber(getEnv('SAFETY_QUARANTINE_COOLDOWN_MS'), 120000, 0),
+    workerRestartThreshold: parseNumber(getEnv('SAFETY_WORKER_RESTART_THRESHOLD'), 5, 1),
+    workerRestartWindowMs: parseNumber(getEnv('SAFETY_WORKER_RESTART_WINDOW_MS'), 300000, 1),
+    failClosedIntegrity: getEnv('SAFETY_FAIL_CLOSED_INTEGRITY') !== 'false',
+    expectedHashes: {
+      dispatchPatterns: getEnv('SAFETY_EXPECTED_HASH_DISPATCH_PATTERNS'),
+      prompts: getEnv('SAFETY_EXPECTED_HASH_PROMPTS'),
+      fallbackMessages: getEnv('SAFETY_EXPECTED_HASH_FALLBACK_MESSAGES'),
+      gptRouterConfig: getEnv('SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG'),
+      assistantRegistry: getEnv('SAFETY_EXPECTED_HASH_ASSISTANT_REGISTRY'),
+      daemonTokens: getEnv('SAFETY_EXPECTED_HASH_DAEMON_TOKENS'),
+      protectedJson: getEnv('SAFETY_EXPECTED_HASH_PROTECTED_JSON')
+    }
   },
 
   // Logging configuration
