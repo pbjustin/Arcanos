@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
-import { getConfig } from '../config/unifiedConfig.js';
-import { resolveHeader } from '../utils/requestHeaders.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { resolveHeader } from '@transport/http/requestHeaders.js';
 import { timingSafeEqual } from 'crypto';
 
 declare module 'express-serve-static-core' {

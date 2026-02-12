@@ -1,4 +1,4 @@
-import config from '../../config/index.js';
+import { config } from '@platform/runtime/config.js';
 import { emitSafetyAuditEvent } from './auditEvents.js';
 import {
   activateUnsafeCondition,

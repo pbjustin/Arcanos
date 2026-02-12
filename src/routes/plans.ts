@@ -11,7 +11,7 @@
  */
 
 import express, { Request, Response } from 'express';
-import { actionPlanInputSchema, executionResultInputSchema } from '../types/actionPlan.js';
+import { actionPlanInputSchema, executionResultInputSchema } from '@shared/types/actionPlan.js';
 import {
   createPlan,
   getPlan,
@@ -25,9 +25,9 @@ import {
 import { validateCapability } from '../stores/agentRegistry.js';
 import { buildClear2Summary } from '../services/clear2.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
-import { getConfig } from '../config/unifiedConfig.js';
-import { apiLogger } from '../utils/structuredLogging.js';
-import type { ClearDecision, PlanStatus, ActionPlanRecord } from '../types/actionPlan.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { apiLogger } from '@platform/logging/structuredLogging.js';
+import type { ClearDecision, PlanStatus, ActionPlanRecord } from '@shared/types/actionPlan.js';
 import { acquireExecutionLock } from '../services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
 

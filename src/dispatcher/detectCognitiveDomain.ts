@@ -1,4 +1,4 @@
-import type { CognitiveDomain } from '../types/cognitiveDomain.js';
+import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 
 export interface DomainDetectionResult {
   domain: CognitiveDomain;

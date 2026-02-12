@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { callOpenAI, getDefaultModel } from './openai.js';
 import { loadState, updateState } from './stateManager.js';
 import { getEnv } from "@platform/runtime/env.js";
 import { DAILY_SUMMARY_PROMPT_LINES } from "@platform/runtime/dailySummaryTemplates.js";
 import { readJsonFileSafely } from "@shared/jsonFileUtils.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { parseModelOutputWithSchema } from "./safety/aiOutputBoundary.js";
 
 interface SummarySources {
   systemState: Record<string, unknown>;

@@ -7,7 +7,7 @@
  */
 
 import express, { Request, Response } from 'express';
-import { agentRegistrationSchema } from '../types/actionPlan.js';
+import { agentRegistrationSchema } from '@shared/types/actionPlan.js';
 import {
   registerAgent,
   getAgent,
@@ -15,8 +15,8 @@ import {
   listAgents,
 } from '../stores/agentRegistry.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
-import { getConfig } from '../config/unifiedConfig.js';
-import { apiLogger } from '../utils/structuredLogging.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { apiLogger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
 

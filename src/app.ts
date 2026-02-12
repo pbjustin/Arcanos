@@ -7,6 +7,7 @@ import { registerRoutes } from "@routes/register.js";
 import { initOpenAI } from "@core/init-openai.js";
 import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transport/http/middleware/fallbackHandler.js";
 import errorHandler from "@transport/http/middleware/errorHandler.js";
+import unsafeExecutionGate from "@transport/http/middleware/unsafeExecutionGate.js";
 
 /**
  * Creates and configures the Express application.
