@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { AppError } from "@core/lib/errors.js";
+import { AppError } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 
 function isAppError(err: Error): err is AppError {
