@@ -65,7 +65,7 @@
     "author": "Justin",
     "license": "MIT",
     "dependencies": {
-        "@prisma/client": "^7.3.0",
+        "@prisma/client": "^6.19.2",
         "@types/pg": "^8.15.5",
         "axios": "^1.11.0",
         "cheerio": "^1.1.0",
