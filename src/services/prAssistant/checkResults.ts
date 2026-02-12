@@ -1,4 +1,4 @@
-import { CHECK_TITLES, REPORT_TEMPLATE } from '../../config/prAssistantTemplates.js';
+import { CHECK_TITLES, REPORT_TEMPLATE } from "@platform/runtime/prAssistantTemplates.js";
 import { formatCheckLabel } from './utils.js';
 import type { CheckResult } from './types.js';
 

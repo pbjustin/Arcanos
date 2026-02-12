@@ -1,4 +1,4 @@
-import { buildContextualSystemPrompt } from '../contextualReinforcement.js';
+import { buildContextualSystemPrompt } from "@services/contextualReinforcement.js";
 import { CallOpenAIOptions, ChatCompletionMessageParam } from './types.js';
 
 export function buildChatMessages(

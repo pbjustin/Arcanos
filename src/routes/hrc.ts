@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
-import { hrcCore } from '../modules/hrc.js';
-import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { hrcCore } from '@services/hrc.js';
+import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 

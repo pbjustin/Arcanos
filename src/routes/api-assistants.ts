@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { getAssistant, getAssistantRegistry, syncAssistantRegistry } from '../services/openai-assistants.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { getAssistant, getAssistantRegistry, syncAssistantRegistry } from "@services/openai-assistants.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = Router();
 

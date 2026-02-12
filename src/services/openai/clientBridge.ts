@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
-import { getOpenAIAdapter } from '../../adapters/openai.adapter.js';
+import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
+import { getOpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { getOrCreateClient } from './unifiedClient.js';
 
 /**

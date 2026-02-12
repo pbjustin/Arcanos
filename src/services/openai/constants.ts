@@ -1,4 +1,4 @@
-import { getEnv, getEnvNumber, getEnvBoolean } from '../../config/env.js';
+import { getEnv, getEnvNumber, getEnvBoolean } from "@platform/runtime/env.js";
 
 const parseIntegerEnv = (key: string, defaultValue: number): number => {
   return getEnvNumber(key, defaultValue);

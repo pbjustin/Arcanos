@@ -21,15 +21,11 @@ import debugConfirmationRouter from './debug-confirmation.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
 import reusableCodeRouter from './api-reusable-code.js';
-import { createFallbackTestRoute } from '../middleware/fallbackHandler.js';
-import { runHealthCheck } from '../utils/diagnostics.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHandler.js";
+import { runHealthCheck } from "@platform/logging/diagnostics.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import devopsRouter from './devops.js';
-import plansRouter from './plans.js';
-import clearRouter from './clear.js';
-import agentsRouter from './agents.js';
-import { sendTimestampedStatus } from '../utils/serviceUnavailable.js';
-import safetyRouter from './safety.js';
+import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
 
 /**
  * Mounts all application routes on the provided Express app.

@@ -17,9 +17,9 @@
  */
 
 import { randomUUID } from 'crypto';
-import config from '../config/index.js';
-import { aiLogger } from '../utils/structuredLogging.js';
-import { generateRequestId } from '../utils/idGenerator.js';
+import { config } from "@platform/runtime/config.js";
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { generateRequestId } from "@shared/idGenerator.js";
 import type {
   AuditRecord,
   ClearScoreScale,
@@ -27,7 +27,7 @@ import type {
   ReinforcementContextEntry,
   ReinforcementHealth,
   ReinforcementTraceEvent
-} from '../types/reinforcement.js';
+} from "@shared/types/reinforcement.js";
 
 /**
  * In-memory context window storing recent reinforcement entries.

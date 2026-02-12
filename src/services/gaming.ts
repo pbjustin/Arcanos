@@ -1,9 +1,9 @@
-import { getPrompt } from '../config/prompts.js';
+import { getPrompt } from "@platform/runtime/prompts.js";
 import { getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js';
-import { fetchAndClean } from './webFetcher.js';
+import { fetchAndClean } from "@services/webFetcher.js";
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { getEnv } from '../config/env.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { getEnv } from "@platform/runtime/env.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 // Use config layer for env access (adapter boundary pattern)
 const FINETUNE_MODEL = getEnv('FINETUNE_MODEL') || getDefaultModel();

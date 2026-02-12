@@ -1,5 +1,5 @@
 import { getAuditHistory, getContextWindow, getReinforcementConfig } from './contextualReinforcement.js';
-import type { MemoryDigestEntry, MemoryDigestResponse } from '../types/reinforcement.js';
+import type { MemoryDigestEntry, MemoryDigestResponse } from "@shared/types/reinforcement.js";
 
 export function getMemoryDigest(): MemoryDigestResponse {
   const config = getReinforcementConfig();

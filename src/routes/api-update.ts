@@ -1,10 +1,10 @@
 import express, { Request, Response } from 'express';
-import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { buildValidationErrorResponse, resolveErrorMessage } from '../lib/errors/index.js';
-import { aiLogger } from '../utils/structuredLogging.js';
-import { recordTraceEvent } from '../utils/telemetry.js';
-import type { ErrorResponseDTO } from '../types/dto.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
+import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { buildValidationErrorResponse, resolveErrorMessage } from "@core/lib/errors/index.js";
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { recordTraceEvent } from "@platform/logging/telemetry.js";
+import type { ErrorResponseDTO } from "@shared/types/dto.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
 
 const router = express.Router();
 

@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { readJsonFileSafely } from '../utils/jsonFileUtils.js';
+import { readJsonFileSafely } from "@shared/jsonFileUtils.js";
 
 const STATE_FILE = path.join(process.cwd(), 'systemState.json');
 
@@ -69,10 +69,10 @@ export function updateState(newData: Partial<SystemState>): SystemState {
  * Inputs/Outputs: Optional port override; returns SystemState.
  * Edge cases: Network errors fall back to file state.
  */
-import config from '../config/index.js';
-import { webFetcher } from '../utils/webFetcher.js';
-import { getBackendBaseUrl, getBackendBaseUrlValue } from '../config/env.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { config } from "@platform/runtime/config.js";
+import { webFetcher } from "@shared/webFetcher.js";
+import { getBackendBaseUrl, getBackendBaseUrlValue } from "@platform/runtime/env.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 function buildStatusUrl(portOverride?: number): string {
   const statusEndpoint = config.server.statusEndpoint || '/status';

@@ -12,7 +12,7 @@
 
 import { getDefaultModel } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
 

@@ -1,5 +1,5 @@
-import { aiLogger } from '../utils/structuredLogging.js';
-import type { AuditResult, ClearFeedbackPayload, ClearScoreScale } from '../types/reinforcement.js';
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import type { AuditResult, ClearFeedbackPayload, ClearScoreScale } from "@shared/types/reinforcement.js";
 import { createAuditRecord, getReinforcementConfig, registerAuditRecord } from './contextualReinforcement.js';
 import { sendClearFeedback } from './clearClient.js';
 import {
@@ -7,7 +7,7 @@ import {
   parseClearPrincipleScores,
   type ClearScorecardSummary
 } from './clearScorecard.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const CLEAR_SYSTEM_IDENTIFIER = 'CLEAR';
 

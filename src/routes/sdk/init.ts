@@ -1,13 +1,13 @@
 import express from 'express';
-import { logExecution, type JobData } from '../../db/index.js';
-import { confirmGate } from '../../middleware/confirmGate.js';
+import { logExecution, type JobData } from "@core/db/index.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import {
   dispatchArcanosTask,
   startWorkers,
   type WorkerBootstrapSummary
-} from '../../config/workerConfig.js';
-import { runSystemDiagnostics, type SystemDiagnostics } from '../../utils/systemDiagnostics.js';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
+} from "@platform/runtime/workerConfig.js";
+import { runSystemDiagnostics, type SystemDiagnostics } from "@platform/logging/systemDiagnostics.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 
@@ -243,7 +243,7 @@ router.post('/jobs/dispatch', confirmGate, async (req, res) => {
 router.post('/test-job', confirmGate, async (_, res) => {
   try {
     // Import necessary functions
-    const { createJob } = await import('../../db/index.js');
+    const { createJob } = await import("@core/db/index.js");
 
     const jobData = {
       type: 'test_job',
@@ -288,7 +288,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
     //audit Assumption: update job if record exists
     if (jobRecord) {
       try {
-        const { updateJob } = await import('../../db/index.js');
+        const { updateJob } = await import("@core/db/index.js");
         jobRecord = await updateJob(jobRecord.id, 'completed', result);
       } catch (error: unknown) {
         //audit Assumption: update failure should not block response

@@ -1,5 +1,5 @@
 import { appendFileSync } from 'fs';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { MEMORY_LOG_FILE, SUPPRESSION_LOG_FILE } from './paths.js';
 
 /**

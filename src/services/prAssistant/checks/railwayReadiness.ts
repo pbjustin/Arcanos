@@ -1,8 +1,8 @@
-import { createCheckResult } from '../checkResults.js';
-import { RAILWAY_VALIDATION_PATTERNS } from '../constants.js';
-import type { CheckContext, CheckResult } from '../types.js';
-import { collectMatches, uniqueStrings } from '../utils.js';
-import { resolveErrorMessage } from '../../../lib/errors/index.js';
+import { createCheckResult } from "@services/prAssistant/checkResults.js";
+import { RAILWAY_VALIDATION_PATTERNS } from "@services/prAssistant/constants.js";
+import type { CheckContext, CheckResult } from "@services/prAssistant/types.js";
+import { collectMatches, uniqueStrings } from "@services/prAssistant/utils.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { validateEnvDocumentation } from './envDocumentation.js';
 
 export async function checkRailwayReadiness(

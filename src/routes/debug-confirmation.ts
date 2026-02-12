@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { createOneTimeToken, consumeOneTimeToken, getOneTimeTokenTtlMs } from '../lib/tokenStore.js';
-import { getAutomationAuth } from '../config/env.js';
-import { resolveHeader } from '../utils/requestHeaders.js';
+import { createOneTimeToken, consumeOneTimeToken, getOneTimeTokenTtlMs } from "@core/lib/tokenStore.js";
+import { getAutomationAuth } from "@platform/runtime/env.js";
+import { resolveHeader } from "@transport/http/requestHeaders.js";
 
 const router = Router();
 
