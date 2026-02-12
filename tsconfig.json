@@ -16,6 +16,12 @@
                             "inlineSources":  true,
                             "baseUrl":  ".",
                             "paths":  {
+                                          "@core/lib/*.js":  [
+                                                                  "src/lib/*.ts"
+                                                              ],
+                                          "@core/lib/*":  [
+                                                             "src/lib/*"
+                                                         ],
                                           "@platform/*":  [
                                                               "src/platform/*"
                                                           ],
