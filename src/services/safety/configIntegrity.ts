@@ -222,7 +222,7 @@ export function assertProtectedConfigIntegrity(
 export function verifyIntegrityManifestConfiguration(): void {
   const missingRequiredBaselines: string[] = [];
 
-  for (const entry of Object.values(INTEGRITY_MANIFEST)) {
+  for (const entry of Object.values(INTEGRITY_MANIFEST) as ProtectedConfigManifestEntry[]) {
     if (entry.allowTrustOnFirstLoad) {
       continue;
     }
