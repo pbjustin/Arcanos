@@ -95,6 +95,9 @@ export async function loadAssistantRegistry(): Promise<AssistantRegistry> {
     const content = await fs.readFile(REGISTRY_PATH, 'utf8');
     const parsed = JSON.parse(content);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      assertProtectedConfigIntegrity('assistant_registry', parsed, {
+        source: REGISTRY_PATH
+      });
       return parsed as AssistantRegistry;
     }
     aiLogger.warn('[AI-ASSISTANT-SYNC] Invalid registry content encountered, resetting', LOG_CONTEXT, {

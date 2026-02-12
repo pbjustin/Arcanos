@@ -55,6 +55,7 @@ export function registerRoutes(app: Express): void {
   });
 
   app.use('/', healthGroupRouter);
+  app.use('/', safetyRouter);
   app.use('/', askRouter);
   app.use('/', apiRouter);
   app.use('/', arcanosRouter);
@@ -77,7 +78,12 @@ export function registerRoutes(app: Express): void {
   app.use('/', researchRouter);
   app.use('/', reinforcementRouter);
   app.use('/', devopsRouter);
-  
+
+  // ActionPlan orchestration + CLEAR 2.0 governance
+  app.use('/', plansRouter);
+  app.use('/', clearRouter);
+  app.use('/', agentsRouter);
+
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
     res.json({ 

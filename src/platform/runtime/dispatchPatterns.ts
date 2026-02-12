@@ -101,3 +101,14 @@ export function getDispatchBindingsVersion(
 
 export const DISPATCH_BINDINGS_VERSION = getDispatchBindingsVersion();
 
+assertProtectedConfigIntegrity(
+  'dispatch_patterns',
+  {
+    bindings: DISPATCH_PATTERN_BINDINGS,
+    exemptRoutes: DISPATCH_V9_EXEMPT_ROUTES
+  },
+  {
+    source: 'src/config/dispatchPatterns.ts'
+  }
+);
+

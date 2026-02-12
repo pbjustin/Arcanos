@@ -16,7 +16,7 @@ import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
   APPLICATION_CONSTANTS.MODEL_GPT_5,
   APPLICATION_CONSTANTS.MODEL_GPT_5_1
-].map(m => (m || '').toLowerCase()));
+].filter(Boolean).map(m => String(m).toLowerCase()));
 
 // Cache for model capability testing to avoid repeated API calls
 const modelCapabilityCache = new Map<string, 'max_tokens' | 'max_completion_tokens'>();
@@ -159,9 +159,11 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
   //audit Assumption: GPT-5 requires max_completion_tokens; Handling: switch param
   // Also treat Google's Gemini family as using max_completion_tokens
   //audit Assumption: gemini models use the newer token parameter; Handling: switch param
-  // Treat any model name that mentions 'gemini' as part of the Gemini family.
-  // Use a simple substring check to cover variants like 'gemini-1', 'gpt-gemini', or 'gemini_v1'.
-  if (lowerModelName.includes('gemini')) {
+  // Use a word-boundary regex to robustly detect "gemini" tokens in model names
+  // Examples matched: 'gemini', 'Gemini-1', 'google/gemini-1a', 'gpt-gemini'
+  // Examples NOT matched: 'metagemini', 'progeminitools'
+  const geminiRegex = /\bgemini\b/i;
+  if (geminiRegex.test(lowerModelName)) {
     return 'max_completion_tokens';
   }
 

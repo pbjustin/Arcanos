@@ -19,6 +19,7 @@ export function createApp(): Express {
   app.use(express.urlencoded({ extended: true }));
 
   app.use(requestLoggingMiddleware);
+  app.use(unsafeExecutionGate);
   app.use(createHealthCheckMiddleware()); // Add health check middleware for AI endpoints
   initOpenAI(app);
   Object.defineProperty(app.locals, 'openai', {

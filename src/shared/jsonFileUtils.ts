@@ -10,6 +10,10 @@ export interface JsonReadDependencies {
   maxFileSizeBytes?: number;
 }
 
+export interface ProtectedJsonReadOptions {
+  protectedConfigId?: ProtectedConfigId;
+}
+
 const defaultDependencies: JsonReadDependencies = {
   fsModule: fs,
   logError: (message: string, error: unknown) => {
@@ -27,7 +31,8 @@ const defaultDependencies: JsonReadDependencies = {
  */
 export function readJsonFileSafely<T>(
   filePath: string,
-  dependencies: JsonReadDependencies = defaultDependencies
+  dependencies: JsonReadDependencies = defaultDependencies,
+  options: ProtectedJsonReadOptions = {}
 ): T | undefined {
   const { fsModule, logError, maxFileSizeBytes = MAX_FILE_SIZE_BYTES } = dependencies;
 
@@ -46,7 +51,14 @@ export function readJsonFileSafely<T>(
 
     const raw = fsModule.readFileSync(filePath, 'utf8');
     //audit Assumption: non-empty content should parse; risk: invalid JSON; invariant: return undefined on parse failure; handling: try/catch.
-    return raw ? (JSON.parse(raw) as T) : undefined;
+    const parsed = raw ? (JSON.parse(raw) as T) : undefined;
+    //audit Assumption: protected config reads must pass integrity checks before returning parsed data; risk: silent semantic corruption; invariant: protected payload integrity validated; handling: fail closed by returning undefined after logged error.
+    if (parsed !== undefined && options.protectedConfigId) {
+      assertProtectedConfigIntegrity(options.protectedConfigId, parsed, {
+        source: filePath
+      });
+    }
+    return parsed;
   } catch (error: unknown) {
     //audit Assumption: read/parse errors should not crash caller; risk: masking issues; invariant: caller can continue; handling: log and return undefined.
     logError(`[JSON-UTIL] Failed to read JSON file ${filePath}`, error);

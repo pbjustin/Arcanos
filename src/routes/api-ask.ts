@@ -161,11 +161,7 @@ router.post(
     metadata
   };
 
-  const typedRequest = req as unknown as Request<
-    {},
-    AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO,
-    AskRequest
-  >;
+  const typedRequest = req as unknown as Request<{}, any, AskRequest>;
   typedRequest.body = normalizedRequest;
 
   return handleAIRequest(typedRequest, res, 'ask');

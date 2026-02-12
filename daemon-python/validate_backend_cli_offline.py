@@ -12,9 +12,6 @@ import sys
 from pathlib import Path
 from typing import List
 
-# Ensure local package import works when invoked from repository root.
-sys.path.insert(0, str(Path(__file__).parent))
-
 from arcanos.config import Config, validate_required_config
 from arcanos.env import set_env_value
 from arcanos.gpt_client import GPTClient

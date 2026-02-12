@@ -13,7 +13,6 @@ if env_path.exists():
     print(f"Loaded .env from: {env_path}")
 
 # Add the arcanos package to path
-sys.path.insert(0, str(Path(__file__).parent))
 
 from arcanos.config import Config
 from arcanos.backend_client import BackendApiClient, BackendRequestError
