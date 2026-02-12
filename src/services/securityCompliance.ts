@@ -8,11 +8,11 @@
  * - Provides deep analysis and problem-solving without exposing sensitive data
  */
 
-import { logger } from '../utils/structuredLogging.js';
+import { logger } from "@platform/logging/structuredLogging.js";
 import {
   getSecurityReasoningEnginePrompt,
   getStructuredSecurityResponseTemplate
-} from '../config/prompts.js';
+} from "@platform/runtime/prompts.js";
 
 interface SecurityConfig {
   redactCredentials: boolean;

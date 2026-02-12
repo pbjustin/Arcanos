@@ -15,14 +15,14 @@
  */
 
 import type OpenAI from 'openai';
-import { aiLogger } from '../../utils/structuredLogging.js';
-import { recordTraceEvent } from '../../utils/telemetry.js';
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import {
   createOpenAIAdapter,
   getOpenAIAdapter,
   isOpenAIAdapterInitialized,
   resetOpenAIAdapter
-} from '../../adapters/openai.adapter.js';
+} from "@core/adapters/openai.adapter.js";
 import {
   resolveOpenAIKey,
   resolveOpenAIBaseURL,
@@ -38,11 +38,11 @@ import {
   getCircuitBreakerSnapshot,
   RESILIENCE_CONSTANTS
 } from './resilience.js';
-import { responseCache } from '../../utils/cache.js';
-import { getRoutingActiveMessage } from '../../config/prompts.js';
-import { getConfig } from '../../config/unifiedConfig.js';
-import { APPLICATION_CONSTANTS } from '../../utils/constants.js';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
+import { responseCache } from "@platform/resilience/cache.js";
+import { getRoutingActiveMessage } from "@platform/runtime/prompts.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import { APPLICATION_CONSTANTS } from "@shared/constants.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 /**
  * Client initialization options

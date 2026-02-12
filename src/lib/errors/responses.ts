@@ -4,7 +4,7 @@
  */
 
 import type { Response } from 'express';
-import { buildTimestampedPayload } from '../../utils/responseHelpers.js';
+import { buildTimestampedPayload } from '@transport/http/responseHelpers.js';
 
 export interface ValidationErrorOptions {
   acceptedFields?: readonly string[];

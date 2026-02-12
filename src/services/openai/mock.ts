@@ -1,5 +1,5 @@
-import { generateRequestId } from '../../utils/idGenerator.js';
-import { MOCK_RESPONSE_CONSTANTS, MOCK_RESPONSE_MESSAGES, truncateInput } from '../../config/mockResponseConfig.js';
+import { generateRequestId } from "@shared/idGenerator.js";
+import { MOCK_RESPONSE_CONSTANTS, MOCK_RESPONSE_MESSAGES, truncateInput } from "@platform/runtime/mockResponseConfig.js";
 
 /**
  * Mock response structure for OpenAI API calls

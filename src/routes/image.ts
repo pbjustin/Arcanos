@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
-import { validateAIRequest, handleAIError } from '../utils/requestHandler.js';
-import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders, commonSchemas } from '../utils/security.js';
-import { generateImage } from '../services/openai.js';
+import { validateAIRequest, handleAIError } from "@transport/http/requestHandler.js";
+import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders, commonSchemas } from "@platform/runtime/security.js";
+import { generateImage } from "@services/openai.js";
 
 const router = express.Router();
 

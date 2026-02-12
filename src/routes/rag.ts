@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { ingestUrl, ingestContent, answerQuestion } from '../services/webRag.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
+import { ingestUrl, ingestContent, answerQuestion } from "@services/webRag.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
 
 const router = Router();
 

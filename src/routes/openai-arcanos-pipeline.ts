@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
-import { executeArcanosPipeline } from '../services/arcanosPipeline.js';
-import type { ChatCompletionMessageParam } from '../services/openai/types.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { executeArcanosPipeline } from "@services/arcanosPipeline.js";
+import type { ChatCompletionMessageParam } from "@services/openai/types.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 

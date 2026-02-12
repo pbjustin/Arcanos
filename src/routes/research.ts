@@ -1,9 +1,9 @@
 import express, { Request, Response } from 'express';
-import { confirmGate } from '../middleware/confirmGate.js';
-import { createValidationMiddleware } from '../utils/security.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { connectResearchBridge } from '../services/researchHub.js';
-import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { createValidationMiddleware } from "@platform/runtime/security.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { connectResearchBridge } from "@services/researchHub.js";
+import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 
 const routeBridge = connectResearchBridge('ROUTE:RESEARCH');
 

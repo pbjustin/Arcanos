@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
+import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { buildEmbeddingRequest } from './requestBuilders.js';
 import { getOpenAIClientOrAdapter } from './clientBridge.js';
 

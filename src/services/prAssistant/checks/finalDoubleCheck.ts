@@ -1,9 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-import { runCommand } from '../commandUtils.js';
-import type { CheckContext, CheckResult } from '../types.js';
-import { resolveErrorMessage } from '../../../lib/errors/index.js';
+import { runCommand } from "@services/prAssistant/commandUtils.js";
+import type { CheckContext, CheckResult } from "@services/prAssistant/types.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export async function performFinalDoubleCheck(context: CheckContext): Promise<CheckResult> {
   const details: string[] = [];

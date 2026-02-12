@@ -1,6 +1,6 @@
-import { APPLICATION_CONSTANTS } from '../../utils/constants.js';
-import config from '../../config/index.js';
-import { getConfig } from '../../config/unifiedConfig.js';
+import { APPLICATION_CONSTANTS } from "@shared/constants.js";
+import { config } from "@platform/runtime/config.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',

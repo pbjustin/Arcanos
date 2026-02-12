@@ -1,10 +1,10 @@
 import express, { Request, Response } from 'express';
-import { auditTrace } from '../middleware/auditTrace.js';
-import { registerContextEntry, getReinforcementHealth } from '../services/contextualReinforcement.js';
-import { getMemoryDigest } from '../services/memoryDigest.js';
-import { processClearFeedback } from '../services/audit.js';
-import type { ClearFeedbackPayload } from '../types/reinforcement.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { auditTrace } from "@transport/http/middleware/auditTrace.js";
+import { registerContextEntry, getReinforcementHealth } from "@services/contextualReinforcement.js";
+import { getMemoryDigest } from "@services/memoryDigest.js";
+import { processClearFeedback } from "@services/audit.js";
+import type { ClearFeedbackPayload } from "@shared/types/reinforcement.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 

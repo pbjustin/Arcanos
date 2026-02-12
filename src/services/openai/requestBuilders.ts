@@ -21,10 +21,10 @@
 import type OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionResponseFormat, ImageSize } from './types.js';
 import { ARCANOS_ROUTING_MESSAGE } from './unifiedClient.js';
-import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
-import { buildSystemPromptMessages } from '../../utils/messageBuilderUtils.js';
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL, ROUTING_MAX_TOKENS } from './config.js';
-import { OPENAI_COMPLETION_DEFAULTS } from './constants.js';
+import { OPENAI_COMPLETION_DEFAULTS } from "./constants.js";
 
 /**
  * Chat completion request parameters

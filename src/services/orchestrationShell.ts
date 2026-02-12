@@ -6,22 +6,22 @@
 
 import { getGPT5Model, call_gpt5_strict } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { generateRequestId } from '../utils/idGenerator.js';
-import { getEnv } from '../config/env.js';
+import { generateRequestId } from "@shared/idGenerator.js";
+import { getEnv } from "@platform/runtime/env.js";
 import {
   ISOLATE_MODULE_PROMPT,
   PURGE_MEMORY_PROMPT,
   REDEPLOY_SAFEGUARDS_PROMPT,
   VERIFY_DEPLOYMENT_PROMPT
-} from '../config/orchestrationPrompts.js';
-import { logArcanosRouting } from '../utils/aiLogger.js';
+} from "@platform/runtime/orchestrationPrompts.js";
+import { logArcanosRouting } from "@platform/logging/aiLogger.js";
 import { initializeGPT5Orchestration, type GPT5OrchestrationConfig } from './orchestrationInit.js';
 import { 
   logAITaskLineage,
   type AuditLogEntry 
 } from './auditSafe.js';
 import { getMemoryContext, clearMemoryState } from './memoryAware.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 interface OrchestrationResult {
   success: boolean;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { getEnvNumber } from '../config/env.js';
+import { getEnvNumber } from '@platform/runtime/env.js';
 
 export interface OneTimeTokenRecord {
   token: string;
@@ -51,9 +51,10 @@ function purgeExpiredTokens(now: number = Date.now()): void {
 export function createOneTimeToken(): OneTimeTokenRecord {
   const now = Date.now();
   purgeExpiredTokens(now);
+  const tokenId = randomUUID();
 
   const record: OneTimeTokenRecord = {
-    token: randomUUID(),
+    token: tokenId,
     issuedAt: now,
     expiresAt: now + tokenTtlMs,
     ttlMs: tokenTtlMs

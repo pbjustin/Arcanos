@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { ensureLogDirectory, getAuditShadowPath, getLogPath } from '../utils/logPath.js';
+import { ensureLogDirectory, getAuditShadowPath, getLogPath } from "@shared/logPath.js";
 import { checkMemoryIntegrity } from './memoryAware.js';
-import { getEnv } from '../config/env.js';
+import { getEnv } from "@platform/runtime/env.js";
 
 const DISABLE_FLAG_FILE = path.join(getLogPath(), 'shadow_disabled');
 

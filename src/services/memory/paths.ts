@@ -1,7 +1,7 @@
 import { mkdirSync } from 'fs';
 import { join } from 'path';
-import { getEnv } from '../../config/env.js';
-import { APPLICATION_CONSTANTS } from '../../utils/constants.js';
+import { getEnv } from "@platform/runtime/env.js";
+import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 
 // Memory storage paths
 // Use config layer for env access (adapter boundary pattern)

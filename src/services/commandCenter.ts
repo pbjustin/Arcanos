@@ -1,8 +1,8 @@
-import { sanitizeInput } from '../utils/security.js';
+import { sanitizeInput } from "@platform/runtime/security.js";
 import { createCentralizedCompletion, generateMockResponse, hasValidAPIKey } from './openai.js';
 import { getAuditSafeMode, interpretCommand, setAuditSafeMode } from './auditSafeToggle.js';
-import { extractTextPrompt } from '../utils/payloadNormalization.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { extractTextPrompt } from "@transport/http/payloadNormalization.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export type CommandName = 'audit-safe:set-mode' | 'audit-safe:interpret' | 'ai:prompt';
 

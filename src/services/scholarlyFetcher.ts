@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { resolveErrorMessage } from '../lib/errors/index.js';
-import { getScholarlyApiConfig } from '../config/scholarly.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { getScholarlyApiConfig } from "@platform/runtime/scholarly.js";
 
 export interface ScholarlySource {
   title: string;

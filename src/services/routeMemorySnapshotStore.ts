@@ -1,12 +1,11 @@
-import config from '../config/index.js';
-import { DISPATCH_BINDINGS_VERSION } from '../config/dispatchPatterns.js';
-import { loadMemory, query, saveMemory } from '../db/index.js';
-import { logger } from '../utils/structuredLogging.js';
-import { createVersionStamp } from './safety/monotonicClock.js';
+import { config } from "@platform/runtime/config.js";
+import { DISPATCH_BINDINGS_VERSION } from "@platform/runtime/dispatchPatterns.js";
+import { loadMemory, query, saveMemory } from "@core/db/index.js";
+import { logger } from "@platform/logging/structuredLogging.js";
 import type {
   DispatchMemorySnapshotV9,
   DispatchRouteStateV9
-} from '../types/dispatchV9.js';
+} from "@shared/types/dispatchV9.js";
 
 export const DISPATCH_V9_SNAPSHOT_KEY = 'dispatch:v9:snapshot:global';
 export const DISPATCH_V9_TRUSTED_SNAPSHOT_KEY = 'dispatch:v9:snapshot:trusted';
