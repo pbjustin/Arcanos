@@ -2,7 +2,7 @@ import fs from 'fs';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getEnv } from '../config/env.js';
+import { getEnv } from "@platform/runtime/env.js";
 
 const { readdir, readFile, stat } = fsp;
 

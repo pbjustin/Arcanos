@@ -5,9 +5,9 @@
  */
 
 import express from 'express';
-import { confirmGate } from '../middleware/confirmGate.js';
-import { validateSchema } from '../middleware/validation.js';
-import AIController from '../controllers/aiController.js';
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { validateSchema } from "@transport/http/middleware/validation.js";
+import AIController from "@transport/http/controllers/aiController.js";
 
 const router = express.Router();
 // Core AI endpoints using clean controller pattern with validation

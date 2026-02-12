@@ -1,9 +1,9 @@
-import type { SessionEntry, SessionMetadata } from '../memory/store.js';
-import memoryStore from '../memory/store.js';
-import { loadMemory, saveMemory } from '../db/index.js';
-import { logger } from '../utils/structuredLogging.js';
-import { getEnvNumber } from '../config/env.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import type { SessionEntry, SessionMetadata } from '@core/memory/persistenceTypes.js';
+import memoryStore from '@core/memory/store.js';
+import { loadMemory, saveMemory } from "@core/db/index.js";
+import { logger } from "@platform/logging/structuredLogging.js";
+import { getEnvNumber } from "@platform/runtime/env.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 type ChannelName = string;
 type SessionMessage = Record<string, unknown> | string;

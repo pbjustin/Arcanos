@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { logger } from '../../utils/structuredLogging.js';
-import { createDaemonStore } from '../daemonStore.js';
-import { DAEMON_TOKENS_FILE } from '../../config/daemonConfig.js';
+import { logger } from "@platform/logging/structuredLogging.js";
+import { createDaemonStore } from "@routes/daemonStore.js";
+import { DAEMON_TOKENS_FILE } from "@platform/runtime/daemonConfig.js";
 
 export const daemonLogger = logger.child({ module: 'api-daemon' });
 

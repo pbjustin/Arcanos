@@ -1,5 +1,5 @@
 import express from 'express';
-import { resolveSession } from '../services/sessionResolver.js';
+import { resolveSession } from "@services/sessionResolver.js";
 
 const router = express.Router();
 

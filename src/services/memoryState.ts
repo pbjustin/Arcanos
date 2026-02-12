@@ -3,10 +3,10 @@
  * Registers, retrieves, and validates memory state entries.
  */
 
-import { query } from '../db/index.js';
+import { query } from "@core/db/index.js";
 import { getDefaultModel } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { buildMemoryValidationMessages } from '../utils/memoryValidationMessages.js';
+import { buildMemoryValidationMessages } from "@shared/memoryValidationMessages.js";
 
 /**
  * Register or update memory state in PostgreSQL.

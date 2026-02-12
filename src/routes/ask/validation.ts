@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
-import { validateInput } from '../../utils/security.js';
-import { buildValidationErrorResponse } from '../../lib/errors/index.js';
+import { validateInput } from "@platform/runtime/security.js";
+import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 
 const ASK_TEXT_FIELDS = ['prompt', 'userInput', 'content', 'text', 'query'] as const;
 

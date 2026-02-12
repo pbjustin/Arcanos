@@ -7,8 +7,8 @@
  */
 
 import { appendFileSync } from 'fs';
-import { getAuditLogPath, getLineageLogPath, ensureLogDirectory } from '../utils/logPath.js';
-import { generateRequestId } from '../utils/idGenerator.js';
+import { getAuditLogPath, getLineageLogPath, ensureLogDirectory } from "@shared/logPath.js";
+import { generateRequestId } from "@shared/idGenerator.js";
 import {
   AUDIT_SAFE_NON_COMPLIANT_PATTERNS,
   AUDIT_SAFE_OVERRIDE_PATTERNS,
@@ -16,8 +16,8 @@ import {
   AUDIT_SAFE_SYSTEM_PROMPT_SUFFIX,
   AUDIT_SAFE_USER_PROMPT_TEMPLATE,
   AUDIT_LINEAGE_TEMPLATE
-} from '../config/auditSafe.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+} from "@platform/runtime/auditSafe.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export interface AuditSafeConfig {
   auditSafeMode: boolean;

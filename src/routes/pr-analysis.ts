@@ -4,9 +4,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { PRAssistant } from '../services/prAssistant.js';
-import { validateCustom } from '../middleware/validation.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { PRAssistant } from "@services/prAssistant.js";
+import { validateCustom } from "@transport/http/middleware/validation.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = Router();
 
@@ -75,7 +75,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 /**
  * Direct API endpoint for PR analysis
  */
-router.post('/analyze', validateCustom((data) => {
+router.post('/analyze', validateCustom((data: any) => {
   const errors: string[] = [];
   const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
 

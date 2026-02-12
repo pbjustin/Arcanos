@@ -1,13 +1,13 @@
 import express, { Response } from 'express';
 import modulesRouter, { getModuleMetadata } from './modules.js';
-import getGptModuleMap from '../config/gptRouterConfig.js';
+import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
 import {
   logGptConnection,
   logGptConnectionFailed,
   logGptAckSent,
   type GptMatchMethod,
   type GptRoutingInfo,
-} from '../utils/gptLogger.js';
+} from "@platform/logging/gptLogger.js";
 
 const router = express.Router();
 

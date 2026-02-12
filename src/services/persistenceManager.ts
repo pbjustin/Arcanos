@@ -13,7 +13,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { getEnv } from '../config/env.js';
+import { getEnv } from "@platform/runtime/env.js";
 
 // ----------------------
 // Types and State

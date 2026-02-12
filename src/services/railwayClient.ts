@@ -1,6 +1,6 @@
-import { getRailwayApiConfig, RAILWAY_DEFAULTS } from '../config/railway.js';
-import { logger } from '../utils/structuredLogging.js';
-import { getEnv } from '../config/env.js';
+import { getRailwayApiConfig, RAILWAY_DEFAULTS } from "@platform/runtime/railway.js";
+import { logger } from "@platform/logging/structuredLogging.js";
+import { getEnv } from "@platform/runtime/env.js";
 
 const railwayApiConfig = getRailwayApiConfig();
 

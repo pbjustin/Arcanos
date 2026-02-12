@@ -1,14 +1,14 @@
 import express, { Request, Response } from 'express';
 import { handleAIRequest, type AskRequest, type AskResponse } from './ask.js';
-import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { inferHttpMethodIntent } from '../utils/httpMethodIntent.js';
-import { buildValidationErrorResponse } from '../lib/errors/index.js';
+import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { inferHttpMethodIntent } from "@transport/http/httpMethodIntent.js";
+import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 import type {
   ClientContextDTO,
   ConfirmationRequiredResponseDTO,
   ErrorResponseDTO
-} from '../types/dto.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
+} from "@shared/types/dto.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
 
 const router = express.Router();
 

@@ -1,6 +1,6 @@
 import sessionMemoryRepository from './sessionMemoryRepository.js';
 import { recordConversationSnippet } from './webRag.js';
-import { logger } from '../utils/structuredLogging.js';
+import { logger } from "@platform/logging/structuredLogging.js";
 
 const sessionMemoryLogger = logger.child({ module: 'sessionMemory' });
 

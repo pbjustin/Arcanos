@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { updateState } from './stateManager.js';
-import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from '../config/selfTestConfig.js';
-import { getBackendBaseUrl, getEnv } from '../config/env.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from "@platform/runtime/selfTestConfig.js";
+import { getBackendBaseUrl, getEnv } from "@platform/runtime/env.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export interface SelfTestResult {
   id: string;

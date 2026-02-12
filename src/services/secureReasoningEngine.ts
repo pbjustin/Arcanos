@@ -8,9 +8,9 @@
 
 import type OpenAI from 'openai';
 import { getDefaultModel, createChatCompletionWithFallback } from './openai.js';
-import { getTokenParameter } from '../utils/tokenParameterHelper.js';
-import { generateRequestId } from '../utils/idGenerator.js';
-import { APPLICATION_CONSTANTS } from '../utils/constants.js';
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { generateRequestId } from "@shared/idGenerator.js";
+import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import {
   applySecurityCompliance,
   createSecureReasoningPrompt,
@@ -21,7 +21,7 @@ import {
   SECURE_REASONING_FALLBACK_ANALYSIS,
   SECURE_REASONING_SIMPLE_FALLBACK,
   SECURE_REASONING_SYSTEM_PROMPT
-} from '../config/secureReasoningMessages.js';
+} from "@platform/runtime/secureReasoningMessages.js";
 
 interface SecureReasoningRequest {
   userInput: string;

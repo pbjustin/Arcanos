@@ -1,11 +1,11 @@
 ﻿import type { IncomingMessage, Server } from 'http';
 import type { Duplex } from 'stream';
 import { WebSocket, WebSocketServer } from 'ws';
-import { logger } from '../utils/structuredLogging.js';
-import { isBridgeEnabled } from '../utils/bridgeEnv.js';
-import { getAutomationAuth } from '../config/env.js';
-import { consumeOneTimeToken } from '../lib/tokenStore.js';
-import { resolveHeader } from '../utils/requestHeaders.js';
+import { logger } from "@platform/logging/structuredLogging.js";
+import { isBridgeEnabled } from "@platform/runtime/bridgeEnv.js";
+import { getAutomationAuth } from "@platform/runtime/env.js";
+import { consumeOneTimeToken } from "@core/lib/tokenStore.js";
+import { resolveHeader } from "@transport/http/requestHeaders.js";
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
 const bridgeClients = new Set<WebSocket>();

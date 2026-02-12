@@ -1,9 +1,9 @@
 import type OpenAI from 'openai';
-import { getDefaultModel } from '../../services/openai.js';
-import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
-import config from '../../config/index.js';
-import { getEnv } from '../../config/env.js';
-import { createPendingDaemonActions, queueDaemonCommandForInstance } from '../api-daemon.js';
+import { getDefaultModel } from "@services/openai.js";
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { config } from "@platform/runtime/config.js";
+import { getEnv } from "@platform/runtime/env.js";
+import { createPendingDaemonActions, queueDaemonCommandForInstance } from "@routes/api-daemon.js";
 import type { AskResponse } from './types.js';
 
 type DaemonMetadata = {

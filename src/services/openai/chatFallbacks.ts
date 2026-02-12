@@ -1,11 +1,11 @@
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
+import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { prepareGPT5Request } from './requestTransforms.js';
 import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
-import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
-import { formatErrorMessage } from '../../lib/errors/reusable.js';
-import { aiLogger } from '../../utils/structuredLogging.js';
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { formatErrorMessage } from "@core/lib/errors/reusable.js";
+import { aiLogger } from "@platform/logging/structuredLogging.js";
 import {
   buildFailureContext,
   buildFinalFallbackReason,
@@ -13,7 +13,7 @@ import {
   buildGpt5FallbackReason,
   buildGpt5SuccessLog,
   CHAT_FALLBACK_LOG_PREFIXES,
-} from '../../config/chatFallbackMessages.js';
+} from "@platform/runtime/chatFallbackMessages.js";
 
 const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 

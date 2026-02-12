@@ -1,5 +1,6 @@
 import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
+import importPlugin from 'eslint-plugin-import';
 
 export default [
   {
@@ -31,19 +32,26 @@ export default [
       }
     },
     plugins: {
-      '@typescript-eslint': tsPlugin
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
     },
     rules: {
-      // Disable TypeScript version warnings
       'no-unreachable': 'error',
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-unused-vars': ['warn', { 
+      '@typescript-eslint/no-unused-vars': ['warn', {
         'argsIgnorePattern': '^_',
         'varsIgnorePattern': '^_',
         'destructuredArrayIgnorePattern': '^_'
       }],
       '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-non-null-assertion': 'off'
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      'import/no-cycle': 'error',
+      'no-restricted-imports': [
+        'error',
+        {
+          'patterns': ['../../*', '../../../*']
+        }
+      ]
     }
   }
 ];

@@ -1,8 +1,8 @@
 import express, { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import { BackstageBooker, MatchInput, Wrestler } from '../modules/backstage-booker.js';
-import { confirmGate } from '../middleware/confirmGate.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { BackstageBooker, MatchInput, Wrestler } from '@services/backstage-booker.js';
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 

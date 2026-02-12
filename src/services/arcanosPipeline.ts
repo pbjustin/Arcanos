@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import { getDefaultModel, getGPT5Model } from './openai.js';
-import { ARCANOS_PIPELINE_PROMPTS } from '../config/arcanosPipelinePrompts.js';
+import { ARCANOS_PIPELINE_PROMPTS } from "@platform/runtime/arcanosPipelinePrompts.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 const ARC_V2 = getDefaultModel();

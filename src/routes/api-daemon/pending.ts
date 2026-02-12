@@ -1,5 +1,5 @@
-import type { PendingDaemonAction } from '../daemonStore.js';
-import { DAEMON_PENDING_ACTION_TTL_MS } from '../../config/daemonConfig.js';
+import type { PendingDaemonAction } from "@routes/daemonStore.js";
+import { DAEMON_PENDING_ACTION_TTL_MS } from "@platform/runtime/daemonConfig.js";
 import { daemonStore } from './context.js';
 
 /**

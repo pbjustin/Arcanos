@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
-import { loadModuleDefinitions, ModuleDef } from '../modules/moduleLoader.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
-import { logger } from '../utils/structuredLogging.js';
+import { loadModuleDefinitions, ModuleDef } from '@services/moduleLoader.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { logger } from "@platform/logging/structuredLogging.js";
 
 const router = express.Router();
 

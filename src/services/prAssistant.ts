@@ -3,11 +3,11 @@
  * Focused on codebase integrity and platform alignment
  */
 
-import { getEnvNumber } from '../config/env.js';
-import { logger } from '../utils/structuredLogging.js';
-import { REPORT_TEMPLATE } from '../config/prAssistantTemplates.js';
+import { getEnvNumber } from "@platform/runtime/env.js";
+import { logger } from "@platform/logging/structuredLogging.js";
+import { REPORT_TEMPLATE } from "@platform/runtime/prAssistantTemplates.js";
 import { formatChecksMarkdown, getStatusMessage } from './prAssistant/checkResults.js';
-import { VALIDATION_CONSTANTS } from './prAssistant/constants.js';
+import { VALIDATION_CONSTANTS } from "./prAssistant/constants.js";
 import { checkDeadCodeRemoval, checkOpenAICompatibility, checkRailwayReadiness, checkSimplification, performFinalDoubleCheck, runAutomatedValidation } from './prAssistant/checks.js';
 import { generateReasoning, generateRecommendations, generateSummary } from './prAssistant/formatters.js';
 import type { CheckContext, PRAnalysisResult, ValidationConfig } from './prAssistant/types.js';
