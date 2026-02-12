@@ -34,8 +34,8 @@
       "@core/lib/errors/openai.js": ["src/core/lib/errors/openai.ts"],
       "@core/lib/errors/reusable.js": ["src/core/lib/errors/reusable.ts"],
       "@core/lib/tokenStore.js": ["src/core/lib/tokenStore.ts"],
-      "@core/*.js": ["src/core/*.ts"],
-      "@core/*": ["src/core/*"],
+      "@core/*.js": ["./src/core/*.ts"],
+      "@core/*": ["./src/core/*"],
       "@routes/*.js": ["src/routes/*.ts"],
       "@routes/*": ["src/routes/*"],
       "@platform": ["src/platform/index.ts"]
