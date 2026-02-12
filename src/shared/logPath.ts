@@ -6,14 +6,25 @@
 
 import fs from 'fs';
 import path from 'path';
-import { getEnv } from "@platform/runtime/env.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { resolveErrorMessage } from "@shared/errorUtils.js";
+
+function getEnvValue(key: string): string | undefined {
+  const value = process.env[key];
+  //audit Assumption: non-string env values are invalid for path resolution; risk: runtime coercion bugs; invariant: only string values proceed; handling: return undefined fallback.
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  //audit Assumption: empty env values should not override defaults; risk: blank path usage; invariant: non-empty string required; handling: return undefined for empty.
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 /**
  * Get the log directory path from environment variable or default
  */
 export function getLogPath(): string {
-  return getEnv('ARC_LOG_PATH', '/tmp/arc/log');
+  return getEnvValue('ARC_LOG_PATH') ?? '/tmp/arc/log';
 }
 
 /**
@@ -86,7 +97,7 @@ export function ensureLogDirectory(): void {
  * Maintains backward compatibility with existing logic
  */
 export function getEnvironmentLogPath(): string {
-  if (getEnv('NODE_ENV') === 'production') {
+  if ((getEnvValue('NODE_ENV') ?? 'development') === 'production') {
     return getSessionLogPath();
   } else {
     // In development, use local memory directory as fallback

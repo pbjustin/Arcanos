@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { resolveErrorMessage } from "@shared/errorUtils.js";
 
 /** Maximum file size (10MB) to prevent DoS via memory exhaustion */
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
