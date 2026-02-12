@@ -10,6 +10,7 @@ import { dirname } from 'path';
 import { logger } from "@platform/logging/structuredLogging.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

@@ -5,6 +5,7 @@ import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { writeJsonFile } from "@shared/fileStorage.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 export interface AssistantInfo {
   id: string;

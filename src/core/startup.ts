@@ -8,6 +8,9 @@ import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from "@p
 import memoryStore from "@core/memory/store.js";
 import { isRailwayApiConfigured, probeRailwayApi } from "@services/railwayClient.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { verifyIntegrityManifestConfiguration } from "@services/safety/configIntegrity.js";
+import { activateUnsafeCondition } from "@services/safety/runtimeState.js";
+import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 
 /**
  * Runs startup checks including environment validation, database init,

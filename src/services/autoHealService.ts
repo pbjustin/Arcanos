@@ -1,5 +1,7 @@
 import { callOpenAI, getDefaultModel } from './openai.js';
+import { z } from 'zod';
 import type { WorkerInfoDTO, WorkerStatusResponseDTO } from "@shared/types/dto.js";
+import { parseModelOutputWithSchema } from "@services/safety/aiOutputBoundary.js";
 import {
   AUTO_HEAL_RECOMMENDED_ACTIONS,
   AUTO_HEAL_SEVERITY_LEVELS,
