@@ -10,6 +10,8 @@ export interface SessionEntry {
   conversations_core: unknown[];
   metadata?: SessionMetadata;
   updatedAt: number;
+  versionId: string;
+  monotonicTimestampMs: number;
 }
 
 export interface SessionUpsert {

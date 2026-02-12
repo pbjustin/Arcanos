@@ -3,9 +3,14 @@ import { createGPT5Reasoning } from "@services/openai.js";
 import { runARCANOS } from "@core/logic/arcanos.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import { config as runtimeConfig } from "@platform/runtime/config.js";
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
 import { requireOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { acquireExecutionLock } from "@services/safety/executionLock.js";
+import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
+import { interpreterSupervisor } from "@services/safety/interpreterSupervisor.js";
+import { activateUnsafeCondition, incrementWorkerFailure } from "@services/safety/runtimeState.js";
 
 // ✅ Environment setup
 // Use config layer for env access (adapter boundary pattern)
@@ -314,8 +319,8 @@ export async function startWorkers(force = false): Promise<WorkerBootstrapSummar
     if (force) {
       const restartCounter = incrementWorkerFailure(
         'worker-runtime:start',
-        appConfig.safety.workerRestartThreshold,
-        appConfig.safety.workerRestartWindowMs
+        runtimeConfig.safety.workerRestartThreshold,
+        runtimeConfig.safety.workerRestartWindowMs
       );
       if (restartCounter.exceeded) {
         activateUnsafeCondition({
@@ -323,7 +328,7 @@ export async function startWorkers(force = false): Promise<WorkerBootstrapSummar
           message: 'Worker restart threshold exceeded',
           metadata: {
             count: restartCounter.count,
-            threshold: appConfig.safety.workerRestartThreshold
+            threshold: runtimeConfig.safety.workerRestartThreshold
           }
         });
         return {

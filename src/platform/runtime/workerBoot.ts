@@ -12,6 +12,9 @@ import { createWorkerContext } from "@platform/runtime/workerContext.js";
 import { resolveWorkersDirectory } from "@platform/runtime/workerPaths.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { acquireExecutionLock } from "@services/safety/executionLock.js";
+import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
+import { interpreterSupervisor } from "@services/safety/interpreterSupervisor.js";
 
 interface WorkerInitResult {
   initialized: string[];

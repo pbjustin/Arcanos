@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import {
   buildUnsafeToProceedPayload,
   hasUnsafeBlockingConditions
-} from '../services/safety/runtimeState.js';
+} from "@services/safety/runtimeState.js";
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;

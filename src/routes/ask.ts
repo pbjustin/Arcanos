@@ -1,15 +1,24 @@
 import express, { Request, Response } from 'express';
+import { z } from 'zod';
 import { runThroughBrain } from "@core/logic/trinity.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
 import type {
+  AIRequestDTO,
   ConfirmationRequiredResponseDTO,
   ErrorResponseDTO
 } from "@shared/types/dto.js";
+import { aiRequestSchema } from "@shared/types/dto.js";
 import { asyncHandler } from "@transport/http/asyncHandler.js";
 import { askValidationMiddleware } from "./ask/validation.js";
-import type { AskRequest, AskResponse } from './ask/types.js';
+import type {
+  AskRequest,
+  AskResponse,
+  SchemaValidationBypassAuditFlag,
+  SystemReviewResponse,
+  SystemStateResponse
+} from './ask/types.js';
 import { tryDispatchDaemonTools } from './ask/daemonTools.js';
 import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
 import { getGPT5Model, hasValidAPIKey } from '../services/openai.js';
