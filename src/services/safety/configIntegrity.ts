@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { z } from 'zod';
-import { getEnv } from '../../config/env.js';
-import config from '../../config/index.js';
+import { getEnv } from '@platform/runtime/env.js';
+import { config } from '@platform/runtime/config.js';
 import {
   activateUnsafeCondition,
   getTrustedHash,
@@ -13,7 +13,7 @@ import {
   INTEGRITY_MANIFEST,
   type ProtectedConfigId,
   type ProtectedConfigManifestEntry
-} from '../../config/integrityManifest.js';
+} from '@platform/runtime/integrityManifest.js';
 
 export class IntegrityValidationError extends Error {
   constructor(

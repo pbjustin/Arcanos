@@ -6,12 +6,12 @@
  */
 
 import express, { Request, Response } from 'express';
-import { clearEvaluateInputSchema } from '../types/actionPlan.js';
+import { clearEvaluateInputSchema } from '@shared/types/actionPlan.js';
 import { buildClear2Summary } from '../services/clear2.js';
 import { getClearScore } from '../stores/actionPlanStore.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
-import { getConfig } from '../config/unifiedConfig.js';
-import { apiLogger } from '../utils/structuredLogging.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { apiLogger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
 

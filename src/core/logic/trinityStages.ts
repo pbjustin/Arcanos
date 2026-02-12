@@ -30,7 +30,7 @@ import type {
   TrinityFinalOutput,
   TrinityDryRunPreview
 } from './trinityTypes.js';
-import type { CognitiveDomain } from '../types/cognitiveDomain.js';
+import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
 import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
