@@ -1,8 +1,8 @@
 import express from 'express';
-import { confirmGate } from '../../middleware/confirmGate.js';
-import { createValidationMiddleware } from '../../utils/security.js';
-import { connectResearchBridge } from '../../services/researchHub.js';
-import { buildValidationErrorResponse } from '../../lib/errors/index.js';
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { createValidationMiddleware } from "@platform/runtime/security.js";
+import { connectResearchBridge } from "@services/researchHub.js";
+import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 const sdkResearchBridge = connectResearchBridge('SDK:RESEARCH');

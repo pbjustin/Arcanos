@@ -1,10 +1,10 @@
 import express, { Request, Response } from 'express';
-import { confirmGate } from '../middleware/confirmGate.js';
-import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from '../utils/security.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { buildTimestampedPayload } from '../utils/responseHelpers.js';
-import { executeCommand, listAvailableCommands } from '../services/commandCenter.js';
-import type { CommandName } from '../services/commandCenter.js';
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
+import { executeCommand, listAvailableCommands } from "@services/commandCenter.js";
+import type { CommandName } from "@services/commandCenter.js";
 
 const router = express.Router();
 

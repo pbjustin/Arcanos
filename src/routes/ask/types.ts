@@ -2,7 +2,7 @@ import type {
   AIRequestDTO,
   AIResponseDTO,
   ClientContextDTO
-} from '../../types/dto.js';
+} from "@shared/types/dto.js";
 
 export type AskRequest = AIRequestDTO & {
   prompt: string;

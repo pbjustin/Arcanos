@@ -1,10 +1,10 @@
 import express, { Request, Response } from 'express';
-import { hasValidAPIKey } from '../services/openai.js';
-import { runARCANOS } from '../logic/arcanos.js';
-import { handleAIError, sendMockAIResponse } from '../utils/requestHandler.js';
-import { confirmGate } from '../middleware/confirmGate.js';
-import type { AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
-import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
+import { hasValidAPIKey } from "@services/openai.js";
+import { runARCANOS } from "@core/logic/arcanos.js";
+import { handleAIError, sendMockAIResponse } from "@transport/http/requestHandler.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import type { AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
+import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 
 const router = express.Router();
 

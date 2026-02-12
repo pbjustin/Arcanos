@@ -4,10 +4,10 @@
  */
 
 import { getBackendState, SystemState } from './stateManager.js';
-import { getTokenParameter } from '../utils/tokenParameterHelper.js';
-import config from '../config/index.js';
-import { GPT_SYNC_CONFIG } from '../config/gptSyncConfig.js';
-import { GPT_SYNC_ERRORS, GPT_SYNC_LOG_MESSAGES, GPT_SYNC_STRINGS } from '../config/gptSyncMessages.js';
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { config } from "@platform/runtime/config.js";
+import { GPT_SYNC_CONFIG } from "@platform/runtime/gptSyncConfig.js";
+import { GPT_SYNC_ERRORS, GPT_SYNC_LOG_MESSAGES, GPT_SYNC_STRINGS } from "@platform/runtime/gptSyncMessages.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 function getRequiredAdapter() {

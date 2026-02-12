@@ -5,7 +5,7 @@ import type {
   DispatchPatternBindingV9,
   DispatchResolvedBindingV9,
   DispatchValidationResultV9
-} from '../types/dispatchV9.js';
+} from "@shared/types/dispatchV9.js";
 
 function normalizeMethod(method: string): string {
   return method.toUpperCase().trim();

@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { decide } from '../afol/engine.js';
-import { getStatus } from '../afol/health.js';
-import { getRecent, logError } from '../afol/logger.js';
-import { getAnalyticsSnapshot } from '../afol/analytics.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { decide } from "@core/afol/engine.js";
+import { getStatus } from "@core/afol/health.js";
+import { getRecent, logError } from "@core/afol/logger.js";
+import { getAnalyticsSnapshot } from "@core/afol/analytics.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = Router();
 

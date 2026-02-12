@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import type fs from 'fs';
 import type path from 'path';
-import { logger } from '../utils/structuredLogging.js';
+import { logger } from "@platform/logging/structuredLogging.js";
 import type {
   DaemonCommand,
   DaemonHeartbeat,

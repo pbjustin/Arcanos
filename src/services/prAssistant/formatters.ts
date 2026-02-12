@@ -1,4 +1,4 @@
-import { PR_ASSISTANT_MESSAGES } from '../../config/prAssistantMessages.js';
+import { PR_ASSISTANT_MESSAGES } from "@platform/runtime/prAssistantMessages.js";
 import { formatCheckLabel } from './utils.js';
 import type { CheckResult, PRAnalysisResult } from './types.js';
 

@@ -6,19 +6,19 @@
 import fs from 'fs';
 import path from 'path';
 import { Router, Request, Response } from 'express';
-import { createWorkerContext } from '../utils/workerContext.js';
-import { confirmGate } from '../middleware/confirmGate.js';
-import { dispatchArcanosTask, getWorkerRuntimeStatus, startWorkers } from '../config/workerConfig.js';
+import { createWorkerContext } from "@platform/runtime/workerContext.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { dispatchArcanosTask, getWorkerRuntimeStatus, startWorkers } from "@platform/runtime/workerConfig.js";
 import type {
   WorkerInfoDTO,
   WorkerRunResponseDTO,
   WorkerStatusResponseDTO
-} from '../types/dto.js';
-import { resolveWorkersDirectory } from '../utils/workerPaths.js';
-import { buildAutoHealPlan, summarizeAutoHeal } from '../services/autoHealService.js';
-import { loadState, updateState } from '../services/stateManager.js';
-import { getConfig } from '../config/unifiedConfig.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+} from "@shared/types/dto.js";
+import { resolveWorkersDirectory } from "@platform/runtime/workerPaths.js";
+import { buildAutoHealPlan, summarizeAutoHeal } from "@services/autoHealService.js";
+import { loadState, updateState } from "@services/stateManager.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = Router();
 

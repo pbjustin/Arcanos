@@ -4,11 +4,11 @@
  */
 
 import express, { Request, Response } from 'express';
-import { resetOrchestrationShell, getOrchestrationShellStatus } from '../services/orchestrationShell.js';
-import { handleAIError } from '../utils/requestHandler.js';
-import { confirmGate } from '../middleware/confirmGate.js';
-import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resetOrchestrationShell, getOrchestrationShellStatus } from "@services/orchestrationShell.js";
+import { handleAIError } from "@transport/http/requestHandler.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 

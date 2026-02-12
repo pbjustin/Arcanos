@@ -1,9 +1,9 @@
-import { generateRequestId } from '../../utils/idGenerator.js';
+import { generateRequestId } from "@shared/idGenerator.js";
 import type { MemoryEntry } from './types.js';
 import { initializeMemory, saveMemoryIndex } from './storage.js';
 import { memoryState } from './state.js';
 import { logMemoryAccess, logSuppressionEvent } from './logging.js';
-import { isValidMemoryEntry } from './validation.js';
+import { isValidMemoryEntry } from "./validation.js";
 
 /**
  * Store a memory entry

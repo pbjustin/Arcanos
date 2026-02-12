@@ -1,20 +1,20 @@
 import { Router } from 'express';
-import apiAskRouter from '../api-ask.js';
-import apiArcanosRouter from '../api-arcanos.js';
-import apiSimRouter from '../api-sim.js';
-import apiMemoryRouter from '../api-memory.js';
-import apiCodebaseRouter from '../api-codebase.js';
-import apiCommandsRouter from '../api-commands.js';
-import apiAssistantsRouter from '../api-assistants.js';
-import apiVisionRouter from '../api-vision.js';
-import apiTranscribeRouter from '../api-transcribe.js';
-import apiUpdateRouter from '../api-update.js';
-import apiDaemonRouter from '../api-daemon.js';
-import reusableCodeRouter from '../api-reusable-code.js';
-import prAnalysisRouter from '../pr-analysis.js';
-import openaiRouter from '../openai.js';
-import afolRouter from '../afol.js';
-import { memoryConsistencyGate } from '../../middleware/memoryConsistencyGate.js';
+import apiAskRouter from "@routes/api-ask.js";
+import apiArcanosRouter from "@routes/api-arcanos.js";
+import apiSimRouter from "@routes/api-sim.js";
+import apiMemoryRouter from "@routes/api-memory.js";
+import apiCodebaseRouter from "@routes/api-codebase.js";
+import apiCommandsRouter from "@routes/api-commands.js";
+import apiAssistantsRouter from "@routes/api-assistants.js";
+import apiVisionRouter from "@routes/api-vision.js";
+import apiTranscribeRouter from "@routes/api-transcribe.js";
+import apiUpdateRouter from "@routes/api-update.js";
+import apiDaemonRouter from "@routes/api-daemon.js";
+import reusableCodeRouter from "@routes/api-reusable-code.js";
+import prAnalysisRouter from "@routes/pr-analysis.js";
+import openaiRouter from "@routes/openai.js";
+import afolRouter from "@routes/afol.js";
+import { memoryConsistencyGate } from "@transport/http/middleware/memoryConsistencyGate.js";
 
 const router = Router();
 

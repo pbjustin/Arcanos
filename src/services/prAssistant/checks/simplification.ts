@@ -1,8 +1,8 @@
-import { CHECK_THRESHOLDS, SIMPLIFICATION_PATTERNS } from '../analysisRules.js';
-import { createCheckResult } from '../checkResults.js';
-import type { CheckContext, CheckResult } from '../types.js';
-import { collectMatches, hasLongFunctionAddition, uniqueStrings } from '../utils.js';
-import { resolveErrorMessage } from '../../../lib/errors/index.js';
+import { CHECK_THRESHOLDS, SIMPLIFICATION_PATTERNS } from "@services/prAssistant/analysisRules.js";
+import { createCheckResult } from "@services/prAssistant/checkResults.js";
+import type { CheckContext, CheckResult } from "@services/prAssistant/types.js";
+import { collectMatches, hasLongFunctionAddition, uniqueStrings } from "@services/prAssistant/utils.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export async function checkSimplification(
   context: CheckContext,

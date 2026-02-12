@@ -1,11 +1,11 @@
 import { callOpenAI, getDefaultModel } from './openai.js';
-import type { WorkerInfoDTO, WorkerStatusResponseDTO } from '../types/dto.js';
+import type { WorkerInfoDTO, WorkerStatusResponseDTO } from "@shared/types/dto.js";
 import {
   AUTO_HEAL_RECOMMENDED_ACTIONS,
   AUTO_HEAL_SEVERITY_LEVELS,
   AUTO_HEAL_TOKEN_LIMIT,
   buildAutoHealPrompt
-} from '../config/autoHeal.js';
+} from "@platform/runtime/autoHeal.js";
 
 export type AutoHealSeverity = (typeof AUTO_HEAL_SEVERITY_LEVELS)[number];
 export type AutoHealRecommendedAction = (typeof AUTO_HEAL_RECOMMENDED_ACTIONS)[number];

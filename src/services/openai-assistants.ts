@@ -1,10 +1,10 @@
 import type OpenAI from 'openai';
 import fs from 'fs/promises';
-import config from '../config/index.js';
-import { aiLogger } from '../utils/structuredLogging.js';
-import { writeJsonFile } from '../utils/fileStorage.js';
+import { config } from "@platform/runtime/config.js";
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { writeJsonFile } from "@shared/fileStorage.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export interface AssistantInfo {
   id: string;

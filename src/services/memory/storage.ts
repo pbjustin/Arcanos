@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { MEMORY_INDEX_FILE } from './paths.js';
 import { memoryState } from './state.js';
 import { sanitizeMemoryIndex } from './sanitizers.js';

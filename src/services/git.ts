@@ -5,7 +5,7 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const execAsync = promisify(exec);
 

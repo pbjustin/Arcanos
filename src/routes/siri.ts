@@ -1,8 +1,8 @@
 import express, { Request, Response } from 'express';
-import { runThroughBrain } from '../logic/trinity.js';
-import { validateAIRequest, handleAIError, logRequestFeedback } from '../utils/requestHandler.js';
-import { confirmGate } from '../middleware/confirmGate.js';
-import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from '../types/dto.js';
+import { runThroughBrain } from "@core/logic/trinity.js";
+import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 
 const router = express.Router();
 

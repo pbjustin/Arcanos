@@ -1,6 +1,6 @@
 import { generateMockResponse } from './openai.js';
-import { runThroughBrain } from '../logic/trinity.js';
-import { mapErrorToFriendlyMessage } from '../lib/errors/index.js';
+import { runThroughBrain } from "@core/logic/trinity.js";
+import { mapErrorToFriendlyMessage } from "@core/lib/errors/index.js";
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 /**
