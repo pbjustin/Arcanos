@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import type { CognitiveDomain } from '../types/cognitiveDomain.js';
+import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 
 const VALID_DOMAINS: ReadonlySet<string> = new Set([
   'diagnostic', 'code', 'creative', 'natural', 'execution'

@@ -7,10 +7,7 @@
 import { isDatabaseConnected } from "@core/db/client.js";
 import type { MemoryEntry } from "@core/db/schema.js";
 import { query } from "@core/db/query.js";
-import {
-  createVersionedMemoryEnvelope,
-  unwrapVersionedMemoryEnvelope
-} from "@services/safety/memoryEnvelope.js";
+import { createVersionedMemoryEnvelope, unwrapVersionedMemoryEnvelope } from "@services/safety/memoryEnvelope.js";
 
 /**
  * Save or update memory entry

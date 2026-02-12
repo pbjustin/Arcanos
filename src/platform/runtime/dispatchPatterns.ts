@@ -109,7 +109,7 @@ assertProtectedConfigIntegrity(
     exemptRoutes: DISPATCH_V9_EXEMPT_ROUTES
   },
   {
-    source: 'src/config/dispatchPatterns.ts'
+    source: 'src/platform/runtime/dispatchPatterns.ts'
   }
 );
 

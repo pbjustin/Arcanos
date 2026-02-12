@@ -1,5 +1,5 @@
-import { logger } from '../../utils/structuredLogging.js';
-import { recordTraceEvent } from '../../utils/telemetry.js';
+import { logger } from '@platform/logging/structuredLogging.js';
+import { recordTraceEvent } from '@platform/logging/telemetry.js';
 
 export type SafetyAuditSeverity = 'info' | 'warn' | 'error';
 

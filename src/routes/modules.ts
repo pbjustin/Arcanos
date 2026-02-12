@@ -108,6 +108,22 @@ for (const { route, definition } of loadedModules) {
   registerModule(route, definition);
 }
 
+/**
+ * Dispatch a module action directly by module name, action, and payload.
+ * Used by /api/ask to route gptId-identified requests to the correct module.
+ */
+export async function dispatchModuleAction(
+  moduleName: string,
+  action: string,
+  payload: unknown
+): Promise<unknown> {
+  const mod = registryByName.get(moduleName);
+  if (!mod) throw new Error(`Module not found: ${moduleName}`);
+  const handler = mod.actions[action];
+  if (!handler) throw new Error(`Action not found: ${action}`);
+  return handler(payload);
+}
+
 router.get('/registry', (_req: Request, res: Response) => {
   const modules = Array.from(registryByName.values()).map((mod) => ({
     name: mod.name,

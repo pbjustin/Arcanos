@@ -15,8 +15,8 @@ import type {
   PlanStatus,
   ClearDecision,
   ActionDefinition,
-} from '../types/actionPlan.js';
-import { aiLogger } from '../utils/structuredLogging.js';
+} from '@shared/types/actionPlan.js';
+import { aiLogger } from '@platform/logging/structuredLogging.js';
 
 let prisma: PrismaClient | null = null;
 

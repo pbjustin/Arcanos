@@ -18,6 +18,8 @@ export interface SessionUpsert {
   sessionId?: string;
   conversations_core?: unknown[];
   metadata?: SessionMetadata;
+  versionId?: string;
+  monotonicTimestampMs?: number;
 }
 
 export interface SessionPersistenceAdapter {

@@ -84,7 +84,7 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
   }
 
   assertProtectedConfigIntegrity('gpt_router_config', map, {
-    source: 'src/config/gptRouterConfig.ts'
+    source: 'src/platform/runtime/gptRouterConfig.ts'
   });
   return map;
 }

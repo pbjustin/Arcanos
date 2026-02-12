@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import operatorAuth from '../middleware/operatorAuth.js';
+import operatorAuth from '@transport/http/middleware/operatorAuth.js';
 import {
   getActiveQuarantines,
   getActiveUnsafeConditions,
@@ -9,7 +9,7 @@ import {
 } from '../services/safety/runtimeState.js';
 import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
 import { assertDeterministicConfirmation } from '../services/safety/aiOutputBoundary.js';
-import { resolveHeader } from '../utils/requestHeaders.js';
+import { resolveHeader } from '@transport/http/requestHeaders.js';
 
 const router = express.Router();
 
