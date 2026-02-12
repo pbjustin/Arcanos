@@ -30,10 +30,23 @@ class SqlSessionPersistenceAdapter implements SessionPersistenceAdapter {
         if (!payload) {
           return null;
         }
+        const versionStamp = createVersionStamp('session-load');
         return {
           ...payload,
           sessionId: row.sessionId,
-          updatedAt: row.updatedAt.getTime()
+          conversations_core: Array.isArray(payload.conversations_core)
+            ? payload.conversations_core
+            : [],
+          updatedAt: row.updatedAt.getTime(),
+          versionId:
+            typeof payload.versionId === 'string' && payload.versionId.length > 0
+              ? payload.versionId
+              : versionStamp.versionId,
+          monotonicTimestampMs:
+            typeof payload.monotonicTimestampMs === 'number' &&
+            Number.isFinite(payload.monotonicTimestampMs)
+              ? payload.monotonicTimestampMs
+              : versionStamp.monotonicTimestampMs
         } satisfies SessionEntry;
       })
       //audit assumption: nulls represent invalid cache rows; risk: data loss; invariant: only valid sessions returned.
@@ -54,9 +67,9 @@ class SqlSessionPersistenceAdapter implements SessionPersistenceAdapter {
   }
 }
 
-function safeParse(payload: string): SessionEntry | null {
+function safeParse(payload: string): Partial<SessionEntry> | null {
   try {
-    const parsed = JSON.parse(payload) as SessionEntry;
+    const parsed = JSON.parse(payload) as Partial<SessionEntry>;
     //audit assumption: parsed payload follows SessionEntry; risk: invalid cache data; invariant: sessionId string required.
     if (parsed && typeof parsed === 'object' && typeof parsed.sessionId === 'string') {
       return parsed;

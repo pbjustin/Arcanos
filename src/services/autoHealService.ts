@@ -27,6 +27,15 @@ export interface AutoHealContext {
   totalDispatched: number;
 }
 
+const autoHealPlanOutputSchema = z.object({
+  planId: z.string().min(1).optional(),
+  severity: z.enum(AUTO_HEAL_SEVERITY_LEVELS).optional(),
+  recommendedAction: z.enum(AUTO_HEAL_RECOMMENDED_ACTIONS).optional(),
+  message: z.string().min(1).optional(),
+  steps: z.array(z.string().min(1)).optional(),
+  fallbackModel: z.string().min(1).optional()
+});
+
 function buildHeuristicPlan(context: AutoHealContext, model: string): AutoHealPlan {
   const severity: AutoHealSeverity = context.failingWorkers.length > 0 || context.lastError ? 'critical' : 'ok';
   const recommendedAction = severity === 'critical' ? 'restart-workers' : 'monitor';
@@ -86,20 +95,27 @@ export async function buildAutoHealPlan(status: WorkerStatusResponseDTO): Promis
       metadata: { route: 'auto-heal' }
     });
 
-    const parsed = JSON.parse(result.output || '{}');
+    const parsed = parseModelOutputWithSchema(result.output || '{}', autoHealPlanOutputSchema, {
+      source: 'autoHealService.buildAutoHealPlan',
+      allowFallback: true,
+      fallbackValue: {
+        planId: heuristics.planId,
+        severity: heuristics.severity,
+        recommendedAction: heuristics.recommendedAction,
+        message: heuristics.message,
+        steps: heuristics.steps,
+        fallbackModel: heuristics.fallbackModel
+      }
+    });
     const steps = Array.isArray(parsed.steps) ? parsed.steps.map((step: unknown) => String(step)) : [];
 
     return {
-      planId: typeof parsed.planId === 'string' ? parsed.planId : 'ai-plan',
-      severity: AUTO_HEAL_SEVERITY_LEVELS.includes(parsed.severity)
-        ? (parsed.severity as AutoHealSeverity)
-        : heuristics.severity,
-      recommendedAction: AUTO_HEAL_RECOMMENDED_ACTIONS.includes(parsed.recommendedAction)
-        ? parsed.recommendedAction
-        : heuristics.recommendedAction,
-      message: typeof parsed.message === 'string' ? parsed.message : heuristics.message,
+      planId: parsed.planId || 'ai-plan',
+      severity: parsed.severity || heuristics.severity,
+      recommendedAction: parsed.recommendedAction || heuristics.recommendedAction,
+      message: parsed.message || heuristics.message,
       steps: steps.length > 0 ? steps : heuristics.steps,
-      fallbackModel: typeof parsed.fallbackModel === 'string' ? parsed.fallbackModel : heuristics.fallbackModel,
+      fallbackModel: parsed.fallbackModel || heuristics.fallbackModel,
       generatedAt: new Date().toISOString()
     };
   } catch (error) {

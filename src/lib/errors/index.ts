@@ -1,13 +1,13 @@
 /**
- * Consolidated Error Handling Library
+ * Consolidated Error Handling Library.
  *
- * Purpose: provide a single public entrypoint for app errors, messages,
- * response helpers, OpenAI classification, and retry helpers.
- * Inputs/Outputs: re-exports symbols from the canonical error modules.
- * Edge cases: preserves legacy base error exports for existing middleware.
+ * Purpose: Provide a single public entrypoint for app errors, message mapping,
+ * response helpers, OpenAI handling, and retry classification utilities.
+ * Inputs/Outputs: Re-exports symbols from canonical error modules.
+ * Edge cases: Preserves base error class exports needed by legacy middleware.
  */
 
-// Legacy base error classes still consumed by middleware and storage utilities.
+// Legacy base error classes still consumed by middleware.
 export {
   AppError,
   HttpCode,

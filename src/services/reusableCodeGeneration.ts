@@ -1,5 +1,7 @@
 import type OpenAI from 'openai';
 import { getDefaultModel } from './openai/credentialProvider.js';
+import { z } from 'zod';
+import { parseModelOutputWithSchema } from './safety/aiOutputBoundary.js';
 
 export type ReusableCodeTarget = 'all' | 'asyncHandler' | 'errorResponse' | 'idGenerator';
 
@@ -23,6 +25,16 @@ export interface ReusableCodeGenerationResult {
 }
 
 const SUPPORTED_TARGETS: ReusableCodeTarget[] = ['asyncHandler', 'errorResponse', 'idGenerator'];
+const reusableCodeResponseSchema = z.object({
+  snippets: z.array(
+    z.object({
+      name: z.string().min(1),
+      description: z.string().min(1),
+      language: z.string().min(1),
+      code: z.string().min(1)
+    })
+  )
+});
 
 /**
  * Resolve the requested targets for code generation.
@@ -77,34 +89,10 @@ export function buildReusableCodePrompt(request: ReusableCodeGenerationRequest):
  * @edgeCases Throws when JSON is invalid or missing required fields.
  */
 export function parseReusableCodeResponse(raw: string): ReusableCodeSnippet[] {
-  let payload: unknown;
-
-  try {
-    payload = JSON.parse(raw);
-  } catch (error) {
-    //audit Assumption: raw should be JSON; risk: malformed model output; invariant: throw on invalid JSON; handling: raise error.
-    throw new Error('OpenAI response was not valid JSON.');
-  }
-
-  const snippets = (payload as { snippets?: ReusableCodeSnippet[] }).snippets;
-  //audit Assumption: snippets array exists; risk: unexpected schema; invariant: array required; handling: throw error.
-  if (!Array.isArray(snippets)) {
-    throw new Error('OpenAI response missing snippets array.');
-  }
-
-  return snippets.map((snippet, index) => {
-    //audit Assumption: snippet fields are present; risk: incomplete snippet; invariant: all fields required; handling: validate per field.
-    if (!snippet?.name || !snippet?.description || !snippet?.language || !snippet?.code) {
-      throw new Error(`Snippet at index ${index} is missing required fields.`);
-    }
-
-    return {
-      name: snippet.name,
-      description: snippet.description,
-      language: snippet.language,
-      code: snippet.code
-    };
+  const parsed = parseModelOutputWithSchema(raw, reusableCodeResponseSchema, {
+    source: 'reusableCodeGeneration.parseReusableCodeResponse'
   });
+  return parsed.snippets;
 }
 
 /**
