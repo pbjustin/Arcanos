@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { FileStorageError } from "@core/lib/errors.js";
+import { FileStorageError } from "@core/lib/errors/index.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 interface JsonWriteOptions {
