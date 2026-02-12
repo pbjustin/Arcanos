@@ -60,7 +60,7 @@ if ($backendUrl) {
 
 # 5) Quick daemon import test
 try {
-    $code = "import sys; sys.path.insert(0, 'daemon-python'); from arcanos.config import Config; ok, msg = Config.validate(); print('OK' if ok else msg)"
+    $code = "from arcanos.config import Config; ok, msg = Config.validate(); print('OK' if ok else msg)"
     $result = & $python -c $code 2>&1
     if ($LASTEXITCODE -eq 0 -and $result -match "OK") {
         Write-Result "Daemon" "OK" "Config validated"

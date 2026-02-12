@@ -31,6 +31,9 @@ function loadConfigFile(): Partial<FallbackMessagesConfig> | null {
     try {
       const contents = readFileSync(candidatePath, 'utf-8');
       const parsed = JSON.parse(contents) as Partial<FallbackMessagesConfig>;
+      assertProtectedConfigIntegrity('fallback_messages', parsed, {
+        source: candidatePath
+      });
       return parsed;
     } catch (error) {
       logger.error('Failed to load fallback messages configuration', {

@@ -103,7 +103,8 @@ export function validateAgainstSnapshot(
   binding: DispatchPatternBindingV9 | null,
   attempt: DispatchAttemptV9,
   snapshot: DispatchMemorySnapshotV9 | null,
-  clientVersion?: string
+  clientVersion?: string,
+  expectedBaselineMonotonicTsMs?: number
 ): DispatchValidationResultV9 {
   //audit Assumption: binding must exist for consistent policy evaluation; risk: undefined policy path; invariant: invalid when missing; handling: missing binding conflict.
   if (!binding) {
@@ -125,8 +126,27 @@ export function validateAgainstSnapshot(
     };
   }
 
-  //audit Assumption: client-provided memory version indicates staleness window; risk: mismatch false positives; invariant: mismatch marks stale; handling: request refresh.
-  if (clientVersion && snapshot.memory_version && clientVersion !== snapshot.memory_version) {
+  //audit Assumption: numeric baseline is authoritative for staleness checks; risk: acting on stale snapshot state; invariant: snapshot monotonic timestamp must be >= expected baseline; handling: stale_version when below baseline.
+  if (
+    typeof expectedBaselineMonotonicTsMs === 'number' &&
+    Number.isFinite(expectedBaselineMonotonicTsMs) &&
+    snapshot.monotonic_ts_ms < expectedBaselineMonotonicTsMs
+  ) {
+    return {
+      valid: false,
+      reason: 'stale_version',
+      requiresSnapshotUpdate: false,
+      hardConflict: false
+    };
+  }
+
+  //audit Assumption: legacy header compatibility still requires strict equality fallback when baseline is absent; risk: false positives in mixed clients; invariant: only apply legacy check when baseline is undefined; handling: stale_version on mismatch.
+  if (
+    expectedBaselineMonotonicTsMs === undefined &&
+    clientVersion &&
+    snapshot.memory_version &&
+    clientVersion !== snapshot.memory_version
+  ) {
     return {
       valid: false,
       reason: 'stale_version',

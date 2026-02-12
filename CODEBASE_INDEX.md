@@ -40,3 +40,10 @@ If a path in this index becomes stale, update this file in the same PR as the mo
 - `docs/README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/CI_CD.md`
+
+## TypeScript copy-path index
+Generate a full TypeScript backend path index (relative + absolute):
+- `npm run index:backend:ts`
+- Markdown output: `docs/TYPESCRIPT_BACKEND_INDEX.md`
+- JSON output: `backend-typescript-index.json`
+

@@ -32,6 +32,28 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
   const runWorkers = config.runWorkers;
   
   console.log(`[🔧 WORKER-BOOT] Worker initialization - RUN_WORKERS: ${runWorkers}`);
+
+  const bootLock = await acquireExecutionLock('worker-boot:initialize');
+  //audit Assumption: worker boot must run as a single active instance; failure risk: duplicate scheduling and double execution; expected invariant: duplicate startup is suppressed; handling strategy: short-circuit when lock acquisition fails.
+  if (!bootLock) {
+    emitSafetyAuditEvent({
+      event: 'worker_boot_duplicate_suppressed',
+      severity: 'warn',
+      details: {
+        lockId: 'worker-boot:initialize'
+      }
+    });
+    const duplicateDbStatus = getStatus();
+    return {
+      initialized: [],
+      failed: [{ worker: 'worker-boot', error: 'duplicate_suppressed' }],
+      scheduled: [],
+      database: {
+        connected: duplicateDbStatus.connected,
+        error: duplicateDbStatus.error
+      }
+    };
+  }
   
   // Initialize database first
   console.log('[🔧 WORKER-BOOT] Initializing database connection...');
@@ -50,6 +72,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
   
   if (!runWorkers) {
     console.log('[🔧 WORKER-BOOT] Workers disabled via RUN_WORKERS environment variable');
+    await bootLock.release();
     return {
       initialized: [],
       failed: [],
@@ -78,6 +101,7 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
     if (!workersDirExists || !fs.existsSync(workersDir)) {
       console.log(`[🔧 WORKER-BOOT] Workers directory not found: ${workersDir}`);
       console.log('[🔧 WORKER-BOOT] Skipping worker initialization');
+      await bootLock.release();
       return results;
     }
 
@@ -168,12 +192,39 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
           if (workerModule.schedule) {
             try {
               const task = cron.schedule(workerModule.schedule, async () => {
+                const cycleLockId = `worker-cycle:${workerId}`;
+                const cycleLock = await acquireExecutionLock(cycleLockId);
+                //audit Assumption: scheduled worker cycles must be single-active per worker ID; failure risk: overlapping executions and conflicting writes; expected invariant: duplicate cycle suppressed when lock unavailable; handling strategy: skip run and emit audit.
+                if (!cycleLock) {
+                  emitSafetyAuditEvent({
+                    event: 'worker_cycle_duplicate_suppressed',
+                    severity: 'warn',
+                    details: {
+                      workerId,
+                      schedule: workerModule.schedule
+                    }
+                  });
+                  await context.log(`Skipped duplicate scheduled worker cycle: ${workerModule.name}`);
+                  return;
+                }
+
+                const cycleId = interpreterSupervisor.beginCycle(`worker:${workerId}`, {
+                  category: 'worker',
+                  metadata: {
+                    schedule: workerModule.schedule
+                  }
+                });
                 try {
+                  interpreterSupervisor.heartbeat(cycleId);
                   await context.log(`Running scheduled worker: ${workerModule.name}`);
                   await workerModule.run(context);
+                  interpreterSupervisor.completeCycle(cycleId);
                 } catch (error) {
                   const errorMsg = resolveErrorMessage(error);
+                  interpreterSupervisor.failCycle(cycleId, errorMsg);
                   await context.error(`Scheduled execution failed: ${errorMsg}`);
+                } finally {
+                  await cycleLock.release();
                 }
               });
               
@@ -220,10 +271,12 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
       console.log(`   ❌ Failed: ${results.failed.length} workers`);
     }
 
+    await bootLock.release();
     return results;
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
     console.error('[🔧 WORKER-BOOT] Fatal error during worker initialization:', error);
+    await bootLock.release();
     return { 
       initialized: [], 
       failed: [{ worker: 'boot', error: errorMessage }], 

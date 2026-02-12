@@ -26,9 +26,6 @@ from typing import Any
 
 import requests
 
-# Add the arcanos package to path
-sys.path.insert(0, str(Path(__file__).parent))
-
 from arcanos.config import Config
 from arcanos.backend_client import BackendApiClient, BackendRequestError
 from arcanos.validation_constants import (

@@ -73,6 +73,10 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
         return;
       }
 
+      assertProtectedConfigIntegrity('daemon_tokens', parsed, {
+        source: deps.tokensFilePath
+      });
+
       for (const [instanceId, token] of Object.entries(parsed)) {
         if (typeof token === 'string') {
           //audit Assumption: token values should be strings; risk: invalid entry; invariant: store valid tokens; handling: set mapping.

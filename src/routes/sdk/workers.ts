@@ -15,7 +15,7 @@ const router = express.Router();
  */
 router.post('/workers/init', confirmGate, async (_, res) => {
   try {
-    const results: WorkerBootstrapSummary = startWorkers();
+    const results: WorkerBootstrapSummary = await startWorkers();
 
     await logExecution('sdk-interface', 'info', 'Workers initialized via SDK', { results });
 

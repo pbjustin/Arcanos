@@ -18,8 +18,6 @@ if env_path.exists():
     from dotenv import load_dotenv
     load_dotenv(env_path)
 
-sys.path.insert(0, str(BASE_DIR))
-
 
 def _resolve_debug_log_path() -> Path:
     """Use DEBUG_LOG_PATH env if set, else Config.LOG_DIR / debug.log (portable, no PII in path)."""

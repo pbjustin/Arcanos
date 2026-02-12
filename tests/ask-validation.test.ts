@@ -18,7 +18,7 @@ describe('ask route validation', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Validation failed');
     expect(Array.isArray(res.body.details)).toBe(true);
-    expect(res.body.details.join(' ')).toContain('prompt, userInput, content, text, query');
+    expect(res.body.details.join(' ')).toContain('prompt, message, userInput, content, text, query');
   });
 
   it('accepts alternate prompt field names', async () => {
