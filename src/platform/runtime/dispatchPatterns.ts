@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import type { DispatchPatternBindingV9 } from "@shared/types/dispatchV9.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 /**
  * Purpose: Static dispatch v9 route binding configuration.

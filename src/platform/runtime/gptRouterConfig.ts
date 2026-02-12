@@ -1,5 +1,6 @@
 import { loadModuleDefinitions, LoadedModule } from '@services/moduleLoader.js';
 import { getEnv } from "@platform/runtime/env.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 interface GptModuleEntry {
   route: string;

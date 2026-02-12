@@ -6,6 +6,7 @@ import { setupDiagnostics } from "@core/diagnostics.js";
 import { registerRoutes } from "@routes/register.js";
 import { initOpenAI } from "@core/init-openai.js";
 import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transport/http/middleware/fallbackHandler.js";
+import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionGate.js";
 import errorHandler from "@transport/http/middleware/errorHandler.js";
 
 /**

@@ -15,6 +15,12 @@ import { routeMemorySnapshotStore } from "@services/routeMemorySnapshotStore.js"
 import { logger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import { resolveHeader } from "@transport/http/requestHeaders.js";
+import {
+  activateUnsafeCondition,
+  buildUnsafeToProceedPayload
+} from "@services/safety/runtimeState.js";
+import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
+import { interpreterSupervisor } from "@services/safety/interpreterSupervisor.js";
 import type {
   DispatchAttemptV9,
   DispatchConflictReasonV9,
