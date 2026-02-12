@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Error Classification Utilities
  * Consolidated error type detection and classification logic
  */
