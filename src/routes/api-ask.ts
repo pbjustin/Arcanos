@@ -9,6 +9,8 @@ import type {
   ErrorResponseDTO
 } from "@shared/types/dto.js";
 import { asyncHandler } from "@transport/http/asyncHandler.js";
+import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
+import { dispatchModuleAction, getModuleMetadata } from './modules.js';
 
 const router = express.Router();
 
@@ -57,9 +59,9 @@ router.post(
   '/api/ask',
   apiAskValidation,
   asyncHandler(
-    (
+    async (
       req: Request<{}, AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO, ChatGPTActionBody>,
-      res: Response<AskResponse | ErrorResponseDTO | ConfirmationRequiredResponseDTO>
+      res: Response<any>
     ) => {
   const { domain, useRAG, useHRC, sessionId, overrideAuditSafe, metadata } = req.body;
 
@@ -93,6 +95,34 @@ router.post(
           'Request must include one of message, prompt, userInput, content, text, or query fields'
         ])
       );
+  }
+
+  // GPT module dispatch: if gptId is present, route to module instead of Trinity brain
+  const gptId = (req.body as Record<string, unknown>).gptId;
+  if (typeof gptId === 'string' && gptId.trim()) {
+    try {
+      const gptModuleMap = await getGptModuleMap();
+      const normalizedId = gptId.trim().toLowerCase();
+      const entry = gptModuleMap[gptId.trim()] || gptModuleMap[normalizedId];
+      if (entry) {
+        const result = await dispatchModuleAction(entry.module, 'generateBooking', { prompt: basePrompt });
+        const meta = getModuleMetadata(entry.module);
+        return res.json({
+          result,
+          module: entry.module,
+          meta: {
+            gptId: gptId.trim(),
+            route: entry.route,
+            matchMethod: 'exact',
+            availableActions: meta?.actions ?? [],
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+    } catch (err) {
+      console.warn(`[GPT_DISPATCH] Module dispatch failed for gptId="${gptId}", falling back to Trinity`, err);
+      // Fall through to normal Trinity brain processing
+    }
   }
 
   const contextDirectives: string[] = [];
