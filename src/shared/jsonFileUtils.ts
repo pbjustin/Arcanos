@@ -1,5 +1,7 @@
 import fs from 'fs';
 import { resolveErrorMessage } from "@shared/errorUtils.js";
+import type { ProtectedConfigId } from "@platform/runtime/integrityManifest.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 /** Maximum file size (10MB) to prevent DoS via memory exhaustion */
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;

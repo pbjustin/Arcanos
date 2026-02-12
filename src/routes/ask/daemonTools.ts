@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { z } from 'zod';
 import { getDefaultModel } from "@services/openai.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { config } from "@platform/runtime/config.js";

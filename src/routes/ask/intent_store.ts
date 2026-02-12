@@ -6,7 +6,7 @@
  * Edge cases: version mismatches return conflict metadata instead of mutating state.
  */
 
-import type { CognitiveDomain } from '../../types/cognitiveDomain.js';
+import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 
 export type IntentStatus = 'active' | 'paused' | 'completed';
 export type IntentPhase = 'exploration' | 'execution';

@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import type fs from 'fs';
 import type path from 'path';
 import { logger } from "@platform/logging/structuredLogging.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 import type {
   DaemonCommand,
   DaemonHeartbeat,

@@ -6,6 +6,7 @@ import type {
   DispatchMemorySnapshotV9,
   DispatchRouteStateV9
 } from "@shared/types/dispatchV9.js";
+import { createVersionStamp } from "@services/safety/monotonicClock.js";
 
 export const DISPATCH_V9_SNAPSHOT_KEY = 'dispatch:v9:snapshot:global';
 export const DISPATCH_V9_TRUSTED_SNAPSHOT_KEY = 'dispatch:v9:snapshot:trusted';

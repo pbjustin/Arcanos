@@ -10,7 +10,7 @@
  *   overall ≥ 0.70  → allow
  */
 
-import type { ClearDecision, ClearScore, ActionDefinition } from '../types/actionPlan.js';
+import type { ClearDecision, ClearScore, ActionDefinition } from '@shared/types/actionPlan.js';
 
 // --- Types ---
 

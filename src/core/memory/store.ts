@@ -3,6 +3,7 @@ import { createSessionPersistenceAdapter } from "./sessionPersistence.js";
 import type { SessionPersistenceAdapter, SessionEntry, SessionUpsert, SessionMetadata } from "./persistenceTypes.js";
 import { getEnvNumber } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { createVersionStamp } from "@services/safety/monotonicClock.js";
 
 
 

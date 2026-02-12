@@ -4,6 +4,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import type { SessionEntry, SessionPersistenceAdapter } from "./persistenceTypes.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@shared/errorUtils.js";
+import { createVersionStamp } from "@services/safety/monotonicClock.js";
 
 
 

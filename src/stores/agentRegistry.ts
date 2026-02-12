@@ -5,8 +5,8 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import type { AgentRecord, AgentRegistration } from '../types/actionPlan.js';
-import { aiLogger } from '../utils/structuredLogging.js';
+import type { AgentRecord, AgentRegistration } from '@shared/types/actionPlan.js';
+import { aiLogger } from '@platform/logging/structuredLogging.js';
 
 let prisma: PrismaClient | null = null;
 
