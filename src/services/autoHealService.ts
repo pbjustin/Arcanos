@@ -1,13 +1,13 @@
 import { callOpenAI, getDefaultModel } from './openai.js';
 import { z } from 'zod';
 import type { WorkerInfoDTO, WorkerStatusResponseDTO } from "@shared/types/dto.js";
+import { parseModelOutputWithSchema } from "@services/safety/aiOutputBoundary.js";
 import {
   AUTO_HEAL_RECOMMENDED_ACTIONS,
   AUTO_HEAL_SEVERITY_LEVELS,
   AUTO_HEAL_TOKEN_LIMIT,
   buildAutoHealPrompt
 } from "@platform/runtime/autoHeal.js";
-import { parseModelOutputWithSchema } from "./safety/aiOutputBoundary.js";
 
 export type AutoHealSeverity = (typeof AUTO_HEAL_SEVERITY_LEVELS)[number];
 export type AutoHealRecommendedAction = (typeof AUTO_HEAL_RECOMMENDED_ACTIONS)[number];

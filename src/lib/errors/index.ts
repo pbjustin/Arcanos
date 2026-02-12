@@ -1,17 +1,25 @@
 /**
- * Consolidated Error Handling Library
- * 
- * This module provides a unified interface for all error handling utilities
- * across the Arcanos codebase, consolidating previously scattered modules:
- * - errorClassification.ts → classification.ts
- * - errorHandling.ts → messages.ts
- * - errorMessageMapper.ts → messages.ts
- * - errorResponse.ts → responses.ts
- * - openaiErrorHandler.ts → openai.ts
- * 
- * Usage:
- *   import { classifyError, resolveErrorMessage, sendValidationError } from '../lib/errors/index.js';
+ * Consolidated Error Handling Library.
+ *
+ * Purpose: Provide a single public entrypoint for app errors, message mapping,
+ * response helpers, OpenAI handling, and retry classification utilities.
+ * Inputs/Outputs: Re-exports symbols from canonical error modules.
+ * Edge cases: Preserves base error class exports needed by legacy middleware.
  */
+
+// Legacy base error classes still consumed by middleware.
+export {
+  AppError,
+  HttpCode,
+  ApiError,
+  DatabaseError,
+  ValidationError,
+  NotFoundError,
+  UnauthorizedError,
+  ForbiddenError,
+  BadRequestError,
+  FileStorageError
+} from '../../core/lib/errors/base.js';
 
 // Error classification and detection
 export {

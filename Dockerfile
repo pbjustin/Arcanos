@@ -16,7 +16,7 @@ WORKDIR /app
 COPY package*.json package-lock.json ./
 
 # Install dependencies with memory optimization
-RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --only=production --no-audit --no-fund
+RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --omit=dev --no-audit --no-fund
 
 # Copy source code, workers, scripts, and build configuration
 COPY src/ ./src/

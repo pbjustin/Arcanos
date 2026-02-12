@@ -7,7 +7,7 @@ import { getEnv } from "@platform/runtime/env.js";
 import { DAILY_SUMMARY_PROMPT_LINES } from "@platform/runtime/dailySummaryTemplates.js";
 import { readJsonFileSafely } from "@shared/jsonFileUtils.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { parseModelOutputWithSchema } from "./safety/aiOutputBoundary.js";
+import { parseModelOutputWithSchema } from "@services/safety/aiOutputBoundary.js";
 
 interface SummarySources {
   systemState: Record<string, unknown>;

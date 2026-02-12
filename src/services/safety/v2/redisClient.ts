@@ -24,12 +24,12 @@ export async function getRedis(): Promise<RedisClient> {
     const client = createClient({
       url: V2_CONFIG.REDIS_URL,
       socket: {
-        reconnectStrategy: (retries) => Math.min(retries * 100, 3_000),
+        reconnectStrategy: (retries: number) => Math.min(retries * 100, 3_000),
         connectTimeout: 5_000,
       },
     });
 
-    client.on("error", (err) => {
+    client.on("error", (err: Error) => {
       console.error("[v2/redis] connection error:", err.message);
     });
 

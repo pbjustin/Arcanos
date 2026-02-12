@@ -12,7 +12,7 @@ export async function decide(input: DecideInput): Promise<DecisionRecord> {
   const intent = typeof input.intent === 'string' ? input.intent : 'default';
   return interpreterSupervisor.runSupervisedCycle(
     `afol:${intent}`,
-    async heartbeat => {
+    async (heartbeat: () => void) => {
       const started = Date.now();
       heartbeat();
       const snapshot = getStatus();
