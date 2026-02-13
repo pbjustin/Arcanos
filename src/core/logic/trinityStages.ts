@@ -31,7 +31,8 @@ import type {
   TrinityDryRunPreview
 } from './trinityTypes.js';
 import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
-import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
+import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH, TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
+import { enforceTokenCap } from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
@@ -177,7 +178,8 @@ export async function runFinalStage(
   cognitiveDomain?: CognitiveDomain
 ): Promise<TrinityFinalOutput> {
   const complexModel = getComplexModel();
-  const finalTokenParams = getTokenParameter(complexModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
+  const cappedLimit = enforceTokenCap(APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
+  const finalTokenParams = getTokenParameter(complexModel, cappedLimit);
   const temperature = resolveTemperature(cognitiveDomain);
   const finalResponse = await createChatCompletionWithFallback(client, {
     messages: buildFinalArcanosMessages(memoryContextSummary, auditSafePrompt, gpt5Output),
