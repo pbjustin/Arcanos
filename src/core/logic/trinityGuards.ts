@@ -59,10 +59,18 @@ export function enforceTokenCap(requested?: number): number {
 // --- Session Token Auditor ---
 
 const SESSION_TOKEN_LIMIT = 20_000;
+const MAX_TRACKED_SESSIONS = 10_000;
 const sessionUsage: Map<string, number> = new Map();
 
 export function recordSessionTokens(sessionId: string, tokens: number): void {
   const current = (sessionUsage.get(sessionId) ?? 0) + tokens;
+
+  // Evict oldest entry if at capacity and this is a new session
+  if (sessionUsage.size >= MAX_TRACKED_SESSIONS && !sessionUsage.has(sessionId)) {
+    const oldestKey = sessionUsage.keys().next().value;
+    if (oldestKey !== undefined) sessionUsage.delete(oldestKey);
+  }
+
   sessionUsage.set(sessionId, current);
 
   if (current > SESSION_TOKEN_LIMIT) {
@@ -81,10 +89,18 @@ export function getSessionTokenUsage(sessionId: string): number {
 // --- Retry Lineage ---
 
 const MAX_RETRIES = 3;
+const MAX_TRACKED_LINEAGES = 10_000;
 const lineageRetries: Map<string, number> = new Map();
 
 export function registerRetry(lineageId: string): void {
   const count = (lineageRetries.get(lineageId) ?? 0) + 1;
+
+  // Evict oldest entry if at capacity and this is a new lineage
+  if (lineageRetries.size >= MAX_TRACKED_LINEAGES && !lineageRetries.has(lineageId)) {
+    const oldestKey = lineageRetries.keys().next().value;
+    if (oldestKey !== undefined) lineageRetries.delete(oldestKey);
+  }
+
   lineageRetries.set(lineageId, count);
 
   if (count > MAX_RETRIES) {
