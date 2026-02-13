@@ -1,5 +1,5 @@
 import express, { Response } from 'express';
-import modulesRouter, { getModuleMetadata } from './modules.js';
+import { getModuleMetadata } from './modules.js';
 import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
 import {
   logGptConnection,
@@ -8,6 +8,8 @@ import {
   type GptMatchMethod,
   type GptRoutingInfo,
 } from "@platform/logging/gptLogger.js";
+import { runThroughBrain } from '@core/logic/trinity.js';
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 
 const router = express.Router();
 
@@ -131,16 +133,38 @@ router.use('/:gptId', async (req, res, next) => {
     // Attach to request (same pattern as confirmGate.ts confirmationContext)
     req.gptRoutingContext = routingInfo;
 
-    // Intercept res.json to wrap the response with acknowledgment metadata
-    const originalJson = res.json.bind(res);
-    (res as Response).json = function wrappedJson(body: unknown) {
-      // Only enrich successful responses (not error payloads from modules.ts)
-      if (res.statusCode >= 400) {
-        return originalJson(body);
-      }
+    // Route through Trinity pipeline
+    //audit Assumption: GPT requests should flow through Trinity for consistency; risk: module-specific logic bypassed; invariant: Trinity processes all GPT routing; handling: build prompt from request body.
+    const { action, payload } = req.body as { action?: string; payload?: unknown };
+    
+    if (!action) {
+      return res.status(400).json({ error: 'Action is required' });
+    }
 
-      // Look up module metadata for the acknowledgment
-      const meta = getModuleMetadata(entry!.module);
+    // Build a natural language prompt for Trinity from the GPT request
+    const promptParts = [
+      `GPT request from ${routingInfo.gptId}`,
+      `Target module: ${routingInfo.moduleName} (${entry.route})`,
+      `Action: ${action}`,
+    ];
+    
+    if (payload) {
+      promptParts.push(`Payload: ${JSON.stringify(payload, null, 2)}`);
+    }
+    
+    const prompt = promptParts.join('\n');
+    const sessionId = `gpt-${incomingGptId}-${Date.now()}`;
+    
+    try {
+      const { client: openaiClient } = getOpenAIClientOrAdapter();
+      //audit Assumption: Trinity pipeline requires an initialized OpenAI client; failure risk: null client causes downstream crashes; expected invariant: client is non-null before runThroughBrain; handling strategy: fail fast with 503.
+      if (!openaiClient) {
+        return res.status(503).json({ error: 'OpenAI client not initialized' });
+      }
+      const trinityResult = await runThroughBrain(openaiClient, prompt, sessionId, undefined);
+      
+      // Build acknowledgment metadata
+      const meta = getModuleMetadata(entry.module);
       const ack = {
         gptId: routingInfo.gptId,
         gptDisplayName: routingInfo.moduleName,
@@ -150,26 +174,20 @@ router.use('/:gptId', async (req, res, next) => {
         matchMethod: routingInfo.matchMethod,
         availableActions: meta?.actions ?? [],
         timestamp: new Date().toISOString(),
+        routedThroughTrinity: true,
       };
-
+      
       logGptAckSent(routingInfo, ack.availableActions.length);
-
-      // Wrap response: preserve original data, add _gptAck
-      if (body && typeof body === 'object' && !Array.isArray(body)) {
-        return originalJson({ ...body as Record<string, unknown>, _gptAck: ack });
-      } else {
-        return originalJson({ result: body, _gptAck: ack });
-      }
-    } as typeof res.json;
-
-    // Ensure body exists so downstream handlers can attach module metadata
-    if (!req.body) {
-      req.body = {};
+      
+      // Return Trinity result with GPT ack wrapper
+      return res.json({
+        ...trinityResult,
+        _gptAck: ack,
+      });
+    } catch (trinityErr) {
+      //audit Assumption: Trinity failures should return 500; risk: silent failure; invariant: error logged and returned; handling: next(err).
+      return next(trinityErr);
     }
-
-    req.url = `/modules/${entry.route}`;
-    req.body.module = entry.module;
-    return modulesRouter(req, res, next);
   } catch (err) {
     return next(err);
   }
