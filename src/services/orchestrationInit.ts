@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from 'fs';
-import { getEnv } from '../config/env.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { getEnv } from "@platform/runtime/env.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export interface GPT5OrchestrationConfig {
   memoryContextEnabled?: boolean;

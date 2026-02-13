@@ -1,14 +1,14 @@
 import { Router, Request, Response } from 'express';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { createValidationMiddleware, ValidationSchema } from '../utils/security.js';
-import { sendServerError } from '../lib/errors/index.js';
+import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { createValidationMiddleware, ValidationSchema } from "@platform/runtime/security.js";
+import { sendServerError } from "@core/lib/errors/index.js";
 import {
   generateReusableCodeSnippets,
   ReusableCodeGenerationRequest,
   ReusableCodeTarget
-} from '../services/reusableCodeGeneration.js';
-import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
-import { sendTimestampedServiceUnavailable } from '../utils/serviceUnavailable.js';
+} from "@services/reusableCodeGeneration.js";
+import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
+import { sendTimestampedServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";
 
 const router = Router();
 const OPENAI_CODEGEN_SETUP_MESSAGE = 'Configure OPENAI_API_KEY or RAILWAY_OPENAI_API_KEY to enable code generation.';

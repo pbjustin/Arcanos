@@ -2,15 +2,15 @@ import crypto from 'crypto';
 import { getOpenAIClientOrAdapter } from './clientBridge.js';
 import { callOpenAI } from './chatFlow.js';
 import { generateMockResponse } from './mock.js';
-import { logOpenAIEvent } from '../../utils/openaiLogger.js';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
-import { hasContent } from '../../utils/promptUtils.js';
-import { OPENAI_LOG_MESSAGES } from '../../config/openaiLogMessages.js';
+import { logOpenAIEvent } from "@platform/logging/openaiLogger.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { hasContent } from "@shared/promptUtils.js";
+import { OPENAI_LOG_MESSAGES } from "@platform/runtime/openaiLogMessages.js";
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL } from './config.js';
 import type { ImageSize } from './types.js';
 import { buildImageRequest } from './requestBuilders.js';
 import { getDefaultModel } from './unifiedClient.js';
-import { IMAGE_PROMPT_TOKEN_LIMIT } from './constants.js';
+import { IMAGE_PROMPT_TOKEN_LIMIT } from "./constants.js";
 
 const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
   try {
@@ -29,8 +29,8 @@ export async function generateImage(
   input: string,
   size: ImageSize = DEFAULT_IMAGE_SIZE
 ): Promise<{ image: string; prompt: string; meta: { id: string; created: number }; error?: string }> {
-  const { client } = getOpenAIClientOrAdapter();
-  if (!client) {
+  const { adapter } = getOpenAIClientOrAdapter();
+  if (!adapter) {
     const mock = generateMockResponse(input, 'image');
     return { image: '', prompt: input, meta: mock.meta, error: mock.error };
   }
@@ -40,7 +40,8 @@ export async function generateImage(
 
   try {
     const requestParams = buildImageRequest({ prompt, size });
-    const response = await client.images.generate(requestParams);
+    //audit Assumption: image generation should flow through adapter-first boundary; risk: direct SDK bypass; invariant: adapter images surface used; handling: call adapter.images.generate.
+    const response = await adapter.images.generate(requestParams);
 
     const image = response.data?.[0]?.b64_json || '';
 

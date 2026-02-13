@@ -16,7 +16,8 @@ Features:
 - Audit trail for all requests
 """
 
-from typing import Optional, Dict, Any, List, Union
+from typing import Any, Dict, List, Optional, Union
+
 from ..config import Config
 def build_chat_completion_request(
     prompt: str,
@@ -56,11 +57,15 @@ def build_chat_completion_request(
     messages.append({"role": "user", "content": prompt})
     
     # Build request payload
+    # //audit assumption: callers may intentionally pass 0/0.0 generation values; risk: truthy fallback would override explicit intent; invariant: defaults only when values are omitted (None); strategy: explicit None checks before payload construction.
+    resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
+    resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+
     request_payload: Dict[str, Any] = {
         "model": model or Config.OPENAI_MODEL,
         "messages": messages,
-        "temperature": temperature or Config.TEMPERATURE,
-        "max_tokens": max_tokens or Config.MAX_TOKENS
+        "temperature": resolved_temperature,
+        "max_tokens": resolved_max_tokens,
     }
     
     if top_p is not None:
@@ -103,11 +108,15 @@ def build_vision_request(
         }
     ]
     
+    # //audit assumption: explicit zero generation values can be intentional for deterministic behavior; risk: truthy fallback drops explicit value; invariant: defaults apply only for None; strategy: explicit None checks.
+    resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
+    resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+
     return {
         "model": model or Config.OPENAI_VISION_MODEL,
         "messages": messages,
-        "temperature": temperature or Config.TEMPERATURE,
-        "max_tokens": max_tokens or Config.MAX_TOKENS
+        "temperature": resolved_temperature,
+        "max_tokens": resolved_max_tokens,
     }
 
 

@@ -1,5 +1,5 @@
 import express from 'express';
-import { handlePrompt, getOpenAIStatus } from '../controllers/openaiController.js';
+import { handlePrompt, getOpenAIStatus } from "@transport/http/controllers/openaiController.js";
 
 const router = express.Router();
 

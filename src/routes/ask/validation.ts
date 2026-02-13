@@ -1,16 +1,23 @@
 import type { Request, Response } from 'express';
-import { validateInput } from '../../utils/security.js';
-import { buildValidationErrorResponse } from '../../lib/errors/index.js';
+import { validateInput } from "@platform/runtime/security.js";
+import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 
-const ASK_TEXT_FIELDS = ['prompt', 'userInput', 'content', 'text', 'query'] as const;
+const ASK_TEXT_FIELDS = ['prompt', 'message', 'userInput', 'content', 'text', 'query'] as const;
+const SYSTEM_MODES = ['system_review', 'system_state'] as const;
+type SystemMode = (typeof SYSTEM_MODES)[number];
 
 // Enhanced validation schema for ask requests that accepts multiple text field aliases
 const askValidationSchema = {
+  mode: { type: 'string' as const, maxLength: 64, sanitize: true },
   prompt: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
+  message: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
   userInput: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
   content: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
   text: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
   query: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
+  subject: { type: 'string' as const, minLength: 1, maxLength: 200, sanitize: true },
+  expectedVersion: { type: 'number' as const },
+  patch: { type: 'object' as const },
   model: { type: 'string' as const, maxLength: 100, sanitize: true },
   temperature: { type: 'number' as const },
   max_tokens: { type: 'number' as const },
@@ -42,6 +49,41 @@ export const askValidationMiddleware = (req: Request, res: Response, next: () =>
   if (!validation.isValid) {
     //audit Assumption: validation errors are safe to expose; risk: leaking schema expectations; invariant: only validation errors returned; handling: standardized payload.
     return res.status(400).json(buildValidationErrorResponse(validation.errors));
+  }
+
+  const modeValue = validation.sanitized.mode;
+  const normalizedMode = typeof modeValue === 'string' && modeValue.trim().length > 0 ? modeValue.trim() : 'chat';
+
+  //audit Assumption: system mode names are fixed and explicit; risk: accidental fallback to chat; invariant: unknown system mode rejected; handling: strict mode allowlist.
+  if (normalizedMode.startsWith('system_') && !SYSTEM_MODES.includes(normalizedMode as SystemMode)) {
+    return res.status(400).json(
+      buildValidationErrorResponse([`Unsupported mode '${normalizedMode}'. Allowed modes: ${SYSTEM_MODES.join(', ')}`])
+    );
+  }
+
+  if (normalizedMode === 'system_state') {
+    const expectedVersion = validation.sanitized.expectedVersion;
+    const patch = validation.sanitized.patch;
+
+    //audit Assumption: optimistic-lock writes require both expectedVersion and patch; risk: partial state mutation contract; invariant: both fields present together; handling: reject partial update payloads.
+    if ((expectedVersion === undefined) !== (patch === undefined)) {
+      return res.status(400).json(
+        buildValidationErrorResponse([
+          "system_state updates require both 'expectedVersion' and 'patch' fields together"
+        ])
+      );
+    }
+
+    //audit Assumption: expectedVersion must be an integer for deterministic locking; risk: floating-point mismatch; invariant: integer version checks; handling: reject non-integer versions.
+    if (typeof expectedVersion === 'number' && !Number.isInteger(expectedVersion)) {
+      return res.status(400).json(
+        buildValidationErrorResponse(["'expectedVersion' must be an integer when provided"])
+      );
+    }
+
+    req.body = validation.sanitized;
+    next();
+    return;
   }
 
   const hasTextField = ASK_TEXT_FIELDS.some(field => {

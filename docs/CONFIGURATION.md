@@ -1,31 +1,47 @@
-# Arcanos Configuration Guide
+# Configuration Guide
 
 ## Overview
-
-This guide documents the environment variables used by the Arcanos backend. Defaults are
-sourced from `src/utils/env.ts`, `src/config/index.ts`, `src/services/openai/constants.ts`,
-`src/services/openai/config.ts`, and `src/services/openai/credentialProvider.ts`.
+This document captures active backend and daemon configuration used by current code. Defaults and precedence are derived from `src/config/unifiedConfig.ts`, `src/config/env.ts`, and daemon config modules.
 
 ## Prerequisites
-
-- Access to the repository root and `.env.example` template.
-- Familiarity with Railway environment variable management if deploying.
+- Copy `.env.example` to `.env` for backend.
+- Copy `daemon-python/.env.example` to `daemon-python/.env` for daemon usage.
 
 ## Setup
+Backend:
+```bash
+cp .env.example .env
+```
 
-1. Copy `.env.example` to `.env`.
-2. Populate required variables (minimum: `OPENAI_API_KEY`).
-3. Keep Railway variables aligned with `.env.example` when deploying.
+Daemon:
+```bash
+cd daemon-python
+cp .env.example .env
+```
 
 ## Configuration
+### Backend required and core variables
 
-### Core runtime
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `PORT` | Yes | none | Required by `validateRequiredEnv()` at startup. |
+| `NODE_ENV` | No | `development` | Affects host binding and runtime behavior. |
+| `OPENAI_API_KEY` | No* | none | Needed for live AI responses. |
+| `OPENAI_BASE_URL` | No | none | Optional OpenAI endpoint override. |
+| `OPENAI_MODEL` | No | fallback chain | Participates in default model resolution chain. |
+| `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
+| `RUN_WORKERS` | No | `true` (non-test) | Background workers toggle. |
+| `WORKER_API_TIMEOUT_MS` | No | `30000` | Unified config default; some worker adapters fallback to `60000` if unset. |
+| `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime log path. |
+| `ARC_MEMORY_PATH` | No | `/tmp/arc/memory` | Runtime memory path. |
+| `RAILWAY_ENVIRONMENT` | No | none | Set by Railway and used for environment detection. |
+| `RAILWAY_API_TOKEN` | No | none | Only required for Railway management/API tooling, not normal app runtime. |
 
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `NODE_ENV` | `development` | Controls logging and worker defaults. |
 | `PORT` | `8080` | HTTP port (Railway overrides with `PORT`). |
-| `HOST` | `127.0.0.1` (dev)<br>`0.0.0.0` (prod) | Bind address for the HTTP server. Development defaults to localhost for security. Set `HOST=0.0.0.0` to allow network access (Docker, WSL2, remote testing). |
+| `HOST` | `127.0.0.1` (dev) / `0.0.0.0` (prod) | Bind address for the HTTP server. In development, defaults to localhost for security. Set to `0.0.0.0` to allow network access (e.g., Docker, WSL2, testing from other devices). |
 | `SERVER_URL` | `http://127.0.0.1:<port>` | Base URL used for internal callbacks. |
 | `BACKEND_STATUS_ENDPOINT` | `/status` | Status endpoint path for internal checks. |
 | `LOG_LEVEL` | `info` | Logging verbosity for the structured logger. |
@@ -37,18 +53,17 @@ sourced from `src/utils/env.ts`, `src/config/index.ts`, `src/services/openai/con
 
 ### OpenAI API key resolution
 
+*Without an API key, AI routes return mock responses by design.*
+
 The OpenAI client resolves keys in this order, skipping placeholders:
 
+### OpenAI key resolution order
 1. `OPENAI_API_KEY`
 2. `RAILWAY_OPENAI_API_KEY`
 3. `API_KEY`
 4. `OPENAI_KEY`
 
-### OpenAI model selection
-
-The OpenAI client selects the first non-empty model in this order and defaults to `gpt-4o-mini`
-when none are configured:
-
+### Default model resolution order
 1. `FINETUNED_MODEL_ID`
 2. `FINE_TUNED_MODEL_ID`
 3. `AI_MODEL`
@@ -56,121 +71,69 @@ when none are configured:
 5. `RAILWAY_OPENAI_MODEL`
 6. `gpt-4o-mini`
 
-Fallback model selection (used when primary calls fail):
-
+### Fallback model resolution order
 1. `FALLBACK_MODEL`
 2. `AI_FALLBACK_MODEL`
 3. `RAILWAY_OPENAI_FALLBACK_MODEL`
-4. `FINETUNED_MODEL_ID`
-5. `FINE_TUNED_MODEL_ID`
-6. `AI_MODEL`
-7. `gpt-4`
+4. `gpt-4`
 
-Additional model-related variables:
-
-| Variable | Default | Notes |
+### Confirmation and automation
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `AI_MODEL` | `gpt-4-turbo` | Default used by config and worker bootstrapping. |
-| `GPT51_MODEL` / `GPT5_MODEL` | `gpt-5.1` | GPT-5 reasoning model override (`GPT51_MODEL` takes precedence). |
-| `RESEARCH_MODEL_ID` | — | Optional override for the research pipeline model. |
-| `IMAGE_MODEL` | `gpt-image-1` | Image generation model. |
-| `IMAGE_DEFAULT_SIZE` | `1024x1024` | Default image size if not supplied in requests. |
-| `ROUTING_MAX_TOKENS` | `4096` | Token ceiling for routing decisions. |
+| `TRUSTED_GPT_IDS` | empty | Trusted GPT IDs that can bypass manual confirmation. |
+| `ARCANOS_AUTOMATION_SECRET` | empty | Shared secret for automation bypass. |
+| `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
 
-### OpenAI client behavior
-
-| Variable | Default | Notes |
+### Daemon-specific core variables
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `OPENAI_BASE_URL` / `OPENAI_API_BASE_URL` / `OPENAI_API_BASE` | — | Optional API base URL override. |
-| `OPENAI_SYSTEM_PROMPT` | `You are a helpful AI assistant.` | Default system prompt if none supplied. |
-| `OPENAI_CACHE_TTL_MS` | `300000` | Cache TTL for OpenAI responses (5 minutes). |
-| `OPENAI_MAX_RETRIES` | `3` | Retry budget for OpenAI calls. |
-| `OPENAI_IMAGE_PROMPT_TOKEN_LIMIT` | `256` | Token limit for image prompt expansion. |
-| `OPENAI_DEFAULT_MAX_TOKENS` | `256` | Default max tokens for responses when not specified. |
-| `OPENAI_DEFAULT_TEMPERATURE` | `0.7` | Default temperature for responses. |
-| `OPENAI_DEFAULT_TOP_P` | `1` | Default nucleus sampling value. |
-| `OPENAI_DEFAULT_FREQUENCY_PENALTY` | `0` | Default frequency penalty. |
-| `OPENAI_DEFAULT_PRESENCE_PENALTY` | `0` | Default presence penalty. |
-
-### Database & persistence
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `DATABASE_URL` | — | PostgreSQL connection string. |
-| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | — | Used to build `DATABASE_URL` if absent. |
-| `SESSION_PERSISTENCE_URL` | — | Optional override for session persistence connection. |
-| `BACKEND_REGISTRY_URL` | — | Optional registry endpoint for backend discovery. |
-
-### Workers & automation
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `RUN_WORKERS` | `true` (disabled in tests) | Controls worker bootstrap. |
-| `WORKER_COUNT` | `4` | Worker count for diagnostics and scheduling. |
-| `WORKER_MODEL` | `AI_MODEL` or `gpt-4o` | Model used by worker tasks. |
-| `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for OpenAI calls from workers. |
-
-### Confirmation gate & security
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `TRUSTED_GPT_IDS` | — | Comma-separated GPT identifiers that bypass confirmation checks. |
-| `ARCANOS_AUTOMATION_SECRET` | — | Shared secret for automation bypass. |
-| `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header name for automation bypass. |
-| `ADMIN_KEY` | — | Admin API key for protected routes. |
-| `REGISTER_KEY` | — | Registration key for protected routes. |
-| `CONFIRMATION_CHALLENGE_TTL_MS` | `120000` | TTL for confirmation challenges. |
-
-### Feature flags, telemetry, and audit
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `ENABLE_GITHUB_ACTIONS` | `false` | Enables GitHub actions-related workflows. |
-| `ENABLE_GPT_USER_HANDLER` | `true` | Enables GPT user handler endpoints. |
-| `ARCANOS_AUDIT_TRACE` | `true` | Enables audit tracing when not set to `false`. |
-| `TELEMETRY_RECENT_LOGS_LIMIT` | `100` | Recent log ring buffer size. |
-| `TELEMETRY_TRACE_EVENT_LIMIT` | `200` | Trace event buffer size. |
-
-### Assistant sync & reinforcement
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `ASSISTANT_SYNC_ENABLED` | `true` | Enables assistant sync when not set to `false`. |
-| `ASSISTANT_SYNC_CRON` | `15,45 * * * *` | Cron schedule for assistant sync. |
-| `ASSISTANT_REGISTRY_PATH` | `config/assistants.json` | Path to the assistant registry file. |
-| `ARCANOS_CONTEXT_MODE` | `reinforcement` | Context mode for memory reinforcement. |
-| `ARCANOS_CONTEXT_WINDOW` | `50` | Reinforcement context window size. |
-| `ARCANOS_MEMORY_DIGEST_SIZE` | `8` | Memory digest size for reinforcement. |
-| `ARCANOS_CLEAR_MIN_SCORE` | `0.85` | Minimum score threshold for clear operations. |
-| `FALLBACK_STRICT_ENVIRONMENTS` | `production,staging` | CSV list for strict fallback handling. |
-| `ENABLE_PREEMPTIVE_FALLBACK` | `false` | Enables preemptive fallback when `true`. |
+| `OPENAI_API_KEY` | none | Required by daemon local GPT client. |
+| `BACKEND_URL` | none | Optional backend routing target. |
+| `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
+| `DEBUG_SERVER_TOKEN` | none | Strongly recommended when debug server enabled. |
+| `IDE_AGENT_DEBUG` / `DEBUG_SERVER_ENABLED` | `false` | Enables local debug server. |
 
 ## Run locally
+Backend config validation is implicit at startup. Use:
+```bash
+npm run build
+npm start
+```
 
-1. Set `OPENAI_API_KEY` and optional variables in `.env`.
-2. Run `npm run build` followed by `npm start`.
-3. Validate health endpoints at `/health`, `/healthz`, and `/readyz`.
+Daemon config validation occurs on daemon startup:
+```bash
+cd daemon-python
+arcanos
+```
 
 ## Deploy (Railway)
-
-Railway config is codified in `railway.json`. Key notes:
-
-- `PORT` is injected by Railway and mirrored into the environment.
-- `RUN_WORKERS` defaults to `false` in the Railway deploy config.
-- If you attach PostgreSQL, Railway injects `DATABASE_URL` (or `PG*` variables) automatically.
-
-Keep Railway variables aligned with this document and `.env.example`.
+- Keep required runtime values in Railway Variables.
+- Keep production and development variables separated.
+- Railway injects `PORT` and optionally `DATABASE_URL` when PostgreSQL is attached.
 
 ## Troubleshooting
+- Startup exits immediately: `PORT` missing or invalid.
+- Unexpected model in use: verify model precedence chain and remove conflicting variables.
+- Confirmation bypass not working: verify header name and secret match exactly.
 
-- **Mock OpenAI responses**: ensure `OPENAI_API_KEY` is set and valid.
-- **Database unavailable**: verify `DATABASE_URL` or `PG*` variables and watch `/health`.
-- **CORS errors**: set `ALLOWED_ORIGINS` when `NODE_ENV=production`.
-- **Confirmation failures**: confirm `TRUSTED_GPT_IDS` or `ARCANOS_AUTOMATION_SECRET` match the caller.
+## Generated Directories
+
+These directories are created at runtime or during builds and must **not** be committed. All are listed in `.gitignore`.
+
+| Directory | Generated by | Purpose |
+| --- | --- | --- |
+| `dist/` | `npm run build` | Compiled TypeScript output |
+| `node_modules/` | `npm install` | Node.js dependencies |
+| `coverage/` | `npm test` / `pytest --cov` | Test coverage reports |
+| `logs/` | Runtime | Application and audit logs |
+| `backups/` | `scripts/backup.ps1` | Workspace backups |
+| `dist_new/` | Legacy build scripts | Deprecated build artifacts |
+| `converge-artifacts/` | `npm run converge:ci` | CI convergence gate output |
+| `**/.pytest_cache/` | pytest | Python test cache |
 
 ## References
-
-- `../README.md`
-- `RAILWAY_DEPLOYMENT.md`
-- `../railway.json`
 - `../.env.example`
+- `../config/env/core.env.example`
+- `../src/config/unifiedConfig.ts`
+- `../src/config/env.ts`
+- `../daemon-python/.env.example`

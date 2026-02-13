@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(gh pr create:*)",
+      "Bash(git status:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx -p typescript tsc:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(npm test:*)",
+      "Bash(npm install:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx --package=prisma@5 prisma generate:*)",
+      "Bash(npx vitest run:*)",
+      "Bash(python -c:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(findstr:*)"
+    ]
+  }
+}

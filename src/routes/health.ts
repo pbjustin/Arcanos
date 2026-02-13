@@ -18,7 +18,7 @@ import {
   checkOpenAIHealth,
   checkDatabaseHealth,
   checkApplicationHealth
-} from '../utils/health/unifiedHealth.js';
+} from "@platform/resilience/unifiedHealth.js";
 
 const router = express.Router();
 

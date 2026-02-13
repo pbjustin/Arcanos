@@ -98,7 +98,7 @@ if (!(Test-Path ".env")) {
 
     if ($apiKey -ne "") {
         # Update .env file
-        (Get-Content ".env") -replace 'OPENAI_API_KEY=sk-your-api-key-here', "OPENAI_API_KEY=$apiKey" | Set-Content ".env"
+        (Get-Content ".env") -replace '^OPENAI_API_KEY=.*$', "OPENAI_API_KEY=$apiKey" | Set-Content ".env"
         Write-Host "   ✅ API key saved" -ForegroundColor Green
     } else {
         Write-Host "   ⚠️  API key not set. You'll need to add it to .env manually." -ForegroundColor Yellow

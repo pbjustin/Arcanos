@@ -1,10 +1,11 @@
 import type OpenAI from 'openai';
 import fs from 'fs/promises';
-import config from '../config/index.js';
-import { aiLogger } from '../utils/structuredLogging.js';
-import { writeJsonFile } from '../utils/fileStorage.js';
+import { config } from "@platform/runtime/config.js";
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { writeJsonFile } from "@shared/fileStorage.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 export interface AssistantInfo {
   id: string;
@@ -95,6 +96,9 @@ export async function loadAssistantRegistry(): Promise<AssistantRegistry> {
     const content = await fs.readFile(REGISTRY_PATH, 'utf8');
     const parsed = JSON.parse(content);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      assertProtectedConfigIntegrity('assistant_registry', parsed, {
+        source: REGISTRY_PATH
+      });
       return parsed as AssistantRegistry;
     }
     aiLogger.warn('[AI-ASSISTANT-SYNC] Invalid registry content encountered, resetting', LOG_CONTEXT, {

@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { callOpenAI, getDefaultModel } from './openai.js';
 import { loadState, updateState } from './stateManager.js';
-import { getEnv } from '../config/env.js';
-import { DAILY_SUMMARY_PROMPT_LINES } from '../config/dailySummaryTemplates.js';
-import { readJsonFileSafely } from '../utils/jsonFileUtils.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { getEnv } from "@platform/runtime/env.js";
+import { DAILY_SUMMARY_PROMPT_LINES } from "@platform/runtime/dailySummaryTemplates.js";
+import { readJsonFileSafely } from "@shared/jsonFileUtils.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { parseModelOutputWithSchema } from "@services/safety/aiOutputBoundary.js";
 
 interface SummarySources {
   systemState: Record<string, unknown>;
@@ -23,6 +25,7 @@ export interface DailySummaryResult {
 }
 
 const MEMORY_DIR = path.join(process.cwd(), 'memory');
+const dailySummaryOutputSchema = z.record(z.unknown());
 
 function collectLogsPreview(): string[] {
   const logsDir = path.join(process.cwd(), 'logs');
@@ -100,8 +103,12 @@ export async function generateDailySummary(triggeredBy: string = 'cli'): Promise
       responseFormat: { type: 'json_object' },
       metadata: { route: 'daily-summary', triggeredBy }
     });
-    //audit Assumption: OpenAI returns JSON string; risk: parse failure; invariant: parsed object; handling: try/catch.
-    parsed = JSON.parse(result.output || '{}');
+    //audit Assumption: daily summary output must pass schema validation before persistence; risk: malformed summary file writes; invariant: object payload required; handling: strict boundary parser with explicit fallback.
+    parsed = parseModelOutputWithSchema(result.output || '{}', dailySummaryOutputSchema, {
+      source: 'dailySummaryService.generateDailySummary',
+      allowFallback: true,
+      fallbackValue: {}
+    });
   } catch (error) {
     //audit Assumption: OpenAI failure should trigger fallback summary; risk: degraded accuracy; invariant: return valid summary; handling: fallback values.
     console.error('[DAILY-SUMMARY] Failed to generate via OpenAI, falling back to heuristic summary', error);

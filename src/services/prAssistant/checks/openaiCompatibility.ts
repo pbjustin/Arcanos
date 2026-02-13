@@ -1,9 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-import { createCheckResult } from '../checkResults.js';
-import type { CheckContext, CheckResult } from '../types.js';
-import { resolveErrorMessage } from '../../../lib/errors/index.js';
+import { createCheckResult } from "@services/prAssistant/checkResults.js";
+import type { CheckContext, CheckResult } from "@services/prAssistant/types.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export async function checkOpenAICompatibility(
   context: CheckContext,

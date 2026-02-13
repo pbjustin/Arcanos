@@ -4,15 +4,15 @@
  */
 
 import { callOpenAI, getDefaultModel } from './openai.js';
-import { saveSelfReflection } from '../db/repositories/selfReflectionRepository.js';
+import { saveSelfReflection } from "@core/db/repositories/selfReflectionRepository.js";
 import {
   AI_REFLECTION_DEFAULT_SYSTEM_PROMPT,
   buildReflectionPrompt,
   buildDefaultPatchContent,
   buildFallbackPatchContent
-} from '../config/aiReflectionTemplates.js';
-import { parseEnvInt, parseEnvFloat, parseEnvBoolean } from '../utils/envParsers.js';
-import { getEnv, getEnvNumber } from '../config/env.js';
+} from "@platform/runtime/aiReflectionTemplates.js";
+import { parseEnvInt, parseEnvFloat, parseEnvBoolean } from "@platform/runtime/envParsers.js";
+import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 
 // Use config layer for env access (adapter boundary pattern)
 const DEFAULT_REFLECTION_SYSTEM_PROMPT =

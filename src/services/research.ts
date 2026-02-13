@@ -1,16 +1,16 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { fetchAndClean } from './webFetcher.js';
+import { fetchAndClean } from "@services/webFetcher.js";
 import {
   createCentralizedCompletion,
   getDefaultModel
 } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { setMemory } from './memory.js';
-import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from '../config/researchPrompts.js';
-import { getEnvNumber, getEnv } from '../config/env.js';
+import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from "@platform/runtime/researchPrompts.js";
+import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
 import type OpenAI from 'openai';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export interface ResearchSourceSummary {
   url: string;

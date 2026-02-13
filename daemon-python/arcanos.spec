@@ -47,7 +47,7 @@ hiddenimports = [
 
 # Analysis
 a = Analysis(
-    ['arcanos/cli.py'],
+    ['arcanos/cli/__main__.py'],
     pathex=[],
     binaries=[],
     datas=datas,

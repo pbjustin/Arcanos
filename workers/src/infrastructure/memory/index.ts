@@ -3,6 +3,69 @@
  * This is a lightweight store for worker-specific data, separate from the main session store
  */
 
+import { randomUUID } from 'crypto';
+
+interface MemoryEnvelopeMetadata {
+  versionId: string;
+  monotonicTimestampMs: number;
+}
+
+interface MemoryEnvelope<T = unknown> {
+  metadata: MemoryEnvelopeMetadata;
+  payload: T;
+}
+
+const monotonicBaseEpochMs = Date.now();
+const monotonicBaseHrNs = process.hrtime.bigint();
+let monotonicLastMs = 0;
+
+function getMonotonicTimestampMs(): number {
+  const elapsedNs = process.hrtime.bigint() - monotonicBaseHrNs;
+  const elapsedMs = Number(elapsedNs / 1_000_000n);
+  const computed = monotonicBaseEpochMs + elapsedMs;
+  //audit Assumption: timestamp monotonicity must be strict for envelope ordering; risk: duplicate ordering keys under clock jitter; invariant: strictly increasing millis; handling: force increment when computed <= last.
+  if (computed <= monotonicLastMs) {
+    monotonicLastMs += 1;
+    return monotonicLastMs;
+  }
+  monotonicLastMs = computed;
+  return computed;
+}
+
+function createEnvelope<T>(payload: T): MemoryEnvelope<T> {
+  const monotonicTimestampMs = getMonotonicTimestampMs();
+  return {
+    metadata: {
+      versionId: `worker-memory-${monotonicTimestampMs}-${randomUUID().slice(0, 8)}`,
+      monotonicTimestampMs
+    },
+    payload
+  };
+}
+
+function isEnvelope(value: unknown): value is MemoryEnvelope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (!candidate.metadata || typeof candidate.metadata !== 'object' || Array.isArray(candidate.metadata)) {
+    return false;
+  }
+  const metadata = candidate.metadata as Record<string, unknown>;
+  return (
+    typeof candidate.payload !== 'undefined' &&
+    typeof metadata.versionId === 'string' &&
+    typeof metadata.monotonicTimestampMs === 'number'
+  );
+}
+
+function unwrapEnvelope<T = unknown>(value: unknown): { payload: T; metadata?: MemoryEnvelopeMetadata } {
+  if (!isEnvelope(value)) {
+    return { payload: value as T };
+  }
+  return { payload: value.payload as T, metadata: value.metadata };
+}
+
 const store = new Map<string, unknown>();
 
 export const MemoryStore = {
@@ -12,7 +75,8 @@ export const MemoryStore = {
    * @param value - The value to store
    */
   async set(key: string, value: unknown): Promise<void> {
-    store.set(key, value);
+    const envelope = createEnvelope(value);
+    store.set(key, envelope);
   },
 
   /**
@@ -21,7 +85,9 @@ export const MemoryStore = {
    * @returns The stored value or undefined if not found
    */
   async get(key: string): Promise<unknown> {
-    return store.get(key);
+    const value = store.get(key);
+    //audit Assumption: worker store may contain legacy direct values; risk: read compatibility break; invariant: get() returns payload shape; handling: unwrap envelopes and passthrough legacy values.
+    return unwrapEnvelope(value).payload;
   },
 
   /**
@@ -52,5 +118,16 @@ export const MemoryStore = {
    */
   async clear(): Promise<void> {
     store.clear();
+  },
+
+  /**
+   * Get metadata envelope for a key (diagnostics only).
+   * @param key - Key to inspect.
+   * @returns Envelope metadata when present.
+   */
+  async getEnvelopeMetadata(key: string): Promise<MemoryEnvelopeMetadata | undefined> {
+    const value = store.get(key);
+    const unwrapped = unwrapEnvelope(value);
+    return unwrapped.metadata;
   }
 };

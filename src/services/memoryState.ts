@@ -3,12 +3,16 @@
  * Registers, retrieves, and validates memory state entries.
  */
 
-import { query } from '../db/index.js';
+import { query } from "@core/db/index.js";
 import { getDefaultModel } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
+import { buildMemoryValidationMessages } from "@shared/memoryValidationMessages.js";
 
 /**
- * Register or update memory state in PostgreSQL
+ * Register or update memory state in PostgreSQL.
+ * Inputs: entryKey (string), entryData (unknown), stateVersion (string, optional).
+ * Outputs: resolves once state is persisted.
+ * Edge cases: overwrites existing entries with same key.
  */
 export async function syncMemoryState(
   entryKey: string,
@@ -26,7 +30,10 @@ export async function syncMemoryState(
 }
 
 /**
- * Retrieve memory state with version control
+ * Retrieve memory state with version control.
+ * Inputs: entryKey (string).
+ * Outputs: memory state row or null when missing.
+ * Edge cases: returns null if no matching entry exists.
  */
 export async function getMemoryState(
   entryKey: string
@@ -36,7 +43,7 @@ export async function getMemoryState(
     [entryKey]
   );
 
-  //audit Assumption: missing rows indicate no entry
+  //audit Assumption: missing rows indicate no entry; risk: upstream callers assume data exists; invariant: empty result implies absence; handling: return null.
   if (result.rows.length === 0) {
     console.log(`⚠️ No entry found for ${entryKey}`);
     return null;
@@ -48,7 +55,10 @@ export async function getMemoryState(
 }
 
 /**
- * Validate memory state via GPT
+ * Validate memory state via GPT.
+ * Inputs: entryKey (string), entryData (unknown), stateVersion (string).
+ * Outputs: validation message from the model or fallback string.
+ * Edge cases: returns fallback string when adapter is unavailable.
  */
 export async function validateMemory(
   entryKey: string,
@@ -57,21 +67,17 @@ export async function validateMemory(
 ): Promise<string> {
   const { adapter } = getOpenAIClientOrAdapter();
   if (!adapter) {
-    //audit Assumption: missing adapter returns mock validation
+    //audit Assumption: missing adapter should return fallback; risk: validation is skipped; invariant: callers receive explicit fallback text; handling: return fallback string.
     console.warn('⚠️ OpenAI adapter not available - returning mock validation');
     return 'OpenAI adapter unavailable';
   }
 
   const response = await adapter.chat.completions.create({
     model: getDefaultModel(),
-    messages: [
-      { role: 'system', content: 'You are ARCANOS Memory Validator. Ensure consistent state across GPT chats.' },
-      { role: 'user', content: `Entry Key: ${entryKey}\nVersion: ${stateVersion}\nData: ${JSON.stringify(entryData)}` }
-    ]
+    messages: buildMemoryValidationMessages(entryKey, stateVersion, entryData)
   });
 
   const validation = response.choices[0]?.message?.content || '';
   console.log('🧠 Memory Validation Result:', validation);
   return validation;
 }
-

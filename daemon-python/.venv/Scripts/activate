@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV="C:\Users\pbjus\Arcanos\daemon-python\.venv"
+VIRTUAL_ENV="C:\arcanos-hybrid\daemon-python\.venv"
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"

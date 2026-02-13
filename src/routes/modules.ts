@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
-import { loadModuleDefinitions, ModuleDef } from '../modules/moduleLoader.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { loadModuleDefinitions, ModuleDef } from '@services/moduleLoader.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { logger } from "@platform/logging/structuredLogging.js";
 
 const router = express.Router();
 
@@ -10,6 +11,20 @@ const moduleRoutes = new Map<string, string>();
 
 function createHandler(mod: ModuleDef) {
   return async (req: Request, res: Response) => {
+    //audit Assumption: rerouted requests should not execute module actions; risk: conflicting side effects; invariant: module execution skipped; handling: log warning + return safe error.
+    if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+      logger.warn('Rerouted request reached module handler unexpectedly', {
+        module: 'modules',
+        url: req.url,
+        originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
+      });
+      return res.status(409).json({
+        error: 'Dispatch rerouted to safe default dispatcher',
+        code: 'DISPATCH_REROUTED',
+        target: '/api/ask'
+      });
+    }
+
     const { module, action, payload } = req.body as {
       module?: string;
       action?: string;
@@ -67,9 +82,46 @@ export function getModulesForRegistry(): Array<{
   }));
 }
 
+/**
+ * Purpose: Look up metadata for a single module by name.
+ * Inputs/Outputs: Module name string; returns metadata or null.
+ * Edge cases: Returns null when module name is not registered.
+ */
+export function getModuleMetadata(moduleName: string): {
+  name: string;
+  description: string | null;
+  route: string | null;
+  actions: string[];
+} | null {
+  const mod = registryByName.get(moduleName);
+  if (!mod) return null;
+  return {
+    name: mod.name,
+    description: mod.description ?? null,
+    route: moduleRoutes.get(mod.name) ?? null,
+    actions: Object.keys(mod.actions),
+  };
+}
+
 const loadedModules = await loadModuleDefinitions();
 for (const { route, definition } of loadedModules) {
   registerModule(route, definition);
+}
+
+/**
+ * Dispatch a module action directly by module name, action, and payload.
+ * Used by /api/ask to route gptId-identified requests to the correct module.
+ */
+export async function dispatchModuleAction(
+  moduleName: string,
+  action: string,
+  payload: unknown
+): Promise<unknown> {
+  const mod = registryByName.get(moduleName);
+  if (!mod) throw new Error(`Module not found: ${moduleName}`);
+  const handler = mod.actions[action];
+  if (!handler) throw new Error(`Action not found: ${action}`);
+  return handler(payload);
 }
 
 router.get('/registry', (_req: Request, res: Response) => {
@@ -116,6 +168,20 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
 });
 
 router.post('/queryroute', async (req: Request, res: Response) => {
+  //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: log warning + return safe error.
+  if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+    logger.warn('Rerouted request reached queryroute handler unexpectedly', {
+      module: 'modules',
+      url: req.url,
+      originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
+    });
+    return res.status(409).json({
+      error: 'Dispatch rerouted to safe default dispatcher',
+      code: 'DISPATCH_REROUTED',
+      target: '/api/ask'
+    });
+  }
+
   const { module: moduleName, action, payload } = req.body as {
     module?: string;
     action?: string;

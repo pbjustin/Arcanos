@@ -1,12 +1,12 @@
 import express, { Request, Response } from 'express';
-import { createCentralizedCompletion } from '../services/openai.js';
-import { confirmGate } from '../middleware/confirmGate.js';
-import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
-import type { IdleStateService } from '../services/idleStateService.js';
+import { createCentralizedCompletion } from "@services/openai.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { createValidationMiddleware, createRateLimitMiddleware } from "@platform/runtime/security.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import type { IdleStateService } from "@services/idleStateService.js";
 import type OpenAI from 'openai';
-import { sendAIStatusError } from '../utils/requestHandler.js';
+import { sendAIStatusError } from "@transport/http/requestHandler.js";
 
 const router = express.Router();
 

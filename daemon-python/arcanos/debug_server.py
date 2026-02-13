@@ -1,5 +1,4 @@
 import json
-import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -14,6 +13,7 @@ if TYPE_CHECKING:
 
 from .config import Config, get_automation_auth, get_backend_base_url
 from arcanos.debug import handle_request, liveness, log_audit_event, readiness, get_debug_logger
+from arcanos.utils.telemetry import sanitize_sensitive_data
 
 
 class DebugAPIHandler(BaseHTTPRequestHandler):
@@ -58,7 +58,9 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         if data is not None:
             response.update(data if isinstance(data, dict) else {"data": data})
 
-        self.wfile.write(json.dumps(response, indent=2).encode("utf-8"))
+        #audit Assumption: debug responses may carry sensitive runtime details; risk: token leakage over local debug channel/log captures; invariant: payload sanitized before write; handling: redact response recursively.
+        sanitized_response = sanitize_sensitive_data(response)
+        self.wfile.write(json.dumps(sanitized_response, indent=2).encode("utf-8"))
 
     def _read_body(self) -> Optional[Dict[str, Any]]:
         try:
@@ -311,8 +313,9 @@ You: ptt
         
         total = len(all_lines)
         lines = all_lines[-tail:] if tail < total else all_lines
+        sanitized_lines = [sanitize_sensitive_data(line) for line in lines]
         
-        self._send_response(200, {"path": str(log_file), "lines": lines, "total": total, "returned": len(lines)})
+        self._send_response(200, {"path": str(log_file), "lines": sanitized_lines, "total": total, "returned": len(lines)})
 
     def get_log_files(self):
         log_dir = Config.LOG_DIR
@@ -375,7 +378,7 @@ You: ptt
                 with open(latest_file, "r", encoding="utf-8") as f:
                     latest_content = f.read()
 
-        self._send_response(200, {"files": files, "latest_content": latest_content})
+        self._send_response(200, {"files": files, "latest_content": sanitize_sensitive_data(latest_content)})
 
     def post_ask(self, body):
         message = body.get("message")

@@ -1,8 +1,8 @@
 import { getCachedSessions } from './sessionMemoryService.js';
-import { cosineSimilarity } from '../utils/vectorUtils.js';
+import { cosineSimilarity } from "@shared/vectorUtils.js";
 import { createEmbedding } from './openai/embeddings.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { getEnv } from '../config/env.js';
+import { getEnv } from "@platform/runtime/env.js";
 
 interface ConversationMessage {
   content?: string;

@@ -1,5 +1,5 @@
 import { ImageSize } from './types.js';
-import { getEnv } from '../../config/env.js';
+import { getEnv } from "@platform/runtime/env.js";
 
 const VALID_IMAGE_SIZES: ImageSize[] = [
   '256x256',

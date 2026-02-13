@@ -1,12 +1,12 @@
 import express from 'express';
-import { logExecution } from '../../db/index.js';
-import { confirmGate } from '../../middleware/confirmGate.js';
+import { logExecution } from "@core/db/index.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import {
   getWorkerRuntimeStatus,
   startWorkers,
   type WorkerBootstrapSummary
-} from '../../config/workerConfig.js';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
+} from "@platform/runtime/workerConfig.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ const router = express.Router();
  */
 router.post('/workers/init', confirmGate, async (_, res) => {
   try {
-    const results: WorkerBootstrapSummary = startWorkers();
+    const results: WorkerBootstrapSummary = await startWorkers();
 
     await logExecution('sdk-interface', 'info', 'Workers initialized via SDK', { results });
 

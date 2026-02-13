@@ -16,8 +16,8 @@
 
 import { ErrorType, classifyError, isRetryableError as isRetryable } from './classification.js';
 import { resolveErrorMessage, mapErrorToFriendlyMessage } from './messages.js';
-import { aiLogger } from '../../utils/structuredLogging.js';
-import { recordTraceEvent } from '../../utils/telemetry.js';
+import { aiLogger } from '@platform/logging/structuredLogging.js';
+import { recordTraceEvent } from '@platform/logging/telemetry.js';
 
 /**
  * Error classification result

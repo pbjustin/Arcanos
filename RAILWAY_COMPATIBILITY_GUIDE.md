@@ -1,153 +1,102 @@
-# Arcanos OpenAI API & Railway Compatibility
+# Arcanos OpenAI API and Railway Compatibility
 
-> **Last Updated:** 2026-01-14 | **Version:** 1.0.0 | **OpenAI SDK:** v6.16.0
+> **Last Updated:** 2026-02-08 | **Version:** 1.0.0 | **OpenAI SDK:** Node v6.16.0, Python v1.x
 
 ## Overview
+This document captures the deployed architecture and compatibility constraints for Railway.
 
-This document provides technical implementation details for Arcanos Railway compatibility.
-For deployment instructions, see the [Railway Deployment Guide](docs/RAILWAY_DEPLOYMENT.md).
+For step-by-step deployment, use `docs/RAILWAY_DEPLOYMENT.md`.
 
-## OpenAI SDK Integration
+## OpenAI Integration Architecture
+Runtime OpenAI usage is adapter-first:
+- TypeScript API constructor boundary: `src/adapters/openai.adapter.ts`
+- TypeScript lifecycle boundary: `src/services/openai/unifiedClient.ts`
+- Worker constructor boundary: `workers/src/infrastructure/sdk/openai.ts`
+- Worker env/config boundary: `workers/src/infrastructure/sdk/openaiConfig.ts`
+- Python daemon constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
+- Python daemon adapter boundary: `daemon-python/arcanos/openai/openai_adapter.py`
 
-### Current Implementation
+Constructor policy:
+- `new OpenAI(...)` appears only in canonical constructor files above.
+- Runtime call sites consume adapters, not ad-hoc local client wrappers.
 
-Arcanos uses OpenAI Node.js SDK v6.16.0 with the standard `chat.completions.create()` API:
-
-```javascript
-const response = await client.chat.completions.create({
-  model: "gpt-4o",  // or configured fine-tuned model
-  messages: [
-    { role: "system", content: "You are a helpful assistant." },
-    { role: "user", content: "Hello!" }
-  ]
-});
-
-const content = response.choices[0].message.content;
+## API Surface
+Core endpoints:
+```text
+/api/ask
+/api/vision
+/api/transcribe
+/api/update
+/api/arcanos
+/api/memory
+/api/sim
+/health
+/healthz
+/readyz
 ```
 
-### Centralized Completion Function
+## Railway Runtime Model
+Railway config source of truth: `railway.json`
 
-All AI requests route through `createCentralizedCompletion()` which:
-- Uses fine-tuned model by default (configurable via `OPENAI_MODEL` or `AI_MODEL`)
-- Adds ARCANOS routing system message for proper handling
-- Supports model override via `options.model`
-- Records conversation context in lightweight runtime
-
-```javascript
-import { createCentralizedCompletion } from './services/openai.js';
-
-const response = await createCentralizedCompletion([
-  { role: 'user', content: 'Hello ARCANOS' }
-]);
-```
-
-## Railway Deployment Features
-
-### 1. RESTful API Structure
-```
-/api/ask         - Chat completions
-/api/vision      - Image analysis
-/api/transcribe  - Audio transcription
-/api/update      - Update events
-/api/arcanos     - Core ARCANOS functionality
-/api/memory      - Memory management with JSON responses
-/api/sim         - Simulation scenarios
-/health          - Health monitoring
-/healthz         - Liveness probe
-/readyz          - Readiness probe
-```
-
-### 2. Environment Configuration
-
-Railway automatically provides:
-- `PORT` - Service port binding
-- `RAILWAY_ENVIRONMENT` - Environment identifier
-- `DATABASE_URL` - PostgreSQL connection (if attached)
-
-Required configuration:
-- `OPENAI_API_KEY` - OpenAI API authentication
-
-Recommended configuration:
-- `OPENAI_MODEL` or `AI_MODEL` - Model selection
-- `RUN_WORKERS` - Worker process control (default: `false` on Railway)
-
-### 3. Build Process
-
-Railway build (via `railway.json`):
+Build command:
 ```bash
 npm ci --include=dev && npm run build
 ```
 
-This:
-1. Installs all dependencies (including dev dependencies for TypeScript)
-2. Builds workers (`npm run build:workers`)
-3. Compiles TypeScript (`tsc`)
-4. Produces `dist/` directory with compiled JavaScript
-
-### 4. Start Process
-
-Railway start command (configured in `railway.json` and `Procfile`):
+Start command:
 ```bash
 node --max-old-space-size=7168 dist/start-server.js
 ```
 
-**Note:** The backend is now consolidated in `src/` (source of truth). All API endpoints (`/api/ask`, `/api/vision`, `/api/transcribe`, `/api/update`) are available from the single backend.
+Locked behavior:
+- Build-phase-first remains enabled.
+- Start command does not execute a build.
 
-Memory configuration:
-- `7168MB` max old space for Railway production environment
-- Optimized for Railway's memory allocation
+Health check:
+- Path: `GET /health`
+- Timeout: `300` seconds
+- Restart policy: `ON_FAILURE`, max retries `10`
 
-### 5. Health Monitoring
+## Environment Compatibility
+Railway-provided variables:
+- `PORT`
+- `RAILWAY_ENVIRONMENT`
+- `DATABASE_URL` (when attached)
 
-Railway health check configuration:
-- **Path:** `GET /health`
-- **Timeout:** 300 seconds
-- **Restart policy:** `ON_FAILURE` with max 10 retries
+Required for live AI responses:
+- `OPENAI_API_KEY`
 
-Health response includes:
-- OpenAI client status
-- Database connectivity
-- Uptime and timestamp
-- Service readiness
+Common optional overrides:
+- `OPENAI_BASE_URL`
+- `OPENAI_MODEL`
+- `AI_MODEL`
+- `RUN_WORKERS` (typically `false` on Railway)
 
-### 6. Security & Resilience
+## CI and Validation Compatibility
+Authoritative required workflow: `.github/workflows/ci-cd.yml`
 
-Production features:
-- Rate limiting (50-100 requests per 15 minutes per endpoint)
-- Input validation and sanitization
-- Circuit breaker pattern for API calls
-- Exponential backoff retry logic
-- Graceful degradation (mock responses when API unavailable)
-- Confirmation gates for mutating operations
+Required CI checks use mock-only OpenAI behavior:
+- `OPENAI_API_KEY=mock-api-key`
+- No required check depends on live OpenAI/network responses.
 
-## Compatibility Validation
-
-Run validation before deploying:
+Recommended local pre-merge checks:
 ```bash
+npm run guard:commit
+npm run build
+npm test
 npm run validate:railway
+npm run validate:backend-cli:offline
 ```
 
-This checks:
-- Railway configuration validity
-- Environment variable setup
-- Build process compatibility
-- Start command correctness
-- Health check endpoints
+## Security and Resilience Guarantees
+- Centralized env access in runtime modules.
+- Structured log sanitization redacts secret-like keys and token-like values.
+- Commit guard blocks staged artifacts and high-signal secret literals.
+- Missing OpenAI key degrades to mock behavior instead of crash for API runtime.
 
 ## References
-
-**Deployment Guide:**
-- [docs/RAILWAY_DEPLOYMENT.md](docs/RAILWAY_DEPLOYMENT.md) - Complete deployment instructions
-
-**Configuration:**
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) - Environment variables reference
-- [railway.json](railway.json) - Railway build/deploy configuration
-- [Procfile](Procfile) - Process definition
-
-**API Documentation:**
-- [docs/api/README.md](docs/api/README.md) - API endpoint reference
-
-**External Resources:**
-- [Railway Documentation](https://docs.railway.app/)
-- [OpenAI Node.js SDK](https://github.com/openai/openai-node)
-- [OpenAI API Reference](https://platform.openai.com/docs/api-reference)
+- `docs/RAILWAY_DEPLOYMENT.md`
+- `railway.json`
+- `validate-railway-compatibility.js`
+- `.github/workflows/ci-cd.yml`
+- `OPENAI_ADAPTER_MIGRATION.md`

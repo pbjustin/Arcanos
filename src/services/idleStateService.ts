@@ -1,7 +1,7 @@
-import { createIdleManager, IdleManager } from '../utils/idleManager.js';
+import { createIdleManager, IdleManager } from "@platform/resilience/idleManager.js";
 import { updateState } from './stateManager.js';
-import { logger } from '../utils/structuredLogging.js';
-import { getEnvNumber } from '../config/env.js';
+import { logger } from "@platform/logging/structuredLogging.js";
+import { getEnvNumber } from "@platform/runtime/env.js";
 
 const idleStateLogger = logger.child({ module: 'idle-state-service' });
 

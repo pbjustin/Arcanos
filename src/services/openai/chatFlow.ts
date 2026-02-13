@@ -1,5 +1,18 @@
+import { logOpenAIEvent, logOpenAISuccess } from "@platform/logging/openaiLogger.js";
+import { getOpenAIClientOrAdapter } from "./clientBridge.js";
+import { generateRequestId } from "@shared/idGenerator.js";
+import { responseCache } from "@platform/resilience/cache.js";
+import { trackModelResponse, trackPromptUsage } from "@services/contextualReinforcement.js";
+import { recordTraceEvent } from "@platform/logging/telemetry.js";
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { createCacheKey } from "@shared/hashUtils.js";
+import { generateMockResponse } from "./mock.js";
+import { OPENAI_LOG_MESSAGES } from "@platform/runtime/openaiLogMessages.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
+import { runtime } from "@services/openaiRuntime.js";
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from '../../adapters/openai.adapter.js';
+import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import type {
   CallOpenAIOptions,
   CallOpenAIResult,
@@ -9,29 +22,8 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionResponseFormat
 } from './types.js';
-import { getOpenAIClientOrAdapter } from './clientBridge.js';
-import { generateRequestId } from '../../utils/idGenerator.js';
-import { responseCache } from '../../utils/cache.js';
-import { aiLogger } from '../../utils/structuredLogging.js';
-import { recordTraceEvent } from '../../utils/telemetry.js';
-import crypto from 'crypto';
-import { runtime } from '../openaiRuntime.js';
-import { trackModelResponse, trackPromptUsage } from '../contextualReinforcement.js';
-import { createCacheKey } from '../../utils/hashUtils.js';
-import { generateMockResponse } from './mock.js';
-import { logOpenAIEvent, logOpenAISuccess } from '../../utils/openaiLogger.js';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
-import { buildSystemPromptMessages } from '../../utils/messageBuilderUtils.js';
-import { OPENAI_LOG_MESSAGES } from '../../config/openaiLogMessages.js';
-import {
-  CACHE_TTL_MS,
-  DEFAULT_MAX_RETRIES,
-  DEFAULT_SYSTEM_PROMPT,
-  OPENAI_COMPLETION_DEFAULTS,
-  NO_RESPONSE_CONTENT_FALLBACK,
-  REQUEST_ID_HEADER
-} from './constants.js';
-import { ROUTING_MAX_TOKENS } from './config.js';
+import { CACHE_TTL_MS, DEFAULT_MAX_RETRIES, DEFAULT_SYSTEM_PROMPT, OPENAI_COMPLETION_DEFAULTS, NO_RESPONSE_CONTENT_FALLBACK, REQUEST_ID_HEADER } from "./constants.js";
+import { ROUTING_MAX_TOKENS } from "./config.js";
 import {
   REASONING_LOG_SUMMARY_LENGTH,
   REASONING_FALLBACK_TEXT,
@@ -39,11 +31,11 @@ import {
   REASONING_TEMPERATURE,
   REASONING_TOKEN_LIMIT,
   buildReasoningPrompt
-} from '../../config/reasoningTemplates.js';
-import { STRICT_ASSISTANT_PROMPT } from '../../config/openaiPrompts.js';
-import { SERVER_CONSTANTS } from '../../config/serverMessages.js';
+} from "@platform/runtime/reasoningTemplates.js";
+import { STRICT_ASSISTANT_PROMPT } from "@platform/runtime/openaiPrompts.js";
+import { SERVER_CONSTANTS } from "@platform/runtime/serverMessages.js";
 import { buildChatMessages } from './messageBuilder.js';
-import { truncateText, hasContent } from '../../utils/promptUtils.js';
+import { truncateText, hasContent } from "@shared/promptUtils.js";
 import { createChatCompletionWithFallback, ensureModelMatchesExpectation } from './chatFallbacks.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
 import {
@@ -52,9 +44,9 @@ import {
   getDefaultModel,
   getGPT5Model
 } from './unifiedClient.js';
-import { withRetry } from '../../utils/resilience/unifiedRetry.js';
-import { classifyOpenAIError } from '../../lib/errors/reusable.js';
-import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
+import { withRetry } from "@platform/resilience/unifiedRetry.js";
+import { classifyOpenAIError } from "@core/lib/errors/reusable.js";
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { buildChatCompletionRequest } from './requestBuilders.js';
 
 /**
@@ -250,11 +242,8 @@ async function makeOpenAIRequest(
       throw new Error('OpenAI adapter not available');
     }
 
-    // Use adapter for OpenAI calls (adapter boundary pattern)
-    // Note: Adapter doesn't support signal/headers yet, so we use getClient() for now
-    // TODO: Extend adapter interface to support signal/headers
-    const client = adapter.getClient();
-    const response = await client.chat.completions.create(nonStreamingPayload, {
+    //audit Assumption: non-stream chat path should stay adapter-first with request options; risk: direct client bypass drifts from canonical interface; invariant: adapter handles call + options forwarding; handling: invoke adapter chat surface.
+    const response = await adapter.chat.completions.create(nonStreamingPayload, {
       signal: controller.signal,
       // Add request ID for tracing
       headers: {
@@ -496,8 +485,8 @@ export async function createCentralizedCompletion(
     presence_penalty?: number;
   } = {}
 ): Promise<ChatCompletion | AsyncIterable<unknown>> {
-  const { client } = getOpenAIClientOrAdapter();
-  if (!client) {
+  const { adapter, client } = getOpenAIClientOrAdapter();
+  if (!adapter && !client) {
     throw new Error('OpenAI client not initialized - API key required');
   }
 
@@ -532,7 +521,27 @@ export async function createCentralizedCompletion(
   };
 
   try {
-    const response = await client.chat.completions.create(requestPayload);
+    const requestOptions = {
+      headers: {
+        [REQUEST_ID_HEADER]: crypto.randomUUID()
+      }
+    };
+
+    let response: ChatCompletion | AsyncIterable<unknown>;
+    if (requestPayload.stream) {
+      //audit Assumption: streaming is not modeled on adapter chat surface yet; risk: feature regression; invariant: streaming remains available via explicit client escape hatch; handling: use underlying client for stream=true.
+      const streamClient = client ?? adapter?.getClient();
+      if (!streamClient) {
+        throw new Error('OpenAI client not initialized - streaming unavailable');
+      }
+      response = await streamClient.chat.completions.create(requestPayload, requestOptions);
+    } else if (adapter) {
+      response = await adapter.chat.completions.create(requestPayload, requestOptions);
+    } else if (client) {
+      response = await client.chat.completions.create(requestPayload, requestOptions);
+    } else {
+      throw new Error('OpenAI client not initialized');
+    }
     
     if (!options.stream && 'usage' in response) {
       logOpenAIEvent('info', OPENAI_LOG_MESSAGES.ARCANOS.COMPLETION_SUCCESS, {

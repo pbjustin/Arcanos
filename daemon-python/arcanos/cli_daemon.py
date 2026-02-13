@@ -9,16 +9,32 @@ from .config import Config
 from .error_handler import logger as error_logger
 
 
+_PLACEHOLDER_TOKENS = {"REPLACE_WITH_BACKEND_TOKEN", ""}
+
+# Timing constants for daemon background threads
+_INITIAL_HEARTBEAT_DELAY_S = 2       # Stagger first heartbeat to avoid race with command poll
+_MAX_BACKOFF_S = 120                 # Maximum backoff time (2 minutes) for rate-limited requests
+_MAX_BACKOFF_EXPONENT = 4            # Cap exponential backoff at 2^4 = 16x the base interval
+
+
 def start_daemon_threads(self) -> None:
     """
     Purpose: Launch daemon background threads for heartbeat and polling.
     Inputs/Outputs: None; starts threads when backend is configured.
-    Edge cases: Returns early when already running or backend missing.
+    Edge cases: Returns early when already running, backend missing, or token is placeholder.
     """
     if self._daemon_running:
         return
-    
+
     if not self.backend_client:
+        return
+
+    # Skip daemon threads when the backend token is an obvious placeholder —
+    # unauthenticated heartbeat/poll requests will just get 429'd.
+    if (Config.BACKEND_TOKEN or "") in _PLACEHOLDER_TOKENS:
+        error_logger.info(
+            "[DAEMON] Skipping daemon threads: BACKEND_TOKEN is not configured."
+        )
         return
 
     self._daemon_running = True
@@ -46,6 +62,8 @@ def heartbeat_loop(self) -> None:
     Inputs/Outputs: None; communicates with backend while running.
     Edge cases: Applies backoff on 429 responses and stops on shutdown.
     """
+    # Stagger the first heartbeat so it doesn't race with command poll on startup.
+    time.sleep(_INITIAL_HEARTBEAT_DELAY_S)
     last_request_time = time.time()
     consecutive_429_count = 0
 
@@ -59,7 +77,7 @@ def heartbeat_loop(self) -> None:
             time_since_last = request_start - last_request_time
 
             # Send heartbeat via backend client
-            response = self.backend_client._make_request(
+            response = self.backend_client.make_raw_request(
                 "POST",
                 "/api/daemon/heartbeat",
                 json={
@@ -80,7 +98,7 @@ def heartbeat_loop(self) -> None:
             if status_code == 429:
                 consecutive_429_count += 1
                 # 429 = rate limit; back off and log as warning (not connection failure)
-                backoff_time = min(120, self._heartbeat_interval * (2 ** min(consecutive_429_count, 4)))
+                backoff_time = min(_MAX_BACKOFF_S, self._heartbeat_interval * (2 ** min(consecutive_429_count, _MAX_BACKOFF_EXPONENT)))
                 if retry_after:
                     try:
                         backoff_time = max(backoff_time, int(retry_after))
@@ -124,7 +142,7 @@ def command_poll_loop(self) -> None:
             time_since_last = request_start - last_request_time
 
             # Poll for commands
-            response = self.backend_client._make_request(
+            response = self.backend_client.make_raw_request(
                 "GET",
                 f"/api/daemon/commands?instance_id={self.instance_id}"
             )
@@ -159,7 +177,7 @@ def command_poll_loop(self) -> None:
                     # Acknowledge processed commands
                     if command_ids:
                         try:
-                            ack_response = self.backend_client._make_request(
+                            ack_response = self.backend_client.make_raw_request(
                                 "POST",
                                 "/api/daemon/commands/ack",
                                 json={
@@ -180,7 +198,7 @@ def command_poll_loop(self) -> None:
             elif status_code == 429:
                 consecutive_429_count += 1
                 # 429 = rate limit; back off and log as warning (not connection failure)
-                backoff_time = min(120, self._command_poll_interval * (2 ** min(consecutive_429_count, 4)))
+                backoff_time = min(_MAX_BACKOFF_S, self._command_poll_interval * (2 ** min(consecutive_429_count, _MAX_BACKOFF_EXPONENT)))
                 if retry_after:
                     try:
                         backoff_time = max(backoff_time, int(retry_after))
@@ -258,6 +276,21 @@ def handle_daemon_command(self, command: DaemonCommand) -> None:
             self.console.print(f"[cyan]Backend message:[/cyan] {message}")
         else:
             self.console.print("[yellow]Notify command missing message[/yellow]")
+
+    elif command_name == "action_plan":
+        # ActionPlan orchestration: CLEAR 2.0 gated execution
+        if isinstance(command_payload, dict):
+            from .action_plan_handler import handle_action_plan
+            handle_action_plan(
+                plan_data=command_payload,
+                console=self.console,
+                backend_client=self.backend_client,
+                instance_id=self.instance_id,
+                run_handler=self.handle_run,
+                confirm_prompt=lambda msg: self._confirm_action(msg),
+            )
+        else:
+            self.console.print("[yellow]action_plan command missing payload[/yellow]")
 
     else:
         # //audit assumption: unsupported commands should be logged; risk: unexpected behavior; invariant: error logged; strategy: warn.
