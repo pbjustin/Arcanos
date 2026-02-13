@@ -376,7 +376,8 @@ export async function runThroughBrain(
       reasoningEffort: reasoningConfig?.effort,
       reflectionApplied,
       invocationsUsed: budget.used(),
-      invocationBudget: budget.limit()
+      invocationBudget: budget.limit(),
+      utalReason: "UTAL Keyword Density"
     };
     result.guardInfo = {
       watchdogMs: watchdog.elapsed(),
