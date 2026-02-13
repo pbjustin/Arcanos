@@ -1,2 +1,0 @@
-2026-01-26 01:45:17,005 - INFO - Robust debug mode initialized.
-2026-01-26 01:45:17,005 - INFO - Command file to watch: C:\Users\pbjus\Arcanos\daemon-python\debug_cmd.in
