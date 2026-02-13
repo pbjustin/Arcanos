@@ -156,8 +156,12 @@ router.use('/:gptId', async (req, res, next) => {
     const sessionId = `gpt-${incomingGptId}-${Date.now()}`;
     
     try {
-      const openai = await getOpenAIClientOrAdapter();
-      const trinityResult = await runThroughBrain(openai, prompt, sessionId, false);
+      const { client: openaiClient } = getOpenAIClientOrAdapter();
+      //audit Assumption: Trinity pipeline requires an initialized OpenAI client; failure risk: null client causes downstream crashes; expected invariant: client is non-null before runThroughBrain; handling strategy: fail fast with 503.
+      if (!openaiClient) {
+        return res.status(503).json({ error: 'OpenAI client not initialized' });
+      }
+      const trinityResult = await runThroughBrain(openaiClient, prompt, sessionId, undefined);
       
       // Build acknowledgment metadata
       const meta = getModuleMetadata(entry.module);
