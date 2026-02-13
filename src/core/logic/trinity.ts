@@ -26,6 +26,8 @@ import {
   type AuditLogEntry
 } from "@services/auditSafe.js";
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
+import { getGPT5Model } from "@services/openai.js";
+import { logger } from "@platform/logging/structuredLogging.js";
 import type { TrinityResult, TrinityRunOptions, TrinityDryRunPreview } from './trinityTypes.js';
 import {
   TRINITY_PREVIEW_SNIPPET_LENGTH,
@@ -37,6 +39,18 @@ import {
   buildDryRunPreview,
   buildAuditLogEntry
 } from './trinityStages.js';
+import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
+import { detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
+import {
+  acquireTierSlot,
+  Watchdog,
+  InvocationBudget,
+  recordSessionTokens,
+  getSessionTokenUsage,
+  registerRetry,
+  detectDowngrade,
+  logTrinityTelemetry
+} from './trinityGuards.js';
 
 // Re-export public types so callers import from trinity.js only
 export type { TrinityResult, TrinityRunOptions, TrinityDryRunPreview } from './trinityTypes.js';
@@ -168,12 +182,29 @@ export async function runThroughBrain(
   const requestId = generateRequestId('trinity');
   const routingStages: string[] = [];
   const gpt5Used = true;
+  const start = Date.now();
+
+  // --- Tier detection ---
+  const tier = detectTier(prompt);
+  const reasoningConfig = buildReasoningConfig(tier);
+  const maxBudget = getInvocationBudget(tier);
+  const budget = new InvocationBudget(maxBudget);
+
+  // --- Retry lineage check ---
+  registerRetry(requestId);
 
   const auditConfig = getAuditSafeConfig(prompt, overrideFlag);
-  console.log(`[🔒 TRINITY AUDIT-SAFE] Mode: ${auditConfig.auditSafeMode ? 'ENABLED' : 'DISABLED'}`);
+  logger.info('Trinity audit-safe mode', {
+    module: 'trinity', operation: 'audit-safe',
+    mode: auditConfig.auditSafeMode ? 'ENABLED' : 'DISABLED',
+    tier
+  });
 
   const memoryContext = getMemoryContext(prompt, sessionId);
-  console.log(`[🧠 TRINITY MEMORY] Retrieved ${memoryContext.relevantEntries.length} relevant entries`);
+  logger.info('Trinity memory context', {
+    module: 'trinity', operation: 'memory',
+    entries: memoryContext.relevantEntries.length
+  });
 
   const relevanceScores = memoryContext.relevantEntries.map(entry => entry.relevanceScore ?? 0);
   const memoryScoreSummary = calculateMemoryScoreSummary(relevanceScores);
@@ -200,90 +231,165 @@ export async function runThroughBrain(
     );
   }
 
-  const arcanosModel = await validateModel(client);
-  logArcanosRouting('INTAKE', arcanosModel, `Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
-  routingStages.push(`ARCANOS-INTAKE:${arcanosModel}`);
+  // --- Concurrency governor + watchdog ---
+  const [release] = await acquireTierSlot(tier);
+  const watchdog = new Watchdog();
 
-  const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
+  try {
+    // --- Stage 1: Intake ---
+    budget.increment();
+    watchdog.check();
 
-  const cognitiveDomain = options.cognitiveDomain;
+    const arcanosModel = await validateModel(client);
+    logArcanosRouting('INTAKE', arcanosModel, `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
+    routingStages.push(`ARCANOS-INTAKE:${arcanosModel}`);
 
-  const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain);
-  const framedRequest = intakeOutput.framedRequest;
-  const actualModel = intakeOutput.activeModel;
+    const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
+    const cognitiveDomain = options.cognitiveDomain;
 
-  routingStages.push('GPT5-REASONING');
-  const reasoningOutput = await runReasoningStage(client, framedRequest);
-  const gpt5Output = reasoningOutput.output;
-  const gpt5ModelUsed = reasoningOutput.model;
+    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain);
+    const framedRequest = intakeOutput.framedRequest;
+    const actualModel = intakeOutput.activeModel;
 
-  logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
-  routingStages.push('ARCANOS-FINAL');
-  const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain);
+    // --- Stage 2: Reasoning ---
+    budget.increment();
+    watchdog.check();
 
-  // Mid-layer translation: strip system/audit artifacts, humanize the response
-  const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
-  const finalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+    routingStages.push('GPT5-REASONING');
+    const reasoningOutput = await runReasoningStage(client, framedRequest);
+    let gpt5Output = reasoningOutput.output;
+    const gpt5ModelUsed = reasoningOutput.model;
 
-  const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
-  if (!finalProcessedSafely) {
-    auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
-  }
+    // --- Stage 2.5: Reflection (critical tier only) ---
+    let reflectionApplied = false;
+    if (tier === 'critical') {
+      budget.increment();
+      watchdog.check();
 
-  if (finalProcessedSafely && !intakeOutput.fallbackUsed && !finalOutput.fallbackUsed) {
-    storePattern(
-      getTrinityMessages().pattern_storage_label,
-      [
-        `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
-        `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
-        `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
-      ],
-      sessionId
+      const critique = await runReflection(client, gpt5Output, tier);
+      if (critique) {
+        gpt5Output += '\n\n--- CRITICAL REVIEW ---\n' + critique;
+        reflectionApplied = true;
+        routingStages.push('GPT5-REFLECTION');
+      }
+    }
+
+    // --- Stage 3: Final ---
+    watchdog.check();
+
+    logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
+    routingStages.push('ARCANOS-FINAL');
+    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain);
+
+    // Mid-layer translation: strip system/audit artifacts, humanize the response
+    const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
+    const finalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+
+    const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
+    if (!finalProcessedSafely) {
+      auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
+    }
+
+    if (finalProcessedSafely && !intakeOutput.fallbackUsed && !finalOutput.fallbackUsed) {
+      storePattern(
+        getTrinityMessages().pattern_storage_label,
+        [
+          `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+          `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+          `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
+        ],
+        sessionId
+      );
+    }
+
+    logRoutingSummary(arcanosModel, true, 'ARCANOS-FINAL');
+
+    const auditLogEntry: AuditLogEntry = buildAuditLogEntry(
+      requestId,
+      prompt,
+      finalText,
+      auditConfig,
+      memoryContext,
+      actualModel,
+      gpt5ModelUsed,
+      finalProcessedSafely,
+      auditFlags
     );
+    logAITaskLineage(auditLogEntry);
+
+    // --- Post-execution guards ---
+    const totalTokens = (finalOutput.usage?.total_tokens ?? 0) +
+      (intakeOutput.usage?.total_tokens ?? 0);
+
+    if (sessionId) {
+      recordSessionTokens(sessionId, totalTokens);
+    }
+
+    const downgradeDetected = detectDowngrade(getGPT5Model(), gpt5ModelUsed);
+
+    const latencyMs = Date.now() - start;
+    recordLatency(latencyMs);
+    const latencyDriftDetected = detectLatencyDrift();
+
+    logTrinityTelemetry({
+      tier,
+      totalTokens,
+      downgradeDetected,
+      latencyMs,
+      reflectionApplied,
+      requestId
+    });
+
+    const fallbackSummary = {
+      intakeFallbackUsed: intakeOutput.fallbackUsed,
+      gpt5FallbackUsed: reasoningOutput.fallbackUsed,
+      finalFallbackUsed: finalOutput.fallbackUsed,
+      fallbackReasons: [
+        ...(intakeOutput.fallbackUsed ? ['Intake fallback used'] : []),
+        ...(reasoningOutput.fallbackUsed ? ['GPT-5.1 fallback used'] : []),
+        ...(finalOutput.fallbackUsed ? ['Final fallback used'] : [])
+      ]
+    };
+
+    const result = buildTrinityResult(
+      finalText,
+      actualModel,
+      requestId,
+      routingStages,
+      gpt5Used,
+      gpt5ModelUsed,
+      reasoningOutput.error,
+      fallbackSummary,
+      auditConfig,
+      auditFlags,
+      finalProcessedSafely,
+      memoryContext,
+      memoryScoreSummary,
+      finalOutput.usage,
+      finalOutput.responseId,
+      finalOutput.created
+    );
+
+    // Attach tier and guard metadata
+    result.tierInfo = {
+      tier,
+      reasoningEffort: reasoningConfig?.effort,
+      reflectionApplied,
+      invocationsUsed: budget.used(),
+      invocationBudget: budget.limit()
+    };
+    result.guardInfo = {
+      watchdogMs: watchdog.elapsed(),
+      tokenCapApplied: TRINITY_HARD_TOKEN_CAP,
+      sessionTokensUsed: sessionId ? getSessionTokenUsage(sessionId) : undefined,
+      downgradeDetected,
+      latencyMs,
+      latencyDriftDetected
+    };
+
+    return result;
+
+  } finally {
+    release();
   }
-
-  logRoutingSummary(arcanosModel, true, 'ARCANOS-FINAL');
-
-  const auditLogEntry: AuditLogEntry = buildAuditLogEntry(
-    requestId,
-    prompt,
-    finalText,
-    auditConfig,
-    memoryContext,
-    actualModel,
-    gpt5ModelUsed,
-    finalProcessedSafely,
-    auditFlags
-  );
-  logAITaskLineage(auditLogEntry);
-
-  const fallbackSummary = {
-    intakeFallbackUsed: intakeOutput.fallbackUsed,
-    gpt5FallbackUsed: reasoningOutput.fallbackUsed,
-    finalFallbackUsed: finalOutput.fallbackUsed,
-    fallbackReasons: [
-      ...(intakeOutput.fallbackUsed ? ['Intake fallback used'] : []),
-      ...(reasoningOutput.fallbackUsed ? ['GPT-5.1 fallback used'] : []),
-      ...(finalOutput.fallbackUsed ? ['Final fallback used'] : [])
-    ]
-  };
-
-  return buildTrinityResult(
-    finalText,
-    actualModel,
-    requestId,
-    routingStages,
-    gpt5Used,
-    gpt5ModelUsed,
-    reasoningOutput.error,
-    fallbackSummary,
-    auditConfig,
-    auditFlags,
-    finalProcessedSafely,
-    memoryContext,
-    memoryScoreSummary,
-    finalOutput.usage,
-    finalOutput.responseId,
-    finalOutput.created
-  );
 }
