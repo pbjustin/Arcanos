@@ -15,8 +15,9 @@ Recommended reading order:
 4. `docs/API.md`
 5. `docs/CUSTOM_GPTS.md`
 6. `docs/FINE_TUNING.md`
-7. `docs/RAILWAY_DEPLOYMENT.md`
-8. `docs/CI_CD.md`
+7. `docs/CLEAR_METHOD_2_0.md`
+8. `docs/RAILWAY_DEPLOYMENT.md`
+9. `docs/CI_CD.md`
 
 ## Configuration
 Configuration source files:
@@ -40,3 +41,4 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 - `docs/CONFIGURATION.md`
 - `docs/CI_CD.md`
 - `docs/REFERENCES.md`
+- `docs/CLEAR_METHOD_2_0.md`
