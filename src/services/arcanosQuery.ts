@@ -1,5 +1,5 @@
 import { getDefaultModel, getGPT5Model } from './openai.js';
-import { ARCANOS_PROMPTS, buildMockArcanosResponse } from '../config/arcanosPrompts.js';
+import { ARCANOS_PROMPTS, buildMockArcanosResponse } from "@platform/runtime/arcanosPrompts.js";
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 // Use centralized model configuration

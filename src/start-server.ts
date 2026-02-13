@@ -1,4 +1,4 @@
-import { validateRequiredEnv } from './config/env.js';
+import { validateRequiredEnv } from "@platform/runtime/env.js";
 import { startServer } from './server.js';
 
 // Fail fast if required env vars are missing

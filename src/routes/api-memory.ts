@@ -1,12 +1,12 @@
 import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
-import { getSessionLogPath } from '../utils/logPath.js';
-import { saveMemory, loadMemory, deleteMemory, getStatus, query } from '../db/index.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { requireField } from '../utils/validation.js';
-import { confirmGate } from '../middleware/confirmGate.js';
-import { createRateLimitMiddleware } from '../utils/security.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { getSessionLogPath } from "@shared/logPath.js";
+import { saveMemory, loadMemory, deleteMemory, getStatus, query } from "@core/db/index.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { requireField } from "@shared/validation.js";
+import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { createRateLimitMiddleware } from "@platform/runtime/security.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = express.Router();
 

@@ -1,12 +1,13 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import config from './config/index.js';
-import { requestLoggingMiddleware, logger } from './utils/structuredLogging.js';
-import { setupDiagnostics } from './diagnostics.js';
-import { registerRoutes } from './routes/register.js';
-import { initOpenAI } from './init-openai.js';
-import { createFallbackMiddleware, createHealthCheckMiddleware } from './middleware/fallbackHandler.js';
-import errorHandler from './middleware/errorHandler.js';
+import { config } from "@platform/runtime/config.js";
+import { requestLoggingMiddleware, logger } from "@platform/logging/structuredLogging.js";
+import { setupDiagnostics } from "@core/diagnostics.js";
+import { registerRoutes } from "@routes/register.js";
+import { initOpenAI } from "@core/init-openai.js";
+import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transport/http/middleware/fallbackHandler.js";
+import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionGate.js";
+import errorHandler from "@transport/http/middleware/errorHandler.js";
 
 /**
  * Creates and configures the Express application.
@@ -19,6 +20,7 @@ export function createApp(): Express {
   app.use(express.urlencoded({ extended: true }));
 
   app.use(requestLoggingMiddleware);
+  app.use(unsafeExecutionGate);
   app.use(createHealthCheckMiddleware()); // Add health check middleware for AI endpoints
   initOpenAI(app);
   Object.defineProperty(app.locals, 'openai', {

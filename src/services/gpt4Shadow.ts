@@ -1,12 +1,12 @@
 import type OpenAI from 'openai';
 import { appendFileSync } from 'fs';
-import { ensureLogDirectory, getGPT4TracePath, getAuditShadowPath } from '../utils/logPath.js';
+import { ensureLogDirectory, getGPT4TracePath, getAuditShadowPath } from "@shared/logPath.js";
 import { validateAuditSafeOutput, createAuditSummary } from './auditSafe.js';
 import { ensureShadowReady, disableShadowMode } from './shadowControl.js';
-import { getTokenParameter } from '../utils/tokenParameterHelper.js';
-import type { OpenAIAdapter } from '../adapters/openai.adapter.js';
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import type { ChatCompletion } from './openai/types.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
 

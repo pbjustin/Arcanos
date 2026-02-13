@@ -4,11 +4,11 @@
  */
 
 import express, { Request, Response } from 'express';
-import { arcanosQuery } from '../services/arcanosQuery.js';
-import { requireField } from '../utils/validation.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
-import { getConfig } from '../config/unifiedConfig.js';
+import { arcanosQuery } from "@services/arcanosQuery.js";
+import { requireField } from "@shared/validation.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
 
 const router = express.Router();
 

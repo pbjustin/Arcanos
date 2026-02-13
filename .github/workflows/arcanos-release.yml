@@ -50,9 +50,17 @@ jobs:
         if: ${{ inputs.patch_only != true }}
         run: npm ci
 
+      - name: 🧹 Lint code
+        if: ${{ inputs.patch_only != true }}
+        run: npm run lint
+
       - name: 🔧 Build project
         if: ${{ inputs.patch_only != true }}
         run: npm run build
+
+      - name: 🧪 Run tests
+        if: ${{ inputs.patch_only != true }}
+        run: npm test
 
       - name: 🤖 ARCANOS Release Analysis
         if: ${{ inputs.patch_only != true }}

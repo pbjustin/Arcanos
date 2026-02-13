@@ -3,7 +3,7 @@
  * Consolidated utilities for error message extraction and user-friendly mapping
  */
 
-import { ERROR_MESSAGE_PATTERNS } from '../../config/errorMessages.js';
+import { ERROR_MESSAGE_PATTERNS } from '@platform/runtime/errorMessages.js';
 
 /**
  * Resolve a human-readable error message from unknown errors.

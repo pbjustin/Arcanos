@@ -5,8 +5,8 @@
 
 import { isRetryableError, classifyError, ErrorType } from './classification.js';
 import { resolveErrorMessage } from './messages.js';
-import { logOpenAIFailure, logOpenAIEvent } from '../../utils/openaiLogger.js';
-import { OPENAI_LOG_MESSAGES } from '../../config/openaiLogMessages.js';
+import { logOpenAIFailure, logOpenAIEvent } from '@platform/logging/openaiLogger.js';
+import { OPENAI_LOG_MESSAGES } from '@platform/runtime/openaiLogMessages.js';
 
 /**
  * Handle OpenAI request error with classification and logging

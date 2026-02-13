@@ -1,58 +1,41 @@
-# Scripts Overview
+# Scripts Guide
 
-This folder contains helper scripts for sync, deployment, debugging, audits, and maintenance.
+## Overview
+This directory contains operational scripts for sync, diagnostics, migration, docs audit, and deployment helpers.
 
-## Backend URL precedence
+## Prerequisites
+- Node.js and npm for `.js`/`.ts` scripts.
+- PowerShell for `.ps1` scripts on Windows.
+- Bash for `.sh` scripts in Unix-like environments.
 
-When a script needs to call the backend, use this precedence:
+## Setup
+Run scripts from repository root unless script comments specify otherwise.
 
+## Configuration
+Backend URL precedence used by scripts that call backend APIs:
 1. `ARCANOS_BACKEND_URL`
 2. `SERVER_URL`
 3. `BACKEND_URL`
 
-For one-time token flows, the backend must have `ARCANOS_AUTOMATION_SECRET` set. Optional header override: `ARCANOS_AUTOMATION_HEADER` (default: `x-arcanos-automation`).
+Automation token flows require backend `ARCANOS_AUTOMATION_SECRET`.
 
-## Sync and automation
+## Run locally
+Common scripts:
+- `node scripts/probe.js`
+- `node scripts/continuous-audit.js`
+- `./scripts/doc_audit.sh`
+- `node validate-railway-compatibility.js`
 
-- `cross-codebase-sync.js`
-- `sync-helper.js`
-- `auto-sync-watcher.js`
-- `setup-auto-sync.js`
-- `sync-github.ps1`
-- `sync-with-github-keep-pr-changes.ps1`
-- `sync-and-draft-pr-openai-wrapper.ps1`
-- `pre-commit-sync-check.js`
-- `schema-sync.js`
-- `sync-config.json`
+## Deploy (Railway)
+- `scripts/railway-set-secret.sh` can help set Railway variables.
+- `scripts/deploy-backend.ps1` is available for manual PowerShell deployment workflows.
 
-## Debug and health
+## Troubleshooting
+- Script not found: confirm exact script name in this folder.
+- Permission issues: run PowerShell/Bash with appropriate execution policy and permissions.
+- Backend script failures: verify backend URL and auth secret env variables.
 
-- `daemon-debug.ps1`
-- `smoke-dev-debug.ps1`
-- `issue-confirm-token.ps1`
-- `health_check.ps1`
-- `probe.js`
-
-## Deployment and backup
-
-- `deploy-backend.ps1`
-- `backup.ps1`
-- `backup-workspace-to-d.ps1`
-- `daemon-install-staging/` (staging assets and .env template)
-
-## Database and migrations
-
-- `db-init.js`
-- `migration-repair.js`
-
-## Docs and audits
-
-- `doc_audit.sh`
-- `continuous-audit.js`
-- `generate-tagged-guide.js`
-- `test-doc-workflow.js`
-
-## OpenAI wrappers
-
-- `arcanos-openai-wrapper.js`
-- `assistants-sync.ts`
+## References
+- `../package.json`
+- `../docs/RAILWAY_DEPLOYMENT.md`
+- `../docs/CI_CD.md`

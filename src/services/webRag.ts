@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto';
 import { getDefaultModel, hasValidAPIKey } from './openai.js';
 import { createEmbedding } from './openai/embeddings.js';
-import { fetchAndClean } from './webFetcher.js';
-import { cosineSimilarity } from '../utils/vectorUtils.js';
-import { saveRagDoc, loadAllRagDocs, initializeDatabaseWithSchema as initializeDatabase, getStatus } from '../db/index.js';
-import { logger } from '../utils/structuredLogging.js';
+import { fetchAndClean } from "@services/webFetcher.js";
+import { cosineSimilarity } from "@shared/vectorUtils.js";
+import { saveRagDoc, loadAllRagDocs, initializeDatabaseWithSchema as initializeDatabase, getStatus } from "@core/db/index.js";
+import { logger } from "@platform/logging/structuredLogging.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
 interface Doc {

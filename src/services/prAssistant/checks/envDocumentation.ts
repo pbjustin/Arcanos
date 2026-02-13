@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import type { CheckContext } from '../types.js';
+import type { CheckContext } from "@services/prAssistant/types.js";
 
 export async function validateEnvDocumentation(
   context: CheckContext,

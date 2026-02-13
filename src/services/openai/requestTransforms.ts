@@ -1,5 +1,5 @@
-import { getTokenParameter } from '../../utils/tokenParameterHelper.js';
-import { REASONING_SYSTEM_PROMPT, REASONING_TEMPERATURE, REASONING_TOKEN_LIMIT, buildReasoningPrompt } from '../../config/reasoningTemplates.js';
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { REASONING_SYSTEM_PROMPT, REASONING_TEMPERATURE, REASONING_TOKEN_LIMIT, buildReasoningPrompt } from "@platform/runtime/reasoningTemplates.js";
 import type { ChatCompletionCreateParams } from './types.js';
 
 /**

@@ -1,10 +1,10 @@
 import express, { Request, Response } from 'express';
-import { createCentralizedCompletion } from '../services/openai.js';
-import { generateRequestId } from '../utils/idGenerator.js';
-import { createValidationMiddleware, createRateLimitMiddleware } from '../utils/security.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
-import { buildTimestampedPayload } from '../utils/responseHelpers.js';
-import { resolveErrorMessage } from '../lib/errors/index.js';
+import { createCentralizedCompletion } from "@services/openai.js";
+import { generateRequestId } from "@shared/idGenerator.js";
+import { createValidationMiddleware, createRateLimitMiddleware } from "@platform/runtime/security.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type OpenAI from 'openai';
 
 const router = express.Router();

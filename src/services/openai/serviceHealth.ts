@@ -1,5 +1,5 @@
-import { responseCache } from '../../utils/cache.js';
-import { isOpenAIAdapterInitialized } from '../../adapters/openai.adapter.js';
+import { responseCache } from "@platform/resilience/cache.js";
+import { isOpenAIAdapterInitialized } from "@core/adapters/openai.adapter.js";
 import { RESILIENCE_CONSTANTS, getCircuitBreakerSnapshot } from './resilience.js';
 import {
   API_TIMEOUT_MS,

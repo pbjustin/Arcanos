@@ -1,3 +1,4 @@
+# Authoritative required workflow for branch protection checks.
 name: CI/CD Pipeline
 
 on:
@@ -9,6 +10,7 @@ on:
 
 env:
   NODE_VERSION: '20.11.1'
+  OPENAI_API_KEY: 'mock-api-key'
 
 jobs:
   lint-and-typecheck:
@@ -28,6 +30,9 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
+      - name: 🛡️ Commit guardrails
+        run: npm run guard:commit
+
       - name: 🔧 Type check
         run: npm run type-check
 
@@ -35,10 +40,14 @@ jobs:
         run: npm run lint
 
   build:
-    name: Build
+    name: Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     needs: [lint-and-typecheck]
-    
+
+    strategy:
+      matrix:
+        node-version: ['18.x', '20.11.1']
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -46,7 +55,7 @@ jobs:
       - name: 🧰 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
       - name: 📦 Install dependencies
@@ -56,6 +65,7 @@ jobs:
         run: npm run build
 
       - name: 📊 Upload build artifacts
+        if: matrix.node-version == '20.11.1'
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
@@ -91,11 +101,21 @@ jobs:
         if: matrix.test-type == 'unit'
         run: npm test
 
+      - name: 📊 Upload Node coverage to Codecov
+        if: matrix.test-type == 'unit'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          flags: node
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
       - name: 🔌 Run integration tests
         if: matrix.test-type == 'integration'
         run: |
           # Set minimal environment for testing
-          export OPENAI_API_KEY=test-key
+          export OPENAI_API_KEY=mock-api-key
           export NODE_ENV=test
           export PORT=0
           npm run test:integration || echo "Integration tests not yet implemented"
@@ -157,7 +177,7 @@ jobs:
         run: |
           export NODE_ENV=production
           export PORT=8080
-          export OPENAI_API_KEY=test-key
+          export OPENAI_API_KEY=mock-api-key
           timeout 30s npm start &
           SERVER_PID=$!
           
@@ -175,7 +195,7 @@ jobs:
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -189,8 +209,21 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
-      - name: 🔒 Run security audit
+      - name: 🔒 Run npm security audit
         run: npm audit --audit-level=moderate
+
+      - name: 📜 License compliance check
+        run: npx license-checker --production --failOn "GPL-3.0;AGPL-3.0"
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🔒 Run Python dependency audit
+        run: |
+          pip install pip-audit
+          pip-audit -r daemon-python/requirements.txt
 
   sdk-compliance-audit:
     name: Convergence Gate
@@ -225,10 +258,46 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  python-cli-windows:
+    name: Python CLI (Windows)
+    runs-on: windows-latest
+    needs: [lint-and-typecheck]
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai requests python-dotenv tenacity sentry-sdk pytest pytest-mock
+
+      - name: 🧪 Validate CLI offline contract
+        run: python daemon-python/validate_backend_cli_offline.py
+
+      - name: 🧪 Run Python unit tests with coverage
+        run: |
+          pip install pytest-cov
+          pytest daemon-python/tests/ -q --cov=daemon-python/arcanos --cov-report=xml:coverage-python.xml
+
+      - name: 📊 Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-python.xml
+          flags: python
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   all-checks-complete:
     name: All Checks Complete
     runs-on: ubuntu-latest
-    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit]
+    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows]
     
     steps:
       - name: ✅ All checks passed

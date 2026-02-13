@@ -1,6 +1,6 @@
-import { APPLICATION_CONSTANTS } from '../../utils/constants.js';
-import config from '../../config/index.js';
-import { getConfig } from '../../config/unifiedConfig.js';
+import { APPLICATION_CONSTANTS } from "@shared/constants.js";
+import { config } from "@platform/runtime/config.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -15,7 +15,7 @@ let cachedDefaultModel: string | null = null;
 /** Backend prefers fine-tuned model when set; otherwise OPENAI_MODEL then fallback. */
 function computeDefaultModelFromConfig(): string {
   const appConfig = getConfig();
-  return appConfig.defaultModel || 'gpt-4o-mini';
+  return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
 }
 
 export function resolveOpenAIBaseURL(): string | undefined {
@@ -76,14 +76,19 @@ export function getDefaultModel(): string {
 
 export function getFallbackModel(): string {
   const appConfig = getConfig();
-  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4;
+  // Ensure the fallback model is a distinct, more capable model than the default mini variant
+  return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1;
 }
 
-/** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else OPENAI_COMPLEX_MODEL / vision / gpt-4o. */
+/** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else gpt-4.1 for deep analysis. */
 export function getComplexModel(): string {
   const appConfig = getConfig();
-  // Prefer default model, fallback to gpt-4o
-  return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4O;
+  // Prefer a specifically configured default model if it differs from the lightweight mini model.
+  // Otherwise, use GPT-4.1 for complex/deep-analysis tasks.
+  if (appConfig.defaultModel && appConfig.defaultModel !== APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI) {
+    return appConfig.defaultModel;
+  }
+  return APPLICATION_CONSTANTS.MODEL_GPT_4_1;
 }
 
 export function getGPT5Model(): string {

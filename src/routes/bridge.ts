@@ -1,6 +1,6 @@
 import express from 'express';
-import { createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
-import { isBridgeEnabled } from '../utils/bridgeEnv.js';
+import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { isBridgeEnabled } from "@platform/runtime/bridgeEnv.js";
 
 const router = express.Router();
 

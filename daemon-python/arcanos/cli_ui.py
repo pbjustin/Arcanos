@@ -2,6 +2,7 @@
 UI content and presentation helpers for the ARCANOS CLI.
 """
 
+import re
 from typing import Any, Mapping
 
 from rich.markdown import Markdown
@@ -16,13 +17,13 @@ def build_welcome_markdown(version: str) -> str:
     Edge cases: version may be empty, which will still render a generic header.
     """
     return f"""
-# ?? Welcome to ARCANOS v{version}
+# Hey! Welcome to ARCANOS v{version}
 
-**Your AI-powered terminal companion**
+I'm your AI assistant, right here in the terminal.
 
-I can chat, see your screen, hear your voice, and help with commands!
+I can have conversations, see your screen, listen to your voice, run commands, and more.
 
-Type **help** for available commands or just start chatting naturally.
+Just type what's on your mind, or type **/help** to see what I can do.
     """
 
 
@@ -72,44 +73,40 @@ def get_help_markdown() -> str:
     Edge cases: Returns a non-empty string even if commands change.
     """
     return """
-# ?? ARCANOS Commands
+# What I can do
 
-### Conversation
-- Just type naturally to chat with ARCANOS
-- **help** - Show this help message
-- **exit** / **quit** - Exit ARCANOS
-- **deep <prompt>** / **backend <prompt>** - Force backend routing
-- **deep:** / **backend:** - Prefix for backend routing in hybrid mode
+### Chat
+Just type naturally — ask me anything, and I'll do my best to help.
 
-### Vision
-- **see** - Analyze screenshot
-- **see camera** - Analyze webcam image
-- **see backend** - Analyze screenshot via backend
-- **see camera backend** - Analyze webcam image via backend
+- **/deep <prompt>** — Send a question to the backend for deeper analysis
+- **/help** — Show this menu
+- **exit** / **quit** / **bye** — End our conversation
 
-### Voice
-- **voice** - Use voice input (one-time)
-- **voice backend** - Use backend transcription
-- **ptt** - Start push-to-talk mode (hold SPACEBAR)
-- **speak** - Replay the last response (TTS)
+### See things
+- **/see** — I'll look at your screen and tell you what I see
+- **/see camera** — Same thing, but with your webcam
 
-### Terminal
-- **run <command>** - Execute shell command (PowerShell on Windows, bash/sh on macOS/Linux)
-  Examples: `run Get-Process` (Windows), `run ls -la` (macOS/Linux)
+### Listen & speak
+- **/voice** — Talk to me (one-shot microphone capture)
+- **/ptt** — Push-to-talk mode (hold SPACEBAR)
+- **/speak** — I'll read my last response out loud
 
-### System
-- **stats** - Show usage statistics
-- **clear** - Clear conversation history
-- **reset** - Reset statistics
-- **update** - Check for updates and download installer (if GITHUB_RELEASES_REPO is set)
+### Run commands
+- **/run <command>** — I'll execute a shell command for you
+  Example: `/run Get-Process` or `/run ls -la`
 
-### Examples
+### Housekeeping
+- **/status** — Show backend-governed system state
+- **/stats** — See usage stats
+- **/clear** — Clear conversation history
+- **/update** — Check for updates
+
+### Try it out
 ```
-You: hey arcanos, what's the weather like today?
-You: see
-You: run Get-Date
-You: voice
-You: ptt
+You: what's the best way to learn Python?
+You: /see
+You: /run Get-Date
+You: /deep explain quantum computing
 ```
     """
 
@@ -146,6 +143,38 @@ def build_stats_table(
     return table
 
 
+def strip_markdown(text: str) -> str:
+    """
+    Purpose: Strip markdown formatting from text to produce clean plain text.
+    Inputs/Outputs: raw markdown text; returns plain text with formatting removed.
+    Edge cases: Empty text returns empty string; nested formatting may leave minor artifacts.
+    """
+    # Remove code block fences (```language ... ```)
+    text = re.sub(r"```[^\n]*\n?", "", text)
+    # Remove inline code backticks
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    # Remove images ![alt](url) before links
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
+    # Convert links [text](url) to just text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Remove bold+italic markers *** and ___
+    text = re.sub(r"\*\*\*(.+?)\*\*\*", r"\1", text)
+    text = re.sub(r"___(.+?)___", r"\1", text)
+    # Remove bold markers ** and __
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"__(.+?)__", r"\1", text)
+    # Remove italic markers * and _ (but not list bullets like "* item")
+    text = re.sub(r"(?<!\w)\*([^\s*].*?)\*(?!\w)", r"\1", text)
+    text = re.sub(r"(?<!\w)_([^\s_].*?)_(?!\w)", r"\1", text)
+    # Remove heading markers
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Remove horizontal rules
+    text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
+    # Collapse excessive blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def build_help_panel() -> Panel:
     """
     Purpose: Build the help panel for CLI display.
@@ -156,6 +185,48 @@ def build_help_panel() -> Panel:
     # //audit assumption: markdown is valid; risk: render issues; invariant: panel returned; strategy: pass through Rich Markdown.
     return Panel(
         Markdown(help_markdown),
-        title="?? ARCANOS Help",
+        title="ARCANOS Help",
         border_style="cyan",
     )
+
+
+def build_clear_summary_table(
+    clarity: float,
+    leverage: float,
+    efficiency: float,
+    alignment: float,
+    resilience: float,
+    overall: float,
+    decision: str,
+    plan_id: str = "",
+) -> Table:
+    """
+    Purpose: Build a CLEAR 2.0 score summary table for display.
+    Inputs/Outputs: CLEAR dimension scores, overall, decision, plan_id; returns Rich Table.
+    Edge cases: Scores outside 0-1 range still render but with red coloring.
+    """
+    title = f"CLEAR 2.0 — Plan {plan_id[:8]}..." if plan_id else "CLEAR 2.0 Score"
+    table = Table(title=title, show_header=True)
+    table.add_column("Dimension", style="cyan")
+    table.add_column("Score", justify="right")
+
+    dimensions = [
+        ("C – Clarity", clarity),
+        ("L – Leverage", leverage),
+        ("E – Efficiency", efficiency),
+        ("A – Alignment", alignment),
+        ("R – Resilience", resilience),
+    ]
+
+    for name, value in dimensions:
+        color = "green" if value >= 0.7 else "yellow" if value >= 0.4 else "red"
+        table.add_row(name, f"[{color}]{value:.2f}[/{color}]")
+
+    decision_upper = decision.upper()
+    decision_color = "green" if decision_upper == "ALLOW" else "yellow" if decision_upper == "CONFIRM" else "red"
+    table.add_row(
+        "[bold]Overall[/bold]",
+        f"[bold {decision_color}]{overall:.3f} → {decision_upper}[/bold {decision_color}]",
+    )
+
+    return table

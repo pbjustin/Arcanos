@@ -11,7 +11,7 @@ body:
         - [ ] Feature aligns with AI-controlled architecture principles
         - [ ] Not a duplicate of existing feature requests
         - [ ] Backward compatibility impact considered
-        - [ ] OpenAI SDK v5.16.0 compatibility requirements identified
+        - [ ] OpenAI SDK v6.16.0 compatibility requirements identified
         - [ ] Railway deployment implications considered
 
   - type: textarea
@@ -89,7 +89,7 @@ body:
       description: Would this feature require confirmation gates for sensitive operations?
       options:
         - "No confirmation needed"
-        - "Yes - requires X-Confirmation header"
+        - "Yes - requires x-confirmed header"
         - "Depends on implementation"
         - "Unsure"
 

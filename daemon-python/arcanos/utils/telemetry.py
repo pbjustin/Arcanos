@@ -18,6 +18,7 @@ import re
 from typing import Callable, TypeVar, Optional, Dict, Any
 from datetime import datetime
 from ..telemetry import Telemetry
+from ..env import get_env
 import logging
 
 logger = logging.getLogger("arcanos.telemetry")
@@ -42,6 +43,29 @@ SENSITIVE_PATTERNS = [
     r'openai[_-]?api[_-]?key',
     r'backend[_-]?token',
 ]
+
+SENSITIVE_VALUE_PATTERNS = [
+    re.compile(r"\bsk-[a-zA-Z0-9]{20,}\b"),
+    re.compile(r"\bbearer\s+[a-zA-Z0-9._-]{12,}\b", re.IGNORECASE),
+    re.compile(r"\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b"),
+    re.compile(r"\b(?:postgres|postgresql|mysql|mongodb):\/\/[^@\s]+:[^@\s]+@", re.IGNORECASE),
+]
+
+
+def sanitize_sensitive_string(value: str) -> str:
+    """
+    Recursively sanitizes sensitive token-like literal strings.
+
+    Args:
+        value: Raw string candidate.
+
+    Returns:
+        Redacted marker when value looks credential-like, otherwise original value.
+    """
+    #audit Assumption: token/connection-string signatures in log strings are sensitive; risk: secret leakage in telemetry/debug files; invariant: sensitive literals redacted; strategy: pattern-based replacement.
+    if any(pattern.search(value) for pattern in SENSITIVE_VALUE_PATTERNS):
+        return "[REDACTED]"
+    return value
 
 
 def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> Any:
@@ -81,6 +105,8 @@ def sanitize_sensitive_data(data: Any, depth: int = 0, max_depth: int = 10) -> A
         return sanitized
     if isinstance(data, list):
         return [sanitize_sensitive_data(item, depth + 1, max_depth) for item in data]
+    if isinstance(data, str):
+        return sanitize_sensitive_string(data)
     return data
 # Global telemetry instance
 _telemetry_instance: Optional[Telemetry] = None
@@ -291,16 +317,13 @@ def log_railway(
         message: Log message
         metadata: Additional metadata
     """
-    import os
     import json
     
     # Sanitize metadata to prevent credential leakage
     sanitized_metadata = sanitize_sensitive_data(metadata or {}) if metadata else {}
-    # Use Config for env access (adapter boundary pattern)
-    # Note: NODE_ENV and RAILWAY_ENVIRONMENT are not yet in Config class, so check env directly
-    # These are system/env detection vars, acceptable to check via os.getenv
-    node_env = os.getenv("NODE_ENV")
-    railway_env = os.getenv("RAILWAY_ENVIRONMENT")
+    # Use centralized env module for runtime env reads.
+    node_env = get_env("NODE_ENV")
+    railway_env = get_env("RAILWAY_ENVIRONMENT")
     is_production = node_env == "production" or bool(railway_env)
     
     if is_production:

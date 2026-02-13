@@ -1,6 +1,6 @@
-import { CircuitBreaker, ExponentialBackoff } from '../../utils/circuitBreaker.js';
-import { recordTraceEvent, markOperation } from '../../utils/telemetry.js';
-import { resolveErrorMessage } from '../../lib/errors/index.js';
+import { CircuitBreaker, ExponentialBackoff } from "@platform/resilience/circuitBreaker.js";
+import { recordTraceEvent, markOperation } from "@platform/logging/telemetry.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export const RESILIENCE_CONSTANTS = {
   DEFAULT_MAX_TOKENS: 1024,

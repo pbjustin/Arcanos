@@ -4,12 +4,18 @@ Handles all OpenAI API interactions with retry logic and caching.
 """
 
 import time
-from io import BytesIO
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union, Generator
 from openai import OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, BadRequestError, NotFoundError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .config import Config
 from .openai.unified_client import get_or_create_client
+from .openai.openai_adapter import chat_completion, chat_stream, transcribe, vision_completion
+
+# OpenAI pricing per token (USD)
+GPT4O_MINI_INPUT_COST = 0.15 / 1_000_000
+GPT4O_MINI_OUTPUT_COST = 0.60 / 1_000_000
+GPT4O_INPUT_COST = 5.00 / 1_000_000
+GPT4O_OUTPUT_COST = 15.00 / 1_000_000
 
 
 def _is_mock_api_key(api_key: str) -> bool:
@@ -59,10 +65,8 @@ class GPTClient:
             raise ValueError("OpenAI API key is required")
 
         self.is_mock = _is_mock_api_key(self.api_key)
-        # Use unified_client adapter instead of direct OpenAI construction
-        # This enforces the adapter boundary pattern
-        self.client = None if self.is_mock else get_or_create_client(Config)
-        if not self.is_mock and not self.client:
+        #audit Assumption: non-mock mode requires unified client availability before serving requests; risk: deferred runtime failures per call; invariant: readiness checked at initialization; handling: fail fast if client singleton cannot initialize.
+        if not self.is_mock and not get_or_create_client(Config):
             raise RuntimeError("Failed to initialize OpenAI client via unified_client adapter")
         self._request_cache: Dict[str, tuple[str, float]] = {}
         self._cache_ttl = 300  # 5 minutes
@@ -107,23 +111,23 @@ class GPTClient:
                 if time.time() - cached_time < self._cache_ttl:
                     return cached_response, 0, 0.0
 
-            # Make API call
-            response = self.client.chat.completions.create(
-                model=Config.OPENAI_MODEL,
-                messages=messages,
+            # Make API call through canonical adapter surface
+            response = chat_completion(
+                user_message=user_message,
+                system_prompt=system_prompt,
                 temperature=temperature or Config.TEMPERATURE,
                 max_tokens=max_tokens or Config.MAX_TOKENS,
-                timeout=Config.REQUEST_TIMEOUT
+                conversation_history=conversation_history,
+                model=Config.OPENAI_MODEL,
             )
 
             # Extract response
             response_text = response.choices[0].message.content
             tokens_used = response.usage.total_tokens
 
-            # Calculate cost (GPT-4o Mini: $0.15/1M input, $0.60/1M output)
             input_tokens = response.usage.prompt_tokens
             output_tokens = response.usage.completion_tokens
-            cost = (input_tokens * 0.15 / 1_000_000) + (output_tokens * 0.60 / 1_000_000)
+            cost = (input_tokens * GPT4O_MINI_INPUT_COST) + (output_tokens * GPT4O_MINI_OUTPUT_COST)
 
             # Cache response
             self._request_cache[cache_key] = (response_text, time.time())
@@ -160,36 +164,33 @@ class GPTClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         conversation_history: Optional[list] = None
-    ):
+    ) -> Generator[Union[str, Any], None, None]:
         """
-        Stream a response from GPT, yielding text chunks.
+        Stream a response from GPT, yielding text chunks and a final usage object.
+        
+        Yields:
+            str: Text content deltas as they arrive
+            Usage object: Final chunk with token usage statistics (has .total_tokens, 
+                         .prompt_tokens, .completion_tokens attributes)
         """
         try:
-            messages = []
-
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-
-            if conversation_history:
-                for conv in conversation_history[-5:]:
-                    messages.append({"role": "user", "content": conv["user"]})
-                    messages.append({"role": "assistant", "content": conv["ai"]})
-
-            messages.append({"role": "user", "content": user_message})
-
-            stream = self.client.chat.completions.create(
-                model=Config.OPENAI_MODEL,
-                messages=messages,
+            stream = chat_stream(
+                user_message=user_message,
+                system_prompt=system_prompt,
                 temperature=temperature or Config.TEMPERATURE,
                 max_tokens=max_tokens or Config.MAX_TOKENS,
-                timeout=Config.REQUEST_TIMEOUT,
-                stream=True
+                conversation_history=conversation_history,
+                model=Config.OPENAI_MODEL,
             )
 
             for chunk in stream:
-                delta = chunk.choices[0].delta.content if chunk.choices else None
-                if delta:
-                    yield delta
+                if chunk.choices:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+                # Final chunk carries usage stats (no choices)
+                if chunk.usage:
+                    yield chunk.usage
 
         except AuthenticationError:
             raise ValueError("Invalid OpenAI API key. Check your .env file.")
@@ -226,37 +227,20 @@ class GPTClient:
         Returns: (response_text, tokens_used, cost)
         """
         try:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_message},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}",
-                                "detail": "auto"
-                            }
-                        }
-                    ]
-                }
-            ]
-
-            response = self.client.chat.completions.create(
-                model=Config.OPENAI_VISION_MODEL,
-                messages=messages,
+            response = vision_completion(
+                user_message=user_message,
+                image_base64=image_base64,
                 temperature=temperature or Config.TEMPERATURE,
                 max_tokens=max_tokens or Config.MAX_TOKENS,
-                timeout=Config.REQUEST_TIMEOUT
+                model=Config.OPENAI_VISION_MODEL,
             )
 
             response_text = response.choices[0].message.content
             tokens_used = response.usage.total_tokens
 
-            # Calculate cost (GPT-4o: $2.50/1M input, $10.00/1M output)
             input_tokens = response.usage.prompt_tokens
             output_tokens = response.usage.completion_tokens
-            cost = (input_tokens * 2.50 / 1_000_000) + (output_tokens * 10.00 / 1_000_000)
+            cost = (input_tokens * GPT4O_INPUT_COST) + (output_tokens * GPT4O_OUTPUT_COST)
 
             return response_text, tokens_used, cost
 
@@ -293,13 +277,10 @@ class GPTClient:
         Returns: transcribed text
         """
         try:
-            audio_file = BytesIO(audio_bytes)
-            audio_file.name = filename
-
-            response = self.client.audio.transcriptions.create(
+            response = transcribe(
+                audio_bytes=audio_bytes,
+                filename=filename,
                 model=Config.OPENAI_TRANSCRIBE_MODEL,
-                file=audio_file,
-                timeout=Config.REQUEST_TIMEOUT
             )
 
             if isinstance(response, str):

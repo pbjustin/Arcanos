@@ -1,21 +1,21 @@
 import express, { Request, Response } from 'express';
-import { createRateLimitMiddleware, securityHeaders } from '../utils/security.js';
-import { asyncHandler } from '../utils/asyncHandler.js';
+import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { asyncHandler } from "@transport/http/asyncHandler.js";
 import { getModulesForRegistry } from './modules.js';
-import { recordTraceEvent } from '../utils/telemetry.js';
+import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import {
   DAEMON_COMMAND_RETENTION_MS,
   DAEMON_RATE_LIMIT_MAX,
   DAEMON_RATE_LIMIT_WINDOW_MS,
   DAEMON_REGISTRY_RATE_LIMIT_MAX,
   DAEMON_REGISTRY_RATE_LIMIT_WINDOW_MS
-} from '../config/daemonConfig.js';
+} from "@platform/runtime/daemonConfig.js";
 import {
   DAEMON_REGISTRY_CORE,
   DAEMON_REGISTRY_ENDPOINTS,
   DAEMON_REGISTRY_TOOLS,
   DAEMON_REGISTRY_VERSION
-} from '../config/daemonRegistry.js';
+} from "@platform/runtime/daemonRegistry.js";
 import { DaemonHeartbeat } from './daemonStore.js';
 import { daemonLogger, daemonStore } from './api-daemon/context.js';
 import { requireDaemonAuth } from './api-daemon/auth.js';
