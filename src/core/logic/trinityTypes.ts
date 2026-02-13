@@ -53,6 +53,21 @@ export interface TrinityResult {
     requestId: string;
     logged: boolean;
   };
+  tierInfo?: {
+    tier: 'simple' | 'complex' | 'critical';
+    reasoningEffort?: 'high';
+    reflectionApplied: boolean;
+    invocationsUsed: number;
+    invocationBudget: number;
+  };
+  guardInfo?: {
+    watchdogMs: number;
+    tokenCapApplied: number;
+    sessionTokensUsed?: number;
+    downgradeDetected: boolean;
+    latencyMs: number;
+    latencyDriftDetected: boolean;
+  };
 }
 
 export interface TrinityRunOptions {
