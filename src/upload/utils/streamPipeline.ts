@@ -1,4 +1,3 @@
-import { pipeline } from "stream";
-import { promisify } from "util";
+import { pipeline } from "stream/promises";
 
-export const streamPipeline = promisify(pipeline);
+export const streamPipeline = pipeline;

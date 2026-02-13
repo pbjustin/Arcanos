@@ -13,54 +13,55 @@ export function handleUpload(req: Request): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
     const uploadId = uuid();
     const uploadDir = path.join(config.UPLOAD_ROOT, uploadId);
-    ensureDir(uploadDir);
 
-    const zipPath = path.join(uploadDir, "original.zip");
+    ensureDir(uploadDir).then(() => {
+      const zipPath = path.join(uploadDir, "original.zip");
 
-    const busboy = Busboy({
-      headers: req.headers,
-      limits: { fileSize: config.MAX_FILE_SIZE, files: 1 }
-    });
+      const busboy = Busboy({
+        headers: req.headers,
+        limits: { fileSize: config.MAX_FILE_SIZE, files: 1 }
+      });
 
-    let uploaded = false;
+      let uploaded = false;
 
-    busboy.on("file", (field, file) => {
-      uploaded = true;
+      busboy.on("file", (field, file) => {
+        uploaded = true;
 
-      const writeStream = fs.createWriteStream(zipPath);
+        const writeStream = fs.createWriteStream(zipPath);
 
-      file.on("limit", () =>
-        reject(new Error("File size limit exceeded"))
-      );
+        file.on("limit", () =>
+          reject(new Error("File size limit exceeded"))
+        );
 
-      file.on("error", reject);
-      writeStream.on("error", reject);
+        file.on("error", reject);
+        writeStream.on("error", reject);
 
-      file.pipe(writeStream);
-    });
+        file.pipe(writeStream);
+      });
 
-    busboy.on("finish", async () => {
-      if (!uploaded) return reject(new Error("No file uploaded"));
+      busboy.on("finish", async () => {
+        if (!uploaded) return reject(new Error("No file uploaded"));
 
-      try {
-        const type = await fileTypeFromFile(zipPath);
-        if (!type || type.mime !== "application/zip") {
-          throw new Error("Invalid MIME type");
+        try {
+          const type = await fileTypeFromFile(zipPath);
+          if (!type || type.mime !== "application/zip") {
+            throw new Error("Invalid MIME type");
+          }
+
+          const extracted = await extractZip(zipPath, uploadDir);
+
+          resolve({
+            uploadId,
+            extractedFiles: extracted
+          });
+        } catch (err) {
+          reject(err);
         }
+      });
 
-        const extracted = await extractZip(zipPath, uploadDir);
+      busboy.on("error", reject);
 
-        resolve({
-          uploadId,
-          extractedFiles: extracted
-        });
-      } catch (err) {
-        reject(err);
-      }
-    });
-
-    busboy.on("error", reject);
-
-    req.pipe(busboy);
+      req.pipe(busboy);
+    }).catch(reject);
   });
 }
