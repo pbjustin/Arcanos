@@ -11,7 +11,24 @@ export default {
     }]
   },
   moduleNameMapper: {
-    '^(\\.{1,2}/.*)\\.js$': '$1'
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^@core/lib/(.*)\\.js$': '<rootDir>/src/lib/$1',
+    '^@core/lib/(.*)$': '<rootDir>/src/lib/$1',
+    '^@platform/(.*)\\.js$': '<rootDir>/src/platform/$1',
+    '^@platform$': '<rootDir>/src/platform/index.ts',
+    '^@platform/(.*)$': '<rootDir>/src/platform/$1',
+    '^@services/(.*)\\.js$': '<rootDir>/src/services/$1',
+    '^@services/(.*)$': '<rootDir>/src/services/$1',
+    '^@shared/(.*)\\.js$': '<rootDir>/src/shared/$1',
+    '^@shared$': '<rootDir>/src/shared/index.ts',
+    '^@shared/(.*)$': '<rootDir>/src/shared/$1',
+    '^@transport/(.*)\\.js$': '<rootDir>/src/transport/$1',
+    '^@transport$': '<rootDir>/src/transport/index.ts',
+    '^@transport/(.*)$': '<rootDir>/src/transport/$1',
+    '^@core/(.*)\\.js$': '<rootDir>/src/core/$1',
+    '^@core/(.*)$': '<rootDir>/src/core/$1',
+    '^@routes/(.*)\\.js$': '<rootDir>/src/routes/$1',
+    '^@routes/(.*)$': '<rootDir>/src/routes/$1'
   },
   collectCoverage: true,
   coverageDirectory: 'coverage',
