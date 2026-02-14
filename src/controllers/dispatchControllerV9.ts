@@ -4,6 +4,7 @@
    ============================================================ */
 
 import { getActiveBrain } from "../brain/brainFactory.js";
+import type { BrainResponse } from "../brain/brainRegistry.js";
 
 export async function dispatchControllerV9(
   prompt: string,

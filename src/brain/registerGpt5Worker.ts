@@ -3,6 +3,7 @@
    File: src/brain/registerGpt5Worker.ts
    ============================================================ */
 
+import type { Brain, BrainPayload, BrainResponse } from "./brainRegistry.js";
 import { registerBrain } from "./brainRegistry.js";
 
 export async function registerGpt5Worker() {

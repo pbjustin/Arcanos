@@ -3,6 +3,7 @@
    File: src/brain/brainFactory.ts
    ============================================================ */
 
+import type { Brain } from "./brainRegistry.js";
 import { getBrain, brainExists } from "./brainRegistry.js";
 import { MockBrain } from "./mockBrain.js";
 
