@@ -22,7 +22,18 @@ const FORBIDDEN_PHRASES = [
   'treat as critical'
 ];
 
-const COMPLEXITY_KEYWORDS = ['audit', 'architecture', 'failure mode', 'threat'];
+const COMPLEXITY_KEYWORDS = [
+  'audit',
+  'architecture',
+  'failure mode',
+  'threat',
+  'infrastructure',
+  'security',
+  'concurrency',
+  'downgrade detection',
+  'watchdog',
+  'multi-tenant'
+];
 
 export function detectTier(prompt: string): Tier {
   const normalized = prompt.toLowerCase().replace(/\s+/g, ' ');
