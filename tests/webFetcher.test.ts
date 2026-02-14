@@ -4,8 +4,12 @@ import { fetchAndClean } from '../src/shared/webFetcher.js';
 describe('fetchAndClean', () => {
   let server: http.Server;
   let baseUrl: string;
+  let previousLocalhostFetchFlag: string | undefined;
 
   beforeAll(async () => {
+    previousLocalhostFetchFlag = process.env.ARCANOS_ALLOW_LOCALHOST_FETCH;
+    process.env.ARCANOS_ALLOW_LOCALHOST_FETCH = 'true';
+
     server = http.createServer((_, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`
@@ -37,6 +41,11 @@ describe('fetchAndClean', () => {
 
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (typeof previousLocalhostFetchFlag === 'string') {
+      process.env.ARCANOS_ALLOW_LOCALHOST_FETCH = previousLocalhostFetchFlag;
+    } else {
+      delete process.env.ARCANOS_ALLOW_LOCALHOST_FETCH;
+    }
   });
 
   it('strips non-text elements and condenses whitespace', async () => {
@@ -58,5 +67,11 @@ describe('fetchAndClean', () => {
     expect(cleaned).toContain('[LINKS]');
     expect(cleaned).toContain('Guide Index ->');
     expect(cleaned).toContain('FAQ ->');
+  });
+
+  it('blocks localhost fetches when local-development bypass is not explicitly enabled', async () => {
+    delete process.env.ARCANOS_ALLOW_LOCALHOST_FETCH;
+    await expect(fetchAndClean(baseUrl)).rejects.toThrow('Private/internal IP addresses are not allowed');
+    process.env.ARCANOS_ALLOW_LOCALHOST_FETCH = 'true';
   });
 });

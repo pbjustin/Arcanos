@@ -5,7 +5,7 @@ T = TypeVar("T")
 
 from functools import wraps
 from .config import Config
-from .utils.telemetry import get_telemetry
+from .utils.telemetry import get_telemetry, sanitize_sensitive_string
 
 logger = logging.getLogger("arcanos")
 if not logger.handlers:
@@ -31,19 +31,28 @@ class ErrorHandler:
 
     @classmethod
     def initialize(cls) -> None:
-        """Initialize error handling (delegates to Telemetry)"""
+        """
+        Purpose: Initialize telemetry-backed error reporting one time.
+        Inputs/Outputs: None; mutates class-level initialization state.
+        Edge cases: Telemetry initialization failures are swallowed to avoid startup crashes.
+        """
         if cls._initialized:
             return
 
         if Config.TELEMETRY_ENABLED:
-            # Telemetry class handles Sentry initialization
-            get_telemetry()
-            cls._initialized = True
+            try:
+                # //audit assumption: telemetry bootstrap can fail at import/startup time; failure risk: app fails before CLI loop starts; expected invariant: startup remains available without telemetry; handling strategy: swallow telemetry init errors and continue.
+                get_telemetry()
+                cls._initialized = True
+            except Exception:
+                cls._initialized = False
 
     @staticmethod
     def handle_exception(e: Exception, context: str = "") -> str:
         """
-        Handle an exception and return user-friendly message
+        Purpose: Convert an exception into a user-facing message and send telemetry.
+        Inputs/Outputs: Exception + context string -> formatted user-friendly message.
+        Edge cases: Telemetry failures are swallowed and sensitive error text is redacted.
         """
         error_type = type(e).__name__
         error_msg = str(e)
@@ -70,7 +79,10 @@ class ErrorHandler:
         # Track error via Telemetry (which handles Sentry if enabled)
         if Config.TELEMETRY_ENABLED:
             try:
-                get_telemetry().track_error(e, {"context": context})
+                # //audit assumption: raw exception text may include secrets/PII; failure risk: sensitive data leakage to telemetry providers; expected invariant: telemetry error payload is redacted; handling strategy: sanitize message before track_error.
+                sanitized_error_message = sanitize_sensitive_string(error_msg) if error_msg else error_type
+                telemetry_error = Exception(sanitized_error_message)
+                get_telemetry().track_error(telemetry_error, {"context": context, "error_type": error_type})
             except Exception:
                 pass  # Fail silently
 
