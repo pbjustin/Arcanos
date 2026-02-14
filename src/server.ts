@@ -14,6 +14,7 @@ import { updateState } from "@services/stateManager.js";
 import { getDefaultModel } from "@services/openai.js";
 import { createApp } from './app.js';
 import { performStartup } from "@core/startup.js";
+import { bootstrap } from './server/bootstrap.js';
 import type { WorkerInitResult } from "@platform/runtime/workerBoot.js";
 import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, logShutdownEvent } from "@platform/logging/bootLogger.js";
 import { logger } from "@platform/logging/structuredLogging.js";
@@ -156,6 +157,7 @@ function registerProcessHandlers(server: Server, actualPort: number, onShutdown?
 
 export async function createServer(options: ServerFactoryOptions = {}): Promise<ServerLifecycle> {
   await performStartup();
+  await bootstrap();
   const app = createApp();
   const idleStateService = createIdleStateService();
   app.locals.idleStateService = idleStateService;
