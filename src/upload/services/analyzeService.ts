@@ -1,4 +1,5 @@
 import { promises as fs } from "fs";
+import { createReadStream } from "fs";
 import path from "path";
 import { config } from "../config/index.js";
 import { UploadError } from "../types/upload.js";
@@ -7,6 +8,10 @@ import { logger } from "../utils/logger.js";
 
 /** Max total characters we'll send to the AI in one request. */
 const MAX_CONTENT_CHARS = 80_000;
+
+/** Max bytes to read per file. UTF-8 worst case is 4 bytes/char, so we
+ *  read at most MAX_CONTENT_CHARS * 4 bytes to avoid loading huge files. */
+const MAX_READ_BYTES = MAX_CONTENT_CHARS * 4;
 
 /** Extensions we consider readable text files. */
 const TEXT_EXTENSIONS = new Set([
@@ -39,13 +44,16 @@ export async function assembleFileContents(
     }
 
     try {
-      const raw = await fs.readFile(filePath, "utf-8");
       const remaining = MAX_CONTENT_CHARS - totalChars;
 
       if (remaining <= 0) {
         truncated = true;
         break;
       }
+
+      // Only read the bytes we actually need instead of loading the whole file
+      const bytesToRead = Math.min(MAX_READ_BYTES, remaining * 4);
+      const raw = await readChunk(filePath, bytesToRead);
 
       const content = raw.length > remaining ? raw.slice(0, remaining) : raw;
       if (raw.length > remaining) truncated = true;
@@ -62,6 +70,33 @@ export async function assembleFileContents(
   }
 
   return { content: sections.join("\n"), filesRead, truncated };
+}
+
+/**
+ * Read at most `maxBytes` from a file, returning a UTF-8 string.
+ * Avoids loading multi-MB files entirely into memory.
+ */
+function readChunk(filePath: string, maxBytes: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytesRead = 0;
+
+    const stream = createReadStream(filePath, {
+      encoding: undefined, // raw buffer
+      end: maxBytes - 1,   // createReadStream `end` is inclusive
+    });
+
+    stream.on("data", (chunk: string | Buffer) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buf);
+      bytesRead += buf.length;
+      if (bytesRead >= maxBytes) stream.destroy();
+    });
+
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    stream.on("close", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    stream.on("error", reject);
+  });
 }
 
 export interface AnalyzeOptions {
@@ -121,8 +156,8 @@ export async function analyzeExtractedFiles(
     "</files_content>"
   ].filter(Boolean).join("\n");
 
-  const backendPort = process.env.BACKEND_PORT || "3001";
-  const baseUrl = `http://localhost:${backendPort}`;
+  const baseUrl = process.env.BACKEND_URL
+    || `http://localhost:${process.env.BACKEND_PORT || "3001"}`;
 
   let analysis: string;
 
