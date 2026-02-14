@@ -10,7 +10,7 @@ import { logger } from "../utils/logger.js";
 
 /** File extensions we skip during extraction (executables, binaries). */
 const BLOCKED_EXTENSIONS = new Set([
-  ".exe", ".dll", ".bat", ".cmd", ".com", ".scr", ".msi", ".ps1", ".sh",
+  ".exe", ".dll", ".bat", ".cmd", ".com", ".scr", ".msi", ".ps1",
 ]);
 
 function isBlockedFile(fileName: string): boolean {
