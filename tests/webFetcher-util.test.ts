@@ -1,5 +1,5 @@
 import http from 'http';
-import { webFetcher } from '../src/utils/webFetcher.js';
+import { webFetcher } from '../src/shared/webFetcher.js';
 
 describe('webFetcher', () => {
   let server: http.Server;

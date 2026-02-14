@@ -1,8 +1,3 @@
-"""
-Error Handler for ARCANOS
-Centralized error handling with user-friendly messages and optional telemetry.
-"""
-
 import sys
 import logging
 from typing import Callable, Any, Optional, TypeVar
@@ -10,13 +5,7 @@ T = TypeVar("T")
 
 from functools import wraps
 from .config import Config
-
-# Optional Sentry integration
-try:
-    import sentry_sdk
-    SENTRY_AVAILABLE = True
-except ImportError:
-    SENTRY_AVAILABLE = False
+from .utils.telemetry import get_telemetry, sanitize_sensitive_string
 
 logger = logging.getLogger("arcanos")
 if not logger.handlers:
@@ -42,26 +31,28 @@ class ErrorHandler:
 
     @classmethod
     def initialize(cls) -> None:
-        """Initialize error handling (Sentry if enabled)"""
+        """
+        Purpose: Initialize telemetry-backed error reporting one time.
+        Inputs/Outputs: None; mutates class-level initialization state.
+        Edge cases: Telemetry initialization failures are swallowed to avoid startup crashes.
+        """
         if cls._initialized:
             return
 
-        if Config.TELEMETRY_ENABLED and Config.SENTRY_DSN and SENTRY_AVAILABLE:
+        if Config.TELEMETRY_ENABLED:
             try:
-                sentry_sdk.init(
-                    dsn=Config.SENTRY_DSN,
-                    traces_sample_rate=0.1,
-                    environment="production",
-                    release=f"arcanos@{Config.VERSION}"
-                )
+                # //audit assumption: telemetry bootstrap can fail at import/startup time; failure risk: app fails before CLI loop starts; expected invariant: startup remains available without telemetry; handling strategy: swallow telemetry init errors and continue.
+                get_telemetry()
                 cls._initialized = True
             except Exception:
-                pass  # Fail silently if Sentry init fails
+                cls._initialized = False
 
     @staticmethod
     def handle_exception(e: Exception, context: str = "") -> str:
         """
-        Handle an exception and return user-friendly message
+        Purpose: Convert an exception into a user-facing message and send telemetry.
+        Inputs/Outputs: Exception + context string -> formatted user-friendly message.
+        Edge cases: Telemetry failures are swallowed and sensitive error text is redacted.
         """
         error_type = type(e).__name__
         error_msg = str(e)
@@ -85,12 +76,13 @@ class ErrorHandler:
         else:
             full_message = user_msg
 
-        # Log to Sentry if enabled
-        if Config.TELEMETRY_ENABLED and SENTRY_AVAILABLE:
+        # Track error via Telemetry (which handles Sentry if enabled)
+        if Config.TELEMETRY_ENABLED:
             try:
-                with sentry_sdk.push_scope() as scope:
-                    scope.set_context("error_context", {"context": context})
-                    sentry_sdk.capture_exception(e)
+                # //audit assumption: raw exception text may include secrets/PII; failure risk: sensitive data leakage to telemetry providers; expected invariant: telemetry error payload is redacted; handling strategy: sanitize message before track_error.
+                sanitized_error_message = sanitize_sensitive_string(error_msg) if error_msg else error_type
+                telemetry_error = Exception(sanitized_error_message)
+                get_telemetry().track_error(telemetry_error, {"context": context, "error_type": error_type})
             except Exception:
                 pass  # Fail silently
 
