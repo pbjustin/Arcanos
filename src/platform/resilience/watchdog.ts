@@ -9,17 +9,17 @@
 import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 import { recordLogEvent } from "@platform/logging/telemetry.js";
 
-export interface WatchdogOptions {
+export interface WatchdogOptions<T> {
   model: string;
   reasoningDepth?: number;
-  taskFn: (signal: AbortSignal) => Promise<unknown>;
+  taskFn: (signal: AbortSignal) => Promise<T>;
 }
 
-export async function executeWithWatchdog({
+export async function executeWithWatchdog<T>({
   model,
   reasoningDepth = 1,
   taskFn
-}: WatchdogOptions): Promise<unknown> {
+}: WatchdogOptions<T>): Promise<T> {
   const timeout = resolveTimeout(model, reasoningDepth);
   const controller = new AbortController();
 
