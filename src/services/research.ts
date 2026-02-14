@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import { fetchAndClean } from "@services/webFetcher.js";
+import { fetchAndClean } from "@shared/webFetcher.js";
 import {
   createCentralizedCompletion,
   getDefaultModel
@@ -151,8 +151,8 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
       role: 'user' as const,
       content: summaries.length
         ? summaries
-            .map((source, index) => `Source [${index + 1}] (${source.url}):\n${source.summary}`)
-            .join('\n\n')
+          .map((source, index) => `Source [${index + 1}] (${source.url}):\n${source.summary}`)
+          .join('\n\n')
         : `No external sources were available. Provide a brief overview of ${topic} using general knowledge.`
     }
   ];
