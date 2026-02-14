@@ -8,6 +8,13 @@ export interface UploadResult {
   extractedFiles: string[];
 }
 
+export interface AnalyzeResult {
+  uploadId: string;
+  analysis: string;
+  filesAnalyzed: number;
+  truncated: boolean;
+}
+
 export class UploadError extends Error {
   constructor(
     message: string,
