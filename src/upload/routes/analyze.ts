@@ -21,16 +21,16 @@ router.post("/", async (req, res, next) => {
   try {
     const { uploadId, extractedFiles } = await handleUpload(req);
 
-    const userPrompt = typeof req.query.prompt === "string"
-      ? req.query.prompt
+    const userPrompt = typeof req.body.prompt === "string"
+      ? req.body.prompt
       : undefined;
 
-    const assistantName = typeof req.query.assistant === "string"
-      ? req.query.assistant
+    const assistantName = typeof req.body.assistant === "string"
+      ? req.body.assistant
       : undefined;
 
-    const gptId = typeof req.query.gptId === "string"
-      ? req.query.gptId
+    const gptId = typeof req.body.gptId === "string"
+      ? req.body.gptId
       : undefined;
 
     const analysis = await analyzeExtractedFiles(
