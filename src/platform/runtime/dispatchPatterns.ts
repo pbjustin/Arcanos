@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import type { DispatchPatternBindingV9 } from "@shared/types/dispatchV9.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 /**
  * Purpose: Static dispatch v9 route binding configuration.
@@ -100,4 +101,15 @@ export function getDispatchBindingsVersion(
 }
 
 export const DISPATCH_BINDINGS_VERSION = getDispatchBindingsVersion();
+
+assertProtectedConfigIntegrity(
+  'dispatch_patterns',
+  {
+    bindings: DISPATCH_PATTERN_BINDINGS,
+    exemptRoutes: DISPATCH_V9_EXEMPT_ROUTES
+  },
+  {
+    source: 'src/platform/runtime/dispatchPatterns.ts'
+  }
+);
 

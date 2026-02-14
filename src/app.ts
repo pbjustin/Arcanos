@@ -6,6 +6,7 @@ import { setupDiagnostics } from "@core/diagnostics.js";
 import { registerRoutes } from "@routes/register.js";
 import { initOpenAI } from "@core/init-openai.js";
 import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transport/http/middleware/fallbackHandler.js";
+import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionGate.js";
 import errorHandler from "@transport/http/middleware/errorHandler.js";
 
 /**
@@ -19,6 +20,7 @@ export function createApp(): Express {
   app.use(express.urlencoded({ extended: true }));
 
   app.use(requestLoggingMiddleware);
+  app.use(unsafeExecutionGate);
   app.use(createHealthCheckMiddleware()); // Add health check middleware for AI endpoints
   initOpenAI(app);
   Object.defineProperty(app.locals, 'openai', {

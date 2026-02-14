@@ -55,7 +55,10 @@ export interface DispatchRouteStateV9 {
 export interface DispatchMemorySnapshotV9 {
   schema_version: 'v9';
   bindings_version: string;
+  version_id: string;
+  monotonic_ts_ms: number;
   memory_version: string;
+  trusted_snapshot_id?: string;
   route_state: Record<string, DispatchRouteStateV9>;
   updated_at: string;
   updated_by: string;

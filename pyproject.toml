@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arcanos"
+version = "0.0.0"
+description = "Arcanos daemon and CLI"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [ { name = "pbjus" } ]
+license = { text = "MIT" }
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["daemon-python", "."]
+include = ["arcanos*", "cli*"]

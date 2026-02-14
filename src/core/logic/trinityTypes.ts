@@ -53,11 +53,29 @@ export interface TrinityResult {
     requestId: string;
     logged: boolean;
   };
+  tierInfo?: {
+    tier: 'simple' | 'complex' | 'critical';
+    reasoningEffort?: 'high';
+    reflectionApplied: boolean;
+    invocationsUsed: number;
+    invocationBudget: number;
+    utalReason?: string;
+    downgradedBy?: string | null;
+  };
+  guardInfo?: {
+    watchdogMs: number;
+    tokenCapApplied: number;
+    sessionTokensUsed?: number;
+    downgradeDetected: boolean;
+    latencyMs: number;
+    latencyDriftDetected: boolean;
+  };
 }
 
 export interface TrinityRunOptions {
   dryRun?: boolean;
   dryRunReason?: string;
+  cognitiveDomain?: import('@shared/types/cognitiveDomain.js').CognitiveDomain;
 }
 
 export interface TrinityDryRunPreview {

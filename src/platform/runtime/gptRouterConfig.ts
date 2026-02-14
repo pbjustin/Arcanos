@@ -1,5 +1,6 @@
 import { loadModuleDefinitions, LoadedModule } from '@services/moduleLoader.js';
 import { getEnv } from "@platform/runtime/env.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 interface GptModuleEntry {
   route: string;
@@ -82,6 +83,9 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
     map[id] = { route, module: moduleName };
   }
 
+  assertProtectedConfigIntegrity('gpt_router_config', map, {
+    source: 'src/platform/runtime/gptRouterConfig.ts'
+  });
   return map;
 }
 

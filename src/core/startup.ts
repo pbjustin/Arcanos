@@ -8,6 +8,9 @@ import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from "@p
 import memoryStore from "@core/memory/store.js";
 import { isRailwayApiConfigured, probeRailwayApi } from "@services/railwayClient.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { verifyIntegrityManifestConfiguration } from "@services/safety/configIntegrity.js";
+import { activateUnsafeCondition } from "@services/safety/runtimeState.js";
+import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 
 /**
  * Runs startup checks including environment validation, database init,
@@ -49,6 +52,27 @@ export async function performStartup(): Promise<void> {
 
   logger.info('🔥 ARCANOS STARTUP - Server boot sequence triggered');
   logger.info('🔧 ARCANOS CONFIG - Validating configuration...');
+
+  try {
+    verifyIntegrityManifestConfiguration();
+  } catch (error) {
+    //audit Assumption: integrity manifest misconfiguration should block mutating execution but keep observability online; risk: unsafe writes continue; invariant: unsafe state activated; handling: activate condition + continue startup in fail-safe mode.
+    const message = resolveErrorMessage(error);
+    activateUnsafeCondition({
+      code: 'PATTERN_INTEGRITY_FAILURE',
+      message: 'Integrity manifest preflight failed',
+      metadata: { message }
+    });
+    emitSafetyAuditEvent({
+      event: 'startup_integrity_preflight_failed',
+      severity: 'error',
+      details: { message }
+    });
+    logger.error('Integrity preflight failed; mutating APIs will be blocked', {
+      module: 'startup',
+      message
+    });
+  }
 
   try {
     const dbConnected = await initializeDatabase('server');

@@ -30,8 +30,27 @@ import type {
   TrinityFinalOutput,
   TrinityDryRunPreview
 } from './trinityTypes.js';
-import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
+import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
+import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH, TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
+import { enforceTokenCap } from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+
+function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
+  switch (cognitiveDomain) {
+    case 'creative':
+      return 0.9;
+    case 'diagnostic':
+      return 0.2;
+    case 'code':
+      return 0.1;
+    case 'execution':
+      return 0.0;
+    case 'natural':
+      return 0.5;
+    default:
+      return TRINITY_STAGE_TEMPERATURE;
+  }
+}
 
 export { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH };
 export { calculateMemoryScoreSummary };
@@ -90,16 +109,18 @@ export async function runIntakeStage(
   client: OpenAI,
   arcanosModel: string,
   auditSafePrompt: string,
-  memoryContextSummary: string
+  memoryContextSummary: string,
+  cognitiveDomain?: CognitiveDomain
 ): Promise<TrinityIntakeOutput> {
   const intakeSystemPrompt = ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary);
   const intakeTokenParams = getTokenParameter(arcanosModel, TRINITY_INTAKE_TOKEN_LIMIT);
+  const temperature = resolveTemperature(cognitiveDomain);
   const intakeResponse = await createChatCompletionWithFallback(client, {
     messages: [
       { role: 'system', content: intakeSystemPrompt },
       { role: 'user', content: auditSafePrompt }
     ],
-    temperature: TRINITY_STAGE_TEMPERATURE,
+    temperature,
     ...intakeTokenParams
   });
 
@@ -153,13 +174,16 @@ export async function runFinalStage(
   client: OpenAI,
   memoryContextSummary: string,
   auditSafePrompt: string,
-  gpt5Output: string
+  gpt5Output: string,
+  cognitiveDomain?: CognitiveDomain
 ): Promise<TrinityFinalOutput> {
   const complexModel = getComplexModel();
-  const finalTokenParams = getTokenParameter(complexModel, APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
+  const cappedLimit = enforceTokenCap(APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
+  const finalTokenParams = getTokenParameter(complexModel, cappedLimit);
+  const temperature = resolveTemperature(cognitiveDomain);
   const finalResponse = await createChatCompletionWithFallback(client, {
     messages: buildFinalArcanosMessages(memoryContextSummary, auditSafePrompt, gpt5Output),
-    temperature: TRINITY_STAGE_TEMPERATURE,
+    temperature,
     model: complexModel,
     ...finalTokenParams
   });

@@ -5,45 +5,58 @@ import { getStatus } from './health.js';
 import { logDecision } from './logger.js';
 import { executeRoute as executeSelectedRoute } from './routes.js';
 import { persistDecision } from './analytics.js';
-import { DecideInput, DecisionRecord, PolicyEvaluation, RouteExecutionResult, RouteSelection } from './types.js';
+import type { DecideInput, DecisionRecord, PolicyEvaluation, RouteExecutionResult, RouteSelection } from './types.js';
+import { interpreterSupervisor } from '@services/safety/interpreterSupervisor.js';
 
 export async function decide(input: DecideInput): Promise<DecisionRecord> {
-  const started = Date.now();
-  const snapshot = getStatus();
   const intent = typeof input.intent === 'string' ? input.intent : 'default';
-  const policy = evaluate(snapshot, intent);
-  const route = selectRoute(policy);
-  recordTraceEvent('afol.decision.route', {
-    intent,
-    route: route.name,
-    reason: route.reason
-  });
-  const response = await executeSelectedRoute(route, input);
+  return interpreterSupervisor.runSupervisedCycle(
+    `afol:${intent}`,
+    async (heartbeat: () => void) => {
+      const started = Date.now();
+      heartbeat();
+      const snapshot = getStatus();
+      const policy = evaluate(snapshot, intent);
+      const route = selectRoute(policy);
+      recordTraceEvent('afol.decision.route', {
+        intent,
+        route: route.name,
+        reason: route.reason
+      });
+      heartbeat();
+      const response = await executeSelectedRoute(route, input);
 
-  const ok = route.name !== 'reject' && !response.error;
-  const decisionId = generateRequestId('afol');
+      const ok = route.name !== 'reject' && !response.error;
+      const decisionId = generateRequestId('afol');
 
-  const decision: DecisionRecord = {
-    id: decisionId,
-    ok,
-    policy,
-    route,
-    response,
-    meta: {
-      latencyMs: Date.now() - started,
-      timestamp: new Date().toISOString()
+      const decision: DecisionRecord = {
+        id: decisionId,
+        ok,
+        policy,
+        route,
+        response,
+        meta: {
+          latencyMs: Date.now() - started,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      heartbeat();
+      await persistDecision(decision);
+      logDecision(input, decision);
+      recordTraceEvent('afol.decision.completed', {
+        decisionId,
+        ok,
+        route: route.name,
+        latencyMs: decision.meta.latencyMs
+      });
+      return decision;
+    },
+    {
+      category: 'policy',
+      metadata: { intent }
     }
-  };
-
-  await persistDecision(decision);
-  logDecision(input, decision);
-  recordTraceEvent('afol.decision.completed', {
-    decisionId,
-    ok,
-    route: route.name,
-    latencyMs: decision.meta.latencyMs
-  });
-  return decision;
+  );
 }
 
 function selectRoute(policy: PolicyEvaluation): RouteSelection {
@@ -65,4 +78,28 @@ export async function __executeRouteForTest(
   input: DecideInput
 ): Promise<RouteExecutionResult> {
   return executeSelectedRoute(route, input);
+}
+
+export async function __runDecideWithoutSupervisorForTest(input: DecideInput): Promise<DecisionRecord> {
+  const started = Date.now();
+  const snapshot = getStatus();
+  const intentForTest = typeof input.intent === 'string' ? input.intent : 'default';
+  const policy = evaluate(snapshot, intentForTest);
+  const route = selectRoute(policy);
+  const response = await executeSelectedRoute(route, input);
+  const ok = route.name !== 'reject' && !response.error;
+  const decisionId = generateRequestId('afol');
+  const decision: DecisionRecord = {
+    id: decisionId,
+    ok,
+    policy,
+    route,
+    response,
+    meta: {
+      latencyMs: Date.now() - started,
+      timestamp: new Date().toISOString()
+    }
+  };
+  await persistDecision(decision);
+  return decision;
 }

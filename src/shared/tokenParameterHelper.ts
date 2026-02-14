@@ -10,14 +10,13 @@
 
 import type OpenAI from 'openai';
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
-import { aiLogger } from "@platform/logging/structuredLogging.js";
 
 // Known models that require max_completion_tokens instead of max_tokens
 // Store lowercase variants to ensure detection is case-insensitive
 const MAX_COMPLETION_TOKENS_MODELS = new Set<string>([
   APPLICATION_CONSTANTS.MODEL_GPT_5,
   APPLICATION_CONSTANTS.MODEL_GPT_5_1
-].map(m => (m || '').toLowerCase()));
+].filter(Boolean).map(m => String(m).toLowerCase()));
 
 // Cache for model capability testing to avoid repeated API calls
 const modelCapabilityCache = new Map<string, 'max_tokens' | 'max_completion_tokens'>();
@@ -32,6 +31,28 @@ interface TokenParameterOptions {
   forceParameter?: 'max_tokens' | 'max_completion_tokens';
 }
 
+export interface TokenParameterLogger {
+  info: (message: string) => void;
+  warn: (message: string) => void;
+}
+
+export interface TokenParameterDependencies {
+  logger?: TokenParameterLogger;
+}
+
+const defaultTokenParameterLogger: TokenParameterLogger = {
+  info: (message: string): void => {
+    console.log(message);
+  },
+  warn: (message: string): void => {
+    console.warn(message);
+  }
+};
+
+function resolveTokenParameterLogger(dependencies: TokenParameterDependencies): TokenParameterLogger {
+  return dependencies.logger ?? defaultTokenParameterLogger;
+}
+
 /**
  * Get the appropriate token parameter for a given model and token limit
  * @param modelName - The OpenAI model name (e.g., 'gpt-4', 'gpt-5', 'ft:gpt-3.5-turbo-*')
@@ -42,12 +63,15 @@ interface TokenParameterOptions {
 export function getTokenParameter(
   modelName: string,
   tokenLimit: number,
-  options: TokenParameterOptions = {}
+  options: TokenParameterOptions = {},
+  dependencies: TokenParameterDependencies = {}
 ): TokenParameterResult {
+  const tokenLogger = resolveTokenParameterLogger(dependencies);
+
   // Safety: Validate token limit is a number and within safe bounds
   //audit Assumption: invalid limits should fall back; Risk: unintended model usage
   if (typeof tokenLimit !== 'number' || !isFinite(tokenLimit) || tokenLimit <= 0) {
-    aiLogger.warn(`[TOKEN-SAFETY] Invalid token limit: ${tokenLimit}, using default ${APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT}`);
+    tokenLogger.warn(`[TOKEN-SAFETY] Invalid token limit: ${tokenLimit}, using default ${APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT}`);
     tokenLimit = APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT;
   }
   
@@ -55,7 +79,7 @@ export function getTokenParameter(
   //audit Assumption: cap prevents excessive usage; Handling: clamp to max
   const maxSafeTokens = APPLICATION_CONSTANTS.MAX_SAFE_TOKENS;
   if (tokenLimit > maxSafeTokens) {
-    aiLogger.warn(`[TOKEN-SAFETY] Token limit ${tokenLimit} exceeds safe maximum ${maxSafeTokens}, capping`);
+    tokenLogger.warn(`[TOKEN-SAFETY] Token limit ${tokenLimit} exceeds safe maximum ${maxSafeTokens}, capping`);
     tokenLimit = maxSafeTokens;
   }
 
@@ -63,7 +87,7 @@ export function getTokenParameter(
   //audit Assumption: forced parameter is authoritative; Risk: API mismatch
   if (options.forceParameter) {
     const parameterUsed = options.forceParameter;
-    aiLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterUsed} (forced), Tokens: ${tokenLimit}`);
+    tokenLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterUsed} (forced), Tokens: ${tokenLimit}`);
     return parameterUsed === 'max_tokens' 
       ? { max_tokens: tokenLimit }
       : { max_completion_tokens: tokenLimit };
@@ -76,7 +100,7 @@ export function getTokenParameter(
   //audit Assumption: cached capability remains valid; Risk: model behavior changes
   const cachedParameter = modelCapabilityCache.get(normalizedModelName);
   if (cachedParameter) {
-    aiLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${cachedParameter} (cached), Tokens: ${tokenLimit}`);
+    tokenLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${cachedParameter} (cached), Tokens: ${tokenLimit}`);
     return cachedParameter === 'max_tokens'
       ? { max_tokens: tokenLimit }
       : { max_completion_tokens: tokenLimit };
@@ -91,7 +115,7 @@ export function getTokenParameter(
   modelCapabilityCache.set(normalizedModelName, parameterToUse);
 
   // Log for audit tracking
-  aiLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterToUse}, Tokens: ${tokenLimit}`);
+  tokenLogger.info(`[TOKEN-AUDIT] Model: ${modelName}, Parameter: ${parameterToUse}, Tokens: ${tokenLimit}`);
 
   return parameterToUse === 'max_tokens'
     ? { max_tokens: tokenLimit }
@@ -135,9 +159,11 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
   //audit Assumption: GPT-5 requires max_completion_tokens; Handling: switch param
   // Also treat Google's Gemini family as using max_completion_tokens
   //audit Assumption: gemini models use the newer token parameter; Handling: switch param
-  // Treat any model name that mentions 'gemini' as part of the Gemini family.
-  // Use a simple substring check to cover variants like 'gemini-1', 'gpt-gemini', or 'gemini_v1'.
-  if (lowerModelName.includes('gemini')) {
+  // Use a word-boundary regex to robustly detect "gemini" tokens in model names
+  // Examples matched: 'gemini', 'Gemini-1', 'google/gemini-1a', 'gpt-gemini'
+  // Examples NOT matched: 'metagemini', 'progeminitools'
+  const geminiRegex = /\bgemini\b/i;
+  if (geminiRegex.test(lowerModelName)) {
     return 'max_completion_tokens';
   }
 
@@ -158,11 +184,13 @@ function determineTokenParameter(modelName: string): 'max_tokens' | 'max_complet
  */
 export async function testModelTokenParameter(
   client: OpenAI,
-  modelName: string
+  modelName: string,
+  dependencies: TokenParameterDependencies = {}
 ): Promise<'max_tokens' | 'max_completion_tokens'> {
+  const tokenLogger = resolveTokenParameterLogger(dependencies);
   
   const normalizedModelName = (modelName || '').toLowerCase().trim();
-  aiLogger.info(`[TOKEN-TEST] Testing token parameter capability for model: ${modelName}`);
+  tokenLogger.info(`[TOKEN-TEST] Testing token parameter capability for model: ${modelName}`);
 
   // Try max_tokens first (most common)
   try {
@@ -175,7 +203,7 @@ export async function testModelTokenParameter(
     
     // If successful, cache and return max_tokens
     modelCapabilityCache.set(normalizedModelName, 'max_tokens');
-    aiLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_tokens`);
+    tokenLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_tokens`);
     return 'max_tokens';
     
   } catch (error: unknown) {
@@ -195,12 +223,12 @@ export async function testModelTokenParameter(
         
         // If successful, cache and return max_completion_tokens
         modelCapabilityCache.set(normalizedModelName, 'max_completion_tokens');
-        aiLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
+        tokenLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
         return 'max_completion_tokens';
         
       } catch (fallbackError: unknown) {
         //audit Assumption: both params failed; Handling: default to max_tokens
-        aiLogger.warn(
+        tokenLogger.warn(
           `[TOKEN-TEST] Model ${modelName} failed both token parameters, defaulting to max_tokens: ${getErrorMessage(fallbackError)}`
         );
         modelCapabilityCache.set(normalizedModelName, 'max_tokens');
@@ -209,7 +237,7 @@ export async function testModelTokenParameter(
     } else {
       // Error not related to token parameters, assume max_tokens works
       //audit Assumption: non-token error implies max_tokens support; Risk: false
-      aiLogger.info(`[TOKEN-TEST] Model ${modelName} error unrelated to tokens, assuming max_tokens support`);
+      tokenLogger.info(`[TOKEN-TEST] Model ${modelName} error unrelated to tokens, assuming max_tokens support`);
       modelCapabilityCache.set(normalizedModelName, 'max_tokens');
       return 'max_tokens';
     }
@@ -240,11 +268,12 @@ function getErrorMessage(error: unknown): string {
 export function createChatCompletionParams(
   baseParams: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParams, 'max_tokens' | 'max_completion_tokens'>,
   modelName: string,
-  tokenLimit: number
+  tokenLimit: number,
+  dependencies: TokenParameterDependencies = {}
 ): OpenAI.Chat.Completions.ChatCompletionCreateParams {
   
   //audit Assumption: helper returns valid token param; Handling: spread into payload
-  const tokenParams = getTokenParameter(modelName, tokenLimit);
+  const tokenParams = getTokenParameter(modelName, tokenLimit, {}, dependencies);
   
   return {
     ...baseParams,
@@ -256,10 +285,12 @@ export function createChatCompletionParams(
 /**
  * Clear the model capability cache (useful for testing or when model capabilities change)
  */
-export function clearModelCapabilityCache(): void {
+export function clearModelCapabilityCache(dependencies: TokenParameterDependencies = {}): void {
+  const tokenLogger = resolveTokenParameterLogger(dependencies);
+
   //audit Assumption: cache invalidation is intentional; Handling: clear map
   modelCapabilityCache.clear();
-  aiLogger.info(`[TOKEN-CACHE] Model capability cache cleared`);
+  tokenLogger.info(`[TOKEN-CACHE] Model capability cache cleared`);
 }
 
 /**
