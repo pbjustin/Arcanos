@@ -22,6 +22,6 @@ export async function registerGpt5Worker() {
 }
 
 // Replace with your actual OpenAI call
-async function callOpenAI(payload: any) {
+async function callOpenAI(payload: BrainPayload): Promise<BrainResponse> {
   throw new Error("OpenAI adapter not implemented");
 }
