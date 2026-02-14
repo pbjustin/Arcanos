@@ -1,8 +1,3 @@
-"""
-Error Handler for ARCANOS
-Centralized error handling with user-friendly messages and optional telemetry.
-"""
-
 import sys
 import logging
 from typing import Callable, Any, Optional, TypeVar
@@ -10,13 +5,7 @@ T = TypeVar("T")
 
 from functools import wraps
 from .config import Config
-
-# Optional Sentry integration
-try:
-    import sentry_sdk
-    SENTRY_AVAILABLE = True
-except ImportError:
-    SENTRY_AVAILABLE = False
+from .utils.telemetry import get_telemetry
 
 logger = logging.getLogger("arcanos")
 if not logger.handlers:
@@ -42,21 +31,14 @@ class ErrorHandler:
 
     @classmethod
     def initialize(cls) -> None:
-        """Initialize error handling (Sentry if enabled)"""
+        """Initialize error handling (delegates to Telemetry)"""
         if cls._initialized:
             return
 
-        if Config.TELEMETRY_ENABLED and Config.SENTRY_DSN and SENTRY_AVAILABLE:
-            try:
-                sentry_sdk.init(
-                    dsn=Config.SENTRY_DSN,
-                    traces_sample_rate=0.1,
-                    environment="production",
-                    release=f"arcanos@{Config.VERSION}"
-                )
-                cls._initialized = True
-            except Exception:
-                pass  # Fail silently if Sentry init fails
+        if Config.TELEMETRY_ENABLED:
+            # Telemetry class handles Sentry initialization
+            get_telemetry()
+            cls._initialized = True
 
     @staticmethod
     def handle_exception(e: Exception, context: str = "") -> str:
@@ -85,12 +67,10 @@ class ErrorHandler:
         else:
             full_message = user_msg
 
-        # Log to Sentry if enabled
-        if Config.TELEMETRY_ENABLED and SENTRY_AVAILABLE:
+        # Track error via Telemetry (which handles Sentry if enabled)
+        if Config.TELEMETRY_ENABLED:
             try:
-                with sentry_sdk.push_scope() as scope:
-                    scope.set_context("error_context", {"context": context})
-                    sentry_sdk.capture_exception(e)
+                get_telemetry().track_error(e, {"context": context})
             except Exception:
                 pass  # Fail silently
 

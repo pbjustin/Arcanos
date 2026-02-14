@@ -1,5 +1,5 @@
 import http from 'http';
-import { fetchAndClean } from '../src/services/webFetcher.js';
+import { fetchAndClean } from '../src/shared/webFetcher.js';
 
 describe('fetchAndClean', () => {
   let server: http.Server;
