@@ -9,6 +9,8 @@
 import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 import { recordLogEvent } from "@platform/logging/telemetry.js";
 
+const NEAR_TIMEOUT_THRESHOLD_RATIO = 0.85;
+
 export interface WatchdogOptions<T> {
   model: string;
   reasoningDepth?: number;
@@ -47,7 +49,7 @@ export async function executeWithWatchdog<T>({
     clearTimeout(timeoutId);
 
     const duration = Date.now() - start;
-    if (duration > timeout * 0.85) {
+    if (duration > timeout * NEAR_TIMEOUT_THRESHOLD_RATIO) {
       recordLogEvent({
         timestamp: new Date().toISOString(),
         level: 'warn',
