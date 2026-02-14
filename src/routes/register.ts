@@ -21,6 +21,10 @@ import debugConfirmationRouter from './debug-confirmation.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
 import reusableCodeRouter from './api-reusable-code.js';
+import safetyRouter from './safety.js';
+import plansRouter from './plans.js';
+import clearRouter from './clear.js';
+import agentsRouter from './agents.js';
 import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHandler.js";
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -55,6 +59,7 @@ export function registerRoutes(app: Express): void {
   });
 
   app.use('/', healthGroupRouter);
+  app.use('/', safetyRouter);
   app.use('/', askRouter);
   app.use('/', apiRouter);
   app.use('/', arcanosRouter);
@@ -77,7 +82,12 @@ export function registerRoutes(app: Express): void {
   app.use('/', researchRouter);
   app.use('/', reinforcementRouter);
   app.use('/', devopsRouter);
-  
+
+  // ActionPlan orchestration + CLEAR 2.0 governance
+  app.use('/', plansRouter);
+  app.use('/', clearRouter);
+  app.use('/', agentsRouter);
+
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
     res.json({ 

@@ -7,6 +7,11 @@ from executor.runner import execute_actions
 
 
 def run_command(command: str):
+    """
+    Purpose: Execute one cli_v2 command cycle with optional backend escalation.
+    Inputs/Outputs: command string; prints backend output and action execution results.
+    Edge cases: Non-escalating requests are handled locally with a no-op response.
+    """
     trace_id = generate_trace_id()
     runtime = Runtime.from_env(trace_id)
     session = Session(trace_id)
@@ -26,13 +31,21 @@ def run_command(command: str):
             results = execute_actions(response.actions, trace_id)
             # In a real scenario, we might send these results back for a second turn
             for res in results:
-                if "stdout" in res:
+                # //audit Assumption: action outputs may include stdout and stderr; risk: hidden execution failures; invariant: both streams surfaced when present; handling: print each non-empty stream.
+                if res.get("stdout"):
                     print(f"[STDOUT] {res['stdout'][:200]}")
+                if res.get("stderr"):
+                    print(f"[STDERR] {res['stderr'][:200]}")
     else:
         print("Handled locally (no escalation).")
 
 
 def main():
+    """
+    Purpose: Interactive entrypoint for single-command cli_v2 testing.
+    Inputs/Outputs: prompts for one command and runs it.
+    Edge cases: Empty command still flows through run_command for policy evaluation.
+    """
     command = input("ARCANOS> ")
     run_command(command)
 

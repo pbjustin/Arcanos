@@ -3,7 +3,8 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { resolveErrorMessage } from "@shared/errorUtils.js";
+import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 export type FallbackMessagesConfig = Record<string, string> & { default: string };
 
@@ -31,6 +32,9 @@ function loadConfigFile(): Partial<FallbackMessagesConfig> | null {
     try {
       const contents = readFileSync(candidatePath, 'utf-8');
       const parsed = JSON.parse(contents) as Partial<FallbackMessagesConfig>;
+      assertProtectedConfigIntegrity('fallback_messages', parsed, {
+        source: candidatePath
+      });
       return parsed;
     } catch (error) {
       logger.error('Failed to load fallback messages configuration', {

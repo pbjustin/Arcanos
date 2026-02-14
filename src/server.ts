@@ -4,9 +4,9 @@ import { config } from "@platform/runtime/config.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
-import './config/workerConfig.js';
-import './logic/aiCron.js';
-import './logic/assistantSyncCron.js';
+import "@platform/runtime/workerConfig.js";
+import "@core/logic/aiCron.js";
+import "@core/logic/assistantSyncCron.js";
 import { initializeWorkers } from "@platform/runtime/workerBoot.js";
 import { getAvailablePort } from "@platform/runtime/portUtils.js";
 import { runSystemDiagnostic } from "@services/gptSync.js";
@@ -14,6 +14,7 @@ import { updateState } from "@services/stateManager.js";
 import { getDefaultModel } from "@services/openai.js";
 import { createApp } from './app.js';
 import { performStartup } from "@core/startup.js";
+import { bootstrap } from './server/bootstrap.js';
 import type { WorkerInitResult } from "@platform/runtime/workerBoot.js";
 import { logServerInfo, logAIConfig, logCompleteBootSummary, formatBootMessage, logShutdownEvent } from "@platform/logging/bootLogger.js";
 import { logger } from "@platform/logging/structuredLogging.js";
@@ -156,6 +157,7 @@ function registerProcessHandlers(server: Server, actualPort: number, onShutdown?
 
 export async function createServer(options: ServerFactoryOptions = {}): Promise<ServerLifecycle> {
   await performStartup();
+  await bootstrap();
   const app = createApp();
   const idleStateService = createIdleStateService();
   app.locals.idleStateService = idleStateService;

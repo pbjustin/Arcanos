@@ -1,0 +1,21 @@
+/* ============================================================
+   MOCK BRAIN (ONLY USED WHEN EXPLICITLY FORCED)
+   File: src/brain/mockBrain.ts
+   ============================================================ */
+
+import type { Brain, BrainPayload, BrainResponse } from "./brainRegistry.js";
+
+export class MockBrain implements Brain {
+  async execute(_payload: BrainPayload): Promise<BrainResponse> {
+    return {
+      module: "MockBrain",
+      activeModel: "MOCK",
+      output_text: "Mock response",
+      usage: {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
+    };
+  }
+}

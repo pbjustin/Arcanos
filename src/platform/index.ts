@@ -30,3 +30,5 @@ export * from './resilience/idleManager.js';
 export * from './resilience/serviceUnavailable.js';
 export * from './resilience/unifiedHealth.js';
 export * from './resilience/unifiedRetry.js';
+export * from './resilience/watchdog.js';
+export * from './runtime/watchdogConfig.js';

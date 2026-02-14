@@ -1,0 +1,24 @@
+/* ============================================================
+   DISPATCH INTEGRATION
+   File: src/controllers/dispatchControllerV9.ts
+   ============================================================ */
+
+import { getActiveBrain } from "../brain/brainFactory.js";
+import type { BrainResponse } from "../brain/brainRegistry.js";
+
+export async function dispatchControllerV9(
+  prompt: string,
+  sessionId: string,
+  lineageId: string
+): Promise<BrainResponse> {
+
+  const brain = getActiveBrain();
+
+  const response = await brain.execute({
+    prompt,
+    sessionId,
+    lineageId
+  });
+
+  return response;
+}

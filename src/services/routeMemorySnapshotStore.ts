@@ -6,8 +6,10 @@ import type {
   DispatchMemorySnapshotV9,
   DispatchRouteStateV9
 } from "@shared/types/dispatchV9.js";
+import { createVersionStamp } from "@services/safety/monotonicClock.js";
 
 export const DISPATCH_V9_SNAPSHOT_KEY = 'dispatch:v9:snapshot:global';
+export const DISPATCH_V9_TRUSTED_SNAPSHOT_KEY = 'dispatch:v9:snapshot:trusted';
 
 export interface RouteMemorySnapshotRecord {
   snapshot: DispatchMemorySnapshotV9;
@@ -17,6 +19,7 @@ export interface RouteMemorySnapshotRecord {
 
 interface RouteMemorySnapshotStoreDependencies {
   snapshotKey: string;
+  trustedSnapshotKey: string;
   bindingsVersion: string;
   cacheTtlMs: number;
   loadMemoryEntry: typeof loadMemory;
@@ -72,10 +75,14 @@ function normalizeRouteState(raw: unknown): Record<string, DispatchRouteStateV9>
 }
 
 function createDefaultSnapshot(bindingsVersion: string, nowIso: string, updatedBy = 'middleware'): DispatchMemorySnapshotV9 {
+  const stamp = createVersionStamp('dispatch-snapshot');
   return {
     schema_version: 'v9',
     bindings_version: bindingsVersion,
+    version_id: stamp.versionId,
+    monotonic_ts_ms: stamp.monotonicTimestampMs,
     memory_version: nowIso,
+    trusted_snapshot_id: undefined,
     route_state: {},
     updated_at: nowIso,
     updated_by: updatedBy
@@ -95,6 +102,7 @@ function normalizeSnapshot(
   if (schemaVersion !== 'v9') {
     return null;
   }
+  const fallbackStamp = createVersionStamp('dispatch-snapshot-normalized');
 
   const normalized: DispatchMemorySnapshotV9 = {
     schema_version: 'v9',
@@ -102,7 +110,19 @@ function normalizeSnapshot(
       typeof raw.bindings_version === 'string' && raw.bindings_version.length > 0
         ? raw.bindings_version
         : bindingsVersion,
+    version_id:
+      typeof raw.version_id === 'string' && raw.version_id.length > 0
+        ? raw.version_id
+        : fallbackStamp.versionId,
+    monotonic_ts_ms:
+      typeof raw.monotonic_ts_ms === 'number' && Number.isFinite(raw.monotonic_ts_ms)
+        ? Math.floor(raw.monotonic_ts_ms)
+        : fallbackStamp.monotonicTimestampMs,
     memory_version: toIsoDate(raw.memory_version, nowIso),
+    trusted_snapshot_id:
+      typeof raw.trusted_snapshot_id === 'string' && raw.trusted_snapshot_id.length > 0
+        ? raw.trusted_snapshot_id
+        : undefined,
     route_state: normalizeRouteState(raw.route_state),
     updated_at: toIsoDate(raw.updated_at, nowIso),
     updated_by: typeof raw.updated_by === 'string' && raw.updated_by.length > 0 ? raw.updated_by : 'middleware'
@@ -133,6 +153,7 @@ async function readMemoryUpdatedAt(
 export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySnapshotStoreDependencies> = {}) {
   const deps: RouteMemorySnapshotStoreDependencies = {
     snapshotKey: overrides.snapshotKey || DISPATCH_V9_SNAPSHOT_KEY,
+    trustedSnapshotKey: overrides.trustedSnapshotKey || DISPATCH_V9_TRUSTED_SNAPSHOT_KEY,
     bindingsVersion: overrides.bindingsVersion || DISPATCH_BINDINGS_VERSION,
     cacheTtlMs:
       typeof overrides.cacheTtlMs === 'number'
@@ -148,6 +169,7 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
   // NOTE: This cache is process-local and not shared across worker processes or cluster instances.
   // In multi-process deployments, each worker maintains its own independent cache.
   let cache: SnapshotCacheEntry | null = null;
+  let trustedSnapshotCache: DispatchMemorySnapshotV9 | null = null;
 
   const setCache = (record: RouteMemorySnapshotRecord): void => {
     const ttl = Math.max(0, deps.cacheTtlMs);
@@ -159,12 +181,20 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
 
   const persistSnapshot = async (
     snapshot: DispatchMemorySnapshotV9,
-    updatedBy: string
+    updatedBy: string,
+    options: { markTrusted?: boolean; trustedSnapshotId?: string } = {}
   ): Promise<RouteMemorySnapshotRecord> => {
     const nowIso = deps.now().toISOString();
+    const stamp = createVersionStamp('dispatch-snapshot');
+    const trustedSnapshotId = options.markTrusted
+      ? stamp.versionId
+      : options.trustedSnapshotId ?? snapshot.trusted_snapshot_id;
     const persistedSnapshot: DispatchMemorySnapshotV9 = {
       ...snapshot,
       bindings_version: deps.bindingsVersion,
+      version_id: stamp.versionId,
+      monotonic_ts_ms: stamp.monotonicTimestampMs,
+      trusted_snapshot_id: trustedSnapshotId,
       updated_at: nowIso,
       updated_by: updatedBy
     };
@@ -193,8 +223,57 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
       memoryVersion,
       loadedFrom: 'db'
     };
+    if (options.markTrusted) {
+      trustedSnapshotCache = normalizedSnapshot;
+      try {
+        await deps.saveMemoryEntry(deps.trustedSnapshotKey, normalizedSnapshot);
+      } catch (error) {
+        storeLogger.warn('Failed to persist trusted dispatch snapshot cache', {
+          operation: 'persistSnapshot',
+          trustedSnapshotKey: deps.trustedSnapshotKey
+        }, undefined, error instanceof Error ? error : undefined);
+      }
+    }
     setCache(record);
     return record;
+  };
+
+  const loadTrustedSnapshot = async (): Promise<DispatchMemorySnapshotV9 | null> => {
+    if (trustedSnapshotCache) {
+      return trustedSnapshotCache;
+    }
+
+    const rawTrustedSnapshot = await deps.loadMemoryEntry(deps.trustedSnapshotKey);
+    if (!rawTrustedSnapshot) {
+      return null;
+    }
+
+    const normalized = normalizeSnapshot(
+      rawTrustedSnapshot,
+      deps.bindingsVersion,
+      deps.now().toISOString()
+    );
+    //audit Assumption: trusted snapshot file may be stale or malformed; risk: rollback to invalid state; invariant: rollback uses normalized v9 snapshot only; handling: discard invalid trusted snapshot.
+    if (!normalized) {
+      storeLogger.warn('Trusted dispatch snapshot malformed; clearing trusted cache reference', {
+        operation: 'loadTrustedSnapshot',
+        trustedSnapshotKey: deps.trustedSnapshotKey
+      });
+      return null;
+    }
+
+    trustedSnapshotCache = normalized;
+    return trustedSnapshotCache;
+  };
+
+  const persistTrustedSnapshotCheckpoint = async (
+    snapshot: DispatchMemorySnapshotV9
+  ): Promise<void> => {
+    trustedSnapshotCache = {
+      ...snapshot,
+      trusted_snapshot_id: snapshot.version_id
+    };
+    await deps.saveMemoryEntry(deps.trustedSnapshotKey, trustedSnapshotCache);
   };
 
   return {
@@ -220,7 +299,9 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
       //audit Assumption: missing snapshot should bootstrap default state; risk: ungoverned routes; invariant: snapshot exists after call; handling: create default.
       if (rawSnapshot == null) {
         const defaultSnapshot = createDefaultSnapshot(deps.bindingsVersion, nowIso, 'middleware');
-        const created = await persistSnapshot(defaultSnapshot, 'middleware');
+        const created = await persistSnapshot(defaultSnapshot, 'middleware', {
+          markTrusted: true
+        });
         return {
           ...created,
           loadedFrom: 'created'
@@ -236,7 +317,8 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
         });
         const recreated = await persistSnapshot(
           createDefaultSnapshot(deps.bindingsVersion, nowIso, 'middleware'),
-          'middleware'
+          'middleware',
+          { markTrusted: true }
         );
         return {
           ...recreated,
@@ -251,7 +333,8 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
             ...normalized,
             bindings_version: deps.bindingsVersion
           },
-          'middleware'
+          'middleware',
+          { markTrusted: true }
         );
         return migrated;
       }
@@ -267,6 +350,18 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
         loadedFrom: 'db'
       };
       setCache(record);
+
+      if (!trustedSnapshotCache) {
+        try {
+          await persistTrustedSnapshotCheckpoint(snapshot);
+        } catch (error) {
+          storeLogger.warn('Failed to initialize trusted snapshot cache', {
+            operation: 'getSnapshot',
+            trustedSnapshotKey: deps.trustedSnapshotKey
+          }, undefined, error instanceof Error ? error : undefined);
+        }
+      }
+
       return record;
     },
 
@@ -325,7 +420,9 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
         updated_by: options.updatedBy || 'middleware'
       };
 
-      return persistSnapshot(nextSnapshot, options.updatedBy || 'middleware');
+      return persistSnapshot(nextSnapshot, options.updatedBy || 'middleware', {
+        markTrusted: true
+      });
     },
 
     /**
@@ -337,7 +434,66 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
       snapshot: DispatchMemorySnapshotV9,
       updatedBy: string = 'middleware'
     ): Promise<RouteMemorySnapshotRecord> {
-      return persistSnapshot(snapshot, updatedBy);
+      return persistSnapshot(snapshot, updatedBy, { markTrusted: true });
+    },
+
+    /**
+     * Purpose: Persist a trusted snapshot checkpoint for rollback recovery.
+     * Inputs/Outputs: snapshot payload; no return value.
+     * Edge cases: overwrites previous trusted checkpoint.
+     */
+    async rememberTrustedSnapshot(
+      snapshot: DispatchMemorySnapshotV9
+    ): Promise<void> {
+      await persistTrustedSnapshotCheckpoint(snapshot);
+    },
+
+    /**
+     * Purpose: Return the in-process cached primary snapshot record.
+     * Inputs/Outputs: no inputs; returns snapshot record or null.
+     * Edge cases: null when cache has not been initialized.
+     */
+    getCachedSnapshot(): RouteMemorySnapshotRecord | null {
+      if (!cache) {
+        return null;
+      }
+      return {
+        ...cache.record,
+        loadedFrom: 'cache'
+      };
+    },
+
+    /**
+     * Purpose: Return the in-process cached trusted snapshot payload.
+     * Inputs/Outputs: no inputs; returns trusted snapshot or null.
+     * Edge cases: null when trusted snapshot has not been persisted yet.
+     */
+    getCachedTrustedSnapshot(): DispatchMemorySnapshotV9 | null {
+      return trustedSnapshotCache ? { ...trustedSnapshotCache } : null;
+    },
+
+    /**
+     * Purpose: Roll back active snapshot to last trusted snapshot checkpoint.
+     * Inputs/Outputs: optional updatedBy actor; returns persisted rollback record or null.
+     * Edge cases: returns null when trusted checkpoint is unavailable.
+     */
+    async rollbackToTrustedSnapshot(updatedBy: string = 'middleware'): Promise<RouteMemorySnapshotRecord | null> {
+      const trustedSnapshot = await loadTrustedSnapshot();
+      //audit Assumption: rollback requires previously trusted checkpoint; risk: undefined rollback target; invariant: null return when no trusted checkpoint exists; handling: caller must fail closed.
+      if (!trustedSnapshot) {
+        return null;
+      }
+
+      return persistSnapshot(
+        {
+          ...trustedSnapshot,
+          trusted_snapshot_id: trustedSnapshot.version_id
+        },
+        updatedBy,
+        {
+          markTrusted: true
+        }
+      );
     },
 
     /**
@@ -347,6 +503,7 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
      */
     clearCache(): void {
       cache = null;
+      trustedSnapshotCache = null;
     }
   };
 }

@@ -11,6 +11,11 @@ class BackendClient:
         self.base_url = runtime.backend_url
 
     def analyze(self, context_payload: dict, artifacts: list):
+        """
+        Purpose: Send an analysis request to the backend and parse the contract response.
+        Inputs/Outputs: context payload + artifacts; returns RawBackendResponse.
+        Edge cases: Network or HTTP failures force DEGRADED mode with fallback response.
+        """
         request = AnalysisRequest(
             runtime_version=self.runtime.runtime_version,
             schema_version=self.runtime.schema_version,
@@ -41,7 +46,11 @@ class BackendClient:
 
             return parsed
 
-        except requests.RequestException:
+        except requests.RequestException as error:
+            # //audit Assumption: backend outages are expected in hybrid mode; risk: silent degradation hides root cause; invariant: failure reason is surfaced; handling: log + fallback response.
+            print(
+                f"[ERROR][{self.runtime.trace_id}] Backend request failed, entering DEGRADED mode: {error}"
+            )
             self.runtime.mode = "DEGRADED"
 
             return RawBackendResponse(

@@ -11,7 +11,12 @@ import requests
 from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
+from .chat import request_system_state as _request_system_state
 from .daemon import request_confirm_daemon_actions as _request_confirm_daemon_actions
+from .plans import fetch_plan as _fetch_plan
+from .plans import approve_plan as _approve_plan
+from .plans import submit_execution_result as _submit_execution_result
+from .plans import block_plan as _block_plan
 from .registry import request_registry as _request_registry
 from .transcribe import request_transcription as _request_transcription
 from .updates import submit_update_event as _submit_update_event
@@ -128,6 +133,14 @@ class BackendApiClient:
         except requests.RequestException as exc:
             raise BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
 
+    def make_raw_request(self, method: str, path: str, json: Optional[Mapping[str, Any]] = None) -> requests.Response:
+        """
+        Purpose: Public wrapper to perform a raw backend request and return the underlying requests.Response.
+        Inputs/Outputs: method, path, optional json payload; returns requests.Response or raises BackendRequestError.
+        Edge cases: Mirrors behavior of _make_request but exposes a sanctioned public API to avoid private access.
+        """
+        return self._make_request(method, path, json)
+
     def request_ask_with_domain(
         self,
         message: str,
@@ -145,6 +158,19 @@ class BackendApiClient:
         metadata: Optional[Mapping[str, Any]] = None
     ) -> BackendResponse[BackendChatResult]:
         return _request_chat_completion(self, messages, temperature, model, stream, metadata)
+
+    def request_system_state(
+        self,
+        metadata: Optional[Mapping[str, Any]] = None,
+        expected_version: Optional[int] = None,
+        patch: Optional[Mapping[str, Any]] = None,
+    ) -> BackendResponse[dict[str, Any]]:
+        """
+        Purpose: Request backend system state through /ask mode=system_state.
+        Inputs/Outputs: optional metadata and optimistic-lock patch fields; returns raw state payload.
+        Edge cases: returns structured validation errors for partial update payloads.
+        """
+        return _request_system_state(self, metadata, expected_version, patch)
 
     def request_vision_analysis(
         self,
@@ -402,6 +428,20 @@ class BackendApiClient:
 
     def request_registry(self) -> BackendResponse[dict[str, Any]]:
         return _request_registry(self)
+
+    def fetch_plan(self, plan_id: str) -> BackendResponse[dict[str, Any]]:
+        return _fetch_plan(self, plan_id)
+
+    def approve_plan(self, plan_id: str) -> BackendResponse[dict[str, Any]]:
+        return _approve_plan(self, plan_id)
+
+    def submit_execution_result(
+        self, plan_id: str, result_data: dict[str, Any]
+    ) -> BackendResponse[dict[str, Any]]:
+        return _submit_execution_result(self, plan_id, result_data)
+
+    def block_plan(self, plan_id: str) -> BackendResponse[dict[str, Any]]:
+        return _block_plan(self, plan_id)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
         # Support both "result" (production backend) and "response" (legacy) field names

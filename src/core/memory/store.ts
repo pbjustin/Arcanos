@@ -3,6 +3,7 @@ import { createSessionPersistenceAdapter } from "./sessionPersistence.js";
 import type { SessionPersistenceAdapter, SessionEntry, SessionUpsert, SessionMetadata } from "./persistenceTypes.js";
 import { getEnvNumber } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { createVersionStamp } from "@services/safety/monotonicClock.js";
 
 
 
@@ -64,11 +65,14 @@ class MemoryStore {
   saveSession(entry: SessionUpsert): SessionEntry {
     const sessionId = entry.sessionId || randomUUID();
     const existing = this.sessions.get(sessionId);
+    const stamp = createVersionStamp('session');
     const merged: SessionEntry = {
       sessionId,
       conversations_core: (entry.conversations_core ?? existing?.conversations_core ?? []) as unknown[],
       metadata: this.mergeMetadata(existing?.metadata, entry.metadata),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      versionId: stamp.versionId,
+      monotonicTimestampMs: stamp.monotonicTimestampMs
     };
 
     this.sessions.set(sessionId, merged);
