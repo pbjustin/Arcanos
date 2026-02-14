@@ -12,8 +12,8 @@ export async function registerGpt5Worker() {
     );
   }
 
-  const gpt5Worker = {
-    async execute(payload: any) {
+  const gpt5Worker: Brain = {
+    async execute(payload: BrainPayload): Promise<BrainResponse> {
       return await callOpenAI(payload);
     }
   };
