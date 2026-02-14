@@ -9,7 +9,7 @@ export async function dispatchControllerV9(
   prompt: string,
   sessionId: string,
   lineageId: string
-) {
+): Promise<BrainResponse> {
 
   const brain = getActiveBrain();
 
