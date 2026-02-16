@@ -19,6 +19,9 @@
 import { execSync } from 'node:child_process';
 
 const BLOCKED_STAGE_PATH_PATTERNS = [
+  /^\.env$/i,
+  /(^|\/)\.env$/i,
+  /(^|\/)\.venv\//i,
   /^dist\//,
   /^workers\/dist\//,
   /^daemon-python\/dist\//,

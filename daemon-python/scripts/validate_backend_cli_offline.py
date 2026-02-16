@@ -8,11 +8,12 @@ Purpose:
 
 from __future__ import annotations
 
-import sys
+import json
 from pathlib import Path
 from typing import List
 
 from arcanos.config import Config, validate_required_config
+from arcanos.contract_versions import BACKEND_CLI_CONTRACT_VERSION
 from arcanos.env import set_env_value
 from arcanos.gpt_client import GPTClient
 from arcanos.openai.unified_client import reset_client
@@ -70,6 +71,116 @@ def _run_config_checks(failures: List[str]) -> None:
     _assert(Config.TELEMETRY_DIR.exists(), "Config.TELEMETRY_DIR was not created", failures)
 
 
+def _run_backend_cli_manifest_checks(failures: List[str]) -> None:
+    """
+    Purpose: Enforce shared backend/CLI contract manifest integrity across Python and TypeScript surfaces.
+    Inputs/Outputs: failure list to append violations.
+    Edge cases: Reports malformed/missing manifests without raising so CI can show all failures together.
+    """
+    repository_root = Path(__file__).resolve().parents[2]
+    manifest_path = repository_root / "contracts" / "backend_cli_contract.v1.json"
+
+    # //audit assumption: backend/CLI contract must be centralized in one manifest file; risk: drift between runtime stacks; invariant: manifest exists at canonical path; handling strategy: record explicit failure when missing.
+    _assert(manifest_path.exists(), f"Missing contract manifest: {manifest_path}", failures)
+    if not manifest_path.exists():
+        return
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        failures.append(f"Invalid contract manifest JSON: {exc}")
+        return
+
+    manifest_version = manifest.get("contractVersion")
+    # //audit assumption: daemon runtime and manifest version must match exactly; risk: incompatible request/response payloads; invariant: version lockstep; handling strategy: fail validation on mismatch.
+    _assert(
+        manifest_version == BACKEND_CLI_CONTRACT_VERSION,
+        (
+            "Contract version mismatch: "
+            f"daemon={BACKEND_CLI_CONTRACT_VERSION} manifest={manifest_version}"
+        ),
+        failures,
+    )
+
+    endpoints = manifest.get("endpoints")
+    # //audit assumption: endpoint definitions are mandatory for compatibility checks; risk: partial or empty contracts; invariant: non-empty endpoint map; handling strategy: fail fast when absent.
+    _assert(isinstance(endpoints, dict) and len(endpoints) > 0, "Manifest endpoints must be a non-empty object", failures)
+    if not isinstance(endpoints, dict):
+        return
+
+    expected_endpoints = {"/ask", "/api/vision", "/api/transcribe", "/api/update"}
+    missing_endpoints = sorted(expected_endpoints.difference(endpoints.keys()))
+    _assert(not missing_endpoints, f"Manifest missing endpoints: {', '.join(missing_endpoints)}", failures)
+
+    backend_client_init_path = repository_root / "daemon-python" / "arcanos" / "backend_client" / "__init__.py"
+    try:
+        backend_client_source = backend_client_init_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        failures.append(f"Unable to read backend client source: {exc}")
+        return
+
+    for endpoint_path, endpoint_definition in endpoints.items():
+        if not isinstance(endpoint_definition, dict):
+            failures.append(f"Endpoint definition must be an object: {endpoint_path}")
+            continue
+
+        ts_route_file = endpoint_definition.get("tsRouteFile")
+        # //audit assumption: each endpoint must map to a TypeScript route source file; risk: untraceable contract ownership; invariant: declared route file exists; handling strategy: fail validation for missing files.
+        if not isinstance(ts_route_file, str):
+            failures.append(f"Endpoint missing tsRouteFile: {endpoint_path}")
+        else:
+            route_path = repository_root / ts_route_file
+            _assert(route_path.exists(), f"Declared route file not found for {endpoint_path}: {ts_route_file}", failures)
+
+        python_client_methods = endpoint_definition.get("pythonClientMethods")
+        if not isinstance(python_client_methods, list):
+            failures.append(f"Endpoint pythonClientMethods must be a list: {endpoint_path}")
+            continue
+
+        for method_name in python_client_methods:
+            if not isinstance(method_name, str):
+                failures.append(f"Endpoint pythonClientMethods contains non-string for {endpoint_path}")
+                continue
+            # //audit assumption: listed client methods must exist on BackendApiClient; risk: runtime AttributeError when invoking endpoint wrappers; invariant: each method is implemented; handling strategy: static source presence check.
+            _assert(
+                f"def {method_name}(" in backend_client_source,
+                f"BackendApiClient missing method from manifest: {method_name}",
+                failures,
+            )
+
+
+def _run_cli_surface_checks(failures: List[str]) -> None:
+    """
+    Purpose: Enforce canonical daemon CLI import boundaries to reduce multi-zone CLI drift.
+    Inputs/Outputs: failure list to append violations.
+    Edge cases: Skips unreadable files while recording explicit failure messages.
+    """
+    repository_root = Path(__file__).resolve().parents[2]
+    cli_package_root = repository_root / "daemon-python" / "arcanos" / "cli"
+
+    required_cli_modules = [
+        cli_package_root / "audit.py",
+        cli_package_root / "execute.py",
+        cli_package_root / "governance.py",
+        cli_package_root / "idempotency.py",
+        cli_package_root / "startup.py",
+        cli_package_root / "trust_state.py",
+    ]
+    for required_module in required_cli_modules:
+        _assert(required_module.exists(), f"Missing canonical CLI governance module: {required_module}", failures)
+
+    for source_path in cli_package_root.rglob("*.py"):
+        try:
+            source_text = source_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            failures.append(f"Unable to read CLI module {source_path}: {exc}")
+            continue
+
+        # //audit assumption: daemon CLI must not depend on root-level `cli/` package after consolidation; risk: fragmented runtime behavior and import failures; invariant: no `from cli.` or `import cli.` in canonical package; handling strategy: fail validation on legacy imports.
+        if "from cli." in source_text or "import cli." in source_text:
+            failures.append(f"Legacy root-cli import detected in canonical CLI package: {source_path}")
+
+
 def main() -> int:
     """
     Purpose: Run all offline validators and print machine-readable status.
@@ -81,6 +192,8 @@ def main() -> int:
 
     _run_config_checks(failures)
     _run_mock_contract_checks(failures)
+    _run_backend_cli_manifest_checks(failures)
+    _run_cli_surface_checks(failures)
 
     if failures:
         print("[offline-validator] FAIL")
