@@ -18,10 +18,11 @@ COPY package*.json package-lock.json ./
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --omit=dev --no-audit --no-fund
 
-# Copy source code, workers, scripts, and build configuration
+# Copy source code, workers, scripts, config, and build configuration
 COPY src/ ./src/
 COPY workers/ ./workers/
 COPY scripts/ ./scripts/
+COPY config/ ./config/
 COPY tsconfig.json ./
 
 # Install dev dependencies (override NODE_ENV) and build

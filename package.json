@@ -13,7 +13,7 @@
         "dev:inspect": "npm run build && node --loader ./scripts/esm-alias-loader.mjs --inspect dist/start-server.js",
         "dev:watch": "tsc --watch",
         "build": "npm run build:workers && tsc && tsc-alias && npm run dist:check-aliases && npm run build:copy-assets",
-        "build:copy-assets": "node scripts/copy-assets.js",
+        "build:copy-assets": "node scripts/copy-assets.cjs",
         "dist:repair-aliases": "node scripts/repair-dist-aliases.js --rewrite",
         "dist:check-aliases": "node scripts/repair-dist-aliases.js --check",
         "clean": "rm -rf dist",
