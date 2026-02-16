@@ -80,6 +80,8 @@ let promptsConfig: PromptsConfig | null = null;
 const CONFIG_SEARCH_PATHS = [
   join(process.cwd(), 'config', 'prompts.json'),
   join(__dirname, 'prompts.json'),
+  join(__dirname, '..', '..', 'config', 'prompts.json'),
+  join(__dirname, '..', '..', '..', 'config', 'prompts.json'),
   join(process.cwd(), 'src', 'config', 'prompts.json')
 ];
 
@@ -184,7 +186,12 @@ function loadPromptsConfig(): PromptsConfig {
     const configPath = resolvePromptsConfigPath();
 
     if (!configPath) {
-      throw new Error('Prompts configuration file not found in expected locations');
+      const searchedPaths = CONFIG_SEARCH_PATHS.map(p => `  ${p} (exists: ${existsSync(p)})`).join('\n');
+      throw new Error(
+        `Prompts configuration file not found in expected locations.\n` +
+        `cwd: ${process.cwd()}, __dirname: ${__dirname}\n` +
+        `Searched:\n${searchedPaths}`
+      );
     }
 
     const configData = readFileSync(configPath, 'utf-8');
