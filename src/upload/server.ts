@@ -40,11 +40,12 @@ async function main() {
 
     shuttingDown = true;
     logger.info("Graceful shutdown initiated");
+    const shutdownTimeoutMs = Math.max(0, config.SHUTDOWN_TIMEOUT_MS);
 
     const forcedExitTimer = setTimeout(() => {
       logger.error("Forced shutdown timeout reached");
       process.exit(1);
-    }, 10_000);
+    }, shutdownTimeoutMs);
     forcedExitTimer.unref();
 
     server.close(() => {

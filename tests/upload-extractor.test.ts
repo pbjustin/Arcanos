@@ -22,20 +22,37 @@ describe('guardZipSlip', () => {
   it('blocks paths that escape the base directory via ..', () => {
     expect(() =>
       guardZipSlip('/tmp/uploads', '/tmp/uploads/../etc/passwd')
-    ).toThrow('Zip Slip detected');
+    ).toThrow('Zip Slip detected: path escapes output directory');
   });
 
   it('blocks paths that are entirely outside the base directory', () => {
     expect(() =>
       guardZipSlip('/tmp/uploads', '/etc/passwd')
-    ).toThrow('Zip Slip detected');
+    ).toThrow('Zip Slip detected: path escapes output directory');
   });
 
   it('blocks paths that are prefix matches but not actual children', () => {
     // /tmp/uploads-evil is a prefix match of /tmp/uploads but not a child
     expect(() =>
       guardZipSlip('/tmp/uploads', '/tmp/uploads-evil/file.txt')
-    ).toThrow('Zip Slip detected');
+    ).toThrow('Zip Slip detected: path escapes output directory');
+  });
+});
+
+describe('isBlockedFile', () => {
+  it('blocks executable extensions when filename has trailing dot', async () => {
+    const { isBlockedFile } = await import('../src/upload/services/extractor');
+    expect(isBlockedFile('payload.exe.')).toBe(true);
+  });
+
+  it('blocks executable extensions when filename has trailing spaces', async () => {
+    const { isBlockedFile } = await import('../src/upload/services/extractor');
+    expect(isBlockedFile('payload.ps1   ')).toBe(true);
+  });
+
+  it('allows non-blocked extensions after trailing dot trim', async () => {
+    const { isBlockedFile } = await import('../src/upload/services/extractor');
+    expect(isBlockedFile('notes.txt.')).toBe(false);
   });
 });
 

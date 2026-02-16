@@ -50,6 +50,7 @@ function parseBooleanFromEnv(rawValue: string | undefined, fallbackValue: boolea
 
 export const config = {
   PORT: parseIntegerFromEnv(process.env.PORT, 3000),
+  SHUTDOWN_TIMEOUT_MS: parseIntegerFromEnv(process.env.SHUTDOWN_TIMEOUT_MS, 10_000),
   MAX_FILE_SIZE: parseIntegerFromEnv(process.env.MAX_FILE_SIZE, 50_000_000),
   UPLOAD_ROOT: process.env.UPLOAD_ROOT ?? "temp",
   RATE_LIMIT_WINDOW_MS: parseIntegerFromEnv(process.env.RATE_LIMIT_WINDOW_MS, 60_000),

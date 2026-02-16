@@ -14,6 +14,6 @@ export function guardZipSlip(baseDir: string, targetPath: string) {
   //audit Invariant: destination remains under extraction root.
   //audit Handling: hard-fail with descriptive error to stop extraction.
   if (!resolvedTarget.startsWith(`${resolvedBase}${path.sep}`)) {
-    throw new Error("Zip Slip detected");
+    throw new Error("Zip Slip detected: path escapes output directory");
   }
 }

@@ -7,6 +7,8 @@ import { UploadError } from "../types/upload.js";
 import { logger } from "../utils/logger.js";
 import { streamPipeline } from "../utils/streamPipeline.js";
 import { guardZipSlip } from "../utils/zipSlipGuard.js";
+import { createArchiveSizeGuardTransform } from "../utils/archiveSizeGuard.js";
+import type { ArchiveSizeGuardState } from "../utils/archiveSizeGuard.js";
 import { cleanupUploadArtifacts } from "./cleanupService.js";
 
 const BLOCKED_EXTENSIONS = new Set([
@@ -24,8 +26,20 @@ function isDirectoryEntry(entryName: string): boolean {
   return /\/$/.test(entryName);
 }
 
-function isBlockedFile(entryName: string): boolean {
-  return BLOCKED_EXTENSIONS.has(path.extname(entryName).toLowerCase());
+function normalizeEntryNameForExtensionCheck(entryName: string): string {
+  const normalizedPathSeparators = entryName.replace(/\\/g, "/");
+  const baseFileName = path.posix.basename(normalizedPathSeparators);
+  return baseFileName.replace(/[. ]+$/g, "");
+}
+
+/**
+ * Purpose: Determine whether an archive entry filename resolves to a blocked executable extension.
+ * Inputs/Outputs: Accepts raw zip entry name and returns true when extension is blocked.
+ * Edge cases: Trailing dots/spaces are stripped so names like `payload.exe.` remain blocked.
+ */
+export function isBlockedFile(entryName: string): boolean {
+  const sanitizedName = normalizeEntryNameForExtensionCheck(entryName);
+  return BLOCKED_EXTENSIONS.has(path.extname(sanitizedName).toLowerCase());
 }
 
 function toExtractionError(error: unknown): UploadError {
@@ -50,7 +64,11 @@ export function extractZip(zipPath: string, outputDir: string): Promise<string[]
   return new Promise((resolve, reject) => {
     const extractedFiles: string[] = [];
     let entryCount = 0;
-    let totalUncompressedSize = 0;
+    let totalUncompressedSizeFromHeaders = 0;
+    const archiveSizeGuardState: ArchiveSizeGuardState = {
+      actualExtractedSizeBytes: 0,
+      maxUncompressedSizeBytes: config.MAX_UNCOMPRESSED_SIZE,
+    };
     let settled = false;
 
     const settleWithFailure = async (error: unknown, zipFile?: yauzl.ZipFile): Promise<void> => {
@@ -123,12 +141,12 @@ export function extractZip(zipPath: string, outputDir: string): Promise<string[]
           return;
         }
 
-        totalUncompressedSize += entry.uncompressedSize;
+        totalUncompressedSizeFromHeaders += entry.uncompressedSize;
         //audit Assumption: cumulative uncompressed size is a valid bomb defense signal.
         //audit Failure risk: unchecked extraction can explode disk consumption.
         //audit Invariant: cumulative uncompressed bytes remain under configured ceiling.
         //audit Handling: abort extraction when threshold is crossed.
-        if (totalUncompressedSize > config.MAX_UNCOMPRESSED_SIZE) {
+        if (totalUncompressedSizeFromHeaders > config.MAX_UNCOMPRESSED_SIZE) {
           void settleWithFailure(
             new UploadError(
               "Zip bomb detected: uncompressed size exceeds limit",
@@ -136,7 +154,7 @@ export function extractZip(zipPath: string, outputDir: string): Promise<string[]
               "UPLOAD_EXTRACTION_FAILED",
               {
                 details: {
-                  totalUncompressedSize,
+                  totalUncompressedSizeFromHeaders,
                   maxUncompressedSize: config.MAX_UNCOMPRESSED_SIZE,
                 },
               }
@@ -194,17 +212,27 @@ export function extractZip(zipPath: string, outputDir: string): Promise<string[]
             .mkdir(path.dirname(destinationPath), { recursive: true })
             .then(async () => {
               const writeStream = fs.createWriteStream(destinationPath);
+              const archiveSizeGuardTransform =
+                createArchiveSizeGuardTransform(archiveSizeGuardState);
 
               try {
-                await streamPipeline(readStream, writeStream);
+                await streamPipeline(readStream, archiveSizeGuardTransform, writeStream);
               } catch (streamError) {
+                if (streamError instanceof UploadError) {
+                  throw streamError;
+                }
+
                 throw new UploadError(
                   "Failed to persist extracted entry",
                   400,
                   "UPLOAD_EXTRACTION_FAILED",
                   {
                     cause: streamError,
-                    details: { entryName: entry.fileName, destinationPath },
+                    details: {
+                      entryName: entry.fileName,
+                      actualExtractedSizeBytes: archiveSizeGuardState.actualExtractedSizeBytes,
+                      maxUncompressedSizeBytes: archiveSizeGuardState.maxUncompressedSizeBytes,
+                    },
                   }
                 );
               }
