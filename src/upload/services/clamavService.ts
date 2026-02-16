@@ -111,10 +111,11 @@ async function streamFileToClamd(filePath: string): Promise<string> {
     socket.on("connect", () => {
       socket.write("zINSTREAM\0");
 
-      fileReadStream.on("data", (chunk: Buffer) => {
+      fileReadStream.on("data", (chunk: string | Buffer) => {
+        const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
         const chunkLength = Buffer.alloc(4);
-        chunkLength.writeUInt32BE(chunk.length, 0);
-        const packet = Buffer.concat([chunkLength, chunk]);
+        chunkLength.writeUInt32BE(chunkBuffer.length, 0);
+        const packet = Buffer.concat([chunkLength, chunkBuffer]);
 
         const canContinueWriting = socket.write(packet);
         //audit Assumption: socket backpressure can occur on large uploads.
@@ -135,8 +136,8 @@ async function streamFileToClamd(filePath: string): Promise<string> {
       fileReadStream.on("error", settleWithError);
     });
 
-    socket.on("data", (chunk: Buffer) => {
-      responseBuffer += chunk.toString("utf-8");
+    socket.on("data", (chunk: string | Buffer) => {
+      responseBuffer += Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : chunk;
     });
 
     socket.on("timeout", () => {
