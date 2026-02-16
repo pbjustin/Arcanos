@@ -8,6 +8,11 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { ensureDir } from "./utils/ensureDir.js";
 import { config } from "./config/index.js";
 
+/**
+ * Purpose: Build and configure the upload-focused Express application.
+ * Inputs/Outputs: No runtime inputs; returns a fully wired Express app instance.
+ * Edge cases: Upload directory creation is awaited before route registration.
+ */
 export async function createApp() {
   await ensureDir(config.UPLOAD_ROOT);
 

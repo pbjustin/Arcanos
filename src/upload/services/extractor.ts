@@ -1,116 +1,228 @@
-import yauzl from "yauzl";
-import { promises as fsPromises } from "fs";
 import fs from "fs";
+import { promises as fsPromises } from "fs";
 import path from "path";
-import { guardZipSlip } from "../utils/zipSlipGuard.js";
-import { streamPipeline } from "../utils/streamPipeline.js";
+import yauzl from "yauzl";
 import { config } from "../config/index.js";
 import { UploadError } from "../types/upload.js";
 import { logger } from "../utils/logger.js";
+import { streamPipeline } from "../utils/streamPipeline.js";
+import { guardZipSlip } from "../utils/zipSlipGuard.js";
+import { cleanupUploadArtifacts } from "./cleanupService.js";
 
-/** File extensions we skip during extraction (executables, binaries). */
 const BLOCKED_EXTENSIONS = new Set([
-  ".exe", ".dll", ".bat", ".cmd", ".com", ".scr", ".msi", ".ps1",
+  ".exe",
+  ".dll",
+  ".bat",
+  ".cmd",
+  ".com",
+  ".scr",
+  ".msi",
+  ".ps1",
 ]);
 
-function isBlockedFile(fileName: string): boolean {
-  return BLOCKED_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+function isDirectoryEntry(entryName: string): boolean {
+  return /\/$/.test(entryName);
+}
+
+function isBlockedFile(entryName: string): boolean {
+  return BLOCKED_EXTENSIONS.has(path.extname(entryName).toLowerCase());
+}
+
+function toExtractionError(error: unknown): UploadError {
+  if (error instanceof UploadError) {
+    return error;
+  }
+
+  return new UploadError(
+    "Zip extraction failed",
+    400,
+    "UPLOAD_EXTRACTION_FAILED",
+    { cause: error }
+  );
 }
 
 /**
- * Remove a directory tree silently — used for cleanup on failure.
+ * Purpose: Securely extract a zip archive into an output directory.
+ * Inputs/Outputs: Accepts zip path + output directory and resolves with extracted file paths.
+ * Edge cases: Zip Slip attempts, zip bombs, blocked executable extensions, and stream failures hard-fail extraction.
  */
-async function cleanupDir(dir: string): Promise<void> {
-  try {
-    await fsPromises.rm(dir, { recursive: true, force: true });
-  } catch {
-    logger.warn({ dir }, "Failed to cleanup directory after extraction error");
-  }
-}
-
-export function extractZip(
-  zipPath: string,
-  outputDir: string
-): Promise<string[]> {
+export function extractZip(zipPath: string, outputDir: string): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const extracted: string[] = [];
+    const extractedFiles: string[] = [];
     let entryCount = 0;
     let totalUncompressedSize = 0;
     let settled = false;
 
-    function fail(err: unknown) {
-      if (settled) return;
+    const settleWithFailure = async (error: unknown, zipFile?: yauzl.ZipFile): Promise<void> => {
+      if (settled) {
+        return;
+      }
+
       settled = true;
-      cleanupDir(outputDir).finally(() => reject(err));
-    }
 
-    function succeed(files: string[]) {
-      if (settled) return;
+      if (zipFile) {
+        try {
+          zipFile.close();
+        } catch (closeError) {
+          logger.warn({ closeError }, "Zip archive close failed during extraction rollback");
+        }
+      }
+
+      const cleanupSummary = await cleanupUploadArtifacts(outputDir);
+      if (cleanupSummary.failures.length > 0) {
+        logger.error(
+          { failures: cleanupSummary.failures, outputDir },
+          "Extraction cleanup encountered failures"
+        );
+      }
+
+      reject(toExtractionError(error));
+    };
+
+    const settleWithSuccess = (): void => {
+      if (settled) {
+        return;
+      }
+
       settled = true;
-      resolve(files);
-    }
+      resolve(extractedFiles);
+    };
 
-    yauzl.open(zipPath, { lazyEntries: true }, (err, zip) => {
-      if (err || !zip) return fail(err ?? new UploadError("Failed to open zip", 400));
+    yauzl.open(zipPath, { lazyEntries: true }, (openError, zipFile) => {
+      if (openError || !zipFile) {
+        void settleWithFailure(
+          new UploadError("Failed to open zip archive", 400, "UPLOAD_EXTRACTION_FAILED", {
+            cause: openError,
+          })
+        );
+        return;
+      }
 
-      zip.readEntry();
+      zipFile.readEntry();
 
-      zip.on("entry", (entry: yauzl.Entry) => {
-        if (settled) return;
+      zipFile.on("entry", (entry: yauzl.Entry) => {
+        if (settled) {
+          return;
+        }
 
-        entryCount++;
+        entryCount += 1;
+        //audit Assumption: high entry counts indicate potential zip bomb payloads.
+        //audit Failure risk: unbounded entry processing can exhaust CPU/disk resources.
+        //audit Invariant: extraction never processes more than configured entry budget.
+        //audit Handling: close archive and fail if entry count exceeds threshold.
         if (entryCount > config.MAX_ZIP_ENTRIES) {
-          zip.close();
-          return fail(new UploadError("Zip bomb detected: too many entries", 400));
+          void settleWithFailure(
+            new UploadError(
+              "Zip bomb detected: too many entries",
+              400,
+              "UPLOAD_EXTRACTION_FAILED",
+              { details: { entryCount, maxEntries: config.MAX_ZIP_ENTRIES } }
+            ),
+            zipFile
+          );
+          return;
         }
 
         totalUncompressedSize += entry.uncompressedSize;
+        //audit Assumption: cumulative uncompressed size is a valid bomb defense signal.
+        //audit Failure risk: unchecked extraction can explode disk consumption.
+        //audit Invariant: cumulative uncompressed bytes remain under configured ceiling.
+        //audit Handling: abort extraction when threshold is crossed.
         if (totalUncompressedSize > config.MAX_UNCOMPRESSED_SIZE) {
-          zip.close();
-          return fail(new UploadError("Zip bomb detected: uncompressed size exceeds limit", 400));
-        }
-
-        // Skip directories
-        if (/\/$/.test(entry.fileName)) {
-          zip.readEntry();
+          void settleWithFailure(
+            new UploadError(
+              "Zip bomb detected: uncompressed size exceeds limit",
+              400,
+              "UPLOAD_EXTRACTION_FAILED",
+              {
+                details: {
+                  totalUncompressedSize,
+                  maxUncompressedSize: config.MAX_UNCOMPRESSED_SIZE,
+                },
+              }
+            ),
+            zipFile
+          );
           return;
         }
 
-        // Skip blocked file types
+        //audit Assumption: directory entries do not require stream extraction.
+        //audit Failure risk: attempting to stream directories would raise runtime errors.
+        //audit Invariant: only file entries are opened as streams.
+        //audit Handling: skip directories and continue iteration.
+        if (isDirectoryEntry(entry.fileName)) {
+          zipFile.readEntry();
+          return;
+        }
+
+        //audit Assumption: executable payloads inside uploads are out-of-policy.
+        //audit Failure risk: extracting executables increases malware exposure.
+        //audit Invariant: blocked extensions are never written to disk.
+        //audit Handling: skip blocked files while preserving extraction continuity.
         if (isBlockedFile(entry.fileName)) {
-          logger.info({ file: entry.fileName }, "Skipping blocked file extension");
-          zip.readEntry();
+          logger.warn({ entryName: entry.fileName }, "Skipping blocked extension during extraction");
+          zipFile.readEntry();
           return;
         }
 
-        const destPath = path.join(outputDir, entry.fileName);
+        const destinationPath = path.join(outputDir, entry.fileName);
 
         try {
-          guardZipSlip(outputDir, destPath);
-        } catch (slipErr) {
-          zip.close();
-          return fail(slipErr);
+          //audit Assumption: destination path may contain traversal segments.
+          //audit Failure risk: path traversal can overwrite files outside output directory.
+          //audit Invariant: all extracted paths remain inside configured output directory.
+          //audit Handling: guardZipSlip throws and stops extraction on violation.
+          guardZipSlip(outputDir, destinationPath);
+        } catch (pathError) {
+          void settleWithFailure(pathError, zipFile);
+          return;
         }
 
-        zip.openReadStream(entry, (streamErr, readStream) => {
-          if (streamErr || !readStream) return fail(streamErr);
+        zipFile.openReadStream(entry, (streamOpenError, readStream) => {
+          if (streamOpenError || !readStream) {
+            void settleWithFailure(
+              new UploadError("Failed to read zip entry stream", 400, "UPLOAD_EXTRACTION_FAILED", {
+                cause: streamOpenError,
+                details: { entryName: entry.fileName },
+              }),
+              zipFile
+            );
+            return;
+          }
 
-          fsPromises
-            .mkdir(path.dirname(destPath), { recursive: true })
-            .then(() => {
-              const writeStream = fs.createWriteStream(destPath);
-              return streamPipeline(readStream, writeStream);
+          void fsPromises
+            .mkdir(path.dirname(destinationPath), { recursive: true })
+            .then(async () => {
+              const writeStream = fs.createWriteStream(destinationPath);
+
+              try {
+                await streamPipeline(readStream, writeStream);
+              } catch (streamError) {
+                throw new UploadError(
+                  "Failed to persist extracted entry",
+                  400,
+                  "UPLOAD_EXTRACTION_FAILED",
+                  {
+                    cause: streamError,
+                    details: { entryName: entry.fileName, destinationPath },
+                  }
+                );
+              }
+
+              extractedFiles.push(destinationPath);
+              zipFile.readEntry();
             })
-            .then(() => {
-              extracted.push(destPath);
-              zip.readEntry();
-            })
-            .catch(fail);
+            .catch((entryError) => {
+              void settleWithFailure(entryError, zipFile);
+            });
         });
       });
 
-      zip.on("end", () => succeed(extracted));
-      zip.on("error", fail);
+      zipFile.on("error", (zipError: Error) => {
+        void settleWithFailure(zipError, zipFile);
+      });
+
+      zipFile.on("end", settleWithSuccess);
     });
   });
 }
