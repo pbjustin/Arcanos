@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
 
-from cli.audit import record as audit_record
-from cli.execute import execute as governed_execute
-from cli.governance import GovernanceError
-from cli.idempotency import command_fingerprint
+from .audit import record as audit_record
+from .execute import execute as governed_execute
+from .governance import GovernanceError
+from .idempotency import command_fingerprint
 
 from ..config import Config
 from . import state

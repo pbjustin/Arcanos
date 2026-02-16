@@ -8,8 +8,8 @@ import time
 from collections import deque
 from typing import Any, Mapping, TYPE_CHECKING
 
-from cli.audit import record as audit_record
-from cli.trust_state import TrustState
+from .audit import record as audit_record
+from .trust_state import TrustState
 
 from ..cli_config import DEFAULT_ACTIVITY_HISTORY_LIMIT, MIN_REGISTRY_CACHE_TTL_MINUTES
 from ..config import Config
