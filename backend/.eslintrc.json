@@ -1,0 +1,86 @@
+{
+    "parser": "@typescript-eslint/parser",
+    "plugins": [
+        "@typescript-eslint",
+        "boundaries"
+    ],
+    "extends": [
+        "eslint:recommended",
+        "plugin:@typescript-eslint/recommended",
+        "plugin:boundaries/recommended"
+    ],
+    "settings": {
+        "boundaries/elements": [
+            {
+                "type": "core",
+                "pattern": "src/core/*"
+            },
+            {
+                "type": "domains",
+                "pattern": "src/domains/*"
+            },
+            {
+                "type": "interfaces",
+                "pattern": "src/interfaces/*"
+            },
+            {
+                "type": "infrastructure",
+                "pattern": "src/infrastructure/*"
+            },
+            {
+                "type": "shared",
+                "pattern": "src/shared/*"
+            }
+        ]
+    },
+    "rules": {
+        "boundaries/element-types": [
+            "error",
+            {
+                "default": "disallow",
+                "rules": [
+                    {
+                        "from": "core",
+                        "allow": [
+                            "shared",
+                            "infrastructure",
+                            "core"
+                        ]
+                    },
+                    {
+                        "from": "domains",
+                        "allow": [
+                            "core",
+                            "shared",
+                            "infrastructure",
+                            "domains"
+                        ]
+                    },
+                    {
+                        "from": "interfaces",
+                        "allow": [
+                            "core",
+                            "domains",
+                            "shared",
+                            "infrastructure",
+                            "interfaces"
+                        ]
+                    },
+                    {
+                        "from": "infrastructure",
+                        "allow": [
+                            "shared",
+                            "infrastructure"
+                        ]
+                    },
+                    {
+                        "from": "shared",
+                        "allow": [
+                            "shared"
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

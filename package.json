@@ -1,0 +1,16 @@
+{
+  "name": "arcanos-monorepo",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "cli",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "eslint": "^8.0.0"
+  }
+}
