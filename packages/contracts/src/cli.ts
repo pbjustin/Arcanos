@@ -9,6 +9,20 @@ export interface EscalationResponse {
   output: string
   memoryWrites?: {
     content: string
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   }[]
+}
+
+export interface MemoryWriteRequest {
+  userId: string
+  sessionId: string
+  content: string
+  metadata?: Record<string, unknown>
+}
+
+export interface MemoryRetrieveRequest {
+  userId: string
+  sessionId: string
+  query: string
+  topK: number
 }

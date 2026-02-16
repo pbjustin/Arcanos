@@ -1,29 +1,41 @@
-export interface MemoryWriteInput {
-    userId: string
-    sessionId: string
-    content: string
-    metadata?: Record<string, any>
-}
-
-export interface MemoryRetrieveInput {
-    userId: string
-    sessionId: string
-    query: string
-    topK: number
-}
+import {
+    MemoryRetrieveRequest,
+    MemoryWriteRequest
+} from "@arcanos/contracts"
 
 export class MemoryService {
-    async write(input: MemoryWriteInput) {
+    /**
+     * Persists a memory event for a user/session pair.
+     * Input: MemoryWriteRequest from shared contracts.
+     * Output: resolves when write is completed.
+     * Edge case: metadata can be omitted.
+     */
+    async write(input: MemoryWriteRequest): Promise<void> {
         // TODO: embed via AIClient
         // TODO: persist via repository
+        void input
     }
 
-    async retrieve(input: MemoryRetrieveInput) {
+    /**
+     * Retrieves top-K similar memories for a user/session query.
+     * Input: MemoryRetrieveRequest from shared contracts.
+     * Output: list of matching memory records.
+     * Edge case: returns empty array when no matches are found.
+     */
+    async retrieve(input: MemoryRetrieveRequest): Promise<unknown[]> {
         // TODO: vector similarity search
+        void input
         return []
     }
 
-    async digest(sessionId: string) {
+    /**
+     * Runs optional summarization/digest logic for a session.
+     * Input: sessionId string.
+     * Output: resolves when digest flow completes.
+     * Edge case: no-op if there is no digestable data.
+     */
+    async digest(sessionId: string): Promise<void> {
         // optional summarization logic
+        void sessionId
     }
 }
