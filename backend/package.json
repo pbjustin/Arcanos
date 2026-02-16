@@ -1,14 +1,16 @@
 {
     "name": "@arcanos/backend",
     "version": "0.0.1",
-    "main": "dist/index.js",
+    "main": "dist/src/index.js",
     "scripts": {
-        "build": "tsc"
+        "build": "tsc",
+        "start": "node dist/src/index.js"
     },
     "dependencies": {
         "@arcanos/contracts": "*"
     },
     "devDependencies": {
+        "@types/node": "^18.0.0",
         "typescript": "^5.0.0",
         "eslint": "^8.0.0",
         "eslint-plugin-boundaries": "^3.0.0"

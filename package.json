@@ -7,6 +7,8 @@
     "packages/*"
   ],
   "scripts": {
+    "build": "npm run build --workspaces",
+    "start": "npm run start --workspace backend",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
