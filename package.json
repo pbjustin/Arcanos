@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces",
+    "build": "npm run build --workspace @arcanos/contracts && npm run build --workspace @arcanos/backend && npm run build --workspace @arcanos/cli",
     "start": "npm run start --workspace backend",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
