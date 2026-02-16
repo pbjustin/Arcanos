@@ -235,7 +235,7 @@ export async function runThroughBrain(
   // --- Concurrency governor + watchdog ---
   const [release] = await acquireTierSlot(tier);
   const gpt5Model = getGPT5Model();
-  const reasoningDepth = tier === 'critical' ? 2 : 1;
+  const reasoningDepth = tier === 'critical' ? 2 : (tier === 'complex' ? 1.5 : 1);
   const watchdog = new Watchdog(resolveTimeout(gpt5Model, reasoningDepth));
 
   try {
