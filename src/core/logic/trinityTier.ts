@@ -60,8 +60,8 @@ export function buildReasoningConfig(tier: Tier): { effort: 'high' } | undefined
 
 export function getInvocationBudget(tier: Tier): number {
   switch (tier) {
-    case 'critical': return 5;
-    case 'complex': return 3;
+    case 'critical': return 4;
+    case 'complex': return 2;
     case 'simple': return 2;
   }
 }
