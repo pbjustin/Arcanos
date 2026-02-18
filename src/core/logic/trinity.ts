@@ -51,6 +51,13 @@ import {
   detectDowngrade,
   logTrinityTelemetry
 } from './trinityGuards.js';
+import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prompts.js";
+
+function isInternalArchitecturalMode(prompt: string): boolean {
+  const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
+  const normalized = prompt.toLowerCase();
+  return keywords.some(k => normalized.includes(k));
+}
 
 // Re-export public types so callers import from trinity.js only
 export type { TrinityResult, TrinityRunOptions, TrinityDryRunPreview } from './trinityTypes.js';
@@ -62,7 +69,13 @@ function buildDryRunTrinityResult(
   auditConfig: ReturnType<typeof getAuditSafeConfig>,
   auditFlags: string[],
   memoryScoreSummary: { maxScore: number; averageScore: number },
-  gpt5Used: boolean
+  gpt5Used: boolean,
+  tier?: Tier,
+  reasoningConfig?: { effort: 'high' },
+  budgetUsed?: number,
+  budgetLimit?: number,
+  internalMode?: boolean,
+  clarificationAllowed?: boolean
 ): TrinityResult {
   const msg = getTrinityMessages();
   return {
@@ -103,7 +116,16 @@ function buildDryRunTrinityResult(
       tokens: undefined,
       id: requestId,
       created: Date.now()
-    }
+    },
+    tierInfo: tier ? {
+      tier,
+      reasoningEffort: reasoningConfig?.effort,
+      reflectionApplied: false,
+      invocationsUsed: budgetUsed ?? 0,
+      invocationBudget: budgetLimit ?? 0,
+      internalMode,
+      clarificationAllowed
+    } : undefined
   };
 }
 
@@ -190,6 +212,10 @@ export async function runThroughBrain(
   const maxBudget = getInvocationBudget(tier);
   const budget = new InvocationBudget(maxBudget);
 
+  const internalMode = isInternalArchitecturalMode(prompt);
+  const internalDirective = internalMode ? getInternalArchitecturalEvaluationPrompt() : undefined;
+  const clarificationAllowed = !internalMode;
+
   // --- Retry lineage check ---
   registerRetry(requestId);
 
@@ -227,7 +253,13 @@ export async function runThroughBrain(
       auditConfig,
       auditFlags,
       memoryScoreSummary,
-      gpt5Used
+      gpt5Used,
+      tier,
+      reasoningConfig,
+      budget.used(),
+      budget.limit(),
+      internalMode,
+      clarificationAllowed
     );
   }
 
@@ -247,7 +279,7 @@ export async function runThroughBrain(
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
 
-    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain);
+    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain, internalDirective);
     const framedRequest = intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
@@ -279,7 +311,7 @@ export async function runThroughBrain(
 
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
-    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain);
+    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain, internalDirective);
 
     // Mid-layer translation: strip system/audit artifacts, humanize the response
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
@@ -326,6 +358,16 @@ export async function runThroughBrain(
     }
 
     const downgradeDetected = detectDowngrade(getGPT5Model(), gpt5ModelUsed);
+
+    if (internalMode && downgradeDetected) {
+      logger.error('CRITICAL: Model downgrade detected in Internal Architectural Mode', {
+        module: 'trinity',
+        operation: 'downgrade-guard',
+        requested: getGPT5Model(),
+        actual: gpt5ModelUsed
+      });
+      throw new Error('STRICT_EXECUTION_ERROR: Model downgrade not allowed in Internal Architectural Mode.');
+    }
 
     const latencyMs = Date.now() - start;
     recordLatency(latencyMs);
@@ -377,7 +419,9 @@ export async function runThroughBrain(
       reflectionApplied,
       invocationsUsed: budget.used(),
       invocationBudget: budget.limit(),
-      utalReason: "UTAL Keyword Density"
+      utalReason: "UTAL Keyword Density",
+      internalMode,
+      clarificationAllowed
     };
     result.guardInfo = {
       watchdogMs: watchdog.elapsed(),

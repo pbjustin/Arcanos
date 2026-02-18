@@ -61,6 +61,8 @@ export interface TrinityResult {
     invocationBudget: number;
     utalReason?: string;
     downgradedBy?: string | null;
+    internalMode?: boolean;
+    clarificationAllowed?: boolean;
   };
   guardInfo?: {
     watchdogMs: number;

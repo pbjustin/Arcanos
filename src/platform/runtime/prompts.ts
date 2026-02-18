@@ -30,6 +30,7 @@ interface PromptsConfig {
     final_response_instruction: string;
     final_review_system: string;
     system_prompt: string;
+    internal_architectural_evaluation: string;
     secure_reasoning_integration: string;
     user_prompt: string;
   };
@@ -399,6 +400,10 @@ export const getPrompt = (category: keyof PromptsConfig, key: string, replacemen
  */
 export const getArcanosSystemPrompt = (): string => {
   return loadPromptsConfig().arcanos.system_prompt;
+};
+
+export const getInternalArchitecturalEvaluationPrompt = (): string => {
+  return loadPromptsConfig().arcanos.internal_architectural_evaluation;
 };
 
 /**
