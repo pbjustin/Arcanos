@@ -228,6 +228,7 @@ function loadPromptsConfig(): PromptsConfig {
         final_review_system: 'Review GPT-5.1 analysis and deliver the final ARCANOS response.',
         system_prompt: 'You are ARCANOS AI system.',
         secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
+        internal_architectural_evaluation: 'SYSTEM MODE: INTERNAL ARCHITECTURAL EVALUATION',
         user_prompt: 'You are ARCANOS.'
       },
       system: {

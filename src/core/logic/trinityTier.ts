@@ -32,11 +32,7 @@ const COMPLEXITY_KEYWORDS = [
   'concurrency',
   'downgrade detection',
   'watchdog',
-  'multi-tenant',
-  'system directive',
-  'internal',
-  'evaluate',
-  'architectural'
+  'multi-tenant'
 ];
 
 export function detectTier(prompt: string): Tier {

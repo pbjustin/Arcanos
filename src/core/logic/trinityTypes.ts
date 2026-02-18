@@ -78,6 +78,7 @@ export interface TrinityRunOptions {
   dryRun?: boolean;
   dryRunReason?: string;
   cognitiveDomain?: import('@shared/types/cognitiveDomain.js').CognitiveDomain;
+  internalMode?: boolean;
 }
 
 export interface TrinityDryRunPreview {

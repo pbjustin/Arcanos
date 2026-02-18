@@ -40,7 +40,7 @@ import {
   buildAuditLogEntry
 } from './trinityStages.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
-import { detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
+import { type Tier, detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
 import {
   acquireTierSlot,
   Watchdog,
@@ -52,12 +52,6 @@ import {
   logTrinityTelemetry
 } from './trinityGuards.js';
 import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prompts.js";
-
-function isInternalArchitecturalMode(prompt: string): boolean {
-  const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
-  const normalized = prompt.toLowerCase();
-  return keywords.some(k => normalized.includes(k));
-}
 
 // Re-export public types so callers import from trinity.js only
 export type { TrinityResult, TrinityRunOptions, TrinityDryRunPreview } from './trinityTypes.js';
@@ -212,7 +206,7 @@ export async function runThroughBrain(
   const maxBudget = getInvocationBudget(tier);
   const budget = new InvocationBudget(maxBudget);
 
-  const internalMode = isInternalArchitecturalMode(prompt);
+  const internalMode = options.internalMode ?? false;
   const internalDirective = internalMode ? getInternalArchitecturalEvaluationPrompt() : undefined;
   const clarificationAllowed = !internalMode;
 
@@ -360,13 +354,12 @@ export async function runThroughBrain(
     const downgradeDetected = detectDowngrade(getGPT5Model(), gpt5ModelUsed);
 
     if (internalMode && downgradeDetected) {
-      logger.error('CRITICAL: Model downgrade detected in Internal Architectural Mode', {
+      logger.warn('Model downgrade detected in Internal Architectural Mode — proceeding with degraded model', {
         module: 'trinity',
         operation: 'downgrade-guard',
         requested: getGPT5Model(),
         actual: gpt5ModelUsed
       });
-      throw new Error('STRICT_EXECUTION_ERROR: Model downgrade not allowed in Internal Architectural Mode.');
     }
 
     const latencyMs = Date.now() - start;
