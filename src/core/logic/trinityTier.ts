@@ -62,7 +62,7 @@ export function getInvocationBudget(tier: Tier): number {
   switch (tier) {
     case 'critical': return 4;
     case 'complex': return 4; // Raised from 2 to 4 per hardening directive
-    case 'simple': return 1;
+    case 'simple': return 2;
   }
 }
 

@@ -30,9 +30,9 @@ from rich.markdown import Markdown
 from rich.table import Table
 from rich.console import Console
 
-from cli.audit import record as audit_record
-from cli.idempotency import IdempotencyGuard
-from cli.trust_state import TrustState
+from .audit import record as audit_record
+from .idempotency import IdempotencyGuard
+from .trust_state import TrustState
 
 from ..backend_client import BackendApiClient, BackendRequestError, BackendResponse
 from ..cli_config import (
@@ -68,7 +68,7 @@ from . import (
     ui_ops,
 )
 from .context import ConversationResult, _UNSET_FILTER, get_or_create_instance_id, resolve_persona
-from .cli_midlayer import translate
+from ..cli_midlayer import translate
 
 try:
     from ..push_to_talk import AdvancedPushToTalkManager

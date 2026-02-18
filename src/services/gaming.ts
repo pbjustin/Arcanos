@@ -1,6 +1,6 @@
 import { getPrompt } from "@platform/runtime/prompts.js";
 import { getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js';
-import { fetchAndClean } from "@services/webFetcher.js";
+import { fetchAndClean } from "@shared/webFetcher.js";
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";

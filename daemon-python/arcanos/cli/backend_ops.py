@@ -8,8 +8,8 @@ import base64
 import time
 from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING
 
-from cli.audit import record as audit_record
-from cli.trust_state import TrustState
+from .audit import record as audit_record
+from .trust_state import TrustState
 
 from ..backend_client import BackendRequestError, BackendResponse
 from ..cli_config import (

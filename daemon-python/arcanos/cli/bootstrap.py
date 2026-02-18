@@ -20,7 +20,7 @@ from ..cli_config import DEFAULT_DEBUG_SERVER_PORT
 from ..config import Config
 from ..error_handler import ErrorHandler, logger as error_logger
 from ..update_checker import check_for_updates
-from cli.startup import startup_sequence
+from .startup import startup_sequence
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI

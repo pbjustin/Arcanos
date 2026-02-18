@@ -1,5 +1,6 @@
 import { buildContextualSystemPrompt } from "@services/contextualReinforcement.js";
 import { CallOpenAIOptions, ChatCompletionMessageParam } from './types.js';
+import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 
 export function buildChatMessages(
   prompt: string,
@@ -19,15 +20,15 @@ export function buildChatMessages(
       return message;
     });
 
+    // Check if we need to inject the system prompt if it wasn't found/updated
     const hasSystemMessage = preparedMessages.some((message) => message.role === 'system');
     if (!hasSystemMessage || !systemInjected) {
+      // If we have existing messages but no system message, prepend the context-aware system prompt
       preparedMessages = [{ role: 'system', content: contextAwarePrompt }, ...preparedMessages];
     }
   } else {
-    preparedMessages = [
-      { role: 'system', content: contextAwarePrompt },
-      { role: 'user', content: prompt }
-    ];
+    // Standard case: just prompt and system prompt
+    preparedMessages = buildSystemPromptMessages(prompt, contextAwarePrompt);
   }
 
   return preparedMessages;

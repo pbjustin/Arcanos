@@ -3,6 +3,7 @@
    File: src/brain/registerGpt5Worker.ts
    ============================================================ */
 
+import type { Brain, BrainPayload, BrainResponse } from "./brainRegistry.js";
 import { registerBrain } from "./brainRegistry.js";
 
 export async function registerGpt5Worker() {
@@ -12,8 +13,8 @@ export async function registerGpt5Worker() {
     );
   }
 
-  const gpt5Worker = {
-    async execute(payload: any) {
+  const gpt5Worker: Brain = {
+    async execute(payload: BrainPayload): Promise<BrainResponse> {
       return await callOpenAI(payload);
     }
   };
@@ -22,6 +23,6 @@ export async function registerGpt5Worker() {
 }
 
 // Replace with your actual OpenAI call
-async function callOpenAI(payload: any) {
+async function callOpenAI(payload: BrainPayload): Promise<BrainResponse> {
   throw new Error("OpenAI adapter not implemented");
 }

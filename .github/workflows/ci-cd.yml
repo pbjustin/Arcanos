@@ -33,6 +33,9 @@ jobs:
       - name: 🛡️ Commit guardrails
         run: npm run guard:commit
 
+      - name: 🧾 Validate backend/CLI contract manifest
+        run: npm run validate:backend-cli:contract
+
       - name: 🔧 Type check
         run: npm run type-check
 

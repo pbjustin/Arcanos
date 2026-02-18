@@ -26,9 +26,9 @@ describe('Brain System', () => {
 
   test('getActiveBrain should throw if gpt5 is not registered and FORCE_MOCK is false', () => {
     process.env.FORCE_MOCK = 'false';
-    // Ensure gpt5 is NOT registered for this test if possible
-    // Since it's a singleton, this is tricky. 
-    // Let's assume for a fresh test it might not be, but in a full app it will be.
-    // If it was already registered by another test, this might fail.
+    // This test will pass if _clearRegistryForTests() is added and called in beforeEach
+    expect(() => getActiveBrain()).toThrow(
+      'CRITICAL: GPT5 worker not registered. Mock fallback is disabled in production.'
+    );
   });
 });

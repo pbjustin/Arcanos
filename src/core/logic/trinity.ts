@@ -52,6 +52,7 @@ import {
   logTrinityTelemetry
 } from './trinityGuards.js';
 import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prompts.js";
+import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 
 // Re-export public types so callers import from trinity.js only
 export type { TrinityResult, TrinityRunOptions, TrinityDryRunPreview } from './trinityTypes.js';
@@ -259,7 +260,9 @@ export async function runThroughBrain(
 
   // --- Concurrency governor + watchdog ---
   const [release] = await acquireTierSlot(tier);
-  const watchdog = new Watchdog();
+  const gpt5Model = getGPT5Model();
+  const reasoningDepth = tier === 'critical' ? 2 : (tier === 'complex' ? 1.5 : 1);
+  const watchdog = new Watchdog(resolveTimeout(gpt5Model, reasoningDepth));
 
   try {
     // --- Stage 1: Intake ---
