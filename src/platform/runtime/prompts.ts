@@ -30,6 +30,7 @@ interface PromptsConfig {
     final_response_instruction: string;
     final_review_system: string;
     system_prompt: string;
+    internal_architectural_evaluation: string;
     secure_reasoning_integration: string;
     user_prompt: string;
   };
@@ -234,6 +235,7 @@ function loadPromptsConfig(): PromptsConfig {
         final_review_system: 'Review GPT-5.1 analysis and deliver the final ARCANOS response.',
         system_prompt: 'You are ARCANOS AI system.',
         secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
+        internal_architectural_evaluation: 'SYSTEM MODE: INTERNAL ARCHITECTURAL EVALUATION',
         user_prompt: 'You are ARCANOS.'
       },
       system: {
@@ -406,6 +408,10 @@ export const getPrompt = (category: keyof PromptsConfig, key: string, replacemen
  */
 export const getArcanosSystemPrompt = (): string => {
   return loadPromptsConfig().arcanos.system_prompt;
+};
+
+export const getInternalArchitecturalEvaluationPrompt = (): string => {
+  return loadPromptsConfig().arcanos.internal_architectural_evaluation;
 };
 
 /**

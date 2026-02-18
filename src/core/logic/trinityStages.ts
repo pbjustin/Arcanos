@@ -91,9 +91,10 @@ function ensureStringContent(value: unknown): string {
 export function buildFinalArcanosMessages(
   memoryContextSummary: string,
   auditSafePrompt: string,
-  gpt5Output: string
+  gpt5Output: string,
+  systemPromptOverride?: string
 ): ChatCompletionMessageParam[] {
-  const systemContent = ensureStringContent(ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary)) || 'Review and respond.';
+  const systemContent = systemPromptOverride || ensureStringContent(ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary)) || 'Review and respond.';
   const userRequestContent = ensureStringContent(buildFinalOriginalRequestMessage(auditSafePrompt)) || 'No request provided.';
   const assistantContent = ensureStringContent(buildFinalGpt5AnalysisMessage(gpt5Output)) || 'No analysis provided.';
   const finalInstructionContent = ensureStringContent(getFinalResponseInstruction()) || 'Provide the final response.';
@@ -105,14 +106,33 @@ export function buildFinalArcanosMessages(
   ];
 }
 
+export function buildInternalArchitecturalMessages(
+  internalDirective: string,
+  auditSafePrompt: string,
+  gpt5Output?: string
+): ChatCompletionMessageParam[] {
+  const messages: ChatCompletionMessageParam[] = [
+    { role: 'system', content: internalDirective },
+    { role: 'user', content: auditSafePrompt }
+  ];
+
+  if (gpt5Output) {
+    messages.push({ role: 'assistant', content: gpt5Output });
+    messages.push({ role: 'user', content: 'Complete the structured analysis based on the reasoning above.' });
+  }
+
+  return messages;
+}
+
 export async function runIntakeStage(
   client: OpenAI,
   arcanosModel: string,
   auditSafePrompt: string,
   memoryContextSummary: string,
-  cognitiveDomain?: CognitiveDomain
+  cognitiveDomain?: CognitiveDomain,
+  systemPromptOverride?: string
 ): Promise<TrinityIntakeOutput> {
-  const intakeSystemPrompt = ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary);
+  const intakeSystemPrompt = systemPromptOverride || ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary);
   const intakeTokenParams = getTokenParameter(arcanosModel, TRINITY_INTAKE_TOKEN_LIMIT);
   const temperature = resolveTemperature(cognitiveDomain);
   const intakeResponse = await createChatCompletionWithFallback(client, {
@@ -175,14 +195,15 @@ export async function runFinalStage(
   memoryContextSummary: string,
   auditSafePrompt: string,
   gpt5Output: string,
-  cognitiveDomain?: CognitiveDomain
+  cognitiveDomain?: CognitiveDomain,
+  systemPromptOverride?: string
 ): Promise<TrinityFinalOutput> {
   const complexModel = getComplexModel();
   const cappedLimit = enforceTokenCap(APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalTokenParams = getTokenParameter(complexModel, cappedLimit);
   const temperature = resolveTemperature(cognitiveDomain);
   const finalResponse = await createChatCompletionWithFallback(client, {
-    messages: buildFinalArcanosMessages(memoryContextSummary, auditSafePrompt, gpt5Output),
+    messages: buildFinalArcanosMessages(memoryContextSummary, auditSafePrompt, gpt5Output, systemPromptOverride),
     temperature,
     model: complexModel,
     ...finalTokenParams
