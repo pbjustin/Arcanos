@@ -266,7 +266,7 @@ function loadPromptsConfig(): PromptsConfig {
       },
       trinity: TRINITY_MESSAGES_DEFAULTS
     };
-    return promptsConfig;
+    return promptsConfig!;
   }
 }
 
