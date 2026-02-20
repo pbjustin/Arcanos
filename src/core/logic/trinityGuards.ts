@@ -26,22 +26,22 @@ export async function acquireTierSlot(tier: Tier): Promise<[() => void]> {
 
 // --- Watchdog ---
 
+const WATCHDOG_BASE_MS = 18000;
+const WATCHDOG_TIER_MULTIPLIERS: Record<Tier, number> = {
+  simple: 1.0,
+  complex: 1.4,
+  critical: 1.8
+};
+const WATCHDOG_ESCALATION_MULTIPLIER = 1.3;
+const WATCHDOG_HARD_CAP_MS = 90000;
+
 export function computeWatchdog(tier: Tier, escalated: boolean): number {
-  const BASE = 18000;
-
-  const multipliers = {
-    simple: 1.0,
-    complex: 1.4,
-    critical: 1.8
-  };
-  const tierMultiplier = multipliers[tier];
-
-  const escalationMultiplier = escalated ? 1.3 : 1.0;
-
-  const computed = BASE * tierMultiplier * escalationMultiplier;
+  const tierMultiplier = WATCHDOG_TIER_MULTIPLIERS[tier];
+  const escalationMultiplier = escalated ? WATCHDOG_ESCALATION_MULTIPLIER : 1.0;
+  const computed = WATCHDOG_BASE_MS * tierMultiplier * escalationMultiplier;
 
   // Hard watchdog cap: 90 seconds
-  return Math.min(computed, 90000);
+  return Math.min(computed, WATCHDOG_HARD_CAP_MS);
 }
 
 export class Watchdog {

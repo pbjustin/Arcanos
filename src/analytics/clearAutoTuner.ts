@@ -1,6 +1,13 @@
 import { logger } from "@platform/logging/structuredLogging.js";
 
-let CLEAR_MIN_THRESHOLD = 3.4;
+const CLEAR_DEFAULT_THRESHOLD = 3.4;
+const ESCALATION_RATE_UPPER_BOUND = 0.35;
+const ESCALATION_RATE_LOWER_BOUND = 0.08;
+const THRESHOLD_ADJUSTMENT_STEP = 0.1;
+const CLEAR_THRESHOLD_MIN_CLAMP = 3.0;
+const CLEAR_THRESHOLD_MAX_CLAMP = 3.8;
+
+let CLEAR_MIN_THRESHOLD = CLEAR_DEFAULT_THRESHOLD;
 
 const WINDOW_SIZE = 500;
 let runCount = 0;
@@ -20,14 +27,17 @@ export function recordRun(wasEscalated: boolean): void {
     const escalationRate = escalationCount / runCount;
     const oldThreshold = CLEAR_MIN_THRESHOLD;
 
-    if (escalationRate > 0.35) {
-      CLEAR_MIN_THRESHOLD -= 0.1;
-    } else if (escalationRate < 0.08) {
-      CLEAR_MIN_THRESHOLD += 0.1;
+    if (escalationRate > ESCALATION_RATE_UPPER_BOUND) {
+      CLEAR_MIN_THRESHOLD -= THRESHOLD_ADJUSTMENT_STEP;
+    } else if (escalationRate < ESCALATION_RATE_LOWER_BOUND) {
+      CLEAR_MIN_THRESHOLD += THRESHOLD_ADJUSTMENT_STEP;
     }
 
     // Clamp
-    CLEAR_MIN_THRESHOLD = Math.max(3.0, Math.min(3.8, CLEAR_MIN_THRESHOLD));
+    CLEAR_MIN_THRESHOLD = Math.max(
+      CLEAR_THRESHOLD_MIN_CLAMP,
+      Math.min(CLEAR_THRESHOLD_MAX_CLAMP, CLEAR_MIN_THRESHOLD)
+    );
 
     if (oldThreshold !== CLEAR_MIN_THRESHOLD) {
       logger.info('CLEAR threshold adjusted', {

@@ -36,7 +36,7 @@ Return JSON only:
 }
 
 Reasoning Ledger:
-\`;
+`;
 
 
 export async function runClearAudit(client: OpenAI, ledger: ReasoningLedger): Promise<ClearAuditResult> {

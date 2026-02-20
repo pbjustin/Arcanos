@@ -57,6 +57,8 @@ import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js'
 import { trackEscalation } from '../../analytics/escalationTracker.js';
 import { getClearMinThreshold, recordRun } from '../../analytics/clearAutoTuner.js';
 
+const MIN_ESCALATION_BUDGET_MS = 5000;
+
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
   const normalized = prompt.toLowerCase();
@@ -294,12 +296,11 @@ export async function runThroughBrain(
     let clearAudit: ClearAuditResult | undefined = undefined;
     if (reasoningLedger) {
       clearAudit = await runClearAudit(client, reasoningLedger);
-      
-      const MIN_ESCALATION_BUDGET = 5000;
+
       if (clearAudit.overall < getClearMinThreshold() && 
           tier !== 'critical' && 
           !internalContext?.escalated && 
-          (watchdog.limit() - watchdog.elapsed()) > MIN_ESCALATION_BUDGET) {
+          (watchdog.limit() - watchdog.elapsed()) > MIN_ESCALATION_BUDGET_MS) {
         
         logger.info('Low CLEAR score detected, triggering single-hop escalation', {
           requestId, tier, clearScore: clearAudit.overall, threshold: getClearMinThreshold()
