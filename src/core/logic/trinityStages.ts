@@ -23,17 +23,19 @@ import {
 } from "@services/auditSafe.js";
 import { getMemoryContext } from "@services/memoryAware.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import { calculateMemoryScoreSummary, logFallbackEvent } from './trinityHelpers.js';
+import { calculateMemoryScoreSummary, logFallbackEvent, STRUCTURED_REASONING_PROMPT, safeJsonParse } from './trinityHelpers.js';
 import type {
   TrinityIntakeOutput,
   TrinityReasoningOutput,
   TrinityFinalOutput,
-  TrinityDryRunPreview
+  TrinityDryRunPreview,
+  ReasoningLedger
 } from './trinityTypes.js';
 import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
 import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH, TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
 import { enforceTokenCap } from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import type { Tier } from './trinityTier.js';
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {
@@ -162,11 +164,40 @@ export async function runIntakeStage(
   };
 }
 
-export async function runReasoningStage(client: OpenAI, framedRequest: string): Promise<TrinityReasoningOutput> {
+export async function runReasoningStage(client: OpenAI, framedRequest: string, tier?: Tier): Promise<TrinityReasoningOutput> {
   logGPT5Invocation('Primary reasoning stage', framedRequest);
-  const gpt5Result = await createGPT5Reasoning(client, framedRequest, ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING());
+  
+  const systemPrompt = ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING();
+  const enhancedPrompt = (tier && tier !== 'simple') 
+    ? systemPrompt + '\n' + STRUCTURED_REASONING_PROMPT 
+    : systemPrompt;
+
+  const gpt5Result = await createGPT5Reasoning(client, framedRequest, enhancedPrompt);
   const gpt5ModelUsed = gpt5Result.model || getGPT5Model();
   const fallbackUsed = Boolean(gpt5Result.error);
+
+  let reasoningLedger: ReasoningLedger | undefined = undefined;
+  let finalOutput = gpt5Result.content;
+
+  if (!fallbackUsed && tier && tier !== 'simple') {
+    const parsed = safeJsonParse(gpt5Result.content);
+    if (parsed && typeof parsed === 'object') {
+      reasoningLedger = {
+        steps: parsed.reasoning_steps || [],
+        assumptions: parsed.assumptions || [],
+        constraints: parsed.constraints || [],
+        tradeoffs: parsed.tradeoffs || [],
+        alternatives: parsed.alternatives_considered || [],
+        justification: parsed.chosen_path_justification || ''
+      };
+      finalOutput = parsed.final_answer || gpt5Result.content;
+    } else {
+      logger.warn('Failed to parse structured reasoning JSON, falling back to raw output', {
+        module: 'trinity',
+        operation: 'gpt5-reasoning-parse'
+      });
+    }
+  }
 
   if (fallbackUsed) {
     logger.warn('GPT-5.1 reasoning fallback in Trinity pipeline', {
@@ -178,15 +209,17 @@ export async function runReasoningStage(client: OpenAI, framedRequest: string): 
     logger.info('GPT-5.1 reasoning confirmed', {
       module: 'trinity',
       operation: 'gpt5-reasoning',
-      model: gpt5ModelUsed
+      model: gpt5ModelUsed,
+      structured: !!reasoningLedger
     });
   }
 
   return {
-    output: gpt5Result.content,
+    output: finalOutput,
     model: gpt5ModelUsed,
     fallbackUsed,
-    error: gpt5Result.error
+    error: gpt5Result.error,
+    reasoningLedger
   };
 }
 

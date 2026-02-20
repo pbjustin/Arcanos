@@ -26,7 +26,7 @@ export async function createJob(data: JobInput): Promise<Job> {
     status: "queued",
     model: data.model,
     messages: data.messages,
-    maxTokens: data.maxTokens,
+    ...(data.maxTokens !== undefined ? { maxTokens: data.maxTokens } : {}),
   };
   await redis.set(`job:${job.id}`, JSON.stringify(job), "EX", JOB_TTL_SECONDS);
   return job;

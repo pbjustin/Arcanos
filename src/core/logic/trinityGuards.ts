@@ -26,12 +26,34 @@ export async function acquireTierSlot(tier: Tier): Promise<[() => void]> {
 
 // --- Watchdog ---
 
+const WATCHDOG_BASE_MS = 18000;
+const WATCHDOG_TIER_MULTIPLIERS: Record<Tier, number> = {
+  simple: 1.0,
+  complex: 1.4,
+  critical: 1.8
+};
+const WATCHDOG_ESCALATION_MULTIPLIER = 1.3;
+const WATCHDOG_HARD_CAP_MS = 90000;
+
+export function computeWatchdog(tier: Tier, escalated: boolean): number {
+  const tierMultiplier = WATCHDOG_TIER_MULTIPLIERS[tier];
+  const escalationMultiplier = escalated ? WATCHDOG_ESCALATION_MULTIPLIER : 1.0;
+  const computed = WATCHDOG_BASE_MS * tierMultiplier * escalationMultiplier;
+
+  // Hard watchdog cap: 90 seconds
+  return Math.min(computed, WATCHDOG_HARD_CAP_MS);
+}
+
 export class Watchdog {
   private start = Date.now();
   private limitMs: number;
 
   constructor(limitMs = 28_000) {
     this.limitMs = limitMs;
+  }
+
+  updateLimit(newLimitMs: number): void {
+    this.limitMs = newLimitMs;
   }
 
   check(): void {
@@ -47,6 +69,10 @@ export class Watchdog {
 
   elapsed(): number {
     return Date.now() - this.start;
+  }
+
+  limit(): number {
+    return this.limitMs;
   }
 }
 

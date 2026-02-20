@@ -1,8 +1,10 @@
 import { openai } from "./openaiClient.js";
 import { computeTimeout } from "./adaptiveTimeout.js";
-import type { Job } from "../jobs/jobStore.js";
+import type { AIJobPayload } from "../jobs/types.js";
 
-export async function executeAIJob(job: Job) {
+type ExecutableAIJob = Pick<AIJobPayload, "model" | "messages" | "maxTokens">;
+
+export async function executeAIJob(job: ExecutableAIJob) {
   const controller = new AbortController();
 
   const timeout = computeTimeout(
@@ -16,15 +18,16 @@ export async function executeAIJob(job: Job) {
   }, timeout);
 
   try {
-    const response = await openai.chat.completions.create(
+    return await openai.chat.completions.create(
       {
         model: job.model,
-        messages: job.messages,
-        max_tokens: job.maxTokens ?? 1500,
+        messages: job.messages as any,
+        max_tokens: job.maxTokens ?? 1500
       },
-      { signal: controller.signal }
+      {
+        signal: controller.signal
+      }
     );
-    return response;
   } finally {
     clearTimeout(timer);
   }

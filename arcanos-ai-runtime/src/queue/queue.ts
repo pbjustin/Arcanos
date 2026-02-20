@@ -1,9 +1,26 @@
-import { Queue } from "bullmq";
-import { config, QUEUE_NAME } from "../config.js";
+import { Queue, type JobsOptions } from "bullmq";
+import { runtimeEnv } from "../config/env.js";
+import type { AIJobPayload } from "../jobs/types.js";
 
-export const aiQueue = new Queue(QUEUE_NAME, {
-  connection: {
-    host: config.redisHost,
-    port: config.redisPort,
+export const AI_QUEUE_NAME = "ai-jobs";
+
+export const queueConnection = {
+  host: runtimeEnv.REDIS_HOST,
+  port: runtimeEnv.REDIS_PORT
+};
+
+const defaultJobOptions: JobsOptions = {
+  removeOnComplete: {
+    age: runtimeEnv.JOB_RETENTION_SECONDS,
+    count: runtimeEnv.MAX_COMPLETED_JOBS
   },
+  removeOnFail: {
+    age: runtimeEnv.JOB_RETENTION_SECONDS,
+    count: runtimeEnv.MAX_FAILED_JOBS
+  }
+};
+
+export const aiQueue = new Queue<AIJobPayload>(AI_QUEUE_NAME, {
+  connection: queueConnection,
+  defaultJobOptions
 });
