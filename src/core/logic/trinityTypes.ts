@@ -13,6 +13,15 @@ export interface TrinityMetaTokens {
  * Comprehensive result from the Trinity processing pipeline.
  * Includes the AI-generated response, metadata, audit information, and routing details.
  */
+export interface ReasoningLedger {
+  steps: string[];
+  assumptions: string[];
+  constraints: string[];
+  tradeoffs: string[];
+  alternatives: string[];
+  justification: string;
+}
+
 export interface TrinityResult {
   result: string;
   module: string;
@@ -55,6 +64,7 @@ export interface TrinityResult {
   };
   tierInfo?: {
     tier: 'simple' | 'complex' | 'critical';
+    originalTier?: 'simple' | 'complex' | 'critical';
     reasoningEffort?: 'high';
     reflectionApplied: boolean;
     invocationsUsed: number;
@@ -63,15 +73,31 @@ export interface TrinityResult {
     downgradedBy?: string | null;
     internalMode?: boolean;
     clarificationAllowed?: boolean;
+    escalated?: boolean;
+    escalationReason?: string;
   };
   guardInfo?: {
     watchdogMs: number;
+    watchdogLimit?: number;
     tokenCapApplied: number;
     sessionTokensUsed?: number;
     downgradeDetected: boolean;
     latencyMs: number;
     latencyDriftDetected: boolean;
+    latencyUtilization?: number;
+    latencyMargin?: number;
   };
+  reasoningLedgerStored?: boolean;
+  reasoningLedger?: ReasoningLedger;
+  clearAudit?: {
+    clarity: number;
+    leverage: number;
+    efficiency: number;
+    alignment: number;
+    resilience: number;
+    overall: number;
+  };
+  confidence?: number;
 }
 
 export interface TrinityRunOptions {
@@ -106,6 +132,7 @@ export interface TrinityReasoningOutput {
   model: string;
   fallbackUsed: boolean;
   error?: string;
+  reasoningLedger?: ReasoningLedger;
 }
 
 export interface TrinityFinalOutput {

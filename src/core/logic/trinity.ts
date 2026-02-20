@@ -40,7 +40,7 @@ import {
   buildAuditLogEntry
 } from './trinityStages.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
-import { detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
+import { detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift, type Tier } from './trinityTier.js';
 import {
   acquireTierSlot,
   Watchdog,
@@ -49,9 +49,13 @@ import {
   getSessionTokenUsage,
   registerRetry,
   detectDowngrade,
-  logTrinityTelemetry
+  logTrinityTelemetry,
+  computeWatchdog
 } from './trinityGuards.js';
 import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prompts.js";
+import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js';
+import { trackEscalation } from '../../analytics/escalationTracker.js';
+import { getClearMinThreshold, recordRun } from '../../analytics/clearAutoTuner.js';
 
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
@@ -129,6 +133,11 @@ function buildDryRunTrinityResult(
   };
 }
 
+function getNextTier(tier: Tier): Tier {
+  if (tier === 'simple') return 'complex';
+  return 'critical';
+}
+
 function buildTrinityResult(
   finalText: string,
   actualModel: string,
@@ -145,9 +154,11 @@ function buildTrinityResult(
   memoryScoreSummary: { maxScore: number; averageScore: number },
   usage: TrinityResult['meta']['tokens'],
   responseId: string | undefined,
-  created: number | undefined
+  created: number | undefined,
+  reasoningLedger?: TrinityResult['reasoningLedger'],
+  clearAudit?: ClearAuditResult
 ): TrinityResult {
-  return {
+  const result: TrinityResult = {
     result: finalText,
     module: actualModel,
     activeModel: actualModel,
@@ -180,8 +191,19 @@ function buildTrinityResult(
       tokens: usage ?? undefined,
       id: responseId ?? requestId,
       created: created ?? Date.now()
-    }
+    },
+    reasoningLedgerStored: !!reasoningLedger,
+    reasoningLedger,
+    clearAudit
   };
+
+  if (clearAudit) {
+    const latencyFactor = 1.0; // Placeholder
+    const escalationBonus = 1.1; // Placeholder
+    result.confidence = (clearAudit.overall / 5) * latencyFactor;
+  }
+
+  return result;
 }
 
 /**
@@ -199,7 +221,8 @@ export async function runThroughBrain(
   prompt: string,
   sessionId?: string,
   overrideFlag?: string,
-  options: TrinityRunOptions = {}
+  options: TrinityRunOptions = {},
+  internalContext?: { escalated: boolean; originalTier: Tier }
 ): Promise<TrinityResult> {
   const requestId = generateRequestId('trinity');
   const routingStages: string[] = [];
@@ -207,7 +230,7 @@ export async function runThroughBrain(
   const start = Date.now();
 
   // --- Tier detection ---
-  const tier = detectTier(prompt);
+  const tier = internalContext?.originalTier ? getNextTier(internalContext.originalTier) : detectTier(prompt);
   const reasoningConfig = buildReasoningConfig(tier);
   const maxBudget = getInvocationBudget(tier);
   const budget = new InvocationBudget(maxBudget);
@@ -223,49 +246,23 @@ export async function runThroughBrain(
   logger.info('Trinity audit-safe mode', {
     module: 'trinity', operation: 'audit-safe',
     mode: auditConfig.auditSafeMode ? 'ENABLED' : 'DISABLED',
-    tier
+    tier,
+    escalated: !!internalContext?.escalated
   });
 
   const memoryContext = getMemoryContext(prompt, sessionId);
-  logger.info('Trinity memory context', {
-    module: 'trinity', operation: 'memory',
-    entries: memoryContext.relevantEntries.length
-  });
-
   const relevanceScores = memoryContext.relevantEntries.map(entry => entry.relevanceScore ?? 0);
   const memoryScoreSummary = calculateMemoryScoreSummary(relevanceScores);
 
   if (options.dryRun) {
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
-    const dryRunPreview = buildDryRunPreview(
-      requestId,
-      prompt,
-      auditSafePrompt,
-      auditFlags,
-      memoryContext.relevantEntries.length,
-      auditConfig.auditSafeMode,
-      options.dryRunReason
-    );
-    return buildDryRunTrinityResult(
-      requestId,
-      dryRunPreview,
-      memoryContext,
-      auditConfig,
-      auditFlags,
-      memoryScoreSummary,
-      gpt5Used,
-      tier,
-      reasoningConfig,
-      budget.used(),
-      budget.limit(),
-      internalMode,
-      clarificationAllowed
-    );
+    const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason);
+    return buildDryRunTrinityResult(requestId, dryRunPreview, memoryContext, auditConfig, auditFlags, memoryScoreSummary, gpt5Used, tier, reasoningConfig, budget.used(), budget.limit(), internalMode, clarificationAllowed);
   }
 
   // --- Concurrency governor + watchdog ---
   const [release] = await acquireTierSlot(tier);
-  const watchdog = new Watchdog();
+  const watchdog = new Watchdog(computeWatchdog(tier, !!internalContext?.escalated));
 
   try {
     // --- Stage 1: Intake ---
@@ -288,9 +285,51 @@ export async function runThroughBrain(
     watchdog.check();
 
     routingStages.push('GPT5-REASONING');
-    const reasoningOutput = await runReasoningStage(client, framedRequest);
+    const reasoningOutput = await runReasoningStage(client, framedRequest, tier);
     let gpt5Output = reasoningOutput.output;
     const gpt5ModelUsed = reasoningOutput.model;
+    const reasoningLedger = reasoningOutput.reasoningLedger;
+
+    // --- CLEAR Audit & Escalation Logic ---
+    let clearAudit: ClearAuditResult | undefined = undefined;
+    if (reasoningLedger) {
+      clearAudit = await runClearAudit(client, reasoningLedger);
+      
+      const MIN_ESCALATION_BUDGET = 5000;
+      if (clearAudit.overall < getClearMinThreshold() && 
+          tier !== 'critical' && 
+          !internalContext?.escalated && 
+          (watchdog.limit() - watchdog.elapsed()) > MIN_ESCALATION_BUDGET) {
+        
+        logger.info('Low CLEAR score detected, triggering single-hop escalation', {
+          requestId, tier, clearScore: clearAudit.overall, threshold: getClearMinThreshold()
+        });
+
+        // Release current slot before escalating
+        release();
+
+        const escalatedResult = await runThroughBrain(client, prompt, sessionId, overrideFlag, options, {
+          escalated: true,
+          originalTier: tier
+        });
+
+        // Track escalation analytics
+        trackEscalation({
+          runId: requestId,
+          originalTier: tier,
+          escalatedTier: escalatedResult.tierInfo?.tier as Tier,
+          clearScoreInitial: clearAudit.overall,
+          clearScoreFinal: escalatedResult.clearAudit?.overall ?? 0,
+          clearImprovement: (escalatedResult.clearAudit?.overall ?? 0) - clearAudit.overall,
+          latencyInitial: watchdog.elapsed(),
+          latencyFinal: escalatedResult.guardInfo?.latencyMs ?? 0,
+          tokenUsageInitial: (intakeOutput.usage?.total_tokens ?? 0) + (reasoningOutput.fallbackUsed ? 0 : 0), // Partial usage
+          tokenUsageFinal: escalatedResult.meta.tokens?.total_tokens ?? 0
+        });
+
+        return escalatedResult;
+      }
+    }
 
     // --- Stage 2.5: Reflection (critical tier only) ---
     let reflectionApplied = false;
@@ -313,7 +352,6 @@ export async function runThroughBrain(
     routingStages.push('ARCANOS-FINAL');
     const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain, internalDirective);
 
-    // Mid-layer translation: strip system/audit artifacts, humanize the response
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
     const finalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
 
@@ -323,49 +361,26 @@ export async function runThroughBrain(
     }
 
     if (finalProcessedSafely && !intakeOutput.fallbackUsed && !finalOutput.fallbackUsed) {
-      storePattern(
-        getTrinityMessages().pattern_storage_label,
-        [
-          `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
-          `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
-          `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
-        ],
-        sessionId
-      );
+      storePattern(getTrinityMessages().pattern_storage_label, [
+        `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+        `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
+        `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
+      ], sessionId);
     }
 
     logRoutingSummary(arcanosModel, true, 'ARCANOS-FINAL');
 
-    const auditLogEntry: AuditLogEntry = buildAuditLogEntry(
-      requestId,
-      prompt,
-      finalText,
-      auditConfig,
-      memoryContext,
-      actualModel,
-      gpt5ModelUsed,
-      finalProcessedSafely,
-      auditFlags
-    );
+    const auditLogEntry: AuditLogEntry = buildAuditLogEntry(requestId, prompt, finalText, auditConfig, memoryContext, actualModel, gpt5ModelUsed, finalProcessedSafely, auditFlags);
     logAITaskLineage(auditLogEntry);
 
     // --- Post-execution guards ---
-    const totalTokens = (finalOutput.usage?.total_tokens ?? 0) +
-      (intakeOutput.usage?.total_tokens ?? 0);
-
+    const totalTokens = (finalOutput.usage?.total_tokens ?? 0) + (intakeOutput.usage?.total_tokens ?? 0);
     if (sessionId) {
       recordSessionTokens(sessionId, totalTokens);
     }
 
     const downgradeDetected = detectDowngrade(getGPT5Model(), gpt5ModelUsed);
-
     if (internalMode && downgradeDetected) {
-      logger.error('CRITICAL: Model downgrade detected in Internal Architectural Mode', {
-        module: 'trinity',
-        operation: 'downgrade-guard',
-        requested: getGPT5Model(),
-        actual: gpt5ModelUsed
-      });
       throw new Error('STRICT_EXECUTION_ERROR: Model downgrade not allowed in Internal Architectural Mode.');
     }
 
@@ -373,14 +388,10 @@ export async function runThroughBrain(
     recordLatency(latencyMs);
     const latencyDriftDetected = detectLatencyDrift();
 
-    logTrinityTelemetry({
-      tier,
-      totalTokens,
-      downgradeDetected,
-      latencyMs,
-      reflectionApplied,
-      requestId
-    });
+    logTrinityTelemetry({ tier, totalTokens, downgradeDetected, latencyMs, reflectionApplied, requestId });
+
+    // Record run for auto-tuning
+    recordRun(!!internalContext?.escalated);
 
     const fallbackSummary = {
       intakeFallbackUsed: intakeOutput.fallbackUsed,
@@ -394,42 +405,33 @@ export async function runThroughBrain(
     };
 
     const result = buildTrinityResult(
-      finalText,
-      actualModel,
-      requestId,
-      routingStages,
-      gpt5Used,
-      gpt5ModelUsed,
-      reasoningOutput.error,
-      fallbackSummary,
-      auditConfig,
-      auditFlags,
-      finalProcessedSafely,
-      memoryContext,
-      memoryScoreSummary,
-      finalOutput.usage,
-      finalOutput.responseId,
-      finalOutput.created
+      finalText, actualModel, requestId, routingStages, gpt5Used, gpt5ModelUsed, reasoningOutput.error, fallbackSummary, auditConfig, auditFlags, finalProcessedSafely, memoryContext, memoryScoreSummary, finalOutput.usage, finalOutput.responseId, finalOutput.created,
+      reasoningLedger, clearAudit
     );
 
-    // Attach tier and guard metadata
     result.tierInfo = {
       tier,
+      originalTier: internalContext?.originalTier,
       reasoningEffort: reasoningConfig?.effort,
       reflectionApplied,
       invocationsUsed: budget.used(),
       invocationBudget: budget.limit(),
       utalReason: "UTAL Keyword Density",
       internalMode,
-      clarificationAllowed
+      clarificationAllowed,
+      escalated: !!internalContext?.escalated,
+      escalationReason: internalContext?.escalated ? 'low_clear_score' : undefined
     };
     result.guardInfo = {
       watchdogMs: watchdog.elapsed(),
+      watchdogLimit: watchdog.limit(),
       tokenCapApplied: TRINITY_HARD_TOKEN_CAP,
       sessionTokensUsed: sessionId ? getSessionTokenUsage(sessionId) : undefined,
       downgradeDetected,
       latencyMs,
-      latencyDriftDetected
+      latencyDriftDetected,
+      latencyUtilization: watchdog.elapsed() / watchdog.limit(),
+      latencyMargin: watchdog.limit() - watchdog.elapsed()
     };
 
     return result;
