@@ -1,0 +1,2153 @@
+{
+  "generatedAt": "2026-02-20T09:29:03.644Z",
+  "scopes": [
+    {
+      "scope": "arcanos-ai-runtime",
+      "files": [
+        {
+          "relativePath": "arcanos-ai-runtime/src/ai/adaptiveTimeout.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\ai\\adaptiveTimeout.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/ai/executeJob.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\ai\\executeJob.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/ai/openaiClient.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\ai\\openaiClient.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/auth/apiKey.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\auth\\apiKey.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/config.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\config.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/config/env.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\config\\env.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/jobs/jobStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\jobs\\jobStore.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/jobs/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\jobs\\types.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/jobs/validation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\jobs\\validation.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/queue/queue.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\queue\\queue.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/redis.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\redis.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/server.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\server.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/worker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\arcanos-ai-runtime\\src\\worker.ts"
+        }
+      ]
+    },
+    {
+      "scope": "backend-service",
+      "files": [
+        {
+          "relativePath": "backend-service/src/config/cors.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\config\\cors.ts"
+        },
+        {
+          "relativePath": "backend-service/src/middleware/auth.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\middleware\\auth.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/getTask.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\routes\\getTask.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/heartbeat.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\routes\\heartbeat.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/register.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\routes\\register.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/submitResult.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\routes\\submitResult.ts"
+        },
+        {
+          "relativePath": "backend-service/src/server.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\server.ts"
+        },
+        {
+          "relativePath": "backend-service/src/services/agentService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\services\\agentService.ts"
+        },
+        {
+          "relativePath": "backend-service/src/services/taskService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\services\\taskService.ts"
+        },
+        {
+          "relativePath": "backend-service/src/storage/inMemoryStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\storage\\inMemoryStore.ts"
+        },
+        {
+          "relativePath": "backend-service/src/types/agent.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\types\\agent.ts"
+        },
+        {
+          "relativePath": "backend-service/src/types/result.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\types\\result.ts"
+        },
+        {
+          "relativePath": "backend-service/src/types/task.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\types\\task.ts"
+        },
+        {
+          "relativePath": "backend-service/src/validation/requestValidators.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-service\\src\\validation\\requestValidators.ts"
+        }
+      ]
+    },
+    {
+      "scope": "backend-typescript",
+      "files": [
+        {
+          "relativePath": "backend-typescript/src/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\backend-typescript\\src\\index.ts"
+        }
+      ]
+    },
+    {
+      "scope": "collected-ts",
+      "files": [
+        {
+          "relativePath": "collected-ts/src/config/prompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\collected-ts\\src\\config\\prompts.ts"
+        },
+        {
+          "relativePath": "collected-ts/tests/prompts-system.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\collected-ts\\tests\\prompts-system.test.ts"
+        }
+      ]
+    },
+    {
+      "scope": "scripts",
+      "files": [
+        {
+          "relativePath": "scripts/assistants-sync.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\scripts\\assistants-sync.ts"
+        },
+        {
+          "relativePath": "scripts/check-boundaries.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\scripts\\check-boundaries.ts"
+        },
+        {
+          "relativePath": "scripts/db-init.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\scripts\\db-init.ts"
+        }
+      ]
+    },
+    {
+      "scope": "src",
+      "files": [
+        {
+          "relativePath": "src/analytics/clearAutoTuner.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\analytics\\clearAutoTuner.ts"
+        },
+        {
+          "relativePath": "src/analytics/escalationTracker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\analytics\\escalationTracker.ts"
+        },
+        {
+          "relativePath": "src/app.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\app.ts"
+        },
+        {
+          "relativePath": "src/brain/brainFactory.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\brain\\brainFactory.ts"
+        },
+        {
+          "relativePath": "src/brain/brainRegistry.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\brain\\brainRegistry.ts"
+        },
+        {
+          "relativePath": "src/brain/mockBrain.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\brain\\mockBrain.ts"
+        },
+        {
+          "relativePath": "src/brain/registerGpt5Worker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\brain\\registerGpt5Worker.ts"
+        },
+        {
+          "relativePath": "src/config/env.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\config\\env.ts"
+        },
+        {
+          "relativePath": "src/config/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\config\\index.ts"
+        },
+        {
+          "relativePath": "src/config/integrityManifest.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\config\\integrityManifest.ts"
+        },
+        {
+          "relativePath": "src/config/unifiedConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\config\\unifiedConfig.ts"
+        },
+        {
+          "relativePath": "src/controllers/dispatchControllerV9.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\controllers\\dispatchControllerV9.ts"
+        },
+        {
+          "relativePath": "src/core/adapters/openai.adapter.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\adapters\\openai.adapter.ts"
+        },
+        {
+          "relativePath": "src/core/afol/analytics.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\afol\\analytics.ts"
+        },
+        {
+          "relativePath": "src/core/afol/engine.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\afol\\engine.ts"
+        },
+        {
+          "relativePath": "src/core/afol/health.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\afol\\health.ts"
+        },
+        {
+          "relativePath": "src/core/afol/logger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\afol\\logger.ts"
+        },
+        {
+          "relativePath": "src/core/afol/policies.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\afol\\policies.ts"
+        },
+        {
+          "relativePath": "src/core/afol/routes.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\afol\\routes.ts"
+        },
+        {
+          "relativePath": "src/core/afol/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\afol\\types.ts"
+        },
+        {
+          "relativePath": "src/core/audit/runClearAudit.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\audit\\runClearAudit.ts"
+        },
+        {
+          "relativePath": "src/core/commands/arcanos/audit_override.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\commands\\arcanos\\audit_override.ts"
+        },
+        {
+          "relativePath": "src/core/commands/runDailySummary.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\commands\\runDailySummary.ts"
+        },
+        {
+          "relativePath": "src/core/commands/runSelfTest.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\commands\\runSelfTest.ts"
+        },
+        {
+          "relativePath": "src/core/db/auditStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\auditStore.ts"
+        },
+        {
+          "relativePath": "src/core/db/client.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\client.ts"
+        },
+        {
+          "relativePath": "src/core/db/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\index.ts"
+        },
+        {
+          "relativePath": "src/core/db/query.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\query.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/executionLogRepository.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\repositories\\executionLogRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/jobRepository.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\repositories\\jobRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/memoryRepository.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\repositories\\memoryRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/ragRepository.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\repositories\\ragRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/reasoningLogRepository.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\repositories\\reasoningLogRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/selfReflectionRepository.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\repositories\\selfReflectionRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/schema.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\schema.ts"
+        },
+        {
+          "relativePath": "src/core/db/sessionCacheStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\db\\sessionCacheStore.ts"
+        },
+        {
+          "relativePath": "src/core/diagnostics.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\diagnostics.ts"
+        },
+        {
+          "relativePath": "src/core/init-openai.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\init-openai.ts"
+        },
+        {
+          "relativePath": "src/core/lib/errors/base.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\lib\\errors\\base.ts"
+        },
+        {
+          "relativePath": "src/core/lib/errors/classification.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\lib\\errors\\classification.ts"
+        },
+        {
+          "relativePath": "src/core/lib/errors/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\lib\\errors\\index.ts"
+        },
+        {
+          "relativePath": "src/core/logic/aiCron.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\aiCron.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\arcanos.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/parsing.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\arcanos\\parsing.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/prompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\arcanos\\prompts.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/secureReasoning.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\arcanos\\secureReasoning.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\arcanos\\types.ts"
+        },
+        {
+          "relativePath": "src/core/logic/assistantSyncCron.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\assistantSyncCron.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinity.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\trinity.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityConstants.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\trinityConstants.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityGuards.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\trinityGuards.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityHelpers.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\trinityHelpers.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityStages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\trinityStages.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityTier.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\trinityTier.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityTypes.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\trinityTypes.ts"
+        },
+        {
+          "relativePath": "src/core/logic/tutor-logic.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\logic\\tutor-logic.ts"
+        },
+        {
+          "relativePath": "src/core/memory/persistenceTypes.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\memory\\persistenceTypes.ts"
+        },
+        {
+          "relativePath": "src/core/memory/sessionPersistence.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\memory\\sessionPersistence.ts"
+        },
+        {
+          "relativePath": "src/core/memory/store.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\memory\\store.ts"
+        },
+        {
+          "relativePath": "src/core/persistenceManagerHierarchy.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\persistenceManagerHierarchy.ts"
+        },
+        {
+          "relativePath": "src/core/startup.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\startup.ts"
+        },
+        {
+          "relativePath": "src/core/types/cognitiveDomain.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\core\\types\\cognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/db/client.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\db\\client.ts"
+        },
+        {
+          "relativePath": "src/dispatcher/detectCognitiveDomain.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\dispatcher\\detectCognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/dispatcher/gptDomainClassifier.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\dispatcher\\gptDomainClassifier.ts"
+        },
+        {
+          "relativePath": "src/lib/errors.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\errors.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/classification.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\errors\\classification.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\errors\\index.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/messages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\errors\\messages.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/openai.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\errors\\openai.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/responses.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\errors\\responses.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/reusable.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\errors\\reusable.ts"
+        },
+        {
+          "relativePath": "src/lib/tokenStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\lib\\tokenStore.ts"
+        },
+        {
+          "relativePath": "src/middleware/operatorAuth.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\middleware\\operatorAuth.ts"
+        },
+        {
+          "relativePath": "src/platform/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\index.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/aiLogger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\aiLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/auditLogger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\auditLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/bootLogger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\bootLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/diagnostics.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\diagnostics.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/dualModeAudit.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\dualModeAudit.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/gptLogger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\gptLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/openaiLogger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\openaiLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/structuredLogging.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\structuredLogging.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/systemDiagnostics.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\systemDiagnostics.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/telemetry.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\telemetry.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/unifiedTelemetry.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\logging\\unifiedTelemetry.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/cache.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\cache.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/circuitBreaker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\circuitBreaker.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/healthChecks.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\healthChecks.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/idleManager.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\idleManager.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/serviceUnavailable.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\serviceUnavailable.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/unifiedHealth.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\unifiedHealth.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/unifiedRetry.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\unifiedRetry.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/watchdog.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\resilience\\watchdog.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/aiReflectionTemplates.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\aiReflectionTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/arcanosPipelinePrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\arcanosPipelinePrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/arcanosPrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\arcanosPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/auditSafe.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\auditSafe.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/autoHeal.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\autoHeal.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/bridgeEnv.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\bridgeEnv.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/bridgeRelay.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\bridgeRelay.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/chatFallbackMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\chatFallbackMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/config.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\config.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/daemonConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\daemonConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/daemonRegistry.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\daemonRegistry.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/dailySummaryTemplates.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\dailySummaryTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/dispatchMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\dispatchMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/dispatchPatterns.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\dispatchPatterns.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/env.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\env.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/environmentFingerprints.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\environmentFingerprints.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/environmentSecurity.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\environmentSecurity.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/environmentValidation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\environmentValidation.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/envParsers.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\envParsers.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/errorMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\errorMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/fallbackMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\fallbackMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/gptRouterConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\gptRouterConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/gptSyncConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\gptSyncConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/gptSyncMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\gptSyncMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/hrcPrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\hrcPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/integrityManifest.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\integrityManifest.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/memoryValidationPrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\memoryValidationPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/mockResponseConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\mockResponseConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/openaiLogMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\openaiLogMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/openaiPrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\openaiPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/orchestrationPrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\orchestrationPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/portUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\portUtils.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/prAssistantMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\prAssistantMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/prAssistantTemplates.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\prAssistantTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/prompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\prompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/railway.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\railway.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/reasoningTemplates.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\reasoningTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/researchPrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\researchPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/runtimeProbeScripts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\runtimeProbeScripts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/scholarly.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\scholarly.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/secureReasoningMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\secureReasoningMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/security.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\security.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/selfTestConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\selfTestConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/serverMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\serverMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/systemDiagnosticsConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\systemDiagnosticsConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/tutorPrompts.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\tutorPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/unifiedConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\unifiedConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/watchdogConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\watchdogConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerBoot.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\workerBoot.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\workerConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerContext.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\workerContext.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerPaths.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\platform\\runtime\\workerPaths.ts"
+        },
+        {
+          "relativePath": "src/routes/afol.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\afol.ts"
+        },
+        {
+          "relativePath": "src/routes/agents.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\agents.ts"
+        },
+        {
+          "relativePath": "src/routes/ai-endpoints.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\ai-endpoints.ts"
+        },
+        {
+          "relativePath": "src/routes/api-arcanos.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-arcanos.ts"
+        },
+        {
+          "relativePath": "src/routes/api-ask.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-ask.ts"
+        },
+        {
+          "relativePath": "src/routes/api-assistants.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-assistants.ts"
+        },
+        {
+          "relativePath": "src/routes/api-codebase.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-codebase.ts"
+        },
+        {
+          "relativePath": "src/routes/api-commands.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-commands.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-daemon.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon/auth.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-daemon\\auth.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon/context.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-daemon\\context.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon/pending.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-daemon\\pending.ts"
+        },
+        {
+          "relativePath": "src/routes/api-memory.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-memory.ts"
+        },
+        {
+          "relativePath": "src/routes/api-reusable-code.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-reusable-code.ts"
+        },
+        {
+          "relativePath": "src/routes/api-sim.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-sim.ts"
+        },
+        {
+          "relativePath": "src/routes/api-transcribe.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-transcribe.ts"
+        },
+        {
+          "relativePath": "src/routes/api-update.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-update.ts"
+        },
+        {
+          "relativePath": "src/routes/api-vision.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api-vision.ts"
+        },
+        {
+          "relativePath": "src/routes/api/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\api\\index.ts"
+        },
+        {
+          "relativePath": "src/routes/arcanos.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\arcanos.ts"
+        },
+        {
+          "relativePath": "src/routes/arcanosQuery.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\arcanosQuery.ts"
+        },
+        {
+          "relativePath": "src/routes/ask.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\ask.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/daemonTools.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\ask\\daemonTools.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/intent_store.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\ask\\intent_store.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\ask\\types.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/validation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\ask\\validation.ts"
+        },
+        {
+          "relativePath": "src/routes/backstage.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\backstage.ts"
+        },
+        {
+          "relativePath": "src/routes/bridge.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\bridge.ts"
+        },
+        {
+          "relativePath": "src/routes/clear.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\clear.ts"
+        },
+        {
+          "relativePath": "src/routes/daemonStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\daemonStore.ts"
+        },
+        {
+          "relativePath": "src/routes/daemonStore/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\daemonStore\\types.ts"
+        },
+        {
+          "relativePath": "src/routes/debug-confirmation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\debug-confirmation.ts"
+        },
+        {
+          "relativePath": "src/routes/devops.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\devops.ts"
+        },
+        {
+          "relativePath": "src/routes/gptRouter.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\gptRouter.ts"
+        },
+        {
+          "relativePath": "src/routes/health.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\health.ts"
+        },
+        {
+          "relativePath": "src/routes/healthGroup.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\healthGroup.ts"
+        },
+        {
+          "relativePath": "src/routes/heartbeat.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\heartbeat.ts"
+        },
+        {
+          "relativePath": "src/routes/hrc.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\hrc.ts"
+        },
+        {
+          "relativePath": "src/routes/image.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\image.ts"
+        },
+        {
+          "relativePath": "src/routes/modules.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\modules.ts"
+        },
+        {
+          "relativePath": "src/routes/openai-arcanos-pipeline.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\openai-arcanos-pipeline.ts"
+        },
+        {
+          "relativePath": "src/routes/openai.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\openai.ts"
+        },
+        {
+          "relativePath": "src/routes/orchestration.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\orchestration.ts"
+        },
+        {
+          "relativePath": "src/routes/plans.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\plans.ts"
+        },
+        {
+          "relativePath": "src/routes/pr-analysis.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\pr-analysis.ts"
+        },
+        {
+          "relativePath": "src/routes/rag.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\rag.ts"
+        },
+        {
+          "relativePath": "src/routes/register.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\register.ts"
+        },
+        {
+          "relativePath": "src/routes/reinforcement.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\reinforcement.ts"
+        },
+        {
+          "relativePath": "src/routes/research.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\research.ts"
+        },
+        {
+          "relativePath": "src/routes/safety.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\safety.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\sdk.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/diagnostics.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\sdk\\diagnostics.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\sdk\\index.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/init.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\sdk\\init.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/research.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\sdk\\research.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/workers.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\sdk\\workers.ts"
+        },
+        {
+          "relativePath": "src/routes/sessionRoutes.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\sessionRoutes.ts"
+        },
+        {
+          "relativePath": "src/routes/siri.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\siri.ts"
+        },
+        {
+          "relativePath": "src/routes/status.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\status.ts"
+        },
+        {
+          "relativePath": "src/routes/workers.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\routes\\workers.ts"
+        },
+        {
+          "relativePath": "src/server.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\server.ts"
+        },
+        {
+          "relativePath": "src/server/bootstrap.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\server\\bootstrap.ts"
+        },
+        {
+          "relativePath": "src/services/ai-reflections.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\ai-reflections.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-gaming.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\arcanos-gaming.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-tutor.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\arcanos-tutor.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosPipeline.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\arcanosPipeline.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosPrompt.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\arcanosPrompt.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosQuery.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\arcanosQuery.ts"
+        },
+        {
+          "relativePath": "src/services/audit.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\audit.ts"
+        },
+        {
+          "relativePath": "src/services/auditSafe.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\auditSafe.ts"
+        },
+        {
+          "relativePath": "src/services/auditSafeToggle.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\auditSafeToggle.ts"
+        },
+        {
+          "relativePath": "src/services/autoHealService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\autoHealService.ts"
+        },
+        {
+          "relativePath": "src/services/backstage-booker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\backstage-booker.ts"
+        },
+        {
+          "relativePath": "src/services/bridgeSocket.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\bridgeSocket.ts"
+        },
+        {
+          "relativePath": "src/services/clear2.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\clear2.ts"
+        },
+        {
+          "relativePath": "src/services/clearClient.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\clearClient.ts"
+        },
+        {
+          "relativePath": "src/services/clearScorecard.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\clearScorecard.ts"
+        },
+        {
+          "relativePath": "src/services/codebaseAccess.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\codebaseAccess.ts"
+        },
+        {
+          "relativePath": "src/services/commandCenter.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\commandCenter.ts"
+        },
+        {
+          "relativePath": "src/services/contextualReinforcement.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\contextualReinforcement.ts"
+        },
+        {
+          "relativePath": "src/services/dailySummaryService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\dailySummaryService.ts"
+        },
+        {
+          "relativePath": "src/services/datasetHarvester.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\datasetHarvester.ts"
+        },
+        {
+          "relativePath": "src/services/dispatchControllerV9.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\dispatchControllerV9.ts"
+        },
+        {
+          "relativePath": "src/services/gaming.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\gaming.ts"
+        },
+        {
+          "relativePath": "src/services/git.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\git.ts"
+        },
+        {
+          "relativePath": "src/services/gpt4Shadow.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\gpt4Shadow.ts"
+        },
+        {
+          "relativePath": "src/services/gptSync.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\gptSync.ts"
+        },
+        {
+          "relativePath": "src/services/hrc.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\hrc.ts"
+        },
+        {
+          "relativePath": "src/services/hrcWrapper.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\hrcWrapper.ts"
+        },
+        {
+          "relativePath": "src/services/idleStateService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\idleStateService.ts"
+        },
+        {
+          "relativePath": "src/services/memory.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory.ts"
+        },
+        {
+          "relativePath": "src/services/memory/context.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\context.ts"
+        },
+        {
+          "relativePath": "src/services/memory/logging.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\logging.ts"
+        },
+        {
+          "relativePath": "src/services/memory/maintenance.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\maintenance.ts"
+        },
+        {
+          "relativePath": "src/services/memory/metadata.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\metadata.ts"
+        },
+        {
+          "relativePath": "src/services/memory/paths.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\paths.ts"
+        },
+        {
+          "relativePath": "src/services/memory/sanitizers.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\sanitizers.ts"
+        },
+        {
+          "relativePath": "src/services/memory/state.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\state.ts"
+        },
+        {
+          "relativePath": "src/services/memory/storage.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\storage.ts"
+        },
+        {
+          "relativePath": "src/services/memory/store.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\store.ts"
+        },
+        {
+          "relativePath": "src/services/memory/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\types.ts"
+        },
+        {
+          "relativePath": "src/services/memory/validation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memory\\validation.ts"
+        },
+        {
+          "relativePath": "src/services/memoryAware.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memoryAware.ts"
+        },
+        {
+          "relativePath": "src/services/memoryDigest.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memoryDigest.ts"
+        },
+        {
+          "relativePath": "src/services/memoryState.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\memoryState.ts"
+        },
+        {
+          "relativePath": "src/services/midLayerTranslator.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\midLayerTranslator.ts"
+        },
+        {
+          "relativePath": "src/services/moduleLoader.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\moduleLoader.ts"
+        },
+        {
+          "relativePath": "src/services/openai-assistants.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai-assistants.ts"
+        },
+        {
+          "relativePath": "src/services/openai.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFallbacks.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\chatFallbacks.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFlow.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\chatFlow.ts"
+        },
+        {
+          "relativePath": "src/services/openai/clientBridge.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\clientBridge.ts"
+        },
+        {
+          "relativePath": "src/services/openai/config.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\config.ts"
+        },
+        {
+          "relativePath": "src/services/openai/constants.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\constants.ts"
+        },
+        {
+          "relativePath": "src/services/openai/credentialProvider.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\credentialProvider.ts"
+        },
+        {
+          "relativePath": "src/services/openai/embeddings.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\embeddings.ts"
+        },
+        {
+          "relativePath": "src/services/openai/imageGeneration.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\imageGeneration.ts"
+        },
+        {
+          "relativePath": "src/services/openai/messageBuilder.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\messageBuilder.ts"
+        },
+        {
+          "relativePath": "src/services/openai/mock.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\mock.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\requestBuilders.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestTransforms.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\requestTransforms.ts"
+        },
+        {
+          "relativePath": "src/services/openai/resilience.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\resilience.ts"
+        },
+        {
+          "relativePath": "src/services/openai/serviceHealth.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\serviceHealth.ts"
+        },
+        {
+          "relativePath": "src/services/openai/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\types.ts"
+        },
+        {
+          "relativePath": "src/services/openai/unifiedClient.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openai\\unifiedClient.ts"
+        },
+        {
+          "relativePath": "src/services/openaiRuntime.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\openaiRuntime.ts"
+        },
+        {
+          "relativePath": "src/services/orchestrationInit.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\orchestrationInit.ts"
+        },
+        {
+          "relativePath": "src/services/orchestrationShell.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\orchestrationShell.ts"
+        },
+        {
+          "relativePath": "src/services/persistenceManager.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\persistenceManager.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/analysisRules.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\analysisRules.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checkResults.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checkResults.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/automatedValidation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks\\automatedValidation.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/deadCode.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks\\deadCode.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/envDocumentation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks\\envDocumentation.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/finalDoubleCheck.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks\\finalDoubleCheck.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/openaiCompatibility.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks\\openaiCompatibility.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/railwayReadiness.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks\\railwayReadiness.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/simplification.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\checks\\simplification.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/commandUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\commandUtils.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/constants.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\constants.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/formatters.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\formatters.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\types.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/utils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\prAssistant\\utils.ts"
+        },
+        {
+          "relativePath": "src/services/railwayClient.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\railwayClient.ts"
+        },
+        {
+          "relativePath": "src/services/research.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\research.ts"
+        },
+        {
+          "relativePath": "src/services/researchHub.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\researchHub.ts"
+        },
+        {
+          "relativePath": "src/services/reusableCodeGeneration.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\reusableCodeGeneration.ts"
+        },
+        {
+          "relativePath": "src/services/routeMemorySnapshotStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\routeMemorySnapshotStore.ts"
+        },
+        {
+          "relativePath": "src/services/safety/aiOutputBoundary.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\aiOutputBoundary.ts"
+        },
+        {
+          "relativePath": "src/services/safety/auditEvents.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\auditEvents.ts"
+        },
+        {
+          "relativePath": "src/services/safety/configIntegrity.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\configIntegrity.ts"
+        },
+        {
+          "relativePath": "src/services/safety/executionLock.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\executionLock.ts"
+        },
+        {
+          "relativePath": "src/services/safety/interpreterSupervisor.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\interpreterSupervisor.ts"
+        },
+        {
+          "relativePath": "src/services/safety/memoryEnvelope.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\memoryEnvelope.ts"
+        },
+        {
+          "relativePath": "src/services/safety/monotonicClock.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\monotonicClock.ts"
+        },
+        {
+          "relativePath": "src/services/safety/runtimeState.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\runtimeState.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/auditLogger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\auditLogger.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/circuitBreaker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\circuitBreaker.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/config.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\config.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\index.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/jwks.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\jwks.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/lock.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\lock.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/redisClient.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\redisClient.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/shutdown.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\shutdown.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/trustVerify.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\safety\\v2\\trustVerify.ts"
+        },
+        {
+          "relativePath": "src/services/scholarlyFetcher.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\scholarlyFetcher.ts"
+        },
+        {
+          "relativePath": "src/services/secureReasoningEngine.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\secureReasoningEngine.ts"
+        },
+        {
+          "relativePath": "src/services/securityCompliance.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\securityCompliance.ts"
+        },
+        {
+          "relativePath": "src/services/selfTestPipeline.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\selfTestPipeline.ts"
+        },
+        {
+          "relativePath": "src/services/sessionMemoryRepository.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\sessionMemoryRepository.ts"
+        },
+        {
+          "relativePath": "src/services/sessionMemoryService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\sessionMemoryService.ts"
+        },
+        {
+          "relativePath": "src/services/sessionResolver.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\sessionResolver.ts"
+        },
+        {
+          "relativePath": "src/services/shadowControl.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\shadowControl.ts"
+        },
+        {
+          "relativePath": "src/services/stateManager.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\stateManager.ts"
+        },
+        {
+          "relativePath": "src/services/webRag.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\services\\webRag.ts"
+        },
+        {
+          "relativePath": "src/shared/constants.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\constants.ts"
+        },
+        {
+          "relativePath": "src/shared/errors.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\errors.ts"
+        },
+        {
+          "relativePath": "src/shared/errorUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\errorUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/exportImageAsBase64.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\exportImageAsBase64.ts"
+        },
+        {
+          "relativePath": "src/shared/fileStorage.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\fileStorage.ts"
+        },
+        {
+          "relativePath": "src/shared/hashUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\hashUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/idGenerator.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\idGenerator.ts"
+        },
+        {
+          "relativePath": "src/shared/jsonFileUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\jsonFileUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/jsonHelpers.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\jsonHelpers.ts"
+        },
+        {
+          "relativePath": "src/shared/logPath.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\logPath.ts"
+        },
+        {
+          "relativePath": "src/shared/memoryValidationMessages.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\memoryValidationMessages.ts"
+        },
+        {
+          "relativePath": "src/shared/messageBuilderUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\messageBuilderUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/promptUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\promptUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/tokenParameterHelper.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\tokenParameterHelper.ts"
+        },
+        {
+          "relativePath": "src/shared/types/actionPlan.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\actionPlan.ts"
+        },
+        {
+          "relativePath": "src/shared/types/cognitiveDomain.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\cognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/shared/types/daemon-bridge.d.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\daemon-bridge.d.ts"
+        },
+        {
+          "relativePath": "src/shared/types/dispatchV9.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\dispatchV9.ts"
+        },
+        {
+          "relativePath": "src/shared/types/dto.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\dto.ts"
+        },
+        {
+          "relativePath": "src/shared/types/express.d.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\express.d.ts"
+        },
+        {
+          "relativePath": "src/shared/types/reinforcement.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\reinforcement.ts"
+        },
+        {
+          "relativePath": "src/shared/types/routes.d.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\types\\routes.d.ts"
+        },
+        {
+          "relativePath": "src/shared/validation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\validation.ts"
+        },
+        {
+          "relativePath": "src/shared/vectorUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\vectorUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/webFetcher.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\shared\\webFetcher.ts"
+        },
+        {
+          "relativePath": "src/start-server.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\start-server.ts"
+        },
+        {
+          "relativePath": "src/stores/actionPlanStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\stores\\actionPlanStore.ts"
+        },
+        {
+          "relativePath": "src/stores/agentRegistry.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\stores\\agentRegistry.ts"
+        },
+        {
+          "relativePath": "src/transport/http/asyncHandler.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\asyncHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/aiController.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\controllers\\aiController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/healthController.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\controllers\\healthController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/openaiController.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\controllers\\openaiController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/sessionMemoryController.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\controllers\\sessionMemoryController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/errorResponse.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\errorResponse.ts"
+        },
+        {
+          "relativePath": "src/transport/http/http.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\http.ts"
+        },
+        {
+          "relativePath": "src/transport/http/httpMethodIntent.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\httpMethodIntent.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/auditTrace.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\auditTrace.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/capabilityGate.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\capabilityGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/confirmationChallengeStore.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\confirmationChallengeStore.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/confirmGate.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\confirmGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/batching.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\costControl\\batching.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/defaults.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\costControl\\defaults.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/idle.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\costControl\\idle.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/requests.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\costControl\\requests.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/types.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\costControl\\types.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControlMiddleware.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\costControlMiddleware.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/errorHandler.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\errorHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/fallbackHandler.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\fallbackHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\memoryConsistencyGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/operatorAuth.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\operatorAuth.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/unsafeExecutionGate.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\unsafeExecutionGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/validation.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\middleware\\validation.ts"
+        },
+        {
+          "relativePath": "src/transport/http/payloadNormalization.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\payloadNormalization.ts"
+        },
+        {
+          "relativePath": "src/transport/http/requestHandler.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\requestHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/requestHeaders.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\requestHeaders.ts"
+        },
+        {
+          "relativePath": "src/transport/http/requestPayloadUtils.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\requestPayloadUtils.ts"
+        },
+        {
+          "relativePath": "src/transport/http/responseHelpers.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\responseHelpers.ts"
+        },
+        {
+          "relativePath": "src/transport/http/tagRequest.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\http\\tagRequest.ts"
+        },
+        {
+          "relativePath": "src/transport/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\transport\\index.ts"
+        },
+        {
+          "relativePath": "src/types/actionPlan.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\types\\actionPlan.ts"
+        },
+        {
+          "relativePath": "src/types/cognitiveDomain.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\types\\cognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/upload/app.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\app.ts"
+        },
+        {
+          "relativePath": "src/upload/config/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\config\\index.ts"
+        },
+        {
+          "relativePath": "src/upload/middleware/errorHandler.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\middleware\\errorHandler.ts"
+        },
+        {
+          "relativePath": "src/upload/middleware/rateLimiter.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\middleware\\rateLimiter.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/abstractUpload.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\routes\\abstractUpload.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/analyze.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\routes\\analyze.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/health.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\routes\\health.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/upload.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\routes\\upload.ts"
+        },
+        {
+          "relativePath": "src/upload/server.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\server.ts"
+        },
+        {
+          "relativePath": "src/upload/services/abstractionService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\services\\abstractionService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/analyzeService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\services\\analyzeService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/clamavService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\services\\clamavService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/cleanupService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\services\\cleanupService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/extractor.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\services\\extractor.ts"
+        },
+        {
+          "relativePath": "src/upload/services/uploadService.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\services\\uploadService.ts"
+        },
+        {
+          "relativePath": "src/upload/types/upload.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\types\\upload.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/archiveSizeGuard.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\utils\\archiveSizeGuard.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/ensureDir.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\utils\\ensureDir.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/logger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\utils\\logger.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/streamPipeline.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\utils\\streamPipeline.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/zipSlipGuard.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\upload\\utils\\zipSlipGuard.ts"
+        },
+        {
+          "relativePath": "src/utils/requestHeaders.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\utils\\requestHeaders.ts"
+        },
+        {
+          "relativePath": "src/utils/structuredLogging.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\utils\\structuredLogging.ts"
+        },
+        {
+          "relativePath": "src/utils/telemetry.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\src\\utils\\telemetry.ts"
+        }
+      ]
+    },
+    {
+      "scope": "tests",
+      "files": [
+        {
+          "relativePath": "tests/action-plan-store.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\action-plan-store.test.ts"
+        },
+        {
+          "relativePath": "tests/afol.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\afol.test.ts"
+        },
+        {
+          "relativePath": "tests/ai-output-boundary.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\ai-output-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/api-transcribe.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\api-transcribe.test.ts"
+        },
+        {
+          "relativePath": "tests/api-update.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\api-update.test.ts"
+        },
+        {
+          "relativePath": "tests/api-vision.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\api-vision.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-gaming.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\arcanos-gaming.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-system-governance.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\ask-system-governance.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-validation.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\ask-validation.test.ts"
+        },
+        {
+          "relativePath": "tests/brain.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\brain.test.ts"
+        },
+        {
+          "relativePath": "tests/bridge-token-auth.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\bridge-token-auth.test.ts"
+        },
+        {
+          "relativePath": "tests/capability-gate.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\capability-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/clear2.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\clear2.test.ts"
+        },
+        {
+          "relativePath": "tests/codebase-api.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\codebase-api.test.ts"
+        },
+        {
+          "relativePath": "tests/config-integrity.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\config-integrity.test.ts"
+        },
+        {
+          "relativePath": "tests/confirmGate-oneTimeToken.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\confirmGate-oneTimeToken.test.ts"
+        },
+        {
+          "relativePath": "tests/confirmGate-token-integration.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\confirmGate-token-integration.test.ts"
+        },
+        {
+          "relativePath": "tests/converge-plan.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\converge-plan.test.ts"
+        },
+        {
+          "relativePath": "tests/daemon-tools-trust-boundary.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\daemon-tools-trust-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/db-client-sanitization.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\db-client-sanitization.test.ts"
+        },
+        {
+          "relativePath": "tests/db-modular.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\db-modular.test.ts"
+        },
+        {
+          "relativePath": "tests/debug-confirmation.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\debug-confirmation.test.ts"
+        },
+        {
+          "relativePath": "tests/dispatch-controller-v9.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\dispatch-controller-v9.test.ts"
+        },
+        {
+          "relativePath": "tests/env-runtime-access.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\env-runtime-access.test.ts"
+        },
+        {
+          "relativePath": "tests/environment-security.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\environment-security.test.ts"
+        },
+        {
+          "relativePath": "tests/execution-lock.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\execution-lock.test.ts"
+        },
+        {
+          "relativePath": "tests/http.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\http.test.ts"
+        },
+        {
+          "relativePath": "tests/idleManager.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\idleManager.test.ts"
+        },
+        {
+          "relativePath": "tests/interpreter-supervisor.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\interpreter-supervisor.test.ts"
+        },
+        {
+          "relativePath": "tests/json-helpers.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\json-helpers.test.ts"
+        },
+        {
+          "relativePath": "tests/memory-consistency-gate.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\memory-consistency-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/memorySync-worker.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\memorySync-worker.test.ts"
+        },
+        {
+          "relativePath": "tests/one-time-token-integration.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\one-time-token-integration.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-adapter.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\openai-adapter.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-client-bridge.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\openai-client-bridge.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-fallback-sequence.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\openai-fallback-sequence.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-integration.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\openai-integration.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-prompt.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\openai-prompt.test.ts"
+        },
+        {
+          "relativePath": "tests/performance-test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\performance-test.ts"
+        },
+        {
+          "relativePath": "tests/placeholder.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\placeholder.test.ts"
+        },
+        {
+          "relativePath": "tests/plan-routes.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\plan-routes.test.ts"
+        },
+        {
+          "relativePath": "tests/port-utils.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\port-utils.test.ts"
+        },
+        {
+          "relativePath": "tests/prompts-system.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\prompts-system.test.ts"
+        },
+        {
+          "relativePath": "tests/railway-client.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\railway-client.test.ts"
+        },
+        {
+          "relativePath": "tests/route-memory-snapshot-store.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\route-memory-snapshot-store.test.ts"
+        },
+        {
+          "relativePath": "tests/session-memory-roundtrip.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\session-memory-roundtrip.test.ts"
+        },
+        {
+          "relativePath": "tests/structured-logging-sanitization.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\structured-logging-sanitization.test.ts"
+        },
+        {
+          "relativePath": "tests/telemetry-limits.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\telemetry-limits.test.ts"
+        },
+        {
+          "relativePath": "tests/test-ai-patch-system.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-ai-patch-system.ts"
+        },
+        {
+          "relativePath": "tests/test-detection-patterns.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-detection-patterns.ts"
+        },
+        {
+          "relativePath": "tests/test-github-push-stable.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-github-push-stable.ts"
+        },
+        {
+          "relativePath": "tests/test-gpt4-fallback.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-gpt4-fallback.ts"
+        },
+        {
+          "relativePath": "tests/test-pr-assistant.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-pr-assistant.test.ts"
+        },
+        {
+          "relativePath": "tests/test-research.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-research.ts"
+        },
+        {
+          "relativePath": "tests/test-safe-fetch-html-integration.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-safe-fetch-html-integration.ts"
+        },
+        {
+          "relativePath": "tests/test-safe-fetch-html.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-safe-fetch-html.ts"
+        },
+        {
+          "relativePath": "tests/test-security-compliance.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-security-compliance.ts"
+        },
+        {
+          "relativePath": "tests/test-stateless-pr.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\test-stateless-pr.ts"
+        },
+        {
+          "relativePath": "tests/tokenParameterHelper.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\tokenParameterHelper.test.ts"
+        },
+        {
+          "relativePath": "tests/tokenStore.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\tokenStore.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\trinity.test.ts"
+        },
+        {
+          "relativePath": "tests/unsafe-execution-gate.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\unsafe-execution-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/upload-archive-size-guard.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\upload-archive-size-guard.test.ts"
+        },
+        {
+          "relativePath": "tests/upload-extractor.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\upload-extractor.test.ts"
+        },
+        {
+          "relativePath": "tests/utal.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\utal.test.ts"
+        },
+        {
+          "relativePath": "tests/vector-utils.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\vector-utils.test.ts"
+        },
+        {
+          "relativePath": "tests/webFetcher-util.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\webFetcher-util.test.ts"
+        },
+        {
+          "relativePath": "tests/webFetcher.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\webFetcher.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-duplication-suppression.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\worker-duplication-suppression.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-task-queue.test.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\tests\\worker-task-queue.test.ts"
+        }
+      ]
+    },
+    {
+      "scope": "workers",
+      "files": [
+        {
+          "relativePath": "workers/src/handlers/memory.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\handlers\\memory.ts"
+        },
+        {
+          "relativePath": "workers/src/handlers/memorySync.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\handlers\\memorySync.ts"
+        },
+        {
+          "relativePath": "workers/src/handlers/openai.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\handlers\\openai.ts"
+        },
+        {
+          "relativePath": "workers/src/infrastructure/memory/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\infrastructure\\memory\\index.ts"
+        },
+        {
+          "relativePath": "workers/src/infrastructure/sdk/openai.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\infrastructure\\sdk\\openai.ts"
+        },
+        {
+          "relativePath": "workers/src/infrastructure/sdk/openaiConfig.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\infrastructure\\sdk\\openaiConfig.ts"
+        },
+        {
+          "relativePath": "workers/src/jobs/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\jobs\\index.ts"
+        },
+        {
+          "relativePath": "workers/src/queue/index.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\queue\\index.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-gpt5-reasoning.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\worker-gpt5-reasoning.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-logger.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\worker-logger.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-memory.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\worker-memory.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-planner-engine.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\worker-planner-engine.ts"
+        },
+        {
+          "relativePath": "workers/src/workers/memory-worker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\workers\\memory-worker.ts"
+        },
+        {
+          "relativePath": "workers/src/workers/memorySync-worker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\workers\\memorySync-worker.ts"
+        },
+        {
+          "relativePath": "workers/src/workers/openai-worker.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\workers\\openai-worker.ts"
+        },
+        {
+          "relativePath": "workers/src/workerTypes.ts",
+          "absolutePath": "C:\\Users\\pbjus\\Arcanos\\workers\\src\\workerTypes.ts"
+        }
+      ]
+    }
+  ]
+}

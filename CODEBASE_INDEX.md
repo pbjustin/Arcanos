@@ -41,9 +41,19 @@ If a path in this index becomes stale, update this file in the same PR as the mo
 - `docs/ARCHITECTURE.md`
 - `docs/CI_CD.md`
 
-## TypeScript copy-path index
-Generate a full TypeScript backend path index (relative + absolute):
-- `npm run index:backend:ts`
-- Markdown output: `docs/TYPESCRIPT_BACKEND_INDEX.md`
-- JSON output: `backend-typescript-index.json`
+## Codebase Indices
+The codebase is split into two primary agents:
+- **Backend (TypeScript)**: All `.ts` files.
+- **CLI Agent (Python)**: All `.py` files.
+
+Generate the full indices:
+- `npm run reindex`
+
+### Backend (TypeScript)
+- Markdown output: `docs/BACKEND_INDEX.md`
+- JSON output: `backend-index.json`
+
+### CLI Agent (Python)
+- Markdown output: `docs/CLI_AGENT_INDEX.md`
+- JSON output: `cli-agent-index.json`
 
