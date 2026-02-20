@@ -18,7 +18,7 @@ export function computeTimeout(
   expectedOutput = 1500
 ): number {
   const total = estimateTokens(input) + expectedOutput;
-  const speed = MODEL_SPEED[model] ?? MODEL_SPEED.default;
+  const speed = MODEL_SPEED[model] ?? MODEL_SPEED.default ?? 8;
 
   const dynamic = BASE_TIMEOUT + total * speed;
   return Math.min(dynamic, MAX_TIMEOUT);

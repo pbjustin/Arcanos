@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
-import { runtimeEnv } from "../config/env";
+import { runtimeEnv } from "../config/env.js";
 
 export interface RequestAuthContext {
   principalId: string;

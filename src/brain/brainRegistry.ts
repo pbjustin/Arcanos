@@ -3,8 +3,25 @@
    File: src/brain/brainRegistry.ts
    ============================================================ */
 
+export interface BrainPayload {
+  prompt: string;
+  sessionId: string;
+  lineageId: string;
+}
+
+export interface BrainResponse {
+  module: string;
+  activeModel: string;
+  output_text: string;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
 export interface Brain {
-  execute(payload: any): Promise<any>;
+  execute(payload: BrainPayload): Promise<BrainResponse>;
 }
 
 const registry: Record<string, Brain> = {};

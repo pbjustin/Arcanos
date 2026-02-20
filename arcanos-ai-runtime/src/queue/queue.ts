@@ -1,6 +1,6 @@
 import { Queue, type JobsOptions } from "bullmq";
-import { runtimeEnv } from "../config/env";
-import type { AIJobPayload } from "../jobs/types";
+import { runtimeEnv } from "../config/env.js";
+import type { AIJobPayload } from "../jobs/types.js";
 
 export const AI_QUEUE_NAME = "ai-jobs";
 

@@ -13,10 +13,12 @@ Recommended reading order:
 2. `docs/RUN_LOCAL.md`
 3. `docs/CONFIGURATION.md`
 4. `docs/API.md`
-5. `docs/CUSTOM_GPTS.md`
-6. `docs/FINE_TUNING.md`
-7. `docs/RAILWAY_DEPLOYMENT.md`
-8. `docs/CI_CD.md`
+5. `docs/TRINITY_PIPELINE.md`
+6. `docs/CUSTOM_GPTS.md`
+7. `docs/FINE_TUNING.md`
+8. `docs/CLEAR_METHOD_2_0.md`
+9. `docs/RAILWAY_DEPLOYMENT.md`
+10. `docs/CI_CD.md`
 
 ## Configuration
 Configuration source files:
@@ -36,7 +38,9 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 
 ## References
 - `docs/ARCHITECTURE.md`
+- `docs/TRINITY_PIPELINE.md`
 - `docs/API.md`
 - `docs/CONFIGURATION.md`
 - `docs/CI_CD.md`
 - `docs/REFERENCES.md`
+- `docs/CLEAR_METHOD_2_0.md`

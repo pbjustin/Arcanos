@@ -1,4 +1,4 @@
-import type { CreateJobInput } from "./types";
+import type { CreateJobInput } from "./types.js";
 
 const ALLOWED_ROLES = new Set([
   "system",

@@ -81,6 +81,8 @@ let promptsConfig: PromptsConfig | null = null;
 const CONFIG_SEARCH_PATHS = [
   join(process.cwd(), 'config', 'prompts.json'),
   join(__dirname, 'prompts.json'),
+  join(__dirname, '..', '..', 'config', 'prompts.json'),
+  join(__dirname, '..', '..', '..', 'config', 'prompts.json'),
   join(process.cwd(), 'src', 'config', 'prompts.json')
 ];
 
@@ -185,7 +187,12 @@ function loadPromptsConfig(): PromptsConfig {
     const configPath = resolvePromptsConfigPath();
 
     if (!configPath) {
-      throw new Error('Prompts configuration file not found in expected locations');
+      const searchedPaths = CONFIG_SEARCH_PATHS.map(p => `  ${p} (exists: ${existsSync(p)})`).join('\n');
+      throw new Error(
+        `Prompts configuration file not found in expected locations.\n` +
+        `cwd: ${process.cwd()}, __dirname: ${__dirname}\n` +
+        `Searched:\n${searchedPaths}`
+      );
     }
 
     const configData = readFileSync(configPath, 'utf-8');
@@ -228,6 +235,7 @@ function loadPromptsConfig(): PromptsConfig {
         final_review_system: 'Review GPT-5.1 analysis and deliver the final ARCANOS response.',
         system_prompt: 'You are ARCANOS AI system.',
         secure_reasoning_integration: '[SECURE REASONING INTEGRATION]',
+        internal_architectural_evaluation: 'SYSTEM MODE: INTERNAL ARCHITECTURAL EVALUATION',
         user_prompt: 'You are ARCANOS.'
       },
       system: {
@@ -258,7 +266,7 @@ function loadPromptsConfig(): PromptsConfig {
       },
       trinity: TRINITY_MESSAGES_DEFAULTS
     };
-    return promptsConfig;
+    return promptsConfig!;
   }
 }
 

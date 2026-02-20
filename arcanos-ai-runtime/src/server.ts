@@ -1,11 +1,11 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 import type { Job } from "bullmq";
-import { aiQueue } from "./queue/queue";
-import { getRequestAuth, requireApiKey } from "./auth/apiKey";
-import { runtimeEnv } from "./config/env";
-import type { AIJobPayload, RuntimeJobStatus } from "./jobs/types";
-import { validateCreateJobInput } from "./jobs/validation";
+import { aiQueue } from "./queue/queue.js";
+import { getRequestAuth, requireApiKey } from "./auth/apiKey.js";
+import { runtimeEnv } from "./config/env.js";
+import type { AIJobPayload, RuntimeJobStatus } from "./jobs/types.js";
+import { validateCreateJobInput } from "./jobs/validation.js";
 
 const JSON_BODY_LIMIT = "256kb";
 

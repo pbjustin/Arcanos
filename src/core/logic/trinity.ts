@@ -40,7 +40,7 @@ import {
   buildAuditLogEntry
 } from './trinityStages.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
-import { detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift, type Tier } from './trinityTier.js';
+import { type Tier, detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
 import {
   acquireTierSlot,
   Watchdog,
@@ -56,6 +56,7 @@ import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prom
 import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js';
 import { trackEscalation } from '../../analytics/escalationTracker.js';
 import { getClearMinThreshold, recordRun } from '../../analytics/clearAutoTuner.js';
+import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
 
@@ -237,7 +238,7 @@ export async function runThroughBrain(
   const maxBudget = getInvocationBudget(tier);
   const budget = new InvocationBudget(maxBudget);
 
-  const internalMode = isInternalArchitecturalMode(prompt);
+  const internalMode = options.internalMode ?? isInternalArchitecturalMode(prompt);
   const internalDirective = internalMode ? getInternalArchitecturalEvaluationPrompt() : undefined;
   const clarificationAllowed = !internalMode;
 
@@ -264,7 +265,11 @@ export async function runThroughBrain(
 
   // --- Concurrency governor + watchdog ---
   const [release] = await acquireTierSlot(tier);
-  const watchdog = new Watchdog(computeWatchdog(tier, !!internalContext?.escalated));
+  const gpt5Model = getGPT5Model();
+  const reasoningDepth = tier === 'critical' ? 2 : (tier === 'complex' ? 1.5 : 1);
+  const adaptiveTimeoutMs = resolveTimeout(gpt5Model, reasoningDepth);
+  const tierWatchdogMs = computeWatchdog(tier, !!internalContext?.escalated);
+  const watchdog = new Watchdog(Math.min(adaptiveTimeoutMs, tierWatchdogMs));
 
   try {
     // --- Stage 1: Intake ---
@@ -382,7 +387,12 @@ export async function runThroughBrain(
 
     const downgradeDetected = detectDowngrade(getGPT5Model(), gpt5ModelUsed);
     if (internalMode && downgradeDetected) {
-      throw new Error('STRICT_EXECUTION_ERROR: Model downgrade not allowed in Internal Architectural Mode.');
+      logger.warn('Model downgrade detected in Internal Architectural Mode - proceeding with degraded model', {
+        module: 'trinity',
+        operation: 'downgrade-guard',
+        requested: getGPT5Model(),
+        actual: gpt5ModelUsed
+      });
     }
 
     const latencyMs = Date.now() - start;

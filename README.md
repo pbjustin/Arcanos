@@ -14,6 +14,33 @@ OpenAI usage is adapter-first across stacks:
 - Python daemon constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
 - Python daemon adapter boundary: `daemon-python/arcanos/openai/openai_adapter.py`
 
+## Canonical Runtime Paths
+
+Single source of truth:
+- Backend service runtime starts at `dist/start-server.js` (invoked by `npm start`, `Procfile`, and `railway.json`).
+- Python daemon runtime starts at `python -m arcanos.cli` (`daemon-python/arcanos/cli/__main__.py`).
+
+```mermaid
+flowchart LR
+  A["Backend Runtime (Canonical)"] -->|"npm start / Railway / Procfile"| B["dist/start-server.js"]
+  B --> C["src/server.ts (compiled runtime source)"]
+  D["index.js"] -->|"Compatibility wrapper only"| B
+  E["backend-typescript/src/index.ts"] -->|"Legacy re-export only"| C
+
+  F["Python Daemon Runtime (Canonical)"] -->|"python -m arcanos.cli"| G["daemon-python/arcanos/cli/__main__.py"]
+  G --> H["daemon-python/arcanos/cli/cli.py"]
+  I["cli_v2/main.py"] -->|"Experimental/manual test path (non-production)"| J["Not in production runtime path"]
+```
+
+| Entrypoint | Role | Runtime Status |
+| --- | --- | --- |
+| `dist/start-server.js` | Backend process bootstrap | Canonical |
+| `src/server.ts` | Backend source-of-truth lifecycle implementation | Canonical source |
+| `index.js` | Wrapper that forwards to `dist/start-server.js` | Compatibility |
+| `backend-typescript/src/index.ts` | Re-export shim to `src/server.js` | Legacy compatibility |
+| `daemon-python/arcanos/cli/__main__.py` | Python daemon module entrypoint | Canonical |
+| `cli_v2/main.py` | Separate CLI v2 experiment harness | Experimental |
+
 ## Quick Start
 
 **Backend (TypeScript):**

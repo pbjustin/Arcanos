@@ -3,10 +3,11 @@
    File: src/brain/brainFactory.ts
    ============================================================ */
 
+import type { Brain } from "./brainRegistry.js";
 import { getBrain, brainExists } from "./brainRegistry.js";
 import { MockBrain } from "./mockBrain.js";
 
-export function getActiveBrain(): any {
+export function getActiveBrain(): Brain {
 
   const forceMock =
     process.env.FORCE_MOCK === "true";
@@ -23,5 +24,5 @@ export function getActiveBrain(): any {
     );
   }
 
-  return getBrain("gpt5");
+  return getBrain("gpt5")!;
 }

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { runtimeEnv } from "../config/env";
+import { runtimeEnv } from "../config/env.js";
 
 export const openai = new OpenAI({
   apiKey: runtimeEnv.OPENAI_API_KEY,
