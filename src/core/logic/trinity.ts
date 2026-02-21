@@ -318,7 +318,7 @@ export async function runThroughBrain(
         });
 
         // Release current slot before escalating
-        release();
+        // Release current slot before escalating - removed as finally block handles it
 
         const escalatedResult = await runThroughBrain(client, prompt, sessionId, overrideFlag, options, runtimeBudget, {
           escalated: true,
