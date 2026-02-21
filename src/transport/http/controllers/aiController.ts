@@ -8,6 +8,7 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import { validateAIRequest, handleAIError } from "@transport/http/requestHandler.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { harvestDatasetsFromAudit } from "@services/datasetHarvester.js";
+import { createRuntimeBudget } from '../../../runtime/runtimeBudget.js';
 
 type AIRequest = AIRequestDTO & {
   prompt?: string;
@@ -44,7 +45,8 @@ export class AIController {
 
     try {
       // runThroughBrain enforces GPT-5.1 as the primary reasoning stage
-      const output = await runThroughBrain(openai, input, body.sessionId, body.overrideAuditSafe);
+      const runtimeBudget = createRuntimeBudget();
+      const output = await runThroughBrain(openai, input, body.sessionId, body.overrideAuditSafe, {}, runtimeBudget);
 
       const responsePayload: AIResponse = {
         ...(output as AIResponse),

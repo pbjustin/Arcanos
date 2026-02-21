@@ -86,6 +86,7 @@ interface QuarantineInput {
 const SAFETY_STATE_FILE = path.join(process.cwd(), 'memory', 'safety-runtime-state.json');
 const SAVE_DEBOUNCE_MS = 100;
 const MAX_ENTITY_KEYS = 1000;
+const IS_TEST_ENV = process.env.NODE_ENV === 'test';
 
 let pendingSaveTimeout: NodeJS.Timeout | null = null;
 
@@ -333,8 +334,32 @@ async function flushStateToDisk(reason?: string): Promise<void> {
   }
 }
 
+function flushStateToDiskSync(reason?: string): void {
+  try {
+    ensureStateDirectory();
+    fs.writeFileSync(SAFETY_STATE_FILE, JSON.stringify(runtimeSnapshot, null, 2), 'utf8');
+    emitSafetyAuditEvent({
+      event: 'runtime_state_persisted',
+      severity: 'info',
+      details: { reason: reason || 'scheduled_flush', updatedAt: runtimeSnapshot.updatedAt }
+    });
+  } catch (err) {
+    emitSafetyAuditEvent({
+      event: 'runtime_state_persist_failed',
+      severity: 'error',
+      details: { reason: reason || 'scheduled_flush', error: String(err) }
+    });
+  }
+}
+
 function scheduleSave(reason: string): void {
   runtimeSnapshot.updatedAt = new Date().toISOString();
+
+  if (IS_TEST_ENV) {
+    flushStateToDiskSync(reason);
+    return;
+  }
+
   if (pendingSaveTimeout) {
     clearTimeout(pendingSaveTimeout);
   }
@@ -787,6 +812,11 @@ export function buildUnsafeToProceedPayload(): {
  * Edge cases: Missing state file is ignored.
  */
 export function resetSafetyRuntimeStateForTests(): void {
+  if (pendingSaveTimeout) {
+    clearTimeout(pendingSaveTimeout);
+    pendingSaveTimeout = null;
+  }
+
   runtimeSnapshot = createDefaultSnapshot();
   try {
     if (fs.existsSync(SAFETY_STATE_FILE)) {

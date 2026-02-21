@@ -77,15 +77,16 @@ export interface TrinityResult {
     escalationReason?: string;
   };
   guardInfo?: {
-    watchdogMs: number;
-    watchdogLimit?: number;
+    elapsedMs: number;
+    remainingBudgetMs: number;
+    tierSoftCap: number;
+    effectiveLimit: number;
+    watchdogTriggered: boolean;
     tokenCapApplied: number;
     sessionTokensUsed?: number;
     downgradeDetected: boolean;
     latencyMs: number;
     latencyDriftDetected: boolean;
-    latencyUtilization?: number;
-    latencyMargin?: number;
   };
   reasoningLedgerStored?: boolean;
   reasoningLedger?: ReasoningLedger;

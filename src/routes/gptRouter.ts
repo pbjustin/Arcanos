@@ -10,6 +10,7 @@ import {
 } from "@platform/logging/gptLogger.js";
 import { runThroughBrain } from '@core/logic/trinity.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
+import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
 
 const router = express.Router();
 
@@ -161,7 +162,8 @@ router.use('/:gptId', async (req, res, next) => {
       if (!openaiClient) {
         return res.status(503).json({ error: 'OpenAI client not initialized' });
       }
-      const trinityResult = await runThroughBrain(openaiClient, prompt, sessionId, undefined);
+      const runtimeBudget = createRuntimeBudget();
+      const trinityResult = await runThroughBrain(openaiClient, prompt, sessionId, undefined, {}, runtimeBudget);
       
       // Build acknowledgment metadata
       const meta = getModuleMetadata(entry.module);

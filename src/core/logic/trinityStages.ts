@@ -36,6 +36,8 @@ import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_
 import { enforceTokenCap } from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Tier } from './trinityTier.js';
+import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
+import { assertBudgetAvailable } from '../../runtime/runtimeBudget.js';
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {
@@ -61,7 +63,9 @@ export { calculateMemoryScoreSummary };
  * Validates the availability of the configured AI model.
  * Falls back to GPT-4.1-mini if the primary model is unavailable.
  */
-export async function validateModel(client: OpenAI): Promise<string> {
+export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudget): Promise<string> {
+  if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
+
   const defaultModel = getDefaultModel();
   try {
     await client.models.retrieve(defaultModel);
@@ -132,8 +136,11 @@ export async function runIntakeStage(
   auditSafePrompt: string,
   memoryContextSummary: string,
   cognitiveDomain?: CognitiveDomain,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  runtimeBudget?: RuntimeBudget
 ): Promise<TrinityIntakeOutput> {
+  if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
+
   const intakeSystemPrompt = systemPromptOverride || ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary);
   const intakeTokenParams = getTokenParameter(arcanosModel, TRINITY_INTAKE_TOKEN_LIMIT);
   const temperature = resolveTemperature(cognitiveDomain);
@@ -164,7 +171,14 @@ export async function runIntakeStage(
   };
 }
 
-export async function runReasoningStage(client: OpenAI, framedRequest: string, tier?: Tier): Promise<TrinityReasoningOutput> {
+export async function runReasoningStage(
+  client: OpenAI,
+  framedRequest: string,
+  tier?: Tier,
+  runtimeBudget?: RuntimeBudget
+): Promise<TrinityReasoningOutput> {
+  if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
+
   logGPT5Invocation('Primary reasoning stage', framedRequest);
   
   const systemPrompt = ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING();
@@ -229,8 +243,11 @@ export async function runFinalStage(
   auditSafePrompt: string,
   gpt5Output: string,
   cognitiveDomain?: CognitiveDomain,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  runtimeBudget?: RuntimeBudget
 ): Promise<TrinityFinalOutput> {
+  if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
+
   const complexModel = getComplexModel();
   const cappedLimit = enforceTokenCap(APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalTokenParams = getTokenParameter(complexModel, cappedLimit);

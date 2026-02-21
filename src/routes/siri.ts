@@ -3,6 +3,7 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
+import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
 
 const router = express.Router();
 
@@ -30,7 +31,8 @@ const handleSiriRequest = async (
   logRequestFeedback(input, 'siri');
 
   try {
-    const output = await runThroughBrain(openai, input, sessionId, overrideAuditSafe);
+    const runtimeBudget = createRuntimeBudget();
+    const output = await runThroughBrain(openai, input, sessionId, overrideAuditSafe, {}, runtimeBudget);
     return res.json({ ...output, content: output.result } as SiriResponse);
   } catch (err) {
     handleAIError(err, input, 'siri', res);

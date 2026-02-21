@@ -6,12 +6,13 @@
 import { describe, it, expect } from '@jest/globals';
 import OpenAI from 'openai';
 import { runThroughBrain } from '../src/core/logic/trinity.js';
+import { createRuntimeBudget } from '../src/runtime/runtimeBudget.js';
 
 describe('Trinity pipeline', () => {
   it('returns TrinityResult shape when called with dryRun: true', async () => {
     // Dry run short-circuits before any OpenAI calls; client is not used
     const client = {} as unknown as OpenAI;
-    const result = await runThroughBrain(client, 'Hello', undefined, undefined, { dryRun: true });
+    const result = await runThroughBrain(client, 'Hello', undefined, undefined, { dryRun: true }, createRuntimeBudget());
 
     expect(result).toBeDefined();
     expect(typeof result.result).toBe('string');
