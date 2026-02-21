@@ -82,10 +82,22 @@ export class Watchdog {
   }
 
   check(globalRemainingMs?: number): void {
-    const activeLimit =
-      typeof globalRemainingMs === 'number'
-        ? Math.min(this.limitMs, globalRemainingMs)
-        : this.limitMs;
+    const elapsed = Date.now() - this.start;
+    const isLocalExceeded = elapsed > this.limitMs;
+    const isGlobalExceeded = typeof globalRemainingMs === 'number' && globalRemainingMs <= 0;
+
+    if (isLocalExceeded || isGlobalExceeded) {
+      this.wasTriggered = true;
+      const activeLimit = isGlobalExceeded ? elapsed : this.limitMs;
+      logger.error('Watchdog threshold exceeded', {
+        module: 'trinity', operation: 'watchdog',
+        elapsed,
+        limit: activeLimit,
+        type: isGlobalExceeded ? 'global' : 'local'
+      });
+      throw new Error(`Execution exceeded watchdog threshold (${elapsed}ms > ${activeLimit}ms)`);
+    }
+  }
     const elapsed = Date.now() - this.start;
     if (elapsed > activeLimit) {
       this.wasTriggered = true;
