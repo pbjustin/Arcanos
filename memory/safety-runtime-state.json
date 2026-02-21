@@ -1,0 +1,16 @@
+{
+  "updatedAt": "2026-02-18T07:50:30.682Z",
+  "conditions": [],
+  "quarantines": [],
+  "counters": {
+    "duplicateSuppressions": 1,
+    "quarantineActivations": 0,
+    "workerFailures": {},
+    "heartbeatMisses": {},
+    "healthyCycles": {}
+  },
+  "trustedHashes": {
+    "prompts_config": "5ed5c7c3c541917989f67715b8e3bae92fd4f4ba1058d96ded486ef7cb530626",
+    "dispatch_patterns": "620ee034f7bf2fa9fb9eb702adfc0f0537206f6607d983947275cb03efbcd468"
+  }
+}

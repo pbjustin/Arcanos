@@ -24,6 +24,7 @@
         "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPattern=test --testPathIgnorePatterns=integration",
         "test:all": "npm run test:unit && npm run test:integration",
         "type-check": "tsc --noEmit",
+        "reindex": "node scripts/reindex-codebase.js",
         "lint": "eslint src/**/*.ts",
         "lint:fix": "eslint src/**/*.ts --fix",
         "assistants-sync": "npx ts-node scripts/assistants-sync.ts",

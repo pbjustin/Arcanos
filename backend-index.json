@@ -1,0 +1,1644 @@
+{
+  "generatedAt": "2026-02-21T09:15:50.233Z",
+  "scopes": [
+    {
+      "scope": "arcanos-ai-runtime",
+      "files": [
+        {
+          "relativePath": "arcanos-ai-runtime/src/ai/adaptiveTimeout.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/ai/executeJob.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/ai/openaiClient.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/auth/apiKey.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/config.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/config/env.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/jobs/jobStore.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/jobs/types.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/jobs/validation.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/queue/queue.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/redis.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/runtime/executionController.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/runtime/metrics.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/runtime/openaiClient.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/runtime/runtimeBudget.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/runtime/runtimeErrors.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/runtime/timeoutEnvelope.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/server.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/worker.ts"
+        }
+      ]
+    },
+    {
+      "scope": "backend-service",
+      "files": [
+        {
+          "relativePath": "backend-service/src/config/cors.ts"
+        },
+        {
+          "relativePath": "backend-service/src/middleware/auth.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/getTask.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/heartbeat.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/register.ts"
+        },
+        {
+          "relativePath": "backend-service/src/routes/submitResult.ts"
+        },
+        {
+          "relativePath": "backend-service/src/server.ts"
+        },
+        {
+          "relativePath": "backend-service/src/services/agentService.ts"
+        },
+        {
+          "relativePath": "backend-service/src/services/taskService.ts"
+        },
+        {
+          "relativePath": "backend-service/src/storage/inMemoryStore.ts"
+        },
+        {
+          "relativePath": "backend-service/src/types/agent.ts"
+        },
+        {
+          "relativePath": "backend-service/src/types/result.ts"
+        },
+        {
+          "relativePath": "backend-service/src/types/task.ts"
+        },
+        {
+          "relativePath": "backend-service/src/validation/requestValidators.ts"
+        }
+      ]
+    },
+    {
+      "scope": "backend-typescript",
+      "files": [
+        {
+          "relativePath": "backend-typescript/src/index.ts"
+        }
+      ]
+    },
+    {
+      "scope": "collected-ts",
+      "files": [
+        {
+          "relativePath": "collected-ts/src/config/prompts.ts"
+        },
+        {
+          "relativePath": "collected-ts/tests/prompts-system.test.ts"
+        }
+      ]
+    },
+    {
+      "scope": "scripts",
+      "files": [
+        {
+          "relativePath": "scripts/assistants-sync.ts"
+        },
+        {
+          "relativePath": "scripts/check-boundaries.ts"
+        },
+        {
+          "relativePath": "scripts/db-init.ts"
+        }
+      ]
+    },
+    {
+      "scope": "src",
+      "files": [
+        {
+          "relativePath": "src/analytics/clearAutoTuner.ts"
+        },
+        {
+          "relativePath": "src/analytics/escalationTracker.ts"
+        },
+        {
+          "relativePath": "src/app.ts"
+        },
+        {
+          "relativePath": "src/brain/brainFactory.ts"
+        },
+        {
+          "relativePath": "src/brain/brainRegistry.ts"
+        },
+        {
+          "relativePath": "src/brain/mockBrain.ts"
+        },
+        {
+          "relativePath": "src/brain/registerGpt5Worker.ts"
+        },
+        {
+          "relativePath": "src/config/env.ts"
+        },
+        {
+          "relativePath": "src/config/index.ts"
+        },
+        {
+          "relativePath": "src/config/integrityManifest.ts"
+        },
+        {
+          "relativePath": "src/config/unifiedConfig.ts"
+        },
+        {
+          "relativePath": "src/controllers/dispatchControllerV9.ts"
+        },
+        {
+          "relativePath": "src/core/adapters/openai.adapter.ts"
+        },
+        {
+          "relativePath": "src/core/afol/analytics.ts"
+        },
+        {
+          "relativePath": "src/core/afol/engine.ts"
+        },
+        {
+          "relativePath": "src/core/afol/health.ts"
+        },
+        {
+          "relativePath": "src/core/afol/logger.ts"
+        },
+        {
+          "relativePath": "src/core/afol/policies.ts"
+        },
+        {
+          "relativePath": "src/core/afol/routes.ts"
+        },
+        {
+          "relativePath": "src/core/afol/types.ts"
+        },
+        {
+          "relativePath": "src/core/audit/runClearAudit.ts"
+        },
+        {
+          "relativePath": "src/core/commands/arcanos/audit_override.ts"
+        },
+        {
+          "relativePath": "src/core/commands/runDailySummary.ts"
+        },
+        {
+          "relativePath": "src/core/commands/runSelfTest.ts"
+        },
+        {
+          "relativePath": "src/core/db/auditStore.ts"
+        },
+        {
+          "relativePath": "src/core/db/client.ts"
+        },
+        {
+          "relativePath": "src/core/db/index.ts"
+        },
+        {
+          "relativePath": "src/core/db/query.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/executionLogRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/jobRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/memoryRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/ragRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/reasoningLogRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/selfReflectionRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/schema.ts"
+        },
+        {
+          "relativePath": "src/core/db/sessionCacheStore.ts"
+        },
+        {
+          "relativePath": "src/core/diagnostics.ts"
+        },
+        {
+          "relativePath": "src/core/init-openai.ts"
+        },
+        {
+          "relativePath": "src/core/lib/errors/base.ts"
+        },
+        {
+          "relativePath": "src/core/lib/errors/classification.ts"
+        },
+        {
+          "relativePath": "src/core/lib/errors/index.ts"
+        },
+        {
+          "relativePath": "src/core/logic/aiCron.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/parsing.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/prompts.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/secureReasoning.ts"
+        },
+        {
+          "relativePath": "src/core/logic/arcanos/types.ts"
+        },
+        {
+          "relativePath": "src/core/logic/assistantSyncCron.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinity.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityConstants.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityGuards.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityHelpers.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityStages.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityTier.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityTypes.ts"
+        },
+        {
+          "relativePath": "src/core/logic/tutor-logic.ts"
+        },
+        {
+          "relativePath": "src/core/memory/persistenceTypes.ts"
+        },
+        {
+          "relativePath": "src/core/memory/sessionPersistence.ts"
+        },
+        {
+          "relativePath": "src/core/memory/store.ts"
+        },
+        {
+          "relativePath": "src/core/persistenceManagerHierarchy.ts"
+        },
+        {
+          "relativePath": "src/core/startup.ts"
+        },
+        {
+          "relativePath": "src/core/types/cognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/db/client.ts"
+        },
+        {
+          "relativePath": "src/dispatcher/detectCognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/dispatcher/gptDomainClassifier.ts"
+        },
+        {
+          "relativePath": "src/lib/errors.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/classification.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/index.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/messages.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/openai.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/responses.ts"
+        },
+        {
+          "relativePath": "src/lib/errors/reusable.ts"
+        },
+        {
+          "relativePath": "src/lib/tokenStore.ts"
+        },
+        {
+          "relativePath": "src/middleware/operatorAuth.ts"
+        },
+        {
+          "relativePath": "src/platform/index.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/aiLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/auditLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/bootLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/diagnostics.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/dualModeAudit.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/gptLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/openaiLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/structuredLogging.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/systemDiagnostics.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/telemetry.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/unifiedTelemetry.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/cache.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/circuitBreaker.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/healthChecks.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/idleManager.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/serviceUnavailable.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/unifiedHealth.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/unifiedRetry.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/watchdog.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/aiReflectionTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/arcanosPipelinePrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/arcanosPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/auditSafe.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/autoHeal.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/bridgeEnv.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/bridgeRelay.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/chatFallbackMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/config.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/daemonConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/daemonRegistry.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/dailySummaryTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/dispatchMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/dispatchPatterns.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/env.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/environmentFingerprints.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/environmentSecurity.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/environmentValidation.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/envParsers.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/errorMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/fallbackMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/gptRouterConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/gptSyncConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/gptSyncMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/hrcPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/integrityManifest.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/memoryValidationPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/mockResponseConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/openaiLogMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/openaiPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/orchestrationPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/portUtils.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/prAssistantMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/prAssistantTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/prompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/railway.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/reasoningTemplates.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/researchPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/runtimeProbeScripts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/scholarly.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/secureReasoningMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/security.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/selfTestConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/serverMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/systemDiagnosticsConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/tutorPrompts.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/unifiedConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/watchdogConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerBoot.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerConfig.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerContext.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/workerPaths.ts"
+        },
+        {
+          "relativePath": "src/routes/afol.ts"
+        },
+        {
+          "relativePath": "src/routes/agents.ts"
+        },
+        {
+          "relativePath": "src/routes/ai-endpoints.ts"
+        },
+        {
+          "relativePath": "src/routes/api-arcanos.ts"
+        },
+        {
+          "relativePath": "src/routes/api-ask.ts"
+        },
+        {
+          "relativePath": "src/routes/api-assistants.ts"
+        },
+        {
+          "relativePath": "src/routes/api-codebase.ts"
+        },
+        {
+          "relativePath": "src/routes/api-commands.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon/auth.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon/context.ts"
+        },
+        {
+          "relativePath": "src/routes/api-daemon/pending.ts"
+        },
+        {
+          "relativePath": "src/routes/api-memory.ts"
+        },
+        {
+          "relativePath": "src/routes/api-reusable-code.ts"
+        },
+        {
+          "relativePath": "src/routes/api-sim.ts"
+        },
+        {
+          "relativePath": "src/routes/api-transcribe.ts"
+        },
+        {
+          "relativePath": "src/routes/api-update.ts"
+        },
+        {
+          "relativePath": "src/routes/api-vision.ts"
+        },
+        {
+          "relativePath": "src/routes/api/index.ts"
+        },
+        {
+          "relativePath": "src/routes/arcanos.ts"
+        },
+        {
+          "relativePath": "src/routes/arcanosQuery.ts"
+        },
+        {
+          "relativePath": "src/routes/ask.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/daemonTools.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/intent_store.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/types.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/validation.ts"
+        },
+        {
+          "relativePath": "src/routes/backstage.ts"
+        },
+        {
+          "relativePath": "src/routes/bridge.ts"
+        },
+        {
+          "relativePath": "src/routes/clear.ts"
+        },
+        {
+          "relativePath": "src/routes/daemonStore.ts"
+        },
+        {
+          "relativePath": "src/routes/daemonStore/types.ts"
+        },
+        {
+          "relativePath": "src/routes/debug-confirmation.ts"
+        },
+        {
+          "relativePath": "src/routes/devops.ts"
+        },
+        {
+          "relativePath": "src/routes/gptRouter.ts"
+        },
+        {
+          "relativePath": "src/routes/health.ts"
+        },
+        {
+          "relativePath": "src/routes/healthGroup.ts"
+        },
+        {
+          "relativePath": "src/routes/heartbeat.ts"
+        },
+        {
+          "relativePath": "src/routes/hrc.ts"
+        },
+        {
+          "relativePath": "src/routes/image.ts"
+        },
+        {
+          "relativePath": "src/routes/modules.ts"
+        },
+        {
+          "relativePath": "src/routes/openai-arcanos-pipeline.ts"
+        },
+        {
+          "relativePath": "src/routes/openai.ts"
+        },
+        {
+          "relativePath": "src/routes/orchestration.ts"
+        },
+        {
+          "relativePath": "src/routes/plans.ts"
+        },
+        {
+          "relativePath": "src/routes/pr-analysis.ts"
+        },
+        {
+          "relativePath": "src/routes/rag.ts"
+        },
+        {
+          "relativePath": "src/routes/register.ts"
+        },
+        {
+          "relativePath": "src/routes/reinforcement.ts"
+        },
+        {
+          "relativePath": "src/routes/research.ts"
+        },
+        {
+          "relativePath": "src/routes/safety.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/diagnostics.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/index.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/init.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/research.ts"
+        },
+        {
+          "relativePath": "src/routes/sdk/workers.ts"
+        },
+        {
+          "relativePath": "src/routes/sessionRoutes.ts"
+        },
+        {
+          "relativePath": "src/routes/siri.ts"
+        },
+        {
+          "relativePath": "src/routes/status.ts"
+        },
+        {
+          "relativePath": "src/routes/workers.ts"
+        },
+        {
+          "relativePath": "src/server.ts"
+        },
+        {
+          "relativePath": "src/server/bootstrap.ts"
+        },
+        {
+          "relativePath": "src/services/ai-reflections.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-gaming.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-tutor.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosPipeline.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosPrompt.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosQuery.ts"
+        },
+        {
+          "relativePath": "src/services/audit.ts"
+        },
+        {
+          "relativePath": "src/services/auditSafe.ts"
+        },
+        {
+          "relativePath": "src/services/auditSafeToggle.ts"
+        },
+        {
+          "relativePath": "src/services/autoHealService.ts"
+        },
+        {
+          "relativePath": "src/services/backstage-booker.ts"
+        },
+        {
+          "relativePath": "src/services/bridgeSocket.ts"
+        },
+        {
+          "relativePath": "src/services/clear2.ts"
+        },
+        {
+          "relativePath": "src/services/clearClient.ts"
+        },
+        {
+          "relativePath": "src/services/clearScorecard.ts"
+        },
+        {
+          "relativePath": "src/services/codebaseAccess.ts"
+        },
+        {
+          "relativePath": "src/services/commandCenter.ts"
+        },
+        {
+          "relativePath": "src/services/contextualReinforcement.ts"
+        },
+        {
+          "relativePath": "src/services/dailySummaryService.ts"
+        },
+        {
+          "relativePath": "src/services/datasetHarvester.ts"
+        },
+        {
+          "relativePath": "src/services/dispatchControllerV9.ts"
+        },
+        {
+          "relativePath": "src/services/gaming.ts"
+        },
+        {
+          "relativePath": "src/services/git.ts"
+        },
+        {
+          "relativePath": "src/services/gpt4Shadow.ts"
+        },
+        {
+          "relativePath": "src/services/gptSync.ts"
+        },
+        {
+          "relativePath": "src/services/hrc.ts"
+        },
+        {
+          "relativePath": "src/services/hrcWrapper.ts"
+        },
+        {
+          "relativePath": "src/services/idleStateService.ts"
+        },
+        {
+          "relativePath": "src/services/memory.ts"
+        },
+        {
+          "relativePath": "src/services/memory/context.ts"
+        },
+        {
+          "relativePath": "src/services/memory/logging.ts"
+        },
+        {
+          "relativePath": "src/services/memory/maintenance.ts"
+        },
+        {
+          "relativePath": "src/services/memory/metadata.ts"
+        },
+        {
+          "relativePath": "src/services/memory/paths.ts"
+        },
+        {
+          "relativePath": "src/services/memory/sanitizers.ts"
+        },
+        {
+          "relativePath": "src/services/memory/state.ts"
+        },
+        {
+          "relativePath": "src/services/memory/storage.ts"
+        },
+        {
+          "relativePath": "src/services/memory/store.ts"
+        },
+        {
+          "relativePath": "src/services/memory/types.ts"
+        },
+        {
+          "relativePath": "src/services/memory/validation.ts"
+        },
+        {
+          "relativePath": "src/services/memoryAware.ts"
+        },
+        {
+          "relativePath": "src/services/memoryDigest.ts"
+        },
+        {
+          "relativePath": "src/services/memoryState.ts"
+        },
+        {
+          "relativePath": "src/services/midLayerTranslator.ts"
+        },
+        {
+          "relativePath": "src/services/moduleLoader.ts"
+        },
+        {
+          "relativePath": "src/services/openai-assistants.ts"
+        },
+        {
+          "relativePath": "src/services/openai.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFallbacks.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFlow.ts"
+        },
+        {
+          "relativePath": "src/services/openai/clientBridge.ts"
+        },
+        {
+          "relativePath": "src/services/openai/config.ts"
+        },
+        {
+          "relativePath": "src/services/openai/constants.ts"
+        },
+        {
+          "relativePath": "src/services/openai/credentialProvider.ts"
+        },
+        {
+          "relativePath": "src/services/openai/embeddings.ts"
+        },
+        {
+          "relativePath": "src/services/openai/imageGeneration.ts"
+        },
+        {
+          "relativePath": "src/services/openai/messageBuilder.ts"
+        },
+        {
+          "relativePath": "src/services/openai/mock.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestTransforms.ts"
+        },
+        {
+          "relativePath": "src/services/openai/resilience.ts"
+        },
+        {
+          "relativePath": "src/services/openai/serviceHealth.ts"
+        },
+        {
+          "relativePath": "src/services/openai/types.ts"
+        },
+        {
+          "relativePath": "src/services/openai/unifiedClient.ts"
+        },
+        {
+          "relativePath": "src/services/openaiRuntime.ts"
+        },
+        {
+          "relativePath": "src/services/orchestrationInit.ts"
+        },
+        {
+          "relativePath": "src/services/orchestrationShell.ts"
+        },
+        {
+          "relativePath": "src/services/persistenceManager.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/analysisRules.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checkResults.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/automatedValidation.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/deadCode.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/envDocumentation.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/finalDoubleCheck.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/openaiCompatibility.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/railwayReadiness.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/checks/simplification.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/commandUtils.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/constants.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/formatters.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/types.ts"
+        },
+        {
+          "relativePath": "src/services/prAssistant/utils.ts"
+        },
+        {
+          "relativePath": "src/services/railwayClient.ts"
+        },
+        {
+          "relativePath": "src/services/research.ts"
+        },
+        {
+          "relativePath": "src/services/researchHub.ts"
+        },
+        {
+          "relativePath": "src/services/reusableCodeGeneration.ts"
+        },
+        {
+          "relativePath": "src/services/routeMemorySnapshotStore.ts"
+        },
+        {
+          "relativePath": "src/services/safety/aiOutputBoundary.ts"
+        },
+        {
+          "relativePath": "src/services/safety/auditEvents.ts"
+        },
+        {
+          "relativePath": "src/services/safety/configIntegrity.ts"
+        },
+        {
+          "relativePath": "src/services/safety/executionLock.ts"
+        },
+        {
+          "relativePath": "src/services/safety/interpreterSupervisor.ts"
+        },
+        {
+          "relativePath": "src/services/safety/memoryEnvelope.ts"
+        },
+        {
+          "relativePath": "src/services/safety/monotonicClock.ts"
+        },
+        {
+          "relativePath": "src/services/safety/runtimeState.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/auditLogger.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/circuitBreaker.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/config.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/index.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/jwks.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/lock.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/redisClient.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/shutdown.ts"
+        },
+        {
+          "relativePath": "src/services/safety/v2/trustVerify.ts"
+        },
+        {
+          "relativePath": "src/services/scholarlyFetcher.ts"
+        },
+        {
+          "relativePath": "src/services/secureReasoningEngine.ts"
+        },
+        {
+          "relativePath": "src/services/securityCompliance.ts"
+        },
+        {
+          "relativePath": "src/services/selfTestPipeline.ts"
+        },
+        {
+          "relativePath": "src/services/sessionMemoryRepository.ts"
+        },
+        {
+          "relativePath": "src/services/sessionMemoryService.ts"
+        },
+        {
+          "relativePath": "src/services/sessionResolver.ts"
+        },
+        {
+          "relativePath": "src/services/shadowControl.ts"
+        },
+        {
+          "relativePath": "src/services/stateManager.ts"
+        },
+        {
+          "relativePath": "src/services/webRag.ts"
+        },
+        {
+          "relativePath": "src/shared/constants.ts"
+        },
+        {
+          "relativePath": "src/shared/errors.ts"
+        },
+        {
+          "relativePath": "src/shared/errorUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/exportImageAsBase64.ts"
+        },
+        {
+          "relativePath": "src/shared/fileStorage.ts"
+        },
+        {
+          "relativePath": "src/shared/hashUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/idGenerator.ts"
+        },
+        {
+          "relativePath": "src/shared/jsonFileUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/jsonHelpers.ts"
+        },
+        {
+          "relativePath": "src/shared/logPath.ts"
+        },
+        {
+          "relativePath": "src/shared/memoryValidationMessages.ts"
+        },
+        {
+          "relativePath": "src/shared/messageBuilderUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/promptUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/tokenParameterHelper.ts"
+        },
+        {
+          "relativePath": "src/shared/types/actionPlan.ts"
+        },
+        {
+          "relativePath": "src/shared/types/cognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/shared/types/daemon-bridge.d.ts"
+        },
+        {
+          "relativePath": "src/shared/types/dispatchV9.ts"
+        },
+        {
+          "relativePath": "src/shared/types/dto.ts"
+        },
+        {
+          "relativePath": "src/shared/types/express.d.ts"
+        },
+        {
+          "relativePath": "src/shared/types/reinforcement.ts"
+        },
+        {
+          "relativePath": "src/shared/types/routes.d.ts"
+        },
+        {
+          "relativePath": "src/shared/validation.ts"
+        },
+        {
+          "relativePath": "src/shared/vectorUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/webFetcher.ts"
+        },
+        {
+          "relativePath": "src/start-server.ts"
+        },
+        {
+          "relativePath": "src/stores/actionPlanStore.ts"
+        },
+        {
+          "relativePath": "src/stores/agentRegistry.ts"
+        },
+        {
+          "relativePath": "src/transport/http/asyncHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/aiController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/healthController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/openaiController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/controllers/sessionMemoryController.ts"
+        },
+        {
+          "relativePath": "src/transport/http/errorResponse.ts"
+        },
+        {
+          "relativePath": "src/transport/http/http.ts"
+        },
+        {
+          "relativePath": "src/transport/http/httpMethodIntent.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/auditTrace.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/capabilityGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/confirmationChallengeStore.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/confirmGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/batching.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/defaults.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/idle.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/requests.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControl/types.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/costControlMiddleware.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/errorHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/fallbackHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/operatorAuth.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/unsafeExecutionGate.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/validation.ts"
+        },
+        {
+          "relativePath": "src/transport/http/payloadNormalization.ts"
+        },
+        {
+          "relativePath": "src/transport/http/requestHandler.ts"
+        },
+        {
+          "relativePath": "src/transport/http/requestHeaders.ts"
+        },
+        {
+          "relativePath": "src/transport/http/requestPayloadUtils.ts"
+        },
+        {
+          "relativePath": "src/transport/http/responseHelpers.ts"
+        },
+        {
+          "relativePath": "src/transport/http/tagRequest.ts"
+        },
+        {
+          "relativePath": "src/transport/index.ts"
+        },
+        {
+          "relativePath": "src/types/actionPlan.ts"
+        },
+        {
+          "relativePath": "src/types/cognitiveDomain.ts"
+        },
+        {
+          "relativePath": "src/upload/app.ts"
+        },
+        {
+          "relativePath": "src/upload/config/index.ts"
+        },
+        {
+          "relativePath": "src/upload/middleware/errorHandler.ts"
+        },
+        {
+          "relativePath": "src/upload/middleware/rateLimiter.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/abstractUpload.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/analyze.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/health.ts"
+        },
+        {
+          "relativePath": "src/upload/routes/upload.ts"
+        },
+        {
+          "relativePath": "src/upload/server.ts"
+        },
+        {
+          "relativePath": "src/upload/services/abstractionService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/analyzeService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/clamavService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/cleanupService.ts"
+        },
+        {
+          "relativePath": "src/upload/services/extractor.ts"
+        },
+        {
+          "relativePath": "src/upload/services/uploadService.ts"
+        },
+        {
+          "relativePath": "src/upload/types/upload.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/archiveSizeGuard.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/ensureDir.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/logger.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/streamPipeline.ts"
+        },
+        {
+          "relativePath": "src/upload/utils/zipSlipGuard.ts"
+        },
+        {
+          "relativePath": "src/utils/requestHeaders.ts"
+        },
+        {
+          "relativePath": "src/utils/structuredLogging.ts"
+        },
+        {
+          "relativePath": "src/utils/telemetry.ts"
+        }
+      ]
+    },
+    {
+      "scope": "tests",
+      "files": [
+        {
+          "relativePath": "tests/action-plan-store.test.ts"
+        },
+        {
+          "relativePath": "tests/afol.test.ts"
+        },
+        {
+          "relativePath": "tests/ai-output-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/api-transcribe.test.ts"
+        },
+        {
+          "relativePath": "tests/api-update.test.ts"
+        },
+        {
+          "relativePath": "tests/api-vision.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-gaming.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-system-governance.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-validation.test.ts"
+        },
+        {
+          "relativePath": "tests/brain.test.ts"
+        },
+        {
+          "relativePath": "tests/bridge-token-auth.test.ts"
+        },
+        {
+          "relativePath": "tests/capability-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/clear2.test.ts"
+        },
+        {
+          "relativePath": "tests/codebase-api.test.ts"
+        },
+        {
+          "relativePath": "tests/config-integrity.test.ts"
+        },
+        {
+          "relativePath": "tests/confirmGate-oneTimeToken.test.ts"
+        },
+        {
+          "relativePath": "tests/confirmGate-token-integration.test.ts"
+        },
+        {
+          "relativePath": "tests/converge-plan.test.ts"
+        },
+        {
+          "relativePath": "tests/daemon-tools-trust-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/db-client-sanitization.test.ts"
+        },
+        {
+          "relativePath": "tests/db-modular.test.ts"
+        },
+        {
+          "relativePath": "tests/debug-confirmation.test.ts"
+        },
+        {
+          "relativePath": "tests/dispatch-controller-v9.test.ts"
+        },
+        {
+          "relativePath": "tests/env-runtime-access.test.ts"
+        },
+        {
+          "relativePath": "tests/environment-security.test.ts"
+        },
+        {
+          "relativePath": "tests/execution-lock.test.ts"
+        },
+        {
+          "relativePath": "tests/http.test.ts"
+        },
+        {
+          "relativePath": "tests/idleManager.test.ts"
+        },
+        {
+          "relativePath": "tests/interpreter-supervisor.test.ts"
+        },
+        {
+          "relativePath": "tests/json-helpers.test.ts"
+        },
+        {
+          "relativePath": "tests/memory-consistency-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/memorySync-worker.test.ts"
+        },
+        {
+          "relativePath": "tests/one-time-token-integration.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-adapter.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-client-bridge.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-fallback-sequence.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-integration.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-prompt.test.ts"
+        },
+        {
+          "relativePath": "tests/performance-test.ts"
+        },
+        {
+          "relativePath": "tests/placeholder.test.ts"
+        },
+        {
+          "relativePath": "tests/plan-routes.test.ts"
+        },
+        {
+          "relativePath": "tests/port-utils.test.ts"
+        },
+        {
+          "relativePath": "tests/prompts-system.test.ts"
+        },
+        {
+          "relativePath": "tests/railway-client.test.ts"
+        },
+        {
+          "relativePath": "tests/route-memory-snapshot-store.test.ts"
+        },
+        {
+          "relativePath": "tests/session-memory-roundtrip.test.ts"
+        },
+        {
+          "relativePath": "tests/structured-logging-sanitization.test.ts"
+        },
+        {
+          "relativePath": "tests/telemetry-limits.test.ts"
+        },
+        {
+          "relativePath": "tests/test-ai-patch-system.ts"
+        },
+        {
+          "relativePath": "tests/test-detection-patterns.ts"
+        },
+        {
+          "relativePath": "tests/test-github-push-stable.ts"
+        },
+        {
+          "relativePath": "tests/test-gpt4-fallback.ts"
+        },
+        {
+          "relativePath": "tests/test-pr-assistant.test.ts"
+        },
+        {
+          "relativePath": "tests/test-research.ts"
+        },
+        {
+          "relativePath": "tests/test-safe-fetch-html-integration.ts"
+        },
+        {
+          "relativePath": "tests/test-safe-fetch-html.ts"
+        },
+        {
+          "relativePath": "tests/test-security-compliance.ts"
+        },
+        {
+          "relativePath": "tests/test-stateless-pr.ts"
+        },
+        {
+          "relativePath": "tests/tokenParameterHelper.test.ts"
+        },
+        {
+          "relativePath": "tests/tokenStore.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity.test.ts"
+        },
+        {
+          "relativePath": "tests/unsafe-execution-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/upload-archive-size-guard.test.ts"
+        },
+        {
+          "relativePath": "tests/upload-extractor.test.ts"
+        },
+        {
+          "relativePath": "tests/utal.test.ts"
+        },
+        {
+          "relativePath": "tests/vector-utils.test.ts"
+        },
+        {
+          "relativePath": "tests/webFetcher-util.test.ts"
+        },
+        {
+          "relativePath": "tests/webFetcher.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-duplication-suppression.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-task-queue.test.ts"
+        }
+      ]
+    },
+    {
+      "scope": "workers",
+      "files": [
+        {
+          "relativePath": "workers/src/handlers/memory.ts"
+        },
+        {
+          "relativePath": "workers/src/handlers/memorySync.ts"
+        },
+        {
+          "relativePath": "workers/src/handlers/openai.ts"
+        },
+        {
+          "relativePath": "workers/src/infrastructure/memory/index.ts"
+        },
+        {
+          "relativePath": "workers/src/infrastructure/sdk/openai.ts"
+        },
+        {
+          "relativePath": "workers/src/infrastructure/sdk/openaiConfig.ts"
+        },
+        {
+          "relativePath": "workers/src/jobs/index.ts"
+        },
+        {
+          "relativePath": "workers/src/queue/index.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-gpt5-reasoning.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-logger.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-memory.ts"
+        },
+        {
+          "relativePath": "workers/src/worker-planner-engine.ts"
+        },
+        {
+          "relativePath": "workers/src/workers/memory-worker.ts"
+        },
+        {
+          "relativePath": "workers/src/workers/memorySync-worker.ts"
+        },
+        {
+          "relativePath": "workers/src/workers/openai-worker.ts"
+        },
+        {
+          "relativePath": "workers/src/workerTypes.ts"
+        }
+      ]
+    }
+  ]
+}

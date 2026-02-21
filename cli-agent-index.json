@@ -1,0 +1,537 @@
+{
+  "generatedAt": "2026-02-21T09:15:50.240Z",
+  "scopes": [
+    {
+      "scope": "agent_core",
+      "files": [
+        {
+          "relativePath": "agent_core/__init__.py"
+        },
+        {
+          "relativePath": "agent_core/backend/__init__.py"
+        },
+        {
+          "relativePath": "agent_core/backend/adapter.py"
+        },
+        {
+          "relativePath": "agent_core/backend/http_client.py"
+        },
+        {
+          "relativePath": "agent_core/config.py"
+        },
+        {
+          "relativePath": "agent_core/core/__init__.py"
+        },
+        {
+          "relativePath": "agent_core/core/execution_gate.py"
+        },
+        {
+          "relativePath": "agent_core/core/kernel.py"
+        },
+        {
+          "relativePath": "agent_core/core/policy_engine.py"
+        },
+        {
+          "relativePath": "agent_core/core/state_machine.py"
+        },
+        {
+          "relativePath": "agent_core/core/supervisor.py"
+        },
+        {
+          "relativePath": "agent_core/models/__init__.py"
+        },
+        {
+          "relativePath": "agent_core/models/event.py"
+        },
+        {
+          "relativePath": "agent_core/models/result.py"
+        },
+        {
+          "relativePath": "agent_core/models/state.py"
+        },
+        {
+          "relativePath": "agent_core/models/task.py"
+        },
+        {
+          "relativePath": "agent_core/observability/__init__.py"
+        },
+        {
+          "relativePath": "agent_core/observability/context.py"
+        },
+        {
+          "relativePath": "agent_core/observability/logger.py"
+        },
+        {
+          "relativePath": "agent_core/observability/tracing.py"
+        },
+        {
+          "relativePath": "agent_core/runtime.py"
+        },
+        {
+          "relativePath": "agent_core/storage/__init__.py"
+        },
+        {
+          "relativePath": "agent_core/storage/event_store.py"
+        }
+      ]
+    },
+    {
+      "scope": "cli",
+      "files": [
+        {
+          "relativePath": "cli/__init__.py"
+        },
+        {
+          "relativePath": "cli/audit.py"
+        },
+        {
+          "relativePath": "cli/execute.py"
+        },
+        {
+          "relativePath": "cli/governance.py"
+        },
+        {
+          "relativePath": "cli/idempotency.py"
+        },
+        {
+          "relativePath": "cli/startup.py"
+        },
+        {
+          "relativePath": "cli/trust_state.py"
+        },
+        {
+          "relativePath": "cli/v2/__init__.py"
+        },
+        {
+          "relativePath": "cli/v2/audit_logger.py"
+        },
+        {
+          "relativePath": "cli/v2/circuit_breaker.py"
+        },
+        {
+          "relativePath": "cli/v2/config.py"
+        },
+        {
+          "relativePath": "cli/v2/jwks.py"
+        },
+        {
+          "relativePath": "cli/v2/lock.py"
+        },
+        {
+          "relativePath": "cli/v2/redis_client.py"
+        },
+        {
+          "relativePath": "cli/v2/shutdown.py"
+        },
+        {
+          "relativePath": "cli/v2/trust_verify.py"
+        }
+      ]
+    },
+    {
+      "scope": "cli_v2",
+      "files": [
+        {
+          "relativePath": "cli_v2/bridge/__init__.py"
+        },
+        {
+          "relativePath": "cli_v2/bridge/client.py"
+        },
+        {
+          "relativePath": "cli_v2/bridge/contracts.py"
+        },
+        {
+          "relativePath": "cli_v2/bridge/escalation.py"
+        },
+        {
+          "relativePath": "cli_v2/bridge/trace.py"
+        },
+        {
+          "relativePath": "cli_v2/context/__init__.py"
+        },
+        {
+          "relativePath": "cli_v2/context/scanner.py"
+        },
+        {
+          "relativePath": "cli_v2/context/session.py"
+        },
+        {
+          "relativePath": "cli_v2/executor/__init__.py"
+        },
+        {
+          "relativePath": "cli_v2/executor/runner.py"
+        },
+        {
+          "relativePath": "cli_v2/executor/shell.py"
+        },
+        {
+          "relativePath": "cli_v2/interaction/__init__.py"
+        },
+        {
+          "relativePath": "cli_v2/live_test_v2.py"
+        },
+        {
+          "relativePath": "cli_v2/main.py"
+        },
+        {
+          "relativePath": "cli_v2/runtime.py"
+        }
+      ]
+    },
+    {
+      "scope": "daemon-python",
+      "files": [
+        {
+          "relativePath": "daemon-python/arcanos/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/action_plan_handler.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/action_plan_types.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/audio.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_auth_client.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client_models.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/chat.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/daemon.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/plans.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/registry.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/transcribe.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/updates.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/backend_client/vision.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_config.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_constants.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_content.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_daemon.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_debug_helpers.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_intent_config.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_intents.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_midlayer.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_presenters.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_runner.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_session.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_types.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli_ui.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/__main__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/audit.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/backend_ops.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/bootstrap.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/cli.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/confirmation.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/context.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/daemon_ops.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/execute.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/governance.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/idempotency.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/local_ops.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/memory_ops.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/run_ops.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/startup.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/state.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/trust_state.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/ui_ops.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/completer.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/config_paths.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/config.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/contract_versions.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/conversation_routing.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/crash_recovery.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/credential_bootstrap/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/credential_bootstrap/env_utils.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/credential_bootstrap/jwt_utils.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/credential_bootstrap/types.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/daemon_system_definition.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug_health.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug_logging.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug_metrics.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug_middleware.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug_server.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug/health.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug/logging.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug/metrics.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/debug/middleware.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/env_store.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/env.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/error_handler.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/gpt_client.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/media_routing.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/openai/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/openai/openai_adapter.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/openai/request_builders.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/openai/unified_client.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/ptt_indicator.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/push_to_talk.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/rate_limiter.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/schema.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/telemetry.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/terminal.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/uninstall.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/update_checker.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/utils/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/utils/config.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/utils/error_handling.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/utils/health.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/utils/retry.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/utils/telemetry.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/vad_processor.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/validation_constants.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/validation_http.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/validation_reporter.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/vision.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/voice_boundary.py"
+        },
+        {
+          "relativePath": "daemon-python/pyinstaller_hooks/hook-webrtcvad.py"
+        },
+        {
+          "relativePath": "daemon-python/scripts/show_cli_status.py"
+        },
+        {
+          "relativePath": "daemon-python/scripts/talk_to_backend.py"
+        },
+        {
+          "relativePath": "daemon-python/scripts/test_backend_connection.py"
+        },
+        {
+          "relativePath": "daemon-python/scripts/test_cli_backend.py"
+        },
+        {
+          "relativePath": "daemon-python/scripts/test_local_and_backend_natural_language.py"
+        },
+        {
+          "relativePath": "daemon-python/scripts/validate_backend_cli_offline.py"
+        },
+        {
+          "relativePath": "daemon-python/scripts/validate_backend_cli.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/__init__.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/conftest.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_handler.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_types.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_debug_server.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_openai_adapter.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_openai_unified_client.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_telemetry_sanitization.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_voice_boundary.py"
+        },
+        {
+          "relativePath": "daemon-python/validate_backend_cli_offline.py"
+        }
+      ]
+    },
+    {
+      "scope": "tests",
+      "files": [
+        {
+          "relativePath": "tests/test_daemon.py"
+        }
+      ]
+    }
+  ]
+}
