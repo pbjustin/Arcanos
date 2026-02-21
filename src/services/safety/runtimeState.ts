@@ -335,6 +335,16 @@ async function flushStateToDisk(reason?: string): Promise<void> {
 }
 
 function flushStateToDiskSync(reason?: string): void {
+  if (!IS_TEST_ENV) {
+    emitSafetyAuditEvent({
+      event: 'runtime_state_sync_flush_blocked_outside_tests',
+      severity: 'warn',
+      details: { reason: reason || 'scheduled_flush' }
+    });
+    void flushStateToDisk(reason);
+    return;
+  }
+
   try {
     ensureStateDirectory();
     fs.writeFileSync(SAFETY_STATE_FILE, JSON.stringify(runtimeSnapshot, null, 2), 'utf8');

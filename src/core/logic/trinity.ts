@@ -445,7 +445,6 @@ export async function runThroughBrain(
       remainingBudgetMs: getSafeRemainingMs(runtimeBudget),
       tierSoftCap,
       effectiveLimit,
-      watchdogTriggered: watchdog.triggered(),
       tokenCapApplied: TRINITY_HARD_TOKEN_CAP,
       sessionTokensUsed: sessionId ? getSessionTokenUsage(sessionId) : undefined,
       downgradeDetected,

@@ -81,7 +81,6 @@ export interface TrinityResult {
     remainingBudgetMs: number;
     tierSoftCap: number;
     effectiveLimit: number;
-    watchdogTriggered: boolean;
     tokenCapApplied: number;
     sessionTokensUsed?: number;
     downgradeDetected: boolean;
