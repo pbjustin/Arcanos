@@ -3,14 +3,18 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 const REPOSITORY_ROOT = process.cwd();
+const BACKEND_JSON_RELATIVE = 'backend-index.json';
+const BACKEND_MD_RELATIVE = path.join('docs', 'BACKEND_INDEX.md');
+const CLI_AGENT_JSON_RELATIVE = 'cli-agent-index.json';
+const CLI_AGENT_MD_RELATIVE = path.join('docs', 'CLI_AGENT_INDEX.md');
 
 // Output paths for Backend (TS)
-const BACKEND_JSON_PATH = path.join(REPOSITORY_ROOT, 'backend-index.json');
-const BACKEND_MD_PATH = path.join(REPOSITORY_ROOT, 'docs', 'BACKEND_INDEX.md');
+const BACKEND_JSON_PATH = path.join(REPOSITORY_ROOT, BACKEND_JSON_RELATIVE);
+const BACKEND_MD_PATH = path.join(REPOSITORY_ROOT, BACKEND_MD_RELATIVE);
 
 // Output paths for CLI Agent (Python)
-const CLI_AGENT_JSON_PATH = path.join(REPOSITORY_ROOT, 'cli-agent-index.json');
-const CLI_AGENT_MD_PATH = path.join(REPOSITORY_ROOT, 'docs', 'CLI_AGENT_INDEX.md');
+const CLI_AGENT_JSON_PATH = path.join(REPOSITORY_ROOT, CLI_AGENT_JSON_RELATIVE);
+const CLI_AGENT_MD_PATH = path.join(REPOSITORY_ROOT, CLI_AGENT_MD_RELATIVE);
 
 const EXCLUDED_DIRS = [
   'node_modules',
@@ -59,8 +63,7 @@ function groupFiles(files) {
     const scope = relative.split('/')[0] || 'root';
     if (!groups[scope]) groups[scope] = [];
     groups[scope].push({
-      relativePath: relative,
-      absolutePath: file
+      relativePath: relative
     });
   }
   
@@ -85,10 +88,10 @@ function renderMarkdown(title, groupedEntries, generatorScript) {
   for (const group of groupedEntries) {
     lines.push(`## ${group.scope}`);
     lines.push('');
-    lines.push('| Relative path | Absolute path |');
-    lines.push('| --- | --- |');
+    lines.push('| Relative path |');
+    lines.push('| --- |');
     for (const file of group.files) {
-      lines.push(`| \`${file.relativePath}\` | \`${file.absolutePath}\` |`);
+      lines.push(`| \`${file.relativePath}\` |`);
     }
     lines.push('');
   }
@@ -118,8 +121,8 @@ async function run() {
   await fs.writeFile(CLI_AGENT_MD_PATH, renderMarkdown('CLI Agent Index (Python)', groupedPy, 'scripts/reindex-codebase.js'));
 
   console.log(`[reindex] Success!`);
-  console.log(`[reindex] Backend: ${tsFiles.length} files -> ${BACKEND_JSON_PATH}`);
-  console.log(`[reindex] CLI Agent: ${pyFiles.length} files -> ${CLI_AGENT_JSON_PATH}`);
+  console.log(`[reindex] Backend: ${tsFiles.length} files -> ${BACKEND_JSON_RELATIVE}`);
+  console.log(`[reindex] CLI Agent: ${pyFiles.length} files -> ${CLI_AGENT_JSON_RELATIVE}`);
 }
 
 run().catch(err => {

@@ -1,24 +1,71 @@
-import OpenAI from "openai";
+import { OpenAI } from "openai";
 import type {
-  RuntimeBudget,
-import {
-  RuntimeBudget,
-  getSafeRemainingMs,
-  assertBudgetAvailable,
-} from "./runtimeBudget.js";
-import {
-  RuntimeBudgetExceededError,
-  OpenAIAbortError,
-} from "./runtimeErrors.js";
+  Response as OpenAIResponse,
+  ResponseCreateParamsNonStreaming,
+  ResponseInput,
+} from "openai/resources/responses/responses";
+import type { RuntimeBudget } from "./runtimeBudget.js";
+import { getSafeRemainingMs, assertBudgetAvailable } from "./runtimeBudget.js";
+import { OpenAIAbortError } from "./runtimeErrors.js";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+export interface GPT5Request {
+  model: string;
+  messages: Array<Record<string, unknown>>;
+  maxTokens?: number;
+  instructions?: string;
+}
+
+export type GPT5Response = OpenAIResponse;
+
+let client: OpenAI | null = null;
+
+function getClient(): OpenAI {
+  if (!client) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY is required to call runGPT5");
+    }
+
+    client = new OpenAI({ apiKey });
+  }
+
+  return client;
+}
+
+function buildRequestPayload(
+  request: GPT5Request
+): ResponseCreateParamsNonStreaming {
+  const payload: ResponseCreateParamsNonStreaming = {
+    model: request.model,
+    input: request.messages as unknown as ResponseInput,
+  };
+
+  if (request.maxTokens !== undefined) {
+    payload.max_output_tokens = request.maxTokens;
+  }
+
+  if (request.instructions) {
+    payload.instructions = request.instructions;
+  }
+
+  return payload;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.name === "AbortError" ||
+    error.message.toLowerCase().includes("aborted")
+  );
+}
 
 export async function runGPT5(
-  input: any,
+  request: GPT5Request,
   budget: RuntimeBudget
-) {
+): Promise<GPT5Response> {
   assertBudgetAvailable(budget);
   const safeRemaining = getSafeRemainingMs(budget);
 
@@ -29,23 +76,19 @@ export async function runGPT5(
   }, safeRemaining);
 
   try {
-    // @ts-ignore - GPT-5 might not be in types yet
-    const response = await client.responses.create(
-      {
-        model: "gpt-5",
-        input,
-      },
+    const response = await getClient().responses.create(
+      buildRequestPayload(request),
       { signal: controller.signal }
     );
 
     return response;
 
-  } catch (err: any) {
-    if (err.name === "AbortError" || err.message?.toLowerCase().includes("aborted")) {
+  } catch (error: unknown) {
+    if (isAbortError(error)) {
       throw new OpenAIAbortError();
     }
 
-    throw err;
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
