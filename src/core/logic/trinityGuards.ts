@@ -98,18 +98,6 @@ export class Watchdog {
       throw new Error(`Execution exceeded watchdog threshold (${elapsed}ms > ${activeLimit}ms)`);
     }
   }
-    const elapsed = Date.now() - this.start;
-    if (elapsed > activeLimit) {
-      this.wasTriggered = true;
-      logger.error('Watchdog threshold exceeded', {
-        module: 'trinity', operation: 'watchdog',
-        elapsed,
-        limit: activeLimit,
-        configuredLimit: this.limitMs
-      });
-      throw new Error(`Execution exceeded watchdog threshold (${elapsed}ms > ${activeLimit}ms)`);
-    }
-  }
 
   elapsed(): number {
     return Date.now() - this.start;
