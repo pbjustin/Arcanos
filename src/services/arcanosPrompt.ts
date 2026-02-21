@@ -2,6 +2,7 @@ import { generateMockResponse } from './openai.js';
 import { runThroughBrain } from "@core/logic/trinity.js";
 import { mapErrorToFriendlyMessage } from "@core/lib/errors/index.js";
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
+import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
 
 /**
  * Handles a basic ARCANOS prompt by routing it through the Trinity brain.
@@ -27,7 +28,8 @@ export async function handleArcanosPrompt(prompt: string) {
 
   try {
     // Route the prompt through the main Trinity brain processing
-    const output = await runThroughBrain(client, prompt);
+    const runtimeBudget = createRuntimeBudget();
+    const output = await runThroughBrain(client, prompt, undefined, undefined, {}, runtimeBudget);
     return output;
   } catch (error: unknown) {
     //audit Assumption: map errors to friendly message when possible

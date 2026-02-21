@@ -9,6 +9,7 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import type { QueryResult } from 'pg';
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { createRuntimeBudget } from '../../runtime/runtimeBudget.js';
 
 export interface WorkerContext {
   log: (message: string) => Promise<void>;
@@ -70,7 +71,8 @@ export function createWorkerContext(workerId: string): WorkerContext {
           }
 
           // Use the trinity brain system for AI processing (pass adapter's client)
-          const result = await runThroughBrain(client, prompt);
+          const runtimeBudget = createRuntimeBudget();
+          const result = await runThroughBrain(client, prompt, undefined, undefined, {}, runtimeBudget);
           return result.result;
         } catch (error: unknown) {
           //audit Assumption: AI failures should propagate with safe message

@@ -8,6 +8,8 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import { createGPT5Reasoning } from "@services/openai.js";
 import { ARCANOS_SYSTEM_PROMPTS } from "@platform/runtime/prompts.js";
+import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
+import { assertBudgetAvailable } from '../../runtime/runtimeBudget.js';
 
 // --- Tier Detection ---
 
@@ -71,9 +73,11 @@ export function getInvocationBudget(tier: Tier): number {
 export async function runReflection(
   client: OpenAI,
   draft: string,
-  tier: Tier
+  tier: Tier,
+  runtimeBudget?: RuntimeBudget
 ): Promise<string | undefined> {
   if (tier !== 'critical') return undefined;
+  if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
   recordTraceEvent('trinity.reflection.start', { tier });
 

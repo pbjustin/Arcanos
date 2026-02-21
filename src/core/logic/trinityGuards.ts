@@ -9,6 +9,8 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
 import type { Tier } from './trinityTier.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
+import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
+import { assertBudgetAvailable, getSafeRemainingMs } from '../../runtime/runtimeBudget.js';
 
 // --- Concurrency Governor ---
 
@@ -26,27 +28,50 @@ export async function acquireTierSlot(tier: Tier): Promise<[() => void]> {
 
 // --- Watchdog ---
 
-const WATCHDOG_BASE_MS = 18000;
+const WATCHDOG_BASE_SOFT_CAP_MS = 25_000;
 const WATCHDOG_TIER_MULTIPLIERS: Record<Tier, number> = {
   simple: 1.0,
   complex: 1.4,
   critical: 1.8
 };
 const WATCHDOG_ESCALATION_MULTIPLIER = 1.3;
-const WATCHDOG_HARD_CAP_MS = 90000;
 
-export function computeWatchdog(tier: Tier, escalated: boolean): number {
+export function computeTierSoftCap(tier: Tier, escalated: boolean): number {
   const tierMultiplier = WATCHDOG_TIER_MULTIPLIERS[tier];
   const escalationMultiplier = escalated ? WATCHDOG_ESCALATION_MULTIPLIER : 1.0;
-  const computed = WATCHDOG_BASE_MS * tierMultiplier * escalationMultiplier;
+  return WATCHDOG_BASE_SOFT_CAP_MS * tierMultiplier * escalationMultiplier;
+}
 
-  // Hard watchdog cap: 90 seconds
-  return Math.min(computed, WATCHDOG_HARD_CAP_MS);
+export interface TrinityWatchdog {
+  watchdog: Watchdog;
+  tierSoftCap: number;
+  remainingBudgetMs: number;
+  effectiveLimit: number;
+}
+
+export function createTrinityWatchdog(
+  tier: Tier,
+  runtimeBudget: RuntimeBudget,
+  escalated: boolean
+): TrinityWatchdog {
+  assertBudgetAvailable(runtimeBudget);
+
+  const tierSoftCap = computeTierSoftCap(tier, escalated);
+  const remainingBudgetMs = getSafeRemainingMs(runtimeBudget);
+  const effectiveLimit = Math.min(tierSoftCap, remainingBudgetMs);
+
+  return {
+    watchdog: new Watchdog(effectiveLimit),
+    tierSoftCap,
+    remainingBudgetMs,
+    effectiveLimit
+  };
 }
 
 export class Watchdog {
   private start = Date.now();
   private limitMs: number;
+  private wasTriggered = false;
 
   constructor(limitMs = 28_000) {
     this.limitMs = limitMs;
@@ -56,14 +81,21 @@ export class Watchdog {
     this.limitMs = newLimitMs;
   }
 
-  check(): void {
+  check(globalRemainingMs?: number): void {
     const elapsed = Date.now() - this.start;
-    if (elapsed > this.limitMs) {
+    const isLocalExceeded = elapsed > this.limitMs;
+    const isGlobalExceeded = typeof globalRemainingMs === 'number' && globalRemainingMs <= 0;
+
+    if (isLocalExceeded || isGlobalExceeded) {
+      this.wasTriggered = true;
+      const activeLimit = isGlobalExceeded ? elapsed : this.limitMs;
       logger.error('Watchdog threshold exceeded', {
         module: 'trinity', operation: 'watchdog',
-        elapsed, limit: this.limitMs
+        elapsed,
+        limit: activeLimit,
+        type: isGlobalExceeded ? 'global' : 'local'
       });
-      throw new Error(`Execution exceeded watchdog threshold (${elapsed}ms > ${this.limitMs}ms)`);
+      throw new Error(`Execution exceeded watchdog threshold (${elapsed}ms > ${activeLimit}ms)`);
     }
   }
 
@@ -73,6 +105,10 @@ export class Watchdog {
 
   limit(): number {
     return this.limitMs;
+  }
+
+  triggered(): boolean {
+    return this.wasTriggered;
   }
 }
 

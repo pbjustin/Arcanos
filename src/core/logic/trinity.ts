@@ -43,20 +43,20 @@ import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
 import { type Tier, detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
 import {
   acquireTierSlot,
-  Watchdog,
   InvocationBudget,
   recordSessionTokens,
   getSessionTokenUsage,
   registerRetry,
   detectDowngrade,
   logTrinityTelemetry,
-  computeWatchdog
+  createTrinityWatchdog
 } from './trinityGuards.js';
 import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prompts.js";
 import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js';
 import { trackEscalation } from '../../analytics/escalationTracker.js';
 import { getClearMinThreshold, recordRun } from '../../analytics/clearAutoTuner.js';
-import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
+import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
+import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '../../runtime/runtimeBudget.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
 
@@ -217,6 +217,7 @@ function buildTrinityResult(
  * @param sessionId - Optional session identifier for context continuity
  * @param overrideFlag - Optional audit-safe override flag for special handling
  * @param options - Optional execution options (e.g., dry run preview)
+ * @param runtimeBudget - Shared worker runtime budget; Trinity must operate within this budget
  * @returns Promise<TrinityResult> - Comprehensive result with AI response and metadata
  */
 export async function runThroughBrain(
@@ -225,8 +226,11 @@ export async function runThroughBrain(
   sessionId?: string,
   overrideFlag?: string,
   options: TrinityRunOptions = {},
+  runtimeBudget: RuntimeBudget = createRuntimeBudget(),
   internalContext?: { escalated: boolean; originalTier: Tier }
 ): Promise<TrinityResult> {
+  assertBudgetAvailable(runtimeBudget);
+
   const requestId = generateRequestId('trinity');
   const routingStages: string[] = [];
   const gpt5Used = true;
@@ -265,34 +269,34 @@ export async function runThroughBrain(
 
   // --- Concurrency governor + watchdog ---
   const [release] = await acquireTierSlot(tier);
-  const gpt5Model = getGPT5Model();
-  const reasoningDepth = tier === 'critical' ? 2 : (tier === 'complex' ? 1.5 : 1);
-  const adaptiveTimeoutMs = resolveTimeout(gpt5Model, reasoningDepth);
-  const tierWatchdogMs = computeWatchdog(tier, !!internalContext?.escalated);
-  const watchdog = new Watchdog(Math.min(adaptiveTimeoutMs, tierWatchdogMs));
+  const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(tier, runtimeBudget, !!internalContext?.escalated);
+  const checkWatchdog = () => {
+    assertBudgetAvailable(runtimeBudget);
+    watchdog.check(getSafeRemainingMs(runtimeBudget));
+  };
 
   try {
     // --- Stage 1: Intake ---
     budget.increment();
-    watchdog.check();
+    checkWatchdog();
 
-    const arcanosModel = await validateModel(client);
+    const arcanosModel = await validateModel(client, runtimeBudget);
     logArcanosRouting('INTAKE', arcanosModel, `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
     routingStages.push(`ARCANOS-INTAKE:${arcanosModel}`);
 
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
 
-    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain, internalDirective);
+    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain, internalDirective, runtimeBudget);
     const framedRequest = intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
     // --- Stage 2: Reasoning ---
     budget.increment();
-    watchdog.check();
+    checkWatchdog();
 
     routingStages.push('GPT5-REASONING');
-    const reasoningOutput = await runReasoningStage(client, framedRequest, tier);
+    const reasoningOutput = await runReasoningStage(client, framedRequest, tier, runtimeBudget);
     let gpt5Output = reasoningOutput.output;
     const gpt5ModelUsed = reasoningOutput.model;
     const reasoningLedger = reasoningOutput.reasoningLedger;
@@ -300,21 +304,23 @@ export async function runThroughBrain(
     // --- CLEAR Audit & Escalation Logic ---
     let clearAudit: ClearAuditResult | undefined = undefined;
     if (reasoningLedger) {
+      checkWatchdog();
       clearAudit = await runClearAudit(client, reasoningLedger);
+      checkWatchdog();
 
       if (clearAudit.overall < getClearMinThreshold() && 
           tier !== 'critical' && 
           !internalContext?.escalated && 
-          (watchdog.limit() - watchdog.elapsed()) > MIN_ESCALATION_BUDGET_MS) {
+          getSafeRemainingMs(runtimeBudget) > MIN_ESCALATION_BUDGET_MS) {
         
         logger.info('Low CLEAR score detected, triggering single-hop escalation', {
           requestId, tier, clearScore: clearAudit.overall, threshold: getClearMinThreshold()
         });
 
         // Release current slot before escalating
-        release();
+        // Release current slot before escalating - removed as finally block handles it
 
-        const escalatedResult = await runThroughBrain(client, prompt, sessionId, overrideFlag, options, {
+        const escalatedResult = await runThroughBrain(client, prompt, sessionId, overrideFlag, options, runtimeBudget, {
           escalated: true,
           originalTier: tier
         });
@@ -341,9 +347,9 @@ export async function runThroughBrain(
     let reflectionApplied = false;
     if (tier === 'critical') {
       budget.increment();
-      watchdog.check();
+      checkWatchdog();
 
-      const critique = await runReflection(client, gpt5Output, tier);
+      const critique = await runReflection(client, gpt5Output, tier, runtimeBudget);
       if (critique) {
         gpt5Output += '\n\n--- CRITICAL REVIEW ---\n' + critique;
         reflectionApplied = true;
@@ -352,11 +358,12 @@ export async function runThroughBrain(
     }
 
     // --- Stage 3: Final ---
-    watchdog.check();
+    checkWatchdog();
 
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
-    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain, internalDirective);
+    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain, internalDirective, runtimeBudget);
+    checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
     const finalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
@@ -434,15 +441,15 @@ export async function runThroughBrain(
       escalationReason: internalContext?.escalated ? 'low_clear_score' : undefined
     };
     result.guardInfo = {
-      watchdogMs: watchdog.elapsed(),
-      watchdogLimit: watchdog.limit(),
+      elapsedMs: watchdog.elapsed(),
+      remainingBudgetMs: getSafeRemainingMs(runtimeBudget),
+      tierSoftCap,
+      effectiveLimit,
       tokenCapApplied: TRINITY_HARD_TOKEN_CAP,
       sessionTokensUsed: sessionId ? getSessionTokenUsage(sessionId) : undefined,
       downgradeDetected,
       latencyMs,
-      latencyDriftDetected,
-      latencyUtilization: watchdog.elapsed() / watchdog.limit(),
-      latencyMargin: watchdog.limit() - watchdog.elapsed()
+      latencyDriftDetected
     };
 
     return result;

@@ -32,6 +32,7 @@ import {
 } from './ask/intent_store.js';
 import { detectCognitiveDomain } from '../dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '../dispatcher/gptDomainClassifier.js';
+import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
 
 const router = express.Router();
 
@@ -532,7 +533,8 @@ export const handleAIRequest = async (
     // TRINITY_STAGE_TEMPERATURE configuration inside runThroughBrain. This asymmetry is
     // intentional for now: /ask is the primary, fully context-routed chat endpoint, while the
     // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
-    const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe, { cognitiveDomain: finalDomain });
+    const runtimeBudget = createRuntimeBudget();
+    const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe, { cognitiveDomain: finalDomain }, runtimeBudget);
     return res.json({
       ...(output as AskResponse),
       clientContext: req.body.clientContext,
