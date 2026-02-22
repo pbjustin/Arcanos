@@ -28,18 +28,20 @@ export async function acquireTierSlot(tier: Tier): Promise<[() => void]> {
 
 // --- Watchdog ---
 
-const WATCHDOG_BASE_SOFT_CAP_MS = 25_000;
-const WATCHDOG_TIER_MULTIPLIERS: Record<Tier, number> = {
+const BASE_SOFT_CAP_MS = 25_000;
+const MULTIPLIERS: Record<Tier, number> = {
   simple: 1.0,
   complex: 1.4,
   critical: 1.8
 };
-const WATCHDOG_ESCALATION_MULTIPLIER = 1.3;
 
-export function computeTierSoftCap(tier: Tier, escalated: boolean): number {
-  const tierMultiplier = WATCHDOG_TIER_MULTIPLIERS[tier];
-  const escalationMultiplier = escalated ? WATCHDOG_ESCALATION_MULTIPLIER : 1.0;
-  return WATCHDOG_BASE_SOFT_CAP_MS * tierMultiplier * escalationMultiplier;
+/**
+ * Computes tier-specific soft cap for watchdog checks.
+ * Input: tier level. Output: soft cap milliseconds before budget clamp.
+ * Edge case: tier must exist in multiplier map.
+ */
+export function computeTierSoftCap(tier: Tier): number {
+  return BASE_SOFT_CAP_MS * MULTIPLIERS[tier];
 }
 
 export interface TrinityWatchdog {
@@ -49,14 +51,18 @@ export interface TrinityWatchdog {
   effectiveLimit: number;
 }
 
+/**
+ * Creates a watchdog constrained by both tier soft cap and runtime budget.
+ * Input: tier and shared runtime budget. Output: TrinityWatchdog metadata and watchdog instance.
+ * Edge case: throws when runtime budget is exhausted before watchdog creation.
+ */
 export function createTrinityWatchdog(
   tier: Tier,
-  runtimeBudget: RuntimeBudget,
-  escalated: boolean
+  runtimeBudget: RuntimeBudget
 ): TrinityWatchdog {
   assertBudgetAvailable(runtimeBudget);
 
-  const tierSoftCap = computeTierSoftCap(tier, escalated);
+  const tierSoftCap = computeTierSoftCap(tier);
   const remainingBudgetMs = getSafeRemainingMs(runtimeBudget);
   const effectiveLimit = Math.min(tierSoftCap, remainingBudgetMs);
 
@@ -81,21 +87,19 @@ export class Watchdog {
     this.limitMs = newLimitMs;
   }
 
-  check(globalRemainingMs?: number): void {
+  check(): void {
     const elapsed = Date.now() - this.start;
-    const isLocalExceeded = elapsed > this.limitMs;
-    const isGlobalExceeded = typeof globalRemainingMs === 'number' && globalRemainingMs <= 0;
+    const isLimitExceeded = elapsed > this.limitMs;
 
-    if (isLocalExceeded || isGlobalExceeded) {
+    //audit Assumption: watchdog enforces a single effective limit after budget clamp; risk: stage overruns local cap; invariant: elapsed remains <= limit while progressing; handling: fail-fast with telemetry.
+    if (isLimitExceeded) {
       this.wasTriggered = true;
-      const activeLimit = isGlobalExceeded ? elapsed : this.limitMs;
       logger.error('Watchdog threshold exceeded', {
         module: 'trinity', operation: 'watchdog',
         elapsed,
-        limit: activeLimit,
-        type: isGlobalExceeded ? 'global' : 'local'
+        limit: this.limitMs
       });
-      throw new Error(`Execution exceeded watchdog threshold (${elapsed}ms > ${activeLimit}ms)`);
+      throw new Error(`Execution exceeded watchdog threshold (${elapsed}ms > ${this.limitMs}ms)`);
     }
   }
 
