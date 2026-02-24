@@ -119,17 +119,6 @@
       ]
     },
     {
-      "scope": "collected-ts",
-      "files": [
-        {
-          "relativePath": "collected-ts/src/config/prompts.ts"
-        },
-        {
-          "relativePath": "collected-ts/tests/prompts-system.test.ts"
-        }
-      ]
-    },
-    {
       "scope": "scripts",
       "files": [
         {
