@@ -1,7 +1,7 @@
-import express, { Express, Request, Response, NextFunction } from 'express';
+import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import { config } from "@platform/runtime/config.js";
-import { requestLoggingMiddleware, logger } from "@platform/logging/structuredLogging.js";
+import { requestLoggingMiddleware } from "@platform/logging/structuredLogging.js";
 import { setupDiagnostics } from "@core/diagnostics.js";
 import { registerRoutes } from "@routes/register.js";
 import { initOpenAI } from "@core/init-openai.js";
@@ -44,3 +44,5 @@ export function createApp(): Express {
 
   return app;
 }
+
+export const app = createApp();

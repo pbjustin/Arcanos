@@ -31,17 +31,14 @@ export class HRCCore {
     try {
       // Use config layer for env access (adapter boundary pattern)
       const model = getEnv('HRC_MODEL') || getDefaultModel();
-      const response = await adapter.chat.completions.create({
+      const response = await adapter.responses.create({
         model,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: HRC_SYSTEM_PROMPT },
-          { role: 'user', content: input }
-        ],
+        input: [{ role: 'system', content: HRC_SYSTEM_PROMPT }, { role: 'user', content: input }],
+        text: { format: { type: 'json_object' } },
         temperature: 0
       });
 
-      const content = response.choices[0]?.message?.content || '{}';
+      const content = (response.output_text as string | undefined) || response.choices?.[0]?.message?.content || '{}';
       const parsed = JSON.parse(content);
 
       return {

@@ -45,7 +45,7 @@ describe('openai adapter', () => {
     const signal = new AbortController().signal;
     const headers = { 'x-request-id': 'req_1' };
 
-    await adapter.chat.completions.create(
+    await adapter.responses.create(
       {
         model: 'gpt-4.1-mini',
         messages: [{ role: 'user', content: 'hello' }],

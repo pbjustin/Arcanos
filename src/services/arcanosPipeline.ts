@@ -26,13 +26,13 @@ export async function executeArcanosPipeline(
   const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not available');
 
   try {
-    const arcFirst = await adapter.chat.completions.create({
+    const arcFirst = await adapter.responses.create({
       model: ARC_V2,
       messages
     });
     const arcFirstOutput = arcFirst.choices[0].message;
 
-    const subAgentResp = await adapter.chat.completions.create({
+    const subAgentResp = await adapter.responses.create({
       model: GPT35_SUBAGENT,
       messages: [
         { role: 'system', content: ARCANOS_PIPELINE_PROMPTS.subAgent },
@@ -41,7 +41,7 @@ export async function executeArcanosPipeline(
     });
     const subAgentOutput = subAgentResp.choices[0].message;
 
-    const gpt5Response = await adapter.chat.completions.create({
+    const gpt5Response = await adapter.responses.create({
       model: GPT5,
       messages: [
         { role: 'system', content: ARCANOS_PIPELINE_PROMPTS.overseer },
@@ -51,7 +51,7 @@ export async function executeArcanosPipeline(
     });
     const gpt5Reasoning = gpt5Response.choices[0].message;
 
-    const arcFinal = await adapter.chat.completions.create({
+    const arcFinal = await adapter.responses.create({
       model: ARC_V2,
       messages: [
         ...messages,
@@ -73,7 +73,7 @@ export async function executeArcanosPipeline(
     };
   } catch (err) {
     console.warn('Primary ARCANOS pipeline failed, using fallback model', err);
-    const fallback = await adapter.chat.completions.create({
+    const fallback = await adapter.responses.create({
       model: ARC_V2_FALLBACK,
       messages
     });

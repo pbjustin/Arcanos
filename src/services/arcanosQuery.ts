@@ -30,7 +30,7 @@ export async function arcanosQuery(prompt: string): Promise<string> {
     }
 
     // Step 1 → Fine-tuned GPT-4.1 (use adapter)
-    const ftResponse = await adapter.chat.completions.create({
+    const ftResponse = await adapter.responses.create({
       model: FT_MODEL,
       messages: buildFineTunedMessages(prompt)
     });
@@ -38,7 +38,7 @@ export async function arcanosQuery(prompt: string): Promise<string> {
     const ftOutput = ftResponse.choices[0].message.content || '';
 
     // Step 2 → Reasoning with GPT-5.1 (use adapter)
-    const reasoningResponse = await adapter.chat.completions.create({
+    const reasoningResponse = await adapter.responses.create({
       model: REASONING_MODEL,
       messages: buildReasoningMessages(ftOutput)
     });

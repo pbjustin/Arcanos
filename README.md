@@ -148,7 +148,7 @@ const adapter = createOpenAIAdapter({
   defaultModel: "gpt-4o-mini",
 });
 
-const response = await adapter.chat.completions.create(
+const response = await adapter.responses.create(
   {
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: "Summarize Arcanos health status." }],

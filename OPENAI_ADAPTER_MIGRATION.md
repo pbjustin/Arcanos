@@ -21,7 +21,7 @@ Old pattern:
 ```ts
 import OpenAI from "openai";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const response = await client.chat.completions.create({ ... });
+const response = await client.responses.create({ ... });
 ```
 
 New pattern:
@@ -35,7 +35,7 @@ const adapter = createOpenAIAdapter({
   maxRetries: 2,
 });
 
-const response = await adapter.chat.completions.create(
+const response = await adapter.responses.create(
   { model: "gpt-4o-mini", messages },
   { signal, headers },
 );
@@ -65,7 +65,7 @@ New pattern:
 Old pattern:
 ```python
 client = get_or_create_client(Config)
-resp = client.chat.completions.create(...)
+resp = client.responses.create(...)
 ```
 
 New pattern:

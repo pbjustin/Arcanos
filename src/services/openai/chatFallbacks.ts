@@ -43,10 +43,10 @@ const executeChatCompletionRequest = async (
   const usesAdapter = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object';
   //audit Assumption: adapter shape is detectable via chat property; risk: mis-detection calls wrong client; invariant: completion request must be sent once; handling: branch on adapter presence.
   if (usesAdapter) {
-    return await clientOrAdapter.chat.completions.create(requestPayload) as ChatCompletionResponse;
+    return await (clientOrAdapter.responses as any).create(requestPayload as any) as ChatCompletionResponse;
   }
 
-  return await (clientOrAdapter as OpenAI).chat.completions.create(requestPayload) as ChatCompletionResponse;
+  return await ((clientOrAdapter as OpenAI).responses as any).create(requestPayload as any) as ChatCompletionResponse;
 };
 
 async function attemptModelCall(
@@ -213,3 +213,4 @@ export const createChatCompletionWithFallback = async (
 };
 
 export { ensureModelMatchesExpectation };
+

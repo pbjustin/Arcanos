@@ -194,7 +194,7 @@ export async function testModelTokenParameter(
 
   // Try max_tokens first (most common)
   try {
-    await client.chat.completions.create({
+    await (client.responses as any).create({
       model: modelName,
       messages: [{ role: 'user', content: 'test' }],
       max_tokens: 1,
@@ -214,7 +214,7 @@ export async function testModelTokenParameter(
       
       // Try max_completion_tokens as fallback
       try {
-        await client.chat.completions.create({
+        await (client.responses as any).create({
           model: modelName,
           messages: [{ role: 'user', content: 'test' }],
           max_completion_tokens: 1,
@@ -319,3 +319,4 @@ export default {
   clearModelCapabilityCache,
   getModelCapabilityCacheStatus
 };
+

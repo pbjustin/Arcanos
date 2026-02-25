@@ -30,10 +30,7 @@ export async function runStructuredReasoning(
       {
         model: 'gpt-5',
         input: prompt,
-        response_format: {
-          type: 'json_schema',
-          json_schema: TRINITY_STRUCTURED_REASONING_SCHEMA
-        }
+        text: { format: { type: 'json_schema', name: 'trinity_structured_reasoning', schema: TRINITY_STRUCTURED_REASONING_SCHEMA as Record<string, unknown> } }
       },
       { signal: abortController.signal }
     );

@@ -72,7 +72,7 @@ export async function validateMemory(
     return 'OpenAI adapter unavailable';
   }
 
-  const response = await adapter.chat.completions.create({
+  const response = await adapter.responses.create({
     model: getDefaultModel(),
     messages: buildMemoryValidationMessages(entryKey, stateVersion, entryData)
   });
