@@ -2,7 +2,8 @@ import type OpenAI from 'openai';
 
 export type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type ChatCompletionResponseFormat =
-  OpenAI.Chat.Completions.ChatCompletionCreateParams['response_format'];
+  | { type: 'json_object' }
+  | { type: 'json_schema'; json_schema: Record<string, unknown> };
 export type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion;
 export type ChatCompletionCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParams;
 
@@ -28,10 +29,6 @@ export interface CallOpenAIOptions {
   metadata?: Record<string, unknown>;
 }
 
-/**
- * OpenAI ChatCompletion response wrapper with typed response
- * @confidence 1.0 - Full type safety from OpenAI SDK
- */
 export interface CallOpenAICacheEntry {
   response: ChatCompletion;
   output: string;

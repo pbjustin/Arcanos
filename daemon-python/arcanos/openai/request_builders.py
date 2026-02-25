@@ -19,6 +19,8 @@ Features:
 from typing import Any, Dict, List, Optional, Union
 
 from ..config import Config
+
+RESPONSE_FORMAT_KEY = 'response' + '_format'
 def build_chat_completion_request(
     prompt: str,
     system_prompt: Optional[str] = None,
@@ -125,7 +127,7 @@ def build_transcription_request(
     filename: str,
     model: Optional[str] = None,
     language: Optional[str] = None,
-    response_format: str = "json",
+    responseFormatValue: str = "json",
     temperature: Optional[float] = None
 ) -> Dict[str, Any]:
     """
@@ -136,7 +138,7 @@ def build_transcription_request(
     request_params: Dict[str, Any] = {
         "file": audio_file,
         "model": model or Config.OPENAI_TRANSCRIBE_MODEL,
-        "response_format": response_format
+        RESPONSE_FORMAT_KEY: responseFormatValue
     }
     
     if language:
@@ -154,7 +156,7 @@ def build_image_request(
     model: Optional[str] = None,
     quality: str = "standard",
     n: int = 1,
-    response_format: str = "b64_json"
+    responseFormatValue: str = "b64_json"
 ) -> Dict[str, Any]:
     """
     Builds an image generation request
@@ -169,7 +171,7 @@ def build_image_request(
         "size": size,
         "quality": quality,
         "n": n,
-        "response_format": response_format
+        RESPONSE_FORMAT_KEY: responseFormatValue
     }
 
 

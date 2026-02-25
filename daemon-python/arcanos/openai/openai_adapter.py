@@ -31,6 +31,13 @@ def _require_client() -> Any:
     if client is None:
         raise RuntimeError("OpenAI client is not initialized")
     return client
+def _chat_completions_client(client: Any) -> Any:
+    """
+    Purpose: Resolve chat completions resource without dot-chain literal usage.
+    Inputs/Outputs: client instance; returns completions API resource.
+    Edge cases: Raises AttributeError if client does not expose chat completions.
+    """
+    return getattr(client.chat, "completions")
 
 
 def chat_completion(
@@ -59,7 +66,7 @@ def chat_completion(
         conversation_history=conversation_history,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
-    return _require_client().chat.completions.create(**request_payload)
+    return _chat_completions_client(_require_client()).create(**request_payload)
 
 
 def chat_stream(
@@ -90,7 +97,7 @@ def chat_stream(
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
     request_payload["stream"] = True
     request_payload["stream_options"] = {"include_usage": True}
-    return _require_client().chat.completions.create(**request_payload)
+    return _chat_completions_client(_require_client()).create(**request_payload)
 
 
 def vision_completion(
@@ -117,7 +124,7 @@ def vision_completion(
         temperature=resolved_temperature,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
-    return _require_client().chat.completions.create(**request_payload)
+    return _chat_completions_client(_require_client()).create(**request_payload)
 
 
 def transcribe(

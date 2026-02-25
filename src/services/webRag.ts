@@ -217,7 +217,7 @@ export async function answerQuestion(question: string): Promise<{ answer: string
     return `${metadataText}${d.content}`;
   }).join('\n---\n');
   // Use adapter for chat completions
-  const answerRes = await adapter.chat.completions.create({
+  const answerRes = await adapter.responses.create({
     model: getDefaultModel(),
     messages: [
       { role: 'system', content: 'Answer the question using the provided context.' },
@@ -226,7 +226,7 @@ export async function answerQuestion(question: string): Promise<{ answer: string
   });
   const answer = answerRes.choices[0]?.message?.content || '';
 
-  const verifyRes = await adapter.chat.completions.create({
+  const verifyRes = await adapter.responses.create({
     model: getDefaultModel(),
     messages: [
       { role: 'system', content: 'Verify if the answer is supported by the context. Reply yes or no with a brief reason.' },

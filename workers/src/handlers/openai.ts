@@ -4,7 +4,7 @@ import { getWorkerOpenAIAdapter } from '../infrastructure/sdk/openai.js';
 export const openaiCompletionHandler: JobHandler<'OPENAI_COMPLETION'> = async ({ payload }) => {
   const adapter = getWorkerOpenAIAdapter();
   const { chatModel } = adapter.getDefaults();
-  const response = await adapter.chat.completions.create({
+  const response = await adapter.responses.create({
     model: payload.model ?? chatModel,
     messages: [{ role: 'user', content: payload.prompt }]
   });

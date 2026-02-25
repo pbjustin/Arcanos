@@ -59,7 +59,7 @@ async function main() {
       return;
     }
 
-    const response = await openai.chat.completions.create({
+    const response = await openai.responses.create({
       model: process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
       temperature: 0,
       messages: [

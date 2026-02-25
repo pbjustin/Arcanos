@@ -50,6 +50,9 @@ export interface OpenAIAdapterRequestOptions {
  * Provides type-safe access to OpenAI functionality
  */
 export interface OpenAIAdapter {
+  responses: {
+    create: (params: any, options?: OpenAIAdapterRequestOptions) => Promise<any>;
+  };
   /**
    * Create a chat completion
    */
@@ -119,6 +122,11 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   });
 
   return {
+    responses: {
+      create: async (params: any, options?: OpenAIAdapterRequestOptions): Promise<any> => {
+        return client.responses.create(params as any, options as any);
+      }
+    },
     chat: {
       completions: {
         create: async (
@@ -128,7 +136,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
           // Ensure stream is false for non-streaming completions
           const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
           //audit Assumption: request-level signal/headers may be provided by callers; risk: dropped cancellation/tracing; invariant: options forwarded; handling: pass through to SDK.
-          const result = await client.chat.completions.create(nonStreamingParams, options);
+          const result = await (client.responses as any).create(nonStreamingParams as any, options as any);
           // Type assertion needed because SDK can return Stream | ChatCompletion
           return result as ChatCompletion;
         }
@@ -205,3 +213,4 @@ export function getClient(): OpenAI {
   //audit Assumption: escape hatch should only be used after adapter init; risk: runtime null usage; invariant: initialized adapter required; handling: delegate to getOpenAIAdapter() throw path.
   return getOpenAIAdapter().getClient();
 }
+

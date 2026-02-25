@@ -93,7 +93,7 @@ async function runTutorPipeline(
     //audit Assumption: token limit is required; Handling: default if absent
     const tokenLimit = options.tokenLimit ?? DEFAULT_TOKEN_LIMIT;
 
-    const intakeResponse = await adapter.chat.completions.create({
+    const intakeResponse = await adapter.responses.create({
       model: intakeModel,
       messages: [
         { role: 'system', content: options.intakePrompt || DEFAULT_INTAKE_SYSTEM_PROMPT },
@@ -104,7 +104,7 @@ async function runTutorPipeline(
 
     const refinedPrompt = intakeResponse.choices[0]?.message?.content?.trim() || prompt;
 
-    const reasoningResponse = await adapter.chat.completions.create({
+    const reasoningResponse = await adapter.responses.create({
       model: reasoningModel,
       messages: [
         {
@@ -119,7 +119,7 @@ async function runTutorPipeline(
 
     const reasoningOutput = reasoningResponse.choices[0]?.message?.content?.trim() || '';
 
-    const auditResponse = await adapter.chat.completions.create({
+    const auditResponse = await adapter.responses.create({
       model: auditModel,
       messages: [
         {

@@ -1,4 +1,4 @@
-﻿import { Express, Request, Response } from 'express';
+import { Express, Request, Response } from 'express';
 import askRouter from './ask.js';
 import arcanosRouter from './arcanos.js';
 import arcanosPipelineRouter from './openai-arcanos-pipeline.js';

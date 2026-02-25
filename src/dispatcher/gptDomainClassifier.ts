@@ -44,7 +44,7 @@ export async function gptFallbackClassifier(
   // preferring to cut at sentence or word boundaries.
   const truncated = truncateAtSemanticBoundary(prompt, MAX_CLASSIFIER_INPUT_LENGTH);
 
-  const response = await openai.chat.completions.create({
+  const response: any = await (openai.responses as any).create({
     model: 'gpt-4o-mini',
     temperature: 0,
     max_tokens: 10,
@@ -58,7 +58,10 @@ export async function gptFallbackClassifier(
     ]
   });
 
-  const label = response.choices?.[0]?.message?.content?.trim()?.toLowerCase() ?? '';
+  const rawText = typeof response?.output_text === 'string'
+    ? response.output_text
+    : response?.choices?.[0]?.message?.content ?? '';
+  const label = rawText.trim().toLowerCase();
 
   if (VALID_DOMAINS.has(label)) {
     return label as CognitiveDomain;

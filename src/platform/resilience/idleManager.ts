@@ -37,7 +37,7 @@
  * 
  * // Wrap OpenAI client for batching and caching
  * const wrappedClient = manager.wrapOpenAI(openaiClient);
- * const response = await wrappedClient.chat.completions.create({ ... });
+ * const response = await wrappedClient.responses.create({ ... });
  * 
  * // Clean up when done
  * manager.destroy();
@@ -226,13 +226,13 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
           try {
             //audit Assumption: first payload is representative for batch
             const payload = group[0].payload;
-            const data = await openai.chat.completions.create({
+            const data = await (openai.responses as any).create({
               ...payload,
               stream: false
             });
-            responseCache.set(key, { timestamp: Date.now(), data });
+            responseCache.set(key, { timestamp: Date.now(), data: data as ChatCompletion });
 
-            for (const r of group) r.resolve(data);
+            for (const r of group) r.resolve(data as ChatCompletion);
 
             auditLogger.log?.("[AUDIT] Batched OpenAI call", {
               key,
@@ -284,3 +284,4 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
     destroy,
   };
 }
+

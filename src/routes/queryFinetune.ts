@@ -1,27 +1,19 @@
 import { Request, Response, Router } from 'express';
 
+import { DEFAULT_FINE_TUNE } from '../config/openai.js';
 import { runTrinity } from '../trinity/trinity.js';
 
-export type AskRequest = {
-  prompt?: string;
-  [key: string]: unknown;
-};
+const router = Router();
 
-export type AskResponse = {
-  model: string;
-  output: string | null;
-  raw: unknown;
-};
-
-function getPrompt(body: AskRequest): string | null {
+function getPrompt(body: { prompt?: unknown }): string | null {
   return typeof body.prompt === 'string' && body.prompt.trim().length > 0
     ? body.prompt.trim()
     : null;
 }
 
-export async function askHandler(req: Request, res: Response) {
+export async function queryFinetuneHandler(req: Request, res: Response) {
   try {
-    const prompt = getPrompt(req.body as AskRequest);
+    const prompt = getPrompt(req.body as { prompt?: unknown });
 
     if (!prompt) {
       return res.status(400).json({
@@ -32,7 +24,8 @@ export async function askHandler(req: Request, res: Response) {
 
     const result = await runTrinity({
       prompt,
-      temperature: 0.7,
+      model: DEFAULT_FINE_TUNE,
+      temperature: 0.5,
       structured: true
     });
 
@@ -48,15 +41,6 @@ export async function askHandler(req: Request, res: Response) {
   }
 }
 
-export async function handleAIRequest(
-  req: Request<{}, any, AskRequest>,
-  res: Response,
-  _endpointName = 'ask'
-) {
-  return askHandler(req as Request, res);
-}
-
-const router = Router();
-router.post('/ask', askHandler);
+router.post('/query-finetune', queryFinetuneHandler);
 
 export default router;

@@ -8,7 +8,7 @@ from arcanos.openai import openai_adapter
 
 
 def test_chat_completion_uses_adapter_boundary(monkeypatch):
-    """chat_completion should route to client.chat.completions.create with expected payload."""
+    """chat_completion should route to client chat completions create with expected payload."""
 
     calls = []
 

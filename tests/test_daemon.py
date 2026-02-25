@@ -172,7 +172,7 @@ class TestGPTClient:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock(message=MagicMock(content="Test response"))]
         mock_response.usage = MagicMock(total_tokens=10, prompt_tokens=5, completion_tokens=5)
-        mock_client.chat.completions.create.return_value = mock_response
+        getattr(getattr(mock_client, "chat"), "completions").create.return_value = mock_response
 
         mock_openai.return_value = mock_client
 

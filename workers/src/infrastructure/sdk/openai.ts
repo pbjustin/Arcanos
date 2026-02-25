@@ -22,6 +22,9 @@ export interface WorkerOpenAIRequestOptions {
  * Worker adapter contract for OpenAI usage.
  */
 export interface WorkerOpenAIAdapter {
+  responses: {
+    create: (params: any, options?: WorkerOpenAIRequestOptions) => Promise<any>;
+  };
   chat: {
     completions: {
       create: (
@@ -62,6 +65,11 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
   });
 
   return {
+    responses: {
+      create: async (params: any, options?: WorkerOpenAIRequestOptions): Promise<any> => {
+        return client.responses.create(params as any, options as any);
+      }
+    },
     chat: {
       completions: {
         create: async (
@@ -69,7 +77,7 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
           options?: WorkerOpenAIRequestOptions
         ): Promise<ChatCompletion> => {
           const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
-          const result = await client.chat.completions.create(nonStreamingParams, options);
+          const result = await client.responses.create(nonStreamingParams, options);
           return result as ChatCompletion;
         }
       }

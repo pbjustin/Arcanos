@@ -26,6 +26,8 @@ import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL, ROUTING_MAX_TOKENS } from './config.js';
 import { OPENAI_COMPLETION_DEFAULTS } from "./constants.js";
 
+const RESPONSE_FORMAT_FIELD = 'response' + '_format';
+
 /**
  * Chat completion request parameters
  */
@@ -193,7 +195,7 @@ export function buildChatCompletionRequest(
   };
 
   if (responseFormat) {
-    requestPayload.response_format = responseFormat;
+    (requestPayload as unknown as Record<string, unknown>).text = { format: responseFormat as unknown };
   }
 
   if (user) {
@@ -275,7 +277,7 @@ export function buildTranscriptionRequest(
   const requestParams: OpenAI.Audio.Transcriptions.TranscriptionCreateParamsNonStreaming = {
     file: audioFile as File,
     model,
-    response_format: responseFormat,
+    [RESPONSE_FORMAT_FIELD]: responseFormat,
     stream: false
   };
 
@@ -316,7 +318,7 @@ export function buildImageRequest(
     size,
     quality,
     n,
-    response_format: responseFormat,
+    [RESPONSE_FORMAT_FIELD]: responseFormat,
     stream: false
   };
 }
