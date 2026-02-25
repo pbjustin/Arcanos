@@ -6,23 +6,21 @@
  */
 
 import OpenAI from 'openai';
-import type {
-  ChatCompletion,
-  ChatCompletionCreateParamsNonStreaming
-} from 'openai/resources/chat/completions.js';
-import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import { resolveWorkerOpenAIConfig } from './openaiConfig.js';
 
-/**
- * Worker adapter request options.
- */
-export interface WorkerOpenAIRequestOptions {
-  signal?: AbortSignal;
-  headers?: Record<string, string>;
-}
+export type WorkerResponsesCreateParams =
+  OpenAI.Responses.ResponseCreateParamsNonStreaming & { stream?: false };
+export type WorkerResponsesCreateOptions = Parameters<OpenAI['responses']['create']>[1];
+export type WorkerResponsesCreateResult = OpenAI.Responses.Response;
 
-type WorkerResponsesCreateParams = OpenAI.Responses.ResponseCreateParamsNonStreaming;
-type WorkerResponsesCreateResult = OpenAI.Responses.Response;
+export type WorkerChatCompletionsCreateParams =
+  OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+export type WorkerChatCompletionsCreateOptions =
+  Parameters<OpenAI['chat']['completions']['create']>[1];
+export type WorkerChatCompletionsCreateResult = OpenAI.Chat.Completions.ChatCompletion;
+
+export type WorkerEmbeddingsCreateParams = Parameters<OpenAI['embeddings']['create']>[0];
+export type WorkerEmbeddingsCreateResult = Awaited<ReturnType<OpenAI['embeddings']['create']>>;
 
 /**
  * Worker adapter contract for OpenAI usage.
@@ -31,19 +29,19 @@ export interface WorkerOpenAIAdapter {
   responses: {
     create: (
       params: WorkerResponsesCreateParams,
-      options?: WorkerOpenAIRequestOptions
+      options?: WorkerResponsesCreateOptions
     ) => Promise<WorkerResponsesCreateResult>;
   };
   chat: {
     completions: {
       create: (
-        params: ChatCompletionCreateParamsNonStreaming,
-        options?: WorkerOpenAIRequestOptions
-      ) => Promise<ChatCompletion>;
+        params: WorkerChatCompletionsCreateParams,
+        options?: WorkerChatCompletionsCreateOptions
+      ) => Promise<WorkerChatCompletionsCreateResult>;
     };
   };
   embeddings: {
-    create: (params: EmbeddingCreateParams) => Promise<CreateEmbeddingResponse>;
+    create: (params: WorkerEmbeddingsCreateParams) => Promise<WorkerEmbeddingsCreateResult>;
   };
   getClient: () => OpenAI;
   getDefaults: () => { chatModel: string; embeddingModel: string };
@@ -77,7 +75,7 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
     responses: {
       create: async (
         params: WorkerResponsesCreateParams,
-        options?: WorkerOpenAIRequestOptions
+        options?: WorkerResponsesCreateOptions
       ): Promise<WorkerResponsesCreateResult> => {
         return client.responses.create(params, options);
       }
@@ -85,15 +83,15 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
     chat: {
       completions: {
         create: async (
-          params: ChatCompletionCreateParamsNonStreaming,
-          options?: WorkerOpenAIRequestOptions
-        ): Promise<ChatCompletion> => {
+          params: WorkerChatCompletionsCreateParams,
+          options?: WorkerChatCompletionsCreateOptions
+        ): Promise<WorkerChatCompletionsCreateResult> => {
           return client.chat.completions.create(params, options);
         }
       }
     },
     embeddings: {
-      create: async (params: EmbeddingCreateParams): Promise<CreateEmbeddingResponse> => {
+      create: async (params: WorkerEmbeddingsCreateParams): Promise<WorkerEmbeddingsCreateResult> => {
         return client.embeddings.create(params);
       }
     },
