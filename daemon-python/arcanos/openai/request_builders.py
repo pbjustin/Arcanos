@@ -127,7 +127,7 @@ def build_transcription_request(
     filename: str,
     model: Optional[str] = None,
     language: Optional[str] = None,
-    responseFormatValue: str = "json",
+    response_format_value: str = "json",
     temperature: Optional[float] = None
 ) -> Dict[str, Any]:
     """
@@ -138,7 +138,7 @@ def build_transcription_request(
     request_params: Dict[str, Any] = {
         "file": audio_file,
         "model": model or Config.OPENAI_TRANSCRIBE_MODEL,
-        RESPONSE_FORMAT_KEY: responseFormatValue
+        RESPONSE_FORMAT_KEY: response_format_value
     }
     
     if language:
@@ -156,7 +156,7 @@ def build_image_request(
     model: Optional[str] = None,
     quality: str = "standard",
     n: int = 1,
-    responseFormatValue: str = "b64_json"
+    response_format_value: str = "b64_json"
 ) -> Dict[str, Any]:
     """
     Builds an image generation request
@@ -171,7 +171,7 @@ def build_image_request(
         "size": size,
         "quality": quality,
         "n": n,
-        RESPONSE_FORMAT_KEY: responseFormatValue
+        RESPONSE_FORMAT_KEY: response_format_value
     }
 
 

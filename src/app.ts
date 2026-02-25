@@ -1,19 +1,48 @@
-import express from 'express';
+import express, { Express, Request, Response } from 'express';
+import cors from 'cors';
+import { config } from "@platform/runtime/config.js";
+import { requestLoggingMiddleware } from "@platform/logging/structuredLogging.js";
+import { setupDiagnostics } from "@core/diagnostics.js";
+import { registerRoutes } from "@routes/register.js";
+import { initOpenAI } from "@core/init-openai.js";
+import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transport/http/middleware/fallbackHandler.js";
+import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionGate.js";
+import errorHandler from "@transport/http/middleware/errorHandler.js";
 
-import { askHandler } from './routes/ask.js';
-import { queryFinetuneHandler } from './routes/queryFinetune.js';
+/**
+ * Creates and configures the Express application.
+ */
+export function createApp(): Express {
+  const app = express();
 
-export const app = express();
+  app.use(cors(config.cors));
+  app.use(express.json({ limit: config.limits.jsonLimit }));
+  app.use(express.urlencoded({ extended: true }));
 
-app.use(express.json());
+  app.use(requestLoggingMiddleware);
+  app.use(unsafeExecutionGate);
+  app.use(createHealthCheckMiddleware()); // Add health check middleware for AI endpoints
+  initOpenAI(app);
+  Object.defineProperty(app.locals, 'openai', {
+    writable: false,
+    configurable: false,
+  });
 
-app.post('/ask', askHandler);
-app.post('/query-finetune', queryFinetuneHandler);
+  setupDiagnostics(app);
+  registerRoutes(app);
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
+  // Add fallback middleware before global error handler
+  app.use(createFallbackMiddleware());
 
-export function createApp() {
+  // Global error handler
+  app.use(errorHandler);
+
+  // 404 handler
+  app.use((_: Request, res: Response) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+  });
+
   return app;
 }
+
+export const app = createApp();

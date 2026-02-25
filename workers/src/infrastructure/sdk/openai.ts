@@ -6,7 +6,10 @@
  */
 
 import OpenAI from 'openai';
-import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
+import type {
+  ChatCompletion,
+  ChatCompletionCreateParamsNonStreaming
+} from 'openai/resources/chat/completions.js';
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import { resolveWorkerOpenAIConfig } from './openaiConfig.js';
 
@@ -18,17 +21,23 @@ export interface WorkerOpenAIRequestOptions {
   headers?: Record<string, string>;
 }
 
+type WorkerResponsesCreateParams = OpenAI.Responses.ResponseCreateParamsNonStreaming;
+type WorkerResponsesCreateResult = OpenAI.Responses.Response;
+
 /**
  * Worker adapter contract for OpenAI usage.
  */
 export interface WorkerOpenAIAdapter {
   responses: {
-    create: (params: any, options?: WorkerOpenAIRequestOptions) => Promise<any>;
+    create: (
+      params: WorkerResponsesCreateParams,
+      options?: WorkerOpenAIRequestOptions
+    ) => Promise<WorkerResponsesCreateResult>;
   };
   chat: {
     completions: {
       create: (
-        params: ChatCompletionCreateParams,
+        params: ChatCompletionCreateParamsNonStreaming,
         options?: WorkerOpenAIRequestOptions
       ) => Promise<ChatCompletion>;
     };
@@ -66,19 +75,20 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
 
   return {
     responses: {
-      create: async (params: any, options?: WorkerOpenAIRequestOptions): Promise<any> => {
-        return client.responses.create(params as any, options as any);
+      create: async (
+        params: WorkerResponsesCreateParams,
+        options?: WorkerOpenAIRequestOptions
+      ): Promise<WorkerResponsesCreateResult> => {
+        return client.responses.create(params, options);
       }
     },
     chat: {
       completions: {
         create: async (
-          params: ChatCompletionCreateParams,
+          params: ChatCompletionCreateParamsNonStreaming,
           options?: WorkerOpenAIRequestOptions
         ): Promise<ChatCompletion> => {
-          const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
-          const result = await client.responses.create(nonStreamingParams, options);
-          return result as ChatCompletion;
+          return client.chat.completions.create(params, options);
         }
       }
     },

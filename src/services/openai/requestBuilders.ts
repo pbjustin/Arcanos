@@ -26,8 +26,6 @@ import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL, ROUTING_MAX_TOKENS } from './config.js';
 import { OPENAI_COMPLETION_DEFAULTS } from "./constants.js";
 
-const RESPONSE_FORMAT_FIELD = 'response' + '_format';
-
 /**
  * Chat completion request parameters
  */
@@ -277,7 +275,7 @@ export function buildTranscriptionRequest(
   const requestParams: OpenAI.Audio.Transcriptions.TranscriptionCreateParamsNonStreaming = {
     file: audioFile as File,
     model,
-    [RESPONSE_FORMAT_FIELD]: responseFormat,
+    response_format: responseFormat,
     stream: false
   };
 
@@ -318,7 +316,7 @@ export function buildImageRequest(
     size,
     quality,
     n,
-    [RESPONSE_FORMAT_FIELD]: responseFormat,
+    response_format: responseFormat,
     stream: false
   };
 }
