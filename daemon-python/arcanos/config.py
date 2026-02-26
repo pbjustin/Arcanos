@@ -54,6 +54,30 @@ def get_automation_auth() -> tuple[str, str]:
     return header_name, secret
 
 
+def get_backend_token() -> Optional[str]:
+    """
+    Purpose: Resolve backend auth token from canonical and compatibility env keys.
+    Inputs/Outputs: Reads process env and returns the first non-empty token string.
+    Edge cases: Ignores blank values so whitespace-only secrets cannot be treated as valid credentials.
+    """
+    backend_token = (get_env("BACKEND_TOKEN") or "").strip()
+    # //audit assumption: BACKEND_TOKEN is the canonical daemon credential; failure risk: stale fallback precedence; expected invariant: canonical token wins when present; handling strategy: return early.
+    if backend_token:
+        return backend_token
+
+    arcanos_api_key = (get_env("ARCANOS_API_KEY") or "").strip()
+    # //audit assumption: deployments may only inject ARCANOS_API_KEY; failure risk: daemon appears offline despite valid backend secret; expected invariant: compatibility fallback keeps auth functional; handling strategy: accept as fallback.
+    if arcanos_api_key:
+        return arcanos_api_key
+
+    admin_key = (get_env("ADMIN_KEY") or "").strip()
+    # //audit assumption: some environments reuse ADMIN_KEY for daemon auth; failure risk: hidden auth mismatch in production probes; expected invariant: final fallback remains explicit and non-empty; handling strategy: return admin key only when other keys absent.
+    if admin_key:
+        return admin_key
+
+    return None
+
+
 _DEBUG_LOG_PATH_OVERRIDE = get_env_path("DEBUG_LOG_PATH")
 
 
@@ -73,7 +97,7 @@ class Config:
     # Backend Settings
     # ============================================
     BACKEND_URL: Optional[str] = get_backend_base_url()
-    BACKEND_TOKEN: Optional[str] = get_env("BACKEND_TOKEN")
+    BACKEND_TOKEN: Optional[str] = get_backend_token()
     BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
     BACKEND_ALLOW_HTTP: bool = get_env_bool("BACKEND_ALLOW_HTTP", False)
     BACKEND_JWT_SECRET: Optional[str] = get_env("BACKEND_JWT_SECRET") or None
@@ -309,4 +333,3 @@ def validate_required_config(exit_on_error: bool = True) -> bool:
         return False
     
     return True
-
