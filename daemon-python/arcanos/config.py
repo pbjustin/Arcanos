@@ -99,6 +99,7 @@ class Config:
     BACKEND_URL: Optional[str] = get_backend_base_url()
     BACKEND_TOKEN: Optional[str] = get_backend_token()
     BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
+    BACKEND_ALLOW_GPT_ID_AUTH: bool = get_env_bool("BACKEND_ALLOW_GPT_ID_AUTH", False)
     BACKEND_ALLOW_HTTP: bool = get_env_bool("BACKEND_ALLOW_HTTP", False)
     BACKEND_JWT_SECRET: Optional[str] = get_env("BACKEND_JWT_SECRET") or None
     BACKEND_JWT_PUBLIC_KEY: Optional[str] = get_env("BACKEND_JWT_PUBLIC_KEY") or None
