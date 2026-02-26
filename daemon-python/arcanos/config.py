@@ -60,20 +60,14 @@ def get_backend_token() -> Optional[str]:
     Inputs/Outputs: Reads process env and returns the first non-empty token string.
     Edge cases: Ignores blank values so whitespace-only secrets cannot be treated as valid credentials.
     """
-    backend_token = (get_env("BACKEND_TOKEN") or "").strip()
-    # //audit assumption: BACKEND_TOKEN is the canonical daemon credential; failure risk: stale fallback precedence; expected invariant: canonical token wins when present; handling strategy: return early.
-    if backend_token:
-        return backend_token
-
-    arcanos_api_key = (get_env("ARCANOS_API_KEY") or "").strip()
-    # //audit assumption: deployments may only inject ARCANOS_API_KEY; failure risk: daemon appears offline despite valid backend secret; expected invariant: compatibility fallback keeps auth functional; handling strategy: accept as fallback.
-    if arcanos_api_key:
-        return arcanos_api_key
-
-    admin_key = (get_env("ADMIN_KEY") or "").strip()
-    # //audit assumption: some environments reuse ADMIN_KEY for daemon auth; failure risk: hidden auth mismatch in production probes; expected invariant: final fallback remains explicit and non-empty; handling strategy: return admin key only when other keys absent.
-    if admin_key:
-        return admin_key
+    # //audit The backend token is resolved with the following precedence, returning the first non-empty value:
+    # //audit 1. BACKEND_TOKEN: The canonical daemon credential.
+    # //audit 2. ARCANOS_API_KEY: A compatibility fallback for certain deployments.
+    # //audit 3. ADMIN_KEY: A final fallback for environments that reuse this key for daemon auth.
+    for key in ("BACKEND_TOKEN", "ARCANOS_API_KEY", "ADMIN_KEY"):
+        token = (get_env(key) or "").strip()
+        if token:
+            return token
 
     return None
 

@@ -13,15 +13,11 @@ def _reload_config_module(monkeypatch, **env_overrides):
     Edge cases: Clears unspecified auth envs to avoid leakage across tests.
     """
     for env_key in ("BACKEND_TOKEN", "ARCANOS_API_KEY", "ADMIN_KEY"):
-        if env_key in env_overrides:
-            env_value = env_overrides[env_key]
-            if env_value is None:
-                monkeypatch.delenv(env_key, raising=False)
-            else:
-                monkeypatch.setenv(env_key, env_value)
-        else:
+        env_value = env_overrides.get(env_key)
+        if env_value is None:
             monkeypatch.delenv(env_key, raising=False)
-
+        else:
+            monkeypatch.setenv(env_key, env_value)
     import arcanos.config as config_module
 
     return importlib.reload(config_module)
