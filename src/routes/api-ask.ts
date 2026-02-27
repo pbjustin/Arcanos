@@ -1,11 +1,8 @@
 import express, { Request, Response } from 'express';
-import { handleAIRequest, type AskRequest, type AskResponse } from './ask.js';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
 import { requireAiEndpointAuth } from "@transport/http/middleware/aiEndpointAuth.js";
-import { inferHttpMethodIntent } from "@transport/http/httpMethodIntent.js";
 import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 import type {
-  ClientContextDTO,
   ConfirmationRequiredResponseDTO,
   ErrorResponseDTO
 } from "@shared/types/dto.js";
@@ -26,7 +23,7 @@ const actionSchema = {
   content: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
   text: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
   query: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
-  gptId: { type: 'string' as const, required: false, maxLength: 120, sanitize: true },
+  gptId: { type: 'string' as const, required: true, maxLength: 120, sanitize: true },
   domain: { type: 'string' as const, required: false, maxLength: 120, sanitize: true },
   useRAG: { type: 'boolean' as const, required: false },
   useHRC: { type: 'boolean' as const, required: false },
@@ -72,7 +69,6 @@ interface ApiAskModuleDispatchResponse {
 }
 
 type ApiAskResponse =
-  | AskResponse
   | ErrorResponseDTO
   | ConfirmationRequiredResponseDTO
   | ApiAskModuleDispatchResponse;
@@ -85,16 +81,12 @@ router.post(
       req: Request<{}, ApiAskResponse, ChatGPTActionBody>,
       res: Response<ApiAskResponse>
     ) => {
-      const { domain, useRAG, useHRC, sessionId, overrideAuditSafe, metadata, gptId } = req.body;
+      req.logger?.debug('ask.received', {
+        bodyKeys: Object.keys((req.body ?? {}) as Record<string, unknown>),
+        gptId: req.body?.gptId
+      });
 
-      const sourceField =
-        (req.body.message && 'message') ||
-        (req.body.prompt && 'prompt') ||
-        (req.body.userInput && 'userInput') ||
-        (req.body.content && 'content') ||
-        (req.body.text && 'text') ||
-        (req.body.query && 'query');
-
+      const { domain, metadata, gptId } = req.body;
       const basePrompt =
         req.body.message ||
         req.body.prompt ||
@@ -103,13 +95,8 @@ router.post(
         req.body.text ||
         req.body.query;
 
-      const dispatchRerouteInfo =
-        req.dispatchRerouted && req.dispatchDecision === 'reroute' && req.body.dispatchReroute
-          ? req.body.dispatchReroute
-          : undefined;
-
+      //audit Assumption: /api/ask requires textual prompt input for deterministic module dispatch; failure risk: empty payload reaching module action; expected invariant: one prompt field is present; handling strategy: return standardized 400 validation error.
       if (!basePrompt) {
-        //audit Assumption: at least one text field is required; risk: rejecting new aliases; invariant: prompt content must exist; handling: return standardized validation error.
         return res
           .status(400)
           .json(
@@ -119,113 +106,66 @@ router.post(
           );
       }
 
-      // GPT module dispatch: if gptId is present, route to module instead of Trinity brain
-      if (typeof gptId === 'string') {
-        const trimmedGptId = gptId.trim();
-        //audit Assumption: empty gptId should not attempt module dispatch; risk: unnecessary module map lookup; invariant: dispatch only when non-empty; handling: skip empty identifiers.
-        if (trimmedGptId) {
-          try {
-            const gptModuleMap = await getGptModuleMap();
-            const normalizedId = trimmedGptId.toLowerCase();
-            const exactEntry = gptModuleMap[trimmedGptId];
-            const normalizedEntry = gptModuleMap[normalizedId];
-            const entry = exactEntry || normalizedEntry;
+      //audit Assumption: gptId identity must come from request body only; failure risk: spec drift and ambiguous identity source; expected invariant: non-empty body gptId; handling strategy: reject missing/blank ids with 400.
+      if (typeof gptId !== 'string' || gptId.trim().length === 0) {
+        return res.status(400).json(buildValidationErrorResponse(['Field \'gptId\' is required']));
+      }
 
-            if (entry) {
-              const result = await dispatchModuleAction(entry.module, 'generateBooking', { prompt: basePrompt });
-              const meta = getModuleMetadata(entry.module);
-              return res.json({
-                result,
-                module: entry.module,
-                meta: {
-                  gptId: trimmedGptId,
-                  route: entry.route,
-                  matchMethod: exactEntry ? 'exact' : 'normalized',
-                  availableActions: meta?.actions ?? [],
-                  timestamp: new Date().toISOString()
-                }
-              });
-            }
-          } catch (err) {
-            console.warn(
-              `[GPT_DISPATCH] Module dispatch failed for gptId="${trimmedGptId}", falling back to Trinity`,
-              err
-            );
-            // Fall through to normal Trinity brain processing
-          }
+      const trimmedGptId = gptId.trim();
+      const gptModuleMap = await getGptModuleMap();
+      const normalizedId = trimmedGptId.toLowerCase();
+      const exactEntry = gptModuleMap[trimmedGptId];
+      const normalizedEntry = gptModuleMap[normalizedId];
+      const entry = exactEntry || normalizedEntry;
+
+      req.logger?.info('ask.gpt.lookup', {
+        gptId: trimmedGptId,
+        match: Boolean(entry),
+        module: entry?.module
+      });
+
+      //audit Assumption: unknown GPT identities must fail closed; failure risk: silent fallback and wrong module execution; expected invariant: only allowlisted gptId values dispatch; handling strategy: return 401 when no registry match exists.
+      if (!entry) {
+        return res.status(401).json({
+          error: 'Unauthorized GPT identity',
+          details: [`gptId '${trimmedGptId}' is not registered`]
+        });
+      }
+
+      const moduleMetadata = getModuleMetadata(entry.module);
+      const availableActions = moduleMetadata?.actions ?? [];
+      const action = availableActions.includes('query') ? 'query' : availableActions[0];
+
+      //audit Assumption: module metadata exposes at least one callable action for valid GPT routes; failure risk: dispatching undefined action causes ambiguous runtime faults; expected invariant: action is resolved before dispatch; handling strategy: throw explicit error for global handler.
+      if (!action) {
+        throw new Error(`No actions available for module ${entry.module}`);
+      }
+
+      req.logger?.info('ask.dispatch.plan', {
+        module: entry.module,
+        action,
+        availableActions
+      });
+
+      const payload = { prompt: basePrompt, domain, metadata };
+      const result = await dispatchModuleAction(entry.module, action, payload);
+
+      req.logger?.info('ask.dispatch.ok', {
+        module: entry.module,
+        action
+      });
+
+      return res.json({
+        result,
+        module: entry.module,
+        meta: {
+          gptId: trimmedGptId,
+          route: entry.route,
+          matchMethod: exactEntry ? 'exact' : 'normalized',
+          availableActions,
+          timestamp: new Date().toISOString()
         }
-      }
-
-      const contextDirectives: string[] = [];
-
-      if (domain) {
-        contextDirectives.push(`Domain routing hint: ${domain}`);
-      }
-      if (typeof useRAG === 'boolean') {
-        contextDirectives.push(`RAG requested: ${useRAG ? 'ENABLED' : 'DISABLED'}`);
-      }
-      if (typeof useHRC === 'boolean') {
-        contextDirectives.push(`HRC requested: ${useHRC ? 'ENABLED' : 'DISABLED'}`);
-      }
-      let metadataKeys: string[] | undefined;
-      if (metadata && Object.keys(metadata).length > 0) {
-        metadataKeys = Object.keys(metadata).slice(0, 10);
-        contextDirectives.push(`Metadata keys: ${metadataKeys.join(', ')}`);
-      }
-
-      //audit Assumption: rerouted requests should preserve conflict context; risk: hidden reroute semantics; invariant: reroute directive appended; handling: add dispatch context.
-      if (dispatchRerouteInfo) {
-        const reason =
-          typeof dispatchRerouteInfo.reason === 'string' && dispatchRerouteInfo.reason
-            ? dispatchRerouteInfo.reason.replace(/[\r\n]/g, ' ').trim()
-            : 'unknown';
-        const originalRoute =
-          typeof dispatchRerouteInfo.originalRoute === 'string' && dispatchRerouteInfo.originalRoute
-            ? dispatchRerouteInfo.originalRoute.replace(/[\r\n]/g, ' ').trim()
-            : 'unknown';
-        contextDirectives.push(`Dispatch reroute active: ${originalRoute} (${reason})`);
-      }
-
-      const httpMethodIntent = inferHttpMethodIntent(basePrompt) || undefined;
-
-      if (httpMethodIntent) {
-        contextDirectives.push(
-          `HTTP intent detected: ${httpMethodIntent.method} (${httpMethodIntent.confidence} confidence${
-            httpMethodIntent.signals.length ? ` via ${httpMethodIntent.signals.join(', ')}` : ''
-          })`
-        );
-      }
-
-      const normalizedPrompt = contextDirectives.length
-        ? `${basePrompt}\n\n[ARCANOS CONTEXT]\n${contextDirectives.join('\n')}`
-        : basePrompt;
-
-      const clientContext: ClientContextDTO = {
-        basePrompt,
-        normalizedPrompt,
-        routingDirectives: contextDirectives,
-        flags: {
-          domain,
-          useRAG,
-          useHRC,
-          metadataKeys,
-          sourceField,
-          httpMethodIntent
-        }
-      };
-
-      const normalizedRequest: AskRequest = {
-        prompt: normalizedPrompt,
-        sessionId,
-        overrideAuditSafe,
-        clientContext,
-        metadata
-      };
-
-      const typedRequest = req as unknown as Request<{}, ApiAskResponse, AskRequest>;
-      typedRequest.body = normalizedRequest;
-
-      return handleAIRequest(typedRequest, res, 'ask');
+      });
     }
   )
 );
