@@ -3,8 +3,18 @@ import { AppError } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { resolveSafeRequestPath } from "@shared/requestPathSanitizer.js";
 
-function isAppError(err: Error): err is AppError {
-  return err instanceof AppError;
+function isAppError(err: unknown): err is AppError {
+  //audit Assumption: AppError may cross module boundaries and fail instanceof in some build contexts; failure risk: valid operational errors treated as 500; expected invariant: error-like objects with numeric httpCode and string message are treated as AppError; handling strategy: structural guard plus instanceof.
+  if (err instanceof AppError) {
+    return true;
+  }
+
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+
+  const candidate = err as Record<string, unknown>;
+  return typeof candidate.httpCode === 'number' && typeof candidate.message === 'string';
 }
 
 /**
@@ -33,8 +43,9 @@ const errorHandler = (err: Error, req: Request, res: Response, _next: NextFuncti
 
   //audit Assumption: operational AppError instances carry client-safe status/message; failure risk: leaking internal error details; expected invariant: unknown errors return generic message; handling strategy: branch on AppError type.
   if (isAppError(err)) {
-    res.status(err.httpCode).json({
-      error: err.message,
+    const appError = err as AppError;
+    res.status(appError.httpCode).json({
+      error: appError.message,
       requestId
     });
     return;

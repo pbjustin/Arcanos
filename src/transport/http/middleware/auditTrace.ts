@@ -17,14 +17,17 @@ import { generateRequestId } from "@shared/idGenerator.js";
 import { registerTraceEvent } from "@services/contextualReinforcement.js";
 
 /**
- * Extended Request interface with optional logger and request ID.
+ * Request logger contract used by auditTrace.
+ * Keeps type checks explicit while supporting optional timed logging.
  */
-interface RequestWithLogger extends Request {
-  logger?: {
-    info: (message: string, context?: Record<string, unknown>) => void;
-    timed: (message: string, duration: number, context?: Record<string, unknown>, metadata?: Record<string, unknown>) => void;
-  };
-  requestId?: string;
+interface AuditTraceLogger {
+  info: (message: string, context?: Record<string, unknown>) => void;
+  timed?: (
+    message: string,
+    duration: number,
+    context?: Record<string, unknown>,
+    metadata?: Record<string, unknown>
+  ) => void;
 }
 
 /**
@@ -45,14 +48,15 @@ interface ResponseWithLocals extends Response {
  * @param res - Express response where trace ID is stored in locals
  * @param next - Next middleware function
  */
-export function auditTrace(req: RequestWithLogger, res: ResponseWithLocals, next: NextFunction): void {
+export function auditTrace(req: Request, res: ResponseWithLocals, next: NextFunction): void {
   const traceId = generateRequestId('trace');
   const startTime = Date.now();
   const requestId = req.requestId ?? generateRequestId('req');
 
   res.locals.auditTraceId = traceId;
 
-  const logger = req.logger ?? apiLogger.child({ traceId, requestId, path: req.path, method: req.method });
+  //audit Assumption: request-scoped logger may not expose timed helper; failure risk: middleware type mismatch; expected invariant: start/finish events are always logged; handling strategy: use optional timed and fallback info log.
+  const logger = (req.logger as AuditTraceLogger | undefined) ?? apiLogger.child({ traceId, requestId, path: req.path, method: req.method });
   logger.info('Audit trace started');
 
   res.on('finish', () => {
@@ -67,7 +71,11 @@ export function auditTrace(req: RequestWithLogger, res: ResponseWithLocals, next
       timestamp: new Date().toISOString()
     });
 
-    logger.timed('Audit trace completed', duration, { traceId, statusCode: res.statusCode });
+    if (typeof logger.timed === 'function') {
+      logger.timed('Audit trace completed', duration, { traceId, statusCode: res.statusCode });
+    } else {
+      logger.info('Audit trace completed', { traceId, statusCode: res.statusCode, durationMs: duration });
+    }
   });
 
   next();
