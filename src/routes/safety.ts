@@ -35,7 +35,9 @@ router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
       mode: authRequired ? 'enforced' : 'disabled',
       configured: isConfigured,
       acceptedCredentials: ['Authorization: Bearer <ADMIN_KEY>', 'x-api-key: <ADMIN_KEY>'],
-      protectedEndpoints: ['POST /status/safety/quarantine/:quarantineId/release']
+      protectedEndpoints: authRequired
+        ? ['POST /status/safety/quarantine/:quarantineId/release']
+        : []
     },
     diagnostics: {
       publicEndpoints: ['GET /health', 'GET /healthz', 'GET /status/safety', 'GET /status/safety/operator-auth']
