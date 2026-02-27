@@ -308,13 +308,18 @@ export const handleAIRequest = async (
 
   function hasAuthHeader(): boolean {
     const authorizationHeader = req.get('authorization');
-    if (typeof authorizationHeader !== 'string') {
-      return false;
+    const apiKeyHeader = req.get('x-api-key');
+
+    let hasBearerAuth = false;
+    if (typeof authorizationHeader === 'string') {
+      const trimmed = authorizationHeader.trim();
+      //audit Assumption: CLI auth uses Bearer JWT in Authorization header; failure risk: static key fallback weakens auth boundary; expected invariant: only Bearer token format passes; handling strategy: require Bearer pattern.
+      hasBearerAuth = /^Bearer\s+\S+$/i.test(trimmed);
     }
 
-    const trimmed = authorizationHeader.trim();
-    //audit Assumption: CLI auth uses Bearer JWT in Authorization header; failure risk: static key fallback weakens auth boundary; expected invariant: only Bearer token format passes; handling strategy: require Bearer pattern.
-    return /^Bearer\s+\S+$/i.test(trimmed);
+    const hasApiKeyHeader = typeof apiKeyHeader === 'string' && apiKeyHeader.trim().length > 0;
+
+    return hasBearerAuth || hasApiKeyHeader;
   }
 
   function canBypassSystemAuth(): boolean {
