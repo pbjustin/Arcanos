@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { resolveSafeRequestPath } from "@shared/requestPathSanitizer.js";
 
 function isAppError(err: Error): err is AppError {
   return err instanceof AppError;
@@ -13,11 +14,12 @@ function isAppError(err: Error): err is AppError {
  */
 const errorHandler = (err: Error, req: Request, res: Response, _next: NextFunction) => {
   const requestId = req.requestId ?? 'unknown';
+  const requestPath = resolveSafeRequestPath(req);
 
   const logDetails = {
     requestId,
     method: req.method,
-    path: req.originalUrl || req.path,
+    path: requestPath,
     name: err.name,
     message: err.message,
     stack: err.stack

@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { generateRequestId } from "@shared/idGenerator.js";
+import { resolveSafeRequestPath } from "@shared/requestPathSanitizer.js";
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -79,10 +80,11 @@ interface RequestScopedLogger {
 }
 
 function createRequestLogger(req: Request, requestId: string): RequestScopedLogger {
+  const sanitizedPath = resolveSafeRequestPath(req);
   const base = {
     requestId,
     method: req.method,
-    path: req.originalUrl || req.path
+    path: sanitizedPath
   };
 
   const logWithLevel = (
@@ -119,6 +121,7 @@ function createRequestLogger(req: Request, requestId: string): RequestScopedLogg
 export function requestContext(req: Request, res: Response, next: NextFunction): void {
   const requestId = resolveRequestId(req);
   const startTimeMs = Date.now();
+  const requestPath = resolveSafeRequestPath(req);
   const requestLogger = createRequestLogger(req, requestId);
 
   req.requestId = requestId;
@@ -142,24 +145,21 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
       contentLength: res.getHeader('content-length') ?? null
     };
 
-    //audit Assumption: non-2xx responses should be elevated in logs for triage; failure risk: hidden client/server errors; expected invariant: severity reflects status code class; handling strategy: map status classes to warn/error levels.
+    //audit Assumption: status class should determine completion severity while preserving a uniform schema for analytics; failure risk: fractured log queries across levels; expected invariant: request.completed always includes top-level latency and data payload; handling strategy: compute level first, then emit a single structured shape.
+    let level: RequestLogLevel = 'info';
     if (statusCode >= 500) {
-      requestLogger.error('request.completed', { ...completionData, latencyMs });
-      return;
-    }
-
-    if (statusCode >= 400) {
-      requestLogger.warn('request.completed', { ...completionData, latencyMs });
-      return;
+      level = 'error';
+    } else if (statusCode >= 400) {
+      level = 'warn';
     }
 
     emitRequestLog({
       timestamp: new Date().toISOString(),
-      level: 'info',
+      level,
       event: 'request.completed',
       requestId,
       method: req.method,
-      path: req.originalUrl || req.path,
+      path: requestPath,
       latencyMs,
       data: completionData
     });
