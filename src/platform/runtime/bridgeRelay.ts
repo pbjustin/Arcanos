@@ -30,13 +30,13 @@ function resolveRequestId(req: RequestWithBridgeContext): string | undefined {
 }
 
 function resolveGptId(req: RequestWithBridgeContext): string | undefined {
-  const header = resolveHeader(req.headers, 'x-gpt-id');
   const param = typeof req.params?.gptId === 'string' ? req.params.gptId : undefined;
   const body = typeof (req.body as Record<string, unknown> | undefined)?.gptId === 'string'
     ? ((req.body as Record<string, unknown>).gptId as string)
     : undefined;
   const confirmation = req.confirmationContext?.gptId;
-  return header || param || body || confirmation;
+  //audit Assumption: GPT identity must be sourced from route/body context, not headers; failure risk: spoofed header identity divergence; expected invariant: gptId aligns with request payload/route intent; handling strategy: prioritize explicit context fields only.
+  return param || body || confirmation;
 }
 
 export async function routeBridgeRequest(

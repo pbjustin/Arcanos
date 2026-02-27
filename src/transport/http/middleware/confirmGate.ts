@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import {
   createConfirmationChallenge,
   getChallengeTtlMs,
@@ -116,9 +116,9 @@ function maskConfirmationHeader(value: string | undefined): string {
 export function confirmGate(req: Request, res: Response, next: NextFunction): void {
   const confirmationHeader = resolveHeader(req.headers, 'x-confirmed');
   const oneTimeTokenHeader = resolveHeader(req.headers, 'x-arcanos-confirm-token');
-  const gptIdHeader = resolveHeader(req.headers, 'x-gpt-id');
-  const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId : undefined;
-  const gptId = gptIdHeader || gptIdFromBody;
+  const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId.trim() : '';
+  //audit Assumption: GPT identity must come from request body for spec alignment; failure risk: header/body mismatch enabling bypass confusion; expected invariant: body gptId is the only trusted identifier; handling strategy: ignore legacy header values.
+  const gptId = gptIdFromBody.length > 0 ? gptIdFromBody : undefined;
   const isTrustedGpt = gptId ? trustedGptIds.has(gptId) : false;
   const automationHeaderValue = automationBypassEnabled
     ? resolveHeader(req.headers, automationBypassHeader)
@@ -254,7 +254,7 @@ export const getConfirmGateConfiguration = () => ({
   trustedGptIds: Array.from(trustedGptIds),
   requiresHeader: !allowAllGpts,
   confirmationHeader: 'x-confirmed',
-  gptHeader: 'x-gpt-id',
+  gptField: 'body.gptId',
   oneTimeTokenHeader: 'x-arcanos-confirm-token',
   confirmationTokenPrefix,
   confirmationChallengeTtlMs: getChallengeTtlMs(),
@@ -294,3 +294,4 @@ export function requiresConfirmation(method: string, path: string): boolean {
   // All other endpoints, especially POST/PUT/DELETE operations, require confirmation
   return ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase());
 }
+

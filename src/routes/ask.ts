@@ -307,13 +307,14 @@ export const handleAIRequest = async (
   const mode = getMode(req.body);
 
   function hasAuthHeader(): boolean {
-    const auth = req.get('authorization') || req.get('x-api-key');
-    if (typeof auth !== 'string') return false;
-    const trimmed = auth.trim();
-    // Accept either `Bearer <token>` or a reasonably long API key
-    if (/^Bearer\s+\S+/i.test(trimmed)) return true;
-    if (/^[A-Za-z0-9\-_.~+/]+=*$/.test(trimmed) && trimmed.length >= 16) return true;
-    return false;
+    const authorizationHeader = req.get('authorization');
+    if (typeof authorizationHeader !== 'string') {
+      return false;
+    }
+
+    const trimmed = authorizationHeader.trim();
+    //audit Assumption: CLI auth uses Bearer JWT in Authorization header; failure risk: static key fallback weakens auth boundary; expected invariant: only Bearer token format passes; handling strategy: require Bearer pattern.
+    return /^Bearer\s+\S+$/i.test(trimmed);
   }
 
   function canBypassSystemAuth(): boolean {
@@ -557,3 +558,4 @@ export default router;
 
 export type { AskRequest, AskResponse };
 export { askValidationMiddleware };
+
