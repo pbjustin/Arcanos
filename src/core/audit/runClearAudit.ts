@@ -1,7 +1,6 @@
 import type OpenAI from 'openai';
 import { createGPT5Reasoning } from "@services/openai.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import { safeJsonParse } from "@core/logic/trinityHelpers.js";
 import type { ReasoningLedger } from "@core/logic/trinityTypes.js";
 
 export interface ClearAuditResult {
@@ -61,9 +60,21 @@ export async function runClearAudit(client: OpenAI, ledger: ReasoningLedger): Pr
     return fallback;
   }
 
-  const parsed = safeJsonParse(result.content);
-  if (!parsed || typeof parsed !== 'object') {
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    parsed = JSON.parse(result.content) as Record<string, unknown>;
+  } catch {
+    //audit Assumption: model may return malformed JSON; risk: invalid CLEAR scoring state; invariant: audit result is always numeric and bounded; handling: return deterministic fallback.
     logger.warn('CLEAR audit failed to parse JSON', {
+      module: 'audit',
+      operation: 'runClearAudit'
+    });
+    return fallback;
+  }
+
+  //audit Assumption: JSON.parse may return non-object primitives or null; risk: property access throws and aborts request path; invariant: CLEAR scoring reads from a non-null object; handling: guard and return deterministic fallback.
+  if (!parsed || typeof parsed !== 'object') {
+    logger.warn('CLEAR audit produced non-object JSON payload', {
       module: 'audit',
       operation: 'runClearAudit'
     });

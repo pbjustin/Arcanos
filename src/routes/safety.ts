@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import operatorAuth from '@transport/http/middleware/operatorAuth.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import {
   getActiveQuarantines,
   getActiveUnsafeConditions,
@@ -12,6 +13,35 @@ import { assertDeterministicConfirmation } from '../services/safety/aiOutputBoun
 import { resolveHeader } from '@transport/http/requestHeaders.js';
 
 const router = express.Router();
+
+/**
+ * GET /status/safety/operator-auth
+ * Purpose: Expose non-secret operator authentication requirements for diagnostics.
+ * Inputs/Outputs: No input; returns auth requirement metadata and safe probe routes.
+ * Edge cases: Reports configured=false when ADMIN_KEY is missing.
+ */
+router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
+  const configuredAdminKey = getConfig().adminKey?.trim();
+  //audit Assumption: diagnostics must not leak secrets; failure risk: key exposure; expected invariant: report only booleans and route metadata; handling strategy: never return raw credential values.
+  const isConfigured = Boolean(configuredAdminKey);
+  //audit Assumption: auth mode should reflect ADMIN_KEY presence; failure risk: caller assumes key enforcement when disabled; expected invariant: required=true only when configured; handling strategy: derive from config in response payload.
+  const authRequired = isConfigured;
+
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    operatorAuth: {
+      required: authRequired,
+      mode: authRequired ? 'enforced' : 'disabled',
+      configured: isConfigured,
+      acceptedCredentials: ['Authorization: Bearer <ADMIN_KEY>', 'x-api-key: <ADMIN_KEY>'],
+      protectedEndpoints: ['POST /status/safety/quarantine/:quarantineId/release']
+    },
+    diagnostics: {
+      publicEndpoints: ['GET /health', 'GET /healthz', 'GET /status/safety', 'GET /status/safety/operator-auth']
+    }
+  });
+});
 
 /**
  * GET /status/safety
