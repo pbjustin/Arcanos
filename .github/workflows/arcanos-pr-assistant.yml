@@ -82,7 +82,8 @@ jobs:
           # Set environment variables
           export PORT=8080
           export NODE_ENV=production
-          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
+          CI_API_KEY="${OPENAI_API_KEY}"
           
           # Start the ARCANOS server in background
           npm start > server.log 2>&1 &
@@ -119,6 +120,7 @@ jobs:
           echo "Running PR analysis..."
           HTTP_CODE=$(curl -X POST http://localhost:8080/api/pr-analysis/analyze \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CI_API_KEY" \
             -d "{
               \"prDiff\": $PR_DIFF,
               \"prFiles\": $PR_FILES,
