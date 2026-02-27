@@ -132,11 +132,19 @@ router.post(
 
       const moduleMetadata = getModuleMetadata(entry.module);
       const availableActions = moduleMetadata?.actions ?? [];
-      const action = availableActions.includes('query') ? 'query' : availableActions[0];
+      const action = availableActions.includes('query')
+        ? 'query'
+        : availableActions.length === 1
+        ? availableActions[0]
+        : undefined;
 
-      //audit Assumption: module metadata exposes at least one callable action for valid GPT routes; failure risk: dispatching undefined action causes ambiguous runtime faults; expected invariant: action is resolved before dispatch; handling strategy: throw explicit error for global handler.
+      //audit Assumption: module metadata either exposes a single callable action or an explicit 'query' default; failure risk: array-order fallback dispatches unintended logic; expected invariant: dispatch action is unambiguous; handling strategy: throw explicit error for global handler.
       if (!action) {
-        throw new Error(`No actions available for module ${entry.module}`);
+        const reason =
+          availableActions.length > 1
+            ? "Ambiguous actions and no default 'query' action found"
+            : 'No actions available';
+        throw new Error(`${reason} for module ${entry.module}`);
       }
 
       req.logger?.info('ask.dispatch.plan', {
