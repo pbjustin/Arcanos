@@ -5,7 +5,7 @@
 
 import type OpenAI from 'openai';
 import { logGPT5Invocation } from "@platform/logging/aiLogger.js";
-import { getDefaultModel, getGPT5Model, getComplexModel, createChatCompletionWithFallback, createGPT5Reasoning } from "@services/openai.js";
+import { getDefaultModel, getGPT5Model, getComplexModel, createChatCompletionWithFallback } from "@services/openai.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import {
@@ -23,7 +23,7 @@ import {
 } from "@services/auditSafe.js";
 import { getMemoryContext } from "@services/memoryAware.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import { calculateMemoryScoreSummary, logFallbackEvent, STRUCTURED_REASONING_PROMPT, safeJsonParse } from './trinityHelpers.js';
+import { calculateMemoryScoreSummary, logFallbackEvent } from './trinityHelpers.js';
 import type {
   TrinityIntakeOutput,
   TrinityReasoningOutput,
@@ -38,6 +38,7 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Tier } from './trinityTier.js';
 import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
 import { assertBudgetAvailable } from '../../runtime/runtimeBudget.js';
+import { runStructuredReasoning } from '../../runtime/openaiClient.js';
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {
@@ -171,68 +172,48 @@ export async function runIntakeStage(
   };
 }
 
+/**
+ * Executes the Trinity reasoning stage using schema-constrained decoding.
+ * Input: framed request and shared runtime budget. Output: deterministic reasoning output.
+ * Edge case: throws when runtime budget is missing/exhausted because no fallback path exists.
+ */
 export async function runReasoningStage(
-  client: OpenAI,
+  _client: OpenAI,
   framedRequest: string,
   tier?: Tier,
   runtimeBudget?: RuntimeBudget
 ): Promise<TrinityReasoningOutput> {
-  if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
+  //audit Assumption: reasoning stage requires a shared runtime budget; risk: unbounded model call if missing; invariant: one RuntimeBudget governs each job; handling: fail-fast.
+  if (!runtimeBudget) {
+    throw new Error('Runtime budget is required for schema-constrained reasoning.');
+  }
+  assertBudgetAvailable(runtimeBudget);
 
   logGPT5Invocation('Primary reasoning stage', framedRequest);
-  
-  const systemPrompt = ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING();
-  const enhancedPrompt = (tier && tier !== 'simple') 
-    ? systemPrompt + '\n' + STRUCTURED_REASONING_PROMPT 
-    : systemPrompt;
+  const structuredReasoning = await runStructuredReasoning(framedRequest, runtimeBudget);
 
-  const gpt5Result = await createGPT5Reasoning(client, framedRequest, enhancedPrompt);
-  const gpt5ModelUsed = gpt5Result.model || getGPT5Model();
-  const fallbackUsed = Boolean(gpt5Result.error);
+  const reasoningLedger: ReasoningLedger = {
+    steps: structuredReasoning.reasoning_steps,
+    assumptions: structuredReasoning.assumptions,
+    constraints: structuredReasoning.constraints,
+    tradeoffs: structuredReasoning.tradeoffs,
+    alternatives: structuredReasoning.alternatives_considered,
+    justification: structuredReasoning.chosen_path_justification
+  };
 
-  let reasoningLedger: ReasoningLedger | undefined = undefined;
-  let finalOutput = gpt5Result.content;
-
-  if (!fallbackUsed && tier && tier !== 'simple') {
-    const parsed = safeJsonParse(gpt5Result.content);
-    if (parsed && typeof parsed === 'object') {
-      reasoningLedger = {
-        steps: parsed.reasoning_steps || [],
-        assumptions: parsed.assumptions || [],
-        constraints: parsed.constraints || [],
-        tradeoffs: parsed.tradeoffs || [],
-        alternatives: parsed.alternatives_considered || [],
-        justification: parsed.chosen_path_justification || ''
-      };
-      finalOutput = parsed.final_answer || gpt5Result.content;
-    } else {
-      logger.warn('Failed to parse structured reasoning JSON, falling back to raw output', {
-        module: 'trinity',
-        operation: 'gpt5-reasoning-parse'
-      });
-    }
-  }
-
-  if (fallbackUsed) {
-    logger.warn('GPT-5.1 reasoning fallback in Trinity pipeline', {
-      module: 'trinity',
-      operation: 'gpt5-reasoning',
-      error: gpt5Result.error
-    });
-  } else {
-    logger.info('GPT-5.1 reasoning confirmed', {
-      module: 'trinity',
-      operation: 'gpt5-reasoning',
-      model: gpt5ModelUsed,
-      structured: !!reasoningLedger
-    });
-  }
+  const gpt5ModelUsed = getGPT5Model();
+  logger.info('GPT-5 reasoning confirmed with schema-constrained output', {
+    module: 'trinity',
+    operation: 'gpt5-reasoning',
+    model: gpt5ModelUsed,
+    tier: tier ?? 'simple',
+    structured: true
+  });
 
   return {
-    output: finalOutput,
+    output: structuredReasoning.final_answer,
     model: gpt5ModelUsed,
-    fallbackUsed,
-    error: gpt5Result.error,
+    fallbackUsed: false,
     reasoningLedger
   };
 }

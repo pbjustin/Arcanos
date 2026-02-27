@@ -9,6 +9,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
  * Computes max and average relevance score from memory entries.
  */
 export function calculateMemoryScoreSummary(relevanceScores: number[]): { maxScore: number; averageScore: number } {
+  //audit Assumption: empty relevance set is valid for prompts with no memory hits; risk: divide-by-zero; invariant: average score is numeric; handling: return zeros.
   if (relevanceScores.length === 0) {
     return { maxScore: 0, averageScore: 0 };
   }
@@ -18,32 +19,9 @@ export function calculateMemoryScoreSummary(relevanceScores: number[]): { maxSco
   return { maxScore, averageScore };
 }
 
-export const STRUCTURED_REASONING_PROMPT = `
-Return JSON only in this format:
-
-{
-  "reasoning_steps": string[],
-  "assumptions": string[],
-  "constraints": string[],
-  "tradeoffs": string[],
-  "alternatives_considered": string[],
-  "chosen_path_justification": string,
-  "final_answer": string
-}
-
-Do not include commentary outside JSON.
-`;
-
-export function safeJsonParse(text: string) {
-  try {
-    // Basic cleanup for markdown code blocks if the model includes them
-    const jsonStr = text.replace(/```json\s?|```/g, '').trim();
-    return JSON.parse(jsonStr);
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Emits a standardized fallback event for stages that still support model fallback.
+ */
 export function logFallbackEvent(stage: string, requestedModel: string, fallbackModel: string, reason: string): void {
   logger.warn('Trinity fallback invoked', {
     module: 'trinity',

@@ -133,7 +133,7 @@ export async function callOpenAI(
     top_p: options.top_p,
     frequency_penalty: options.frequency_penalty,
     presence_penalty: options.presence_penalty,
-    response_format: options.responseFormat,
+    responseFormat: options.responseFormat,
     user: options.user
   };
 
@@ -243,7 +243,7 @@ async function makeOpenAIRequest(
     }
 
     //audit Assumption: non-stream chat path should stay adapter-first with request options; risk: direct client bypass drifts from canonical interface; invariant: adapter handles call + options forwarding; handling: invoke adapter chat surface.
-    const response = await adapter.chat.completions.create(nonStreamingPayload, {
+    const response = await adapter.responses.create(nonStreamingPayload, {
       signal: controller.signal,
       // Add request ID for tracing
       headers: {
@@ -319,8 +319,8 @@ export const createGPT5Reasoning = async (
 
     // Support both adapter and legacy client
     const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-      ? await clientOrAdapter.chat.completions.create(requestPayload)
-      : await (clientOrAdapter as OpenAI).chat.completions.create({ ...requestPayload, stream: false });
+      ? await clientOrAdapter.responses.create(requestPayload)
+      : await ((clientOrAdapter as OpenAI).responses as any).create({ ...requestPayload, stream: false } as any);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const content = extractReasoningText(response as ChatCompletion);
@@ -381,8 +381,8 @@ export const createGPT5ReasoningLayer = async (
 
     // Support both adapter and legacy client
     const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-      ? await clientOrAdapter.chat.completions.create(requestPayload)
-      : await (clientOrAdapter as OpenAI).chat.completions.create({ ...requestPayload, stream: false });
+      ? await clientOrAdapter.responses.create(requestPayload)
+      : await ((clientOrAdapter as OpenAI).responses as any).create({ ...requestPayload, stream: false } as any);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const reasoningContent = extractReasoningText(response as ChatCompletion);
@@ -445,7 +445,7 @@ export async function call_gpt5_strict(
       ) : {})
     };
 
-    const response = await client.chat.completions.create(requestPayload);
+    const response = await (client.responses as any).create(requestPayload as any);
 
     // Validate that the response actually came from GPT-5.1
     // Response is guaranteed to be ChatCompletion (not Stream) because stream: false
@@ -534,11 +534,11 @@ export async function createCentralizedCompletion(
       if (!streamClient) {
         throw new Error('OpenAI client not initialized - streaming unavailable');
       }
-      response = await streamClient.chat.completions.create(requestPayload, requestOptions);
+      response = await (streamClient.responses as any).create(requestPayload as any, requestOptions as any);
     } else if (adapter) {
-      response = await adapter.chat.completions.create(requestPayload, requestOptions);
+      response = await adapter.responses.create(requestPayload, requestOptions);
     } else if (client) {
-      response = await client.chat.completions.create(requestPayload, requestOptions);
+      response = await (client.responses as any).create(requestPayload as any, requestOptions as any);
     } else {
       throw new Error('OpenAI client not initialized');
     }
@@ -570,3 +570,4 @@ export type {
 export {
   createChatCompletionWithFallback
 };
+

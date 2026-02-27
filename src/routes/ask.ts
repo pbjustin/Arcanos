@@ -4,6 +4,7 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { requireAiEndpointAuth } from "@transport/http/middleware/aiEndpointAuth.js";
 import type {
   AIRequestDTO,
   ConfirmationRequiredResponseDTO,
@@ -20,8 +21,7 @@ import type {
   SystemStateResponse
 } from './ask/types.js';
 import { tryDispatchDaemonTools } from './ask/daemonTools.js';
-import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
-import { getGPT5Model, hasValidAPIKey } from '../services/openai.js';
+import { getGPT5Model } from '../services/openai.js';
 import {
   getActiveIntentSnapshot,
   getLastRoutingUsed,
@@ -39,6 +39,7 @@ const router = express.Router();
 // Apply security middleware
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
+router.use(requireAiEndpointAuth);
 
 type AskRouteResponse =
   | AskResponse

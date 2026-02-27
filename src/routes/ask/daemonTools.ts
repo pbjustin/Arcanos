@@ -99,7 +99,7 @@ export async function tryDispatchDaemonTools(
   const model = getDefaultModel();
   const tokenParams = getTokenParameter(model, 256);
 
-  const response = await client.chat.completions.create({
+  const response: any = await (client.responses as any).create({
     model,
     messages: [
       { role: 'system', content: DAEMON_TOOL_SYSTEM_PROMPT },
@@ -224,7 +224,7 @@ export async function tryDispatchDaemonTools(
     resultText = 'Unable to queue daemon actions. Please try again.';
   }
 
-  const usage = response.usage;
+  const usage = response?.usage;
   const tokens = usage
     ? {
         prompt_tokens: usage.prompt_tokens,
@@ -247,3 +247,4 @@ export async function tryDispatchDaemonTools(
     }
   };
 }
+

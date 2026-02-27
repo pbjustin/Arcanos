@@ -132,28 +132,24 @@ describe('IdleManager', () => {
     test('should cache OpenAI responses', async () => {
       const manager = createIdleManager(mockLogger);
       const mockOpenAI = {
-        chat: {
-          completions: {
-            create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
-          }
-        }
-      };
+        responses: { create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
+          } };
       
       const wrapped = manager.wrapOpenAI(mockOpenAI);
       const payload = { model: 'gpt-4', messages: [{ role: 'user', content: 'test' }] };
       
       // First call - should hit the API
-      const promise1 = wrapped.chat.completions.create(payload);
+      const promise1 = wrapped.responses.create(payload);
       
       // Advance time to process batch
       jest.advanceTimersByTime(200);
       
       const result1 = await promise1;
       expect(result1).toBeDefined();
-      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(1);
+      expect(mockOpenAI.responses.create).toHaveBeenCalledTimes(1);
       
       // Second call with same payload - should hit cache
-      const promise2 = wrapped.chat.completions.create(payload);
+      const promise2 = wrapped.responses.create(payload);
       jest.advanceTimersByTime(200);
       
       const result2 = await promise2;
@@ -167,20 +163,16 @@ describe('IdleManager', () => {
     test('should batch identical requests', async () => {
       const manager = createIdleManager(mockLogger);
       const mockOpenAI = {
-        chat: {
-          completions: {
-            create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
-          }
-        }
-      };
+        responses: { create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
+          } };
       
       const wrapped = manager.wrapOpenAI(mockOpenAI);
       const payload = { model: 'gpt-4', messages: [{ role: 'user', content: 'test' }] };
       
       // Create multiple identical requests
-      const promise1 = wrapped.chat.completions.create(payload);
-      const promise2 = wrapped.chat.completions.create(payload);
-      const promise3 = wrapped.chat.completions.create(payload);
+      const promise1 = wrapped.responses.create(payload);
+      const promise2 = wrapped.responses.create(payload);
+      const promise3 = wrapped.responses.create(payload);
       
       // Advance time to process batch
       jest.advanceTimersByTime(200);
@@ -188,7 +180,7 @@ describe('IdleManager', () => {
       const [result1, result2, result3] = await Promise.all([promise1, promise2, promise3]);
       
       // Should only call the API once
-      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(1);
+      expect(mockOpenAI.responses.create).toHaveBeenCalledTimes(1);
       expect(result1).toEqual(result2);
       expect(result2).toEqual(result3);
       
@@ -204,17 +196,13 @@ describe('IdleManager', () => {
       const manager = createIdleManager(mockLogger);
       const mockError = new Error('API Error');
       const mockOpenAI = {
-        chat: {
-          completions: {
-            create: jest.fn().mockRejectedValue(mockError)
-          }
-        }
-      };
+        responses: { create: jest.fn().mockRejectedValue(mockError)
+          } };
       
       const wrapped = manager.wrapOpenAI(mockOpenAI);
       const payload = { model: 'gpt-4', messages: [{ role: 'user', content: 'test' }] };
       
-      const promise = wrapped.chat.completions.create(payload);
+      const promise = wrapped.responses.create(payload);
       
       // Advance time to process batch
       jest.advanceTimersByTime(200);
@@ -225,32 +213,28 @@ describe('IdleManager', () => {
     test('should expire cache after TTL', async () => {
       const manager = createIdleManager(mockLogger);
       const mockOpenAI = {
-        chat: {
-          completions: {
-            create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
-          }
-        }
-      };
+        responses: { create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
+          } };
       
       const wrapped = manager.wrapOpenAI(mockOpenAI);
       const payload = { model: 'gpt-4', messages: [{ role: 'user', content: 'test' }] };
       
       // First call
-      const promise1 = wrapped.chat.completions.create(payload);
+      const promise1 = wrapped.responses.create(payload);
       jest.advanceTimersByTime(200);
       await promise1;
       
-      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(1);
+      expect(mockOpenAI.responses.create).toHaveBeenCalledTimes(1);
       
       // Advance time past cache TTL (60s)
       jest.advanceTimersByTime(65000);
       
       // Second call after cache expiry - should hit API again
-      const promise2 = wrapped.chat.completions.create(payload);
+      const promise2 = wrapped.responses.create(payload);
       jest.advanceTimersByTime(200);
       await promise2;
       
-      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(2);
+      expect(mockOpenAI.responses.create).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -276,17 +260,13 @@ describe('IdleManager', () => {
     test('should clean up resources', () => {
       const manager = createIdleManager(mockLogger);
       const mockOpenAI = {
-        chat: {
-          completions: {
-            create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
-          }
-        }
-      };
+        responses: { create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
+          } };
       
       const wrapped = manager.wrapOpenAI(mockOpenAI);
       
       // Create a request to start the batch interval
-      const promise = wrapped.chat.completions.create({ model: 'gpt-4', messages: [] });
+      const promise = wrapped.responses.create({ model: 'gpt-4', messages: [] });
       
       // Destroy the manager
       manager.destroy();
@@ -303,12 +283,8 @@ describe('IdleManager', () => {
     test('should allow multiple wrappers to share batching', () => {
       const manager = createIdleManager(mockLogger);
       const mockOpenAI = {
-        chat: {
-          completions: {
-            create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
-          }
-        }
-      };
+        responses: { create: jest.fn().mockResolvedValue({ id: 'test-response', choices: [] })
+          } };
       
       // Create two wrapper instances
       const wrapped1 = manager.wrapOpenAI(mockOpenAI);
@@ -317,14 +293,14 @@ describe('IdleManager', () => {
       const payload = { model: 'gpt-4', messages: [{ role: 'user', content: 'test' }] };
       
       // Make requests from both wrappers
-      const promise1 = wrapped1.chat.completions.create(payload);
-      const promise2 = wrapped2.chat.completions.create(payload);
+      const promise1 = wrapped1.responses.create(payload);
+      const promise2 = wrapped2.responses.create(payload);
       
       jest.advanceTimersByTime(200);
       
       // Both should resolve and only call API once due to shared batching
       return Promise.all([promise1, promise2]).then(() => {
-        expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(1);
+        expect(mockOpenAI.responses.create).toHaveBeenCalledTimes(1);
         manager.destroy();
       });
     });

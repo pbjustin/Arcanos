@@ -110,7 +110,7 @@ export async function generateReusableCodeSnippets(
   const model = getDefaultModel();
   const prompt = buildReusableCodePrompt(request);
 
-  const response = await client.chat.completions.create({
+  const response: any = await (client.responses as any).create({
     model,
     messages: [
       {
@@ -125,7 +125,7 @@ export async function generateReusableCodeSnippets(
     temperature: 0.2
   });
 
-  const rawContent = response.choices?.[0]?.message?.content ?? '';
+  const rawContent = (typeof response?.output_text === 'string' ? response.output_text : response?.choices?.[0]?.message?.content) ?? '';
   //audit Assumption: OpenAI returns content; risk: empty response; invariant: non-empty string; handling: throw error if empty.
   if (!rawContent.trim()) {
     throw new Error('OpenAI response contained no content.');
@@ -139,3 +139,4 @@ export async function generateReusableCodeSnippets(
     raw: rawContent
   };
 }
+

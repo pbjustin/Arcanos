@@ -21,7 +21,7 @@ async function routeToModule(clientOrAdapter: OpenAI | OpenAIAdapter, tag: Shado
   
   // Support both adapter and legacy client
   const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-    ? await clientOrAdapter.chat.completions.create({
+    ? await (clientOrAdapter.responses as any).create({
         model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -30,7 +30,7 @@ async function routeToModule(clientOrAdapter: OpenAI | OpenAIAdapter, tag: Shado
         temperature: 0.2,
         ...tokenParams
       })
-    : await (clientOrAdapter as OpenAI).chat.completions.create({
+    : await ((clientOrAdapter as OpenAI).responses as any).create({
         model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -88,4 +88,5 @@ export async function mirrorDecisionEvent(
     disableShadowMode(msg);
   }
 }
+
 
