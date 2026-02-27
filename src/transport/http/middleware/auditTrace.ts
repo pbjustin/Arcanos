@@ -16,6 +16,7 @@ import { apiLogger } from "@platform/logging/structuredLogging.js";
 import { generateRequestId } from "@shared/idGenerator.js";
 import { registerTraceEvent } from "@services/contextualReinforcement.js";
 
+/**
  * Extended Response interface with audit trace ID in locals.
  */
 interface ResponseWithLocals extends Response {
