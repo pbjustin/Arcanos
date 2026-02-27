@@ -24,7 +24,7 @@ export function createApp(): Express {
 
   app.use(requestContext);
   app.use(cors(config.cors));
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
 
   app.use(unsafeExecutionGate);
