@@ -211,6 +211,18 @@ export function normalizeResponsesCreateParams(params: any): any {
     delete normalized.max_completion_tokens;
   }
 
+  const MIN_TOKENS = 16;
+  if (typeof normalized.max_output_tokens === 'number') {
+    normalized.max_output_tokens = Math.max(MIN_TOKENS, Math.floor(normalized.max_output_tokens));
+  }
+
+  if (typeof (normalized as any).max_completion_tokens === 'number') {
+    (normalized as any).max_completion_tokens = Math.max(
+      MIN_TOKENS,
+      Math.floor((normalized as any).max_completion_tokens)
+    );
+  }
+
   return normalized;
 }
 
