@@ -197,7 +197,7 @@ function buildResponsesRequestFromChatParams(
 ): ResponseCreateParamsNonStreaming {
   const typedMessages = Array.isArray(params.messages) ? params.messages : [];
   const instructionParts: string[] = [];
-  const inputItems: Array<{ role: 'assistant' | 'user'; content: Array<{ type: 'input_text'; text: string }> }> = [];
+  const inputItems: Array<{ role: 'assistant' | 'user'; content: Array<{ type: 'input_text' | 'output_text'; text: string }> }> = [];
 
   for (const message of typedMessages) {
     if (!message || typeof message !== 'object') {
@@ -216,9 +216,10 @@ function buildResponsesRequestFromChatParams(
     }
 
     const mappedRole: 'assistant' | 'user' = role === 'assistant' ? 'assistant' : 'user';
+    const contentType: 'input_text' | 'output_text' = mappedRole === 'assistant' ? 'output_text' : 'input_text';
     inputItems.push({
       role: mappedRole,
-      content: [{ type: 'input_text', text: text.length > 0 ? text : ' ' }]
+      content: [{ type: contentType, text: text.length > 0 ? text : ' ' }]
     });
   }
 
@@ -474,3 +475,4 @@ export function getClient(): OpenAI {
   //audit Assumption: escape hatch should only be used after adapter init; risk: runtime null usage; invariant: initialized adapter required; handling: delegate to getOpenAIAdapter() throw path.
   return getOpenAIAdapter().getClient();
 }
+

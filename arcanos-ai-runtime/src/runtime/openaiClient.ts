@@ -10,19 +10,32 @@ import { getRuntimeOpenAIClient } from "../ai/openaiClient.js";
 
 export interface GPT5Request {
   model: string;
-  messages: Array<Record<string, unknown>>;
+  input?: Array<Record<string, unknown>>;
+  messages?: Array<Record<string, unknown>>;
   maxTokens?: number;
   instructions?: string;
 }
 
 export type GPT5Response = OpenAIResponse;
 
+function resolveRequestInput(request: GPT5Request): Array<Record<string, unknown>> {
+  if (Array.isArray(request.input)) {
+    return request.input;
+  }
+
+  // Backward compatibility for call sites still using the legacy field during migration.`r`n  if (Array.isArray(request.messages)) {
+    return request.messages;
+  }
+
+  return [];
+}
+
 function buildRequestPayload(
   request: GPT5Request
 ): ResponseCreateParamsNonStreaming {
   const payload: ResponseCreateParamsNonStreaming = {
     model: request.model,
-    input: request.messages as unknown as ResponseInput,
+    input: resolveRequestInput(request) as unknown as ResponseInput,
   };
 
   if (request.maxTokens !== undefined) {
@@ -78,3 +91,5 @@ export async function runGPT5(
     clearTimeout(timeout);
   }
 }
+
+
