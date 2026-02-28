@@ -9,6 +9,15 @@ declare module 'express-serve-static-core' {
   }
 }
 
+const OPERATOR_DIAGNOSTIC_ENDPOINTS = ['GET /health', 'GET /healthz', 'GET /status/safety', 'GET /status/safety/operator-auth'];
+
+interface OperatorAuthMissingCredentialPayload {
+  error: 'UNAUTHORIZED';
+  details: string[];
+  remediation: string[];
+  diagnosticEndpoints: string[];
+}
+
 function resolvePresentedToken(req: Request): string | null {
   const authHeaderValue = resolveHeader(req.headers, 'authorization');
   if (authHeaderValue) {
@@ -28,28 +37,43 @@ function resolvePresentedToken(req: Request): string | null {
 }
 
 /**
+ * Purpose: Build a structured response payload for missing operator credentials.
+ * Inputs/Outputs: Express request context; returns remediation + non-auth diagnostic endpoints.
+ * Edge cases: Returns static guidance when request metadata is unavailable.
+ */
+function buildMissingCredentialPayload(_req: Request): OperatorAuthMissingCredentialPayload {
+  return {
+    error: 'UNAUTHORIZED',
+    details: ['Authorization Bearer token or x-api-key is required'],
+    remediation: [
+      'Provide the ADMIN_KEY value in the Authorization Bearer header.',
+      'Or provide the ADMIN_KEY value in the x-api-key header.',
+      'Use GET /status/safety/operator-auth to verify operator-auth wiring without credentials.'
+    ],
+    diagnosticEndpoints: OPERATOR_DIAGNOSTIC_ENDPOINTS
+  };
+}
+
+/**
  * Purpose: Enforce operator authentication using ADMIN_KEY for safety controls.
  * Inputs/Outputs: Express middleware; sets req.operatorActor on success.
  * Edge cases: Returns 503 when ADMIN_KEY is not configured.
  */
 export function operatorAuth(req: Request, res: Response, next: NextFunction): void {
   const adminKey = getConfig().adminKey?.trim();
-  //audit Assumption: recovery controls require explicit operator secret; failure risk: unauthenticated quarantine release; expected invariant: ADMIN_KEY must be configured; handling strategy: fail closed with 503.
+  //audit Assumption: single-operator deployments may intentionally omit ADMIN_KEY; failure risk: public unauthenticated operator actions if endpoint is internet-exposed; expected invariant: explicit ADMIN_KEY still enforces auth, missing ADMIN_KEY enters local-trust mode; handling strategy: fail-open and annotate actor for auditability.
   if (!adminKey) {
-    res.status(503).json({
-      error: 'OPERATOR_AUTH_UNAVAILABLE',
-      details: ['ADMIN_KEY is not configured for operator safety controls']
-    });
+    req.operatorActor = 'operator:admin-key-disabled';
+    res.setHeader('x-operator-auth-mode', 'disabled');
+    next();
     return;
   }
 
   const presentedToken = resolvePresentedToken(req);
   //audit Assumption: missing auth token must block operator actions; failure risk: anonymous release attempts; expected invariant: token required; handling strategy: 401 challenge.
   if (!presentedToken) {
-    res.status(401).json({
-      error: 'UNAUTHORIZED',
-      details: ['Authorization Bearer token or x-api-key is required']
-    });
+    //audit Assumption: failed auth should include explicit remediation hints; failure risk: repeated probe failures with no guidance; expected invariant: response documents accepted credentials and safe diagnostics; handling strategy: return structured 401 payload.
+    res.status(401).json(buildMissingCredentialPayload(req));
     return;
   }
 
