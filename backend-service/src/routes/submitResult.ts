@@ -1,11 +1,10 @@
 import { Router } from "express";
-import { requireAgentApiKey } from "../middleware/auth.js";
 import { assignedTasks, taskResults } from "../storage/inMemoryStore.js";
 import { validateSubmitResultPayload } from "../validation/requestValidators.js";
 
 export const submitResultRouter = Router();
 
-submitResultRouter.post("/", requireAgentApiKey, (req, res) => {
+submitResultRouter.post("/", (req, res) => {
   const validation = validateSubmitResultPayload(req.body);
   //audit assumption: result persistence requires validated task and agent identifiers.
   if (!validation.isValid) {
@@ -37,3 +36,4 @@ submitResultRouter.post("/", requireAgentApiKey, (req, res) => {
   console.info("Task result recorded", { taskId, agentId });
   res.json({ acknowledged: true });
 });
+

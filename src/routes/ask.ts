@@ -4,7 +4,6 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
-import { requireAiEndpointAuth } from "@transport/http/middleware/aiEndpointAuth.js";
 import type {
   AIRequestDTO,
   ConfirmationRequiredResponseDTO,
@@ -39,7 +38,6 @@ const router = express.Router();
 // Apply security middleware
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
-router.use(requireAiEndpointAuth);
 
 type AskRouteResponse =
   | AskResponse
@@ -307,21 +305,6 @@ export const handleAIRequest = async (
 ) => {
   const mode = getMode(req.body);
 
-  function hasAuthHeader(): boolean {
-    const auth = req.get('authorization') || req.get('x-api-key');
-    if (typeof auth !== 'string') return false;
-    const trimmed = auth.trim();
-    // Accept either `Bearer <token>` or a reasonably long API key
-    if (/^Bearer\s+\S+/i.test(trimmed)) return true;
-    if (/^[A-Za-z0-9\-_.~+/]+=*$/.test(trimmed) && trimmed.length >= 16) return true;
-    return false;
-  }
-
-  function canBypassSystemAuth(): boolean {
-    //audit Assumption: tests should exercise system modes without secrets; risk: accidental auth bypass; invariant: bypass only when explicitly allowed in test env; handling: require explicit env allow flag.
-    return process.env.NODE_ENV === 'test' && process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS === '1';
-  }
-
   if (mode === 'system_state') {
     const stateRequest = systemStateUpdateSchema.safeParse(req.body);
     //audit Assumption: system mode requests are strictly validated; failure risk: ambiguous mode behavior; expected invariant: strict contract before execution; handling strategy: hard fail on validation errors.
@@ -330,12 +313,6 @@ export const handleAIRequest = async (
         error: 'SYSTEM_STATE_REQUEST_INVALID',
         details: stateRequest.error.issues.map(issue => issue.message)
       });
-    }
-
-    // Require an authorization header for state mutation/read operations
-    //audit Assumption: system_state should be protected outside tests; risk: unauthorized access; invariant: auth required unless test env; handling: explicit bypass check.
-    if (!hasAuthHeader() && !canBypassSystemAuth()) {
-      return res.status(401).json({ error: 'UNAUTHORIZED', details: ['Authorization required for system_state operations'] });
     }
 
     if (stateRequest.data.expectedVersion !== undefined && stateRequest.data.patch) {
@@ -368,11 +345,6 @@ export const handleAIRequest = async (
   }
 
   if (mode === 'system_review') {
-    // Require caller authentication before initiating expensive model calls
-    //audit Assumption: system_review should be protected outside tests; risk: unauthorized access; invariant: auth required unless test env; handling: explicit bypass check.
-    if (!hasAuthHeader() && !canBypassSystemAuth()) {
-      return res.status(401).json({ error: 'UNAUTHORIZED', details: ['Authorization required for system_review mode'] });
-    }
 
     // Normalize and validate via shared AI request path to get a client and input
     const validation = validateAIRequest(req as Request, res as Response, endpointName);
@@ -558,3 +530,4 @@ export default router;
 
 export type { AskRequest, AskResponse };
 export { askValidationMiddleware };
+

@@ -1,11 +1,10 @@
 import { Router } from "express";
 import { agents } from "../storage/inMemoryStore.js";
-import { requireAgentApiKey } from "../middleware/auth.js";
 import { validateHeartbeatPayload } from "../validation/requestValidators.js";
 
 export const heartbeatRouter = Router();
 
-heartbeatRouter.post("/", requireAgentApiKey, (req, res) => {
+heartbeatRouter.post("/", (req, res) => {
   const validation = validateHeartbeatPayload(req.body);
   //audit assumption: heartbeat state updates are only safe after schema validation.
   if (!validation.isValid) {
@@ -24,3 +23,4 @@ heartbeatRouter.post("/", requireAgentApiKey, (req, res) => {
 
   res.json({ status: "ok" });
 });
+

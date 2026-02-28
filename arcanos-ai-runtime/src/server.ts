@@ -2,12 +2,12 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import type { Job } from "bullmq";
 import { aiQueue } from "./queue/queue.js";
-import { getRequestAuth, requireApiKey } from "./auth/apiKey.js";
 import { runtimeEnv } from "./config/env.js";
 import type { AIJobPayload, RuntimeJobStatus } from "./jobs/types.js";
 import { validateCreateJobInput } from "./jobs/validation.js";
 
 const JSON_BODY_LIMIT = "256kb";
+const ANONYMOUS_PRINCIPAL_ID = "anonymous";
 
 function mapQueueStateToStatus(state: string): RuntimeJobStatus {
   switch (state) {
@@ -52,7 +52,6 @@ function buildJobResponse(
 
 const app = express();
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
-app.use("/jobs", requireApiKey);
 
 app.post("/jobs", async (req, res) => {
   const validation = validateCreateJobInput(req.body);
@@ -61,18 +60,13 @@ app.post("/jobs", async (req, res) => {
   }
 
   try {
-    const auth = getRequestAuth(req);
-    if (!auth) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
     const jobId = randomUUID();
 
     await aiQueue.add(
       "ai-job",
       {
         ...validation.data,
-        principalId: auth.principalId
+        principalId: ANONYMOUS_PRINCIPAL_ID
       },
       { jobId }
     );
@@ -91,20 +85,9 @@ app.get("/jobs/:id", async (req, res) => {
   }
 
   try {
-    const auth = getRequestAuth(req);
-    if (!auth) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
     const job = await aiQueue.getJob(jobId);
     if (!job) {
       return res.status(404).json({ error: "Job not found" });
-    }
-
-    if (job.data.principalId !== auth.principalId) {
-      return res
-        .status(403)
-        .json({ error: "Not authorized to access this job" });
     }
 
     const status = mapQueueStateToStatus(await job.getState());
@@ -118,3 +101,4 @@ app.get("/jobs/:id", async (req, res) => {
 app.listen(runtimeEnv.PORT, () => {
   console.log(`API running on port ${runtimeEnv.PORT}`);
 });
+

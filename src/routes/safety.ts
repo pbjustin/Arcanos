@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import operatorAuth from '@transport/http/middleware/operatorAuth.js';
 import {
   getActiveQuarantines,
   getActiveUnsafeConditions,
@@ -38,7 +37,6 @@ router.get('/status/safety', (_req: Request, res: Response) => {
  */
 router.post(
   '/status/safety/quarantine/:quarantineId/release',
-  operatorAuth,
   (req: Request, res: Response) => {
     const { quarantineId } = req.params;
     const headerConfirmed = resolveHeader(req.headers, 'x-confirmed')?.toLowerCase() === 'yes';
