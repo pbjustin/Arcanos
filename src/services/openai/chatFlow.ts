@@ -12,7 +12,7 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 import { runtime } from "@services/openaiRuntime.js";
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
+import { normalizeResponsesCreateParams, type OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import type {
   CallOpenAIOptions,
   CallOpenAIResult,
@@ -157,6 +157,7 @@ export async function callOpenAI(
 
   // Use unified retry/resilience module for resilient API calls
   let result: CallOpenAIResult;
+
   try {
     result = await withRetry(
       async () => {
@@ -210,7 +211,7 @@ async function makeOpenAIRequest(
 ): Promise<CallOpenAIResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
-  
+
   try {
     // Extract prompt from messages for the builder (required by ChatParams type)
     const userMessage = messages.find(m => m.role === 'user');
@@ -319,8 +320,8 @@ export const createGPT5Reasoning = async (
 
     // Support both adapter and legacy client
     const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-      ? await clientOrAdapter.responses.create(requestPayload)
-      : await ((clientOrAdapter as OpenAI).responses as any).create({ ...requestPayload, stream: false } as any);
+      ? await clientOrAdapter.responses.create(normalizeResponsesCreateParams(requestPayload))
+      : await ((clientOrAdapter as OpenAI).responses as any).create(normalizeResponsesCreateParams({ ...requestPayload, stream: false }) as any);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const content = extractReasoningText(response as ChatCompletion);
@@ -381,8 +382,8 @@ export const createGPT5ReasoningLayer = async (
 
     // Support both adapter and legacy client
     const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-      ? await clientOrAdapter.responses.create(requestPayload)
-      : await ((clientOrAdapter as OpenAI).responses as any).create({ ...requestPayload, stream: false } as any);
+      ? await clientOrAdapter.responses.create(normalizeResponsesCreateParams(requestPayload))
+      : await ((clientOrAdapter as OpenAI).responses as any).create(normalizeResponsesCreateParams({ ...requestPayload, stream: false }) as any);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const reasoningContent = extractReasoningText(response as ChatCompletion);
@@ -445,7 +446,7 @@ export async function call_gpt5_strict(
       ) : {})
     };
 
-    const response = await (client.responses as any).create(requestPayload as any);
+    const response = await (client.responses as any).create(normalizeResponsesCreateParams(requestPayload) as any);
 
     // Validate that the response actually came from GPT-5.1
     // Response is guaranteed to be ChatCompletion (not Stream) because stream: false
@@ -534,11 +535,11 @@ export async function createCentralizedCompletion(
       if (!streamClient) {
         throw new Error('OpenAI client not initialized - streaming unavailable');
       }
-      response = await (streamClient.responses as any).create(requestPayload as any, requestOptions as any);
+      response = await (streamClient.responses as any).create(normalizeResponsesCreateParams(requestPayload) as any, requestOptions as any);
     } else if (adapter) {
-      response = await adapter.responses.create(requestPayload, requestOptions);
+      response = await adapter.responses.create(normalizeResponsesCreateParams(requestPayload), requestOptions);
     } else if (client) {
-      response = await (client.responses as any).create(requestPayload as any, requestOptions as any);
+      response = await (client.responses as any).create(normalizeResponsesCreateParams(requestPayload) as any, requestOptions as any);
     } else {
       throw new Error('OpenAI client not initialized');
     }

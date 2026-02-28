@@ -17,6 +17,203 @@ import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/reso
 import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 import type { ImageGenerateParamsNonStreaming, ImagesResponse } from 'openai/resources/images.js';
 
+type LegacyChatMessage = {
+  role?: unknown;
+  content?: unknown;
+};
+
+function extractTextFromContent(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  const textParts: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') {
+      continue;
+    }
+    const partRecord = part as Record<string, unknown>;
+    const type = typeof partRecord.type === 'string' ? partRecord.type : '';
+    if (type === 'text' || type === 'input_text' || type === 'output_text') {
+      const text = partRecord.text;
+      if (typeof text === 'string' && text.length > 0) {
+        textParts.push(text);
+      }
+    }
+  }
+
+  return textParts.join('\n');
+}
+
+function normalizeInputContentParts(
+  role: 'assistant' | 'user',
+  content: unknown
+): Array<Record<string, unknown>> {
+  const textType = role === 'assistant' ? 'output_text' : 'input_text';
+
+  if (typeof content === 'string') {
+    return [{ type: textType, text: content.length > 0 ? content : ' ' }];
+  }
+
+  if (!Array.isArray(content)) {
+    return [{ type: textType, text: ' ' }];
+  }
+
+  const normalizedParts: Array<Record<string, unknown>> = [];
+
+  for (const part of content) {
+    if (!part || typeof part !== 'object') {
+      continue;
+    }
+
+    const partRecord = part as Record<string, unknown>;
+    const type = typeof partRecord.type === 'string' ? partRecord.type : '';
+
+    if (type === 'text' || type === 'input_text' || type === 'output_text') {
+      const text = partRecord.text;
+      if (typeof text === 'string') {
+        normalizedParts.push({
+          type: textType,
+          text: text.length > 0 ? text : ' '
+        });
+      }
+      continue;
+    }
+
+    if ((type === 'image_url' || type === 'input_image') && role === 'user') {
+      if (type === 'image_url') {
+        const imageUrl = partRecord.image_url;
+        if (imageUrl && typeof imageUrl === 'object') {
+          const imageUrlRecord = imageUrl as Record<string, unknown>;
+          const url = typeof imageUrlRecord.url === 'string' ? imageUrlRecord.url : undefined;
+          if (url) {
+            normalizedParts.push({
+              type: 'input_image',
+              image_url: url,
+              ...(typeof imageUrlRecord.detail === 'string' ? { detail: imageUrlRecord.detail } : {})
+            });
+          }
+        } else if (typeof imageUrl === 'string') {
+          normalizedParts.push({ type: 'input_image', image_url: imageUrl });
+        }
+        continue;
+      }
+
+      normalizedParts.push(partRecord);
+    }
+  }
+
+  if (normalizedParts.length === 0) {
+    return [{ type: textType, text: ' ' }];
+  }
+
+  return normalizedParts;
+}
+
+function collectInstructionFragments(messages: LegacyChatMessage[]): string[] {
+  const fragments: string[] = [];
+
+  for (const message of messages) {
+    const role = typeof message.role === 'string' ? message.role : '';
+    if (role !== 'system' && role !== 'developer') {
+      continue;
+    }
+
+    const text = extractTextFromContent(message.content).trim();
+    if (text.length > 0) {
+      fragments.push(text);
+    }
+  }
+
+  return fragments;
+}
+
+function normalizeInputItems(input: unknown): unknown {
+  if (!Array.isArray(input)) {
+    return input;
+  }
+
+  return input.map((item) => {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+
+    const record = item as Record<string, unknown>;
+    const mappedRole: 'assistant' | 'user' = record.role === 'assistant' ? 'assistant' : 'user';
+    const normalizedContent = normalizeInputContentParts(mappedRole, record.content);
+
+    return {
+      ...record,
+      role: mappedRole,
+      content: normalizedContent
+    };
+  });
+}
+
+export function normalizeResponsesCreateParams(params: any): any {
+  if (!params || typeof params !== 'object') {
+    return params;
+  }
+
+  const record = params as Record<string, unknown>;
+  const normalized: Record<string, unknown> = { ...record };
+  const legacyMessages = Array.isArray(record.messages) ? (record.messages as LegacyChatMessage[]) : null;
+
+  if (legacyMessages) {
+    const inputItems: Array<Record<string, unknown>> = [];
+
+    for (const message of legacyMessages) {
+      const role = typeof message.role === 'string' ? message.role : 'user';
+      if (role === 'system' || role === 'developer') {
+        continue;
+      }
+
+      const mappedRole: 'assistant' | 'user' = role === 'assistant' ? 'assistant' : 'user';
+      inputItems.push({
+        role: mappedRole,
+        content: normalizeInputContentParts(mappedRole, message.content)
+      });
+    }
+
+    normalized.input = inputItems;
+    delete normalized.messages;
+
+    const instructionFragments = collectInstructionFragments(legacyMessages);
+    const existingInstructions =
+      typeof record.instructions === 'string' && record.instructions.trim().length > 0
+        ? [record.instructions.trim()]
+        : [];
+    const mergedInstructions = [...existingInstructions, ...instructionFragments];
+    if (mergedInstructions.length > 0) {
+      normalized.instructions = mergedInstructions.join('\n\n');
+    }
+  }
+
+  normalized.input = normalizeInputItems(normalized.input);
+
+  if (
+    normalized.max_output_tokens === undefined &&
+    typeof normalized.max_tokens === 'number'
+  ) {
+    normalized.max_output_tokens = normalized.max_tokens;
+    delete normalized.max_tokens;
+  }
+
+  if (
+    normalized.max_output_tokens === undefined &&
+    typeof normalized.max_completion_tokens === 'number'
+  ) {
+    normalized.max_output_tokens = normalized.max_completion_tokens;
+    delete normalized.max_completion_tokens;
+  }
+
+  return normalized;
+}
+
 /**
  * OpenAI adapter configuration
  * All values must be provided (no env access inside adapter)
@@ -124,7 +321,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   return {
     responses: {
       create: async (params: any, options?: OpenAIAdapterRequestOptions): Promise<any> => {
-        return client.responses.create(params as any, options as any);
+        const normalizedParams = normalizeResponsesCreateParams(params);
+        return client.responses.create(normalizedParams as any, options as any);
       }
     },
     chat: {
@@ -136,7 +334,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
           // Ensure stream is false for non-streaming completions
           const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
           //audit Assumption: request-level signal/headers may be provided by callers; risk: dropped cancellation/tracing; invariant: options forwarded; handling: pass through to SDK.
-          const result = await (client.responses as any).create(nonStreamingParams as any, options as any);
+          const normalizedParams = normalizeResponsesCreateParams(nonStreamingParams);
+          const result = await (client.responses as any).create(normalizedParams as any, options as any);
           // Type assertion needed because SDK can return Stream | ChatCompletion
           return result as ChatCompletion;
         }

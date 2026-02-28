@@ -71,7 +71,7 @@ export async function executeWithBudget(
 function buildFirstPassRequest(input: ExecutionInput): GPT5Request {
   const request: GPT5Request = {
     model: input.model,
-    messages: input.messages,
+    input: input.messages,
   };
 
   if (input.maxTokens !== undefined) {
@@ -95,7 +95,7 @@ function buildSecondPassInput(
   const request: GPT5Request = {
     model: input.model,
     instructions: SECOND_PASS_INSTRUCTIONS,
-    messages: [
+    input: [
       ...input.messages,
       {
         role: "user",
@@ -141,3 +141,4 @@ function sanitizeUntrustedOutput(value: string): string {
 
   return `${trimmed.slice(0, MAX_SECOND_PASS_INPUT_CHARS)}\n[truncated]`;
 }
+

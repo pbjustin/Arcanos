@@ -10,7 +10,8 @@ import { OpenAIAbortError } from "./runtimeErrors.js";
 
 export interface GPT5Request {
   model: string;
-  messages: Array<Record<string, unknown>>;
+  input: Array<Record<string, unknown>>;
+  messages?: Array<Record<string, unknown>>;
   maxTokens?: number;
   instructions?: string;
 }
@@ -32,12 +33,24 @@ function getClient(): OpenAI {
   return client;
 }
 
+function resolveRequestInput(request: GPT5Request): Array<Record<string, unknown>> {
+  if (Array.isArray(request.input)) {
+    return request.input;
+  }
+
+  if (Array.isArray(request.messages)) {
+    return request.messages;
+  }
+
+  return [];
+}
+
 function buildRequestPayload(
   request: GPT5Request
 ): ResponseCreateParamsNonStreaming {
   const payload: ResponseCreateParamsNonStreaming = {
     model: request.model,
-    input: request.messages as unknown as ResponseInput,
+    input: resolveRequestInput(request) as unknown as ResponseInput,
   };
 
   if (request.maxTokens !== undefined) {
@@ -93,3 +106,4 @@ export async function runGPT5(
     clearTimeout(timeout);
   }
 }
+

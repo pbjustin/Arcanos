@@ -1,5 +1,5 @@
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
+import { normalizeResponsesCreateParams, type OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { prepareGPT5Request } from './requestTransforms.js';
 import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
@@ -39,7 +39,7 @@ const executeChatCompletionRequest = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
   payload: ChatCompletionParams & { model: string },
 ): Promise<ChatCompletionResponse> => {
-  const requestPayload = { ...payload, stream: false as const };
+  const requestPayload = normalizeResponsesCreateParams({ ...payload, stream: false as const });
   const usesAdapter = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object';
   //audit Assumption: adapter shape is detectable via chat property; risk: mis-detection calls wrong client; invariant: completion request must be sent once; handling: branch on adapter presence.
   if (usesAdapter) {
