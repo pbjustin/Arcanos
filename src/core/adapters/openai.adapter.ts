@@ -204,10 +204,12 @@ function normalizeResponsesCreateParams(
     normalized.max_output_tokens = Math.max(MIN_RESPONSE_TOKENS, Math.floor(normalized.max_output_tokens));
   }
 
-  const withMaxCompletionTokens = (normalized as { max_completion_tokens?: unknown }).max_completion_tokens;
-  if (typeof withMaxCompletionTokens === 'number') {
-    const normalizedCompletionTokens = Math.max(MIN_RESPONSE_TOKENS, Math.floor(withMaxCompletionTokens));
-    (normalized as { max_completion_tokens?: number }).max_completion_tokens = normalizedCompletionTokens;
+  const withMaxCompletionTokens = normalized as { max_completion_tokens?: number };
+  if (typeof withMaxCompletionTokens.max_completion_tokens === 'number') {
+    withMaxCompletionTokens.max_completion_tokens = Math.max(
+      MIN_RESPONSE_TOKENS,
+      Math.floor(withMaxCompletionTokens.max_completion_tokens)
+    );
   }
 
   return normalized;
