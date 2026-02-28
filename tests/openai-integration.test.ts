@@ -12,7 +12,7 @@ describe('OpenAI SDK Integration Tests', () => {
   });
 
   describe('OpenAI Service Integration', () => {
-    it('should have OpenAI SDK v5+ properly integrated', async () => {
+    it('should have OpenAI SDK v6+ properly integrated', async () => {
       // Import the service
       const { getOpenAIClient } = await import('../src/services/openai.js');
       
@@ -214,7 +214,7 @@ describe('OpenAI SDK Integration Tests', () => {
 
   describe('Railway Environment Compatibility', () => {
     it('should support Railway environment variables', async () => {
-      const { validateEnvironment } = await import('../src/utils/environmentValidation.js');
+      const { validateEnvironment } = await import('../src/platform/runtime/environmentValidation.js');
       
       // Test environment validation works
       const result = validateEnvironment();
@@ -232,7 +232,7 @@ describe('OpenAI SDK Integration Tests', () => {
 
       try {
         jest.resetModules();
-        const { validateEnvironment } = await import('../src/utils/environmentValidation.js');
+        const { validateEnvironment } = await import('../src/platform/runtime/environmentValidation.js');
         
         const result = validateEnvironment();
         expect(result.isValid).toBe(true);
@@ -253,7 +253,7 @@ describe('OpenAI SDK Integration Tests', () => {
         // Test empty string
         process.env.PORT = '';
         jest.resetModules();
-        let module = await import('../src/utils/environmentValidation.js');
+        let module = await import('../src/platform/runtime/environmentValidation.js');
         let result = module.validateEnvironment();
         expect(result.isValid).toBe(true);
         expect(process.env.PORT).toBe('8080');
@@ -261,7 +261,7 @@ describe('OpenAI SDK Integration Tests', () => {
         // Test whitespace
         process.env.PORT = '   ';
         jest.resetModules();
-        module = await import('../src/utils/environmentValidation.js');
+        module = await import('../src/platform/runtime/environmentValidation.js');
         result = module.validateEnvironment();
         expect(result.isValid).toBe(true);
         expect(process.env.PORT).toBe('8080');

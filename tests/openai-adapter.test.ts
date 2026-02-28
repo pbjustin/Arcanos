@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const chatCreateMock = jest.fn();
+const responsesCreateMock = jest.fn();
 const embeddingsCreateMock = jest.fn();
 const imagesGenerateMock = jest.fn();
 const transcriptionsCreateMock = jest.fn();
 const openAIConstructorMock = jest.fn();
 
-let createOpenAIAdapter: typeof import('../src/adapters/openai.adapter.js').createOpenAIAdapter;
+let createOpenAIAdapter: typeof import('../src/core/adapters/openai.adapter.js').createOpenAIAdapter;
 
 beforeEach(async () => {
   jest.resetModules();
   chatCreateMock.mockReset();
+  responsesCreateMock.mockReset();
   embeddingsCreateMock.mockReset();
   imagesGenerateMock.mockReset();
   transcriptionsCreateMock.mockReset();
@@ -18,6 +20,7 @@ beforeEach(async () => {
 
   openAIConstructorMock.mockImplementation(() => ({
     chat: { completions: { create: chatCreateMock } },
+    responses: { create: responsesCreateMock, parse: jest.fn() },
     embeddings: { create: embeddingsCreateMock },
     images: { generate: imagesGenerateMock },
     audio: { transcriptions: { create: transcriptionsCreateMock } },
@@ -27,18 +30,18 @@ beforeEach(async () => {
     default: openAIConstructorMock
   }));
 
-  ({ createOpenAIAdapter } = await import('../src/adapters/openai.adapter.js'));
+  ({ createOpenAIAdapter } = await import('../src/core/adapters/openai.adapter.js'));
 });
 
 describe('openai adapter', () => {
   it('forwards chat request options and enforces non-stream payloads', async () => {
-    chatCreateMock.mockResolvedValue({
-      id: 'chat_1',
-      object: 'chat.completion',
-      created: 1,
+    responsesCreateMock.mockResolvedValue({
+      id: 'resp_1',
+      created_at: 1,
       model: 'gpt-4.1-mini',
-      choices: [],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      output_text: 'hello',
+      output: [],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
     });
 
     const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
@@ -53,9 +56,11 @@ describe('openai adapter', () => {
       { signal, headers }
     );
 
-    expect(chatCreateMock).toHaveBeenCalledTimes(1);
-    expect(chatCreateMock.mock.calls[0][0]).toEqual(expect.objectContaining({ stream: false }));
-    expect(chatCreateMock.mock.calls[0][1]).toEqual({ signal, headers });
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(responsesCreateMock.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ model: 'gpt-4.1-mini' })
+    );
+    expect(responsesCreateMock.mock.calls[0][1]).toEqual({ signal, headers });
   });
 
   it('routes image generation through adapter images surface with options', async () => {

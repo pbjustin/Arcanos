@@ -7,7 +7,7 @@
 Arcanos is a TypeScript/Express backend with optional workers and an optional Python CLI daemon (`daemon-python/`).
 
 OpenAI usage is adapter-first across stacks:
-- TypeScript runtime constructor boundary: `src/adapters/openai.adapter.ts`
+- TypeScript runtime constructor boundary: `src/core/adapters/openai.adapter.ts`
 - TypeScript lifecycle bridge: `src/services/openai/unifiedClient.ts`
 - Worker constructor boundary: `workers/src/infrastructure/sdk/openai.ts`
 - Worker env/config boundary: `workers/src/infrastructure/sdk/openaiConfig.ts`
@@ -25,7 +25,6 @@ flowchart LR
   A["Backend Runtime (Canonical)"] -->|"npm start / Railway / Procfile"| B["dist/start-server.js"]
   B --> C["src/server.ts (compiled runtime source)"]
   D["index.js"] -->|"Compatibility wrapper only"| B
-  E["backend-typescript/src/index.ts"] -->|"Legacy re-export only"| C
 
   F["Python Daemon Runtime (Canonical)"] -->|"python -m arcanos.cli"| G["daemon-python/arcanos/cli/__main__.py"]
   G --> H["daemon-python/arcanos/cli/cli.py"]
@@ -37,7 +36,6 @@ flowchart LR
 | `dist/start-server.js` | Backend process bootstrap | Canonical |
 | `src/server.ts` | Backend source-of-truth lifecycle implementation | Canonical source |
 | `index.js` | Wrapper that forwards to `dist/start-server.js` | Compatibility |
-| `backend-typescript/src/index.ts` | Re-export shim to `src/server.js` | Legacy compatibility |
 | `daemon-python/arcanos/cli/__main__.py` | Python daemon module entrypoint | Canonical |
 | `cli_v2/main.py` | Separate CLI v2 experiment harness | Experimental |
 
@@ -141,20 +139,21 @@ Railway remains build-phase-first. Start does not run a build.
 ## Adapter-First Usage Examples
 TypeScript:
 ```ts
-import { createOpenAIAdapter } from "./src/adapters/openai.adapter.js";
+import { createOpenAIAdapter } from "./src/core/adapters/openai.adapter.js";
 
 const adapter = createOpenAIAdapter({
   apiKey: process.env.OPENAI_API_KEY ?? "",
   defaultModel: "gpt-4o-mini",
 });
 
-const response = await adapter.chat.completions.create(
+const response = await adapter.responses.create(
   {
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: "Summarize Arcanos health status." }],
+    model: "gpt-4.1-mini",
+    input: [{ role: "user", content: [{ type: "input_text", text: "Summarize Arcanos health status." }] }],
   },
-  { headers: { "x-trace-id": "local-demo" } },
+  { headers: { "x-trace-id": "local-demo" } }
 );
+console.log(response.output_text);
 ```
 
 Python daemon:
@@ -163,9 +162,9 @@ from arcanos.openai import chat_completion
 
 response = chat_completion(
     user_message="Summarize Arcanos health status.",
-    model="gpt-4o-mini",
+    model="gpt-4.1-mini",
 )
-print(response.choices[0].message.content)
+print(response.output_text)
 ```
 
 ## Security and Logging

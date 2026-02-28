@@ -10,7 +10,7 @@ beforeEach(async () => {
   getOpenAIAdapterMock.mockReset();
   getOrCreateClientMock.mockReset();
 
-  jest.unstable_mockModule('../src/adapters/openai.adapter.js', () => ({
+  jest.unstable_mockModule('../src/core/adapters/openai.adapter.js', () => ({
     getOpenAIAdapter: getOpenAIAdapterMock,
   }));
 

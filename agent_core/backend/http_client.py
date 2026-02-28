@@ -3,7 +3,7 @@ from typing import Any, Tuple
 
 
 class HTTPClient:
-    """Asynchronous HTTP client for backend-service communication."""
+    """Asynchronous HTTP client for backend API communication."""
 
     def __init__(self, base_url: str, api_key: str):
         """

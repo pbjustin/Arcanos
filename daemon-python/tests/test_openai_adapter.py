@@ -8,17 +8,17 @@ from arcanos.openai import openai_adapter
 
 
 def test_chat_completion_uses_adapter_boundary(monkeypatch):
-    """chat_completion should route to client.chat.completions.create with expected payload."""
+    """chat_completion should route to client.responses.create with expected payload."""
 
     calls = []
 
-    class FakeCompletions:
+    class FakeResponses:
         def create(self, **kwargs):
             calls.append(kwargs)
             return {"ok": True, "payload": kwargs}
 
     fake_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=FakeCompletions()),
+        responses=FakeResponses(),
     )
 
     monkeypatch.setattr(openai_adapter, "_require_client", lambda: fake_client)
@@ -34,22 +34,22 @@ def test_chat_completion_uses_adapter_boundary(monkeypatch):
     assert result["ok"] is True
     assert len(calls) == 1
     assert calls[0]["model"] == "gpt-test"
-    assert calls[0]["messages"][-1]["content"] == "hello"
+    assert calls[0]["input"][-1]["content"][0]["text"] == "hello"
     assert calls[0]["timeout"] > 0
 
 
 def test_vision_completion_uses_adapter_boundary(monkeypatch):
-    """vision_completion should route vision payload through chat completions."""
+    """vision_completion should route vision payload through Responses API."""
 
     calls = []
 
-    class FakeCompletions:
+    class FakeResponses:
         def create(self, **kwargs):
             calls.append(kwargs)
             return {"ok": True}
 
     fake_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=FakeCompletions()),
+        responses=FakeResponses(),
     )
 
     monkeypatch.setattr(openai_adapter, "_require_client", lambda: fake_client)
@@ -63,7 +63,7 @@ def test_vision_completion_uses_adapter_boundary(monkeypatch):
     assert result["ok"] is True
     assert len(calls) == 1
     assert calls[0]["model"] == "gpt-vision-test"
-    assert calls[0]["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert calls[0]["input"][0]["content"][1]["image_url"].startswith("data:image/png;base64,")
 
 
 def test_transcribe_wraps_audio_bytes_as_named_file(monkeypatch):
@@ -95,13 +95,13 @@ def test_chat_completion_preserves_explicit_zero_generation_values(monkeypatch):
 
     calls = []
 
-    class FakeCompletions:
+    class FakeResponses:
         def create(self, **kwargs):
             calls.append(kwargs)
             return {"ok": True}
 
     fake_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=FakeCompletions()),
+        responses=FakeResponses(),
     )
 
     monkeypatch.setattr(openai_adapter, "_require_client", lambda: fake_client)
@@ -115,7 +115,7 @@ def test_chat_completion_preserves_explicit_zero_generation_values(monkeypatch):
     assert result["ok"] is True
     assert len(calls) == 1
     assert calls[0]["temperature"] == 0.0
-    assert calls[0]["max_tokens"] == 0
+    assert calls[0]["max_output_tokens"] == 0
 
 
 def test_chat_stream_preserves_explicit_zero_generation_values(monkeypatch):
@@ -123,27 +123,33 @@ def test_chat_stream_preserves_explicit_zero_generation_values(monkeypatch):
 
     calls = []
 
-    class FakeCompletions:
+    class FakeResponses:
         def create(self, **kwargs):
             calls.append(kwargs)
-            return []
+            return SimpleNamespace(
+                output_text="stream-result",
+                usage=SimpleNamespace(input_tokens=0, output_tokens=0, total_tokens=0),
+            )
 
     fake_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=FakeCompletions()),
+        responses=FakeResponses(),
     )
 
     monkeypatch.setattr(openai_adapter, "_require_client", lambda: fake_client)
 
-    stream = openai_adapter.chat_stream(
-        user_message="zero override stream",
-        temperature=0.0,
-        max_tokens=0,
+    stream = list(
+        openai_adapter.chat_stream(
+            user_message="zero override stream",
+            temperature=0.0,
+            max_tokens=0,
+        )
     )
 
-    assert stream == []
     assert len(calls) == 1
     assert calls[0]["temperature"] == 0.0
-    assert calls[0]["max_tokens"] == 0
+    assert calls[0]["max_output_tokens"] == 0
+    assert stream[0] == "stream-result"
+    assert stream[1].total_tokens == 0
 
 
 def test_vision_completion_preserves_explicit_zero_generation_values(monkeypatch):
@@ -151,13 +157,13 @@ def test_vision_completion_preserves_explicit_zero_generation_values(monkeypatch
 
     calls = []
 
-    class FakeCompletions:
+    class FakeResponses:
         def create(self, **kwargs):
             calls.append(kwargs)
             return {"ok": True}
 
     fake_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=FakeCompletions()),
+        responses=FakeResponses(),
     )
 
     monkeypatch.setattr(openai_adapter, "_require_client", lambda: fake_client)
@@ -172,4 +178,4 @@ def test_vision_completion_preserves_explicit_zero_generation_values(monkeypatch
     assert result["ok"] is True
     assert len(calls) == 1
     assert calls[0]["temperature"] == 0.0
-    assert calls[0]["max_tokens"] == 0
+    assert calls[0]["max_output_tokens"] == 0

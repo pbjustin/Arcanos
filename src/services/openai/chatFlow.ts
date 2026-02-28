@@ -47,7 +47,11 @@ import {
 import { withRetry } from "@platform/resilience/unifiedRetry.js";
 import { classifyOpenAIError } from "@core/lib/errors/reusable.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
-import { buildChatCompletionRequest } from './requestBuilders.js';
+import {
+  buildResponsesRequest,
+  convertResponseToLegacyChatCompletion,
+  extractResponseOutputText
+} from './requestBuilders.js';
 
 /**
  * Enhanced OpenAI call helper with circuit breaker, exponential backoff, and caching
@@ -212,17 +216,14 @@ async function makeOpenAIRequest(
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   
   try {
-    // Extract prompt from messages for the builder (required by ChatParams type)
-    const userMessage = messages.find(m => m.role === 'user');
-    const prompt = typeof userMessage?.content === 'string' 
-      ? userMessage.content 
+    const userMessage = messages.find((message) => message.role === 'user');
+    const prompt = typeof userMessage?.content === 'string'
+      ? userMessage.content
       : Array.isArray(userMessage?.content)
-        ? userMessage.content.find(c => c.type === 'text')?.text || ''
+        ? userMessage.content.find((contentPart) => contentPart.type === 'text')?.text || ''
         : '';
-    
-    // Use the new standardized request builder
-    // Pass messages directly to preserve conversation history and routing message
-    const nonStreamingPayload = buildChatCompletionRequest({
+
+    const requestPayload = buildResponsesRequest({
       prompt,
       model,
       messages,
@@ -233,7 +234,7 @@ async function makeOpenAIRequest(
       presence_penalty: options.presence_penalty,
       responseFormat: options.responseFormat,
       user: options.user,
-      includeRoutingMessage: false // Messages already include routing message if needed
+      includeRoutingMessage: false
     });
 
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.REQUEST.ATTEMPT(1, 1, model));
@@ -242,27 +243,28 @@ async function makeOpenAIRequest(
       throw new Error('OpenAI adapter not available');
     }
 
-    //audit Assumption: non-stream chat path should stay adapter-first with request options; risk: direct client bypass drifts from canonical interface; invariant: adapter handles call + options forwarding; handling: invoke adapter chat surface.
-    const response = await adapter.chat.completions.create(nonStreamingPayload, {
+    //audit Assumption: non-stream request path should run through Responses API boundary; risk: endpoint drift with mixed completion APIs; invariant: adapter.responses.create handles execution; handling: invoke responses surface with request metadata.
+    const response = await adapter.responses.create(requestPayload, {
       signal: controller.signal,
-      // Add request ID for tracing
       headers: {
         [REQUEST_ID_HEADER]: crypto.randomUUID()
       }
     });
 
     clearTimeout(timeout);
-    const output = response.choices?.[0]?.message?.content?.trim() || NO_RESPONSE_CONTENT_FALLBACK;
+    const output = extractResponseOutputText(response, NO_RESPONSE_CONTENT_FALLBACK);
     const activeModel = response.model || model;
+    const legacyResponse = convertResponseToLegacyChatCompletion(response, activeModel);
+    const usage = legacyResponse.usage;
 
     // Log success metrics
     logOpenAISuccess(OPENAI_LOG_MESSAGES.REQUEST.SUCCESS, {
       attempt: 1,
       model: activeModel,
-      totalTokens: response.usage?.total_tokens || 'unknown'
+      totalTokens: usage?.total_tokens || 'unknown'
     });
 
-    return { response, output, model: activeModel, cached: false };
+    return { response: legacyResponse, output, model: activeModel, cached: false };
     
   } catch (err: unknown) {
     clearTimeout(timeout);
@@ -289,6 +291,38 @@ async function makeOpenAIRequest(
 const extractReasoningText = (response: ChatCompletion, fallback: string = REASONING_FALLBACK_TEXT): string =>
   response?.choices?.[0]?.message?.content?.trim() || fallback;
 
+function resolveMaxTokensFromTokenParameters(
+  tokenParameters: Record<string, unknown>,
+  fallbackValue: number
+): number {
+  const maxTokensValue = tokenParameters.max_tokens;
+  if (typeof maxTokensValue === 'number' && Number.isFinite(maxTokensValue) && maxTokensValue > 0) {
+    return Math.floor(maxTokensValue);
+  }
+
+  const maxCompletionTokensValue = tokenParameters.max_completion_tokens;
+  if (
+    typeof maxCompletionTokensValue === 'number' &&
+    Number.isFinite(maxCompletionTokensValue) &&
+    maxCompletionTokensValue > 0
+  ) {
+    return Math.floor(maxCompletionTokensValue);
+  }
+
+  return fallbackValue;
+}
+
+async function invokeResponsesCompletion(
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  payload: ReturnType<typeof buildResponsesRequest>,
+  expectedModel: string
+): Promise<ChatCompletion> {
+  const responsesResult = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object'
+    ? await (clientOrAdapter as OpenAIAdapter).responses.create(payload)
+    : await (clientOrAdapter as OpenAI).responses.create(payload);
+  return convertResponseToLegacyChatCompletion(responsesResult, expectedModel);
+}
+
 /**
  * Centralized GPT-5.1 helper function for reasoning tasks
  * Used by both core logic and workers
@@ -310,17 +344,17 @@ export const createGPT5Reasoning = async (
     // Use token parameter utility for correct parameter selection
     const tokenParams = getTokenParameter(gpt5Model, RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS);
     const messages = buildSystemPromptMessages(prompt, systemPrompt);
-
-    const requestPayload: ChatCompletionCreateParams = {
+    const requestPayload = buildResponsesRequest({
+      prompt,
       model: gpt5Model,
       messages,
-      ...tokenParams
-    };
-
-    // Support both adapter and legacy client
-    const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-      ? await clientOrAdapter.chat.completions.create(requestPayload)
-      : await (clientOrAdapter as OpenAI).chat.completions.create({ ...requestPayload, stream: false });
+      maxTokens: resolveMaxTokensFromTokenParameters(
+        tokenParams as Record<string, unknown>,
+        RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
+      ),
+      includeRoutingMessage: false
+    });
+    const response = await invokeResponsesCompletion(clientOrAdapter, requestPayload, gpt5Model);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const content = extractReasoningText(response as ChatCompletion);
@@ -371,18 +405,18 @@ export const createGPT5ReasoningLayer = async (
       buildReasoningPrompt(originalPrompt, arcanosResult, context),
       REASONING_SYSTEM_PROMPT
     );
-
-    const requestPayload: ChatCompletionCreateParams = {
+    const requestPayload = buildResponsesRequest({
+      prompt: originalPrompt,
       model: gpt5Model,
       messages,
-      ...tokenParams,
-      temperature: REASONING_TEMPERATURE
-    };
-
-    // Support both adapter and legacy client
-    const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-      ? await clientOrAdapter.chat.completions.create(requestPayload)
-      : await (clientOrAdapter as OpenAI).chat.completions.create({ ...requestPayload, stream: false });
+      maxTokens: resolveMaxTokensFromTokenParameters(
+        tokenParams as Record<string, unknown>,
+        REASONING_TOKEN_LIMIT
+      ),
+      temperature: REASONING_TEMPERATURE,
+      includeRoutingMessage: false
+    });
+    const response = await invokeResponsesCompletion(clientOrAdapter, requestPayload, gpt5Model);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const reasoningContent = extractReasoningText(response as ChatCompletion);
@@ -435,17 +469,26 @@ export async function call_gpt5_strict(
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_CALL, { model: gpt5Model });
 
     const messages = buildSystemPromptMessages(prompt, STRICT_ASSISTANT_PROMPT);
-
-    const requestPayload: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
+    const maxTokens = resolveMaxTokensFromTokenParameters(
+      kwargs as Record<string, unknown>,
+      RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
+    );
+    const requestPayload = buildResponsesRequest({
+      prompt,
       model: gpt5Model,
       messages,
-      stream: false,
-      ...(kwargs && typeof kwargs === 'object' ? Object.fromEntries(
-        Object.entries(kwargs).filter(([key]) => key !== 'stream')
-      ) : {})
-    };
+      maxTokens,
+      temperature: kwargs.temperature ?? undefined,
+      top_p: kwargs.top_p ?? undefined,
+      frequency_penalty: kwargs.frequency_penalty ?? undefined,
+      presence_penalty: kwargs.presence_penalty ?? undefined,
+      includeRoutingMessage: false
+    });
 
-    const response = await client.chat.completions.create(requestPayload);
+    const response = convertResponseToLegacyChatCompletion(
+      await client.responses.create(requestPayload),
+      gpt5Model
+    );
 
     // Validate that the response actually came from GPT-5.1
     // Response is guaranteed to be ChatCompletion (not Stream) because stream: false
@@ -529,16 +572,50 @@ export async function createCentralizedCompletion(
 
     let response: ChatCompletion | AsyncIterable<unknown>;
     if (requestPayload.stream) {
-      //audit Assumption: streaming is not modeled on adapter chat surface yet; risk: feature regression; invariant: streaming remains available via explicit client escape hatch; handling: use underlying client for stream=true.
+      //audit Assumption: streaming compatibility remains on chat.completions temporarily; risk: behavior mismatch with Responses stream events; invariant: non-stream calls still use Responses API; handling: preserve legacy stream path until stream abstraction is standardized.
       const streamClient = client ?? adapter?.getClient();
       if (!streamClient) {
         throw new Error('OpenAI client not initialized - streaming unavailable');
       }
       response = await streamClient.chat.completions.create(requestPayload, requestOptions);
     } else if (adapter) {
-      response = await adapter.chat.completions.create(requestPayload, requestOptions);
+      const responsePayload = buildResponsesRequest({
+        prompt: '',
+        model,
+        messages: arcanosMessages,
+        maxTokens: resolveMaxTokensFromTokenParameters(
+          tokenParams as Record<string, unknown>,
+          options.max_tokens || ROUTING_MAX_TOKENS
+        ),
+        temperature: requestPayload.temperature,
+        top_p: requestPayload.top_p,
+        frequency_penalty: requestPayload.frequency_penalty,
+        presence_penalty: requestPayload.presence_penalty,
+        includeRoutingMessage: false
+      });
+      response = convertResponseToLegacyChatCompletion(
+        await adapter.responses.create(responsePayload, requestOptions),
+        model
+      );
     } else if (client) {
-      response = await client.chat.completions.create(requestPayload, requestOptions);
+      const responsePayload = buildResponsesRequest({
+        prompt: '',
+        model,
+        messages: arcanosMessages,
+        maxTokens: resolveMaxTokensFromTokenParameters(
+          tokenParams as Record<string, unknown>,
+          options.max_tokens || ROUTING_MAX_TOKENS
+        ),
+        temperature: requestPayload.temperature,
+        top_p: requestPayload.top_p,
+        frequency_penalty: requestPayload.frequency_penalty,
+        presence_penalty: requestPayload.presence_penalty,
+        includeRoutingMessage: false
+      });
+      response = convertResponseToLegacyChatCompletion(
+        await client.responses.create(responsePayload, requestOptions),
+        model
+      );
     } else {
       throw new Error('OpenAI client not initialized');
     }

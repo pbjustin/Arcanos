@@ -133,7 +133,7 @@ body:
         - label: I have checked the latest version of the documentation
         - label: I have searched for existing documentation issues
         - label: I have tested any code examples mentioned
-        - label: I have verified this affects the current software version (OpenAI SDK v6.16.0)
+        - label: I have verified this affects the current software version (OpenAI SDK v6.22.0)
 
   - type: textarea
     id: related_files

@@ -12,12 +12,10 @@ Features:
 - Audit trail for all operations
 """
 
-import warnings
 from typing import Optional, Dict, Any
 from datetime import datetime
 from openai import OpenAI
 from ..config import Config
-from ..env import get_env
 from ..utils.telemetry import record_trace_event
 import logging
 
@@ -46,48 +44,6 @@ def _normalize_secret_candidate(value: Optional[str]) -> Optional[str]:
     if normalized.lower() in _OPENAI_KEY_PLACEHOLDERS:
         return None
     return normalized
-
-
-def _warn_deprecated_env_lookup(label: str) -> None:
-    """
-    Purpose: Emit explicit deprecation warning for legacy env fallback shims.
-    Inputs/Outputs: label string; emits RuntimeWarning.
-    Edge cases: Warning can be filtered by caller/test harness.
-    """
-    warnings.warn(
-        f"{label} fallback uses legacy env shim. Migrate callers to Config/env.py hydration path.",
-        RuntimeWarning,
-        stacklevel=3,
-    )
-
-
-def _resolve_openai_key_from_env_deprecated() -> Optional[str]:
-    """
-    Purpose: Legacy fallback shim for OpenAI key lookup.
-    Inputs/Outputs: none; returns resolved key or None.
-    Edge cases: Placeholder values are filtered out.
-    """
-    _warn_deprecated_env_lookup("resolve_openai_key")
-    key_priority = ["OPENAI_API_KEY", "RAILWAY_OPENAI_API_KEY", "API_KEY", "OPENAI_KEY"]
-    for key_name in key_priority:
-        candidate = _normalize_secret_candidate(get_env(key_name))
-        if candidate:
-            return candidate
-    return None
-
-
-def _resolve_openai_base_url_from_env_deprecated() -> Optional[str]:
-    """
-    Purpose: Legacy fallback shim for OpenAI base URL lookup.
-    Inputs/Outputs: none; returns base URL or None.
-    Edge cases: Empty values are ignored.
-    """
-    _warn_deprecated_env_lookup("resolve_openai_base_url")
-    for key_name in ("OPENAI_BASE_URL", "OPENAI_API_BASE_URL", "OPENAI_API_BASE"):
-        candidate = get_env(key_name)
-        if candidate and candidate.strip():
-            return candidate.strip()
-    return None
 
 
 class ClientOptions:
@@ -139,10 +95,10 @@ class HealthStatus:
 
 def resolve_openai_key(config: Optional[Config] = None) -> Optional[str]:
     """
-    Resolves OpenAI API key from Config (preferred) or deprecated env shim.
+    Resolves OpenAI API key from Config.
     
     Args:
-        config: Config instance (preferred). If None, uses deprecated env shim.
+        config: Config instance (preferred). If None, uses module-level Config.
     
     Returns:
         API key string or None if not found
@@ -152,15 +108,15 @@ def resolve_openai_key(config: Optional[Config] = None) -> Optional[str]:
     #audit Assumption: Config is canonical for runtime credentials; risk: hidden env drift; invariant: Config value preferred when present; handling: return normalized configured key.
     if configured_key:
         return configured_key
-    return _resolve_openai_key_from_env_deprecated()
+    return None
 
 
 def resolve_openai_base_url(config: Optional[Config] = None) -> Optional[str]:
     """
-    Resolves OpenAI base URL from Config (preferred) or deprecated env shim.
+    Resolves OpenAI base URL from Config.
     
     Args:
-        config: Config instance (preferred). If None, uses deprecated env shim.
+        config: Config instance (preferred). If None, uses module-level Config.
     
     Returns:
         Base URL string or None if not found
@@ -169,20 +125,15 @@ def resolve_openai_base_url(config: Optional[Config] = None) -> Optional[str]:
     configured_url = getattr(config_to_use, "OPENAI_BASE_URL", None)
     if configured_url and configured_url.strip():
         return configured_url.strip()
-    # Config was checked and no URL is set — return None without
-    # falling back to the deprecated env shim (avoids noisy warning
-    # on every startup when no custom base URL is configured).
-    if config is not None:
-        return None
-    return _resolve_openai_base_url_from_env_deprecated()
+    return None
 
 
 def get_openai_key_source(config: Optional[Config] = None) -> Optional[str]:
     """
-    Gets the source of the API key (from Config or env).
+    Gets the source of the API key from Config.
     
     Args:
-        config: Config instance (preferred). If None, checks env for backward compatibility.
+        config: Config instance (preferred). If None, checks module-level Config.
     
     Returns:
         Source identifier string or None
@@ -192,12 +143,6 @@ def get_openai_key_source(config: Optional[Config] = None) -> Optional[str]:
     configured_key = _normalize_secret_candidate(getattr(config_to_use, "OPENAI_API_KEY", None))
     if configured_key:
         return "OPENAI_API_KEY"
-
-    _warn_deprecated_env_lookup("get_openai_key_source")
-    key_priority = ["OPENAI_API_KEY", "RAILWAY_OPENAI_API_KEY", "API_KEY", "OPENAI_KEY"]
-    for key_name in key_priority:
-        if _normalize_secret_candidate(get_env(key_name)):
-            return key_name
     return None
 
 
@@ -398,10 +343,10 @@ def get_fallback_model() -> str:
 
 def get_gpt5_model(config: Optional[Config] = None) -> str:
     """
-    Gets the GPT-5 model from Config or deprecated env shim.
+    Gets the GPT-5 model from Config.
     
     Args:
-        config: Config instance (preferred). If None, falls back to deprecated env shim.
+        config: Config instance (preferred). If None, uses module-level Config.
     
     Returns:
         GPT-5 model name string
@@ -410,9 +355,7 @@ def get_gpt5_model(config: Optional[Config] = None) -> str:
     gpt5_model = getattr(config_to_use, "GPT5_MODEL", None) or getattr(config_to_use, "GPT51_MODEL", None)
     if gpt5_model:
         return gpt5_model
-
-    _warn_deprecated_env_lookup("get_gpt5_model")
-    return get_env("GPT51_MODEL") or get_env("GPT5_MODEL") or "gpt-5.1"
+    return "gpt-5.1"
 
 
 # Exports for backward compatibility

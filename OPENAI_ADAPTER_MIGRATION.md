@@ -7,7 +7,7 @@ This guide documents migration to unified OpenAI construction and adapter-first 
 - Python daemon CLI (`daemon-python/`)
 
 ## Locked Architecture
-- TypeScript canonical adapter: `src/adapters/openai.adapter.ts`
+- TypeScript canonical adapter: `src/core/adapters/openai.adapter.ts`
 - Worker canonical adapter: `workers/src/infrastructure/sdk/openai.ts`
 - Python canonical client singleton: `daemon-python/arcanos/openai/unified_client.py`
 - Python canonical adapter: `daemon-python/arcanos/openai/openai_adapter.py`
@@ -21,12 +21,12 @@ Old pattern:
 ```ts
 import OpenAI from "openai";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const response = await client.chat.completions.create({ ... });
+const response = await client.responses.create({ ... });
 ```
 
 New pattern:
 ```ts
-import { createOpenAIAdapter } from "../adapters/openai.adapter.js";
+import { createOpenAIAdapter } from "../core/adapters/openai.adapter.js";
 
 const adapter = createOpenAIAdapter({
   apiKey: "...",
@@ -35,9 +35,12 @@ const adapter = createOpenAIAdapter({
   maxRetries: 2,
 });
 
-const response = await adapter.chat.completions.create(
-  { model: "gpt-4o-mini", messages },
-  { signal, headers },
+const response = await adapter.responses.create(
+  {
+    model: "gpt-4.1-mini",
+    input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }]
+  },
+  { signal, headers }
 );
 ```
 
@@ -50,7 +53,7 @@ await adapter.images.generate(
 ```
 
 Escape hatch:
-- Use `getClient()` from `src/adapters/openai.adapter.ts` only when adapter surface does not yet cover a required Beta/Assistants API.
+- Use `getClient()` from `src/core/adapters/openai.adapter.ts` only when adapter surface does not yet cover a required Beta/Assistants API.
 
 ## Worker Migration Map
 Old pattern:
@@ -65,7 +68,7 @@ New pattern:
 Old pattern:
 ```python
 client = get_or_create_client(Config)
-resp = client.chat.completions.create(...)
+resp = client.responses.create(...)
 ```
 
 New pattern:
@@ -89,7 +92,7 @@ Method mapping:
 - embeddings: `embeddings(...)`
 
 Compatibility note:
-- Deprecated env fallbacks remain in `unified_client.py` as shims, but runtime paths should hydrate config/env via `Config` + `env.py`.
+- Unified client now resolves from `Config` only (legacy env shims removed).
 
 ## CI and Validation Expectations
 Authoritative required workflow:

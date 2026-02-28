@@ -8,14 +8,16 @@ raw SDK resources directly.
 from __future__ import annotations
 
 from io import BytesIO
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, Union
 
 from ..config import Config
 from .request_builders import (
-    build_chat_completion_request,
     build_embedding_request,
+    build_responses_request,
     build_transcription_request,
-    build_vision_request,
+    build_vision_responses_request,
+    extract_response_text,
 )
 from .unified_client import get_or_create_client
 
@@ -31,6 +33,23 @@ def _require_client() -> Any:
     if client is None:
         raise RuntimeError("OpenAI client is not initialized")
     return client
+
+
+def _extract_legacy_usage(response: Any) -> Any:
+    """
+    Purpose: Convert Responses API usage fields into legacy usage shape.
+    Inputs/Outputs: response object -> object with prompt/completion/total token attrs.
+    Edge cases: Missing usage metadata returns zero-valued token counters.
+    """
+    usage = getattr(response, "usage", None)
+    prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    completion_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or (prompt_tokens + completion_tokens))
+    return SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
 
 
 def chat_completion(
@@ -50,16 +69,17 @@ def chat_completion(
     resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
     resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
 
-    request_payload: Dict[str, Any] = build_chat_completion_request(
+    request_payload: Dict[str, Any] = build_responses_request(
         prompt=user_message,
         system_prompt=system_prompt,
         model=model or Config.OPENAI_MODEL,
         max_tokens=resolved_max_tokens,
         temperature=resolved_temperature,
+        top_p=None,
         conversation_history=conversation_history,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
-    return _require_client().chat.completions.create(**request_payload)
+    return _require_client().responses.create(**request_payload)
 
 
 def chat_stream(
@@ -79,7 +99,7 @@ def chat_stream(
     resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
     resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
 
-    request_payload: Dict[str, Any] = build_chat_completion_request(
+    request_payload: Dict[str, Any] = build_responses_request(
         prompt=user_message,
         system_prompt=system_prompt,
         model=model or Config.OPENAI_MODEL,
@@ -88,9 +108,17 @@ def chat_stream(
         conversation_history=conversation_history,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
-    request_payload["stream"] = True
-    request_payload["stream_options"] = {"include_usage": True}
-    return _require_client().chat.completions.create(**request_payload)
+    #audit Assumption: streaming compatibility can be emulated by yielding normalized text then usage object; risk: chunk-level latency semantics differ from old stream endpoint; invariant: consumer still receives iterable text + usage payload; handling: wrap non-stream response into generator.
+    response = _require_client().responses.create(**request_payload)
+    text_output = extract_response_text(response, "")
+    usage = _extract_legacy_usage(response)
+
+    def _stream_generator() -> Iterable[Any]:
+        if text_output:
+            yield text_output
+        yield usage
+
+    return _stream_generator()
 
 
 def vision_completion(
@@ -109,7 +137,7 @@ def vision_completion(
     resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
     resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
 
-    request_payload = build_vision_request(
+    request_payload = build_vision_responses_request(
         prompt=user_message,
         image_base64=image_base64,
         model=model or Config.OPENAI_VISION_MODEL,
@@ -117,7 +145,7 @@ def vision_completion(
         temperature=resolved_temperature,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
-    return _require_client().chat.completions.create(**request_payload)
+    return _require_client().responses.create(**request_payload)
 
 
 def transcribe(

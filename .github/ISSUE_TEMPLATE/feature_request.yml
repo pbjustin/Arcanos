@@ -11,7 +11,7 @@ body:
         - [ ] Feature aligns with AI-controlled architecture principles
         - [ ] Not a duplicate of existing feature requests
         - [ ] Backward compatibility impact considered
-        - [ ] OpenAI SDK v6.16.0 compatibility requirements identified
+        - [ ] OpenAI SDK v6.22.0 compatibility requirements identified
         - [ ] Railway deployment implications considered
 
   - type: textarea

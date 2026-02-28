@@ -6,6 +6,7 @@ import { RESILIENCE_CONSTANTS } from './resilience.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { formatErrorMessage } from "@core/lib/errors/reusable.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { buildResponsesRequest, convertResponseToLegacyChatCompletion } from './requestBuilders.js';
 import {
   buildFailureContext,
   buildFinalFallbackReason,
@@ -35,18 +36,60 @@ interface ChatCompletionWithFallback extends ChatCompletionResponse {
 const getTokensFromParams = (params: ChatCompletionParams): number =>
   params.max_tokens || params.max_completion_tokens || RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
 
+function extractPromptFromParams(params: ChatCompletionParams): string {
+  const messages = Array.isArray(params.messages) ? params.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== 'user') {
+      continue;
+    }
+    if (typeof message.content === 'string' && message.content.trim().length > 0) {
+      return message.content;
+    }
+    if (Array.isArray(message.content)) {
+      for (const contentPart of message.content) {
+        if (
+          contentPart &&
+          typeof contentPart === 'object' &&
+          (contentPart as { type?: unknown }).type === 'text' &&
+          typeof (contentPart as { text?: unknown }).text === 'string'
+        ) {
+          const normalizedText = (contentPart as { text: string }).text.trim();
+          if (normalizedText.length > 0) {
+            return normalizedText;
+          }
+        }
+      }
+    }
+  }
+  return 'Fallback request context.';
+}
+
 const executeChatCompletionRequest = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
   payload: ChatCompletionParams & { model: string },
 ): Promise<ChatCompletionResponse> => {
-  const requestPayload = { ...payload, stream: false as const };
-  const usesAdapter = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object';
-  //audit Assumption: adapter shape is detectable via chat property; risk: mis-detection calls wrong client; invariant: completion request must be sent once; handling: branch on adapter presence.
-  if (usesAdapter) {
-    return await clientOrAdapter.chat.completions.create(requestPayload) as ChatCompletionResponse;
-  }
+  const requestPayload = buildResponsesRequest({
+    prompt: extractPromptFromParams(payload),
+    model: payload.model,
+    maxTokens: getTokensFromParams(payload),
+    temperature: payload.temperature ?? undefined,
+    top_p: payload.top_p ?? undefined,
+    frequency_penalty: payload.frequency_penalty ?? undefined,
+    presence_penalty: payload.presence_penalty ?? undefined,
+    responseFormat: payload.response_format,
+    user: payload.user,
+    messages: payload.messages,
+    includeRoutingMessage: true
+  });
 
-  return await (clientOrAdapter as OpenAI).chat.completions.create(requestPayload) as ChatCompletionResponse;
+  const usesAdapter = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object';
+  //audit Assumption: fallback orchestration should execute against Responses API across client types; risk: mixed endpoint behavior across stages; invariant: one Responses call per attempt; handling: branch on adapter/client Responses surface.
+  const response = usesAdapter
+    ? await (clientOrAdapter as OpenAIAdapter).responses.create(requestPayload)
+    : await (clientOrAdapter as OpenAI).responses.create(requestPayload);
+
+  return convertResponseToLegacyChatCompletion(response, payload.model);
 };
 
 async function attemptModelCall(

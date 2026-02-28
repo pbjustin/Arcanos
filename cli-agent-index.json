@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-21T09:15:50.240Z",
+  "generatedAt": "2026-02-28T05:46:06.475Z",
   "scopes": [
     {
       "scope": "agent_core",
@@ -166,9 +166,6 @@
         },
         {
           "relativePath": "cli_v2/interaction/__init__.py"
-        },
-        {
-          "relativePath": "cli_v2/live_test_v2.py"
         },
         {
           "relativePath": "cli_v2/main.py"

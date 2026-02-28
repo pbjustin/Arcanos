@@ -16,13 +16,11 @@ describe('createChatCompletionWithFallback', () => {
       .mockRejectedValueOnce(new Error('primary failure'))
       .mockRejectedValueOnce(new Error('retry failure'))
       .mockRejectedValueOnce(new Error('gpt5 failure'))
-      .mockResolvedValueOnce({ id: 'final', model: finalModel, choices: [] });
+      .mockResolvedValueOnce({ id: 'final', model: finalModel, output_text: '' });
 
     const client = {
-      chat: {
-        completions: {
-          create: createSpy
-        }
+      responses: {
+        create: createSpy
       }
     } as any;
 

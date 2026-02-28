@@ -10,12 +10,26 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from .config import Config
 from .openai.unified_client import get_or_create_client
 from .openai.openai_adapter import chat_completion, chat_stream, transcribe, vision_completion
+from .openai.request_builders import extract_response_text
 
 # OpenAI pricing per token (USD)
 GPT4O_MINI_INPUT_COST = 0.15 / 1_000_000
 GPT4O_MINI_OUTPUT_COST = 0.60 / 1_000_000
 GPT4O_INPUT_COST = 5.00 / 1_000_000
 GPT4O_OUTPUT_COST = 15.00 / 1_000_000
+
+
+def _response_usage_tokens(response: Any) -> tuple[int, int, int]:
+    """
+    Purpose: Normalize Responses API usage fields into prompt/output/total token counts.
+    Inputs/Outputs: OpenAI response object -> (prompt_tokens, completion_tokens, total_tokens).
+    Edge cases: Missing usage metadata returns zeros.
+    """
+    usage = getattr(response, "usage", None)
+    prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    completion_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    total_tokens = int(getattr(usage, "total_tokens", prompt_tokens + completion_tokens) or (prompt_tokens + completion_tokens))
+    return prompt_tokens, completion_tokens, total_tokens
 
 
 def _is_mock_api_key(api_key: str) -> bool:
@@ -122,11 +136,8 @@ class GPTClient:
             )
 
             # Extract response
-            response_text = response.choices[0].message.content
-            tokens_used = response.usage.total_tokens
-
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
+            response_text = extract_response_text(response, "")
+            input_tokens, output_tokens, tokens_used = _response_usage_tokens(response)
             cost = (input_tokens * GPT4O_MINI_INPUT_COST) + (output_tokens * GPT4O_MINI_OUTPUT_COST)
 
             # Cache response
@@ -184,13 +195,23 @@ class GPTClient:
             )
 
             for chunk in stream:
-                if chunk.choices:
+                #audit Assumption: adapter stream may yield plain text chunks or legacy usage object; risk: attribute errors when handling mixed chunk shapes; invariant: emit text and final usage deterministically; handling: branch by chunk type/attributes.
+                if isinstance(chunk, str):
+                    if chunk:
+                        yield chunk
+                    continue
+
+                if hasattr(chunk, "choices") and chunk.choices:
                     delta = chunk.choices[0].delta.content
                     if delta:
                         yield delta
-                # Final chunk carries usage stats (no choices)
-                if chunk.usage:
+
+                if hasattr(chunk, "usage") and chunk.usage:
                     yield chunk.usage
+                    continue
+
+                if hasattr(chunk, "total_tokens"):
+                    yield chunk
 
         except AuthenticationError:
             raise ValueError("Invalid OpenAI API key. Check your .env file.")
@@ -235,11 +256,8 @@ class GPTClient:
                 model=Config.OPENAI_VISION_MODEL,
             )
 
-            response_text = response.choices[0].message.content
-            tokens_used = response.usage.total_tokens
-
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
+            response_text = extract_response_text(response, "")
+            input_tokens, output_tokens, tokens_used = _response_usage_tokens(response)
             cost = (input_tokens * GPT4O_INPUT_COST) + (output_tokens * GPT4O_OUTPUT_COST)
 
             return response_text, tokens_used, cost

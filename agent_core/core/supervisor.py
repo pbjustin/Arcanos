@@ -54,13 +54,13 @@ class Supervisor:
             tg.create_task(self._task_loop())
 
     async def _heartbeat_loop(self):
-        """Send periodic heartbeats to backend-service."""
+        """Send periodic heartbeats to the backend API."""
         while True:
             await asyncio.sleep(self.heartbeat_interval_seconds)
             await self.kernel.send_heartbeat()
 
     async def _task_loop(self):
-        """Poll backend-service for tasks and process each cycle."""
+        """Poll the backend API for tasks and process each cycle."""
         while True:
             await asyncio.sleep(self.task_poll_interval_seconds)
             await self.kernel.process_task_cycle()
