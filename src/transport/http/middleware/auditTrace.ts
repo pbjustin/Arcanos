@@ -17,20 +17,6 @@ import { generateRequestId } from "@shared/idGenerator.js";
 import { registerTraceEvent } from "@services/contextualReinforcement.js";
 
 /**
- * Request logger contract used by auditTrace.
- * Keeps type checks explicit while supporting optional timed logging.
- */
-interface AuditTraceLogger {
-  info: (message: string, context?: Record<string, unknown>) => void;
-  timed?: (
-    message: string,
-    duration: number,
-    context?: Record<string, unknown>,
-    metadata?: Record<string, unknown>
-  ) => void;
-}
-
-/**
  * Extended Response interface with audit trace ID in locals.
  */
 interface ResponseWithLocals extends Response {
@@ -55,9 +41,13 @@ export function auditTrace(req: Request, res: ResponseWithLocals, next: NextFunc
 
   res.locals.auditTraceId = traceId;
 
-  //audit Assumption: request-scoped logger may not expose timed helper; failure risk: middleware type mismatch; expected invariant: start/finish events are always logged; handling strategy: use optional timed and fallback info log.
-  const logger = (req.logger as AuditTraceLogger | undefined) ?? apiLogger.child({ traceId, requestId, path: req.path, method: req.method });
-  logger.info('Audit trace started');
+  //audit Assumption: req.logger may not expose duration-aware helpers; failure risk: middleware type incompatibility with Express declarations; expected invariant: request middleware remains assignable to RequestHandler; handling strategy: use req.logger when available, fallback to apiLogger timed events.
+  const requestLogger = req.logger;
+  if (requestLogger) {
+    requestLogger.info('audit.trace.started', { traceId, requestId, path: req.path, method: req.method });
+  } else {
+    apiLogger.info('audit.trace.started', { traceId, requestId, path: req.path, method: req.method });
+  }
 
   res.on('finish', () => {
     const duration = Date.now() - startTime;
@@ -71,11 +61,12 @@ export function auditTrace(req: Request, res: ResponseWithLocals, next: NextFunc
       timestamp: new Date().toISOString()
     });
 
-    if (typeof logger.timed === 'function') {
-      logger.timed('Audit trace completed', duration, { traceId, statusCode: res.statusCode });
-    } else {
-      logger.info('Audit trace completed', { traceId, statusCode: res.statusCode, durationMs: duration });
+    if (requestLogger) {
+      requestLogger.info('audit.trace.completed', { traceId, statusCode: res.statusCode, durationMs: duration });
+      return;
     }
+
+    apiLogger.timed('Audit trace completed', duration, { traceId, statusCode: res.statusCode });
   });
 
   next();

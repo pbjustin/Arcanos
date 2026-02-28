@@ -124,7 +124,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       temperature: visionTemperature,
       maxTokens: maxTokens || 1024
     });
-    const completion = await adapter.chat.completions.create(requestPayload);
+    const completion = await adapter.responses.create(requestPayload);
 
     const responseText = completion.choices[0]?.message?.content || '';
     const tokens = completion.usage?.total_tokens || 0;

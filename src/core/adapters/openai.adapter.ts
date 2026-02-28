@@ -61,13 +61,13 @@ export interface OpenAIAdapter {
    */
   responses: {
     create: (
-      params: ResponseCreateParamsNonStreaming,
+      params: any,
       options?: OpenAIResponsesRequestOptions
-    ) => Promise<OpenAIResponse>;
+    ) => Promise<any>;
     parse: (
       params: Record<string, unknown>,
       options?: OpenAIResponsesRequestOptions
-    ) => Promise<Record<string, unknown>>;
+    ) => Promise<any>;
   };
 
   /**
@@ -368,18 +368,34 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   return {
     responses: {
       create: async (
-        params: ResponseCreateParamsNonStreaming,
+        params: any,
         options?: OpenAIResponsesRequestOptions
-      ): Promise<OpenAIResponse> => {
-        //audit Assumption: responses.create is canonical runtime path; risk: drift back to legacy endpoints; invariant: adapter exposes single responses boundary; handling: forward payload/options directly.
-        return client.responses.create(params, options);
+      ): Promise<any> => {
+        const hasLegacyMessages =
+          params &&
+          typeof params === 'object' &&
+          Array.isArray((params as { messages?: unknown }).messages);
+
+        //audit Assumption: some call sites still pass chat-completions-shaped payloads to responses surface; risk: runtime schema mismatch on responses.create; invariant: adapter accepts both legacy and responses payloads during migration; handling: normalize legacy messages payloads through responses mapper then backfill legacy chat shape.
+        if (hasLegacyMessages) {
+          const nonStreamingParams = {
+            ...(params as ChatCompletionCreateParams),
+            stream: false
+          } as ChatCompletionCreateParams & { stream: false };
+          const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
+          const response = await client.responses.create(responsePayload, options);
+          return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
+        }
+
+        //audit Assumption: canonical responses payloads should pass through unchanged; risk: accidental mutation of advanced params; invariant: direct responses API path remains available; handling: forward params/options directly.
+        return client.responses.create(params as ResponseCreateParamsNonStreaming, options);
       },
       parse: async (
         params: Record<string, unknown>,
         options?: OpenAIResponsesRequestOptions
-      ): Promise<Record<string, unknown>> => {
+      ): Promise<any> => {
         //audit Assumption: parse may use evolving schema shape; risk: over-constrained types break compile on SDK updates; invariant: parse call remains available; handling: permissive typed pass-through.
-        return await client.responses.parse(params as never, options) as unknown as Record<string, unknown>;
+        return await client.responses.parse(params as never, options);
       }
     },
     chat: {

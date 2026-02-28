@@ -51,7 +51,7 @@ export const buildCompletionRequestPayload = (
     payload.presence_penalty = options.presence_penalty;
   }
   if (options.responseFormat !== undefined) {
-    payload.response_format = options.responseFormat;
+    (payload as Record<string, unknown>).text = { format: options.responseFormat as unknown };
   }
   if (options.user !== undefined) {
     payload.user = options.user;

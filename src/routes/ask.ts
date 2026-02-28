@@ -4,6 +4,7 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { requireAiEndpointAuth } from "@transport/http/middleware/aiEndpointAuth.js";
 import type {
   AIRequestDTO,
   ConfirmationRequiredResponseDTO,
@@ -20,8 +21,7 @@ import type {
   SystemStateResponse
 } from './ask/types.js';
 import { tryDispatchDaemonTools } from './ask/daemonTools.js';
-import { getOpenAIClientOrAdapter } from '../services/openai/clientBridge.js';
-import { getGPT5Model, hasValidAPIKey } from '../services/openai.js';
+import { getGPT5Model } from '../services/openai.js';
 import {
   getActiveIntentSnapshot,
   getLastRoutingUsed,
@@ -39,6 +39,7 @@ const router = express.Router();
 // Apply security middleware
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
+router.use(requireAiEndpointAuth);
 
 type AskRouteResponse =
   | AskResponse
@@ -308,13 +309,18 @@ export const handleAIRequest = async (
 
   function hasAuthHeader(): boolean {
     const authorizationHeader = req.get('authorization');
-    if (typeof authorizationHeader !== 'string') {
-      return false;
+    const apiKeyHeader = req.get('x-api-key');
+
+    let hasBearerAuth = false;
+    if (typeof authorizationHeader === 'string') {
+      const trimmed = authorizationHeader.trim();
+      //audit Assumption: CLI auth uses Bearer JWT in Authorization header; failure risk: static key fallback weakens auth boundary; expected invariant: only Bearer token format passes; handling strategy: require Bearer pattern.
+      hasBearerAuth = /^Bearer\s+\S+$/i.test(trimmed);
     }
 
-    const trimmed = authorizationHeader.trim();
-    //audit Assumption: CLI auth uses Bearer JWT in Authorization header; failure risk: static key fallback weakens auth boundary; expected invariant: only Bearer token format passes; handling strategy: require Bearer pattern.
-    return /^Bearer\s+\S+$/i.test(trimmed);
+    const hasApiKeyHeader = typeof apiKeyHeader === 'string' && apiKeyHeader.trim().length > 0;
+
+    return hasBearerAuth || hasApiKeyHeader;
   }
 
   function canBypassSystemAuth(): boolean {

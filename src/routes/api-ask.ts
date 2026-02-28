@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import { requireAiEndpointAuth } from "@transport/http/middleware/aiEndpointAuth.js";
 import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 import type {
   ConfirmationRequiredResponseDTO,
@@ -13,6 +14,7 @@ const router = express.Router();
 
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(120, 10 * 60 * 1000));
+router.use(requireAiEndpointAuth);
 
 const actionSchema = {
   message: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },

@@ -77,7 +77,7 @@ const executeChatCompletionRequest = async (
     top_p: payload.top_p ?? undefined,
     frequency_penalty: payload.frequency_penalty ?? undefined,
     presence_penalty: payload.presence_penalty ?? undefined,
-    responseFormat: payload.response_format,
+    responseFormat: payload.response_format as any,
     user: payload.user,
     messages: payload.messages,
     includeRoutingMessage: true

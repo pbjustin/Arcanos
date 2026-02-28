@@ -465,7 +465,7 @@ export function buildChatCompletionRequest(
   };
 
   if (responseFormat) {
-    requestPayload.response_format = responseFormat;
+    (requestPayload as unknown as Record<string, unknown>).text = { format: responseFormat as unknown };
   }
 
   if (user) {

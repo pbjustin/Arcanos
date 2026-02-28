@@ -51,7 +51,7 @@ async function createSyncedCompletion(systemPrompt: string, userPrompt: string, 
   const adapter = getRequiredAdapter();
   const tokenParams = getTokenParameter(model, GPT_SYNC_CONFIG.maxCompletionTokens);
 
-  const response = await adapter.chat.completions.create({
+  const response = await adapter.responses.create({
     model: model,
     messages: [
       { role: 'system', content: systemPrompt },

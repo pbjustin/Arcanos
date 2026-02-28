@@ -82,7 +82,7 @@ export async function interpretCommand(userCommand: string) {
   }
 
   try {
-    const response = await adapter.chat.completions.create({
+    const response = await adapter.responses.create({
       model: getDefaultModel(),
       messages: [
         { role: 'system', content: 'You are an AI that maps natural language commands to audit-safe mode toggles.' },
