@@ -33,37 +33,11 @@ function parseIntegerEnv(
   return value;
 }
 
-function parseApiKeys(): string[] {
-  const raw =
-    process.env.ARCANOS_AI_RUNTIME_API_KEYS ??
-    process.env.ARCANOS_AI_RUNTIME_API_KEY;
-
-  if (!raw || raw.trim().length === 0) {
-    throw new Error(
-      "Missing API key configuration. Set ARCANOS_AI_RUNTIME_API_KEY or ARCANOS_AI_RUNTIME_API_KEYS."
-    );
-  }
-
-  const keys = raw
-    .split(",")
-    .map((key) => key.trim())
-    .filter((key) => key.length > 0);
-
-  if (keys.length === 0) {
-    throw new Error(
-      "API key configuration is empty. Set ARCANOS_AI_RUNTIME_API_KEY or ARCANOS_AI_RUNTIME_API_KEYS."
-    );
-  }
-
-  return keys;
-}
-
 export const runtimeEnv = Object.freeze({
   PORT: parseIntegerEnv("PORT", DEFAULT_HTTP_PORT, 1, 65535),
   REDIS_HOST: requireEnv("REDIS_HOST"),
   REDIS_PORT: parseIntegerEnv("REDIS_PORT", DEFAULT_REDIS_PORT, 1, 65535),
   OPENAI_API_KEY: requireEnv("OPENAI_API_KEY"),
-  API_KEYS: parseApiKeys(),
   JOB_RETENTION_SECONDS: parseIntegerEnv(
     "AI_RUNTIME_JOB_RETENTION_SECONDS",
     DEFAULT_JOB_RETENTION_SECONDS,
@@ -83,3 +57,4 @@ export const runtimeEnv = Object.freeze({
     100000
   )
 });
+

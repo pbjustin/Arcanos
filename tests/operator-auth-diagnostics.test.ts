@@ -31,26 +31,24 @@ describe('operator auth diagnostics', () => {
     const response = await request(app).get('/status/safety/operator-auth');
     expect(response.status).toBe(200);
     expect(response.body?.status).toBe('ok');
-    expect(response.body?.operatorAuth?.required).toBe(true);
-    expect(response.body?.operatorAuth?.mode).toBe('enforced');
-    expect(response.body?.operatorAuth?.configured).toBe(true);
-    expect(response.body?.operatorAuth?.acceptedCredentials).toContain('Authorization: Bearer <ADMIN_KEY>');
+    expect(response.body?.operatorAuth?.required).toBe(false);
+    expect(response.body?.operatorAuth?.mode).toBe('disabled');
+    expect(response.body?.operatorAuth?.configured).toBe(false);
+    expect(response.body?.operatorAuth?.acceptedCredentials).toEqual([]);
   });
 
-  it('returns structured remediation when protected safety endpoint is called without credentials', async () => {
+  it('allows release endpoint without credentials when deterministic confirmation is provided', async () => {
     const app = createSafetyApp();
 
-    const response = await request(app).post('/status/safety/quarantine/example/release').send({
-      confirmation: 'release:example'
-    });
-    expect(response.status).toBe(401);
-    expect(response.body?.error).toBe('UNAUTHORIZED');
-    expect(response.body?.details).toContain('Authorization Bearer token or x-api-key is required');
-    expect(response.body?.remediation).toContain('Provide the ADMIN_KEY value in the Authorization Bearer header.');
-    expect(response.body?.diagnosticEndpoints).toContain('GET /status/safety/operator-auth');
+    const response = await request(app)
+      .post('/status/safety/quarantine/example/release')
+      .send({ confirmation: 'release:example' });
+
+    expect(response.status).toBe(404);
+    expect(response.body?.error).toBe('QUARANTINE_NOT_FOUND');
   });
 
-  it('disables operator auth requirement when ADMIN_KEY is not configured', async () => {
+  it('remains disabled when ADMIN_KEY is not configured', async () => {
     delete process.env.ADMIN_KEY;
     const app = createSafetyApp();
 
@@ -65,7 +63,6 @@ describe('operator auth diagnostics', () => {
       .send({ confirmation: 'release:example' });
 
     expect(releaseResponse.status).toBe(404);
-    expect(releaseResponse.headers['x-operator-auth-mode']).toBe('disabled');
     expect(releaseResponse.body?.error).toBe('QUARANTINE_NOT_FOUND');
   });
 });

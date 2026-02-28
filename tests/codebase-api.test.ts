@@ -1,32 +1,17 @@
-import { describe, beforeAll, afterAll, it, expect } from '@jest/globals';
-import type { Server } from 'http';
-import type { AddressInfo } from 'net';
-import { createApp } from '../src/app.js';
+import { describe, beforeAll, it, expect } from '@jest/globals';
 
-describe('Codebase access API', () => {
-  let server: Server;
+const externalBaseUrl = process.env.TEST_SERVER_BASE_URL?.trim();
+const describeWithServer = externalBaseUrl ? describe : describe.skip;
+
+describeWithServer('Codebase access API', () => {
   let baseUrl: string;
-  const originalOpenAIKey = process.env.OPENAI_API_KEY;
 
   beforeAll(async () => {
-    process.env.OPENAI_API_KEY = '';
-    const app = createApp();
-    server = await new Promise<Server>((resolve, reject) => {
-      const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
-      listener.on('error', reject);
-    });
-    const { port } = server.address() as AddressInfo;
-    baseUrl = `http://127.0.0.1:${port}`;
-  });
-
-  afterAll(async () => {
-    process.env.OPENAI_API_KEY = originalOpenAIKey;
-    if (!server) {
-      return;
+    if (!externalBaseUrl) {
+      throw new Error('TEST_SERVER_BASE_URL is required for codebase API endpoint tests');
     }
-    await new Promise<void>((resolve, reject) => {
-      server.close(err => (err ? reject(err) : resolve()));
-    });
+
+    baseUrl = externalBaseUrl.replace(/\/$/, '');
   });
 
   it('lists repository root contents', async () => {

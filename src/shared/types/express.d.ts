@@ -16,10 +16,14 @@ declare global {
   namespace Express {
     interface Request {
       /**
-       * Daemon Bearer token extracted from Authorization header
-       * Set by requireDaemonAuth middleware
+       * Daemon request token
+       * Set by daemon route middleware
        */
       daemonToken?: string;
+      /**
+       * Operator actor label used in safety audit events.
+       */
+      operatorActor?: string;
       /**
        * Dispatch governance decision for request lifecycle.
        * Set by memoryConsistencyGate middleware.
