@@ -1,6 +1,4 @@
 import express, { Request, Response } from 'express';
-import operatorAuth from '@transport/http/middleware/operatorAuth.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import {
   getActiveQuarantines,
   getActiveUnsafeConditions,
@@ -17,27 +15,17 @@ const router = express.Router();
 /**
  * GET /status/safety/operator-auth
  * Purpose: Expose non-secret operator authentication requirements for diagnostics.
- * Inputs/Outputs: No input; returns auth requirement metadata and safe probe routes.
- * Edge cases: Reports configured=false when ADMIN_KEY is missing.
  */
 router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
-  const configuredAdminKey = getConfig().adminKey?.trim();
-  //audit Assumption: diagnostics must not leak secrets; failure risk: key exposure; expected invariant: report only booleans and route metadata; handling strategy: never return raw credential values.
-  const isConfigured = Boolean(configuredAdminKey);
-  //audit Assumption: auth mode should reflect ADMIN_KEY presence; failure risk: caller assumes key enforcement when disabled; expected invariant: required=true only when configured; handling strategy: derive from config in response payload.
-  const authRequired = isConfigured;
-
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     operatorAuth: {
-      required: authRequired,
-      mode: authRequired ? 'enforced' : 'disabled',
-      configured: isConfigured,
-      acceptedCredentials: ['Authorization: Bearer <ADMIN_KEY>', 'x-api-key: <ADMIN_KEY>'],
-      protectedEndpoints: authRequired
-        ? ['POST /status/safety/quarantine/:quarantineId/release']
-        : []
+      required: false,
+      mode: 'disabled',
+      configured: false,
+      acceptedCredentials: [],
+      protectedEndpoints: []
     },
     diagnostics: {
       publicEndpoints: ['GET /health', 'GET /healthz', 'GET /status/safety', 'GET /status/safety/operator-auth']
@@ -48,8 +36,6 @@ router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
 /**
  * GET /status/safety
  * Purpose: Expose active safety conditions, quarantines, and counters.
- * Inputs/Outputs: No input; returns runtime safety snapshot summary.
- * Edge cases: Includes historical counters while filtering active controls.
  */
 router.get('/status/safety', (_req: Request, res: Response) => {
   const snapshot = getSafetyRuntimeSnapshot();
@@ -64,13 +50,10 @@ router.get('/status/safety', (_req: Request, res: Response) => {
 
 /**
  * POST /status/safety/quarantine/:quarantineId/release
- * Purpose: Operator-only explicit release flow for integrity quarantines.
- * Inputs/Outputs: quarantineId path param + deterministic confirmation; returns release status.
- * Edge cases: Rejects non-integrity quarantine release from this endpoint.
+ * Purpose: Explicit release flow for integrity quarantines.
  */
 router.post(
   '/status/safety/quarantine/:quarantineId/release',
-  operatorAuth,
   (req: Request, res: Response) => {
     const { quarantineId } = req.params;
     const headerConfirmed = resolveHeader(req.headers, 'x-confirmed')?.toLowerCase() === 'yes';
@@ -85,7 +68,6 @@ router.post(
         source: 'routes/safety.release'
       });
     } catch (error) {
-      //audit Assumption: release requires explicit deterministic confirmation; failure risk: accidental irreversible release; expected invariant: confirmation challenge must be satisfied; handling strategy: reject with 400.
       res.status(400).json({
         error: 'CONFIRMATION_REQUIRED',
         details: [
@@ -147,4 +129,3 @@ router.post(
 );
 
 export default router;
-

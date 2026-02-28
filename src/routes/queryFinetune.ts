@@ -3,13 +3,11 @@ import { Request, Response, Router } from 'express';
 import { DEFAULT_FINE_TUNE } from '../config/openai.js';
 import { runTrinity } from '../trinity/trinity.js';
 import { createRateLimitMiddleware, securityHeaders } from '@platform/runtime/security.js';
-import { requireAiEndpointAuth } from '@transport/http/middleware/aiEndpointAuth.js';
 
 const router = Router();
 
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(30, 15 * 60 * 1000));
-router.use(requireAiEndpointAuth);
 
 function getPrompt(body: { prompt?: unknown }): string | null {
   return typeof body.prompt === 'string' && body.prompt.trim().length > 0
@@ -50,3 +48,4 @@ export async function queryFinetuneHandler(req: Request, res: Response) {
 router.post('/query-finetune', queryFinetuneHandler);
 
 export default router;
+
