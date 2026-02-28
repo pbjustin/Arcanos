@@ -47,7 +47,7 @@ export async function gptFallbackClassifier(
   const response: any = await (openai.responses as any).create({
     model: 'gpt-4o-mini',
     temperature: 0,
-    max_tokens: 10,
+    max_output_tokens: 64,
     messages: [
       {
         role: 'system',
