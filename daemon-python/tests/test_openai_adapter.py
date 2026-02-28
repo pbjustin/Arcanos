@@ -123,16 +123,18 @@ def test_chat_stream_preserves_explicit_zero_generation_values(monkeypatch):
 
     calls = []
 
-    class FakeResponses:
+    class FakeCompletions:
         def create(self, **kwargs):
             calls.append(kwargs)
-            return SimpleNamespace(
-                output_text="stream-result",
-                usage=SimpleNamespace(input_tokens=0, output_tokens=0, total_tokens=0),
+            return iter(
+                [
+                    "stream-result",
+                    SimpleNamespace(total_tokens=0, prompt_tokens=0, completion_tokens=0),
+                ]
             )
 
     fake_client = SimpleNamespace(
-        responses=FakeResponses(),
+        chat=SimpleNamespace(completions=FakeCompletions()),
     )
 
     monkeypatch.setattr(openai_adapter, "_require_client", lambda: fake_client)
@@ -147,7 +149,9 @@ def test_chat_stream_preserves_explicit_zero_generation_values(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0]["temperature"] == 0.0
-    assert calls[0]["max_output_tokens"] == 0
+    assert calls[0]["max_tokens"] == 0
+    assert calls[0]["stream"] is True
+    assert calls[0]["stream_options"] == {"include_usage": True}
     assert stream[0] == "stream-result"
     assert stream[1].total_tokens == 0
 

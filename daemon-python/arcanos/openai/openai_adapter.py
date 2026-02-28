@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, Optional, Union
 
 from ..config import Config
 from .request_builders import (
+    build_chat_completion_request,
     build_embedding_request,
     build_responses_request,
     build_transcription_request,
@@ -99,7 +100,7 @@ def chat_stream(
     resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
     resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
 
-    request_payload: Dict[str, Any] = build_responses_request(
+    request_payload: Dict[str, Any] = build_chat_completion_request(
         prompt=user_message,
         system_prompt=system_prompt,
         model=model or Config.OPENAI_MODEL,
@@ -108,17 +109,17 @@ def chat_stream(
         conversation_history=conversation_history,
     )
     request_payload["timeout"] = Config.REQUEST_TIMEOUT
-    #audit Assumption: streaming compatibility can be emulated by yielding normalized text then usage object; risk: chunk-level latency semantics differ from old stream endpoint; invariant: consumer still receives iterable text + usage payload; handling: wrap non-stream response into generator.
-    response = _require_client().responses.create(**request_payload)
-    text_output = extract_response_text(response, "")
-    usage = _extract_legacy_usage(response)
+    request_payload["stream"] = True
+    request_payload["stream_options"] = {"include_usage": True}
 
-    def _stream_generator() -> Iterable[Any]:
-        if text_output:
-            yield text_output
-        yield usage
+    client = _require_client()
+    chat_completions = getattr(getattr(client, "chat", None), "completions", None)
+    create_stream = getattr(chat_completions, "create", None)
+    #audit Assumption: true streaming requires chat.completions stream endpoint; risk: missing SDK surface regresses latency semantics; invariant: callable stream create method exists; handling: raise explicit runtime error if unavailable.
+    if not callable(create_stream):
+        raise RuntimeError("OpenAI client does not support chat.completions streaming")
 
-    return _stream_generator()
+    return create_stream(**request_payload)
 
 
 def vision_completion(
