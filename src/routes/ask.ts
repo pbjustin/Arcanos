@@ -304,7 +304,8 @@ export const handleAIRequest = async (
   endpointName: string
 ) => {
   const mode = getMode(req.body);
-\n  if (mode === 'system_state') {
+
+  if (mode === 'system_state') {
     const stateRequest = systemStateUpdateSchema.safeParse(req.body);
     //audit Assumption: system mode requests are strictly validated; failure risk: ambiguous mode behavior; expected invariant: strict contract before execution; handling strategy: hard fail on validation errors.
     if (!stateRequest.success) {
@@ -529,5 +530,6 @@ export default router;
 
 export type { AskRequest, AskResponse };
 export { askValidationMiddleware };
+
 
 
