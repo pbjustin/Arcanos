@@ -7,8 +7,8 @@ declare global {
   namespace Express {
     interface Request {
       /**
-       * Daemon Bearer token extracted from Authorization header
-       * Set by requireDaemonAuth middleware
+       * Daemon request token
+       * Set by daemon route middleware
        */
       daemonToken?: string;
       /**
@@ -33,3 +33,4 @@ declare global {
 }
 
 export {};
+

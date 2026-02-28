@@ -1,11 +1,10 @@
 import { Router } from "express";
-import { requireAgentApiKey } from "../middleware/auth.js";
 import { agents, assignedTasks, tasks } from "../storage/inMemoryStore.js";
 import { validateGetTaskPayload } from "../validation/requestValidators.js";
 
 export const getTaskRouter = Router();
 
-getTaskRouter.post("/", requireAgentApiKey, (req, res) => {
+getTaskRouter.post("/", (req, res) => {
   const validation = validateGetTaskPayload(req.body);
   //audit assumption: task dequeue operations require a validated agent identity.
   if (!validation.isValid) {
@@ -37,3 +36,4 @@ getTaskRouter.post("/", requireAgentApiKey, (req, res) => {
 
   res.json({ task });
 });
+

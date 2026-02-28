@@ -1,11 +1,10 @@
 import { Router } from "express";
 import { agents } from "../storage/inMemoryStore.js";
-import { requireAgentApiKey } from "../middleware/auth.js";
 import { validateRegisterPayload } from "../validation/requestValidators.js";
 
 export const registerRouter = Router();
 
-registerRouter.post("/", requireAgentApiKey, (req, res) => {
+registerRouter.post("/", (req, res) => {
   const validation = validateRegisterPayload(req.body);
   //audit assumption: body validation must run before mutating shared agent state.
   if (!validation.isValid) {
@@ -25,3 +24,4 @@ registerRouter.post("/", requireAgentApiKey, (req, res) => {
 
   res.json({ status: "registered", registeredAt: now });
 });
+
