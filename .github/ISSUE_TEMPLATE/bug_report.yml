@@ -12,7 +12,7 @@ body:
         - [ ] Not a duplicate of existing issues
         - [ ] Environment details are complete
         - [ ] Logs and error messages are included
-        - [ ] OpenAI SDK v6.16.0 compatibility verified
+        - [ ] OpenAI SDK v6.22.0 compatibility verified
 
   - type: textarea
     id: description

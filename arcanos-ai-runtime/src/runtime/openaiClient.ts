@@ -1,4 +1,3 @@
-import { OpenAI } from "openai";
 import type {
   Response as OpenAIResponse,
   ResponseCreateParamsNonStreaming,
@@ -7,6 +6,7 @@ import type {
 import type { RuntimeBudget } from "./runtimeBudget.js";
 import { getSafeRemainingMs, assertBudgetAvailable } from "./runtimeBudget.js";
 import { OpenAIAbortError } from "./runtimeErrors.js";
+import { getRuntimeOpenAIClient } from "../ai/openaiClient.js";
 
 export interface GPT5Request {
   model: string;
@@ -16,21 +16,6 @@ export interface GPT5Request {
 }
 
 export type GPT5Response = OpenAIResponse;
-
-let client: OpenAI | null = null;
-
-function getClient(): OpenAI {
-  if (!client) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("OPENAI_API_KEY is required to call runGPT5");
-    }
-
-    client = new OpenAI({ apiKey });
-  }
-
-  return client;
-}
 
 function buildRequestPayload(
   request: GPT5Request
@@ -76,7 +61,7 @@ export async function runGPT5(
   }, safeRemaining);
 
   try {
-    const response = await getClient().responses.create(
+    const response = await getRuntimeOpenAIClient().responses.create(
       buildRequestPayload(request),
       { signal: controller.signal }
     );

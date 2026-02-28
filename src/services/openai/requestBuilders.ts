@@ -19,6 +19,11 @@
  */
 
 import type OpenAI from 'openai';
+import type {
+  Response as OpenAIResponse,
+  ResponseCreateParamsNonStreaming,
+  ResponseInput
+} from 'openai/resources/responses/responses';
 import type { ChatCompletionMessageParam, ChatCompletionResponseFormat, ImageSize } from './types.js';
 import { ARCANOS_ROUTING_MESSAGE } from './unifiedClient.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
@@ -122,6 +127,273 @@ export interface EmbeddingParams {
   model: string;
   /** User identifier */
   user?: string;
+}
+
+interface LegacyUsageShape {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+}
+
+function normalizeMessageContent(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== 'object') {
+          return '';
+        }
+        const typedPart = part as Record<string, unknown>;
+        if (typedPart.type === 'text' && typeof typedPart.text === 'string') {
+          return typedPart.text;
+        }
+        if (typedPart.type === 'input_text' && typeof typedPart.text === 'string') {
+          return typedPart.text;
+        }
+        return '';
+      })
+      .filter((part) => part.length > 0)
+      .join('\n');
+  }
+
+  return '';
+}
+
+function extractUsage(usage: unknown): { promptTokens: number; completionTokens: number; totalTokens: number } {
+  const typedUsage = (usage ?? {}) as LegacyUsageShape;
+  const promptTokens = Number.isFinite(typedUsage.input_tokens) ? Number(typedUsage.input_tokens) : 0;
+  const completionTokens = Number.isFinite(typedUsage.output_tokens) ? Number(typedUsage.output_tokens) : 0;
+  const totalTokens = Number.isFinite(typedUsage.total_tokens)
+    ? Number(typedUsage.total_tokens)
+    : promptTokens + completionTokens;
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens
+  };
+}
+
+/**
+ * Build a Responses API payload from chat-style params.
+ *
+ * Purpose:
+ * - Canonicalize runtime request construction on Responses API.
+ * Inputs/Outputs:
+ * - Input: chat-oriented params used across legacy call sites.
+ * - Output: OpenAI Responses non-streaming payload.
+ * Edge cases:
+ * - Empty/unsupported message parts are normalized to text.
+ */
+export function buildResponsesRequest(
+  params: ChatParams
+): ResponseCreateParamsNonStreaming {
+  const {
+    prompt,
+    systemPrompt,
+    model,
+    maxTokens = ROUTING_MAX_TOKENS,
+    temperature = OPENAI_COMPLETION_DEFAULTS.TEMPERATURE,
+    top_p = OPENAI_COMPLETION_DEFAULTS.TOP_P,
+    messages,
+    includeRoutingMessage = true,
+    responseFormat,
+    user
+  } = params;
+
+  let preparedMessages: ChatCompletionMessageParam[] =
+    messages && messages.length > 0 ? [...messages] : buildSystemPromptMessages(prompt, systemPrompt);
+
+  //audit Assumption: routing guard message must be prepended exactly once; risk: missing routing behavior or duplicate instructions; invariant: one routing system message present when enabled; handling: detect then prepend if absent.
+  if (includeRoutingMessage) {
+    const hasRoutingMessage = preparedMessages.some(
+      (message) =>
+        message.role === 'system' &&
+        typeof message.content === 'string' &&
+        message.content.includes(ARCANOS_ROUTING_MESSAGE)
+    );
+    if (!hasRoutingMessage) {
+      preparedMessages = [{ role: 'system', content: ARCANOS_ROUTING_MESSAGE }, ...preparedMessages];
+    }
+  }
+
+  const instructionText = preparedMessages
+    .filter((message) => message.role === 'system')
+    .map((message) => normalizeMessageContent(message.content))
+    .filter((value) => value.length > 0)
+    .join('\n\n');
+
+  const responseInput = preparedMessages
+    .filter((message) => message.role !== 'system')
+    .map((message) => {
+      const contentText = normalizeMessageContent(message.content);
+      return {
+        role: message.role === 'assistant' ? 'assistant' : 'user',
+        content: [{ type: 'input_text', text: contentText.length > 0 ? contentText : prompt }]
+      };
+    });
+
+  const tokenParameters = getTokenParameter(model || 'gpt-4.1-mini', maxTokens);
+  const maxOutputTokens = tokenParameters.max_completion_tokens || tokenParameters.max_tokens || maxTokens;
+
+  const payload: ResponseCreateParamsNonStreaming = {
+    model: model || 'gpt-4.1-mini',
+    input: (responseInput.length > 0
+      ? responseInput
+      : [{ role: 'user', content: [{ type: 'input_text', text: prompt }] }]) as unknown as ResponseInput,
+    temperature,
+    top_p,
+    max_output_tokens: maxOutputTokens
+  };
+
+  if (instructionText.length > 0) {
+    payload.instructions = instructionText;
+  }
+
+  //audit Assumption: legacy callers may still request structured JSON; risk: behavior drift when ignored; invariant: format hints forwarded when recognizable; handling: map supported response_format types to Responses text.format.
+  if (responseFormat && typeof responseFormat === 'object' && 'type' in responseFormat) {
+    const responseType = String((responseFormat as { type?: unknown }).type || '').toLowerCase();
+    if (responseType === 'json_object') {
+      payload.text = { format: { type: 'json_object' } };
+    } else if (responseType === 'json_schema') {
+      const jsonSchema = (responseFormat as { json_schema?: unknown }).json_schema;
+      payload.text = {
+        format: {
+          type: 'json_schema',
+          ...(jsonSchema && typeof jsonSchema === 'object' ? { json_schema: jsonSchema } : {})
+        } as never
+      };
+    }
+  }
+
+  if (user) {
+    payload.metadata = { user };
+  }
+
+  return payload;
+}
+
+/**
+ * Build a Responses API payload for vision analysis.
+ *
+ * @param params - Vision request parameters.
+ * @returns Responses API payload.
+ */
+export function buildVisionResponsesRequest(
+  params: VisionParams
+): ResponseCreateParamsNonStreaming {
+  const {
+    prompt,
+    imageBase64,
+    mimeType = 'image/png',
+    model = 'gpt-4o',
+    maxTokens = ROUTING_MAX_TOKENS,
+    temperature = OPENAI_COMPLETION_DEFAULTS.TEMPERATURE
+  } = params;
+
+  return {
+    model,
+    input: [
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: prompt },
+          {
+            type: 'input_image',
+            image_url: `data:${mimeType};base64,${imageBase64}`
+          }
+        ]
+      }
+    ] as unknown as ResponseInput,
+    temperature,
+    max_output_tokens: maxTokens
+  };
+}
+
+/**
+ * Extract text content from a Responses API response.
+ *
+ * @param response - Responses API response payload.
+ * @param fallback - Fallback text when no output text is present.
+ * @returns Normalized output text.
+ */
+export function extractResponseOutputText(response: OpenAIResponse, fallback = ''): string {
+  const typedOutputText = (response as { output_text?: unknown }).output_text;
+  if (typeof typedOutputText === 'string' && typedOutputText.trim().length > 0) {
+    return typedOutputText.trim();
+  }
+
+  const outputItems = Array.isArray(response.output) ? response.output : [];
+  for (const outputItem of outputItems) {
+    if (!outputItem || typeof outputItem !== 'object') {
+      continue;
+    }
+    const typedOutputItem = outputItem as unknown as Record<string, unknown>;
+    const contentItems = Array.isArray(typedOutputItem.content) ? typedOutputItem.content : [];
+    for (const contentItem of contentItems) {
+      if (!contentItem || typeof contentItem !== 'object') {
+        continue;
+      }
+      const typedContentItem = contentItem as Record<string, unknown>;
+      if (typedContentItem.type === 'output_text' && typeof typedContentItem.text === 'string') {
+        const normalizedText = typedContentItem.text.trim();
+        if (normalizedText.length > 0) {
+          return normalizedText;
+        }
+      }
+    }
+  }
+
+  return fallback;
+}
+
+/**
+ * Convert a Responses API response into a legacy ChatCompletion shape.
+ *
+ * Purpose:
+ * - Preserve compatibility with existing consumers while migrating internals.
+ * Inputs/Outputs:
+ * - Input: Responses API response + requested model.
+ * - Output: ChatCompletion-compatible object.
+ * Edge cases:
+ * - Missing usage metadata falls back to zero-valued token counts.
+ */
+export function convertResponseToLegacyChatCompletion(
+  response: OpenAIResponse,
+  requestedModel: string
+): OpenAI.Chat.Completions.ChatCompletion {
+  const outputText = extractResponseOutputText(response, '');
+  const usage = extractUsage(response.usage);
+  const createdSource = (response as { created_at?: unknown }).created_at;
+  const created = typeof createdSource === 'number'
+    ? Math.floor(createdSource)
+    : Math.floor(Date.now() / 1000);
+
+  return {
+    id: response.id || `legacy_${Date.now()}`,
+    object: 'chat.completion',
+    created,
+    model: response.model || requestedModel,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: outputText,
+          refusal: null
+        },
+        finish_reason: 'stop',
+        logprobs: null
+      }
+    ],
+    usage: {
+      prompt_tokens: usage.promptTokens,
+      completion_tokens: usage.completionTokens,
+      total_tokens: usage.totalTokens
+    }
+  };
 }
 
 /**
@@ -351,8 +623,12 @@ export function buildEmbeddingRequest(
  */
 export default {
   buildChatCompletionRequest,
+  buildResponsesRequest,
   buildVisionRequest,
+  buildVisionResponsesRequest,
   buildTranscriptionRequest,
   buildImageRequest,
-  buildEmbeddingRequest
+  buildEmbeddingRequest,
+  extractResponseOutputText,
+  convertResponseToLegacyChatCompletion
 };

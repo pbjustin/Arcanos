@@ -178,7 +178,7 @@ export async function runIntakeStage(
  * Edge case: throws when runtime budget is missing/exhausted because no fallback path exists.
  */
 export async function runReasoningStage(
-  _client: OpenAI,
+  client: OpenAI,
   framedRequest: string,
   tier?: Tier,
   runtimeBudget?: RuntimeBudget
@@ -190,7 +190,12 @@ export async function runReasoningStage(
   assertBudgetAvailable(runtimeBudget);
 
   logGPT5Invocation('Primary reasoning stage', framedRequest);
-  const structuredReasoning = await runStructuredReasoning(framedRequest, runtimeBudget);
+  const gpt5ModelUsed = getGPT5Model();
+  const structuredReasoning = await runStructuredReasoning(client, gpt5ModelUsed, framedRequest, runtimeBudget);
+  //audit Assumption: structured reasoning helper enforces non-null payload; risk: downstream field access crash if contract regresses; invariant: reasoning payload exists before ledger mapping; handling: explicit guard.
+  if (!structuredReasoning) {
+    throw new Error('Model failed to provide structured reasoning.');
+  }
 
   const reasoningLedger: ReasoningLedger = {
     steps: structuredReasoning.reasoning_steps,
@@ -201,7 +206,6 @@ export async function runReasoningStage(
     justification: structuredReasoning.chosen_path_justification
   };
 
-  const gpt5ModelUsed = getGPT5Model();
   logger.info('GPT-5 reasoning confirmed with schema-constrained output', {
     module: 'trinity',
     operation: 'gpt5-reasoning',

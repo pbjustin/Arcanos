@@ -25,7 +25,7 @@ export async function checkOpenAICompatibility(
     for (const { pattern, message } of oldPatterns) {
       if (pattern.test(diff)) {
         issues.push(message);
-        details.push('Update to use latest OpenAI SDK v5.15.0+ patterns');
+        details.push('Update to use latest OpenAI SDK v6.22.0+ patterns');
       }
     }
 
@@ -52,9 +52,9 @@ export async function checkOpenAICompatibility(
         const versionNumber = openaiVersion.replace(/[^\d.]/g, '');
         const [major, minor] = versionNumber.split('.').map(Number);
 
-        if (major < 5 || (major === 5 && minor < 15)) {
+        if (major < 6 || (major === 6 && minor < 22)) {
           issues.push('Outdated OpenAI SDK version');
-          details.push('Update to OpenAI SDK v5.15.0 or later');
+          details.push('Update to OpenAI SDK v6.22.0 or later');
         }
       }
     } catch {

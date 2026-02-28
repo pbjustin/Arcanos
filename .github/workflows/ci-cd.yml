@@ -145,7 +145,7 @@ jobs:
         run: npm run build
 
       - name: 🚄 Validate Railway compatibility
-        run: node validate-railway-compatibility.js
+        run: npm run validate:railway
 
       - name: 🐳 Test Docker build
         run: |
