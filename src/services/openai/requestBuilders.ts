@@ -153,6 +153,9 @@ function normalizeMessageContent(content: unknown): string {
         if (typedPart.type === 'input_text' && typeof typedPart.text === 'string') {
           return typedPart.text;
         }
+        if (typedPart.type === 'output_text' && typeof typedPart.text === 'string') {
+          return typedPart.text;
+        }
         return '';
       })
       .filter((part) => part.length > 0)
@@ -229,9 +232,11 @@ export function buildResponsesRequest(
     .filter((message) => message.role !== 'system')
     .map((message) => {
       const contentText = normalizeMessageContent(message.content);
+      const mappedRole = message.role === 'assistant' ? 'assistant' : 'user';
+      const contentType = mappedRole === 'assistant' ? 'output_text' : 'input_text';
       return {
-        role: message.role === 'assistant' ? 'assistant' : 'user',
-        content: [{ type: 'input_text', text: contentText.length > 0 ? contentText : prompt }]
+        role: mappedRole,
+        content: [{ type: contentType, text: contentText.length > 0 ? contentText : prompt }]
       };
     });
 
@@ -632,3 +637,4 @@ export default {
   extractResponseOutputText,
   convertResponseToLegacyChatCompletion
 };
+
