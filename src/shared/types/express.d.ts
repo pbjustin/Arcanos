@@ -21,6 +21,10 @@ declare global {
        */
       daemonToken?: string;
       /**
+       * Operator actor label used in safety audit events.
+       */
+      operatorActor?: string;
+      /**
        * Dispatch governance decision for request lifecycle.
        * Set by memoryConsistencyGate middleware.
        */
@@ -54,4 +58,3 @@ declare global {
 }
 
 export {};
-
