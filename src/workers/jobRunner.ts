@@ -87,8 +87,8 @@ async function run(): Promise<void> {
         try {
           resetOpenAIAdapter();
           openai = initOpenAIClient();
-        } catch {
-          // ignore secondary failures
+        } catch (reinitError: unknown) {
+          console.error('[jobRunner] Failed to re-initialize OpenAI client during error recovery:', resolveErrorMessage(reinitError));
         }
       }
 
