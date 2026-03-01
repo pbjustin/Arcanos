@@ -98,7 +98,7 @@ def verify_trust_token(token: str) -> dict:
 
     # --- 7. Nonce replay prevention ---
     exp = payload["exp"]
-    ttl = exp - now
+    ttl = exp - time.time()
 
     if ttl <= 0:
         raise RuntimeError("Token already expired — nonce TTL would be non-positive")
