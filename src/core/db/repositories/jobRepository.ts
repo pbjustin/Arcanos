@@ -4,7 +4,7 @@
  * Handles job data storage and retrieval operations.
  */
 
-import { isDatabaseConnected } from "@core/db/client.js";
+import { getPool, isDatabaseConnected } from "@core/db/client.js";
 import type { JobData } from "@core/db/schema.js";
 import { query } from "@core/db/query.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -52,6 +52,66 @@ export async function updateJob(
   );
   
   return result.rows[0];
+}
+
+/**
+ * Get a job by id
+ */
+export async function getJobById(jobId: string): Promise<JobData | null> {
+  if (!isDatabaseConnected()) {
+    return null;
+  }
+
+  const result = await query(
+    'SELECT * FROM job_data WHERE id = $1 LIMIT 1',
+    [jobId]
+  );
+
+  return result.rows[0] || null;
+}
+
+/**
+ * Atomically claim the next pending job using SKIP LOCKED.
+ * Returns null when no jobs are pending.
+ */
+export async function claimNextPendingJob(): Promise<JobData | null> {
+  if (!isDatabaseConnected()) {
+    throw new Error('Database not configured');
+  }
+
+  const pool = getPool();
+  if (!pool) {
+    throw new Error('Database pool unavailable');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const result = await client.query(
+      `UPDATE job_data
+       SET status = 'running', updated_at = NOW()
+       WHERE id = (
+         SELECT id FROM job_data
+         WHERE status = 'pending'
+         ORDER BY created_at ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       RETURNING *`,
+      []
+    );
+
+    await client.query('COMMIT');
+
+    return result.rows[0] || null;
+  } catch (error: unknown) {
+    await client.query('ROLLBACK');
+    console.error('Error claiming pending job:', resolveErrorMessage(error));
+    return null;
+  } finally {
+    client.release();
+  }
 }
 
 /**
