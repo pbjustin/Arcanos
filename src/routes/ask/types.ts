@@ -16,6 +16,7 @@ export type AskRequest = AIRequestDTO & {
   prompt?: string;
   message?: string;
   mode?: AskMode | string;
+  async?: boolean;
   subject?: string;
   expectedVersion?: number;
   patch?: {
@@ -115,3 +116,4 @@ export interface SystemStateResponse {
   generatedAt: string;
   confidence: number;
 }
+

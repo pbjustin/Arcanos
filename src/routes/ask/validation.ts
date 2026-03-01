@@ -9,6 +9,7 @@ type SystemMode = (typeof SYSTEM_MODES)[number];
 // Enhanced validation schema for ask requests that accepts multiple text field aliases
 const askValidationSchema = {
   mode: { type: 'string' as const, maxLength: 64, sanitize: true },
+  async: { type: 'boolean' as const },
   prompt: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
   message: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
   userInput: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
@@ -106,3 +107,4 @@ export const askValidationMiddleware = (req: Request, res: Response, next: () =>
   req.body = validation.sanitized;
   next();
 };
+
