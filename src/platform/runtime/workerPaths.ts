@@ -41,17 +41,20 @@ export function resolveWorkersDirectory(): WorkersDirectoryResolution {
   const checked: string[] = [];
   const candidates: string[] = [];
 
+  const cwd = process.cwd();
+
   // Use config layer for env access (adapter boundary pattern)
   const envOverride = getEnv('WORKERS_DIRECTORY');
-  if (envOverride) {
-    candidates.push(
-      path.isAbsolute(envOverride)
-        ? envOverride
-        : path.resolve(process.cwd(), envOverride)
-    );
+  const resolvedEnvOverride = envOverride
+    ? path.isAbsolute(envOverride)
+      ? envOverride
+      : path.resolve(cwd, envOverride)
+    : undefined;
+
+  if (resolvedEnvOverride) {
+    candidates.push(resolvedEnvOverride);
   }
 
-  const cwd = process.cwd();
   const cwdIsDist = path.basename(cwd).toLowerCase() === 'dist';
   const cwdDistWorkers = cwdIsDist ? path.resolve(cwd, 'workers') : path.resolve(cwd, 'dist', 'workers');
   const cwdWorkers = path.resolve(cwd, 'workers');
@@ -79,12 +82,7 @@ export function resolveWorkersDirectory(): WorkersDirectoryResolution {
   }
 
   // Keep fallback path stable and dev-friendly.
-  const fallback =
-    envOverride
-      ? path.isAbsolute(envOverride)
-        ? envOverride
-        : path.resolve(cwd, envOverride)
-      : cwdWorkers;
+  const fallback = resolvedEnvOverride ?? cwdWorkers;
 
   return { path: fallback, exists: false, checked };
 }
