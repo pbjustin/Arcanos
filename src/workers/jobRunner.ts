@@ -12,9 +12,20 @@ import { createRuntimeBudget } from "../runtime/runtimeBudget.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getOpenAIAdapter, resetOpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+const COGNITIVE_DOMAIN_VALUES: readonly CognitiveDomain[] = ['diagnostic', 'code', 'creative', 'natural', 'execution'];
+
+function normalizeCognitiveDomain(value: unknown): CognitiveDomain | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  return COGNITIVE_DOMAIN_VALUES.includes(value as CognitiveDomain) ? (value as CognitiveDomain) : undefined;
 }
 
 function initOpenAIClient() {
@@ -62,7 +73,7 @@ async function run(): Promise<void> {
       const prompt = typeof input.prompt === 'string' ? input.prompt : '';
       const sessionId = typeof input.sessionId === 'string' ? input.sessionId : undefined;
       const overrideAuditSafe = typeof input.overrideAuditSafe === 'string' ? input.overrideAuditSafe : undefined;
-      const cognitiveDomain = typeof input.cognitiveDomain === 'string' ? input.cognitiveDomain : undefined;
+      const cognitiveDomain = normalizeCognitiveDomain(input.cognitiveDomain);
 
       if (!prompt) {
         await updateJob(job.id, 'failed', null, 'Missing prompt in job.input');
