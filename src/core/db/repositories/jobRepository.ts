@@ -108,7 +108,7 @@ export async function claimNextPendingJob(): Promise<JobData | null> {
   } catch (error: unknown) {
     await client.query('ROLLBACK');
     console.error('Error claiming pending job:', resolveErrorMessage(error));
-    return null;
+    throw error;
   } finally {
     client.release();
   }
