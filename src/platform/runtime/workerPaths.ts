@@ -19,6 +19,14 @@ interface WorkersDirectoryResolution {
   checked: string[];
 }
 
+function existsDir(p: string): boolean {
+  try {
+    return fs.existsSync(p) && fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve the most appropriate workers directory for the current runtime.
  *
@@ -43,11 +51,20 @@ export function resolveWorkersDirectory(): WorkersDirectoryResolution {
     );
   }
 
-  candidates.push(path.resolve(process.cwd(), 'workers'));
+  const cwd = process.cwd();
+  const cwdIsDist = path.basename(cwd).toLowerCase() === 'dist';
+  const cwdDistWorkers = cwdIsDist ? path.resolve(cwd, 'workers') : path.resolve(cwd, 'dist', 'workers');
+  const cwdWorkers = path.resolve(cwd, 'workers');
 
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  candidates.push(path.resolve(moduleDir, '../../workers'));
-  candidates.push(path.resolve(moduleDir, '../../../workers'));
+  const moduleDistWorkersA = path.resolve(moduleDir, '../../workers');   // typically dist/workers
+  const moduleDistWorkersB = path.resolve(moduleDir, '../../../workers'); // fallback
+
+  // Prefer dist/workers only when present; otherwise preserve source-first fallback.
+  candidates.push(cwdDistWorkers);
+  candidates.push(moduleDistWorkersA);
+  candidates.push(moduleDistWorkersB);
+  candidates.push(cwdWorkers);
 
   for (const candidate of candidates) {
     if (checked.includes(candidate)) {
@@ -56,15 +73,18 @@ export function resolveWorkersDirectory(): WorkersDirectoryResolution {
 
     checked.push(candidate);
 
-    if (fs.existsSync(candidate)) {
+    if (existsDir(candidate)) {
       return { path: candidate, exists: true, checked };
     }
   }
 
-  const fallback = candidates[0] ?? path.resolve(process.cwd(), 'workers');
-  if (!checked.includes(fallback)) {
-    checked.push(fallback);
-  }
+  // Keep fallback path stable and dev-friendly.
+  const fallback =
+    envOverride
+      ? path.isAbsolute(envOverride)
+        ? envOverride
+        : path.resolve(cwd, envOverride)
+      : cwdWorkers;
 
   return { path: fallback, exists: false, checked };
 }
