@@ -35,8 +35,8 @@
     }
   },
   "dependencies": {
-    "@arcanos/runtime": "workspace:*",
-    "openai": "^4.0.0"
+    "@arcanos/runtime": "file:../arcanos-runtime",
+    "openai": "^6.22.0"
   },
   "types": "dist/index.d.ts",
   "scripts": {
@@ -44,3 +44,5 @@
     "clean": "rm -rf dist"
   }
 }
+
+

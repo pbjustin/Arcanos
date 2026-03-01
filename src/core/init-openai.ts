@@ -62,7 +62,9 @@ export function initOpenAI(app: Express): void {
       getCircuitBreakerSnapshot: getCircuitBreakerSnapshot as any,
       isCacheEnabled: () => true,
 
-      trace: (event, data) => recordTraceEvent(event, data as any),
+      trace: (event, data) => {
+        void recordTraceEvent(event, data as any);
+      },
       logger: {
         info: (message, meta) => aiLogger.info(message, meta as any),
         warn: (message, meta) => aiLogger.warn(message, meta as any),
@@ -104,3 +106,5 @@ export function initOpenAI(app: Express): void {
     clearAdapter();
   }
 }
+
+
