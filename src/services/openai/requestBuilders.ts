@@ -25,7 +25,7 @@ import type {
   ResponseInput
 } from 'openai/resources/responses/responses';
 import type { ChatCompletionMessageParam, ChatCompletionResponseFormat, ImageSize } from './types.js';
-import { ARCANOS_ROUTING_MESSAGE } from './unifiedClient.js';
+import { getRoutingMessage } from '@arcanos/openai/unifiedClient';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL, ROUTING_MAX_TOKENS } from './config.js';
@@ -215,10 +215,10 @@ export function buildResponsesRequest(
       (message) =>
         message.role === 'system' &&
         typeof message.content === 'string' &&
-        message.content.includes(ARCANOS_ROUTING_MESSAGE)
+        message.content.includes(getRoutingMessage())
     );
     if (!hasRoutingMessage) {
-      preparedMessages = [{ role: 'system', content: ARCANOS_ROUTING_MESSAGE }, ...preparedMessages];
+      preparedMessages = [{ role: 'system', content: getRoutingMessage() }, ...preparedMessages];
     }
   }
 
@@ -443,12 +443,12 @@ export function buildChatCompletionRequest(
     const hasRoutingMessage = preparedMessages.some(
       msg => msg.role === 'system' && 
       typeof msg.content === 'string' && 
-      msg.content.includes(ARCANOS_ROUTING_MESSAGE)
+      msg.content.includes(getRoutingMessage())
     );
 
     if (!hasRoutingMessage) {
       preparedMessages = [
-        { role: 'system', content: ARCANOS_ROUTING_MESSAGE },
+        { role: 'system', content: getRoutingMessage() },
         ...preparedMessages
       ];
     }

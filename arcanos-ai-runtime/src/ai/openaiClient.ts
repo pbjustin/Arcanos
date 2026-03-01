@@ -1,4 +1,5 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
+import { createOpenAIClient } from "@arcanos/openai/client";
 
 let runtimeClient: OpenAI | null = null;
 
@@ -12,11 +13,8 @@ export function getRuntimeOpenAIClient(): OpenAI {
   }
 
   if (!runtimeClient) {
-    runtimeClient = new OpenAI({
-      apiKey,
-      timeout: 120000,
-      maxRetries: 2
-    });
+    runtimeClient = createOpenAIClient({ apiKey, timeoutMs: 120000 });
+    // NOTE: retries should be applied via retryWithBackoff at call sites (shared).
   }
 
   return runtimeClient;

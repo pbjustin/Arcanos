@@ -36,9 +36,9 @@ import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_
 import { enforceTokenCap } from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Tier } from './trinityTier.js';
-import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
-import { assertBudgetAvailable } from '../../runtime/runtimeBudget.js';
-import { runStructuredReasoning } from '../../runtime/openaiClient.js';
+import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { assertBudgetAvailable } from '@platform/resilience/runtimeBudget.js';
+import { runStructuredReasoning } from '@services/openai.js';
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {

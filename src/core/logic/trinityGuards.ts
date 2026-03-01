@@ -9,8 +9,8 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
 import type { Tier } from './trinityTier.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
-import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
-import { assertBudgetAvailable, getSafeRemainingMs } from '../../runtime/runtimeBudget.js';
+import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 
 // --- Concurrency Governor ---
 

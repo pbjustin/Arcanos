@@ -5,7 +5,9 @@
  * All worker OpenAI access should route through this adapter.
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
+import { createOpenAIClient } from '@arcanos/openai/client';
+import { retryWithBackoff } from '@arcanos/openai/retry';
 import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
@@ -211,13 +213,8 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
   }
 
   //audit Assumption: constructor remains centralized in this module only; risk: accidental duplicate factories; invariant: single worker construction boundary; handling: use localized constructor alias.
-  const OpenAIClient = OpenAI;
-  const client = new OpenAIClient({
-    apiKey: config.apiKey,
-    timeout: config.timeoutMs,
-    maxRetries: config.maxRetries,
-    ...(config.baseURL ? { baseURL: config.baseURL } : {})
-  });
+  const client = createOpenAIClient({ apiKey: config.apiKey, baseURL: config.baseURL, timeoutMs: config.timeoutMs });
+  // NOTE: maxRetries handled by shared retryWithBackoff wrapper where needed.
 
   return {
     responses: {
@@ -226,7 +223,7 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
         options?: WorkerOpenAIRequestOptions
       ): Promise<OpenAIResponse> => {
         //audit Assumption: worker OpenAI requests should default to Responses API; risk: endpoint drift between runtime surfaces; invariant: worker adapter exposes responses boundary; handling: delegate to SDK responses.create.
-        return client.responses.create(params, options);
+        return retryWithBackoff(() => client.responses.create(params, options), { signal: options?.signal });
       }
     },
     chat: {
@@ -238,14 +235,14 @@ export function createWorkerOpenAIAdapter(): WorkerOpenAIAdapter {
           const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
           const responsePayload = buildWorkerResponsesPayload(nonStreamingParams);
           //audit Assumption: legacy worker chat callers must execute via Responses API to avoid dual-surface drift; risk: inconsistent behavior between handlers; invariant: single execution surface; handling: translate chat payload, then convert response to legacy chat shape.
-          const response = await client.responses.create(responsePayload, options);
+          const response = await retryWithBackoff(() => client.responses.create(responsePayload, options), { signal: options?.signal });
           return convertWorkerResponseToChatCompletion(response, String(nonStreamingParams.model || config.defaultChatModel));
         }
       }
     },
     embeddings: {
       create: async (params: EmbeddingCreateParams): Promise<CreateEmbeddingResponse> => {
-        return client.embeddings.create(params);
+        return retryWithBackoff(() => client.embeddings.create(params));
       }
     },
     getClient: () => client,

@@ -8,7 +8,7 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import { validateAIRequest, handleAIError } from "@transport/http/requestHandler.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { harvestDatasetsFromAudit } from "@services/datasetHarvester.js";
-import { createRuntimeBudget } from '../../../runtime/runtimeBudget.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 type AIRequest = AIRequestDTO & {
   prompt?: string;
