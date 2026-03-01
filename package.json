@@ -13,13 +13,13 @@
     "dev": "npm run build:packages && npm run build:workers && tsc && tsc-alias && npm run dist:check-aliases && npm run build:copy-assets && node --loader ./scripts/esm-alias-loader.mjs dist/start-server.js",
     "dev:inspect": "npm run build && node --loader ./scripts/esm-alias-loader.mjs --inspect dist/start-server.js",
     "dev:watch": "tsc --watch",
-    "build": "npm run build:packages && npm run build:workers && tsc && tsc-alias && npm run dist:check-aliases && npm run build:copy-assets",
+    "build": "npm run build:packages && npm run build:workers:only && tsc && tsc-alias && npm run dist:check-aliases && npm run build:copy-assets",
     "build:copy-assets": "node scripts/copy-assets.cjs",
     "dist:repair-aliases": "node scripts/repair-dist-aliases.js --rewrite",
     "dist:check-aliases": "node scripts/repair-dist-aliases.js --check",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "build:workers": "cd workers && npm run build:workers && cd ..",
+    "build:workers": "npm run build:packages && npm run build:workers:only",
     "test": "npm run build:packages && node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:integration": "npm run build:packages && node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPattern=integration",
     "test:unit": "npm run build:packages && node scripts/jest-unit-helper.mjs",
@@ -60,7 +60,8 @@
     "validate:all": "npm run guard:commit && npm run type-check && npm run lint && npm run build && npm test && npm run validate:railway && npm run validate:backend-cli:contract && npm run validate:backend-cli:offline",
     "postinstall": "node -e \"try { const fs = require('fs'); const path = require('path'); const scriptPath = path.join(process.cwd(), 'scripts', 'setup-auto-sync.js'); if (!fs.existsSync(scriptPath)) { process.exit(0); } try { require(scriptPath); } catch(e) { if (e.code === 'MODULE_NOT_FOUND') { process.exit(0); } throw e; } } catch(e) { process.exit(0); }\" || true",
     "boundary-check": "ts-node scripts/check-boundaries.ts",
-    "build:packages": "npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai"
+    "build:packages": "npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
+    "build:workers:only": "cd workers && npm run build:workers && cd .."
   },
   "keywords": [
     "ai",
