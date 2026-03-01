@@ -196,7 +196,7 @@ export async function testModelTokenParameter(
   try {
     await (client.responses as any).create({
       model: modelName,
-      messages: [{ role: 'user', content: 'test' }],
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
       max_tokens: 16,
       stream: false
     });
@@ -216,7 +216,7 @@ export async function testModelTokenParameter(
       try {
         await (client.responses as any).create({
           model: modelName,
-          messages: [{ role: 'user', content: 'test' }],
+          input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
           max_completion_tokens: 16,
           stream: false
         });

@@ -48,13 +48,13 @@ export async function gptFallbackClassifier(
     model: 'gpt-4o-mini',
     temperature: 0,
     max_output_tokens: 64,
-    messages: [
+    instructions:
+      'Classify the request into exactly one of: diagnostic, code, creative, natural, execution. Return only the label.',
+    input: [
       {
-        role: 'system',
-        content:
-          'Classify the request into exactly one of: diagnostic, code, creative, natural, execution. Return only the label.'
-      },
-      { role: 'user', content: truncated }
+        role: 'user',
+        content: [{ type: 'input_text', text: truncated.length > 0 ? truncated : ' ' }]
+      }
     ]
   });
 
