@@ -29,7 +29,6 @@ COPY tsconfig.json ./
 
 # Install dev dependencies (override NODE_ENV) and build
 RUN npm install --include=dev --no-audit --no-fund && \
-    cd workers && npm install --no-audit --no-fund && cd .. && \
     npm run build:workers && \
     npm run build
 
@@ -52,4 +51,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start with Railway-optimized memory settings
 CMD ["sh", "-c", "NODE_OPTIONS='--max-old-space-size=7168' npm start"]
+
 
