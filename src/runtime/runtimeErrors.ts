@@ -1,7 +1,5 @@
-export class RuntimeBudgetExceededError extends Error {
-  constructor() {
-    super('runtime_budget_exhausted');
-    this.name = 'RuntimeBudgetExceededError';
-  }
-}
-
+/**
+ * @deprecated Moved to platform resilience layer.
+ * Use: @platform/resilience/runtimeErrors
+ */
+export * from '../platform/resilience/runtimeErrors.js';

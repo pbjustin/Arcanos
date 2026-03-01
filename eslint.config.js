@@ -36,7 +36,14 @@ export default [
       'import': importPlugin
     },
     rules: {
-      'no-unreachable': 'error',
+      
+      'no-restricted-imports': ['error', {
+        patterns: [
+          { group: ['../legacy/**', '../../legacy/**', '../../../legacy/**', 'legacy/**'], message: 'Legacy code is read-only; do not import it from production modules.' },
+          { group: ['../cli/**','../cli_v2/**','../agent_core/**','cli/**','cli_v2/**','agent_core/**'], message: 'CLI/agent_core are legacy; import from legacy/ only if you are working inside legacy.' }
+        ]
+      }],
+'no-unreachable': 'error',
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['warn', {
         'argsIgnorePattern': '^_',

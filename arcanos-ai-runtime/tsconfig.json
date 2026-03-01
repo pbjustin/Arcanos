@@ -10,7 +10,15 @@
     "module": "nodenext",
     "target": "esnext",
     "types": [],
-    // For nodejs:
+        "baseUrl": ".",
+
+    "paths": {
+      "@arcanos/runtime": ["../packages/arcanos-runtime/src/index.ts"],
+      "@arcanos/runtime/*": ["../packages/arcanos-runtime/src/*"],
+      "@arcanos/openai": ["../packages/arcanos-openai/src/index.ts"],
+      "@arcanos/openai/*": ["../packages/arcanos-openai/src/*"]
+    },
+// For nodejs:
     // "lib": ["esnext"],
     // "types": ["node"],
     // and npm install -D @types/node

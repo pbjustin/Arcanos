@@ -14,7 +14,7 @@ beforeEach(async () => {
     getOpenAIAdapter: getOpenAIAdapterMock,
   }));
 
-  jest.unstable_mockModule('../src/services/openai/unifiedClient.js', () => ({
+  jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
     getOrCreateClient: getOrCreateClientMock,
   }));
 

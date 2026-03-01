@@ -6,6 +6,7 @@ import type {
 import type { RuntimeBudget } from "./runtimeBudget.js";
 import { getSafeRemainingMs, assertBudgetAvailable } from "./runtimeBudget.js";
 import { OpenAIAbortError } from "./runtimeErrors.js";
+import { retryWithBackoff } from "@arcanos/openai/retry";
 import { getRuntimeOpenAIClient } from "../ai/openaiClient.js";
 
 export interface GPT5Request {
@@ -74,10 +75,10 @@ export async function runGPT5(
   }, safeRemaining);
 
   try {
-    const response = await getRuntimeOpenAIClient().responses.create(
+    const response = await retryWithBackoff(() => getRuntimeOpenAIClient().responses.create(
       buildRequestPayload(request),
       { signal: controller.signal }
-    );
+    ), { signal: controller.signal });
 
     return response;
 

@@ -32,7 +32,7 @@ import {
 } from './ask/intent_store.js';
 import { detectCognitiveDomain } from '../dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '../dispatcher/gptDomainClassifier.js';
-import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 const router = express.Router();
 

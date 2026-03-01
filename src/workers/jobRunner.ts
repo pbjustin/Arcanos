@@ -8,7 +8,7 @@
 
 import { claimNextPendingJob, updateJob } from "@core/db/repositories/jobRepository.js";
 import { runThroughBrain } from "@core/logic/trinity.js";
-import { createRuntimeBudget } from "../runtime/runtimeBudget.js";
+import { createRuntimeBudget } from "@platform/resilience/runtimeBudget.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getOpenAIAdapter, resetOpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";

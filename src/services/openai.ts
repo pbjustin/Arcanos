@@ -1,19 +1,19 @@
 import { callOpenAI, createCentralizedCompletion, createGPT5Reasoning, createGPT5ReasoningLayer, call_gpt5_strict } from './openai/chatFlow.js';
 import { generateImage } from './openai/imageGeneration.js';
 import { getOpenAIServiceHealth, validateAPIKeyAtStartup } from './openai/serviceHealth.js';
+import { getOrCreateClient, validateClientHealth } from '@arcanos/openai/unifiedClient';
 import {
-  getOrCreateClient,
   getOpenAIKeySource,
   hasValidAPIKey,
   getDefaultModel,
   getFallbackModel,
   getComplexModel,
-  getGPT5Model,
-  validateClientHealth
-} from './openai/unifiedClient.js';
+  getGPT5Model
+} from './openai/credentialProvider.js';
 import { generateMockResponse } from './openai/mock.js';
 import { getCircuitBreakerSnapshot } from './openai/resilience.js';
 import { createChatCompletionWithFallback } from './openai/chatFallbacks.js';
+import { runStructuredReasoning } from './openai/structuredReasoning.js';
 
 export type {
   CallOpenAIOptions,
@@ -34,7 +34,8 @@ export {
   call_gpt5_strict,
   generateImage,
   getOpenAIServiceHealth,
-  validateAPIKeyAtStartup
+  validateAPIKeyAtStartup,
+  runStructuredReasoning,
 };
 
 export {
@@ -57,6 +58,7 @@ export default {
   getGPT5Model,
   createGPT5Reasoning,
   createGPT5ReasoningLayer,
+  runStructuredReasoning,
   validateAPIKeyAtStartup,
   callOpenAI,
   call_gpt5_strict,

@@ -38,12 +38,8 @@ import { buildChatMessages } from './messageBuilder.js';
 import { truncateText, hasContent } from "@shared/promptUtils.js";
 import { createChatCompletionWithFallback, ensureModelMatchesExpectation } from './chatFallbacks.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
-import {
-  API_TIMEOUT_MS,
-  ARCANOS_ROUTING_MESSAGE,
-  getDefaultModel,
-  getGPT5Model
-} from './unifiedClient.js';
+import { getApiTimeoutMs, getRoutingMessage } from '@arcanos/openai/unifiedClient';
+import { getDefaultModel, getGPT5Model } from './credentialProvider.js';
 import { withRetry } from "@platform/resilience/unifiedRetry.js";
 import { classifyOpenAIError } from "@core/lib/errors/reusable.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
@@ -213,7 +209,7 @@ async function makeOpenAIRequest(
   options: CallOpenAIOptions
 ): Promise<CallOpenAIResult> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), getApiTimeoutMs());
   
   try {
     const userMessage = messages.find((message) => message.role === 'user');
@@ -538,7 +534,7 @@ export async function createCentralizedCompletion(
   
   // Prepend ARCANOS routing system message to ensure proper handling
   const arcanosMessages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: ARCANOS_ROUTING_MESSAGE },
+    { role: 'system', content: getRoutingMessage() },
     ...messages
   ];
 
@@ -547,7 +543,7 @@ export async function createCentralizedCompletion(
   runtime.addMessages(sessionId, arcanosMessages);
   runtime.setMetadata(sessionId, { model });
 
-  logOpenAIEvent('info', `${OPENAI_LOG_MESSAGES.ARCANOS.ROUTING_PREFIX} ${ARCANOS_ROUTING_MESSAGE}`, { model });
+  logOpenAIEvent('info', `${OPENAI_LOG_MESSAGES.ARCANOS.ROUTING_PREFIX} ${getRoutingMessage()}`, { model });
 
   // Prepare request with token parameters for the specific model
   const tokenParams = getTokenParameter(model, options.max_tokens || ROUTING_MAX_TOKENS);

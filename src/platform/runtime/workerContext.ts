@@ -9,7 +9,7 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import type { QueryResult } from 'pg';
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { createRuntimeBudget } from '../../runtime/runtimeBudget.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 export interface WorkerContext {
   log: (message: string) => Promise<void>;
