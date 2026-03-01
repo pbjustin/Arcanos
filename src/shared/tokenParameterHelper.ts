@@ -197,7 +197,7 @@ export async function testModelTokenParameter(
     await (client.responses as any).create({
       model: modelName,
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
-      max_tokens: 1,
+      max_tokens: 16,
       stream: false
     });
     
@@ -217,7 +217,7 @@ export async function testModelTokenParameter(
         await (client.responses as any).create({
           model: modelName,
           input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
-          max_completion_tokens: 1,
+          max_completion_tokens: 16,
           stream: false
         });
         
@@ -319,5 +319,3 @@ export default {
   clearModelCapabilityCache,
   getModelCapabilityCacheStatus
 };
-
-

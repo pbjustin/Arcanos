@@ -192,6 +192,29 @@ function normalizeUsage(usage: unknown): { promptTokens: number; completionToken
   return { promptTokens, completionTokens, totalTokens };
 }
 
+
+const MIN_RESPONSE_TOKENS = 16;
+
+function normalizeResponsesCreateParams(
+  params: ResponseCreateParamsNonStreaming
+): ResponseCreateParamsNonStreaming {
+  const normalized = { ...params } as ResponseCreateParamsNonStreaming & { max_completion_tokens?: number };
+
+  if (typeof normalized.max_output_tokens === 'number') {
+    normalized.max_output_tokens = Math.max(MIN_RESPONSE_TOKENS, Math.floor(normalized.max_output_tokens));
+  }
+
+  const withMaxCompletionTokens = normalized as { max_completion_tokens?: number };
+  if (typeof withMaxCompletionTokens.max_completion_tokens === 'number') {
+    withMaxCompletionTokens.max_completion_tokens = Math.max(
+      MIN_RESPONSE_TOKENS,
+      Math.floor(withMaxCompletionTokens.max_completion_tokens)
+    );
+  }
+
+  return normalized;
+}
+
 function buildResponsesRequestFromChatParams(
   params: ChatCompletionCreateParams
 ): ResponseCreateParamsNonStreaming {
@@ -352,7 +375,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
     const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
     //audit Assumption: legacy chat callers must route through Responses API internally; risk: mixed API surfaces diverge; invariant: one canonical execution path for non-stream chat; handling: convert chat params to responses payload and backfill legacy shape.
-    const response = await client.responses.create(responsePayload, options);
+    const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
+    const response = await client.responses.create(normalizedResponsePayload, options);
     return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
   };
 
@@ -384,12 +408,14 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
             stream: false
           } as ChatCompletionCreateParams & { stream: false };
           const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
-          const response = await client.responses.create(responsePayload, options);
+          const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
+          const response = await client.responses.create(normalizedResponsePayload, options);
           return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
         }
 
         //audit Assumption: canonical responses payloads should pass through unchanged; risk: accidental mutation of advanced params; invariant: direct responses API path remains available; handling: forward params/options directly.
-        return client.responses.create(params as ResponseCreateParamsNonStreaming, options);
+        const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
+        return client.responses.create(normalizedParams, options);
       },
       parse: async (
         params: Record<string, unknown>,

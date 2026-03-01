@@ -47,7 +47,7 @@ export async function gptFallbackClassifier(
   const response: any = await (openai.responses as any).create({
     model: 'gpt-4o-mini',
     temperature: 0,
-    max_output_tokens: 10,
+    max_output_tokens: 64,
     instructions:
       'Classify the request into exactly one of: diagnostic, code, creative, natural, execution. Return only the label.',
     input: [
