@@ -1,5 +1,6 @@
 import { Express, Request, Response } from 'express';
 import askRouter from './ask.js';
+import jobsRouter from './jobs.js';
 import queryFinetuneRouter from './queryFinetune.js';
 import arcanosRouter from './arcanos.js';
 import arcanosPipelineRouter from './openai-arcanos-pipeline.js';
@@ -94,6 +95,7 @@ export function registerRoutes(app: Express): void {
 
   app.use('/', healthGroupRouter);
   app.use('/', safetyRouter);
+  app.use('/', jobsRouter);
   app.use('/', askRouter);
   app.use('/', queryFinetuneRouter);
   app.use('/', apiRouter);
@@ -134,3 +136,4 @@ export function registerRoutes(app: Express): void {
   });
   app.get('/api/fallback/test', createFallbackTestRoute());
 }
+

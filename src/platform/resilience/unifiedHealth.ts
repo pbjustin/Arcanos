@@ -19,7 +19,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
-import { validateClientHealth, HealthStatus as ClientHealthStatus } from "@services/openai/unifiedClient.js";
+import { validateClientHealth, type HealthStatus as ClientHealthStatus } from '@arcanos/openai/unifiedClient';
 import { isOpenAIAdapterInitialized } from "@core/adapters/openai.adapter.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { assessCoreServiceReadiness, HealthStatus as ServiceHealthStatus } from "@platform/resilience/healthChecks.js";

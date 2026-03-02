@@ -72,6 +72,15 @@ export async function runClearAudit(client: OpenAI, ledger: ReasoningLedger): Pr
     return fallback;
   }
 
+  //audit Assumption: JSON.parse may return non-object primitives or null; risk: property access throws and aborts request path; invariant: CLEAR scoring reads from a non-null object; handling: guard and return deterministic fallback.
+  if (!parsed || typeof parsed !== 'object') {
+    logger.warn('CLEAR audit produced non-object JSON payload', {
+      module: 'audit',
+      operation: 'runClearAudit'
+    });
+    return fallback;
+  }
+
   const clamp = (n: any) => {
     const num = Number(n);
     if (isNaN(num)) return 0;

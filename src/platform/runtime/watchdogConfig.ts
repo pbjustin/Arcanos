@@ -3,7 +3,7 @@
  * Model-aware adaptive timeouts with budget-safe clamping.
  */
 
-import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS } from '../../runtime/runtimeBudget.js';
+import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS } from '@platform/resilience/runtimeBudget.js';
 
 export const TIMEOUT_MAP: Record<string, number> = {
   "gpt-5": 60_000,

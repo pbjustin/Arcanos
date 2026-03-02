@@ -16,215 +16,7 @@ import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resource
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 import type { ImageGenerateParamsNonStreaming, ImagesResponse } from 'openai/resources/images.js';
-
-type LegacyChatMessage = {
-  role?: unknown;
-  content?: unknown;
-};
-
-function extractTextFromContent(content: unknown): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return '';
-  }
-
-  const textParts: string[] = [];
-  for (const part of content) {
-    if (!part || typeof part !== 'object') {
-      continue;
-    }
-    const partRecord = part as Record<string, unknown>;
-    const type = typeof partRecord.type === 'string' ? partRecord.type : '';
-    if (type === 'text' || type === 'input_text' || type === 'output_text') {
-      const text = partRecord.text;
-      if (typeof text === 'string' && text.length > 0) {
-        textParts.push(text);
-      }
-    }
-  }
-
-  return textParts.join('\n');
-}
-
-function normalizeInputContentParts(
-  role: 'assistant' | 'user',
-  content: unknown
-): Array<Record<string, unknown>> {
-  const textType = role === 'assistant' ? 'output_text' : 'input_text';
-
-  if (typeof content === 'string') {
-    return [{ type: textType, text: content.length > 0 ? content : ' ' }];
-  }
-
-  if (!Array.isArray(content)) {
-    return [{ type: textType, text: ' ' }];
-  }
-
-  const normalizedParts: Array<Record<string, unknown>> = [];
-
-  for (const part of content) {
-    if (!part || typeof part !== 'object') {
-      continue;
-    }
-
-    const partRecord = part as Record<string, unknown>;
-    const type = typeof partRecord.type === 'string' ? partRecord.type : '';
-
-    if (type === 'text' || type === 'input_text' || type === 'output_text') {
-      const text = partRecord.text;
-      if (typeof text === 'string') {
-        normalizedParts.push({
-          type: textType,
-          text: text.length > 0 ? text : ' '
-        });
-      }
-      continue;
-    }
-
-    if ((type === 'image_url' || type === 'input_image') && role === 'user') {
-      if (type === 'image_url') {
-        const imageUrl = partRecord.image_url;
-        if (imageUrl && typeof imageUrl === 'object') {
-          const imageUrlRecord = imageUrl as Record<string, unknown>;
-          const url = typeof imageUrlRecord.url === 'string' ? imageUrlRecord.url : undefined;
-          if (url) {
-            normalizedParts.push({
-              type: 'input_image',
-              image_url: url,
-              ...(typeof imageUrlRecord.detail === 'string' ? { detail: imageUrlRecord.detail } : {})
-            });
-          }
-        } else if (typeof imageUrl === 'string') {
-          normalizedParts.push({ type: 'input_image', image_url: imageUrl });
-        }
-        continue;
-      }
-
-      normalizedParts.push(partRecord);
-    }
-  }
-
-  if (normalizedParts.length === 0) {
-    return [{ type: textType, text: ' ' }];
-  }
-
-  return normalizedParts;
-}
-
-function collectInstructionFragments(messages: LegacyChatMessage[]): string[] {
-  const fragments: string[] = [];
-
-  for (const message of messages) {
-    const role = typeof message.role === 'string' ? message.role : '';
-    if (role !== 'system' && role !== 'developer') {
-      continue;
-    }
-
-    const text = extractTextFromContent(message.content).trim();
-    if (text.length > 0) {
-      fragments.push(text);
-    }
-  }
-
-  return fragments;
-}
-
-function normalizeInputItems(input: unknown): unknown {
-  if (!Array.isArray(input)) {
-    return input;
-  }
-
-  return input.map((item) => {
-    if (!item || typeof item !== 'object') {
-      return item;
-    }
-
-    const record = item as Record<string, unknown>;
-    const mappedRole: 'assistant' | 'user' = record.role === 'assistant' ? 'assistant' : 'user';
-    const normalizedContent = normalizeInputContentParts(mappedRole, record.content);
-
-    return {
-      ...record,
-      role: mappedRole,
-      content: normalizedContent
-    };
-  });
-}
-
-export function normalizeResponsesCreateParams(params: any): any {
-  if (!params || typeof params !== 'object') {
-    return params;
-  }
-
-  const record = params as Record<string, unknown>;
-  const normalized: Record<string, unknown> = { ...record };
-  const legacyMessages = Array.isArray(record.messages) ? (record.messages as LegacyChatMessage[]) : null;
-
-  if (legacyMessages) {
-    const inputItems: Array<Record<string, unknown>> = [];
-
-    for (const message of legacyMessages) {
-      const role = typeof message.role === 'string' ? message.role : 'user';
-      if (role === 'system' || role === 'developer') {
-        continue;
-      }
-
-      const mappedRole: 'assistant' | 'user' = role === 'assistant' ? 'assistant' : 'user';
-      inputItems.push({
-        role: mappedRole,
-        content: normalizeInputContentParts(mappedRole, message.content)
-      });
-    }
-
-    normalized.input = inputItems;
-    delete normalized.messages;
-
-    const instructionFragments = collectInstructionFragments(legacyMessages);
-    const existingInstructions =
-      typeof record.instructions === 'string' && record.instructions.trim().length > 0
-        ? [record.instructions.trim()]
-        : [];
-    const mergedInstructions = [...existingInstructions, ...instructionFragments];
-    if (mergedInstructions.length > 0) {
-      normalized.instructions = mergedInstructions.join('\n\n');
-    }
-  }
-
-  normalized.input = normalizeInputItems(normalized.input);
-
-  if (
-    normalized.max_output_tokens === undefined &&
-    typeof normalized.max_tokens === 'number'
-  ) {
-    normalized.max_output_tokens = normalized.max_tokens;
-    delete normalized.max_tokens;
-  }
-
-  if (
-    normalized.max_output_tokens === undefined &&
-    typeof normalized.max_completion_tokens === 'number'
-  ) {
-    normalized.max_output_tokens = normalized.max_completion_tokens;
-    delete normalized.max_completion_tokens;
-  }
-
-  const MIN_TOKENS = 16;
-  if (typeof normalized.max_output_tokens === 'number') {
-    normalized.max_output_tokens = Math.max(MIN_TOKENS, Math.floor(normalized.max_output_tokens));
-  }
-
-  if (typeof (normalized as any).max_completion_tokens === 'number') {
-    (normalized as any).max_completion_tokens = Math.max(
-      MIN_TOKENS,
-      Math.floor((normalized as any).max_completion_tokens)
-    );
-  }
-
-  return normalized;
-}
+import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 
 /**
  * OpenAI adapter configuration
@@ -254,14 +46,30 @@ export interface OpenAIAdapterRequestOptions {
   headers?: Record<string, string>;
 }
 
+export interface OpenAIResponsesRequestOptions {
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+}
+
 /**
  * OpenAI adapter interface
  * Provides type-safe access to OpenAI functionality
  */
 export interface OpenAIAdapter {
+  /**
+   * Canonical Responses API surface.
+   */
   responses: {
-    create: (params: any, options?: OpenAIAdapterRequestOptions) => Promise<any>;
+    create: (
+      params: any,
+      options?: OpenAIResponsesRequestOptions
+    ) => Promise<any>;
+    parse: (
+      params: Record<string, unknown>,
+      options?: OpenAIResponsesRequestOptions
+    ) => Promise<any>;
   };
+
   /**
    * Create a chat completion
    */
@@ -307,6 +115,227 @@ export interface OpenAIAdapter {
   getClient: () => OpenAI;
 }
 
+interface LegacyUsageShape {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+}
+
+function normalizeMessageContent(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  return content
+    .map((part) => {
+      if (!part || typeof part !== 'object') {
+        return '';
+      }
+      const typedPart = part as Record<string, unknown>;
+      if (typedPart.type === 'text' && typeof typedPart.text === 'string') {
+        return typedPart.text;
+      }
+      if (typedPart.type === 'input_text' && typeof typedPart.text === 'string') {
+        return typedPart.text;
+      }
+      if (typedPart.type === 'output_text' && typeof typedPart.text === 'string') {
+        return typedPart.text;
+      }
+      return '';
+    })
+    .filter((value) => value.length > 0)
+    .join('\n');
+}
+
+function extractResponseText(response: OpenAIResponse): string {
+  const directOutputText = (response as { output_text?: unknown }).output_text;
+  if (typeof directOutputText === 'string' && directOutputText.trim().length > 0) {
+    return directOutputText.trim();
+  }
+
+  const outputItems = Array.isArray(response.output) ? response.output : [];
+  for (const outputItem of outputItems) {
+    if (!outputItem || typeof outputItem !== 'object') {
+      continue;
+    }
+    const typedOutputItem = outputItem as unknown as Record<string, unknown>;
+    const contentItems = Array.isArray(typedOutputItem.content) ? typedOutputItem.content : [];
+    for (const contentItem of contentItems) {
+      if (!contentItem || typeof contentItem !== 'object') {
+        continue;
+      }
+      const typedContentItem = contentItem as Record<string, unknown>;
+      if (typedContentItem.type === 'output_text' && typeof typedContentItem.text === 'string') {
+        const normalized = typedContentItem.text.trim();
+        if (normalized.length > 0) {
+          return normalized;
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
+function normalizeUsage(usage: unknown): { promptTokens: number; completionTokens: number; totalTokens: number } {
+  const typedUsage = (usage ?? {}) as LegacyUsageShape;
+  const promptTokens = Number.isFinite(typedUsage.input_tokens) ? Number(typedUsage.input_tokens) : 0;
+  const completionTokens = Number.isFinite(typedUsage.output_tokens) ? Number(typedUsage.output_tokens) : 0;
+  const totalTokens = Number.isFinite(typedUsage.total_tokens)
+    ? Number(typedUsage.total_tokens)
+    : promptTokens + completionTokens;
+
+  return { promptTokens, completionTokens, totalTokens };
+}
+
+
+const MIN_RESPONSE_TOKENS = 16;
+
+function normalizeResponsesCreateParams(
+  params: ResponseCreateParamsNonStreaming
+): ResponseCreateParamsNonStreaming {
+  const normalized = { ...params } as ResponseCreateParamsNonStreaming & { max_completion_tokens?: number };
+
+  if (typeof normalized.max_output_tokens === 'number') {
+    normalized.max_output_tokens = Math.max(MIN_RESPONSE_TOKENS, Math.floor(normalized.max_output_tokens));
+  }
+
+  const withMaxCompletionTokens = normalized as { max_completion_tokens?: number };
+  if (typeof withMaxCompletionTokens.max_completion_tokens === 'number') {
+    withMaxCompletionTokens.max_completion_tokens = Math.max(
+      MIN_RESPONSE_TOKENS,
+      Math.floor(withMaxCompletionTokens.max_completion_tokens)
+    );
+  }
+
+  return normalized;
+}
+
+function buildResponsesRequestFromChatParams(
+  params: ChatCompletionCreateParams
+): ResponseCreateParamsNonStreaming {
+  const typedMessages = Array.isArray(params.messages) ? params.messages : [];
+  const instructionParts: string[] = [];
+  const inputItems: Array<{ role: 'assistant' | 'user'; content: Array<{ type: 'input_text' | 'output_text'; text: string }> }> = [];
+
+  for (const message of typedMessages) {
+    if (!message || typeof message !== 'object') {
+      continue;
+    }
+    const typedMessage = message as { role?: unknown; content?: unknown };
+    const role = String(typedMessage.role ?? '');
+    const text = normalizeMessageContent(typedMessage.content);
+
+    //audit Assumption: system/developer messages belong in instructions; risk: policy prompts leaking into user content; invariant: non-user policy text isolated; handling: aggregate into instructions.
+    if (role === 'system' || role === 'developer') {
+      if (text.length > 0) {
+        instructionParts.push(text);
+      }
+      continue;
+    }
+
+    const mappedRole: 'assistant' | 'user' = role === 'assistant' ? 'assistant' : 'user';
+    const contentType: 'input_text' | 'output_text' = mappedRole === 'assistant' ? 'output_text' : 'input_text';
+    inputItems.push({
+      role: mappedRole,
+      content: [{ type: contentType, text: text.length > 0 ? text : ' ' }]
+    });
+  }
+
+  const maxOutputTokens = (() => {
+    const withMaxCompletion = params as ChatCompletionCreateParams & { max_completion_tokens?: unknown };
+    if (typeof withMaxCompletion.max_completion_tokens === 'number') {
+      return withMaxCompletion.max_completion_tokens;
+    }
+    const withMaxTokens = params as ChatCompletionCreateParams & { max_tokens?: unknown };
+    if (typeof withMaxTokens.max_tokens === 'number') {
+      return withMaxTokens.max_tokens;
+    }
+    return undefined;
+  })();
+
+  const payload: ResponseCreateParamsNonStreaming = {
+    model: params.model,
+    input: (inputItems.length > 0
+      ? inputItems
+      : [{ role: 'user', content: [{ type: 'input_text', text: ' ' }] }]) as never
+  };
+
+  if (instructionParts.length > 0) {
+    payload.instructions = instructionParts.join('\n\n');
+  }
+  if (typeof params.temperature === 'number') {
+    payload.temperature = params.temperature;
+  }
+  if (typeof params.top_p === 'number') {
+    payload.top_p = params.top_p;
+  }
+  if (typeof maxOutputTokens === 'number' && Number.isFinite(maxOutputTokens)) {
+    payload.max_output_tokens = maxOutputTokens;
+  }
+  if (typeof params.user === 'string' && params.user.trim().length > 0) {
+    payload.metadata = { user: params.user };
+  }
+
+  const responseFormat = (params as ChatCompletionCreateParams & { response_format?: unknown }).response_format;
+  //audit Assumption: only JSON object/schema format hints are safely portable to Responses API; risk: unsupported format passthrough causing runtime 400; invariant: map recognized formats only; handling: ignore unknown formats.
+  if (responseFormat && typeof responseFormat === 'object' && 'type' in responseFormat) {
+    const responseType = String((responseFormat as { type?: unknown }).type ?? '').toLowerCase();
+    if (responseType === 'json_object') {
+      payload.text = { format: { type: 'json_object' } };
+    }
+    if (responseType === 'json_schema') {
+      const jsonSchema = (responseFormat as { json_schema?: unknown }).json_schema;
+      payload.text = {
+        format: {
+          type: 'json_schema',
+          ...(jsonSchema && typeof jsonSchema === 'object' ? { json_schema: jsonSchema } : {})
+        } as never
+      };
+    }
+  }
+
+  return payload;
+}
+
+function convertResponseToLegacyChatCompletion(
+  response: OpenAIResponse,
+  requestedModel: string
+): ChatCompletion {
+  const usage = normalizeUsage(response.usage);
+  const outputText = extractResponseText(response);
+  const createdAt = (response as { created_at?: unknown }).created_at;
+  const created = typeof createdAt === 'number' ? Math.floor(createdAt) : Math.floor(Date.now() / 1000);
+
+  return {
+    id: response.id || `legacy_${Date.now()}`,
+    object: 'chat.completion',
+    created,
+    model: response.model || requestedModel,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: outputText,
+          refusal: null
+        },
+        finish_reason: 'stop',
+        logprobs: null
+      }
+    ],
+    usage: {
+      prompt_tokens: usage.promptTokens,
+      completion_tokens: usage.completionTokens,
+      total_tokens: usage.totalTokens
+    }
+  };
+}
+
 /**
  * Creates the OpenAI adapter instance
  * 
@@ -330,27 +359,75 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     ...(config.baseURL ? { baseURL: config.baseURL } : {})
   });
 
+  const originalChatCreate = client.chat.completions.create.bind(client.chat.completions);
+
+  const responsesBackedChatCreate = async (
+    params: ChatCompletionCreateParams,
+    options?: OpenAIAdapterRequestOptions
+  ): Promise<ChatCompletion> => {
+    const streamRequested = (params as ChatCompletionCreateParams & { stream?: unknown }).stream === true;
+    //audit Assumption: streaming remains temporarily on chat endpoint for compatibility; risk: partial dual-surface behavior; invariant: non-stream routes through Responses; handling: preserve native stream path only when explicitly requested.
+    if (streamRequested) {
+      const streamingResult = await originalChatCreate(params, options);
+      return streamingResult as unknown as ChatCompletion;
+    }
+
+    const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
+    const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
+    //audit Assumption: legacy chat callers must route through Responses API internally; risk: mixed API surfaces diverge; invariant: one canonical execution path for non-stream chat; handling: convert chat params to responses payload and backfill legacy shape.
+    const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
+    const response = await client.responses.create(normalizedResponsePayload, options);
+    return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
+  };
+
+  const mutableClient = client as unknown as {
+    chat: {
+      completions: {
+        create: typeof originalChatCreate;
+      };
+    };
+  };
+  //audit Assumption: some legacy call sites still use raw client.chat.completions.create; risk: bypassing adapter migration path; invariant: raw client non-stream chat is responses-backed; handling: patch client method at construction boundary.
+  mutableClient.chat.completions.create = responsesBackedChatCreate as unknown as typeof originalChatCreate;
+
   return {
     responses: {
-      create: async (params: any, options?: OpenAIAdapterRequestOptions): Promise<any> => {
-        const normalizedParams = normalizeResponsesCreateParams(params);
-        return client.responses.create(normalizedParams as any, options as any);
+      create: async (
+        params: any,
+        options?: OpenAIResponsesRequestOptions
+      ): Promise<any> => {
+        const hasLegacyMessages =
+          params &&
+          typeof params === 'object' &&
+          Array.isArray((params as { messages?: unknown }).messages);
+
+        //audit Assumption: some call sites still pass chat-completions-shaped payloads to responses surface; risk: runtime schema mismatch on responses.create; invariant: adapter accepts both legacy and responses payloads during migration; handling: normalize legacy messages payloads through responses mapper then backfill legacy chat shape.
+        if (hasLegacyMessages) {
+          const nonStreamingParams = {
+            ...(params as ChatCompletionCreateParams),
+            stream: false
+          } as ChatCompletionCreateParams & { stream: false };
+          const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
+          const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
+          const response = await client.responses.create(normalizedResponsePayload, options);
+          return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
+        }
+
+        //audit Assumption: canonical responses payloads should pass through unchanged; risk: accidental mutation of advanced params; invariant: direct responses API path remains available; handling: forward params/options directly.
+        const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
+        return client.responses.create(normalizedParams, options);
+      },
+      parse: async (
+        params: Record<string, unknown>,
+        options?: OpenAIResponsesRequestOptions
+      ): Promise<any> => {
+        //audit Assumption: parse may use evolving schema shape; risk: over-constrained types break compile on SDK updates; invariant: parse call remains available; handling: permissive typed pass-through.
+        return await client.responses.parse(params as never, options);
       }
     },
     chat: {
       completions: {
-        create: async (
-          params: ChatCompletionCreateParams,
-          options?: OpenAIAdapterRequestOptions
-        ): Promise<ChatCompletion> => {
-          // Ensure stream is false for non-streaming completions
-          const nonStreamingParams = { ...params, stream: false } as ChatCompletionCreateParams & { stream: false };
-          //audit Assumption: request-level signal/headers may be provided by callers; risk: dropped cancellation/tracing; invariant: options forwarded; handling: pass through to SDK.
-          const normalizedParams = normalizeResponsesCreateParams(nonStreamingParams);
-          const result = await (client.responses as any).create(normalizedParams as any, options as any);
-          // Type assertion needed because SDK can return Stream | ChatCompletion
-          return result as ChatCompletion;
-        }
+        create: responsesBackedChatCreate
       }
     },
     embeddings: {

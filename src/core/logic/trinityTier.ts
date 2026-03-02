@@ -8,8 +8,8 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import { createGPT5Reasoning } from "@services/openai.js";
 import { ARCANOS_SYSTEM_PROMPTS } from "@platform/runtime/prompts.js";
-import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
-import { assertBudgetAvailable } from '../../runtime/runtimeBudget.js';
+import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { assertBudgetAvailable } from '@platform/resilience/runtimeBudget.js';
 
 // --- Tier Detection ---
 

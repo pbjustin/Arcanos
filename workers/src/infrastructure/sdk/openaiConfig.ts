@@ -125,7 +125,7 @@ export function resolveWorkerOpenAIConfig(): WorkerOpenAIConfig {
     baseURL,
     timeoutMs: parsePositiveIntEnv('WORKER_API_TIMEOUT_MS', 60000),
     maxRetries: parsePositiveIntEnv('OPENAI_MAX_RETRIES', 2),
-    defaultChatModel: readRuntimeEnvValue('WORKER_OPENAI_MODEL') || readRuntimeEnvValue('OPENAI_MODEL') || 'gpt-4-turbo',
+    defaultChatModel: readRuntimeEnvValue('WORKER_OPENAI_MODEL') || readRuntimeEnvValue('OPENAI_MODEL') || 'gpt-4.1-mini',
     defaultEmbeddingModel: readRuntimeEnvValue('EMBEDDING_MODEL') || 'text-embedding-3-large'
   };
 }

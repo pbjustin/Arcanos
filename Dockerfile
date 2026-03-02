@@ -21,13 +21,14 @@ RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --omit=dev --no-audit --no-fund
 # Copy source code, workers, scripts, config, and build configuration
 COPY src/ ./src/
 COPY workers/ ./workers/
+COPY packages/ ./packages/
+COPY arcanos-ai-runtime/ ./arcanos-ai-runtime/
 COPY scripts/ ./scripts/
 COPY config/ ./config/
 COPY tsconfig.json ./
 
 # Install dev dependencies (override NODE_ENV) and build
 RUN npm install --include=dev --no-audit --no-fund && \
-    cd workers && npm install --no-audit --no-fund && cd .. && \
     npm run build:workers && \
     npm run build
 
@@ -50,3 +51,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start with Railway-optimized memory settings
 CMD ["sh", "-c", "NODE_OPTIONS='--max-old-space-size=7168' npm start"]
+
+

@@ -29,6 +29,6 @@ If an external reference conflicts with repository behavior, prefer repository c
 - OpenAI Node SDK: https://github.com/openai/openai-node
 - OpenAI Python SDK: https://github.com/openai/openai-python
 - OpenAI API docs: https://platform.openai.com/docs
-- Railway docs: https://docs.railway.app/
-- Railway CLI docs: https://docs.railway.app/develop/cli
+- Railway docs: https://docs.railway.com/
+- Railway CLI docs: https://docs.railway.com/develop/cli
 - Keep a Changelog: https://keepachangelog.com/en/1.1.0/

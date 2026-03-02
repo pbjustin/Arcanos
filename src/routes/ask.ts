@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
 import { runThroughBrain } from "@core/logic/trinity.js";
+import { createJob } from "@core/db/repositories/jobRepository.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
@@ -31,7 +32,7 @@ import {
 } from './ask/intent_store.js';
 import { detectCognitiveDomain } from '../dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '../dispatcher/gptDomainClassifier.js';
-import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 const router = express.Router();
 
@@ -161,6 +162,12 @@ function getMode(body: AskRequest): 'chat' | 'system_review' | 'system_state' {
     return 'system_state';
   }
   return 'chat';
+}
+
+function wantsAsync(body: AskRequest): boolean {
+  // Accept either `mode: "async"` or `async: true` without breaking existing clients.
+  const anyBody = body as unknown as Record<string, unknown>;
+  return body.mode === 'async' || anyBody.async === true;
 }
 
 function extractTextInput(body: AskRequest): string | null {
@@ -427,6 +434,7 @@ export const handleAIRequest = async (
 
   req.body = lenientChatValidation.normalizedBody;
   const bypassAuditFlag = lenientChatValidation.auditFlag;
+  const asyncRequested = wantsAsync(req.body);
 
   const { sessionId, overrideAuditSafe, metadata } = req.body;
   const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
@@ -506,6 +514,25 @@ export const handleAIRequest = async (
     // TRINITY_STAGE_TEMPERATURE configuration inside runThroughBrain. This asymmetry is
     // intentional for now: /ask is the primary, fully context-routed chat endpoint, while the
     // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
+    if (asyncRequested) {
+      const workerId = process.env.WORKER_ID || 'api';
+      const job = await createJob(workerId, 'ask', {
+        prompt,
+        sessionId,
+        overrideAuditSafe,
+        cognitiveDomain: finalDomain,
+        clientContext: req.body.clientContext ?? null,
+        endpointName
+      });
+
+      return res.status(202).json({
+        ok: true,
+        status: 'pending',
+        jobId: job.id,
+        poll: `/jobs/${job.id}`
+      });
+    }
+
     const runtimeBudget = createRuntimeBudget();
     const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe, { cognitiveDomain: finalDomain }, runtimeBudget);
     return res.json({
@@ -530,4 +557,6 @@ export default router;
 
 export type { AskRequest, AskResponse };
 export { askValidationMiddleware };
+
+
 
