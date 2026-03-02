@@ -8,7 +8,7 @@ test("Runtime Budget Logic", async (t) => {
   await t.test("should create a budget with default values", () => {
     const budget = createRuntimeBudget();
     assert.ok(budget.startedAt <= Date.now());
-    assert.strictEqual(budget.watchdogLimit, 45000);
+    assert.strictEqual(budget.watchdogLimit, 60000);
     assert.strictEqual(budget.safetyBuffer, 2000);
     assert.ok(budget.hardDeadline > budget.startedAt);
   });
@@ -16,14 +16,15 @@ test("Runtime Budget Logic", async (t) => {
   await t.test("should report sufficient budget", () => {
     const budget = createRuntimeBudget();
     assert.ok(hasSufficientBudget(budget, 10000));
-    assert.ok(!hasSufficientBudget(budget, 44000));
+    const safeRemainingMs = budget.watchdogLimit - budget.safetyBuffer;
+    assert.ok(!hasSufficientBudget(budget, safeRemainingMs + 1));
   });
 
   await t.test("assertBudgetAvailable should throw on exhausted budget", () => {
     const budget = {
       startedAt: Date.now() - 50000,
       hardDeadline: Date.now() - 5000,
-      watchdogLimit: 45000,
+      watchdogLimit: 60000,
       safetyBuffer: 2000
     };
     assert.throws(() => assertBudgetAvailable(budget), RuntimeBudgetExceededError);

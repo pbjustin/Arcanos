@@ -28,7 +28,7 @@ export async function acquireTierSlot(tier: Tier): Promise<[() => void]> {
 
 // --- Watchdog ---
 
-const BASE_SOFT_CAP_MS = 25_000;
+const BASE_SOFT_CAP_MS = 60_000;
 const MULTIPLIERS: Record<Tier, number> = {
   simple: 1.0,
   complex: 1.4,

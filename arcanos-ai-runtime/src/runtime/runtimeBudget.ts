@@ -1,6 +1,6 @@
 import { RuntimeBudgetExceededError } from "./runtimeErrors.js";
 
-export const WATCHDOG_LIMIT_MS = 45000;
+export const WATCHDOG_LIMIT_MS = 60000;
 export const SAFETY_BUFFER_MS = 2000;
 
 export interface RuntimeBudget {
