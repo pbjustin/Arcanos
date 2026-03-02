@@ -31,6 +31,9 @@ import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import devopsRouter from './devops.js';
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
+import { TRINITY_BASE_SOFT_CAP_MS, TRINITY_MULTIPLIERS } from "@core/logic/trinityGuards.js";
+import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS, BUDGET_DISABLED } from '../runtime/runtimeBudget.js';
+import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -58,6 +61,36 @@ export function registerRoutes(app: Express): void {
       });
     }
   });
+
+  if (process.env.DEBUG_WATCHDOG === 'true') {
+    app.get('/debug/watchdog', (req: Request, res: Response) => {
+      const expectedDebugKey = process.env.DEBUG_WATCHDOG_KEY;
+      if (expectedDebugKey && req.header('x-debug-key') !== expectedDebugKey) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      res.json({
+        trinity: {
+          baseSoftCapMs: TRINITY_BASE_SOFT_CAP_MS,
+          multipliers: {
+            simple: TRINITY_MULTIPLIERS.simple,
+            complex: TRINITY_MULTIPLIERS.complex,
+            critical: TRINITY_MULTIPLIERS.critical,
+          }
+        },
+        runtime: {
+          watchdogLimitMs: WATCHDOG_LIMIT_MS,
+          safetyBufferMs: SAFETY_BUFFER_MS,
+          budgetDisabled: BUDGET_DISABLED,
+        },
+        modelTimeouts: {
+          'gpt-5': resolveTimeout('gpt-5'),
+          'gpt-5.1': resolveTimeout('gpt-5.1'),
+          default: resolveTimeout('default'),
+        }
+      });
+    });
+  }
 
   app.use('/', healthGroupRouter);
   app.use('/', safetyRouter);
@@ -92,8 +125,8 @@ export function registerRoutes(app: Express): void {
 
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
-    res.json({ 
-      status: 'ok', 
+    res.json({
+      status: 'ok',
       timestamp: new Date().toISOString(),
       service: 'ARCANOS',
       version: '1.0.0'

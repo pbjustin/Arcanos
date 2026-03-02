@@ -16,6 +16,15 @@ import {
 } from "@shared/types/dto.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
+const BUDGET_ABORT_ERROR_MARKERS = [
+  'openai_call_aborted_due_to_budget',
+  'watchdog threshold',
+  'runtimebudget',
+  'budgetexceeded',
+  'runtime_budget_exhausted',
+  'execution aborted by watchdog'
+];
+
 /**
  * Extract input text from various possible field names in request body
  */
@@ -124,6 +133,17 @@ export function validateAIRequest(
   return { client: openai, input, body: parsed.data };
 }
 
+export function isBudgetAbort(err: unknown): boolean {
+  if (err instanceof Error) {
+    if (err.name === 'RuntimeBudgetExceededError' || err.name === 'OpenAIAbortError') {
+      return true;
+    }
+  }
+
+  const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+  return BUDGET_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker));
+}
+
 /**
  * Handle errors in AI request processing with consistent error response format
  */
@@ -136,10 +156,31 @@ export function handleAIError(
   //audit Assumption: error message should be safely derived; Handling: stringify
   const errorMessage = resolveErrorMessage(err);
   console.error(`❌ ${endpointName} processing error:`, errorMessage);
-  //audit Assumption: mock response is acceptable fallback; Handling: include error
-  sendMockAIResponse(res, input, endpointName, 'processing failed', {
-    error: `AI service failure: ${errorMessage}`
-  });
+
+  const allowMockFallback = process.env.ALLOW_MOCK_FALLBACK === 'true';
+  if (allowMockFallback) {
+    sendMockAIResponse(res, input, endpointName, 'processing failed', {
+      error: `AI service failure: ${errorMessage}`
+    });
+    return;
+  }
+
+  if (isBudgetAbort(err)) {
+    res.status(408).json({
+      error: 'AI timeout/budget abort',
+      detail: errorMessage,
+      details: errorMessage,
+      code: 'BUDGET_ABORT'
+    } as ErrorResponseDTO);
+    return;
+  }
+
+  res.status(500).json({
+    error: 'AI service failure',
+    detail: errorMessage,
+    details: errorMessage,
+    code: 'AI_FAILURE'
+  } as ErrorResponseDTO);
 }
 
 /**

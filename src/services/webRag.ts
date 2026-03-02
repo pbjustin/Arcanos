@@ -15,6 +15,14 @@ interface Doc {
   metadata?: Record<string, unknown>;
 }
 
+export interface IngestResult {
+  parentId: string;
+  chunkCount: number;
+  source: string;
+  contentLength: number;
+  metadata: Record<string, unknown>;
+}
+
 let vectorStore: Doc[] | null = null;
 const ragLogger = logger.child({ module: 'webRag' });
 
@@ -42,6 +50,29 @@ function sanitizeMetadataInput(metadata?: Record<string, unknown>): Record<strin
   } catch {
     return {};
   }
+}
+
+export function chunkText(text: string, chunkSize = 8_000, overlap = 400): string[] {
+  const normalizedText = typeof text === 'string' ? text : '';
+  if (!normalizedText) {
+    return [];
+  }
+
+  const safeChunkSize = Math.max(1, Math.floor(chunkSize));
+  const safeOverlap = Math.max(0, Math.min(Math.floor(overlap), safeChunkSize - 1));
+  const chunks: string[] = [];
+  let i = 0;
+
+  while (i < normalizedText.length) {
+    const end = Math.min(i + safeChunkSize, normalizedText.length);
+    chunks.push(normalizedText.slice(i, end));
+    if (end === normalizedText.length) {
+      break;
+    }
+    i = Math.max(0, end - safeOverlap);
+  }
+
+  return chunks;
 }
 
 interface SourceDetail {
@@ -79,27 +110,17 @@ async function ensureStore(): Promise<void> {
   }
 }
 
-export async function ingestUrl(url: string): Promise<Doc> {
-  await ensureStore();
+export async function ingestUrl(url: string): Promise<IngestResult> {
   const content = await fetchAndClean(url);
-  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
-  const doc: Doc = {
+  return ingestContent({
     id: url,
-    url,
     content,
-    embedding: await createEmbedding(content, client),
+    source: url,
     metadata: {
       sourceType: 'url',
       fetchedAt: new Date().toISOString(),
     },
-  };
-  try {
-    await saveRagDoc(doc);
-  } catch (error) {
-    console.warn('[🧠 RAG] Failed to persist document to database - retaining in-memory copy', error);
-  }
-  upsertDoc(doc);
-  return doc;
+  });
 }
 
 interface IngestContentOptions {
@@ -109,13 +130,13 @@ interface IngestContentOptions {
   metadata?: Record<string, unknown>;
 }
 
-export async function ingestContent(options: IngestContentOptions): Promise<Doc> {
+export async function ingestContent(options: IngestContentOptions): Promise<IngestResult> {
   const { id, content, source, metadata } = options;
   await ensureStore();
   const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
 
-  const docId = (id && id.trim()) || randomUUID();
-  const sourceLabel = (source && source.trim()) || docId;
+  const parentId = (id && id.trim()) || randomUUID();
+  const sourceLabel = (source && source.trim()) || parentId;
   const sanitizedMetadata = sanitizeMetadataInput(metadata);
   if (!('sourceType' in sanitizedMetadata)) {
     sanitizedMetadata.sourceType = 'direct';
@@ -125,22 +146,40 @@ export async function ingestContent(options: IngestContentOptions): Promise<Doc>
     sanitizedMetadata.source = sourceLabel;
   }
 
-  const doc: Doc = {
-    id: docId,
-    url: sourceLabel,
-    content,
-    embedding: await createEmbedding(content, client),
-    metadata: sanitizedMetadata,
-  };
+  const chunks = chunkText(content);
+  for (let idx = 0; idx < chunks.length; idx++) {
+    const chunk = chunks[idx];
+    const chunkMetadata: Record<string, unknown> = {
+      ...sanitizedMetadata,
+      parentId,
+      chunkIndex: idx,
+      chunkCount: chunks.length,
+    };
 
-  try {
-    await saveRagDoc(doc);
-  } catch (error) {
-    console.warn('[🧠 RAG] Failed to persist document to database - retaining in-memory copy', error);
+    const doc: Doc = {
+      id: `${parentId}#${idx}`,
+      url: sourceLabel,
+      content: chunk,
+      embedding: await createEmbedding(chunk, client),
+      metadata: chunkMetadata,
+    };
+
+    try {
+      await saveRagDoc(doc);
+    } catch (error) {
+      console.warn('[🧠 RAG] Failed to persist document to database - retaining in-memory copy', error);
+    }
+
+    upsertDoc(doc);
   }
 
-  upsertDoc(doc);
-  return doc;
+  return {
+    parentId,
+    chunkCount: chunks.length,
+    source: sourceLabel,
+    contentLength: content.length,
+    metadata: sanitizedMetadata,
+  };
 }
 
 interface ConversationSnippetOptions {
@@ -242,3 +281,5 @@ export async function answerQuestion(question: string): Promise<{ answer: string
     sourceDetails: topDocs.map((d) => ({ id: d.id, url: d.url, metadata: d.metadata })),
   };
 }
+
+

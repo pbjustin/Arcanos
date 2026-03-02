@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/smoke.test.js"
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test tests/smoke.test.js",
+    "test:integration": "npm run build && node --test tests/runtime_integration.test.js"
   },
   "keywords": [],
   "author": "",

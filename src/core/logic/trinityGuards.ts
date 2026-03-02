@@ -7,10 +7,21 @@
 import { Semaphore } from 'async-mutex';
 import { logger } from "@platform/logging/structuredLogging.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
+import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 import type { Tier } from './trinityTier.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
 import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
 import { assertBudgetAvailable, getSafeRemainingMs } from '../../runtime/runtimeBudget.js';
+
+function readNumberEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 // --- Concurrency Governor ---
 
@@ -28,11 +39,11 @@ export async function acquireTierSlot(tier: Tier): Promise<[() => void]> {
 
 // --- Watchdog ---
 
-const BASE_SOFT_CAP_MS = 25_000;
-const MULTIPLIERS: Record<Tier, number> = {
-  simple: 1.0,
-  complex: 1.4,
-  critical: 1.8
+export const TRINITY_BASE_SOFT_CAP_MS = readNumberEnv('TRINITY_BASE_SOFT_CAP_MS', 60_000);
+export const TRINITY_MULTIPLIERS: Record<Tier, number> = {
+  simple: readNumberEnv('TRINITY_MULT_SIMPLE', 1.0),
+  complex: readNumberEnv('TRINITY_MULT_COMPLEX', 1.4),
+  critical: readNumberEnv('TRINITY_MULT_CRITICAL', 1.8)
 };
 
 /**
@@ -41,13 +52,14 @@ const MULTIPLIERS: Record<Tier, number> = {
  * Edge case: tier must exist in multiplier map.
  */
 export function computeTierSoftCap(tier: Tier): number {
-  return BASE_SOFT_CAP_MS * MULTIPLIERS[tier];
+  return TRINITY_BASE_SOFT_CAP_MS * TRINITY_MULTIPLIERS[tier];
 }
 
 export interface TrinityWatchdog {
   watchdog: Watchdog;
   tierSoftCap: number;
   remainingBudgetMs: number;
+  modelCapMs: number;
   effectiveLimit: number;
 }
 
@@ -58,18 +70,31 @@ export interface TrinityWatchdog {
  */
 export function createTrinityWatchdog(
   tier: Tier,
-  runtimeBudget: RuntimeBudget
+  runtimeBudget: RuntimeBudget,
+  model = 'gpt-5'
 ): TrinityWatchdog {
   assertBudgetAvailable(runtimeBudget);
 
   const tierSoftCap = computeTierSoftCap(tier);
   const remainingBudgetMs = getSafeRemainingMs(runtimeBudget);
-  const effectiveLimit = Math.min(tierSoftCap, remainingBudgetMs);
+  const modelCapMs = resolveTimeout(model);
+  const effectiveLimit = Math.max(1, Math.min(tierSoftCap, remainingBudgetMs, modelCapMs));
+
+  if (process.env.DEBUG_WATCHDOG === 'true') {
+    logger.info('Trinity watchdog computed', {
+      tier,
+      tierSoftCap,
+      remainingBudgetMs,
+      modelCapMs,
+      effectiveLimitMs: effectiveLimit
+    });
+  }
 
   return {
     watchdog: new Watchdog(effectiveLimit),
     tierSoftCap,
     remainingBudgetMs,
+    modelCapMs,
     effectiveLimit
   };
 }

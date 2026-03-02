@@ -1,30 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRuntimeBudget, hasSufficientBudget, assertBudgetAvailable } from "../src/runtime/runtimeBudget.js";
-import { RuntimeBudgetExceededError } from "../src/runtime/runtimeErrors.js";
-import { executeWithBudget } from "../src/runtime/executionController.js";
+import { createRuntimeBudget, hasSufficientBudget, assertBudgetAvailable } from "../dist/runtime/runtimeBudget.js";
+import { RuntimeBudgetExceededError } from "../dist/runtime/runtimeErrors.js";
+import { executeWithBudget } from "../dist/runtime/executionController.js";
+
+const EXPECTED_WATCHDOG_LIMIT_MS = Number(process.env.WATCHDOG_LIMIT_MS ?? 60000);
+const EXPECTED_SAFETY_BUFFER_MS = Number(process.env.SAFETY_BUFFER_MS ?? 2000);
 
 test("Runtime Budget Logic", async (t) => {
   await t.test("should create a budget with default values", () => {
     const budget = createRuntimeBudget();
     assert.ok(budget.startedAt <= Date.now());
-    assert.strictEqual(budget.watchdogLimit, 45000);
-    assert.strictEqual(budget.safetyBuffer, 2000);
+    assert.strictEqual(budget.watchdogLimit, EXPECTED_WATCHDOG_LIMIT_MS);
+    assert.strictEqual(budget.safetyBuffer, EXPECTED_SAFETY_BUFFER_MS);
     assert.ok(budget.hardDeadline > budget.startedAt);
   });
 
   await t.test("should report sufficient budget", () => {
     const budget = createRuntimeBudget();
-    assert.ok(hasSufficientBudget(budget, 10000));
-    assert.ok(!hasSufficientBudget(budget, 44000));
+    assert.ok(hasSufficientBudget(budget, 1000));
+    assert.ok(!hasSufficientBudget(budget, EXPECTED_WATCHDOG_LIMIT_MS));
   });
 
   await t.test("assertBudgetAvailable should throw on exhausted budget", () => {
     const budget = {
-      startedAt: Date.now() - 50000,
+      startedAt: Date.now() - EXPECTED_WATCHDOG_LIMIT_MS,
       hardDeadline: Date.now() - 5000,
-      watchdogLimit: 45000,
-      safetyBuffer: 2000
+      watchdogLimit: EXPECTED_WATCHDOG_LIMIT_MS,
+      safetyBuffer: EXPECTED_SAFETY_BUFFER_MS
     };
     assert.throws(() => assertBudgetAvailable(budget), RuntimeBudgetExceededError);
   });
@@ -50,7 +53,7 @@ test("Runtime Budget Logic", async (t) => {
     assert.strictEqual(result.stage, "reasoning");
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0].model, job.model);
-    assert.deepStrictEqual(calls[0].messages, job.messages);
+    assert.deepStrictEqual(calls[0].input, job.messages);
     assert.strictEqual(calls[0].maxTokens, job.maxTokens);
   });
 
@@ -88,7 +91,7 @@ test("Runtime Budget Logic", async (t) => {
       secondPassRequest.instructions.includes("untrusted data")
     );
 
-    const secondPassMessage = secondPassRequest.messages[secondPassRequest.messages.length - 1];
+    const secondPassMessage = secondPassRequest.input[secondPassRequest.input.length - 1];
     assert.ok(secondPassMessage);
     assert.strictEqual(secondPassMessage.role, "user");
     assert.ok(typeof secondPassMessage.content === "string");
