@@ -9,8 +9,15 @@ router.post('/rag/fetch', asyncHandler(async (req, res) => {
   if (!url) {
     return res.status(400).json({ error: 'url required' });
   }
-  const doc = await ingestUrl(url);
-  res.json({ id: doc.id, url: doc.url, contentLength: doc.content.length, metadata: doc.metadata ?? {} });
+  const result = await ingestUrl(url);
+  res.json({
+    id: result.parentId,
+    parentId: result.parentId,
+    url: result.source,
+    chunkCount: result.chunkCount,
+    contentLength: result.contentLength,
+    metadata: result.metadata,
+  });
 }));
 
 router.post('/rag/save', asyncHandler(async (req, res) => {
@@ -32,8 +39,15 @@ router.post('/rag/save', asyncHandler(async (req, res) => {
     metadataObject = metadata as Record<string, unknown>;
   }
 
-  const doc = await ingestContent({ id, content, source, metadata: metadataObject });
-  res.json({ id: doc.id, source: doc.url, contentLength: doc.content.length, metadata: doc.metadata ?? {} });
+  const result = await ingestContent({ id, content, source, metadata: metadataObject });
+  res.json({
+    id: result.parentId,
+    parentId: result.parentId,
+    source: result.source,
+    chunkCount: result.chunkCount,
+    contentLength: result.contentLength,
+    metadata: result.metadata,
+  });
 }));
 
 router.post('/rag/query', asyncHandler(async (req, res) => {
@@ -46,3 +60,4 @@ router.post('/rag/query', asyncHandler(async (req, res) => {
 }));
 
 export default router;
+

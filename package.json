@@ -61,7 +61,8 @@
     "postinstall": "node -e \"try { const fs = require('fs'); const path = require('path'); const scriptPath = path.join(process.cwd(), 'scripts', 'setup-auto-sync.js'); if (!fs.existsSync(scriptPath)) { process.exit(0); } try { require(scriptPath); } catch(e) { if (e.code === 'MODULE_NOT_FOUND') { process.exit(0); } throw e; } } catch(e) { process.exit(0); }\" || true",
     "boundary-check": "ts-node scripts/check-boundaries.ts",
     "build:packages": "npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
-    "build:workers:only": "cd workers && npm run build:workers && cd .."
+    "build:workers:only": "cd workers && npm run build:workers && cd ..",
+    "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration"
   },
   "keywords": [
     "ai",

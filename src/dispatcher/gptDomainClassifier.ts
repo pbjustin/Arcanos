@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
+import { normalizeResponsesCreateParams } from '@core/adapters/openai.adapter.js';
 
 const VALID_DOMAINS: ReadonlySet<string> = new Set([
   'diagnostic', 'code', 'creative', 'natural', 'execution'
@@ -44,7 +45,7 @@ export async function gptFallbackClassifier(
   // preferring to cut at sentence or word boundaries.
   const truncated = truncateAtSemanticBoundary(prompt, MAX_CLASSIFIER_INPUT_LENGTH);
 
-  const response: any = await (openai.responses as any).create({
+  const payload = normalizeResponsesCreateParams({
     model: 'gpt-4o-mini',
     temperature: 0,
     max_output_tokens: 64,
@@ -57,6 +58,8 @@ export async function gptFallbackClassifier(
       }
     ]
   });
+
+  const response: any = await (openai.responses as any).create(payload);
 
   const rawText = typeof response?.output_text === 'string'
     ? response.output_text
@@ -73,3 +76,4 @@ export async function gptFallbackClassifier(
   );
   return 'natural';
 }
+

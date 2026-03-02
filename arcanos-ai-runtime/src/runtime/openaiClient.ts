@@ -24,7 +24,8 @@ function resolveRequestInput(request: GPT5Request): Array<Record<string, unknown
     return request.input;
   }
 
-  // Backward compatibility for call sites still using the legacy field during migration.`r`n  if (Array.isArray(request.messages)) {
+  // Backward compatibility for call sites still using the legacy field during migration.
+  if (Array.isArray(request.messages)) {
     return request.messages;
   }
 
@@ -92,5 +93,3 @@ export async function runGPT5(
     clearTimeout(timeout);
   }
 }
-
-

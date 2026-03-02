@@ -269,7 +269,7 @@ export async function runThroughBrain(
 
   // --- Concurrency governor + watchdog ---
   const [release] = await acquireTierSlot(tier);
-  const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(tier, runtimeBudget);
+  const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(tier, runtimeBudget, getGPT5Model());
   const checkWatchdog = () => {
     assertBudgetAvailable(runtimeBudget);
     watchdog.check();
