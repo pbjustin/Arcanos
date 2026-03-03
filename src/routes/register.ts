@@ -20,6 +20,7 @@ import researchRouter from './research.js';
 import reinforcementRouter from './reinforcement.js';
 import bridgeRouter from './bridge.js';
 import debugConfirmationRouter from './debug-confirmation.js';
+import mcpRouter from './mcp.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
 import reusableCodeRouter from './api-reusable-code.js';
@@ -31,12 +32,17 @@ import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHand
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import devopsRouter from './devops.js';
+import introspectionRouter from './introspection.js';
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
+import { computeTierSoftCap } from "@core/logic/trinityGuards.js";
+import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS } from '../runtime/runtimeBudget.js';
+import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 
 /**
  * Mounts all application routes on the provided Express app.
  */
 export function registerRoutes(app: Express): void {
+
   app.get('/', (_: Request, res: Response) => {
     res.send('ARCANOS is live');
   });
@@ -60,8 +66,44 @@ export function registerRoutes(app: Express): void {
     }
   });
 
+  if (process.env.DEBUG_WATCHDOG === 'true') {
+    app.get('/debug/watchdog', (req: Request, res: Response) => {
+      const expectedDebugKey = process.env.DEBUG_WATCHDOG_KEY;
+      if (expectedDebugKey && req.header('x-debug-key') !== expectedDebugKey) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      const simpleCapMs = computeTierSoftCap('simple');
+      const complexCapMs = computeTierSoftCap('complex');
+      const criticalCapMs = computeTierSoftCap('critical');
+
+      res.json({
+        trinity: {
+          baseSoftCapMs: simpleCapMs,
+          multipliers: {
+            simple: 1,
+            complex: Number((complexCapMs / simpleCapMs).toFixed(2)),
+            critical: Number((criticalCapMs / simpleCapMs).toFixed(2)),
+          }
+        },
+        runtime: {
+          watchdogLimitMs: WATCHDOG_LIMIT_MS,
+          safetyBufferMs: SAFETY_BUFFER_MS,
+          budgetDisabled: process.env.BUDGET_DISABLED === 'true',
+        },
+        modelTimeouts: {
+          'gpt-5': resolveTimeout('gpt-5'),
+          'gpt-5.1': resolveTimeout('gpt-5.1'),
+          default: resolveTimeout('default'),
+        }
+      });
+    });
+  }
+
   app.use('/', healthGroupRouter);
+  app.use('/', introspectionRouter);
   app.use('/', safetyRouter);
+  app.use('/', mcpRouter);
   app.use('/', jobsRouter);
   app.use('/', askRouter);
   app.use('/', queryFinetuneRouter);
@@ -94,8 +136,8 @@ export function registerRoutes(app: Express): void {
 
   // Add test endpoints for Railway health checks
   app.get('/api/test', (_: Request, res: Response) => {
-    res.json({ 
-      status: 'ok', 
+    res.json({
+      status: 'ok',
       timestamp: new Date().toISOString(),
       service: 'ARCANOS',
       version: '1.0.0'
@@ -103,4 +145,5 @@ export function registerRoutes(app: Express): void {
   });
   app.get('/api/fallback/test', createFallbackTestRoute());
 }
+
 

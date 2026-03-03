@@ -2,12 +2,16 @@ import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
 import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 import type {
+  AIResponseDTO,
   ConfirmationRequiredResponseDTO,
-  ErrorResponseDTO
+  ErrorResponseDTO,
+  ClientContextDTO
 } from "@shared/types/dto.js";
 import { asyncHandler } from "@transport/http/asyncHandler.js";
-import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
-import { dispatchModuleAction, getModuleMetadata } from './modules.js';
+import { routeGptRequest } from "./_core/gptDispatch.js";
+import { hasValidAPIKey } from '@services/openai.js';
+import { createMockAIResponse } from '@transport/http/requestHandler.js';
+import { extractPromptFromBody, normalizePromptWithContext } from '@shared/promptUtils.js';
 
 const router = express.Router();
 
@@ -21,7 +25,7 @@ const actionSchema = {
   content: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
   text: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
   query: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
-  gptId: { type: 'string' as const, required: true, maxLength: 120, sanitize: true },
+  gptId: { type: 'string' as const, required: false, maxLength: 120, sanitize: true },
   domain: { type: 'string' as const, required: false, maxLength: 120, sanitize: true },
   useRAG: { type: 'boolean' as const, required: false },
   useHRC: { type: 'boolean' as const, required: false },
@@ -52,6 +56,8 @@ interface ChatGPTActionBody {
     reason?: string;
     memoryVersion?: string;
   };
+  action?: string;
+  timeoutMs?: number;
 }
 
 interface ApiAskModuleDispatchResponse {
@@ -60,16 +66,54 @@ interface ApiAskModuleDispatchResponse {
   meta: {
     gptId: string;
     route: string;
-    matchMethod: 'exact' | 'normalized';
+    matchMethod: string;
     availableActions: string[];
     timestamp: string;
+    requestId?: string;
   };
 }
 
 type ApiAskResponse =
   | ErrorResponseDTO
   | ConfirmationRequiredResponseDTO
+  | AIResponseDTO
   | ApiAskModuleDispatchResponse;
+
+function buildLegacyClientContext(
+  body: ChatGPTActionBody,
+  basePrompt: string,
+  sourceField: string
+): ClientContextDTO {
+  const routingDirectives: string[] = [];
+
+  if (typeof body.domain === 'string' && body.domain.trim().length > 0) {
+    routingDirectives.push(`Domain routing hint: ${body.domain.trim()}`);
+  }
+
+  if (body.useRAG === true) {
+    routingDirectives.push('RAG hint: enabled');
+  }
+
+  if (body.useHRC === true) {
+    routingDirectives.push('HRC hint: enabled');
+  }
+
+  const normalizedPrompt = normalizePromptWithContext(basePrompt, routingDirectives);
+  const metadataKeys = body.metadata ? Object.keys(body.metadata) : undefined;
+
+  return {
+    basePrompt,
+    normalizedPrompt,
+    routingDirectives,
+    flags: {
+      domain: body.domain,
+      useRAG: body.useRAG,
+      useHRC: body.useHRC,
+      metadataKeys,
+      sourceField
+    }
+  };
+}
 
 router.post(
   '/api/ask',
@@ -84,92 +128,62 @@ router.post(
         gptId: req.body?.gptId
       });
 
-      const { domain, metadata, gptId } = req.body;
-      const basePrompt =
-        req.body.message ||
-        req.body.prompt ||
-        req.body.userInput ||
-        req.body.content ||
-        req.body.text ||
-        req.body.query;
+      const gptId = (req.body?.gptId ?? '').trim();
+      if (!gptId) {
+        const { prompt, sourceField } = extractPromptFromBody((req.body ?? {}) as Record<string, unknown>);
 
-      //audit Assumption: /api/ask requires textual prompt input for deterministic module dispatch; failure risk: empty payload reaching module action; expected invariant: one prompt field is present; handling strategy: return standardized 400 validation error.
-      if (!basePrompt) {
-        return res
-          .status(400)
-          .json(
-            buildValidationErrorResponse([
-              'Request must include one of message, prompt, userInput, content, text, or query fields'
-            ])
+        if (!prompt || !sourceField) {
+          return res.status(400).json(
+            buildValidationErrorResponse(["Request must include one of message/prompt/userInput/content/text/query fields"]) as any
           );
+        }
+
+        // Compatibility path: legacy ChatGPT action payloads without gptId are allowed in mock mode.
+        if (!hasValidAPIKey()) {
+          const clientContext = buildLegacyClientContext(req.body, prompt, sourceField);
+          const payload = createMockAIResponse(clientContext.normalizedPrompt || prompt, 'ask', {
+            clientContext
+          });
+          return res.json(payload as any);
+        }
+
+        return res.status(400).json(buildValidationErrorResponse(["Field 'gptId' is required"]) as any);
       }
 
-      //audit Assumption: gptId identity must come from request body only; failure risk: spec drift and ambiguous identity source; expected invariant: non-empty body gptId; handling strategy: reject missing/blank ids with 400.
-      if (typeof gptId !== 'string' || gptId.trim().length === 0) {
-        return res.status(400).json(buildValidationErrorResponse(['Field \'gptId\' is required']));
-      }
-
-      const trimmedGptId = gptId.trim();
-      const gptModuleMap = await getGptModuleMap();
-      const normalizedId = trimmedGptId.toLowerCase();
-      const exactEntry = gptModuleMap[trimmedGptId];
-      const normalizedEntry = gptModuleMap[normalizedId];
-      const entry = exactEntry || normalizedEntry;
-
-      req.logger?.info('ask.gpt.lookup', {
-        gptId: trimmedGptId,
-        match: Boolean(entry),
-        module: entry?.module
+      const envelope = await routeGptRequest({
+        gptId,
+        body: req.body,
+        requestId: (req as any).requestId,
+        logger: (req as any).logger,
       });
 
-      //audit Assumption: unknown GPT identities must fail closed; failure risk: silent fallback and wrong module execution; expected invariant: only allowlisted gptId values dispatch; handling strategy: return 401 when no registry match exists.
-      if (!entry) {
-        return res.status(401).json({
-          error: 'Unauthorized GPT identity',
-          details: [`gptId '${trimmedGptId}' is not registered`]
-        });
+      if (!envelope.ok) {
+        if (envelope.error.code === 'BAD_REQUEST') {
+          return res.status(400).json(buildValidationErrorResponse([envelope.error.message]) as any);
+        }
+        if (envelope.error.code === 'UNKNOWN_GPT') {
+          return res.status(401).json({
+            error: 'Unauthorized GPT identity',
+            details: [envelope.error.message]
+          } as any);
+        }
+        // MODULE_ERROR / other
+        return res.status(500).json({
+          error: envelope.error.message,
+          details: envelope.error.details ? [String(envelope.error.details)] : undefined
+        } as any);
       }
-
-      const moduleMetadata = getModuleMetadata(entry.module);
-      const availableActions = moduleMetadata?.actions ?? [];
-      const action = availableActions.includes('query')
-        ? 'query'
-        : availableActions.length === 1
-        ? availableActions[0]
-        : undefined;
-
-      //audit Assumption: module metadata either exposes a single callable action or an explicit 'query' default; failure risk: array-order fallback dispatches unintended logic; expected invariant: dispatch action is unambiguous; handling strategy: throw explicit error for global handler.
-      if (!action) {
-        const reason =
-          availableActions.length > 1
-            ? "Ambiguous actions and no default 'query' action found"
-            : 'No actions available';
-        throw new Error(`${reason} for module ${entry.module}`);
-      }
-
-      req.logger?.info('ask.dispatch.plan', {
-        module: entry.module,
-        action,
-        availableActions
-      });
-
-      const payload = { prompt: basePrompt, domain, metadata };
-      const result = await dispatchModuleAction(entry.module, action, payload);
-
-      req.logger?.info('ask.dispatch.ok', {
-        module: entry.module,
-        action
-      });
 
       return res.json({
-        result,
-        module: entry.module,
+        result: envelope.result,
+        module: envelope._route.module ?? 'unknown',
         meta: {
-          gptId: trimmedGptId,
-          route: entry.route,
-          matchMethod: exactEntry ? 'exact' : 'normalized',
-          availableActions,
-          timestamp: new Date().toISOString()
+          gptId: envelope._route.gptId,
+          route: envelope._route.route ?? 'unknown',
+          matchMethod: String(envelope._route.matchMethod ?? 'unknown'),
+          availableActions: envelope._route.availableActions ?? [],
+          timestamp: envelope._route.timestamp,
+          requestId: envelope._route.requestId,
         }
       });
     }
@@ -177,4 +191,3 @@ router.post(
 );
 
 export default router;
-

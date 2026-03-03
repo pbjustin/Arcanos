@@ -32,7 +32,9 @@ export default {
     '^@arcanos/openai$': '<rootDir>/packages/arcanos-openai/src/index.ts',
     '^@arcanos/openai/(.*)$': '<rootDir>/packages/arcanos-openai/src/$1.ts',
     '^@arcanos/runtime$': '<rootDir>/packages/arcanos-runtime/src/index.ts',
-    '^@arcanos/runtime/(.*)$': '<rootDir>/packages/arcanos-runtime/src/$1.ts'
+    '^@arcanos/runtime/(.*)$': '<rootDir>/packages/arcanos-runtime/src/$1.ts',
+    '^@prisma/client$': '<rootDir>/tests/mocks/prisma-client.ts',
+    '^@prisma/client/(.*)$': '<rootDir>/tests/mocks/prisma-client.ts'
   },
   collectCoverage: true,
   coverageDirectory: 'coverage',

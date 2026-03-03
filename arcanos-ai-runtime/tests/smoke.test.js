@@ -1,6 +1,7 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { describe, it, expect } from '@jest/globals';
 
-test("runtime test harness is configured", () => {
-  assert.equal(1 + 1, 2);
+describe('runtime smoke', () => {
+  it('runtime test harness is configured', () => {
+    expect(1 + 1).toBe(2);
+  });
 });
