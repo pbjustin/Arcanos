@@ -2,7 +2,6 @@ import { RuntimeBudgetExceededError } from './runtimeErrors.js';
 import { parseEnvBoolean, parseEnvInteger } from '@platform/runtime/envParsers.js';
 
 export const WATCHDOG_LIMIT_MS = parseEnvInteger(process.env.WATCHDOG_LIMIT_MS, 120_000, {
-  allowZero: false,
   minimum: 1,
   roundingMode: 'floor'
 });

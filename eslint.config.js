@@ -67,11 +67,8 @@ export default [
     ignores: ['dist/**', 'node_modules/**'],
     languageOptions: {
       parser: tsParser,
-      ecmaVersion: 2022,
-      sourceType: 'module',
-      parserOptions: {
-        ecmaVersion: 'latest'
-      }
+      ecmaVersion: 'latest',
+      sourceType: 'module'
     },
     plugins: {
       '@typescript-eslint': tsPlugin,

@@ -51,29 +51,24 @@ export const parseEnvInteger = (
     roundingMode = 'trunc'
   } = options;
 
-  //audit Assumption: missing env values should default safely; risk: misconfiguration hidden by fallback; invariant: function always returns a number; handling: fallback on undefined.
   if (value === undefined) {
     return fallback;
   }
 
   const parsed = Number(value);
-  //audit Assumption: non-finite values are invalid; risk: NaN/Infinity causing unsafe limits; invariant: finite integer candidate; handling: return fallback.
   if (!Number.isFinite(parsed)) {
     return fallback;
   }
 
   const rounded = roundingMode === 'floor' ? Math.floor(parsed) : Math.trunc(parsed);
-  //audit Assumption: zero may be disallowed by caller policy; risk: disabled safeguards due to zero values; invariant: parsed value matches zero policy; handling: enforce allowZero gate.
   if (!allowZero && rounded === 0) {
     return fallback;
   }
 
-  //audit Assumption: minimum constraint must be honored when provided; risk: underflow behavior drift; invariant: rounded value >= minimum; handling: fallback when below minimum.
   if (minimum !== undefined && rounded < minimum) {
     return fallback;
   }
 
-  //audit Assumption: maximum constraint must be honored when provided; risk: oversized config causing instability; invariant: rounded value <= maximum; handling: fallback when above maximum.
   if (maximum !== undefined && rounded > maximum) {
     return fallback;
   }

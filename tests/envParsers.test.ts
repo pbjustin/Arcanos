@@ -30,16 +30,35 @@ describe('envParsers', () => {
 
   describe('existing parsers remain stable', () => {
     it('parseEnvInt handles integer conversion with fallback', () => {
+      expect(parseEnvInt(undefined, 1)).toBe(1);
+      expect(parseEnvInt('', 1)).toBe(1);
       expect(parseEnvInt('12', 1)).toBe(12);
+      expect(parseEnvInt('12.9', 1)).toBe(12);
+      expect(parseEnvInt('12px', 1)).toBe(12);
       expect(parseEnvInt('abc', 1)).toBe(1);
     });
 
     it('parseEnvFloat handles float conversion with fallback', () => {
+      expect(parseEnvFloat(undefined, 1)).toBe(1);
+      expect(parseEnvFloat('', 1)).toBe(1);
       expect(parseEnvFloat('12.34', 1)).toBe(12.34);
+      expect(parseEnvFloat('12.34rem', 1)).toBe(12.34);
+      expect(parseEnvFloat(' 8.5 ', 1)).toBe(8.5);
       expect(parseEnvFloat('abc', 1)).toBe(1);
     });
 
     it('parseEnvBoolean handles explicit true/false mappings and fallback', () => {
+      expect(parseEnvBoolean(undefined, true)).toBe(true);
+      expect(parseEnvBoolean(undefined, false)).toBe(false);
+      expect(parseEnvBoolean('true', false)).toBe(true);
+      expect(parseEnvBoolean('false', true)).toBe(false);
+      expect(parseEnvBoolean('1', false)).toBe(true);
+      expect(parseEnvBoolean('0', true)).toBe(false);
+      expect(parseEnvBoolean('on', false)).toBe(true);
+      expect(parseEnvBoolean('no', true)).toBe(false);
+      expect(parseEnvBoolean(' TRUE ', false)).toBe(true);
+      expect(parseEnvBoolean(' OFF ', true)).toBe(false);
+      expect(parseEnvBoolean('', true)).toBe(true);
       expect(parseEnvBoolean('yes', false)).toBe(true);
       expect(parseEnvBoolean('off', true)).toBe(false);
       expect(parseEnvBoolean('unknown', true)).toBe(true);
