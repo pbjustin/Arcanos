@@ -60,5 +60,32 @@ export default [
         }
       ]
     }
-  }
+  },
+
+  {
+    files: ['tests/**/*.{ts,js}'],
+    ignores: ['dist/**', 'node_modules/**'],
+    languageOptions: {
+      parser: tsParser,
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      parserOptions: {
+        ecmaVersion: 'latest'
+      }
+    },
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
+    },
+    rules: {
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['warn', {
+        'argsIgnorePattern': '^_',
+        'varsIgnorePattern': '^_',
+        'destructuredArrayIgnorePattern': '^_'
+      }],
+      '@typescript-eslint/no-explicit-any': 'off'
+    }
+  },
+
 ];

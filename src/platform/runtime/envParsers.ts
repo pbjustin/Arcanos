@@ -26,6 +26,61 @@ export const parseEnvFloat = (value: string | undefined, fallback: number): numb
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
+export interface ParseEnvIntegerOptions {
+  allowZero?: boolean;
+  minimum?: number;
+  maximum?: number;
+  roundingMode?: 'floor' | 'trunc';
+}
+
+/**
+ * Parse an integer with optional boundary constraints.
+ * Inputs: raw string value, fallback number, and optional parsing constraints.
+ * Outputs: parsed integer within constraints or fallback when invalid.
+ * Edge cases: undefined, NaN, infinities, and out-of-range values fall back.
+ */
+export const parseEnvInteger = (
+  value: string | undefined,
+  fallback: number,
+  options: ParseEnvIntegerOptions = {}
+): number => {
+  const {
+    allowZero = true,
+    minimum,
+    maximum,
+    roundingMode = 'trunc'
+  } = options;
+
+  //audit Assumption: missing env values should default safely; risk: misconfiguration hidden by fallback; invariant: function always returns a number; handling: fallback on undefined.
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  //audit Assumption: non-finite values are invalid; risk: NaN/Infinity causing unsafe limits; invariant: finite integer candidate; handling: return fallback.
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const rounded = roundingMode === 'floor' ? Math.floor(parsed) : Math.trunc(parsed);
+  //audit Assumption: zero may be disallowed by caller policy; risk: disabled safeguards due to zero values; invariant: parsed value matches zero policy; handling: enforce allowZero gate.
+  if (!allowZero && rounded === 0) {
+    return fallback;
+  }
+
+  //audit Assumption: minimum constraint must be honored when provided; risk: underflow behavior drift; invariant: rounded value >= minimum; handling: fallback when below minimum.
+  if (minimum !== undefined && rounded < minimum) {
+    return fallback;
+  }
+
+  //audit Assumption: maximum constraint must be honored when provided; risk: oversized config causing instability; invariant: rounded value <= maximum; handling: fallback when above maximum.
+  if (maximum !== undefined && rounded > maximum) {
+    return fallback;
+  }
+
+  return rounded;
+};
+
 /**
  * Parse a boolean from an environment variable string.
  * Inputs: raw string value, fallback boolean.
