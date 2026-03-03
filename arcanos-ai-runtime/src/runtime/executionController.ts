@@ -141,3 +141,4 @@ function sanitizeUntrustedOutput(value: string): string {
 
   return `${trimmed.slice(0, MAX_SECOND_PASS_INPUT_CHARS)}\n[truncated]`;
 }
+

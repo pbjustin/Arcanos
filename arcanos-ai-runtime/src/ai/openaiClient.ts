@@ -17,6 +17,10 @@ export function getRuntimeOpenAIClient(): OpenAI {
     // NOTE: retries should be applied via retryWithBackoff at call sites (shared).
   }
 
+  if (!runtimeClient) {
+    throw new Error("Failed to initialize OpenAI runtime client");
+  }
+
   return runtimeClient;
 }
 

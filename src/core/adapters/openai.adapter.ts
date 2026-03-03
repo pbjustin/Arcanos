@@ -195,7 +195,7 @@ function normalizeUsage(usage: unknown): { promptTokens: number; completionToken
 
 const MIN_RESPONSE_TOKENS = 16;
 
-function normalizeResponsesCreateParams(
+export function normalizeResponsesCreateParams(
   params: ResponseCreateParamsNonStreaming
 ): ResponseCreateParamsNonStreaming {
   const normalized = { ...params } as ResponseCreateParamsNonStreaming & { max_completion_tokens?: number };

@@ -8,6 +8,7 @@ import type OpenAI from 'openai';
 
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { createCacheKey } from '@shared/hashUtils.js';
+import { normalizeResponsesCreateParams } from '@core/adapters/openai.adapter.js';
 
 const DEFAULTS = {
   IDLE_MEMORY_THRESHOLD_MB: getEnvNumber('IDLE_MEMORY_THRESHOLD_MB', 150),
@@ -156,10 +157,10 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
         for (const [key, group] of grouped.entries()) {
           try {
             const payload = group[0].payload;
-            const data = await openai.responses.create({
+            const data = await openai.responses.create(normalizeResponsesCreateParams({
               ...payload,
               stream: false
-            });
+            }));
 
             responseCache.set(key, { timestamp: Date.now(), data });
             for (const request of group) {
@@ -209,5 +210,4 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
     destroy
   };
 }
-
 

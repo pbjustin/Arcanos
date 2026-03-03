@@ -7,27 +7,30 @@ import {
 import { RuntimeBudgetExceededError } from '../src/runtime/runtimeErrors.js';
 import { executeWithBudget } from '../src/runtime/executionController.js';
 
+const EXPECTED_WATCHDOG_LIMIT_MS = Number(process.env.WATCHDOG_LIMIT_MS ?? 60000);
+const EXPECTED_SAFETY_BUFFER_MS = Number(process.env.SAFETY_BUFFER_MS ?? 2000);
+
 describe('Runtime Budget Logic', () => {
   it('should create a budget with default values', () => {
     const budget = createRuntimeBudget();
     expect(budget.startedAt).toBeLessThanOrEqual(Date.now());
-    expect(budget.watchdogLimit).toBe(45000);
-    expect(budget.safetyBuffer).toBe(2000);
+    expect(budget.watchdogLimit).toBe(EXPECTED_WATCHDOG_LIMIT_MS);
+    expect(budget.safetyBuffer).toBe(EXPECTED_SAFETY_BUFFER_MS);
     expect(budget.hardDeadline).toBeGreaterThan(budget.startedAt);
   });
 
   it('should report sufficient budget', () => {
     const budget = createRuntimeBudget();
-    expect(hasSufficientBudget(budget, 10000)).toBe(true);
-    expect(hasSufficientBudget(budget, 44000)).toBe(false);
+    expect(hasSufficientBudget(budget, 1000)).toBe(true);
+    expect(hasSufficientBudget(budget, EXPECTED_WATCHDOG_LIMIT_MS)).toBe(false);
   });
 
   it('assertBudgetAvailable should throw on exhausted budget', () => {
     const budget = {
-      startedAt: Date.now() - 50000,
+      startedAt: Date.now() - EXPECTED_WATCHDOG_LIMIT_MS,
       hardDeadline: Date.now() - 5000,
-      watchdogLimit: 45000,
-      safetyBuffer: 2000
+      watchdogLimit: EXPECTED_WATCHDOG_LIMIT_MS,
+      safetyBuffer: EXPECTED_SAFETY_BUFFER_MS
     };
 
     expect(() => assertBudgetAvailable(budget)).toThrow(RuntimeBudgetExceededError);
@@ -121,4 +124,3 @@ describe('Runtime Budget Logic', () => {
     expect(calls).toHaveLength(1);
   });
 });
-

@@ -62,6 +62,7 @@
     "boundary-check": "ts-node scripts/check-boundaries.ts",
     "build:packages": "npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
     "build:workers:only": "cd workers && npm run build:workers && cd ..",
+    "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration",
     "mcp:stdio": "node dist/mcp/mcp-stdio.js",
     "mcp:stdio:dev": "node --loader ts-node/esm src/mcp/mcp-stdio.ts"
   },

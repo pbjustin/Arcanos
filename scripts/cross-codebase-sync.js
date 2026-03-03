@@ -259,20 +259,18 @@ async function checkDependencySync() {
       
       // Check for major version mismatches
       if (pythonInfo?.version && mapping.critical) {
-        // Special case: OpenAI SDK uses different versioning schemes
-        // Python: 1.x, Node: 6.x - both are current and compatible
+        // Special case: OpenAI SDK uses different versioning schemes.
+        // Python and Node majors are not expected to match numerically.
         if (depName === 'openai') {
-          // OpenAI SDK: Python 1.x and Node 6.x are both current versions
-          // They use different versioning schemes but are compatible
-          const pythonMajor = pythonInfo.version.split('.')[0];
-          const nodeMajor = nodeVersion.split('.')[0];
-          // Both should be current major versions (Python 1.x, Node 6.x)
-          if (pythonMajor === '1' && nodeMajor === '6') {
-            console.log(`  ✓ ${depName}: Python ${pythonInfo.version} | Node ${nodeVersion} (compatible)`);
+          const pythonMajor = Number(pythonInfo.version.split('.')[0]);
+          const nodeMajor = Number(nodeVersion.split('.')[0]);
+          // OpenAI Python is currently on 1.x/2.x while Node is on 6.x+.
+          // Treat these as compatible when both are modern major versions.
+          if (Number.isFinite(pythonMajor) && Number.isFinite(nodeMajor) && pythonMajor >= 1 && nodeMajor >= 6) {
+            console.log(`  ✓ ${depName}: Python ${pythonInfo.version} | Node ${nodeVersion} (compatible cross-SDK majors)`);
             continue; // Skip the error, they're compatible
           }
-        }
-        
+        }        
         if (!areVersionsCompatible(pythonInfo.version, nodeVersion)) {
           issues.push({
             type: 'version_mismatch',
@@ -1179,3 +1177,5 @@ export {
   detectServerChangesRequiringDaemonUpdates,
   detectDaemonChangesNotMatchingServer
 };
+
+

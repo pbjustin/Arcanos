@@ -34,8 +34,8 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import devopsRouter from './devops.js';
 import introspectionRouter from './introspection.js';
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
-import { computeTierSoftCap } from "@core/logic/trinityGuards.js";
-import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS } from '../runtime/runtimeBudget.js';
+import { TRINITY_BASE_SOFT_CAP_MS, TRINITY_MULTIPLIERS } from "@core/logic/trinityGuards.js";
+import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS, BUDGET_DISABLED } from '../runtime/runtimeBudget.js';
 import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 
 /**
@@ -73,23 +73,19 @@ export function registerRoutes(app: Express): void {
         return res.status(403).json({ error: 'Forbidden' });
       }
 
-      const simpleCapMs = computeTierSoftCap('simple');
-      const complexCapMs = computeTierSoftCap('complex');
-      const criticalCapMs = computeTierSoftCap('critical');
-
       res.json({
         trinity: {
-          baseSoftCapMs: simpleCapMs,
+          baseSoftCapMs: TRINITY_BASE_SOFT_CAP_MS,
           multipliers: {
-            simple: 1,
-            complex: Number((complexCapMs / simpleCapMs).toFixed(2)),
-            critical: Number((criticalCapMs / simpleCapMs).toFixed(2)),
+            simple: TRINITY_MULTIPLIERS.simple,
+            complex: TRINITY_MULTIPLIERS.complex,
+            critical: TRINITY_MULTIPLIERS.critical,
           }
         },
         runtime: {
           watchdogLimitMs: WATCHDOG_LIMIT_MS,
           safetyBufferMs: SAFETY_BUFFER_MS,
-          budgetDisabled: process.env.BUDGET_DISABLED === 'true',
+          budgetDisabled: BUDGET_DISABLED,
         },
         modelTimeouts: {
           'gpt-5': resolveTimeout('gpt-5'),
@@ -145,5 +141,3 @@ export function registerRoutes(app: Express): void {
   });
   app.get('/api/fallback/test', createFallbackTestRoute());
 }
-
-
