@@ -59,7 +59,9 @@
         "test:all:stacks": "npm test && cd daemon-python && python -m pytest tests/ -q",
         "validate:all": "npm run guard:commit && npm run type-check && npm run lint && npm run build && npm test && npm run validate:railway && npm run validate:backend-cli:contract && npm run validate:backend-cli:offline",
         "postinstall": "node -e \"try { const fs = require('fs'); const path = require('path'); const scriptPath = path.join(process.cwd(), 'scripts', 'setup-auto-sync.js'); if (!fs.existsSync(scriptPath)) { process.exit(0); } try { require(scriptPath); } catch(e) { if (e.code === 'MODULE_NOT_FOUND') { process.exit(0); } throw e; } } catch(e) { process.exit(0); }\" || true",
-        "boundary-check": "ts-node scripts/check-boundaries.ts"
+        "boundary-check": "ts-node scripts/check-boundaries.ts",
+        "mcp:stdio": "node dist/mcp/mcp-stdio.js",
+        "mcp:stdio:dev": "node --loader ts-node/esm src/mcp/mcp-stdio.ts"
     },
     "keywords": [
         "ai",
@@ -71,6 +73,7 @@
     "author": "Justin",
     "license": "MIT",
     "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.26.0",
         "@prisma/client": "^5.22.0",
         "@types/pg": "^8.15.5",
         "async-mutex": "^0.5.0",
@@ -123,5 +126,9 @@
     "engines": {
         "node": ">=18.0.0",
         "npm": ">=8.0.0"
+    },
+    "bin": {
+        "arcanos-mcp-stdio": "dist/mcp/mcp-stdio.js"
     }
 }
+

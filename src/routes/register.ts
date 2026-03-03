@@ -19,6 +19,7 @@ import researchRouter from './research.js';
 import reinforcementRouter from './reinforcement.js';
 import bridgeRouter from './bridge.js';
 import debugConfirmationRouter from './debug-confirmation.js';
+import mcpRouter from './mcp.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
 import reusableCodeRouter from './api-reusable-code.js';
@@ -94,6 +95,7 @@ export function registerRoutes(app: Express): void {
 
   app.use('/', healthGroupRouter);
   app.use('/', safetyRouter);
+  app.use('/', mcpRouter);
   app.use('/', askRouter);
   app.use('/', queryFinetuneRouter);
   app.use('/', apiRouter);
@@ -134,3 +136,4 @@ export function registerRoutes(app: Express): void {
   });
   app.get('/api/fallback/test', createFallbackTestRoute());
 }
+
