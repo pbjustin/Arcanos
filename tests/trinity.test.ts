@@ -6,7 +6,7 @@
 import { describe, it, expect } from '@jest/globals';
 import OpenAI from 'openai';
 import { runThroughBrain } from '../src/core/logic/trinity.js';
-import { createRuntimeBudget } from '../src/runtime/runtimeBudget.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 describe('Trinity pipeline', () => {
   it('returns TrinityResult shape when called with dryRun: true', async () => {

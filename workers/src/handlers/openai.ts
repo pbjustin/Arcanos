@@ -1,39 +1,42 @@
-import type OpenAI from 'openai';
-
 import type { JobHandler } from '../jobs/index.js';
 import { getWorkerOpenAIAdapter } from '../infrastructure/sdk/openai.js';
 
-function extractOutputText(response: OpenAI.Responses.Response): string {
+function extractOutputText(response: { output_text?: unknown; output?: unknown[] }): string {
+  //audit Assumption: responses may or may not expose output_text shortcut; risk: empty worker payload despite valid output; invariant: return first textual output part when available; handling: fallback scan through output content blocks.
   if (typeof response.output_text === 'string' && response.output_text.length > 0) {
     return response.output_text;
   }
 
-  const message = response.output.find(
-    (item): item is OpenAI.Responses.ResponseOutputMessage => item.type === 'message'
-  );
+  const outputItems = Array.isArray(response.output) ? response.output : [];
+  for (const outputItem of outputItems) {
+    if (!outputItem || typeof outputItem !== 'object') {
+      continue;
+    }
+    const typedOutputItem = outputItem as Record<string, unknown>;
+    const content = Array.isArray(typedOutputItem.content) ? typedOutputItem.content : [];
+    for (const contentItem of content) {
+      if (!contentItem || typeof contentItem !== 'object') {
+        continue;
+      }
+      const typedContentItem = contentItem as Record<string, unknown>;
+      if (typedContentItem.type === 'output_text' && typeof typedContentItem.text === 'string') {
+        return typedContentItem.text;
+      }
+    }
+  }
 
-  const outputText = message?.content.find(
-    (part): part is OpenAI.Responses.ResponseOutputText => part.type === 'output_text'
-  );
-
-  return outputText?.text ?? '';
+  return '';
 }
 
 export const openaiCompletionHandler: JobHandler<'OPENAI_COMPLETION'> = async ({ payload }) => {
   const adapter = getWorkerOpenAIAdapter();
   const { chatModel } = adapter.getDefaults();
-
   const response = await adapter.responses.create({
     model: payload.model ?? chatModel,
-    input: [
-      {
-        role: 'user',
-        content: payload.prompt
-      }
-    ]
+    input: [{ role: 'user', content: [{ type: 'input_text', text: payload.prompt }] }]
   });
 
-  return { response: extractOutputText(response) };
+  return { response: extractOutputText(response as { output_text?: unknown; output?: unknown[] }) };
 };
 
 export const openaiEmbeddingHandler: JobHandler<'OPENAI_EMBEDDING'> = async ({ payload }) => {

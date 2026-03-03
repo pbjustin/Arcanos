@@ -7,6 +7,26 @@ interface GptModuleEntry {
   module: string;
 }
 
+/**
+ * Purpose: Register both raw and normalized GPT ID bindings in the lookup map.
+ * Inputs/Outputs: Accepts mutable map + GPT ID + module entry; mutates map in-place.
+ * Edge cases: Ignores empty/whitespace GPT IDs.
+ */
+function addBinding(
+  map: Record<string, GptModuleEntry>,
+  gptId: string,
+  entry: GptModuleEntry
+): void {
+  const raw = gptId.trim();
+  //audit Assumption: blank GPT IDs are invalid routing keys; failure risk: accidental empty map key collisions; expected invariant: only non-empty IDs are stored; handling strategy: ignore blank IDs.
+  if (!raw) {
+    return;
+  }
+  const lower = raw.toLowerCase();
+  map[raw] = { ...entry };
+  map[lower] = { ...entry };
+}
+
 function buildDefaultBindings(modules: LoadedModule[]): Record<string, GptModuleEntry> {
   const defaults: Record<string, GptModuleEntry> = {};
 
@@ -20,7 +40,7 @@ function buildDefaultBindings(modules: LoadedModule[]): Record<string, GptModule
     normalizedIds.add(route);
 
     for (const gptId of normalizedIds) {
-      defaults[gptId] = { ...entry };
+      addBinding(defaults, gptId, entry);
     }
   }
 
@@ -57,7 +77,7 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
       const parsed = JSON.parse(raw) as Record<string, GptModuleEntry>;
       for (const [gptId, entry] of Object.entries(parsed)) {
         if (entry.route && entry.module) {
-          map[gptId] = { ...entry };
+          addBinding(map, gptId, entry);
         }
       }
     } catch (err) {
@@ -80,7 +100,7 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
     if (!id) continue;
     const route = moduleRoutesByName.get(moduleName);
     if (!route) continue;
-    map[id] = { route, module: moduleName };
+    addBinding(map, id, { route, module: moduleName });
   }
 
   assertProtectedConfigIntegrity('gpt_router_config', map, {

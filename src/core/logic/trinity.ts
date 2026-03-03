@@ -55,8 +55,8 @@ import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prom
 import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js';
 import { trackEscalation } from '../../analytics/escalationTracker.js';
 import { getClearMinThreshold, recordRun } from '../../analytics/clearAutoTuner.js';
-import type { RuntimeBudget } from '../../runtime/runtimeBudget.js';
-import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '../../runtime/runtimeBudget.js';
+import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
 

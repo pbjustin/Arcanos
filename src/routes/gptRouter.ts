@@ -10,7 +10,7 @@ import {
 } from "@platform/logging/gptLogger.js";
 import { runThroughBrain } from '@core/logic/trinity.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
-import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 const router = express.Router();
 

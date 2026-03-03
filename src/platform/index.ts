@@ -31,4 +31,6 @@ export * from './resilience/serviceUnavailable.js';
 export * from './resilience/unifiedHealth.js';
 export * from './resilience/unifiedRetry.js';
 export * from './resilience/watchdog.js';
+export * from './resilience/runtimeBudget.js';
+export * from './resilience/runtimeErrors.js';
 export * from './runtime/watchdogConfig.js';

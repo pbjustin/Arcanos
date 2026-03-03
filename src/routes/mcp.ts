@@ -1,6 +1,10 @@
 import express, { type Request, type Response } from 'express';
 import { mcpAuthMiddleware } from '../mcp/auth.js';
-import { buildMcpRequestContext } from '../mcp/context.js';
+import {
+  buildMcpRequestContext,
+  createMcpRequestContextProxy,
+  runWithMcpRequestContext,
+} from '../mcp/context.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
 const router = express.Router();
@@ -9,16 +13,30 @@ const router = express.Router();
 router.use(express.json({ limit: process.env.MCP_HTTP_BODY_LIMIT ?? '1mb' }));
 router.use(mcpAuthMiddleware);
 
+let sharedMcpServerPromise: Promise<{ server: any; transport: any }> | null = null;
+
+async function getSharedMcpServer() {
+  if (!sharedMcpServerPromise) {
+    sharedMcpServerPromise = (async () => {
+      const proxyContext = createMcpRequestContextProxy();
+      const { buildMcpServer } = await import('../mcp/server.js');
+      return buildMcpServer(proxyContext);
+    })().catch((error) => {
+      sharedMcpServerPromise = null;
+      throw error;
+    });
+  }
+
+  return sharedMcpServerPromise;
+}
+
 router.post('/mcp', async (req: Request, res: Response) => {
   try {
     const ctx = buildMcpRequestContext(req);
-    const { server, transport } = await (await import('../mcp/server.js')).buildMcpServer(ctx);
+    const { transport } = await getSharedMcpServer();
 
-    await transport.handleRequest(req, res, req.body);
-
-    res.on('close', () => {
-      try { transport.close(); } catch {}
-      try { server.close(); } catch {}
+    await runWithMcpRequestContext(ctx, async () => {
+      await transport.handleRequest(req, res, req.body);
     });
   } catch (error) {
     const message = resolveErrorMessage(error);
@@ -31,4 +49,3 @@ router.get('/mcp', (_req: Request, res: Response) => {
 });
 
 export default router;
-

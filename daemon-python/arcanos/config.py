@@ -54,6 +54,24 @@ def get_automation_auth() -> tuple[str, str]:
     return header_name, secret
 
 
+def get_backend_token() -> Optional[str]:
+    """
+    Purpose: Resolve backend auth token from canonical and compatibility env keys.
+    Inputs/Outputs: Reads process env and returns the first non-empty token string.
+    Edge cases: Ignores blank values so whitespace-only secrets cannot be treated as valid credentials.
+    """
+    # //audit The backend token is resolved with the following precedence, returning the first non-empty value:
+    # //audit 1. BACKEND_TOKEN: The canonical daemon credential.
+    # //audit 2. ARCANOS_API_KEY: A compatibility fallback for certain deployments.
+    # //audit 3. ADMIN_KEY: A final fallback for environments that reuse this key for daemon auth.
+    for key in ("BACKEND_TOKEN", "ARCANOS_API_KEY", "ADMIN_KEY"):
+        token = (get_env(key) or "").strip()
+        if token:
+            return token
+
+    return None
+
+
 _DEBUG_LOG_PATH_OVERRIDE = get_env_path("DEBUG_LOG_PATH")
 
 
@@ -73,8 +91,9 @@ class Config:
     # Backend Settings
     # ============================================
     BACKEND_URL: Optional[str] = get_backend_base_url()
-    BACKEND_TOKEN: Optional[str] = get_env("BACKEND_TOKEN")
+    BACKEND_TOKEN: Optional[str] = get_backend_token()
     BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
+    BACKEND_ALLOW_GPT_ID_AUTH: bool = get_env_bool("BACKEND_ALLOW_GPT_ID_AUTH", False)
     BACKEND_ALLOW_HTTP: bool = get_env_bool("BACKEND_ALLOW_HTTP", False)
     BACKEND_JWT_SECRET: Optional[str] = get_env("BACKEND_JWT_SECRET") or None
     BACKEND_JWT_PUBLIC_KEY: Optional[str] = get_env("BACKEND_JWT_PUBLIC_KEY") or None
@@ -309,4 +328,3 @@ def validate_required_config(exit_on_error: bool = True) -> bool:
         return False
     
     return True
-

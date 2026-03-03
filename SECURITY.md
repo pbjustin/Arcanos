@@ -45,6 +45,6 @@ python -m pip list --outdated
 
 ## References
 - Security advisories: `https://github.com/pbjustin/Arcanos/security`
-- Railway secrets docs: `https://docs.railway.app/guides/variables`
+- Railway secrets docs: `https://docs.railway.com/guides/variables`
 - OpenAI key safety: `https://platform.openai.com/docs/guides/security`
 - TODO: add dedicated private security contact email if the maintainers publish one.

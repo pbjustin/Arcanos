@@ -1,33 +1,86 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { resolveSafeRequestPath } from "@shared/requestPathSanitizer.js";
 
-function isAppError(err: Error): err is AppError {
-  return err instanceof AppError;
+function isAppError(err: unknown): err is AppError {
+  //audit Assumption: AppError may cross module boundaries and fail instanceof in some build contexts; failure risk: valid operational errors treated as 500; expected invariant: error-like objects with numeric httpCode and string message are treated as AppError; handling strategy: structural guard plus instanceof.
+  if (err instanceof AppError) {
+    return true;
+  }
+
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+
+  const candidate = err as Record<string, unknown>;
+  return typeof candidate.httpCode === 'number' && typeof candidate.message === 'string';
 }
 
-const errorHandler = (err: Error, req: Request, res: Response, next: NextFunction) => {
-  if (isAppError(err)) {
-    logger.error(err.name, {
-      message: err.message,
-      httpCode: err.httpCode,
-      isOperational: err.isOperational,
-      stack: err.stack,
-    });
-    res.status(err.httpCode).json({
-      name: err.name,
-      message: err.message,
-    });
-  } else {
-    logger.error('UnhandledError', {
-      message: err.message,
-      stack: err.stack,
-    });
-    res.status(500).json({
-      name: 'InternalServerError',
-      message: 'An unexpected error occurred.',
-    });
+/**
+ * Purpose: Centralize HTTP error responses with request-id correlation and stack logging.
+ * Inputs/Outputs: Express error middleware; writes JSON error payload and status code.
+ * Edge cases: Falls back to 500/internal message for unknown error types.
+ */
+const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const requestId = req.requestId ?? 'unknown';
+  const requestPath = resolveSafeRequestPath(req);
+
+  // Normalize unknown error input into an Error-like shape for safe logging.
+  let name = 'UnknownError';
+  let message = 'An unexpected error occurred.';
+  let stack: string | undefined;
+
+  if (err instanceof Error) {
+    name = err.name || 'Error';
+    message = err.message || message;
+    stack = err.stack;
+  } else if (err && typeof err === 'object') {
+    const candidate = err as Record<string, unknown>;
+    if (typeof candidate.name === 'string') {
+      name = candidate.name;
+    }
+    if (typeof candidate.message === 'string') {
+      message = candidate.message;
+    }
+    if (typeof candidate.stack === 'string') {
+      stack = candidate.stack;
+    }
+  } else if (typeof err === 'string') {
+    message = err;
+  } else if (err !== undefined) {
+    message = String(err);
   }
+
+  const logDetails = {
+    requestId,
+    method: req.method,
+    path: requestPath,
+    name,
+    message,
+    stack
+  };
+
+  if (req.logger) {
+    req.logger.error('request.failed', logDetails);
+  } else {
+    logger.error('request.failed', logDetails);
+  }
+
+  //audit Assumption: operational AppError instances carry client-safe status/message; failure risk: leaking internal error details; expected invariant: unknown errors return generic message; handling strategy: branch on AppError type.
+  if (isAppError(err)) {
+    const appError = err as AppError;
+    res.status(appError.httpCode).json({
+      error: appError.message,
+      requestId
+    });
+    return;
+  }
+
+  res.status(500).json({
+    error: 'An unexpected error occurred.',
+    requestId
+  });
 };
 
 export default errorHandler;

@@ -29,12 +29,12 @@ beforeEach(async () => {
     getOpenAIKeySource
   }));
 
-  jest.unstable_mockModule('../src/utils/requestHandler.js', () => ({
+  jest.unstable_mockModule('../src/transport/http/requestHandler.js', () => ({
     validateAIRequest,
     handleAIError
   }));
 
-  ({ handlePrompt } = await import('../src/controllers/openaiController.js'));
+  ({ handlePrompt } = await import('../src/transport/http/controllers/openaiController.js'));
 });
 
 afterEach(() => {

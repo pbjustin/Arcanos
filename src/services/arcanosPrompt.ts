@@ -2,7 +2,7 @@ import { generateMockResponse } from './openai.js';
 import { runThroughBrain } from "@core/logic/trinity.js";
 import { mapErrorToFriendlyMessage } from "@core/lib/errors/index.js";
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
-import { createRuntimeBudget } from '../runtime/runtimeBudget.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 /**
  * Handles a basic ARCANOS prompt by routing it through the Trinity brain.

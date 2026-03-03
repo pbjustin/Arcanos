@@ -19,7 +19,7 @@ export {
   ForbiddenError,
   BadRequestError,
   FileStorageError
-} from '../../core/lib/errors/base.js';
+} from '../errors.js';
 
 // Error classification and detection
 export {

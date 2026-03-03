@@ -1,0 +1,5 @@
+{
+  "max_local_tokens": 1200,
+  "multi_file_limit": 3,
+  "security_keywords": ["exploit", "breach", "vulnerability"]
+}

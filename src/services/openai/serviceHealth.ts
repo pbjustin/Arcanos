@@ -1,11 +1,8 @@
 import { responseCache } from "@platform/resilience/cache.js";
 import { isOpenAIAdapterInitialized } from "@core/adapters/openai.adapter.js";
 import { RESILIENCE_CONSTANTS, getCircuitBreakerSnapshot } from './resilience.js';
-import {
-  API_TIMEOUT_MS,
-  resolveOpenAIBaseURL,
-  validateClientHealth
-} from './unifiedClient.js';
+import { getApiTimeoutMs, validateClientHealth } from '@arcanos/openai/unifiedClient';
+import { resolveOpenAIBaseURL } from './credentialProvider.js';
 
 // Legacy export for backward compatibility
 export function getOpenAIServiceHealth() {
@@ -27,7 +24,7 @@ export function getOpenAIServiceHealth() {
     client: {
       initialized: effectiveInitialized,
       model: health.defaultModel,
-      timeout: API_TIMEOUT_MS,
+      timeout: getApiTimeoutMs(),
       baseURL: resolveOpenAIBaseURL()
     },
     circuitBreaker: {

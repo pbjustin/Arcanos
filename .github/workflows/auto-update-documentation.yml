@@ -46,6 +46,10 @@ jobs:
       - name: 📝 Run Documentation Update
         run: |
           echo "📝 Starting AI-powered documentation update..."
+          export PORT=8080
+          export NODE_ENV=production
+          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
+          CI_API_KEY="${OPENAI_API_KEY}"
           
           # Start ARCANOS backend for documentation analysis
           npm start &
@@ -66,6 +70,7 @@ jobs:
           # Perform repository scan and documentation analysis
           curl -X POST http://localhost:8080/ask \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CI_API_KEY" \
             -d '{
               "prompt": "Perform a comprehensive repository scan and analyze all documentation files. Review README.md, CONTRIBUTING.md, CHANGELOG.md, all files in docs/, .env.example, and package.json. Compare documentation against the current codebase state including: 1) API endpoints in src/routes/, 2) Available npm scripts, 3) Environment variables used in code, 4) Current dependencies and versions, 5) Project structure changes. Apply CLEAR 2.0 audit principles (Clarity, Leverage, Efficiency, Alignment, Resilience). Generate updated content for any files that need updates to match current codebase state. Return a JSON response with format: {\"updates\": [{\"file\": \"path/to/file.md\", \"content\": \"updated content\", \"reason\": \"why update needed\"}], \"summary\": \"overall changes summary\"}",
               "context": "documentation_audit",

@@ -31,8 +31,8 @@ async function main() {
   await server.connect(transport);
 
   const shutdown = async (signal: string) => {
-    try { await transport.close?.(); } catch {}
-    try { await server.close?.(); } catch {}
+    try { await transport.close?.(); } catch (error) { console.error('[mcp-stdio] error closing transport:', error); }
+    try { await server.close?.(); } catch (error) { console.error('[mcp-stdio] error closing server:', error); }
     // eslint-disable-next-line no-process-exit
     process.exit(0);
   };
@@ -48,3 +48,4 @@ main().catch((err) => {
   // eslint-disable-next-line no-process-exit
   process.exit(1);
 });
+

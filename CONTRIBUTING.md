@@ -107,7 +107,7 @@ Required CI behavior:
 - Windows Python CLI unit/offline validation job
 
 ## OpenAI and Env Rules
-- TypeScript OpenAI constructor boundary: `src/adapters/openai.adapter.ts`
+- TypeScript OpenAI constructor boundary: `src/core/adapters/openai.adapter.ts`
 - Worker OpenAI constructor boundary: `workers/src/infrastructure/sdk/openai.ts`
 - Python OpenAI constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
 - TypeScript env access boundary: `src/config/env.ts`

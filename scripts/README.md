@@ -24,7 +24,7 @@ Common scripts:
 - `node scripts/probe.js`
 - `node scripts/continuous-audit.js`
 - `./scripts/doc_audit.sh`
-- `node validate-railway-compatibility.js`
+- `node scripts/validate-railway-compatibility.js`
 
 ## Deploy (Railway)
 - `scripts/railway-set-secret.sh` can help set Railway variables.

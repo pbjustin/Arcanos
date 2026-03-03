@@ -1,0 +1,26 @@
+{
+  "name": "@arcanos/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./runtimeBudget": {
+      "types": "./dist/runtimeBudget.d.ts",
+      "import": "./dist/runtimeBudget.js"
+    },
+    "./runtimeErrors": {
+      "types": "./dist/runtimeErrors.d.ts",
+      "import": "./dist/runtimeErrors.js"
+    }
+  },
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  }
+}

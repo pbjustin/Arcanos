@@ -9,7 +9,7 @@ import { OPENAI_LOG_MESSAGES } from "@platform/runtime/openaiLogMessages.js";
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL } from './config.js';
 import type { ImageSize } from './types.js';
 import { buildImageRequest } from './requestBuilders.js';
-import { getDefaultModel } from './unifiedClient.js';
+import { getDefaultModel } from './credentialProvider.js';
 import { IMAGE_PROMPT_TOKEN_LIMIT } from "./constants.js";
 
 const buildEnhancedImagePrompt = async (input: string): Promise<string> => {

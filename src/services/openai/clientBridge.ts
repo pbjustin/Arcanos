@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { getOpenAIAdapter } from "@core/adapters/openai.adapter.js";
-import { getOrCreateClient } from './unifiedClient.js';
+import { getOrCreateClient } from '@arcanos/openai/unifiedClient';
 
 /**
  * Helper to get OpenAI client (adapter preferred, legacy fallback)

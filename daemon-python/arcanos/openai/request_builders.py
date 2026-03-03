@@ -20,7 +20,140 @@ from typing import Any, Dict, List, Optional, Union
 
 from ..config import Config
 
-RESPONSE_FORMAT_KEY = 'response' + '_format'
+
+def _normalize_content_to_text(content: Any) -> str:
+    """
+    Purpose: Normalize mixed message content payloads into plain text.
+    Inputs/Outputs: arbitrary message content -> normalized string.
+    Edge cases: Unknown content parts resolve to empty strings.
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        normalized_parts: List[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            #audit Assumption: text-like parts should preserve deterministic prompt content; risk: silent data loss in multimodal lists; invariant: text and input_text parts are extracted when present; handling: collect supported text fields only.
+            if part.get("type") in {"text", "input_text"} and isinstance(part.get("text"), str):
+                normalized_parts.append(part["text"])
+        return "\n".join(part for part in normalized_parts if part)
+
+    return ""
+
+
+def extract_response_text(response: Any, fallback: str = "") -> str:
+    """
+    Purpose: Extract normalized text output from Responses API payloads.
+    Inputs/Outputs: OpenAI response object -> output text string.
+    Edge cases: Falls back to scanning output content when output_text shortcut is absent.
+    """
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    output = getattr(response, "output", None)
+    if not isinstance(output, list):
+        return fallback
+
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content_list = item.get("content", [])
+        if not isinstance(content_list, list):
+            continue
+        for content_item in content_list:
+            if not isinstance(content_item, dict):
+                continue
+            if content_item.get("type") == "output_text" and isinstance(content_item.get("text"), str):
+                candidate = content_item["text"].strip()
+                if candidate:
+                    return candidate
+    return fallback
+
+
+def build_responses_request(
+    prompt: str,
+    system_prompt: Optional[str] = None,
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    conversation_history: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    """
+    Purpose: Build canonical Responses API request payload for text interactions.
+    Inputs/Outputs: prompt + generation controls -> responses.create payload.
+    Edge cases: Missing history/system prompts degrade to single user message input.
+    """
+    resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
+    resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+
+    input_items: List[Dict[str, Any]] = []
+    if conversation_history:
+        for conversation_item in conversation_history[-5:]:
+            #audit Assumption: conversation history keys follow user/ai schema; risk: malformed history breaks context reconstruction; invariant: only string values are emitted into response input; handling: guard each key before append.
+            if isinstance(conversation_item.get("user"), str):
+                input_items.append({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": conversation_item["user"]}]
+                })
+            if isinstance(conversation_item.get("ai"), str):
+                input_items.append({
+                    "role": "assistant",
+                    "content": [{"type": "input_text", "text": conversation_item["ai"]}]
+                })
+
+    input_items.append({
+        "role": "user",
+        "content": [{"type": "input_text", "text": prompt}]
+    })
+
+    payload: Dict[str, Any] = {
+        "model": model or Config.OPENAI_MODEL,
+        "input": input_items,
+        "temperature": resolved_temperature,
+        "max_output_tokens": resolved_max_tokens,
+    }
+
+    if system_prompt:
+        payload["instructions"] = system_prompt
+    if top_p is not None:
+        payload["top_p"] = top_p
+
+    return payload
+
+
+def build_vision_responses_request(
+    prompt: str,
+    image_base64: str,
+    model: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Purpose: Build canonical Responses API request payload for vision interactions.
+    Inputs/Outputs: prompt + base64 image -> responses.create payload.
+    Edge cases: Uses PNG data URL format when MIME metadata is unavailable.
+    """
+    resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
+    resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+
+    return {
+        "model": model or Config.OPENAI_VISION_MODEL,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": f"data:image/png;base64,{image_base64}"},
+                ],
+            }
+        ],
+        "temperature": resolved_temperature,
+        "max_output_tokens": resolved_max_tokens,
+    }
 def build_chat_completion_request(
     prompt: str,
     system_prompt: Optional[str] = None,
@@ -127,7 +260,7 @@ def build_transcription_request(
     filename: str,
     model: Optional[str] = None,
     language: Optional[str] = None,
-    response_format_value: str = "json",
+    response_format: str = "json",
     temperature: Optional[float] = None
 ) -> Dict[str, Any]:
     """
@@ -138,7 +271,7 @@ def build_transcription_request(
     request_params: Dict[str, Any] = {
         "file": audio_file,
         "model": model or Config.OPENAI_TRANSCRIBE_MODEL,
-        RESPONSE_FORMAT_KEY: response_format_value
+        "response_format": response_format
     }
     
     if language:
@@ -156,7 +289,7 @@ def build_image_request(
     model: Optional[str] = None,
     quality: str = "standard",
     n: int = 1,
-    response_format_value: str = "b64_json"
+    response_format: str = "b64_json"
 ) -> Dict[str, Any]:
     """
     Builds an image generation request
@@ -171,7 +304,7 @@ def build_image_request(
         "size": size,
         "quality": quality,
         "n": n,
-        RESPONSE_FORMAT_KEY: response_format_value
+        "response_format": response_format
     }
 
 
@@ -197,6 +330,10 @@ def build_embedding_request(
 
 
 __all__ = [
+    "_normalize_content_to_text",
+    "extract_response_text",
+    "build_responses_request",
+    "build_vision_responses_request",
     "build_chat_completion_request",
     "build_vision_request",
     "build_transcription_request",

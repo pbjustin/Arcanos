@@ -60,6 +60,7 @@ jobs:
           export PORT=8080
           export NODE_ENV=production
           export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
+          CI_API_KEY="${OPENAI_API_KEY}"
           
           # Start ARCANOS backend for analysis
           npm start > server.log 2>&1 &
@@ -88,10 +89,11 @@ jobs:
             exit 1
           fi
           
-          # Perform code analysis via ARCANOS API (/api/ask expects prompt, not messages)
+          # //audit Assumption: code analysis should use the standard chat entrypoint; failure risk: /api/ask requires route-specific payload fields and auth; expected invariant: CI can authenticate deterministically with the configured mock/openai key; handling strategy: call /ask with an Authorization header.
           PROMPT="Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: $COMMIT_SHA"
-          HTTP_CODE=$(curl -X POST http://localhost:8080/api/ask \
+          HTTP_CODE=$(curl -X POST http://localhost:8080/ask \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CI_API_KEY" \
             -d "$(jq -nc --arg p "$PROMPT" '{prompt: $p, context: "code_analysis"}')" \
             -w "%{http_code}" \
             -o analysis_result.json \

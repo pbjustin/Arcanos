@@ -104,23 +104,31 @@ class BackendApiClient:
             raise BackendRequestError(kind="configuration", message="Backend URL is not configured")
 
         token = self._token_provider()
-        if not token:
+        backend_gpt_id = (Config.BACKEND_GPT_ID or "").strip()
+        allow_gpt_id_auth = bool(Config.BACKEND_ALLOW_GPT_ID_AUTH)
+
+        # //audit assumption: tokenless requests are allowed only when explicitly opted in with GPT ID auth mode; failure risk: accidental anonymous backend access; expected invariant: either bearer token exists or GPT-ID mode is explicitly enabled with non-empty ID; handling strategy: fail closed with structured auth error.
+        if not token and not (allow_gpt_id_auth and backend_gpt_id):
             log_audit_event(
                 "auth_failure",
                 source="backend_client",
                 reason="token_missing",
                 path=path,
-                method=method
+                method=method,
+                gpt_id_auth_enabled=allow_gpt_id_auth,
+                has_backend_gpt_id=bool(backend_gpt_id),
             )
             raise BackendRequestError(kind="auth", message="Backend token is missing")
 
         url = f"{self._base_url}{path}"
         headers = {
-            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
+        # //audit assumption: bearer token remains primary auth signal; failure risk: credentials omitted despite availability; expected invariant: include Authorization whenever token exists; handling strategy: conditional header injection.
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
-        try:
+        # //audit assumption: x-gpt-id may function as trusted identity in GPT-ID auth mode; failure risk: empty/incorrect identity breaks routing or auth; expected invariant: only non-empty IDs are sent; handling strategy: trim and add header conditionally.
             return self._request_sender(
                 method,
                 url,

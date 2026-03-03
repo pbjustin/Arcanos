@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-21T09:15:50.233Z",
+  "generatedAt": "2026-02-28T05:46:06.473Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -60,72 +60,6 @@
         },
         {
           "relativePath": "arcanos-ai-runtime/src/worker.ts"
-        }
-      ]
-    },
-    {
-      "scope": "backend-service",
-      "files": [
-        {
-          "relativePath": "backend-service/src/config/cors.ts"
-        },
-        {
-          "relativePath": "backend-service/src/middleware/auth.ts"
-        },
-        {
-          "relativePath": "backend-service/src/routes/getTask.ts"
-        },
-        {
-          "relativePath": "backend-service/src/routes/heartbeat.ts"
-        },
-        {
-          "relativePath": "backend-service/src/routes/register.ts"
-        },
-        {
-          "relativePath": "backend-service/src/routes/submitResult.ts"
-        },
-        {
-          "relativePath": "backend-service/src/server.ts"
-        },
-        {
-          "relativePath": "backend-service/src/services/agentService.ts"
-        },
-        {
-          "relativePath": "backend-service/src/services/taskService.ts"
-        },
-        {
-          "relativePath": "backend-service/src/storage/inMemoryStore.ts"
-        },
-        {
-          "relativePath": "backend-service/src/types/agent.ts"
-        },
-        {
-          "relativePath": "backend-service/src/types/result.ts"
-        },
-        {
-          "relativePath": "backend-service/src/types/task.ts"
-        },
-        {
-          "relativePath": "backend-service/src/validation/requestValidators.ts"
-        }
-      ]
-    },
-    {
-      "scope": "backend-typescript",
-      "files": [
-        {
-          "relativePath": "backend-typescript/src/index.ts"
-        }
-      ]
-    },
-    {
-      "scope": "collected-ts",
-      "files": [
-        {
-          "relativePath": "collected-ts/src/config/prompts.ts"
-        },
-        {
-          "relativePath": "collected-ts/tests/prompts-system.test.ts"
         }
       ]
     },
@@ -303,6 +237,9 @@
           "relativePath": "src/core/logic/trinityHelpers.ts"
         },
         {
+          "relativePath": "src/core/logic/trinitySchema.ts"
+        },
+        {
           "relativePath": "src/core/logic/trinityStages.ts"
         },
         {
@@ -367,6 +304,9 @@
         },
         {
           "relativePath": "src/middleware/operatorAuth.ts"
+        },
+        {
+          "relativePath": "src/middleware/requestContext.ts"
         },
         {
           "relativePath": "src/platform/index.ts"
@@ -765,6 +705,15 @@
           "relativePath": "src/routes/workers.ts"
         },
         {
+          "relativePath": "src/runtime/openaiClient.ts"
+        },
+        {
+          "relativePath": "src/runtime/runtimeBudget.ts"
+        },
+        {
+          "relativePath": "src/runtime/runtimeErrors.ts"
+        },
+        {
           "relativePath": "src/server.ts"
         },
         {
@@ -1155,6 +1104,9 @@
           "relativePath": "src/shared/promptUtils.ts"
         },
         {
+          "relativePath": "src/shared/requestPathSanitizer.ts"
+        },
+        {
           "relativePath": "src/shared/tokenParameterHelper.ts"
         },
         {
@@ -1385,6 +1337,9 @@
           "relativePath": "tests/ai-output-boundary.test.ts"
         },
         {
+          "relativePath": "tests/api-ask-action-selection.test.ts"
+        },
+        {
           "relativePath": "tests/api-transcribe.test.ts"
         },
         {
@@ -1425,6 +1380,9 @@
         },
         {
           "relativePath": "tests/confirmGate-token-integration.test.ts"
+        },
+        {
+          "relativePath": "tests/confirmGate-trustedGpt-hardening.test.ts"
         },
         {
           "relativePath": "tests/converge-plan.test.ts"
@@ -1490,6 +1448,9 @@
           "relativePath": "tests/openai-prompt.test.ts"
         },
         {
+          "relativePath": "tests/operator-auth-diagnostics.test.ts"
+        },
+        {
           "relativePath": "tests/performance-test.ts"
         },
         {
@@ -1506,6 +1467,12 @@
         },
         {
           "relativePath": "tests/railway-client.test.ts"
+        },
+        {
+          "relativePath": "tests/requestContext-security-logging.test.ts"
+        },
+        {
+          "relativePath": "tests/requestPathSanitizer.test.ts"
         },
         {
           "relativePath": "tests/route-memory-snapshot-store.test.ts"

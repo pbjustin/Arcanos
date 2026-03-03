@@ -13,10 +13,29 @@ import { resolveHeader } from '@transport/http/requestHeaders.js';
 const router = express.Router();
 
 /**
+ * GET /status/safety/operator-auth
+ * Purpose: Expose non-secret operator authentication requirements for diagnostics.
+ */
+router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    operatorAuth: {
+      required: false,
+      mode: 'disabled',
+      configured: false,
+      acceptedCredentials: [],
+      protectedEndpoints: []
+    },
+    diagnostics: {
+      publicEndpoints: ['GET /health', 'GET /healthz', 'GET /status/safety', 'GET /status/safety/operator-auth']
+    }
+  });
+});
+
+/**
  * GET /status/safety
  * Purpose: Expose active safety conditions, quarantines, and counters.
- * Inputs/Outputs: No input; returns runtime safety snapshot summary.
- * Edge cases: Includes historical counters while filtering active controls.
  */
 router.get('/status/safety', (_req: Request, res: Response) => {
   const snapshot = getSafetyRuntimeSnapshot();
@@ -31,9 +50,7 @@ router.get('/status/safety', (_req: Request, res: Response) => {
 
 /**
  * POST /status/safety/quarantine/:quarantineId/release
- * Purpose: Operator-only explicit release flow for integrity quarantines.
- * Inputs/Outputs: quarantineId path param + deterministic confirmation; returns release status.
- * Edge cases: Rejects non-integrity quarantine release from this endpoint.
+ * Purpose: Explicit release flow for integrity quarantines.
  */
 router.post(
   '/status/safety/quarantine/:quarantineId/release',
@@ -51,7 +68,6 @@ router.post(
         source: 'routes/safety.release'
       });
     } catch (error) {
-      //audit Assumption: release requires explicit deterministic confirmation; failure risk: accidental irreversible release; expected invariant: confirmation challenge must be satisfied; handling strategy: reject with 400.
       res.status(400).json({
         error: 'CONFIRMATION_REQUIRED',
         details: [
@@ -113,4 +129,3 @@ router.post(
 );
 
 export default router;
-

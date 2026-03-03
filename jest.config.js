@@ -28,7 +28,11 @@ export default {
     '^@core/(.*)\\.js$': '<rootDir>/src/core/$1',
     '^@core/(.*)$': '<rootDir>/src/core/$1',
     '^@routes/(.*)\\.js$': '<rootDir>/src/routes/$1',
-    '^@routes/(.*)$': '<rootDir>/src/routes/$1'
+    '^@routes/(.*)$': '<rootDir>/src/routes/$1',
+    '^@arcanos/openai$': '<rootDir>/packages/arcanos-openai/src/index.ts',
+    '^@arcanos/openai/(.*)$': '<rootDir>/packages/arcanos-openai/src/$1.ts',
+    '^@arcanos/runtime$': '<rootDir>/packages/arcanos-runtime/src/index.ts',
+    '^@arcanos/runtime/(.*)$': '<rootDir>/packages/arcanos-runtime/src/$1.ts'
   },
   collectCoverage: true,
   coverageDirectory: 'coverage',

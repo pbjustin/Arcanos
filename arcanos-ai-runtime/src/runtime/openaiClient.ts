@@ -1,4 +1,3 @@
-import { OpenAI } from "openai";
 import type {
   Response as OpenAIResponse,
   ResponseCreateParamsNonStreaming,
@@ -7,10 +6,12 @@ import type {
 import type { RuntimeBudget } from "./runtimeBudget.js";
 import { getSafeRemainingMs, assertBudgetAvailable } from "./runtimeBudget.js";
 import { OpenAIAbortError } from "./runtimeErrors.js";
+import { retryWithBackoff } from "@arcanos/openai/retry";
+import { getRuntimeOpenAIClient } from "../ai/openaiClient.js";
 
 export interface GPT5Request {
   model: string;
-  input: Array<Record<string, unknown>>;
+  input?: Array<Record<string, unknown>>;
   messages?: Array<Record<string, unknown>>;
   maxTokens?: number;
   instructions?: string;
@@ -18,26 +19,12 @@ export interface GPT5Request {
 
 export type GPT5Response = OpenAIResponse;
 
-let client: OpenAI | null = null;
-
-function getClient(): OpenAI {
-  if (!client) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error("OPENAI_API_KEY is required to call runGPT5");
-    }
-
-    client = new OpenAI({ apiKey });
-  }
-
-  return client;
-}
-
 function resolveRequestInput(request: GPT5Request): Array<Record<string, unknown>> {
   if (Array.isArray(request.input)) {
     return request.input;
   }
 
+  // Backward compatibility for call sites still using the legacy field during migration.
   if (Array.isArray(request.messages)) {
     return request.messages;
   }
@@ -89,10 +76,10 @@ export async function runGPT5(
   }, safeRemaining);
 
   try {
-    const response = await getClient().responses.create(
+    const response = await retryWithBackoff(() => getRuntimeOpenAIClient().responses.create(
       buildRequestPayload(request),
       { signal: controller.signal }
-    );
+    ), { signal: controller.signal });
 
     return response;
 
@@ -106,4 +93,3 @@ export async function runGPT5(
     clearTimeout(timeout);
   }
 }
-

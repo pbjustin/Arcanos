@@ -74,7 +74,7 @@ describe('ARCANOS PR Assistant', () => {
     const packageJson = {
       name: 'test-project',
       dependencies: {
-        openai: '^5.15.0'
+        openai: '^6.22.0'
       }
     };
     await fs.writeFile(

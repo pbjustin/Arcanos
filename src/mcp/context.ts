@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type OpenAI from 'openai';
 import type { Request } from 'express';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
@@ -12,6 +13,34 @@ export interface McpRequestContext {
   sessionId?: string;
   req: Request;
   logger: McpLogger;
+}
+
+const mcpRequestContextStorage = new AsyncLocalStorage<McpRequestContext>();
+
+/**
+ * Execute a callback inside a request-local MCP context.
+ */
+export function runWithMcpRequestContext<T>(
+  ctx: McpRequestContext,
+  callback: () => Promise<T> | T
+): Promise<T> | T {
+  return mcpRequestContextStorage.run(ctx, callback);
+}
+
+/**
+ * Create a context proxy that resolves values from AsyncLocalStorage at access-time.
+ * This enables a singleton MCP server while still exposing request-specific context to tools.
+ */
+export function createMcpRequestContextProxy(): McpRequestContext {
+  return new Proxy({} as McpRequestContext, {
+    get(_target, prop) {
+      const activeContext = mcpRequestContextStorage.getStore();
+      if (!activeContext) {
+        throw new Error('MCP request context unavailable');
+      }
+      return (activeContext as any)[prop as keyof McpRequestContext];
+    },
+  });
 }
 
 /**

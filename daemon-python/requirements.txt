@@ -2,7 +2,7 @@
 # Source of truth: `daemon-python/pyproject.toml` ([project.dependencies] and optional `dev` extras).
 
 # Runtime dependencies
-openai>=1.12.0,<2
+openai>=2.24.0,<3
 packaging>=24.0
 requests>=2.31.0
 python-dotenv>=1.0.0

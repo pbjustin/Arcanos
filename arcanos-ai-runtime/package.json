@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test tests/smoke.test.js",
-    "test:integration": "npm run build && node --test tests/runtime_integration.test.js"
+    "test:integration": "npm --prefix .. run build:packages && npm run build && node --test tests/runtime_integration.test.js"
   },
   "keywords": [],
   "author": "",
@@ -17,7 +17,9 @@
     "express": "^5.2.1",
     "ioredis": "^5.9.3",
     "openai": "^6.22.0",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "@arcanos/runtime": "file:../packages/arcanos-runtime",
+    "@arcanos/openai": "file:../packages/arcanos-openai"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
