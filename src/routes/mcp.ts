@@ -11,7 +11,6 @@ const router = express.Router();
 
 // The MCP transport handler needs raw JSON body.
 router.use(express.json({ limit: process.env.MCP_HTTP_BODY_LIMIT ?? '1mb' }));
-router.use(mcpAuthMiddleware);
 
 let sharedMcpServerPromise: Promise<{ server: any; transport: any }> | null = null;
 
@@ -30,7 +29,7 @@ async function getSharedMcpServer() {
   return sharedMcpServerPromise;
 }
 
-router.post('/mcp', async (req: Request, res: Response) => {
+router.post('/mcp', mcpAuthMiddleware, async (req: Request, res: Response) => {
   try {
     const ctx = buildMcpRequestContext(req);
     const { transport } = await getSharedMcpServer();

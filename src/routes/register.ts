@@ -32,6 +32,7 @@ import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHand
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import devopsRouter from './devops.js';
+import introspectionRouter from './introspection.js';
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
 import { TRINITY_BASE_SOFT_CAP_MS, TRINITY_MULTIPLIERS } from "@core/logic/trinityGuards.js";
 import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS, BUDGET_DISABLED } from '../runtime/runtimeBudget.js';
@@ -41,6 +42,7 @@ import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
  * Mounts all application routes on the provided Express app.
  */
 export function registerRoutes(app: Express): void {
+
   app.get('/', (_: Request, res: Response) => {
     res.send('ARCANOS is live');
   });
@@ -95,6 +97,7 @@ export function registerRoutes(app: Express): void {
   }
 
   app.use('/', healthGroupRouter);
+  app.use('/', introspectionRouter);
   app.use('/', safetyRouter);
   app.use('/', mcpRouter);
   app.use('/', jobsRouter);
@@ -138,5 +141,3 @@ export function registerRoutes(app: Express): void {
   });
   app.get('/api/fallback/test', createFallbackTestRoute());
 }
-
-

@@ -716,7 +716,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       inputSchema: z.object({}).passthrough(),
     },
     wrapTool('modules.list', ctx, async () => {
-      const defs = loadModuleDefinitions();
+      const defs = await loadModuleDefinitions();
       return mcpText(defs);
     })
   );
@@ -786,5 +786,6 @@ export async function buildMcpServer(ctx: McpRequestContext): Promise<{ server: 
   await server.connect(transport);
   return { server, transport };
 }
+
 
 

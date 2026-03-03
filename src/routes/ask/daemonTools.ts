@@ -99,7 +99,7 @@ export async function tryDispatchDaemonTools(
   const model = getDefaultModel();
   const tokenParams = getTokenParameter(model, 256);
 
-  const response: any = await (client.responses as any).create({
+  const payload = {
     model,
     messages: [
       { role: 'system', content: DAEMON_TOOL_SYSTEM_PROMPT },
@@ -108,7 +108,19 @@ export async function tryDispatchDaemonTools(
     tools: DAEMON_TOOLS,
     tool_choice: 'auto',
     ...tokenParams
-  });
+  };
+
+  const responsesApi = (client as any)?.responses;
+  const chatCompletionsApi = (client as any)?.chat?.completions;
+
+  let response: any;
+  if (responsesApi?.create) {
+    response = await responsesApi.create(payload);
+  } else if (chatCompletionsApi?.create) {
+    response = await chatCompletionsApi.create(payload);
+  } else {
+    throw new Error('OpenAI client does not expose responses.create or chat.completions.create');
+  }
 
   const toolCalls = response.choices[0]?.message?.tool_calls ?? [];
   if (!toolCalls.length) {
