@@ -62,7 +62,9 @@
     "boundary-check": "ts-node scripts/check-boundaries.ts",
     "build:packages": "npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
     "build:workers:only": "cd workers && npm run build:workers && cd ..",
-    "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration"
+    "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration",
+    "mcp:stdio": "node dist/mcp/mcp-stdio.js",
+    "mcp:stdio:dev": "node --loader ts-node/esm src/mcp/mcp-stdio.ts"
   },
   "keywords": [
     "ai",
@@ -95,7 +97,8 @@
     "uuid": "^13.0.0",
     "ws": "^8.18.0",
     "yauzl": "^3.2.0",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@modelcontextprotocol/sdk": "^1.26.0"
   },
   "devDependencies": {
     "@jest/globals": "^30.2.0",
@@ -131,5 +134,8 @@
     "packages/*",
     "workers",
     "arcanos-ai-runtime"
-  ]
+  ],
+  "bin": {
+    "arcanos-mcp-stdio": "dist/mcp/mcp-stdio.js"
+  }
 }
