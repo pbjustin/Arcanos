@@ -26,6 +26,56 @@ export const parseEnvFloat = (value: string | undefined, fallback: number): numb
   return Number.isNaN(parsed) ? fallback : parsed;
 };
 
+export interface ParseEnvIntegerOptions {
+  allowZero?: boolean;
+  minimum?: number;
+  maximum?: number;
+  roundingMode?: 'floor' | 'trunc';
+}
+
+/**
+ * Parse an integer with optional boundary constraints.
+ * Inputs: raw string value, fallback number, and optional parsing constraints.
+ * Outputs: parsed integer within constraints or fallback when invalid.
+ * Edge cases: undefined, NaN, infinities, and out-of-range values fall back.
+ */
+export const parseEnvInteger = (
+  value: string | undefined,
+  fallback: number,
+  options: ParseEnvIntegerOptions = {}
+): number => {
+  const {
+    allowZero = true,
+    minimum,
+    maximum,
+    roundingMode = 'trunc'
+  } = options;
+
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const rounded = roundingMode === 'floor' ? Math.floor(parsed) : Math.trunc(parsed);
+  if (!allowZero && rounded === 0) {
+    return fallback;
+  }
+
+  if (minimum !== undefined && rounded < minimum) {
+    return fallback;
+  }
+
+  if (maximum !== undefined && rounded > maximum) {
+    return fallback;
+  }
+
+  return rounded;
+};
+
 /**
  * Parse a boolean from an environment variable string.
  * Inputs: raw string value, fallback boolean.
