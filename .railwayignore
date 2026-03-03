@@ -27,3 +27,22 @@ temp/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Large local artifacts (exclude from Railway upload)
+release/
+rclone_bin/
+
+# Python desktop/installer build outputs
+daemon-python/.venv/
+daemon-python/dist/
+daemon-python/build/
+daemon-python/build_pyi/
+daemon-python/dist_new/
+installer/dist_new/
+
+# Binary/package artifacts
+*.msi
+*.pyd
+*.pkg
+# Staging binaries
+scripts/daemon-install-staging/

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { callOpenAI } from "@services/openai.js";
+import { callOpenAI, getDefaultModel } from "@services/openai.js";
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
 import {
   BACKSTAGE_BOOKER_PERSONA,
@@ -9,6 +9,7 @@ import {
 import { query } from "@core/db/index.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC, withHRC } from './hrcWrapper.js';
+import { extractTextPrompt } from '@transport/http/payloadNormalization.js';
 
 export interface Wrestler {
   name: string;
@@ -248,10 +249,18 @@ export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
 }
 
 export async function generateBooking(prompt: string): Promise<string> {
-  const model = getEnv('USER_GPT_ID');
+  const model =
+    getEnv('BACKSTAGE_BOOKER_MODEL') ||
+    getEnv('USER_GPT_ID') ||
+    getEnv('FINETUNED_MODEL_ID') ||
+    getEnv('AI_MODEL') ||
+    getEnv('OPENAI_MODEL') ||
+    getDefaultModel();
+
   if (!model) {
-    throw new Error('USER_GPT_ID not configured');
+    throw new Error('No model configured for BACKSTAGE:BOOKER');
   }
+
   const tokenLimit = getEnvNumber('BOOKER_TOKEN_LIMIT', 512);
   const instructions = await buildStructuredBookingPrompt(prompt);
   try {
@@ -384,6 +393,15 @@ export const BackstageBookerModule = {
   description: 'Behind-the-scenes pro wrestling booker for WWE/AEW with strict canon and logic.',
   gptIds: ['backstage-booker', 'backstage'],
   actions: {
+    async query(payload: unknown) {
+      const prompt = extractTextPrompt(payload);
+
+      if (!prompt) {
+        throw new Error('BACKSTAGE:BOOKER query requires a text prompt.');
+      }
+
+      return BackstageBooker.generateBooking(prompt);
+    },
     async bookEvent(payload: unknown) {
       const record = normalizePayloadRecord(payload);
       return BackstageBooker.bookEvent(record);
@@ -415,3 +433,4 @@ export const BackstageBookerModule = {
 };
 
 export default BackstageBookerModule;
+
