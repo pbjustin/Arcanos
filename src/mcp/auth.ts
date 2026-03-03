@@ -8,12 +8,15 @@ import { getEnv } from '@platform/runtime/env.js';
  */
 export function mcpAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   const token = getEnv('MCP_BEARER_TOKEN');
-  if (token) {
-    const auth = req.header('authorization') ?? '';
-    if (auth !== `Bearer ${token}`) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
+  if (!token) {
+    res.status(500).json({ error: 'MCP_BEARER_TOKEN not configured' });
+    return;
+  }
+
+  const auth = req.header('authorization') ?? '';
+  if (auth !== `Bearer ${token}`) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
   }
 
   const origin = req.header('origin');
