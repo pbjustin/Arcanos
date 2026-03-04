@@ -4,7 +4,10 @@ import type {
   ResponseCreateParamsNonStreaming
 } from 'openai/resources/responses/responses';
 
-import { normalizeUsage as normalizeOpenAIUsage, extractResponseOutputText as extractResponseText } from '@arcanos/openai';
+import {
+  normalizeUsage as normalizeOpenAIUsage,
+  extractResponseOutputText as extractResponseText
+} from '@arcanos/openai/responseParsing';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 
 import type {

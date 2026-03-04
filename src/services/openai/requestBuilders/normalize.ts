@@ -3,7 +3,7 @@ import type { ResponseInput } from 'openai/resources/responses/responses';
 
 import { getRoutingMessage } from '@arcanos/openai/unifiedClient';
 import { getTokenParameter } from '@shared/tokenParameterHelper.js';
-import { extractTextFromContentParts } from '@arcanos/openai';
+import { extractTextFromContentParts } from '@arcanos/openai/responseParsing';
 
 import type {
   ResponsesRequestDraft,

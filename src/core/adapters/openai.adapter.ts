@@ -1,4 +1,8 @@
-import { extractResponseOutputText, extractTextFromContentParts, normalizeUsage as normalizeOpenAIUsage } from '@arcanos/openai';
+import {
+  extractResponseOutputText,
+  extractTextFromContentParts,
+  normalizeUsage as normalizeOpenAIUsage
+} from '@arcanos/openai/responseParsing';
 /**
  * OpenAI Adapter
  * 
@@ -444,4 +448,3 @@ export function getClient(): OpenAI {
   //audit Assumption: escape hatch should only be used after adapter init; risk: runtime null usage; invariant: initialized adapter required; handling: delegate to getOpenAIAdapter() throw path.
   return getOpenAIAdapter().getClient();
 }
-
