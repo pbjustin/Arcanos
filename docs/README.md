@@ -11,16 +11,17 @@ This is the production documentation map for the active Arcanos codebase.
 Recommended reading order:
 1. `README.md`
 2. `docs/RUN_LOCAL.md`
-3. `docs/CONFIGURATION.md`
-4. `docs/API.md`
-5. `docs/OPENAI_RESPONSES_TOOLS.md`
-6. `docs/TRINITY_PIPELINE.md`
-7. `docs/CUSTOM_GPTS.md`
-8. `docs/FINE_TUNING.md`
-9. `docs/CLEAR_METHOD_2_0.md`
-10. `docs/RAILWAY_DEPLOYMENT.md`
-11. `docs/CI_CD.md`
-12. `docs/DOCUMENTATION.md`
+3. `docs/CLI_DAEMON.md` (optional local Python agent)
+4. `docs/CONFIGURATION.md`
+5. `docs/API.md`
+6. `docs/OPENAI_RESPONSES_TOOLS.md`
+7. `docs/TRINITY_PIPELINE.md`
+8. `docs/CUSTOM_GPTS.md`
+9. `docs/FINE_TUNING.md`
+10. `docs/CLEAR_METHOD_2_0.md`
+11. `docs/RAILWAY_DEPLOYMENT.md`
+12. `docs/CI_CD.md`
+13. `docs/DOCUMENTATION.md`
 
 ## Configuration
 Configuration source files:

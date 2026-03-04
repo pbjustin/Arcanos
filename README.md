@@ -12,6 +12,18 @@ Key characteristics:
 - **Shared HTTP toolkit** (`src/shared/http/`) for request context, validation, and errors
 - **Railway-ready** start/health configuration
 
+
+### Optional local daemon (Python)
+The repository includes an **optional local daemon CLI** in `daemon-python/` that turns Arcanos into a personal coding assistant on your machine:
+- routes chat to the backend using `gptId=arcanos-daemon`
+- detects inline unified diffs in AI responses and prompts **Apply patch? [y/N]**
+- detects command proposals and prompts **Run? [y/N]** (allowlisted)
+- injects lightweight **repo indexing context** into backend requests
+- keeps **SQLite audit/history** with backups + `/rollback`
+
+See: `daemon-python/README.md`
+
+
 ## Prerequisites
 - Node.js 18+ and npm 8+
 - Optional: Python 3.10+ for daemon work in `daemon-python/`

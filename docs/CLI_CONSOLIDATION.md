@@ -3,6 +3,8 @@
 ## Decision
 - Canonical CLI runtime path: `daemon-python/arcanos/cli/`.
 - Canonical governance primitives: `daemon-python/arcanos/cli/{audit,execute,governance,idempotency,startup,trust_state}.py`.
+- Agentic coding loop (patch/command proposals, repo indexing, history): `daemon-python/arcanos/agentic/`.
+- Response translation/interpreter layer: `daemon-python/arcanos/assistant/translator.py`.
 - Backend/CLI contract source of truth: `contracts/backend_cli_contract.v1.json`.
 
 ## Legacy Zones
@@ -14,4 +16,3 @@
 - Node validator: `npm run validate:backend-cli:contract`.
 - Python validator: `python daemon-python/validate_backend_cli_offline.py`.
 - CI runs contract validation in `.github/workflows/ci-cd.yml`.
-

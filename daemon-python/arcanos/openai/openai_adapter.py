@@ -132,10 +132,29 @@ def chat_stream(
     client = _require_client()
     responses_api = getattr(client, "responses", None)
     create_stream = getattr(responses_api, "create", None) if responses_api else None
-    if not callable(create_stream):
-        raise RuntimeError("OpenAI client does not support responses streaming")
+    if callable(create_stream):
+        return create_stream(**request_payload)
 
-    return create_stream(**request_payload)
+    chat_api = getattr(client, "chat", None)
+    completions_api = getattr(chat_api, "completions", None) if chat_api else None
+    create_chat_stream = getattr(completions_api, "create", None) if completions_api else None
+    # //audit assumption: some SDK clients may expose only chat.completions streaming; failure risk: hard failure during migration windows; invariant: stream path remains available when either API surface exists; handling: fallback to chat.completions when Responses API is unavailable.
+    if not callable(create_chat_stream):
+        raise RuntimeError("OpenAI client does not support responses or chat.completions streaming")
+
+    fallback_payload: Dict[str, Any] = build_chat_completion_request(
+        prompt=user_message,
+        system_prompt=system_prompt,
+        model=model or Config.OPENAI_MODEL,
+        max_tokens=resolved_max_tokens,
+        temperature=resolved_temperature,
+        top_p=None,
+        conversation_history=conversation_history,
+    )
+    fallback_payload["stream"] = True
+    fallback_payload["stream_options"] = {"include_usage": True}
+    fallback_payload["timeout"] = Config.REQUEST_TIMEOUT
+    return create_chat_stream(**fallback_payload)
 
 
 def vision_completion(

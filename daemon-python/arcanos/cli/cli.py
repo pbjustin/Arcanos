@@ -430,6 +430,12 @@ class ArcanosCLI:
         if use_streaming:
             result = local_ops.perform_local_conversation_streaming(self, route_decision.normalized_message)
         else:
+            # Agentic loop: allow backend to propose patches/commands inline; prompt for approval in CLI.
+            if route_decision.route == "backend" and Config.AGENTIC_ENABLED and not return_result:
+                from ..agentic.agent_loop import run_agentic_loop
+                run_agentic_loop(self, route_decision.normalized_message, domain=domain, from_debug=from_debug)
+                return None
+
             with self.console.status("[dim]Thinking...[/dim]", spinner="dots"):
                 if route_decision.route == "backend":
                     result = backend_ops.perform_backend_conversation(
@@ -466,7 +472,6 @@ class ArcanosCLI:
                         result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
                 else:
                     result = local_ops.perform_local_conversation(self, route_decision.normalized_message)
-
         if not result:
             if not return_result:
                 self.console.print("[red]No response generated.[/red]")
@@ -569,6 +574,179 @@ class ArcanosCLI:
     def handle_run(self, command: str, return_result: bool = False) -> Optional[dict]:
         return run_ops.handle_run(self, command, return_result=return_result)
 
+    @handle_errors("opening a local file")
+    def handle_open(self, args: str) -> None:
+        """Read and print a local file (read-only). Usage: /open <path>"""
+        from pathlib import Path
+
+        path = Path((args or "").strip())
+        if not path.exists() or not path.is_file():
+            self.console.print("[red]File not found.[/red]")
+            return
+
+        text = path.read_text(encoding="utf-8", errors="replace")
+        self.console.print(text)
+
+    @handle_errors("running an automation")
+    def handle_auto(self, args: str) -> None:
+        """Run a named automation from the automations TOML file (approval-gated per step). Usage: /auto <name>"""
+        from pathlib import Path
+
+        name = (args or "").strip()
+        if not name:
+            self.console.print("[yellow]Usage: /auto <name>[/yellow]")
+            return
+
+        automations_file: Path = Config.AUTOMATIONS_FILE
+        if not automations_file.exists():
+            self.console.print(f"[red]Automations file not found:[/red] {automations_file}")
+            self.console.print("[dim]Create one at that path or set AUTOMATIONS_FILE in .env[/dim]")
+            return
+
+        try:
+            try:
+                import tomllib  # py3.11+
+            except ImportError:  # pragma: no cover
+                import tomli as tomllib  # type: ignore
+            data = tomllib.loads(automations_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.console.print(f"[red]Failed to load automations:[/red] {exc}")
+            return
+
+        steps = (((data.get("automations") or {}).get(name) or {}).get("steps")) or []
+        if not steps:
+            self.console.print("[red]Automation not found or has no steps.[/red]")
+            return
+
+        for step in steps:
+            cmd = str(step).strip()
+            if not cmd:
+                continue
+            self.console.print(f"\n[bold]Automation step[/bold]: {cmd}")
+            ans = input("Run? [y/N] ").strip().lower()
+            if ans not in ("y", "yes"):
+                self.console.print("[yellow]Cancelled automation.[/yellow]")
+                return
+            self.handle_run(cmd)
+
+    @handle_errors("showing patch history")
+    def handle_history(self) -> None:
+        """Show recent patch history (rollback IDs). Usage: /history"""
+        from ..agentic.history_db import HistoryDB
+
+        db = HistoryDB()
+        rows = db.recent_patches(limit=10)
+        self.console.print("[bold]Recent patches:[/bold]")
+        if not rows:
+            self.console.print("[dim](none)[/dim]")
+            return
+        for r in rows:
+            self.console.print(f"- {r.rollback_id} status={r.status} files={len(r.files)} summary={r.summary}")
+
+    def handle_patchlog(self) -> None:
+        """Alias for /history."""
+        self.handle_history()
+
+    @handle_errors("rolling back a patch")
+    def handle_rollback(self, args: str) -> None:
+        """Rollback a previously applied patch. Usage: /rollback <rollback_id>"""
+        rollback_id = (args or "").strip()
+        if not rollback_id:
+            self.console.print("[yellow]Usage: /rollback <rollback_id>[/yellow]")
+            return
+
+        from ..agentic.history_db import HistoryDB
+        from ..agentic.patch_orchestrator import PatchOrchestrator
+
+        db = HistoryDB()
+        from ..agentic.policy_guard import PolicyGuard
+        guard = PolicyGuard(db)
+        orch = PatchOrchestrator(self.console, db, guard)
+        orch.rollback(self.instance_id, rollback_id)
+
+    
+def handle_audit(self, args: str) -> None:
+    """Audit utilities. Usage: /audit export <path> [--all]"""
+    parts = (args or "").strip().split()
+    if not parts or parts[0] != "export":
+        self.console.print("[yellow]Usage: /audit export <path> [--all][/yellow]")
+        return
+    if len(parts) < 2:
+        self.console.print("[yellow]Usage: /audit export <path> [--all][/yellow]")
+        return
+    out_path = parts[1]
+    export_all = "--all" in parts[2:]
+    from pathlib import Path
+    from ..agentic.history_db import HistoryDB
+    db = HistoryDB()
+    db.export_audit(Path(out_path), session_id=None if export_all else self.instance_id)
+    self.console.print(f"[green]Audit exported to[/green] {out_path}")
+
+def handle_intents(self) -> None:
+    """Show last detected agent intents (patches/commands)."""
+    intents = getattr(self, "last_intents", None)
+    if not intents:
+        self.console.print("[yellow]No intents captured yet.[/yellow]")
+        return
+    patches = intents.get("patches") or []
+    commands = intents.get("commands") or []
+    self.console.print("[bold]Last intents[/bold]")
+    self.console.print(f"Step: {intents.get('step')}")
+    self.console.print(f"Patches: {len(patches)}") 
+    for i, p in enumerate(patches[:5], 1):
+        self.console.print(f"  {i}. {p.splitlines()[0][:120]}")
+    self.console.print(f"Commands: {len(commands)}")
+    for i, c in enumerate(commands[:10], 1):
+        self.console.print(f"  {i}. {c}")
+
+def handle_dryrun(self, args: str) -> None:
+    """Toggle dry-run mode (proposals only). Usage: /dryrun on|off"""
+    val = (args or "").strip().lower()
+    if val not in ("on", "off", "true", "false", "1", "0", ""):
+        self.console.print("[yellow]Usage: /dryrun on|off[/yellow]")
+        return
+    if val in ("",):
+        self.console.print(f"Dry-run is {'ON' if self.dry_run else 'OFF'}") 
+        return
+    self.dry_run = val in ("on", "true", "1")
+    self.console.print(f"[green]Dry-run set to[/green] {'ON' if self.dry_run else 'OFF'}")
+
+def handle_feedback(self, args: str) -> None:
+    """Attach feedback to a patch/command id. Usage: /feedback <target_id> <rating 1-5> <note...>"""
+    parts = (args or "").strip().split()
+    if len(parts) < 2:
+        self.console.print("[yellow]Usage: /feedback <target_id> <rating 1-5> <note...>[/yellow]")
+        return
+    target_id = parts[0]
+    try:
+        rating = int(parts[1])
+    except ValueError:
+        self.console.print("[red]Rating must be an integer 1-5.[/red]")
+        return
+    rating = max(1, min(5, rating))
+    note = " ".join(parts[2:]).strip()
+    from ..agentic.history_db import HistoryDB
+    db = HistoryDB()
+    fb_id = db.log_feedback(self.instance_id, target_id, rating, note)
+    self.console.print(f"[green]Feedback recorded[/green] id={fb_id}")
+
+
+def handle_safemode(self, args: str) -> None:
+    """Toggle safe mode. Usage: /safemode on|off"""
+    val = (args or "").strip().lower()
+    from ..agentic.history_db import HistoryDB
+    from ..agentic.policy_guard import PolicyGuard
+    db = HistoryDB()
+    guard = PolicyGuard(db)
+    if val in ("on","true","1"):
+        guard.enable_safe_mode(self.instance_id, "user enabled")
+        self.console.print("[yellow]Safe mode enabled.[/yellow]")
+    elif val in ("off","false","0"):
+        guard.disable_safe_mode(self.instance_id)
+        self.console.print("[green]Safe mode disabled.[/green]")
+    else:
+        self.console.print(f"Safe mode is {'ON' if guard.is_safe_mode() else 'OFF'}")
+
     @handle_errors("speaking response")
     def handle_speak(self) -> None:
         return ui_ops.handle_speak(self)
@@ -592,7 +770,6 @@ class ArcanosCLI:
         """
         Purpose: Run CLI loop in debug or interactive mode.
         Inputs/Outputs: debug_mode flag; blocks until exit.
-        Edge cases: None.
         """
         if debug_mode:
             run_debug_mode(self)

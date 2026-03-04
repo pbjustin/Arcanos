@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, jest } from '@jest/globals';
-import { deployService, isRailwayApiConfigured } from '../src/services/railwayClient.js';
+import { deployService, isRailwayApiConfigured, listProjects } from '../src/services/railwayClient.js';
 
 const ORIGINAL_TOKEN = process.env.RAILWAY_API_TOKEN;
 let originalFetch: typeof fetch | undefined;
@@ -113,5 +113,81 @@ describe('railwayClient', () => {
     jest.runOnlyPendingTimers();
 
     await expect(pending).rejects.toThrow(/timed out/i);
+  });
+
+  it('falls back to root projects query when viewer field is unsupported', async () => {
+    process.env.RAILWAY_API_TOKEN = 'test-token-1234567890-railway-access';
+
+    const fetchSpy = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          errors: [{ message: 'Cannot query field "viewer" on type "Query".' }]
+        })
+      } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          data: {
+            projects: {
+              edges: [
+                {
+                  node: {
+                    id: 'proj-1',
+                    name: 'Project One',
+                    environments: [
+                      {
+                        id: 'env-1',
+                        name: 'production',
+                        services: [
+                          {
+                            id: 'svc-1',
+                            name: 'api',
+                            latestDeployment: {
+                              id: 'dep-1',
+                              status: 'SUCCESS',
+                              createdAt: '2026-03-04T00:00:00.000Z'
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        })
+      } as any);
+
+    global.fetch = fetchSpy;
+
+    const projects = await listProjects();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({
+      id: 'proj-1',
+      name: 'Project One'
+    });
+  });
+
+  it('does not retry listProjects for non-schema GraphQL failures', async () => {
+    process.env.RAILWAY_API_TOKEN = 'test-token-1234567890-railway-access';
+
+    const fetchSpy = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        errors: [{ message: 'Unauthorized' }]
+      })
+    } as any);
+
+    global.fetch = fetchSpy;
+
+    await expect(listProjects()).rejects.toThrow(/Unauthorized/i);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,7 @@
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
 
+from ..config import Config
+
 from ..backend_client_models import BackendChatResult, BackendRequestError, BackendResponse
 
 if TYPE_CHECKING:
@@ -17,7 +19,7 @@ def request_ask_with_domain(
     Inputs/Outputs: message, optional domain, optional metadata; returns BackendChatResult.
     Edge cases: Returns structured error on auth, network, or parsing failures.
     """
-    payload: dict[str, Any] = {"prompt": message}
+    payload: dict[str, Any] = {"prompt": message, "gptId": Config.BACKEND_GPT_ID}
     if domain:
         # //audit assumption: domain optional; risk: missing routing context; invariant: include when provided; strategy: conditional field.
         payload["domain"] = domain
@@ -25,6 +27,14 @@ def request_ask_with_domain(
     if normalized_metadata is not None:
         # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
         payload["metadata"] = normalized_metadata
+
+    # Prefer top-level sessionId/context if provided in metadata.
+    if isinstance(normalized_metadata, dict):
+        if "instanceId" in normalized_metadata and "sessionId" not in payload:
+            payload["sessionId"] = str(normalized_metadata.get("instanceId"))
+        if "repoIndex" in normalized_metadata:
+            payload["context"] = {"repoIndex": normalized_metadata.get("repoIndex")}
+
 
     response = client._request_json("post", "/ask", payload)
     if not response.ok or not response.value:
@@ -67,6 +77,14 @@ def request_chat_completion(
         # //audit assumption: metadata optional; risk: missing context; invariant: include when provided; strategy: conditional field.
         payload["metadata"] = normalized_metadata
 
+    # Prefer top-level sessionId/context if provided in metadata.
+    if isinstance(normalized_metadata, dict):
+        if "instanceId" in normalized_metadata and "sessionId" not in payload:
+            payload["sessionId"] = str(normalized_metadata.get("instanceId"))
+        if "repoIndex" in normalized_metadata:
+            payload["context"] = {"repoIndex": normalized_metadata.get("repoIndex")}
+
+
     response = client._request_json("post", "/ask", payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
@@ -92,6 +110,14 @@ def request_system_state(
     if normalized_metadata is not None:
         # //audit assumption: metadata optional; risk: missing tracing context; invariant: include when provided; strategy: conditional attach.
         payload["metadata"] = normalized_metadata
+
+    # Prefer top-level sessionId/context if provided in metadata.
+    if isinstance(normalized_metadata, dict):
+        if "instanceId" in normalized_metadata and "sessionId" not in payload:
+            payload["sessionId"] = str(normalized_metadata.get("instanceId"))
+        if "repoIndex" in normalized_metadata:
+            payload["context"] = {"repoIndex": normalized_metadata.get("repoIndex")}
+
 
     # //audit assumption: optimistic lock updates require both fields; risk: partial contract write; invariant: both fields must appear together; strategy: reject malformed client payload.
     if (expected_version is None) != (patch is None):

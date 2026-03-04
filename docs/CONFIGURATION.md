@@ -85,11 +85,25 @@ The OpenAI client resolves keys in this order, skipping placeholders:
 | `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
 
 ### Daemon-specific core variables
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | none | Required by daemon local GPT client. |
-| `BACKEND_URL` | none | Optional backend routing target. |
+| `OPENAI_API_KEY` | none | Required only when using local OpenAI routing. |
+| `BACKEND_URL` | none | Backend routing target (recommended for `arcanos-daemon`). |
+| `BACKEND_TOKEN` | none | Optional bearer token for backend auth. |
+| `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend (sent as `gptId` and/or `x-gpt-id`). |
+| `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | If true, daemon may authenticate via `x-gpt-id` without a bearer token (backend must allow). |
 | `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
+| `AGENTIC_ENABLED` | `true` | Enables multi-step reasoning loop (ask → propose → approve → apply/run → continue). |
+| `AGENT_MAX_STEPS` | `6` | Max loop iterations per user request. |
+| `REPO_INDEX_ENABLED` | `true` | Enables lightweight repo indexing context injection. |
+| `REPO_INDEX_MAX_FILES` | `800` | Upper bound for indexed file count. |
+| `REPO_INDEX_MAX_CHARS` | `50000` | Upper bound for serialized context payload size. |
+| `HISTORY_DB_PATH` | `history.db` | SQLite file for messages/patch/command history and audit. |
+| `PATCH_BACKUP_DIR` | `patch_backups` | Directory used for backup snapshots (rollback support). |
+| `PATCH_TOKEN_START` | `---patch.start---` | Optional explicit patch block delimiter recognized by the CLI. |
+| `PATCH_TOKEN_END` | `---patch.end---` | Optional explicit patch block delimiter recognized by the CLI. |
+| `AUTOMATIONS_FILE` | `automations.toml` | TOML file containing local automation recipes (`/auto`). |
 | `DEBUG_SERVER_TOKEN` | none | Strongly recommended when debug server enabled. |
 | `IDE_AGENT_DEBUG` / `DEBUG_SERVER_ENABLED` | `false` | Enables local debug server. |
 

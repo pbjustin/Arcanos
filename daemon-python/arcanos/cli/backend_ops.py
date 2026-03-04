@@ -101,17 +101,26 @@ def request_with_auth_retry(
     return response
 
 
-def build_backend_metadata(cli: "ArcanosCLI") -> dict[str, str]:
+def build_backend_metadata(cli: "ArcanosCLI") -> dict[str, Any]:
     """
     Purpose: Build shared metadata for backend requests and update events.
     Inputs/Outputs: CLI instance; returns metadata dictionary.
-    Edge cases: None.
+    Edge cases: Repo indexing failures are non-fatal (best-effort).
     """
-    return {
+    meta: dict[str, Any] = {
         "source": "daemon",
         "client": cli.client_id,
         "instanceId": cli.instance_id,
     }
+
+    if Config.REPO_INDEX_ENABLED:
+        try:
+            from ..agentic.repo_indexer import build_repo_index, to_context_payload
+            meta["repoIndex"] = to_context_payload(build_repo_index())
+        except Exception as exc:
+            meta["repoIndexError"] = str(exc)
+
+    return meta
 
 
 def request_backend_system_state_payload(cli: "ArcanosCLI") -> Optional[dict[str, Any]]:

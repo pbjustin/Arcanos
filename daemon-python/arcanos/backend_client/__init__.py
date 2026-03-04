@@ -89,57 +89,60 @@ class BackendApiClient:
 
         return tokens
 
+    
+
+
     def _make_request(
-        self,
-        method: str,
-        path: str,
-        json: Optional[Mapping[str, Any]] = None
-    ) -> requests.Response:
-        """
-        Purpose: Perform a raw backend request and return the Response.
-        Inputs/Outputs: method, path, optional json payload; returns requests.Response.
-        Edge cases: Raises BackendRequestError for missing config, auth, or network failures.
-        """
-        if not self._base_url:
-            raise BackendRequestError(kind="configuration", message="Backend URL is not configured")
+            self,
+            method: str,
+            path: str,
+            json: Optional[Mapping[str, Any]] = None
+        ) -> requests.Response:
+            """
+            Purpose: Perform a raw backend request and return the Response.
+            Inputs/Outputs: method, path, optional json payload; returns requests.Response.
+            Edge cases: Raises BackendRequestError for missing config, auth, or network failures.
+            """
+            if not self._base_url:
+                raise BackendRequestError(kind="configuration", message="Backend URL is not configured")
 
-        token = self._token_provider()
-        backend_gpt_id = (Config.BACKEND_GPT_ID or "").strip()
-        allow_gpt_id_auth = bool(Config.BACKEND_ALLOW_GPT_ID_AUTH)
+            auth_value = self._token_provider()
+            backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", "") or "").strip()
+            allow_gpt_id_auth = bool(getattr(Config, "BACKEND_ALLOW_GPT_ID_AUTH", False))
 
-        # //audit assumption: tokenless requests are allowed only when explicitly opted in with GPT ID auth mode; failure risk: accidental anonymous backend access; expected invariant: either bearer token exists or GPT-ID mode is explicitly enabled with non-empty ID; handling strategy: fail closed with structured auth error.
-        if not token and not (allow_gpt_id_auth and backend_gpt_id):
-            log_audit_event(
-                "auth_failure",
-                source="backend_client",
-                reason="token_missing",
-                path=path,
-                method=method,
-                gpt_id_auth_enabled=allow_gpt_id_auth,
-                has_backend_gpt_id=bool(backend_gpt_id),
-            )
-            raise BackendRequestError(kind="auth", message="Backend token is missing")
+            if not auth_value and not (allow_gpt_id_auth and backend_gpt_id):
+                log_audit_event(
+                    "auth_failure",
+                    source="backend_client",
+                    reason="token_missing",
+                    path=path,
+                    method=method,
+                    gpt_id_auth_enabled=allow_gpt_id_auth,
+                    has_backend_gpt_id=bool(backend_gpt_id),
+                )
+                raise BackendRequestError(kind="auth", message="Backend token is missing")
 
-        url = f"{self._base_url}{path}"
-        headers = {
-            "Content-Type": "application/json"
-        }
-        # //audit assumption: bearer token remains primary auth signal; failure risk: credentials omitted despite availability; expected invariant: include Authorization whenever token exists; handling strategy: conditional header injection.
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+            url = f"{self._base_url}{path}"
+            headers = {"Content-Type": "application/json"}
 
-        # //audit assumption: x-gpt-id may function as trusted identity in GPT-ID auth mode; failure risk: empty/incorrect identity breaks routing or auth; expected invariant: only non-empty IDs are sent; handling strategy: trim and add header conditionally.
-            return self._request_sender(
-                method,
-                url,
-                headers=headers,
-                json=json,
-                timeout=self._timeout_seconds
-            )
-        except requests.Timeout as exc:
-            raise BackendRequestError(kind="timeout", message="Backend request timed out", details=str(exc))
-        except requests.RequestException as exc:
-            raise BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
+            if auth_value:
+                headers["Authorization"] = f"Bearer {auth_value}"
+
+            if allow_gpt_id_auth and backend_gpt_id:
+                headers["x-gpt-id"] = backend_gpt_id
+
+            try:
+                return self._request_sender(
+                    method,
+                    url,
+                    headers=headers,
+                    json=json,
+                    timeout=self._timeout_seconds
+                )
+            except requests.Timeout as exc:
+                raise BackendRequestError(kind="timeout", message="Backend request timed out", details=str(exc))
+            except requests.RequestException as exc:
+                raise BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
 
     def make_raw_request(self, method: str, path: str, json: Optional[Mapping[str, Any]] = None) -> requests.Response:
         """
@@ -257,8 +260,8 @@ class BackendApiClient:
                 error=BackendRequestError(kind="configuration", message="Backend URL is not configured")
             )
 
-        token = self._token_provider()
-        if not token:
+        auth_value = self._token_provider()
+        if not auth_value:
             log_audit_event(
                 "auth_failure",
                 source="backend_client",
@@ -273,7 +276,7 @@ class BackendApiClient:
 
         url = f"{self._base_url}{path}"
         headers = {
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {auth_value}",
             "Content-Type": "application/json"
         }
 

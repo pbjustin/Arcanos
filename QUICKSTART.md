@@ -15,7 +15,7 @@ npm install
 cp .env.example .env
 ```
 
-Daemon (optional):
+Daemon (optional, local coding assistant):
 ```bash
 cd daemon-python
 python -m venv venv
@@ -24,6 +24,28 @@ python -m venv venv
 python -m pip install -e .
 cp .env.example .env
 ```
+
+Recommended `.env` (backend-routed agent):
+```env
+BACKEND_URL=http://localhost:3000
+BACKEND_GPT_ID=arcanos-daemon
+BACKEND_ALLOW_GPT_ID_AUTH=true
+
+AGENTIC_ENABLED=true
+REPO_INDEX_ENABLED=true
+HISTORY_DB_PATH=history.db
+PATCH_BACKUP_DIR=patch_backups
+AUTOMATIONS_FILE=automations.toml
+```
+
+Run:
+```bash
+arcanos
+```
+
+Tip: when the backend proposes a patch (inline diff), the CLI will prompt **Apply patch? [y/N]**.
+
+
 
 ## Configuration
 Minimum backend config (`.env`):

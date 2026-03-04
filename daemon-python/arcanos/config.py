@@ -33,6 +33,53 @@ ENV_PATHS = [PRIMARY_ENV_PATH] + (
 )
 ENV_PATH = PRIMARY_ENV_PATH
 
+def _resolve_data_dir() -> Path:
+    """
+    Purpose: Resolve and create the daemon data directory used for runtime state files.
+    Inputs/Outputs: Reads DATA_DIR from env and returns a writable absolute Path.
+    Edge cases: Relative DATA_DIR values are anchored to BASE_DIR; mkdir failures fail back to BASE_DIR.
+    """
+    configured_data_dir = get_env_path("DATA_DIR")
+    if configured_data_dir is None:
+        # //audit assumption: DATA_DIR is optional; failure risk: downstream files use an unset path; invariant: fallback path is always available; handling strategy: use BASE_DIR when DATA_DIR is missing.
+        resolved_data_dir = BASE_DIR
+    elif configured_data_dir.is_absolute():
+        # //audit assumption: absolute DATA_DIR should be honored; failure risk: writing to unexpected location; invariant: explicit operator choice wins; handling strategy: accept absolute path as-is.
+        resolved_data_dir = configured_data_dir
+    else:
+        # //audit assumption: relative DATA_DIR should be rooted predictably; failure risk: CWD-dependent writes; invariant: relative paths anchor to BASE_DIR; handling strategy: join relative path to BASE_DIR.
+        resolved_data_dir = BASE_DIR / configured_data_dir
+
+    try:
+        resolved_data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # //audit assumption: DATA_DIR creation can fail in restricted envs; failure risk: daemon startup crash; invariant: fallback remains writable in most installs; handling strategy: degrade to BASE_DIR and ensure it exists.
+        BASE_DIR.mkdir(parents=True, exist_ok=True)
+        return BASE_DIR
+
+    return resolved_data_dir
+
+
+def _resolve_data_path(key: str, default_relative_path: Path) -> Path:
+    """
+    Purpose: Resolve optional env path values against DATA_DIR for daemon state files.
+    Inputs/Outputs: env key + default relative path; returns absolute Path.
+    Edge cases: Relative overrides are anchored to DATA_DIR to avoid CWD-dependent behavior.
+    """
+    override_path = get_env_path(key)
+    if override_path is None:
+        # //audit assumption: explicit override may be absent; failure risk: None passed into path consumers; invariant: deterministic fallback path; handling strategy: default to DATA_DIR-relative path.
+        return DATA_DIR / default_relative_path
+    if override_path.is_absolute():
+        # //audit assumption: absolute override should bypass DATA_DIR anchoring; failure risk: unexpected base path; invariant: explicit override remains authoritative; handling strategy: return override directly.
+        return override_path
+    # //audit assumption: relative override should still be sandboxed under DATA_DIR; failure risk: writes outside intended data tree; invariant: final path is DATA_DIR-scoped; handling strategy: join relative override to DATA_DIR.
+    return DATA_DIR / override_path
+
+
+DATA_DIR: Path = _resolve_data_dir()
+# //audit assumption: DATA_DIR may be omitted in most installs; failure risk: unwritable default paths; invariant: DATA_DIR always resolves to a writable Path; handling strategy: normalize + mkdir + BASE_DIR fallback.
+
 
 def get_backend_base_url() -> Optional[str]:
     raw = (
@@ -94,6 +141,38 @@ class Config:
     BACKEND_TOKEN: Optional[str] = get_backend_token()
     BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
     BACKEND_ALLOW_GPT_ID_AUTH: bool = get_env_bool("BACKEND_ALLOW_GPT_ID_AUTH", False)
+
+    # Identity used for x-gpt-id auth mode and for backend routing.
+    BACKEND_GPT_ID: str = get_env("BACKEND_GPT_ID", "arcanos-daemon") or "arcanos-daemon"
+
+    # ============================================
+    # Agentic Coding Assistant Settings
+    # ============================================
+    AGENTIC_ENABLED: bool = get_env_bool("AGENTIC_ENABLED", True)
+    AGENT_MAX_STEPS: int = get_env_int("AGENT_MAX_STEPS", 6)
+
+    REPO_INDEX_ENABLED: bool = get_env_bool("REPO_INDEX_ENABLED", True)
+    REPO_INDEX_MAX_FILES: int = get_env_int("REPO_INDEX_MAX_FILES", 800)
+    REPO_INDEX_MAX_CHARS: int = get_env_int("REPO_INDEX_MAX_CHARS", 50000)
+
+    
+    # ============================================
+    # Policy Guardrails / Safe Mode
+    # ============================================
+    POLICY_MAX_PATCHES_PER_SESSION: int = get_env_int("POLICY_MAX_PATCHES_PER_SESSION", 20)
+    POLICY_LARGE_DIFF_CHAR_THRESHOLD: int = get_env_int("POLICY_LARGE_DIFF_CHAR_THRESHOLD", 8000)
+    POLICY_MAX_CONSECUTIVE_FAILURES: int = get_env_int("POLICY_MAX_CONSECUTIVE_FAILURES", 3)
+    POLICY_RATE_LIMIT_PATCHES_PER_MINUTE: int = get_env_int("POLICY_RATE_LIMIT_PATCHES_PER_MINUTE", 6)
+    POLICY_RATE_LIMIT_COMMANDS_PER_MINUTE: int = get_env_int("POLICY_RATE_LIMIT_COMMANDS_PER_MINUTE", 10)
+
+    DATA_DIR: Path = DATA_DIR
+    HISTORY_DB_PATH: Path = _resolve_data_path("HISTORY_DB_PATH", Path("history.db"))
+    PATCH_BACKUP_DIR: Path = _resolve_data_path("PATCH_BACKUP_DIR", Path("patch_backups"))
+    AUTOMATIONS_FILE: Path = _resolve_data_path("AUTOMATIONS_FILE", Path("automations.toml"))
+
+    PATCH_TOKEN_START: str = get_env("PATCH_TOKEN_START", "---patch.start---") or "---patch.start---"
+    PATCH_TOKEN_END: str = get_env("PATCH_TOKEN_END", "---patch.end---") or "---patch.end---"
+
     BACKEND_ALLOW_HTTP: bool = get_env_bool("BACKEND_ALLOW_HTTP", False)
     BACKEND_JWT_SECRET: Optional[str] = get_env("BACKEND_JWT_SECRET") or None
     BACKEND_JWT_PUBLIC_KEY: Optional[str] = get_env("BACKEND_JWT_PUBLIC_KEY") or None
@@ -281,7 +360,17 @@ class Config:
             errors.append("REQUEST_TIMEOUT must be at least 5 seconds")
 
         # Create directories
-        for directory in [cls.LOG_DIR, cls.SCREENSHOT_DIR, cls.CRASH_REPORTS_DIR, cls.TELEMETRY_DIR]:
+        for directory in [
+            cls.DATA_DIR,
+            cls.PATCH_BACKUP_DIR,
+            cls.HISTORY_DB_PATH.parent,
+            cls.AUTOMATIONS_FILE.parent,
+            cls.LOG_DIR,
+            cls.SCREENSHOT_DIR,
+            cls.CRASH_REPORTS_DIR,
+            cls.TELEMETRY_DIR,
+        ]:
+            # //audit assumption: runtime directories must exist before daemon writes; failure risk: delayed filesystem errors during requests; invariant: parent directories are created at startup; handling strategy: eager mkdir with exist_ok.
             directory.mkdir(parents=True, exist_ok=True)
 
         return len(errors) == 0, errors

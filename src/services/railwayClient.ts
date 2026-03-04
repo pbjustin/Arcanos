@@ -76,6 +76,29 @@ interface GraphQLRequestOptions {
   timeoutMs?: number;
 }
 
+interface RailwayProjectEdge {
+  node: RailwayProjectSummary;
+}
+
+interface ViewerProjectsResponse {
+  viewer: {
+    projects: {
+      edges: RailwayProjectEdge[];
+    };
+  };
+}
+
+interface RootProjectsResponse {
+  projects: {
+    edges: Array<{
+      node: {
+        id: string;
+        name: string;
+      };
+    }>;
+  };
+}
+
 function truncate(value: string, maxLength = 300): string {
   if (value.length <= maxLength) {
     return value;
@@ -163,7 +186,7 @@ async function executeGraphQL<T>(
 }
 
 export async function listProjects(): Promise<RailwayProjectSummary[]> {
-  const query = `
+  const viewerQuery = `
     query ViewerProjects {
       viewer {
         projects {
@@ -191,17 +214,43 @@ export async function listProjects(): Promise<RailwayProjectSummary[]> {
     }
   `;
 
-  const data = await executeGraphQL<{
-    viewer: {
-      projects: {
-        edges: Array<{
-          node: RailwayProjectSummary;
-        }>;
-      };
-    };
-  }>(query);
+  try {
+    const data = await executeGraphQL<ViewerProjectsResponse>(viewerQuery);
+    return data.viewer.projects.edges.map((edge) => edge.node);
+  } catch (error) {
+    const errorMessage = (error as Error).message;
+    const viewerSchemaError = 'Cannot query field "viewer" on type "Query"';
 
-  return data.viewer.projects.edges.map((edge) => edge.node);
+    if (!errorMessage.includes(viewerSchemaError)) {
+      //audit Assumption: non-schema failures should preserve original error semantics; failure risk: masking auth/network errors; expected invariant: unexpected probe failures remain visible; handling strategy: rethrow unchanged error.
+      throw error;
+    }
+
+    //audit Assumption: Railway GraphQL schema can change from viewer-rooted to query-rooted projects; failure risk: probe permanently fails on supported tokens; expected invariant: probe works when either query shape is supported; handling strategy: retry with root-level projects query.
+    logger.warn('Railway GraphQL viewer query unsupported; retrying project probe with root query', {
+      error: errorMessage
+    });
+  }
+
+  const rootQuery = `
+    query Projects {
+      projects {
+        edges {
+          node {
+            id
+            name
+          }
+        }
+      }
+    }
+  `;
+
+  const fallbackData = await executeGraphQL<RootProjectsResponse>(rootQuery);
+  return fallbackData.projects.edges.map((edge) => ({
+    id: edge.node.id,
+    name: edge.node.name,
+    environments: []
+  }));
 }
 
 export async function deployService(options: DeployServiceOptions): Promise<{ deploymentId: string; status: string; }> {
