@@ -27,6 +27,10 @@ Common scripts:
 - `node scripts/validate-railway-compatibility.js`
 - `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`
 - `npm run railway:alert:timeouts`
+- `npm run railway:alert:budget-abort` (fails on any BUDGET_ABORT signal in the last 15 minutes)
+
+Post-deploy behavior:
+- `scripts/deploy-backend.ps1` now runs `npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort` automatically after `railway up`.
 
 ## Deploy (Railway)
 - `scripts/railway-set-secret.sh` can help set Railway variables.

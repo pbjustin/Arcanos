@@ -15,7 +15,8 @@ const DEFAULTS = {
   lines: 400,
   service: '',
   environment: '',
-  timeoutLatencyMs: 90000
+  timeoutLatencyMs: 90000,
+  failOnBudgetAbort: false
 };
 
 /**
@@ -65,6 +66,12 @@ function parseArgs(argv) {
         ? Math.floor(parsed)
         : DEFAULTS.timeoutLatencyMs;
       index += 1;
+      continue;
+    }
+
+    //audit assumption: BUDGET_ABORT should optionally trigger hard failure for post-deploy verification; failure risk: missed watchdog regressions; expected invariant: strict mode enabled only when requested; handling strategy: boolean flag.
+    if (argFlag === '--fail-on-budget-abort') {
+      config.failOnBudgetAbort = true;
     }
   }
 
@@ -85,8 +92,6 @@ function buildRailwayArgs(config) {
     config.since,
     '--lines',
     String(config.lines),
-    '--filter',
-    '@level:error',
     '--json'
   ];
 
@@ -187,6 +192,7 @@ function parseLogLines(rawOutput) {
  */
 function detectFindings(entries, config) {
   const timeoutTextPattern = /(ask processing error|request timed out|openai timeout|budget abort|watchdog threshold)/i;
+  const budgetAbortPattern = /(budget_abort|budget abort|ai timeout\/budget abort|execution exceeded watchdog threshold|runtimebudgetexceedederror)/i;
   /** @type {Array<{kind: string; timestamp: string; message: string; path: string; statusCode: number | null; latencyMs: number | null; requestId: string | null}>} */
   const findings = [];
 
@@ -205,6 +211,12 @@ function detectFindings(entries, config) {
       : Number.isFinite(Number(statusCodeCandidate))
         ? Number(statusCodeCandidate)
         : null;
+    const codeCandidate = typeof entry.code === 'string'
+      ? entry.code
+      : typeof rawData.code === 'string'
+        ? rawData.code
+        : '';
+    const codeUpper = codeCandidate.toUpperCase();
 
     const latencyCandidate = typeof entry.latencyMs === 'number'
       ? entry.latencyMs
@@ -223,6 +235,26 @@ function detectFindings(entries, config) {
         latencyMs: latencyCandidate,
         requestId
       });
+    }
+
+    //audit assumption: strict post-deploy checks must fail on any BUDGET_ABORT signal regardless route field quality; failure risk: false negatives when path metadata is missing; expected invariant: watchdog budget aborts are surfaced; handling strategy: match by code/message markers.
+    if (config.failOnBudgetAbort) {
+      const hasBudgetAbortSignal =
+        codeUpper.includes('BUDGET_ABORT') ||
+        budgetAbortPattern.test(message) ||
+        (path.includes('/ask') && statusCode === 408 && message.toLowerCase().includes('timeout'));
+
+      if (hasBudgetAbortSignal) {
+        findings.push({
+          kind: 'budget_abort_signal',
+          timestamp,
+          message,
+          path,
+          statusCode,
+          latencyMs: latencyCandidate,
+          requestId
+        });
+      }
     }
 
     //audit assumption: /ask HTTP 5xx in error logs indicates possible user-facing regression; failure risk: non-timeout errors included; expected invariant: statusCode extracted when present; handling strategy: tag separately for triage.
@@ -311,7 +343,7 @@ function main() {
   //audit assumption: zero findings indicates no current timeout regression in scanned window; failure risk: missed signals outside window; expected invariant: explicit window reported; handling strategy: print checked scope.
   if (findings.length === 0) {
     console.log(
-      `railway-timeout-alert: no /ask timeout regressions detected (window=${config.since}, lines=${config.lines}, service="${config.service || '(linked)'}", env="${config.environment || '(linked)'}").`
+      `railway-timeout-alert: no /ask timeout regressions detected (window=${config.since}, lines=${config.lines}, service="${config.service || '(linked)'}", env="${config.environment || '(linked)'}", strictBudgetAbort=${config.failOnBudgetAbort}).`
     );
     process.exit(0);
   }

@@ -38,4 +38,11 @@ if ($LASTEXITCODE -ne 0) {
   exit 1
 }
 
-Write-Host "Deployment complete. Check status with: railway status" -ForegroundColor Green
+Write-Host "Post-deploy verification: timeout/budget regression check (last 15m)..." -ForegroundColor Green
+npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Post-deploy regression check failed (timeout/budget signal detected)." -ForegroundColor Red
+  exit 1
+}
+
+Write-Host "Deployment complete and post-deploy checks passed. Check status with: railway status" -ForegroundColor Green
