@@ -25,6 +25,8 @@ Common scripts:
 - `node scripts/continuous-audit.js`
 - `./scripts/doc_audit.sh`
 - `node scripts/validate-railway-compatibility.js`
+- `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`
+- `npm run railway:alert:timeouts`
 
 ## Deploy (Railway)
 - `scripts/railway-set-secret.sh` can help set Railway variables.
