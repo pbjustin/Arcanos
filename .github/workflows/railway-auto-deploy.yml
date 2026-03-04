@@ -1,0 +1,116 @@
+name: Railway Auto Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: railway-auto-deploy-production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-production:
+    name: Deploy Production (Railway)
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_SERVICE_ID: ${{ vars.RAILWAY_SERVICE_ID }}
+      RAILWAY_ENVIRONMENT_NAME: ${{ vars.RAILWAY_ENVIRONMENT_NAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.11.1'
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Validate deploy configuration
+        run: |
+          set -euo pipefail
+
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "Missing required GitHub Actions variable: RAILWAY_TOKEN"
+            exit 1
+          fi
+
+          if [ -z "${RAILWAY_PROJECT_ID:-}" ]; then
+            echo "Missing required repo variable: RAILWAY_PROJECT_ID"
+            exit 1
+          fi
+
+          if [ -z "${RAILWAY_SERVICE_ID:-}" ]; then
+            echo "Missing required repo variable: RAILWAY_SERVICE_ID"
+            exit 1
+          fi
+
+          if [ -z "${RAILWAY_ENVIRONMENT_NAME:-}" ]; then
+            echo "RAILWAY_ENVIRONMENT_NAME not set; defaulting to production"
+            echo "RAILWAY_ENVIRONMENT_NAME=production" >> "$GITHUB_ENV"
+          fi
+
+      - name: Verify Railway auth
+        run: railway whoami
+
+      - name: Deploy to Railway
+        run: |
+          set -euo pipefail
+
+          railway up \
+            --ci \
+            --project "${RAILWAY_PROJECT_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --message "GitHub auto deploy ${GITHUB_SHA}"
+
+      - name: Wait for deployment success
+        run: |
+          set -euo pipefail
+
+          final_status=""
+          deployment_id=""
+          for attempt in $(seq 1 30); do
+            status_json="$(railway service status --service "${RAILWAY_SERVICE_ID}" --environment "${RAILWAY_ENVIRONMENT_NAME}" --json)"
+            final_status="$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.status || 'UNKNOWN'));" "${status_json}")"
+            deployment_id="$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.deploymentId || 'unknown'));" "${status_json}")"
+
+            echo "attempt=${attempt} deployment_id=${deployment_id} status=${final_status}"
+
+            if [ "${final_status}" = "SUCCESS" ]; then
+              echo "DEPLOYMENT_ID=${deployment_id}" >> "$GITHUB_ENV"
+              break
+            fi
+
+            if [ "${final_status}" = "FAILED" ] || [ "${final_status}" = "REMOVED" ] || [ "${final_status}" = "CRASHED" ] || [ "${final_status}" = "STOPPED" ]; then
+              echo "Deployment reached terminal failure state: ${final_status}"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          if [ "${final_status}" != "SUCCESS" ]; then
+            echo "Deployment did not reach SUCCESS within polling window."
+            exit 1
+          fi
+
+      - name: Post-deploy watchdog/budget regression check
+        run: |
+          set -euo pipefail
+          npm run railway:alert:timeouts -- \
+            --since 15m \
+            --lines 500 \
+            --fail-on-budget-abort \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}"
