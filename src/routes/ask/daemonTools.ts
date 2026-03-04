@@ -12,7 +12,7 @@ import {
 import type { AskResponse } from './types.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
-import { extractResponseOutputText } from '@arcanos/openai';
+import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 
 type DaemonMetadata = {
   source?: string;
