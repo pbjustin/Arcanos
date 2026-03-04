@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 export const OPENAI_SERVICE_UNAVAILABLE_DETAILS = 'OpenAI service is not configured';
 export const OPENAI_PROCESSING_FAILED_ERROR = 'Internal Server Error';
@@ -20,7 +21,7 @@ export function sendOpenAIProcessingFailed<T>(
   details: string,
   error: string = OPENAI_PROCESSING_FAILED_ERROR
 ): void {
-  res.status(500).json(buildTimestampedPayload({
+  sendInternalErrorPayload(res, buildTimestampedPayload({
     error,
     details
   }) as T);

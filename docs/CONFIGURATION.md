@@ -137,3 +137,47 @@ These directories are created at runtime or during builds and must **not** be co
 - `../src/config/unifiedConfig.ts`
 - `../src/config/env.ts`
 - `../daemon-python/.env.example`
+
+
+## OpenAI data retention
+- `OPENAI_STORE` (default: `false`)
+  - When `true`, Responses requests will be created with `store: true`.
+  - When `false`, Responses requests use `store: false` (stateless / no retention).
+
+## Daemon tool result continuation
+These control how long the backend waits for the daemon to report tool results before continuing the model response:
+- `DAEMON_RESULT_WAIT_MS` (default: `8000`)
+- `DAEMON_RESULT_POLL_MS` (default: `250`)
+
+## Complete environment variable reference
+This table mirrors `.env.example` and is the source-of-truth reference for deploy configuration.
+| Variable | Default (example) | Purpose |
+|---|---:|---|
+| `PORT` | `3000` | HTTP port the server binds to. |
+| `NODE_ENV` | `development` | Runtime mode. |
+| `OPENAI_API_KEY` | `your-openai-api-key-here` | OpenAI API key used by server/runtime. |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Default model name. |
+| `ALLOW_MOCK_FALLBACK` | `false` | Allow fallback to mocked providers in non-prod. |
+| `BUDGET_DISABLED` | `false` | Disable runtime budget enforcement (not recommended in prod). |
+| `WATCHDOG_LIMIT_MS` | `120000` | Hard watchdog limit for long-running operations. |
+| `SAFETY_BUFFER_MS` | `2000` | Safety buffer subtracted from watchdog to stop early. |
+| `TRINITY_BASE_SOFT_CAP_MS` | `60000` | Base soft cap for Trinity-mode calls. |
+| `TRINITY_MULT_SIMPLE` | `1.0` | Multiplier for simple Trinity calls. |
+| `TRINITY_MULT_COMPLEX` | `1.4` | Multiplier for complex Trinity calls. |
+| `TRINITY_MULT_CRITICAL` | `1.8` | Multiplier for critical Trinity calls. |
+| `RAILWAY_API_TOKEN` | `` | Railway API token used by optional automation/ops routes. |
+| `ARC_LOG_PATH` | `/tmp/arc/log` | Filesystem path for logs (if file logging enabled). |
+| `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem path for memory persistence. |
+| `RUN_WORKERS` | `true` | Whether to run background workers in this process. |
+| `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for worker-to-server API calls. |
+| `SAFETY_HEARTBEAT_TIMEOUT_MS` | `15000` | Worker heartbeat timeout window. |
+| `SAFETY_HEARTBEAT_MISS_THRESHOLD` | `3` | Missed heartbeats before marking unhealthy. |
+| `SAFETY_HEALTHY_CYCLES_TO_RECOVER` | `3` | Healthy cycles required to recover from unhealthy state. |
+| `SAFETY_QUARANTINE_COOLDOWN_MS` | `120000` | Cooldown after quarantining before recovery. |
+| `SAFETY_WORKER_RESTART_THRESHOLD` | `5` | Restart threshold within the restart window. |
+| `SAFETY_WORKER_RESTART_WINDOW_MS` | `300000` | Window for counting worker restarts. |
+| `DISPATCH_V9_POLICY_TIMEOUT_MS` | `5000` | Timeout for dispatch policy evaluation. |
+| `SAFETY_FAIL_CLOSED_INTEGRITY` | `true` | Fail closed when integrity checks cannot be satisfied. |
+| `OPENAI_STORE` | `false` | If true, allow OpenAI to store Responses; default false (stateless). |
+| `DAEMON_RESULT_WAIT_MS` | `8000` | How long (ms) to poll for daemon command results before continuing without them. |
+| `DAEMON_RESULT_POLL_MS` | `250` | Poll interval (ms) when waiting for daemon results. |

@@ -112,3 +112,11 @@ npm run validate:backend-cli:offline
 python daemon-python/tests/test_telemetry_sanitization.py
 python daemon-python/scripts/continuous_audit.py --max-depth=1 --no-recursive --no-railway-check
 ```
+
+
+## Current guidance (2026-03)
+- Prefer the **Responses API** for text + tools + streaming.
+- Chat Completions is retained only for legacy compatibility layers; production call paths should use Responses.
+- Tool calling uses `function_call` / `function_call_output` items and can continue via `previous_response_id`.
+
+See: `docs/OPENAI_RESPONSES_TOOLS.md`.

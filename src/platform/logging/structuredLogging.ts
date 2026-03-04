@@ -5,6 +5,7 @@
 
 import { type NextFunction, type Request, type Response } from 'express';
 import { generateRequestId } from "@shared/idGenerator.js";
+import { redactSensitive } from "@shared/redaction.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
 import { getEnv } from "@platform/runtime/env.js";
 
@@ -38,49 +39,6 @@ export interface LogEntry {
   };
 }
 
-const SENSITIVE_KEYS = ['authorization', 'cookie', 'token', 'password', 'apikey', 'secret', 'privatekey', 'connectionstring'];
-const SENSITIVE_VALUE_PATTERNS = [
-  /\bsk-[a-zA-Z0-9]{20,}\b/,
-  /\bBearer\s+[a-zA-Z0-9._-]{12,}\b/i,
-  /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
-  /\b(?:postgres|postgresql|mysql|mongodb):\/\/[^@\s]+:[^@\s]+@/i,
-  /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[a-zA-Z0-9._-]{12,}/i
-];
-
-function sanitizeStringValue(value: string): string {
-  //audit Assumption: token-like literal patterns inside log strings are sensitive; risk: credential leakage in aggregated logs; invariant: redact sensitive literals before output; handling: pattern-match and replace with sentinel.
-  if (SENSITIVE_VALUE_PATTERNS.some(pattern => pattern.test(value))) {
-    return '[REDACTED]';
-  }
-  return value;
-}
-
-// Helper to recursively sanitize potentially sensitive fields before logging
-function sanitize(data: any): any {
-  if (typeof data === 'string') {
-    return sanitizeStringValue(data);
-  }
-
-  if (data === null || typeof data !== 'object') {
-    return data;
-  }
-
-  if (Array.isArray(data)) {
-    return data.map(item => sanitize(item));
-  }
-
-  const sanitized: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(data)) {
-    if (SENSITIVE_KEYS.some(sensitiveKey => key.toLowerCase().includes(sensitiveKey))) {
-      sanitized[key] = '[REDACTED]';
-    } else {
-      sanitized[key] = sanitize(value);
-    }
-  }
-
-  return sanitized;
-}
 
 class StructuredLogger {
   private defaultContext: LogContext = {};
@@ -138,8 +96,8 @@ class StructuredLogger {
 
     const sanitizedEntry = {
       ...entry,
-      context: entry.context ? sanitize(entry.context) : undefined,
-      metadata: entry.metadata ? sanitize(entry.metadata) : undefined,
+      context: entry.context ? redactSensitive(entry.context) : undefined,
+      metadata: entry.metadata ? redactSensitive(entry.metadata) : undefined,
     };
 
     //audit Assumption: production logs should be structured JSON

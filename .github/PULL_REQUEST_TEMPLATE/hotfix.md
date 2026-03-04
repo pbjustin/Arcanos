@@ -23,7 +23,7 @@ Required verification before merge:
 ## Deploy (Railway)
 - [ ] Deploy order and rollback plan documented
 - [ ] On-call/owners notified
-- [ ] Post-deploy checks listed (`/health`, key endpoint)
+- [ ] Post-deploy checks listed (`/healthz`, key endpoint)
 
 ## Troubleshooting
 If hotfix fails in production, rollback trigger:

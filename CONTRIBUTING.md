@@ -88,7 +88,7 @@ python daemon-python/scripts/continuous_audit.py --max-depth=1 --no-recursive --
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:
 - Build in build phase (`npm ci --include=dev && npm run build`)
-- Start only runs compiled output (`node --max-old-space-size=7168 dist/start-server.js`)
+- Start only runs compiled output (`node --max-old-space-size=7168 --loader ./scripts/esm-alias-loader.mjs dist/start-server.js`)
 
 Validate Railway compatibility before merge:
 ```bash

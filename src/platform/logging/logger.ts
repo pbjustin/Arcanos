@@ -5,6 +5,7 @@
 
 import { type NextFunction, type Request, type Response } from 'express';
 import { generateRequestId } from "@shared/idGenerator.js";
+import { redactSensitive } from "@shared/redaction.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
 import { getEnv } from "@platform/runtime/env.js";
 
@@ -166,8 +167,8 @@ class StructuredLogger {
 
     const sanitizedEntry = {
       ...entry,
-      context: entry.context ? sanitize(entry.context) : undefined,
-      metadata: entry.metadata ? sanitize(entry.metadata) : undefined,
+      context: entry.context ? redactSensitive(entry.context) : undefined,
+      metadata: entry.metadata ? redactSensitive(entry.metadata) : undefined,
     };
 
     //audit Assumption: production logs should be structured JSON

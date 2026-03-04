@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import path from 'path';
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { HEARTBEAT_LOG_FILENAME, HEARTBEAT_RESPONSE_TEMPLATE } from "@platform/runtime/serverMessages.js";
+import { sendBadRequest } from '@shared/http/index.js';
 
 interface HeartbeatPayload {
   write_override: boolean;
@@ -43,7 +44,7 @@ router.post('/heartbeat', confirmGate, (req: Request<{}, any, HeartbeatRequest>,
   const { timestamp, mode, payload } = req.body;
 
   if (!timestamp || !mode || !payload) {
-    return res.status(400).json({ error: 'Invalid heartbeat payload' });
+    return sendBadRequest(res, 'Invalid heartbeat payload');
   }
 
   logHeartbeat({ timestamp, mode, payload });

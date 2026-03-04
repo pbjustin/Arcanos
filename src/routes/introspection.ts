@@ -1,7 +1,7 @@
 import express, { Request, Response } from "express";
 import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
 import { loadModuleDefinitions } from "@services/moduleLoader.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { resolveGptRouting } from "./_core/gptDispatch.js";
 
 const router = express.Router();

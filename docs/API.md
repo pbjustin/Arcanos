@@ -29,12 +29,12 @@ Confirmation gate behavior (`src/middleware/confirmGate.ts`):
 ## Run locally
 Quick probes:
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:3000/healthzz
 curl -X POST http://localhost:3000/api/ask -H "Content-Type: application/json" -d '{"message":"hello"}'
 ```
 
 ## Deploy (Railway)
-No API path changes are required for Railway. Ensure health (`/health`) and confirmation-gated flows are validated after deploy.
+No API path changes are required for Railway. Ensure liveness (`/healthz`) and readiness (`/health`) and confirmation-gated flows are validated after deploy.
 
 ## Troubleshooting
 - 403 with `CONFIRMATION_REQUIRED`: use confirmation flow headers.
@@ -139,10 +139,6 @@ No API path changes are required for Railway. Ensure health (`/health`) and conf
 - `POST /api/sim`
 - `GET /api/sim/health`
 - `GET /api/sim/examples`
-- `POST /api/afol/decide`
-- `GET /api/afol/health`
-- `GET /api/afol/logs`
-- `GET /api/afol/analytics`
 - `POST /api/pr-analysis/webhook`
 - `POST /api/pr-analysis/analyze`
 - `GET /api/pr-analysis/health`
@@ -164,3 +160,22 @@ No API path changes are required for Railway. Ensure health (`/health`) and conf
 - `POST /api/update` has a public route and a daemon-authenticated route; current mount order executes the public route first.
 - `GET /health` is defined in multiple routers; health-group handler executes first because it is mounted before reinforcement and status routes.
 - `/api/reusables*` routes are mounted both through `api/index.ts` and directly in `register.ts`; first matching handler responds and the second mount is effectively redundant.
+
+
+## Daemon command result reporting
+If you run the optional Python daemon, it can report tool results back to the backend so the model can continue after tool calls.
+
+- `POST /api/daemon/commands/result`
+
+Body:
+```json
+{
+  "instanceId": "daemon-instance-id",
+  "commandId": "cmd_123",
+  "result": { "any": "json payload" }
+}
+```
+
+Notes:
+- The backend stores results temporarily (in-memory by default).
+- `src/routes/ask/daemonTools.ts` will poll for results up to `DAEMON_RESULT_WAIT_MS` and feed them back to OpenAI as `function_call_output`.

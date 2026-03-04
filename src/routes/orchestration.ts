@@ -1,3 +1,4 @@
+import { sendBadRequest, sendInternalErrorPayload } from '@shared/http/index.js';
 /**
  * Orchestration Shell API Routes
  * Provides endpoints for GPT-5.1 orchestration shell management
@@ -68,7 +69,7 @@ router.post('/orchestration/reset', confirmGate, async (
 
     const { agentId, sessionId, contextSnapshotTag } = req.body;
     if (!agentId || !sessionId) {
-      res.status(400).json({ error: 'Missing agentId or sessionId' });
+      sendBadRequest(res, 'Missing agentId or sessionId');
       return;
     }
 
@@ -117,7 +118,7 @@ router.post('/orchestration/reset', confirmGate, async (
     if (result.success) {
       res.status(200).json(response);
     } else {
-      res.status(500).json({
+      sendInternalErrorPayload(res, {
         ...response,
         error: result.message
       });
@@ -200,7 +201,7 @@ router.post('/orchestration/purge', confirmGate, async (
 
     const { agentId, sessionId, contextSnapshotTag } = req.body;
     if (!agentId || !sessionId) {
-      res.status(400).json({ error: 'Missing agentId or sessionId' });
+      sendBadRequest(res, 'Missing agentId or sessionId');
       return;
     }
 
@@ -248,7 +249,7 @@ router.post('/orchestration/purge', confirmGate, async (
     if (result.success) {
       res.status(200).json(response);
     } else {
-      res.status(500).json({
+      sendInternalErrorPayload(res, {
         ...response,
         error: result.message
       });

@@ -3,6 +3,7 @@ import { runSelfTestPipeline } from "@services/selfTestPipeline.js";
 import { generateDailySummary } from "@services/dailySummaryService.js";
 import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = Router();
 
@@ -16,7 +17,7 @@ router.post('/devops/self-test', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[DEVOPS] Self-test execution failed', error);
     //audit Assumption: self-test errors are server failures; risk: leaking sensitive details; invariant: 500 response; handling: sanitize message with fallback.
-    res.status(500).json(buildTimestampedPayload({
+    sendInternalErrorPayload(res, buildTimestampedPayload({
       error: 'Self-test failed',
       message: resolveErrorMessage(error)
     }));
@@ -30,7 +31,7 @@ router.post('/devops/daily-summary', async (_: Request, res: Response) => {
   } catch (error) {
     console.error('[DEVOPS] Daily summary failed', error);
     //audit Assumption: daily summary errors are server failures; risk: leaking sensitive details; invariant: 500 response; handling: sanitize message with fallback.
-    res.status(500).json(buildTimestampedPayload({
+    sendInternalErrorPayload(res, buildTimestampedPayload({
       error: 'Daily summary failed',
       message: resolveErrorMessage(error)
     }));

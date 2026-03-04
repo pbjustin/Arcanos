@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { promises as fs } from 'fs';
 import { getSessionLogPath } from "@shared/logPath.js";
 import { saveMemory, loadMemory, deleteMemory, getStatus, query } from "@core/db/index.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
 import { requireField } from "@shared/validation.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware } from "@platform/runtime/security.js";
@@ -136,7 +136,7 @@ router.get("/view", asyncHandler(async (_: Request, res: Response) => {
     });
   } catch (err) {
     const errorMessage = resolveErrorMessage(err);
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       status: 'error',
       message: 'Cannot read memory file',
       error: errorMessage,

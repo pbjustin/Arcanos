@@ -6,8 +6,8 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { validateCapability } from '../../../stores/agentRegistry.js';
-import { aiLogger } from '../../../platform/logging/structuredLogging.js';
+import { validateCapability } from '@stores/agentRegistry.js';
+import { aiLogger } from '@platform/logging/structuredLogging.js';
 
 /**
  * Middleware factory that validates agent capabilities for plan execution.

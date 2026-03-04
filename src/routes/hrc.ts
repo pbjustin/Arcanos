@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { hrcCore } from '@services/hrc.js';
 import { createValidationMiddleware, createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -29,7 +30,7 @@ router.post('/api/ask-hrc', createValidationMiddleware(hrcSchema), async (
   } catch (err: unknown) {
     //audit Assumption: evaluation failures should return 500
     console.error('HRC evaluation failed:', resolveErrorMessage(err));
-    res.status(500).json({ success: false, error: resolveErrorMessage(err, 'HRC evaluation failed') });
+    sendInternalErrorPayload(res, { success: false, error: resolveErrorMessage(err, 'HRC evaluation failed') });
   }
 });
 

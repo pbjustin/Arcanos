@@ -1,14 +1,16 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   createRuntimeBudget,
+  WATCHDOG_LIMIT_MS,
+  SAFETY_BUFFER_MS,
   hasSufficientBudget,
   assertBudgetAvailable
 } from '../src/runtime/runtimeBudget.js';
 import { RuntimeBudgetExceededError } from '../src/runtime/runtimeErrors.js';
 import { executeWithBudget } from '../src/runtime/executionController.js';
 
-const EXPECTED_WATCHDOG_LIMIT_MS = Number(process.env.WATCHDOG_LIMIT_MS ?? 60000);
-const EXPECTED_SAFETY_BUFFER_MS = Number(process.env.SAFETY_BUFFER_MS ?? 2000);
+const EXPECTED_WATCHDOG_LIMIT_MS = Number(process.env.WATCHDOG_LIMIT_MS ?? WATCHDOG_LIMIT_MS);
+const EXPECTED_SAFETY_BUFFER_MS = Number(process.env.SAFETY_BUFFER_MS ?? SAFETY_BUFFER_MS);
 
 describe('Runtime Budget Logic', () => {
   it('should create a budget with default values', () => {

@@ -23,82 +23,9 @@ import {
 } from "@platform/logging/telemetry.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { redactSensitive } from "@shared/redaction.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-
-/**
- * Patterns for sensitive data that should be redacted
- */
-const SENSITIVE_PATTERNS = [
-  /api[-_]?key/i,
-  /api[-_]?token/i,
-  /bearer[-_]?token/i,
-  /access[-_]?token/i,
-  /secret[-_]?key/i,
-  /password/i,
-  /passwd/i,
-  /auth[-_]?token/i,
-  /authorization/i,
-  /credential/i,
-  /private[-_]?key/i,
-  /secret/i,
-  /token/i,
-  /openai[-_]?api[-_]?key/i,
-  /backend[-_]?token/i,
-];
-
-/**
- * Recursively sanitizes sensitive data from objects and nested structures.
- * 
- * Redacts values for keys matching sensitive patterns (API keys, tokens, passwords, etc.)
- * to prevent credential leakage in logs.
- * 
- * @param data - Data structure to sanitize (object, array, or primitive)
- * @param depth - Current recursion depth
- * @param maxDepth - Maximum recursion depth to prevent stack overflow
- * @returns Sanitized data structure with sensitive values redacted
- */
-function sanitizeSensitiveData(
-  data: unknown,
-  depth = 0,
-  maxDepth = 10
-): unknown {
-  if (depth > maxDepth) {
-    return '[max depth reached]';
-  }
-
-  if (data === null || data === undefined) {
-    return data;
-  }
-
-  if (Array.isArray(data)) {
-    return data.map(item => sanitizeSensitiveData(item, depth + 1, maxDepth));
-  }
-
-  if (typeof data === 'object') {
-    const sanitized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(data)) {
-      const keyLower = key.toLowerCase();
-      // Check if key matches any sensitive pattern
-      const isSensitive = SENSITIVE_PATTERNS.some(pattern => pattern.test(keyLower));
-
-      if (isSensitive) {
-        // Redact sensitive values
-        if (typeof value === 'string' && value.length > 0) {
-          sanitized[key] = `[REDACTED:${value.length} chars]`;
-        } else {
-          sanitized[key] = '[REDACTED]';
-        }
-      } else {
-        // Recursively sanitize nested structures
-        sanitized[key] = sanitizeSensitiveData(value, depth + 1, maxDepth);
-      }
-    }
-    return sanitized;
-  }
-
-  return data;
-}
 
 /**
  * Span for tracing operations
@@ -180,7 +107,7 @@ export function createSpan(
   activeSpans.set(spanId, span);
 
   // Sanitize attributes to prevent credential leakage
-  const sanitizedAttributes = sanitizeSensitiveData(attributes) as Record<string, unknown>;
+  const sanitizedAttributes = redactSensitive(attributes) as Record<string, unknown>;
   
   recordTraceEvent(`span.start.${name}`, {
     spanId,
@@ -211,7 +138,7 @@ export function endSpan(span: Span, attributes: Record<string, unknown> = {}): v
   activeSpans.delete(span.id);
 
   // Sanitize attributes to prevent credential leakage
-  const sanitizedAttributes = sanitizeSensitiveData(span.attributes) as Record<string, unknown>;
+  const sanitizedAttributes = redactSensitive(span.attributes) as Record<string, unknown>;
   
   recordTraceEvent(`span.end.${span.name}`, {
     spanId: span.id,
@@ -393,7 +320,7 @@ export function logRailway(
   metadata: Record<string, unknown> = {}
 ): void {
   // Sanitize metadata to prevent credential leakage
-  const sanitizedMetadata = sanitizeSensitiveData(metadata) as Record<string, unknown>;
+  const sanitizedMetadata = redactSensitive(metadata) as Record<string, unknown>;
   // Use config layer for env access (adapter boundary pattern)
   const isProduction = getEnv('NODE_ENV') === 'production';
 

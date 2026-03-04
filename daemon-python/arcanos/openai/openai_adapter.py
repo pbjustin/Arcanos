@@ -7,6 +7,7 @@ raw SDK resources directly.
 
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Optional, Union
@@ -99,26 +100,42 @@ def chat_stream(
     # //audit assumption: stream callers may pass explicit zero values for deterministic tests/limits; risk: truthy fallback masks explicit intent; invariant: only None resolves to defaults; handling: explicit None checks.
     resolved_temperature = Config.TEMPERATURE if temperature is None else temperature
     resolved_max_tokens = Config.MAX_TOKENS if max_tokens is None else max_tokens
+    # Build Responses API streaming request (preferred over chat.completions).
+    input_items: list[dict[str, Any]] = []
+    if system_prompt:
+        input_items.append({"role": "developer", "content": system_prompt})
+    if conversation_history:
+        for msg in conversation_history:
+            role = msg.get("role")
+            content = msg.get("content")
+            if not isinstance(content, str):
+                continue
+            if role == "assistant":
+                mapped_role = "assistant"
+            elif role in ("system", "developer"):
+                mapped_role = "developer"
+            else:
+                mapped_role = "user"
+            input_items.append({"role": mapped_role, "content": content})
+    input_items.append({"role": "user", "content": user_message})
 
-    request_payload: Dict[str, Any] = build_chat_completion_request(
-        prompt=user_message,
-        system_prompt=system_prompt,
-        model=model or Config.OPENAI_MODEL,
-        max_tokens=resolved_max_tokens,
-        temperature=resolved_temperature,
-        conversation_history=conversation_history,
-    )
-    request_payload["timeout"] = Config.REQUEST_TIMEOUT
-    request_payload["stream"] = True
-    request_payload["stream_options"] = {"include_usage": True}
+    should_store = str(os.environ.get("OPENAI_STORE", "")).strip().lower() in ("1", "true", "yes", "on")
+    request_payload: Dict[str, Any] = {
+        "model": model or Config.OPENAI_MODEL,
+        "input": input_items,
+        "temperature": resolved_temperature,
+        "max_output_tokens": resolved_max_tokens,
+        "stream": True,
+        "store": should_store,
+    }
 
     client = _require_client()
-    chat_completions = getattr(getattr(client, "chat", None), "completions", None)
-    create_stream = getattr(chat_completions, "create", None)
-    #audit Assumption: true streaming requires chat.completions stream endpoint; risk: missing SDK surface regresses latency semantics; invariant: callable stream create method exists; handling: raise explicit runtime error if unavailable.
+    responses_api = getattr(client, "responses", None)
+    create_stream = getattr(responses_api, "create", None) if responses_api else None
     if not callable(create_stream):
-        raise RuntimeError("OpenAI client does not support chat.completions streaming")
+        raise RuntimeError("OpenAI client does not support responses streaming")
 
+    return create_stream(**request_payload)
     return create_stream(**request_payload)
 
 

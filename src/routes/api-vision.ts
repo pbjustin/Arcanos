@@ -4,7 +4,7 @@ import { buildValidationErrorResponse, resolveErrorMessage } from "@core/lib/err
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import type { ErrorResponseDTO } from "@shared/types/dto.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { buildVisionRequest } from "@services/openai/requestBuilders.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";

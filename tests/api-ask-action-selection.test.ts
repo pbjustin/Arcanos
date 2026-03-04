@@ -1,6 +1,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const mockGetGptModuleMap = jest.fn();
 const mockGetModuleMetadata = jest.fn();
@@ -24,7 +25,7 @@ function createApiAskTestApp(): Express {
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const message = err instanceof Error ? err.message : 'Internal Server Error';
-    res.status(500).json({ error: message });
+    sendInternalErrorPayload(res, { error: message });
   });
 
   return app;

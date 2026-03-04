@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import type { RuntimeBudget } from '@arcanos/runtime/runtimeBudget';
-import type { TrinityStructuredReasoning } from '../../core/logic/trinitySchema.js';
-import { TRINITY_STRUCTURED_REASONING_SCHEMA } from '../../core/logic/trinitySchema.js';
+import type { TrinityStructuredReasoning } from '@core/logic/trinitySchema.js';
+import { TRINITY_STRUCTURED_REASONING_SCHEMA } from '@core/logic/trinitySchema.js';
 import { runStructuredReasoning as runStructuredReasoningGeneric } from '@arcanos/openai/structuredReasoning';
 
 interface ParsedReasoningResponse {

@@ -13,8 +13,8 @@
     }
   },
   "deploy": {
-    "startCommand": "node --max-old-space-size=7168 dist/start-server.js",
-    "healthcheckPath": "/health",
+    "startCommand": "node --max-old-space-size=7168 --loader ./scripts/esm-alias-loader.mjs dist/start-server.js",
+    "healthcheckPath": "/healthz",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,

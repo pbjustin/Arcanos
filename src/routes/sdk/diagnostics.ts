@@ -4,6 +4,7 @@ import { logExecution, type JobData } from "@core/db/index.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { dispatchArcanosTask, startWorkers } from "@platform/runtime/workerConfig.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -69,7 +70,7 @@ router.get('/diagnostics', async (req, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Diagnostics failed via SDK', { error: errorMessage });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()
@@ -187,7 +188,7 @@ router.post('/system-test', confirmGate, async (_, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'System test failed via SDK', { error: errorMessage });
 
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()

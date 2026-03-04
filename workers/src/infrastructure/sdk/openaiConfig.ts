@@ -1,3 +1,4 @@
+import { redactSensitive } from '@arcanos/runtime';
 import type { JobName } from '../../jobs/index.js';
 
 const OPENAI_KEY_ENV_PRIORITY = [
@@ -19,13 +20,6 @@ const OPENAI_KEY_PLACEHOLDERS = new Set([
   'your-openai-key-here'
 ]);
 
-const SENSITIVE_KEY_HINTS = ['token', 'secret', 'password', 'authorization', 'apikey', 'api_key', 'connection'];
-const SENSITIVE_VALUE_PATTERNS = [
-  /\bsk-[a-zA-Z0-9]{20,}\b/,
-  /\bBearer\s+[a-zA-Z0-9._-]{12,}\b/i,
-  /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
-  /\b(?:postgres|postgresql|mysql|mongodb):\/\/[^@\s]+:[^@\s]+@/i
-];
 
 const ALLOWED_JOB_TYPES: readonly JobName[] = [
   'OPENAI_COMPLETION',
@@ -183,30 +177,5 @@ export function resolveWorkerJobContract(): WorkerJobContract {
  * @returns Sanitized payload.
  */
 export function sanitizeWorkerLogPayload(payload: unknown): unknown {
-  if (typeof payload === 'string') {
-    //audit Assumption: token-like literals may appear in stringified payloads; risk: credential leakage via worker stdout; invariant: sensitive literals redacted; handling: regex-based replacement.
-    if (SENSITIVE_VALUE_PATTERNS.some((pattern) => pattern.test(payload))) {
-      return '[REDACTED]';
-    }
-    return payload;
-  }
-
-  if (Array.isArray(payload)) {
-    return payload.map((item) => sanitizeWorkerLogPayload(item));
-  }
-
-  if (payload && typeof payload === 'object') {
-    const sanitized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
-      //audit Assumption: key hints detect common secret fields; risk: accidental credential logging; invariant: hinted keys are redacted; handling: redact by key or sanitize recursively.
-      if (SENSITIVE_KEY_HINTS.some((hint) => key.toLowerCase().includes(hint))) {
-        sanitized[key] = '[REDACTED]';
-      } else {
-        sanitized[key] = sanitizeWorkerLogPayload(value);
-      }
-    }
-    return sanitized;
-  }
-
-  return payload;
+  return redactSensitive(payload);
 }

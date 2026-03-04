@@ -1,3 +1,4 @@
+import { sendBadRequestPayload, sendInternalErrorPayload } from '@shared/http/index.js';
 /**
  * PR Analysis API Route
  * Provides webhook endpoint for GitHub PR analysis
@@ -65,7 +66,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
 
   } catch (error) {
     console.error('❌ PR webhook error:', error);
-    res.status(500).json({ 
+    sendInternalErrorPayload(res, { 
       error: 'Internal server error processing PR webhook',
       details: resolveErrorMessage(error)
     });
@@ -121,7 +122,7 @@ router.post('/analyze', validateCustom((data: any) => {
     const { prDiff, prFiles, metadata }: PRAnalysisRequest = req.body;
 
     if (!prDiff || !Array.isArray(prFiles)) {
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Invalid request body',
         required: ['prDiff', 'prFiles'],
         received: Object.keys(req.body)
@@ -146,7 +147,7 @@ router.post('/analyze', validateCustom((data: any) => {
 
   } catch (error) {
     console.error('❌ PR analysis error:', error);
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       error: 'Internal server error during PR analysis',
       details: resolveErrorMessage(error)
     });

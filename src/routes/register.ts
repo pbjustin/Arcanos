@@ -35,7 +35,7 @@ import devopsRouter from './devops.js';
 import introspectionRouter from './introspection.js';
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
 import { TRINITY_BASE_SOFT_CAP_MS, TRINITY_MULTIPLIERS } from "@core/logic/trinityGuards.js";
-import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS, BUDGET_DISABLED } from '../runtime/runtimeBudget.js';
+import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS, BUDGET_DISABLED } from '../platform/resilience/runtimeBudget.js';
 import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
 
 /**

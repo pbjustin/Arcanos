@@ -43,6 +43,24 @@
       "@core/*": [
         "src/core/*"
       ],
+      "@analytics/*": [
+        "src/analytics/*"
+      ],
+      "@config/*": [
+        "src/config/*"
+      ],
+      "@stores/*": [
+        "src/stores/*"
+      ],
+      "@dispatcher/*": [
+        "src/dispatcher/*"
+      ],
+      "@trinity/*": [
+        "src/trinity/*"
+      ],
+      "@middleware/*": [
+        "src/middleware/*"
+      ],
       "@routes/*": [
         "src/routes/*"
       ],

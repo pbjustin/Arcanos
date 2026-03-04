@@ -5,6 +5,7 @@ import { handleAIError, sendMockAIResponse } from "@transport/http/requestHandle
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import type { AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
+import { sendBadRequest } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -65,7 +66,7 @@ router.post('/arcanos', confirmGate, async (
   const { userInput, sessionId, overrideAuditSafe } = req.body;
 
   if (!userInput || typeof userInput !== 'string') {
-    return res.status(400).json({ error: 'Missing or invalid userInput in request body' });
+    return sendBadRequest(res, 'Missing or invalid userInput in request body');
   }
 
   console.log(`[🔬 ARCANOS] Processing request with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}`);

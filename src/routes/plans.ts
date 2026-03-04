@@ -1,3 +1,4 @@
+import { sendBadRequest, sendNotFound, sendInternalErrorCode } from '@shared/http/index.js';
 /**
  * ActionPlan API Routes
  *
@@ -46,7 +47,7 @@ router.post('/plans', async (req: Request, res: Response) => {
 
     const parsed = actionPlanInputSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: 'Invalid plan input', details: parsed.error.issues });
+      sendBadRequest(res, 'Invalid plan input', parsed.error.issues);
       return;
     }
 
@@ -59,7 +60,7 @@ router.post('/plans', async (req: Request, res: Response) => {
       return;
     }
     apiLogger.error('Create failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to create plan' });
+    sendInternalErrorCode(res, 'Failed to create plan');
   }
 });
 
@@ -82,7 +83,7 @@ router.get('/plans', async (req: Request, res: Response) => {
     res.json({ plans, count: plans.length });
   } catch (error: unknown) {
     apiLogger.error('List failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to list plans' });
+    sendInternalErrorCode(res, 'Failed to list plans');
   }
 });
 
@@ -93,13 +94,13 @@ router.get('/plans/:planId', async (req: Request, res: Response) => {
   try {
     const plan = await getPlan(req.params.planId);
     if (!plan) {
-      res.status(404).json({ error: 'Plan not found' });
+      sendNotFound(res, 'Plan not found');
       return;
     }
     res.json(plan);
   } catch (error: unknown) {
     apiLogger.error('Get failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to get plan' });
+    sendInternalErrorCode(res, 'Failed to get plan');
   }
 });
 
@@ -113,7 +114,7 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
       // Determine reason
       const existing = await getPlan(req.params.planId);
       if (!existing) {
-        res.status(404).json({ error: 'Plan not found' });
+        sendNotFound(res, 'Plan not found');
         return;
       }
       if (existing.clearScore?.decision === 'block') {
@@ -133,7 +134,7 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
     res.json(plan);
   } catch (error: unknown) {
     apiLogger.error('Approve failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to approve plan' });
+    sendInternalErrorCode(res, 'Failed to approve plan');
   }
 });
 
@@ -144,13 +145,13 @@ router.post('/plans/:planId/block', async (req: Request, res: Response) => {
   try {
     const plan = await blockPlan(req.params.planId);
     if (!plan) {
-      res.status(404).json({ error: 'Plan not found' });
+      sendNotFound(res, 'Plan not found');
       return;
     }
     res.json(plan);
   } catch (error: unknown) {
     apiLogger.error('Block failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to block plan' });
+    sendInternalErrorCode(res, 'Failed to block plan');
   }
 });
 
@@ -161,13 +162,13 @@ router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
   try {
     const plan = await expirePlan(req.params.planId);
     if (!plan) {
-      res.status(404).json({ error: 'Plan not found' });
+      sendNotFound(res, 'Plan not found');
       return;
     }
     res.json(plan);
   } catch (error: unknown) {
     apiLogger.error('Expire failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to expire plan' });
+    sendInternalErrorCode(res, 'Failed to expire plan');
   }
 });
 
@@ -205,7 +206,7 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
   try {
     const plan = await getPlan(req.params.planId);
     if (!plan) {
-      res.status(404).json({ error: 'Plan not found' });
+      sendNotFound(res, 'Plan not found');
       return;
     }
 
@@ -271,7 +272,7 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       return;
     }
     apiLogger.error('Execute failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to execute plan' });
+    sendInternalErrorCode(res, 'Failed to execute plan');
   }
 });
 
@@ -284,7 +285,7 @@ router.get('/plans/:planId/results', async (req: Request, res: Response) => {
     res.json({ plan_id: req.params.planId, results });
   } catch (error: unknown) {
     apiLogger.error('Results failed', { module: 'plans', error: resolveErrorMessage(error) });
-    res.status(500).json({ error: 'Failed to get execution results' });
+    sendInternalErrorCode(res, 'Failed to get execution results');
   }
 });
 

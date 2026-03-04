@@ -25,8 +25,8 @@ Railway project setup:
 ## Configuration
 Active Railway config (source: `railway.json`):
 - Build: `npm ci --include=dev && npm run build`
-- Start: `node --max-old-space-size=7168 dist/start-server.js`
-- Health check path: `/health`
+- Start: `node --max-old-space-size=7168 --loader ./scripts/esm-alias-loader.mjs dist/start-server.js`
+- Health check path: `/healthz`
 - Health check timeout: `300`
 - Restart policy: `ON_FAILURE` (`restartPolicyMaxRetries=10`)
 
@@ -52,7 +52,7 @@ cp .env.example .env
 # set PORT and OPENAI_API_KEY
 npm run build
 npm start
-curl http://localhost:3000/health
+curl http://localhost:3000/healthzz
 ```
 
 ## Deploy (Railway)
@@ -60,7 +60,7 @@ curl http://localhost:3000/health
 2. Watch deployment logs in Railway.
 3. Confirm health endpoint:
 ```bash
-curl https://<your-service>.up.railway.app/health
+curl https://<your-service>.up.railway.app/healthz
 ```
 
 Rollback:
@@ -70,7 +70,7 @@ Rollback:
 
 ## Troubleshooting
 - Build fails: run `npm ci --include=dev && npm run build` locally first.
-- Repeated restarts: inspect `/health` output and Railway logs.
+- Repeated restarts: inspect `/healthz` (liveness) and `/health` (readiness) output and Railway logs.
 - App boots without AI output: validate `OPENAI_API_KEY` is present and valid.
 - Persistence degraded: attach PostgreSQL or set valid `DATABASE_URL`.
 

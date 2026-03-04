@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { sendBadRequestPayload, sendNotFoundPayload } from '@shared/http/index.js';
 import {
   getActiveQuarantines,
   getActiveUnsafeConditions,
@@ -68,7 +69,7 @@ router.post(
         source: 'routes/safety.release'
       });
     } catch (error) {
-      res.status(400).json({
+      sendBadRequestPayload(res, {
         error: 'CONFIRMATION_REQUIRED',
         details: [
           error instanceof Error ? error.message : String(error),
@@ -86,7 +87,7 @@ router.post(
 
     if (!releaseResult.released) {
       if (releaseResult.reason === 'not_found') {
-        res.status(404).json({
+        sendNotFoundPayload(res, {
           error: 'QUARANTINE_NOT_FOUND',
           quarantineId
         });

@@ -6,6 +6,7 @@ import {
   runWithMcpRequestContext,
 } from '../mcp/context.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -39,7 +40,7 @@ router.post('/mcp', mcpAuthMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     const message = resolveErrorMessage(error);
-    res.status(500).json({ error: message });
+    sendInternalErrorPayload(res, { error: message });
   }
 });
 

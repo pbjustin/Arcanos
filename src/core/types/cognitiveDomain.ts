@@ -1,1 +1,1 @@
-export * from '../../shared/types/cognitiveDomain.js';
+export * from '@shared/types/cognitiveDomain.js';

@@ -22,7 +22,7 @@ Configuration and secrets changes:
 
 ## Run locally
 Manual verification performed:
-- [ ] Backend startup and `/health` check
+- [ ] Backend startup and `/healthz` check
 - [ ] Changed endpoints/scripts tested locally
 - [ ] Confirmation-gated routes tested (if applicable)
 

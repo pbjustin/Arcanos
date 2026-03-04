@@ -53,7 +53,7 @@ arcanos
 
 Validation:
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:3000/healthzz
 curl http://localhost:3000/api/test
 ```
 

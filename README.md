@@ -6,176 +6,36 @@
 ## Overview
 Arcanos is a TypeScript/Express backend with optional workers and an optional Python CLI daemon (`daemon-python/`).
 
-OpenAI usage is adapter-first across stacks:
-- TypeScript runtime constructor boundary: `src/core/adapters/openai.adapter.ts`
-- TypeScript lifecycle bridge: `src/services/openai/unifiedClient.ts`
-- Worker constructor boundary: `workers/src/infrastructure/sdk/openai.ts`
-- Worker env/config boundary: `workers/src/infrastructure/sdk/openaiConfig.ts`
-- Python daemon constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
-- Python daemon adapter boundary: `daemon-python/arcanos/openai/openai_adapter.py`
+Key characteristics:
+- **Responses-first OpenAI integration** (tool calling + continuation via `previous_response_id`)
+- **Adapter-boundary construction** (centralized client creation, headers, resilience)
+- **Shared HTTP toolkit** (`src/shared/http/`) for request context, validation, and errors
+- **Railway-ready** start/health configuration
 
-## Canonical Runtime Paths
+## OpenAI integration map (current)
+Canonical boundaries / pipelines:
+- TypeScript OpenAI adapter boundary: `src/core/adapters/openai.adapter.ts`
+- TypeScript request builders (staged): `src/services/openai/requestBuilders/`
+  - `build → normalize → convert → validate`
+- TypeScript call pipeline (staged): `src/services/openai/chatFlow/`
+  - `prepare → execute → parse → trace`
+- Shared parsing utilities: `packages/arcanos-openai/src/responseParsing.ts`
+- Worker OpenAI boundary: `workers/src/infrastructure/sdk/openai.ts`
+- Python daemon OpenAI adapter: `daemon-python/arcanos/openai/openai_adapter.py`
 
-Single source of truth:
-- Backend service runtime starts at `dist/start-server.js` (invoked by `npm start`, `Procfile`, and `railway.json`).
-- Python daemon runtime starts at `python -m arcanos.cli` (`daemon-python/arcanos/cli/__main__.py`).
+## Health endpoints
+- Liveness: `GET /healthz` (used by Railway healthchecks)
+- Readiness: `GET /health` (may reflect downstream dependencies and can return non-200)
 
-```mermaid
-flowchart LR
-  A["Backend Runtime (Canonical)"] -->|"npm start / Railway / Procfile"| B["dist/start-server.js"]
-  B --> C["src/server.ts (compiled runtime source)"]
-  D["index.js"] -->|"Compatibility wrapper only"| B
+## Getting started
+See:
+- `QUICKSTART.md` (fast local run)
+- `docs/RUN_LOCAL.md` (runbook + validation)
+- `docs/RAILWAY_DEPLOYMENT.md` (Railway deploy workflow)
 
-  F["Python Daemon Runtime (Canonical)"] -->|"python -m arcanos.cli"| G["daemon-python/arcanos/cli/__main__.py"]
-  G --> H["daemon-python/arcanos/cli/cli.py"]
-  I["cli_v2/main.py"] -->|"Experimental/manual test path (non-production)"| J["Not in production runtime path"]
-```
+## OpenAI data retention
+Responses requests default to **stateless** (`store: false`). You can enable storage via:
+- `OPENAI_STORE=true`
 
-| Entrypoint | Role | Runtime Status |
-| --- | --- | --- |
-| `dist/start-server.js` | Backend process bootstrap | Canonical |
-| `src/server.ts` | Backend source-of-truth lifecycle implementation | Canonical source |
-| `index.js` | Wrapper that forwards to `dist/start-server.js` | Compatibility |
-| `daemon-python/arcanos/cli/__main__.py` | Python daemon module entrypoint | Canonical |
-| `cli_v2/main.py` | Separate CLI v2 experiment harness | Experimental |
-
-## Quick Start
-
-**Backend (TypeScript):**
-```bash
-npm install
-cp .env.example .env        # set PORT=3000 and OPENAI_API_KEY
-npm run build
-npm test                     # run tests
-npm start                    # http://localhost:3000/health
-```
-
-**CLI Daemon (Python):**
-```bash
-cd daemon-python
-pip install -r requirements.txt
-cp .env.example .env         # set OPENAI_API_KEY
-pytest tests/ -q             # run tests
-python -m arcanos.cli        # start daemon
-```
-
-See [docs/RUN_LOCAL.md](docs/RUN_LOCAL.md) for detailed setup, or use `make install && make test` with the root [Makefile](Makefile).
-
-## Prerequisites
-- Node.js 18+ and npm 8+
-- `PORT` set in runtime env (required at startup; Railway injects this)
-- `OPENAI_API_KEY` for live calls (mock responses are used when absent)
-- Optional PostgreSQL `DATABASE_URL`
-- Optional Python 3.10+ for daemon work
-
-## Setup
-```bash
-npm install
-cp .env.example .env
-```
-
-Minimum local `.env` values:
-- `PORT=3000`
-- `OPENAI_API_KEY=your-openai-api-key-here`
-
-## Configuration
-Primary backend runtime variables:
-
-| Variable | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `PORT` | Yes | none | Fail-fast startup validation in `src/config/env.ts`. |
-| `OPENAI_API_KEY` | No* | none | Missing key keeps OpenAI routes in mock/degraded mode. |
-| `OPENAI_MODEL` | No | `gpt-4o-mini` | Default chat model override. |
-| `OPENAI_BASE_URL` | No | none | Optional custom provider endpoint. |
-| `OPENAI_MAX_RETRIES` | No | `2` | Retry count for transient failures. |
-| `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
-| `RUN_WORKERS` | No | `true` (non-test) | Set `false` for API-only runtime. |
-| `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime logs (ephemeral on Railway). |
-| `ARC_MEMORY_PATH` | No | `/tmp/arc/memory` | Runtime memory/cache path. |
-
-*Operationally required for non-mock responses.
-
-## Run Locally
-```bash
-npm run build
-npm start
-```
-
-Health checks:
-```bash
-curl http://localhost:3000/health
-curl http://localhost:3000/healthz
-curl http://localhost:3000/readyz
-```
-
-## Validation Commands
-Required local validation for this refactor:
-```bash
-npm run build
-npm test
-npm run validate:railway
-npm run guard:commit
-npm run validate:backend-cli:offline
-python daemon-python/tests/test_telemetry_sanitization.py
-python daemon-python/scripts/continuous_audit.py --max-depth=1 --no-recursive --no-railway-check
-```
-
-## CI and Branch Protection
-The authoritative required workflow is `.github/workflows/ci-cd.yml`.
-
-Required CI behavior:
-- Uses mock-only OpenAI execution (`OPENAI_API_KEY=mock-api-key`) for required checks.
-- Runs `npm run guard:commit`.
-- Runs offline daemon validation (`daemon-python/validate_backend_cli_offline.py`).
-
-## Deploy (Railway)
-Railway settings are source-controlled in `railway.json`:
-- Build: `npm ci --include=dev && npm run build`
-- Start: `node --max-old-space-size=7168 dist/start-server.js`
-- Health check: `GET /health`
-
-Railway remains build-phase-first. Start does not run a build.
-
-## Adapter-First Usage Examples
-TypeScript:
-```ts
-import { createOpenAIAdapter } from "./src/core/adapters/openai.adapter.js";
-
-const adapter = createOpenAIAdapter({
-  apiKey: process.env.OPENAI_API_KEY ?? "",
-  defaultModel: "gpt-4o-mini",
-});
-
-const response = await adapter.responses.create(
-  {
-    model: "gpt-4.1-mini",
-    input: [{ role: "user", content: [{ type: "input_text", text: "Summarize Arcanos health status." }] }],
-  },
-  { headers: { "x-trace-id": "local-demo" } }
-);
-console.log(response.output_text);
-```
-
-Python daemon:
-```python
-from arcanos.openai import chat_completion
-
-response = chat_completion(
-    user_message="Summarize Arcanos health status.",
-    model="gpt-4.1-mini",
-)
-print(response.output_text)
-```
-
-## Security and Logging
-- Runtime env access is centralized (`src/config/env.ts`, `daemon-python/arcanos/env.py`).
-- Structured logs redact secret-like keys and token-like values.
-- Commit guardrails block staged artifacts and obvious secret literals.
-
-## References
-- `docs/README.md`
-- `docs/RUN_LOCAL.md`
-- `docs/API.md`
-- `docs/RAILWAY_DEPLOYMENT.md`
-- `RAILWAY_COMPATIBILITY_GUIDE.md`
-- `OPENAI_ADAPTER_MIGRATION.md`
+More details:
+- `docs/OPENAI_RESPONSES_TOOLS.md`

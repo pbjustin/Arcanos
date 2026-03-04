@@ -56,9 +56,9 @@ function validateConfig(config) {
     errors.push('deploy.startCommand must be a non-empty string');
   }
 
-  //audit Assumption: healthcheck path drives Railway restarts; risk: unhealthy services marked healthy; invariant: path is /health; handling: fail on drift.
-  if (deploy.healthcheckPath !== '/health') {
-    errors.push(`Expected deploy.healthcheckPath to be "/health" but found "${String(deploy.healthcheckPath ?? '')}"`);
+  //audit Assumption: healthcheck path drives Railway restarts; risk: unhealthy services marked healthy; invariant: path is /healthz; handling: fail on drift.
+  if (deploy.healthcheckPath !== '/healthz') {
+    errors.push(`Expected deploy.healthcheckPath to be "/healthz" but found "${String(deploy.healthcheckPath ?? '')}"`);
   }
 
   //audit Assumption: explicit restart policy is required for stable recovery behavior; risk: unbounded crash loops or no restart; invariant: ON_FAILURE policy present; handling: fail on mismatch.

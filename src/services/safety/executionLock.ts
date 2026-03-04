@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import type { PoolClient } from 'pg';
-import { getPool, isDatabaseConnected } from '../../db/client.js';
+import { getPool, isDatabaseConnected } from '@core/db/client.js';
 import { emitSafetyAuditEvent } from './auditEvents.js';
 import { recordDuplicateSuppression } from './runtimeState.js';
 
@@ -159,4 +159,3 @@ export async function runWithExecutionLock<T>(
     await lock.release();
   }
 }
-

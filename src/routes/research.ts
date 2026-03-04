@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createValidationMiddleware } from "@platform/runtime/security.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { connectResearchBridge } from "@services/researchHub.js";
 import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 

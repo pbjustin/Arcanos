@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { getEnv } from '@platform/runtime/env.js';
+import { sendInternalErrorCode } from '@shared/http/index.js';
 
 /**
  * Minimal auth / origin protection for MCP Streamable HTTP.
@@ -30,7 +31,7 @@ const allowedOrigins = parseAllowedOrigins(getEnv('MCP_ALLOWED_ORIGINS', ''));
 
 export function mcpAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   if (!mcpBearerToken) {
-    res.status(500).json({ error: 'MCP_BEARER_TOKEN not configured' });
+    sendInternalErrorCode(res, 'MCP_BEARER_TOKEN not configured');
     return;
   }
 

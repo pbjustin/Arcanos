@@ -3,6 +3,7 @@ import { saveMessage, getChannel, getConversation, type SessionMessage } from "@
 import { requireField } from "@shared/validation.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendBadRequest, sendInternalErrorCode } from '@shared/http/index.js';
 
 /**
  * Helper function to normalize message input
@@ -51,7 +52,7 @@ export const sessionMemoryController = {
     const normalizedMessage = normalizeMessage(message);
     
     if (!normalizedMessage) {
-      res.status(400).json({ error: 'message content is required' });
+      sendBadRequest(res, 'message content is required');
       return;
     }
 
@@ -79,7 +80,7 @@ export const sessionMemoryController = {
         error: resolveErrorMessage(error)
       });
 
-      res.status(500).json({ error: 'Failed to save message' });
+      sendInternalErrorCode(res, 'Failed to save message');
     }
   },
 
@@ -97,7 +98,7 @@ export const sessionMemoryController = {
         error: resolveErrorMessage(error)
       });
 
-      res.status(500).json({ error: 'Failed to retrieve core data' });
+      sendInternalErrorCode(res, 'Failed to retrieve core data');
     }
   },
 
@@ -115,7 +116,7 @@ export const sessionMemoryController = {
         error: resolveErrorMessage(error)
       });
 
-      res.status(500).json({ error: 'Failed to retrieve meta data' });
+      sendInternalErrorCode(res, 'Failed to retrieve meta data');
     }
   },
 
@@ -133,7 +134,7 @@ export const sessionMemoryController = {
         error: resolveErrorMessage(error)
       });
 
-      res.status(500).json({ error: 'Failed to retrieve conversation' });
+      sendInternalErrorCode(res, 'Failed to retrieve conversation');
     }
   }
 };

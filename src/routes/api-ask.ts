@@ -7,7 +7,7 @@ import type {
   ErrorResponseDTO,
   ClientContextDTO
 } from "@shared/types/dto.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
 import { routeGptRequest } from "./_core/gptDispatch.js";
 import { hasValidAPIKey } from '@services/openai.js';
 import { createMockAIResponse } from '@transport/http/requestHandler.js';
@@ -168,7 +168,7 @@ router.post(
           } as any);
         }
         // MODULE_ERROR / other
-        return res.status(500).json({
+        return sendInternalErrorPayload(res, {
           error: envelope.error.message,
           details: envelope.error.details ? [String(envelope.error.details)] : undefined
         } as any);

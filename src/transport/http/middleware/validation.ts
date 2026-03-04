@@ -1,3 +1,4 @@
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 /**
  * JSON Schema Validation Layer
  * Provides comprehensive validation for all POST payloads with standardized error responses
@@ -261,7 +262,7 @@ export function validateSchema(schemaName: keyof typeof schemas) {
     //audit Assumption: schema name must exist
     if (!schema) {
       //audit Assumption: schema lookup failures are server errors; risk: leaking endpoint metadata; invariant: payload includes ISO timestamp; handling: buildTimestampedPayload.
-      return res.status(500).json(buildTimestampedPayload({
+      return sendInternalErrorPayload(res, buildTimestampedPayload({
         error: 'Internal validation error',
         details: {
           code: 'SCHEMA_NOT_FOUND',

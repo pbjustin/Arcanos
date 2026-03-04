@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler, sendBadRequestPayload, sendNotFoundPayload } from '@shared/http/index.js';
 import { getModulesForRegistry } from './modules.js';
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import {
@@ -51,7 +51,7 @@ router.post(
 
     if (!clientId || !instanceId) {
       //audit Assumption: clientId and instanceId required; risk: incomplete heartbeat; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'clientId and instanceId are required'
       });
@@ -69,15 +69,15 @@ router.post(
     };
 
     // Use token + instanceId as key to support multiple daemons with same token
-    const token = req.daemonToken!;
-    daemonStore.recordHeartbeat(token, heartbeat);
+    const daemonToken = req.daemonToken!;
+    daemonStore.recordHeartbeat(daemonToken, heartbeat);
     
     // Security: Prevent instanceId hijacking by validating token ownership
     // Only allow setting/updating token mapping if:
     // 1. InstanceId has no existing token (first registration), OR
     // 2. The existing token matches the current token (legitimate update)
     const existingToken = daemonStore.getTokenForInstance(instanceId);
-    if (existingToken && existingToken !== token) {
+    if (existingToken && existingToken !== daemonToken) {
       //audit Assumption: instanceId hijacking attempt detected; risk: unauthorized access; invariant: reject; handling: return 403.
       return res.status(403).json({
         error: 'Forbidden',
@@ -88,7 +88,7 @@ router.post(
     // Safe to set/update the token mapping
     if (!existingToken) {
       //audit Assumption: new instance mapping required; risk: missing mapping; invariant: persist mapping; handling: save tokens.
-      daemonStore.setTokenForInstance(instanceId, token);
+      daemonStore.setTokenForInstance(instanceId, daemonToken);
       daemonStore.saveTokens();
     }
 
@@ -107,12 +107,12 @@ router.get(
   '/api/daemon/commands',
   attachDaemonContext,
   asyncHandler(async (req: Request, res: Response) => {
-    const token = req.daemonToken!;
+    const daemonToken = req.daemonToken!;
     const instanceId = req.query.instance_id as string | undefined;
 
     if (!instanceId) {
       //audit Assumption: instance_id required; risk: ambiguous query; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'instance_id query parameter is required'
       });
@@ -147,7 +147,7 @@ router.post(
 
     if (!Array.isArray(commandIds) || commandIds.length === 0) {
       //audit Assumption: commandIds required; risk: no-op request; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'commandIds array is required'
       });
@@ -155,7 +155,7 @@ router.post(
 
     if (!instanceId) {
       //audit Assumption: instanceId required; risk: ambiguous ack; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'instanceId is required in request body'
       });
@@ -213,6 +213,52 @@ export function queueDaemonCommandForInstance(
 }
 
 /**
+ * Purpose: Fetch a daemon command result for an instance.
+ * Inputs/Outputs: instanceId, commandId; returns result record or null.
+ */
+export function getDaemonCommandResultForInstance(
+  instanceId: string,
+  commandId: string
+): Record<string, unknown> | null {
+  const daemonToken = process.env.DAEMON_DEFAULT_TOKEN || 'anonymous-daemon';
+  const entry = daemonStore.getCommandResult(daemonToken, instanceId, commandId);
+  return entry ? entry.result : null;
+}
+
+
+/**
+ * POST /api/daemon/commands/result
+ * Daemon reports the result/output of a processed command
+ */
+router.post(
+  '/api/daemon/commands/result',
+  attachDaemonContext,
+  asyncHandler(async (req: Request, res: Response) => {
+    const daemonToken = req.daemonToken!;
+    const instanceId = req.body.instanceId as string | undefined;
+    const commandId = req.body.commandId as string | undefined;
+    const result = req.body.result as unknown;
+
+    if (!instanceId || !commandId) {
+      return sendBadRequestPayload(res, {
+        error: 'Bad Request',
+        message: 'instanceId and commandId are required'
+      });
+    }
+
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+      return sendBadRequestPayload(res, {
+        error: 'Bad Request',
+        message: 'result must be an object'
+      });
+    }
+
+    daemonStore.recordCommandResult(daemonToken, instanceId, commandId, result as Record<string, unknown>);
+    res.json({ ok: true });
+  })
+);
+
+/**
  * POST /api/daemon/confirm-actions
  * Daemon confirms and queues sensitive actions after user approval
  */
@@ -227,7 +273,7 @@ router.post(
 
     if (!confirmationToken || typeof confirmationToken !== 'string') {
       //audit Assumption: confirmation token required; risk: invalid request; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'confirmation_token is required'
       });
@@ -235,7 +281,7 @@ router.post(
 
     if (!instanceId || typeof instanceId !== 'string') {
       //audit Assumption: instanceId required; risk: invalid request; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'instanceId is required'
       });
@@ -244,7 +290,7 @@ router.post(
     const queued = consumePendingDaemonActions(confirmationToken, instanceId, req.daemonToken!);
     if (queued < 0) {
       //audit Assumption: invalid/expired token should fail; risk: stale confirmation; invariant: 404 returned; handling: reject.
-      return res.status(404).json({
+      return sendNotFoundPayload(res, {
         error: 'Not Found',
         message: 'Confirmation token invalid or expired'
       });
@@ -292,7 +338,7 @@ router.post(
 
     if (!updateType || typeof updateType !== 'string') {
       //audit Assumption: updateType required; risk: invalid update; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'updateType is required and must be a string'
       });
@@ -300,7 +346,7 @@ router.post(
 
     if (!data || typeof data !== 'object') {
       //audit Assumption: data payload required; risk: invalid update; invariant: 400 returned; handling: reject.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'Bad Request',
         message: 'data is required and must be an object'
       });
@@ -336,4 +382,3 @@ export function getDaemonHeartbeat(token: string, instanceId: string): DaemonHea
 }
 
 export default router;
-

@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { loadModuleDefinitions, ModuleDef } from '@services/moduleLoader.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { sendBadRequest, sendNotFound, sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -31,21 +32,21 @@ function createHandler(mod: ModuleDef) {
       payload?: unknown;
     };
     if (module !== mod.name) {
-      return res.status(404).json({ error: 'Module not found' });
+      return sendNotFound(res, 'Module not found');
     }
     if (!action) {
-      return res.status(400).json({ error: 'Action is required' });
+      return sendBadRequest(res, 'Action is required');
     }
     const handler = mod.actions[action];
     if (!handler) {
-      return res.status(404).json({ error: 'Action not found' });
+      return sendNotFound(res, 'Action not found');
     }
     try {
       const result = await handler(payload);
       res.json(result);
     } catch (err: unknown) {
       //audit Assumption: module failures should return 500
-      res.status(500).json({ error: resolveErrorMessage(err) });
+      sendInternalErrorPayload(res, { error: resolveErrorMessage(err) });
     }
   };
 }
@@ -188,25 +189,25 @@ router.post('/queryroute', async (req: Request, res: Response) => {
     payload?: unknown;
   };
   if (!moduleName) {
-    return res.status(400).json({ error: 'Module name is required' });
+    return sendBadRequest(res, 'Module name is required');
   }
   const mod = registryByName.get(moduleName) ?? registryByRoute.get(moduleName);
   if (!mod) {
-    return res.status(404).json({ error: 'Module not found' });
+    return sendNotFound(res, 'Module not found');
   }
   if (!action) {
-    return res.status(400).json({ error: 'Action is required' });
+    return sendBadRequest(res, 'Action is required');
   }
   const handler = mod.actions[action];
   if (!handler) {
-    return res.status(404).json({ error: 'Action not found' });
+    return sendNotFound(res, 'Action not found');
   }
   try {
     const result = await handler(payload);
     res.json(result);
   } catch (err: unknown) {
     //audit Assumption: module failures should return 500
-    res.status(500).json({ error: resolveErrorMessage(err) });
+    sendInternalErrorPayload(res, { error: resolveErrorMessage(err) });
   }
 });
 

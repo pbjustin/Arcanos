@@ -5,3 +5,4 @@ export type { OpenAIClientConfig } from './client.js';
 export * from './retry.js';
 export * from './resilience.js';
 export * from './unifiedClient.js';
+export * from './responseParsing.js';

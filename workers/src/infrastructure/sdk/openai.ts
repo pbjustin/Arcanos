@@ -8,6 +8,7 @@
 import type OpenAI from 'openai';
 import { createOpenAIClient } from '@arcanos/openai/client';
 import { retryWithBackoff } from '@arcanos/openai/retry';
+import { extractResponseOutputText, extractTextFromContentParts } from '@arcanos/openai';
 import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
@@ -53,28 +54,8 @@ interface WorkerLegacyUsageShape {
 }
 
 function normalizeWorkerMessageContent(content: unknown): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-  if (!Array.isArray(content)) {
-    return '';
-  }
-  return content
-    .map((part) => {
-      if (!part || typeof part !== 'object') {
-        return '';
-      }
-      const typedPart = part as Record<string, unknown>;
-      if (typedPart.type === 'text' && typeof typedPart.text === 'string') {
-        return typedPart.text;
-      }
-      if (typedPart.type === 'input_text' && typeof typedPart.text === 'string') {
-        return typedPart.text;
-      }
-      return '';
-    })
-    .filter((value) => value.length > 0)
-    .join('\n');
+  if (typeof content === 'string') return content;
+  return extractTextFromContentParts(content, { includeOutputText: false });
 }
 
 function buildWorkerResponsesPayload(params: ChatCompletionCreateParams): ResponseCreateParamsNonStreaming {
@@ -138,29 +119,8 @@ function buildWorkerResponsesPayload(params: ChatCompletionCreateParams): Respon
   return payload;
 }
 
-function extractWorkerOutputText(response: OpenAIResponse): string {
-  const outputText = (response as { output_text?: unknown }).output_text;
-  if (typeof outputText === 'string' && outputText.trim().length > 0) {
-    return outputText.trim();
-  }
-  const outputItems = Array.isArray(response.output) ? response.output : [];
-  for (const outputItem of outputItems) {
-    if (!outputItem || typeof outputItem !== 'object') {
-      continue;
-    }
-    const typedOutputItem = outputItem as unknown as Record<string, unknown>;
-    const contentItems = Array.isArray(typedOutputItem.content) ? typedOutputItem.content : [];
-    for (const contentItem of contentItems) {
-      if (!contentItem || typeof contentItem !== 'object') {
-        continue;
-      }
-      const typedContentItem = contentItem as Record<string, unknown>;
-      if (typedContentItem.type === 'output_text' && typeof typedContentItem.text === 'string') {
-        return typedContentItem.text.trim();
-      }
-    }
-  }
-  return '';
+function extractWorkerOutputText(response: unknown): string {
+  return extractResponseOutputText(response, '');
 }
 
 function convertWorkerResponseToChatCompletion(response: OpenAIResponse, requestedModel: string): ChatCompletion {

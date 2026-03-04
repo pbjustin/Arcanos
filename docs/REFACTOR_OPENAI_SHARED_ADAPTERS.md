@@ -22,14 +22,14 @@ This repo now centralizes **client construction** and **retry/backoff policy** i
 ## Next incremental steps
 1. Wrap worker and runtime OpenAI calls with `retryWithBackoff()` where appropriate (rate limits, 5xx, network).
 2. Extract a shared `OpenAIAdapter` interface (responses/chat/embeddings) into `@arcanos/openai` and have:
-   - backend `src/services/openai/unifiedClient.ts`
+   - backend `src/services/openai/chatFlow/`
    - workers `workers/src/infrastructure/sdk/openai.ts`
    - runtime `arcanos-ai-runtime/src/ai/openaiClient.ts`
    converge on that single surface.
 3. Fold backend-only telemetry/circuit-breaker into thin wrappers (platform layer), keeping the shared package dependency-free.
-## Added (this step): Shared `unifiedClient` implementation
+## Added (current): Staged call pipeline (`chatFlow`) and staged request builders
 
-The backend `src/services/openai/unifiedClient.ts` is now a **thin wiring layer** only.
+The backend `src/services/openai/chatFlow/` is now a **thin wiring layer** only.
 All real logic lives in:
 
 - `packages/arcanos-openai/src/unifiedClient.ts`
@@ -42,6 +42,18 @@ This shared implementation is dependency-injected so it can remain portable whil
 - circuit breaker snapshot for health checks
 
 ### Runtime import
-- Backend continues to import `./openai/unifiedClient.js` (unchanged), but that module is now just a bridge.
-- If you want to import directly, use: `@arcanos/openai/unifiedClient`
+- Backend uses staged pipelines:
+  - `src/services/openai/chatFlow/`
+  - `src/services/openai/requestBuilders/`
+  and relies on shared package utilities where appropriate.
 
+
+
+## Responses-first helpers (current)
+- Shared output parsing: `packages/arcanos-openai/src/responseParsing.ts`
+- Shared request staging:
+  - `src/services/openai/chatFlow/` (prepare/execute/parse/trace)
+  - `src/services/openai/requestBuilders/` (build/normalize/convert/validate)
+
+## Data retention
+Responses requests default to `store: false`. Override via `OPENAI_STORE=true`.
