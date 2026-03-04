@@ -1,1 +1,1 @@
-export * from '@arcanos/runtime';
+export * from '@arcanos/runtime/redaction';

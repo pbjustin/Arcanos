@@ -16,6 +16,10 @@
     "./runtimeErrors": {
       "types": "./dist/runtimeErrors.d.ts",
       "import": "./dist/runtimeErrors.js"
+    },
+    "./redaction": {
+      "types": "./dist/redaction.d.ts",
+      "import": "./dist/redaction.js"
     }
   },
   "types": "dist/index.d.ts",
