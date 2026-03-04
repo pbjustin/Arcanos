@@ -25,7 +25,7 @@ Helpful probes:
 ```bash
 npm run build
 npm start
-curl http://localhost:3000/health
+curl http://localhost:3000/healthz
 ```
 
 Daemon probe:
@@ -37,6 +37,7 @@ python validate_backend_cli.py
 ## Deploy (Railway)
 Post-deploy checks:
 ```bash
+curl https://<your-service>.up.railway.app/healthz
 curl https://<your-service>.up.railway.app/health
 curl https://<your-service>.up.railway.app/readyz
 ```

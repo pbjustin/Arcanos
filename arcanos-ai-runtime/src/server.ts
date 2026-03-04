@@ -5,6 +5,8 @@ import { aiQueue } from "./queue/queue.js";
 import { runtimeEnv } from "./config/env.js";
 import type { AIJobPayload, RuntimeJobStatus } from "./jobs/types.js";
 import { validateCreateJobInput } from "./jobs/validation.js";
+import { sendBadRequest, sendNotFound } from '@shared/http/index.js';
+import { sendInternalErrorPayload } from './http/errors.js';
 
 const JSON_BODY_LIMIT = "256kb";
 const ANONYMOUS_PRINCIPAL_ID = "anonymous";
@@ -74,31 +76,30 @@ app.post("/jobs", async (req, res) => {
     return res.status(202).json({ jobId, status: "queued" });
   } catch (error) {
     console.error("Failed to enqueue job", error);
-    return res.status(500).json({ error: "Failed to enqueue job" });
+    return sendInternalErrorPayload(res, { error: "Failed to enqueue job" });
   }
 });
 
 app.get("/jobs/:id", async (req, res) => {
   const jobId = req.params.id?.trim();
   if (!jobId) {
-    return res.status(400).json({ error: "Job ID is required" });
+    return sendBadRequest(res, 'Job ID is required');
   }
 
   try {
     const job = await aiQueue.getJob(jobId);
     if (!job) {
-      return res.status(404).json({ error: "Job not found" });
+      return sendNotFound(res, 'Job not found');
     }
 
     const status = mapQueueStateToStatus(await job.getState());
     return res.json(buildJobResponse(job, status));
   } catch (error) {
     console.error("Failed to read job", error);
-    return res.status(500).json({ error: "Failed to read job status" });
+    return sendInternalErrorPayload(res, { error: "Failed to read job status" });
   }
 });
 
 app.listen(runtimeEnv.PORT, () => {
   console.log(`API running on port ${runtimeEnv.PORT}`);
 });
-

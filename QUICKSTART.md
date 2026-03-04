@@ -30,6 +30,8 @@ Minimum backend config (`.env`):
 ```env
 PORT=3000
 OPENAI_API_KEY=sk-...
+# Optional: persist Responses on OpenAI side (default false)
+OPENAI_STORE=false
 ```
 
 Minimum daemon config (`daemon-python/.env`):
@@ -39,6 +41,12 @@ OPENAI_API_KEY=sk-...
 # BACKEND_URL=http://localhost:3000
 ```
 
+Optional daemon result-wait knobs (backend `.env`):
+```env
+DAEMON_RESULT_WAIT_MS=8000
+DAEMON_RESULT_POLL_MS=250
+```
+
 ## Run locally
 Backend:
 ```bash
@@ -46,23 +54,17 @@ npm run build
 npm start
 ```
 
-Daemon (optional, in `daemon-python/` venv):
+Daemon (optional):
 ```bash
+cd daemon-python
 arcanos
-# or
-python -m arcanos.cli
 ```
 
-## Deploy (Railway)
-Use `docs/RAILWAY_DEPLOYMENT.md` for production deployment and rollback steps.
+## Quick checks
+```bash
+curl http://localhost:3000/healthz
+```
 
-## Troubleshooting
-- `OPENAI_API_KEY is required`: update the correct `.env` file.
-- Daemon cannot reach backend: confirm `BACKEND_URL` and backend port.
-- `PORT is required`: backend startup enforces `PORT`; set it in `.env`.
-
-## References
-- Root guide: `README.md`
-- Local runbook: `docs/RUN_LOCAL.md`
-- Daemon guide: `daemon-python/README.md`
-- Railway deployment: `docs/RAILWAY_DEPLOYMENT.md`
+Next:
+- API catalog: `docs/API.md`
+- OpenAI tooling/continuation: `docs/OPENAI_RESPONSES_TOOLS.md`

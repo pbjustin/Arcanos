@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { createCentralizedCompletion } from "@services/openai.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createValidationMiddleware, createRateLimitMiddleware } from "@platform/runtime/security.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { IdleStateService } from "@services/idleStateService.js";
 import type OpenAI from 'openai';

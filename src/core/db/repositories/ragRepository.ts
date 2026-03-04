@@ -7,20 +7,16 @@
 import { isDatabaseConnected } from "@core/db/client.js";
 import type { RagDoc } from "@core/db/schema.js";
 import { query } from "@core/db/query.js";
+import { safeJSONParse } from "@shared/jsonHelpers.js";
 
 /**
- * Parse JSON field with fallback
+ * Parse JSON field with fallback (safe)
  */
 function parseJsonField<T>(value: unknown, fallback: T): T {
-  if (value === null || value === undefined) {
-    return fallback;
-  }
+  if (value === null || value === undefined) return fallback;
   if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return fallback;
-    }
+    const result = safeJSONParse<T>(value, 'ragRepository.parseJsonField');
+    return result.success && result.data !== undefined ? result.data : fallback;
   }
   return value as T;
 }

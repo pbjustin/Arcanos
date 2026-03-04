@@ -1,3 +1,4 @@
+import { safeJSONParse } from '@shared/jsonHelpers.js';
 import { z } from 'zod';
 import type {
   AskRequest,
@@ -45,11 +46,8 @@ export function buildValidationBypassFlag(body: AskRequest): SchemaValidationByp
 
 export function parseJsonContent(payload: unknown): unknown {
   if (typeof payload !== 'string') return payload;
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return payload;
-  }
+  const parsed = safeJSONParse(payload, 'ask.helpers.parseJsonContent');
+  return parsed.success ? parsed.data : payload;
 }
 
 export function buildSystemStateResponse(state: SystemStateResponse): AskResponse {

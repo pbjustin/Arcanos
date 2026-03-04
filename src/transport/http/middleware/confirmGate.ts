@@ -4,6 +4,7 @@ import {
   getChallengeTtlMs,
   verifyConfirmationChallenge,
 } from './confirmationChallengeStore.js';
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 import { consumeOneTimeToken } from "@core/lib/tokenStore.js";
 import { getDefaultModel } from "@services/openai/credentialProvider.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
@@ -145,7 +146,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
       hasValidToken = verifyConfirmationChallenge(providedToken, req.method, req.path);
     } catch (error: unknown) {
       console.error('[🛡️ CONFIRM-GATE] Confirmation challenge verification failed.', error);
-      res.status(500).json({
+      sendInternalErrorPayload(res, {
         error: 'Confirmation check failed',
         message: 'Unable to verify confirmation token. Please retry.'
       });
@@ -161,7 +162,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
       oneTimeTokenApproved = tokenResult.ok;
     } catch (error: unknown) {
       console.error('[🛡️ CONFIRM-GATE] One-time token consumption failed.', error);
-      res.status(500).json({
+      sendInternalErrorPayload(res, {
         error: 'Confirmation check failed',
         message: 'Unable to verify one-time token. Please retry.'
       });

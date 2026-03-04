@@ -29,6 +29,10 @@
       "types": "./dist/resilience.d.ts",
       "import": "./dist/resilience.js"
     },
+    "./responseParsing": {
+      "types": "./dist/responseParsing.d.ts",
+      "import": "./dist/responseParsing.js"
+    },
     "./unifiedClient": {
       "types": "./dist/unifiedClient.d.ts",
       "import": "./dist/unifiedClient.js"
@@ -44,5 +48,4 @@
     "clean": "rm -rf dist"
   }
 }
-
 

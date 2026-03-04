@@ -17,7 +17,7 @@ Railway is the preferred deployment target because it offers a low-friction path
 - This matches Arcanos runtime expectations and reduces custom bootstrapping logic.
 
 ### 3) Health checks and observability
-- Railway supports health checks that align with Arcanos `/health` endpoint, enabling fast feedback on deploy status.
+- Railway supports health checks that align with Arcanos `/healthz` liveness endpoint (and `/health` readiness when needed), enabling fast feedback on deploy status.
 - Centralized logs streamline incident response and reduce the need for bespoke log aggregation in early stages.
 
 ### 4) Operational simplicity

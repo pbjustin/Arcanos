@@ -1,6 +1,6 @@
 # Arcanos OpenAI API and Railway Compatibility
 
-> **Last Updated:** 2026-02-28 | **Version:** 1.1.0 | **OpenAI SDK:** Node v6.22.0, Python v2.24.0+
+> **Last Updated:** 2026-02-28 | **Version:** 1.1.0 | **OpenAI SDK:** Node v6.x, Python v2.24.0+
 
 ## Overview
 This document captures the deployed architecture and compatibility constraints for Railway.
@@ -10,7 +10,7 @@ For step-by-step deployment, use `docs/RAILWAY_DEPLOYMENT.md`.
 ## OpenAI Integration Architecture
 Runtime OpenAI usage is adapter-first:
 - TypeScript API constructor boundary: `src/core/adapters/openai.adapter.ts`
-- TypeScript lifecycle boundary: `src/services/openai/unifiedClient.ts`
+- TypeScript lifecycle boundary: `src/services/openai/chatFlow/` (staged pipeline)
 - Worker constructor boundary: `workers/src/infrastructure/sdk/openai.ts`
 - Worker env/config boundary: `workers/src/infrastructure/sdk/openaiConfig.ts`
 - Python daemon constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
@@ -53,7 +53,7 @@ Locked behavior:
 - Start command does not execute a build.
 
 Health check:
-- Path: `GET /health`
+- Path: `GET /healthz`
 - Timeout: `300` seconds
 - Restart policy: `ON_FAILURE`, max retries `10`
 

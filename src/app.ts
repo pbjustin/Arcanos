@@ -7,7 +7,7 @@ import { initOpenAI } from "@core/init-openai.js";
 import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transport/http/middleware/fallbackHandler.js";
 import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionGate.js";
 import errorHandler from "@transport/http/middleware/errorHandler.js";
-import requestContext from './middleware/requestContext.js';
+import { requestContext, sendNotFound } from '@shared/http/index.js';
 import getGptModuleMap from '@platform/runtime/gptRouterConfig.js';
 import { getEnv } from '@platform/runtime/env.js';
 
@@ -72,7 +72,7 @@ export function createApp(): Express {
   app.use(errorHandler);
 
   app.use((_: Request, res: Response) => {
-    res.status(404).json({ error: 'Endpoint not found' });
+    sendNotFound(res, 'Endpoint not found');
   });
 
   return app;

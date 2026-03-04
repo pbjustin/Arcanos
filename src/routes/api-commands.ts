@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
 import { executeCommand, listAvailableCommands } from "@services/commandCenter.js";
 import type { CommandName } from "@services/commandCenter.js";

@@ -3,6 +3,7 @@ import { Request, Response, Router } from 'express';
 import { DEFAULT_FINE_TUNE } from '../config/openai.js';
 import { runTrinity } from '../trinity/trinity.js';
 import { createRateLimitMiddleware, securityHeaders } from '@platform/runtime/security.js';
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = Router();
 
@@ -38,7 +39,7 @@ export async function queryFinetuneHandler(req: Request, res: Response) {
       ...result
     });
   } catch (error) {
-    return res.status(500).json({
+    return sendInternalErrorPayload(res, {
       success: false,
       error: error instanceof Error ? error.message : String(error)
     });
@@ -48,4 +49,3 @@ export async function queryFinetuneHandler(req: Request, res: Response) {
 router.post('/query-finetune', queryFinetuneHandler);
 
 export default router;
-

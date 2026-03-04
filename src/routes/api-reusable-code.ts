@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { createValidationMiddleware, ValidationSchema } from "@platform/runtime/security.js";
 import { sendServerError } from "@core/lib/errors/index.js";
 import {

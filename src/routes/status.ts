@@ -1,3 +1,4 @@
+import { sendBadRequestPayload } from '@shared/http/index.js';
 /**
  * System Status Routes
  * Provides endpoints for reading and updating system state
@@ -101,7 +102,7 @@ router.post('/status', confirmGate, (req: Request, res: Response) => {
     // Validate that we have some data to update
     if (!updates || Object.keys(updates).length === 0) {
       //audit Assumption: empty updates are invalid; risk: accepting no-op updates; invariant: update requires payload; handling: return 400 with message.
-      return res.status(400).json({
+      return sendBadRequestPayload(res, {
         error: 'No update data provided',
         message: 'Request body must contain state updates'
       });

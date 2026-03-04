@@ -235,3 +235,6 @@ daemon-python/validation_report.html
 # Convergence loop artifacts
 converge-artifacts/**
 !converge-artifacts/.gitkeep
+
+# generated / collected artifacts
+collected-ts/

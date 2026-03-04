@@ -7,6 +7,7 @@ import {
   type WorkerBootstrapSummary
 } from "@platform/runtime/workerConfig.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -30,7 +31,7 @@ router.post('/workers/init', confirmGate, async (_, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Worker initialization failed via SDK', { error: errorMessage });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()
@@ -55,7 +56,7 @@ router.get('/workers/status', async (_, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Worker status check failed via SDK', { error: errorMessage });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()

@@ -1,69 +1,41 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import type { Express } from 'express';
 import { createApp } from '../src/app.js';
+import { installMockFetch, uninstallMockFetch, parseJsonBody } from './testUtils/mockFetch.js';
 
 describe('API Update Endpoint', () => {
   let app: Express;
   const baseUrl = 'http://localhost:8080';
-  const originalFetch = global.fetch;
-
-  const parseBody = (init?: RequestInit): Record<string, unknown> | null => {
-    if (!init?.body || typeof init.body !== 'string') {
-      return null;
-    }
-    try {
-      return JSON.parse(init.body) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  };
-
-  const createResponse = (status: number, data: Record<string, unknown>) => ({
-    status,
-    ok: status >= 200 && status < 300,
-    json: async () => data
-  });
 
   beforeEach(() => {
     app = createApp();
-    global.fetch = jest.fn(async (url: string, init?: RequestInit) => {
-      if (!url.includes('/api/update')) {
-        return createResponse(404, { error: 'Not found' });
-      }
 
-      const body = parseBody(init);
-      const updateType = typeof body?.updateType === 'string' ? body.updateType : '';
-      const data = body?.data;
+    installMockFetch({
+      '/api/update': async (_url, init) => {
+        const body = parseJsonBody(init);
+        const updateType = typeof body?.updateType === 'string' ? body.updateType : '';
+        const data = (body as any)?.data;
 
-      if (!updateType || updateType.trim().length === 0) {
-        return createResponse(400, { error: 'updateType is required' });
-      }
+        if (!updateType) {
+          return { status: 400, data: { error: 'updateType is required' } };
+        }
 
-      if (data === undefined || data === null) {
-        return createResponse(400, { error: 'data is required' });
-      }
+        if (!data || typeof data !== 'object') {
+          return { status: 400, data: { error: 'data is required' } };
+        }
 
-      try {
         const serialized = JSON.stringify(data);
         if (serialized.length > 10_000) {
-          return createResponse(413, { error: 'Payload Too Large' });
+          return { status: 413, data: { error: 'Payload Too Large' } };
         }
-      } catch {
-        return createResponse(400, { error: 'data must be JSON-serializable' });
-      }
 
-      return createResponse(200, { success: true });
-    }) as unknown as typeof fetch;
+        return { status: 200, data: { success: true } };
+      }
+    });
   });
 
   afterEach(() => {
-    // Cleanup if needed
-    if (originalFetch) {
-      global.fetch = originalFetch;
-    } else {
-      delete (global as { fetch?: typeof fetch }).fetch;
-    }
-    jest.restoreAllMocks();
+    uninstallMockFetch();
   });
 
   it('should reject requests without updateType', async () => {

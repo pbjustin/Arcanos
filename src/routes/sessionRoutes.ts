@@ -1,5 +1,6 @@
 import express from 'express';
 import { resolveSession } from "@services/sessionResolver.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ router.post('/memory/resolve', async (req, res) => {
     const result = await resolveSession(query);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to resolve session', details: err });
+    sendInternalErrorPayload(res, { error: 'Failed to resolve session', details: err });
   }
 });
 

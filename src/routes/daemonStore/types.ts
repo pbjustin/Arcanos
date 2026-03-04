@@ -17,6 +17,14 @@ export interface DaemonCommand {
   acknowledged: boolean;
 }
 
+export interface DaemonCommandResult {
+  commandId: string;
+  instanceId: string;
+  token: string;
+  result: Record<string, unknown>;
+  reportedAt: Date;
+}
+
 export interface PendingDaemonAction {
   daemon: string;
   payload: Record<string, unknown>;
@@ -112,4 +120,18 @@ export interface DaemonStore {
     instanceId: string,
     daemonToken: string
   ) => number;
+
+  /**
+   * Purpose: Record result/output for a daemon command.
+   * Inputs/Outputs: token, instanceId, commandId, result; stores result for later retrieval.
+   * Edge cases: overwrites existing result; retains for a limited window.
+   */
+  recordCommandResult: (token: string, instanceId: string, commandId: string, result: Record<string, unknown>) => void;
+
+  /**
+   * Purpose: Fetch a previously recorded command result.
+   * Inputs/Outputs: token, instanceId, commandId; returns result or null.
+   * Edge cases: returns null when missing or expired.
+   */
+  getCommandResult: (token: string, instanceId: string, commandId: string) => DaemonCommandResult | null;
 }

@@ -5,6 +5,7 @@ import { getMemoryDigest } from "@services/memoryDigest.js";
 import { processClearFeedback } from "@services/audit.js";
 import type { ClearFeedbackPayload } from "@shared/types/reinforcement.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendBadRequest } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ router.post('/reinforce', auditTrace, (req: Request, res: Response) => {
   const { context, bias, metadata, requestId } = req.body ?? {};
 
   if (typeof context !== 'string' || context.trim().length === 0) {
-    return res.status(400).json({ error: 'context is required' });
+    return sendBadRequest(res, 'context is required');
   }
 
   const sanitizedMetadata = typeof metadata === 'object' && metadata !== null ? metadata : undefined;

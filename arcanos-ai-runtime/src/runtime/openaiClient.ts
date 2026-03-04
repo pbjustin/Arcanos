@@ -1,3 +1,10 @@
+const shouldStore = (() => {
+  const raw = process.env.OPENAI_STORE;
+  if (!raw) return false;
+  const v = String(raw).trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+})();
+
 import type {
   Response as OpenAIResponse,
   ResponseCreateParamsNonStreaming,
@@ -38,6 +45,8 @@ function buildRequestPayload(
   const payload: ResponseCreateParamsNonStreaming = {
     model: request.model,
     input: resolveRequestInput(request) as unknown as ResponseInput,
+    store: shouldStore,
+    include: ['reasoning.encrypted_content'],
   };
 
   if (request.maxTokens !== undefined) {

@@ -4,7 +4,7 @@ import { buildValidationErrorResponse, resolveErrorMessage } from "@core/lib/err
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import type { ErrorResponseDTO } from "@shared/types/dto.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -88,7 +88,7 @@ router.post('/api/update', updateValidation, asyncHandler(async (req: Request<{}
       error: resolveErrorMessage(error)
     });
 
-    return res.status(500).json({
+    return sendInternalErrorPayload(res, {
       error: 'Internal Server Error',
       details: 'Failed to process update request'
     });

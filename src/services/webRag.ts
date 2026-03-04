@@ -39,18 +39,25 @@ function upsertDoc(doc: Doc): void {
 }
 
 function sanitizeMetadataInput(metadata?: Record<string, unknown>): Record<string, unknown> {
-  if (!metadata) {
-    return {};
-  }
-  if (typeof metadata !== 'object' || Array.isArray(metadata)) {
-    return {};
-  }
+  if (!metadata) return {};
+  if (typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+
   try {
+    // Prefer structuredClone when available (preserves more types safely)
+    if (typeof structuredClone === 'function') {
+      const cloned = structuredClone(metadata);
+      return (cloned && typeof cloned === 'object' && !Array.isArray(cloned))
+        ? (cloned as Record<string, unknown>)
+        : {};
+    }
+
+    // Fallback: JSON round-trip (best-effort)
     return JSON.parse(JSON.stringify(metadata));
   } catch {
     return {};
   }
 }
+
 
 export function chunkText(text: string, chunkSize = 8_000, overlap = 400): string[] {
   const normalizedText = typeof text === 'string' ? text : '';

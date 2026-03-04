@@ -5,6 +5,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 import type {
   DaemonCommand,
+  DaemonCommandResult,
   DaemonHeartbeat,
   DaemonStore,
   PendingDaemonAction,
@@ -29,6 +30,10 @@ function buildDaemonKey(token: string, instanceId: string): string {
   return `${token}:${instanceId}`;
 }
 
+function buildDaemonCommandResultKey(token: string, instanceId: string, commandId: string): string {
+  return `${token}:${instanceId}:${commandId}`;
+}
+
 function ensureTokensDirectoryExists(filePath: string, deps: DaemonStoreDependencies): void {
   const dir = deps.path.dirname(filePath);
   if (!deps.fs.existsSync(dir)) {
@@ -49,6 +54,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
   const daemonHeartbeats = new Map<string, DaemonHeartbeat>();
   const daemonCommands = new Map<string, DaemonCommand[]>();
+  const daemonCommandResults = new Map<string, { result: Record<string, unknown>; reportedAt: Date }>();
   const daemonTokensByInstanceId = new Map<string, string>();
   const pendingDaemonActions = new Map<string, PendingDaemonActions>();
 
@@ -227,6 +233,30 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
     return queueCommand(token, instanceId, name, payload);
   };
 
+
+  const recordCommandResult = (
+    token: string,
+    instanceId: string,
+    commandId: string,
+    result: Record<string, unknown>
+  ): void => {
+    const key = buildDaemonCommandResultKey(token, instanceId, commandId);
+    daemonCommandResults.set(key, { result: isPlainObject(result) ? result : { value: result as any }, reportedAt: deps.now() });
+  };
+
+  const getCommandResult = (token: string, instanceId: string, commandId: string) => {
+    const key = buildDaemonCommandResultKey(token, instanceId, commandId);
+    const entry = daemonCommandResults.get(key);
+    if (!entry) return null;
+    return {
+      token,
+      instanceId,
+      commandId,
+      result: entry.result,
+      reportedAt: entry.reportedAt
+    };
+  };
+
   const createPendingActions = (instanceId: string, actions: PendingDaemonAction[], ttlMs: number): string => {
     const id = randomUUID();
     const expiresAt = new Date(deps.now().getTime() + ttlMs);
@@ -294,12 +324,15 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
     queueCommand,
     queueCommandForInstance,
     createPendingActions,
-    consumePendingActions
+    consumePendingActions,
+    recordCommandResult,
+    getCommandResult
   };
 }
 
 export type {
   DaemonCommand,
+  DaemonCommandResult,
   DaemonHeartbeat,
   DaemonStore,
   PendingDaemonAction,

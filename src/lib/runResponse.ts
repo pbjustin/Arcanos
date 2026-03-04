@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 
-import { openai } from '../config/openai.js';
+import { requireOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 
 type RunResponseOptions = {
   model: string;
@@ -27,5 +27,9 @@ export async function runResponse({
     };
   }
 
-  return openai.responses.create(config);
+  const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
+  // Best practice: disable response storage unless explicitly needed.
+  (config as any).store = false;
+  return adapter.responses.create(config as any);
+
 }

@@ -8,6 +8,7 @@ import {
 } from "@platform/runtime/workerConfig.js";
 import { runSystemDiagnostics, type SystemDiagnostics } from "@platform/logging/systemDiagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -105,7 +106,7 @@ router.post('/routes/register', confirmGate, async (_, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Route registration failed via SDK', { error: errorMessage });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()
@@ -156,7 +157,7 @@ router.post('/scheduler/activate', confirmGate, async (_, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Scheduler activation failed via SDK', { error: errorMessage });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()
@@ -229,7 +230,7 @@ router.post('/jobs/dispatch', confirmGate, async (req, res) => {
       jobType: req.body.jobType 
     });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()
@@ -309,7 +310,7 @@ router.post('/test-job', confirmGate, async (_, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Test job failed via SDK', { error: errorMessage });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()
@@ -369,7 +370,7 @@ router.post('/init-all', confirmGate, async (_, res) => {
     const errorMessage = resolveErrorMessage(error);
     await logExecution('sdk-interface', 'error', 'Full SDK initialization failed', { error: errorMessage });
     
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       error: errorMessage,
       timestamp: new Date().toISOString()

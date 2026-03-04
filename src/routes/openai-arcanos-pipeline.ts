@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { executeArcanosPipeline } from "@services/arcanosPipeline.js";
 import type { ChatCompletionMessageParam } from "@services/openai/types.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
   } catch (err: unknown) {
     //audit Assumption: pipeline errors should return 500
     console.error('Pipeline error:', resolveErrorMessage(err));
-    res.status(500).json({ error: 'Pipeline failed', details: resolveErrorMessage(err) });
+    sendInternalErrorPayload(res, { error: 'Pipeline failed', details: resolveErrorMessage(err) });
   }
 });
 

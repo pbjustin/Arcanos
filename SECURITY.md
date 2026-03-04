@@ -35,7 +35,7 @@ python -m pip list --outdated
 ## Deploy (Railway)
 - Store secrets only in Railway Variables or GitHub Actions Secrets.
 - Keep production and development environments separated.
-- Validate post-deploy health: `/health`, `/readyz`.
+- Validate post-deploy liveness/readiness: `/healthz`, `/health`, `/readyz`.
 - If a secret leaks, rotate immediately and redeploy.
 
 ## Troubleshooting

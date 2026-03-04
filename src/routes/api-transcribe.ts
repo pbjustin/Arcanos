@@ -6,7 +6,7 @@ import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import { toFile } from 'openai/uploads';
 import path from 'path';
 import type { ErrorResponseDTO } from "@shared/types/dto.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { buildTranscriptionRequest } from "@services/openai/requestBuilders.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";

@@ -55,6 +55,19 @@ python -m pip install -e .
 cp .env.example .env
 ```
 
+## Run locally
+Backend:
+```bash
+npm run build
+npm start
+```
+
+Daemon (optional):
+```bash
+cd daemon-python
+arcanos
+```
+
 ## Configuration
 - Backend minimum:
   - `PORT=3000`
@@ -88,7 +101,7 @@ python daemon-python/scripts/continuous_audit.py --max-depth=1 --no-recursive --
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:
 - Build in build phase (`npm ci --include=dev && npm run build`)
-- Start only runs compiled output (`node --max-old-space-size=7168 dist/start-server.js`)
+- Start only runs compiled output (`node --max-old-space-size=7168 --loader ./scripts/esm-alias-loader.mjs dist/start-server.js`)
 
 Validate Railway compatibility before merge:
 ```bash

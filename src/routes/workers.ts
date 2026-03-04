@@ -1,3 +1,4 @@
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 /**
  * Workers Route - Simplified worker management
  * Provides endpoints for running and monitoring workers
@@ -100,7 +101,7 @@ router.get(
     res.json(payload);
   } catch (error) {
     console.error('Error getting worker status:', error);
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       error: 'Failed to get worker status',
       message: resolveErrorMessage(error)
     });
@@ -158,7 +159,7 @@ router.post('/workers/heal', confirmGate, async (req: Request, res: Response) =>
     });
   } catch (error) {
     console.error('[AUTO-HEAL] Failed to process request', error);
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       error: 'Auto-heal failed',
       message: resolveErrorMessage(error)
     });
@@ -188,7 +189,7 @@ router.post('/workers/run/:workerId', confirmGate, async (
       const duration = Date.now() - startTime;
 
       if (!primaryResult) {
-        return res.status(500).json({
+        return sendInternalErrorPayload(res, {
           success: false,
           workerId,
           executionTime: `${duration}ms`,
@@ -289,7 +290,7 @@ router.post('/workers/run/:workerId', confirmGate, async (
 
   } catch (error) {
     console.error(`Error running worker ${workerId}:`, error);
-    res.status(500).json({
+    sendInternalErrorPayload(res, {
       success: false,
       workerId,
       executionTime: '0ms',

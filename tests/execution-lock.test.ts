@@ -28,7 +28,7 @@ describe('executionLock', () => {
       release: releaseMock
     }));
 
-    jest.unstable_mockModule('../src/db/client.js', () => ({
+    jest.unstable_mockModule('@core/db/client.js', () => ({
       getPool: () => ({
         connect: connectMock
       }),

@@ -1,3 +1,4 @@
+import { sendInternalErrorPayload } from '@shared/http/index.js';
 /**
  * Shared request handling utilities for AI endpoints
  * Consolidates common error handling, validation, and response patterns
@@ -175,7 +176,7 @@ export function handleAIError(
     return;
   }
 
-  res.status(500).json({
+  sendInternalErrorPayload(res, {
     error: 'AI service failure',
     detail: errorMessage,
     details: errorMessage,

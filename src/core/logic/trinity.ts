@@ -53,8 +53,8 @@ import {
 } from './trinityGuards.js';
 import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prompts.js";
 import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js';
-import { trackEscalation } from '../../analytics/escalationTracker.js';
-import { getClearMinThreshold, recordRun } from '../../analytics/clearAutoTuner.js';
+import { trackEscalation } from '@analytics/escalationTracker.js';
+import { getClearMinThreshold, recordRun } from '@analytics/clearAutoTuner.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 

@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler } from "@shared/http/index.js";
 import { createRateLimitMiddleware } from "@platform/runtime/security.js";
 import { listDirectory, readRepositoryFile } from "@services/codebaseAccess.js";
 import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";

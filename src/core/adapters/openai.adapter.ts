@@ -1,3 +1,8 @@
+import {
+  extractResponseOutputText,
+  extractTextFromContentParts,
+  normalizeUsage as normalizeOpenAIUsage
+} from '@arcanos/openai/responseParsing';
 /**
  * OpenAI Adapter
  * 
@@ -122,74 +127,16 @@ interface LegacyUsageShape {
 }
 
 function normalizeMessageContent(content: unknown): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return '';
-  }
-
-  return content
-    .map((part) => {
-      if (!part || typeof part !== 'object') {
-        return '';
-      }
-      const typedPart = part as Record<string, unknown>;
-      if (typedPart.type === 'text' && typeof typedPart.text === 'string') {
-        return typedPart.text;
-      }
-      if (typedPart.type === 'input_text' && typeof typedPart.text === 'string') {
-        return typedPart.text;
-      }
-      if (typedPart.type === 'output_text' && typeof typedPart.text === 'string') {
-        return typedPart.text;
-      }
-      return '';
-    })
-    .filter((value) => value.length > 0)
-    .join('\n');
+  if (typeof content === 'string') return content;
+  return extractTextFromContentParts(content, { includeOutputText: false });
 }
 
-function extractResponseText(response: OpenAIResponse): string {
-  const directOutputText = (response as { output_text?: unknown }).output_text;
-  if (typeof directOutputText === 'string' && directOutputText.trim().length > 0) {
-    return directOutputText.trim();
-  }
-
-  const outputItems = Array.isArray(response.output) ? response.output : [];
-  for (const outputItem of outputItems) {
-    if (!outputItem || typeof outputItem !== 'object') {
-      continue;
-    }
-    const typedOutputItem = outputItem as unknown as Record<string, unknown>;
-    const contentItems = Array.isArray(typedOutputItem.content) ? typedOutputItem.content : [];
-    for (const contentItem of contentItems) {
-      if (!contentItem || typeof contentItem !== 'object') {
-        continue;
-      }
-      const typedContentItem = contentItem as Record<string, unknown>;
-      if (typedContentItem.type === 'output_text' && typeof typedContentItem.text === 'string') {
-        const normalized = typedContentItem.text.trim();
-        if (normalized.length > 0) {
-          return normalized;
-        }
-      }
-    }
-  }
-
-  return '';
+function extractResponseText(response: unknown): string {
+  return extractResponseOutputText(response, '');
 }
 
 function normalizeUsage(usage: unknown): { promptTokens: number; completionTokens: number; totalTokens: number } {
-  const typedUsage = (usage ?? {}) as LegacyUsageShape;
-  const promptTokens = Number.isFinite(typedUsage.input_tokens) ? Number(typedUsage.input_tokens) : 0;
-  const completionTokens = Number.isFinite(typedUsage.output_tokens) ? Number(typedUsage.output_tokens) : 0;
-  const totalTokens = Number.isFinite(typedUsage.total_tokens)
-    ? Number(typedUsage.total_tokens)
-    : promptTokens + completionTokens;
-
-  return { promptTokens, completionTokens, totalTokens };
+  return normalizeOpenAIUsage(usage);
 }
 
 
@@ -501,4 +448,3 @@ export function getClient(): OpenAI {
   //audit Assumption: escape hatch should only be used after adapter init; risk: runtime null usage; invariant: initialized adapter required; handling: delegate to getOpenAIAdapter() throw path.
   return getOpenAIAdapter().getClient();
 }
-

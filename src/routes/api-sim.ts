@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { createCentralizedCompletion } from "@services/openai.js";
 import { generateRequestId } from "@shared/idGenerator.js";
 import { createValidationMiddleware, createRateLimitMiddleware } from "@platform/runtime/security.js";
-import { asyncHandler } from "@transport/http/asyncHandler.js";
+import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
 import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type OpenAI from 'openai';
@@ -151,7 +151,7 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
     console.error('Simulation error:', resolveErrorMessage(error));
 
     //audit Assumption: simulation errors should return 500; risk: leaking internal details; invariant: response includes timestamp; handling: sanitize error message.
-    res.status(500).json(buildTimestampedPayload({
+    sendInternalErrorPayload(res, buildTimestampedPayload({
       status: 'error',
       message: 'Simulation failed',
       error: resolveErrorMessage(error)
