@@ -165,10 +165,12 @@ class StructuredLogger {
     // Use config layer for env access (adapter boundary pattern)
     const isProduction = getEnv('NODE_ENV') === 'production';
 
-    const sanitizedEntry = {
+    const sanitizedEntry: LogEntry = {
       ...entry,
-      context: entry.context ? redactSensitive(entry.context) : undefined,
-      metadata: entry.metadata ? redactSensitive(entry.metadata) : undefined,
+      context: entry.context ? (redactSensitive(entry.context) as LogContext) : undefined,
+      metadata: entry.metadata
+        ? (redactSensitive(entry.metadata) as Record<string, unknown>)
+        : undefined,
     };
 
     //audit Assumption: production logs should be structured JSON

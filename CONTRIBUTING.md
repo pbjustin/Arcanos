@@ -55,6 +55,19 @@ python -m pip install -e .
 cp .env.example .env
 ```
 
+## Run locally
+Backend:
+```bash
+npm run build
+npm start
+```
+
+Daemon (optional):
+```bash
+cd daemon-python
+arcanos
+```
+
 ## Configuration
 - Backend minimum:
   - `PORT=3000`

@@ -119,7 +119,7 @@ router.get(
     }
 
     // Get pending commands for this daemon instance
-    const pendingCommands = daemonStore.listPendingCommands(token, instanceId);
+    const pendingCommands = daemonStore.listPendingCommands(daemonToken, instanceId);
 
     //audit Assumption: command payloads are safe to expose; risk: leaking sensitive data; invariant: map only required fields; handling: transform.
     res.json({

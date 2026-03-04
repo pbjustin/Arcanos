@@ -12,6 +12,43 @@ Key characteristics:
 - **Shared HTTP toolkit** (`src/shared/http/`) for request context, validation, and errors
 - **Railway-ready** start/health configuration
 
+## Prerequisites
+- Node.js 18+ and npm 8+
+- Optional: Python 3.10+ for daemon work in `daemon-python/`
+- Optional: OpenAI API key for non-mock model calls
+
+## Setup
+```bash
+npm install
+cp .env.example .env
+```
+
+## Configuration
+- Backend minimum:
+  - `PORT=3000`
+  - `OPENAI_API_KEY=sk-...` (optional for mock-mode tests)
+- Optional OpenAI request persistence:
+  - `OPENAI_STORE=false`
+
+## Run locally
+Use the runbook docs for exact commands:
+- `QUICKSTART.md`
+- `docs/RUN_LOCAL.md`
+
+## Deploy (Railway)
+- `docs/RAILWAY_DEPLOYMENT.md`
+- `docs/CI_CD.md`
+
+## Troubleshooting
+- `docs/TROUBLESHOOTING.md`
+- Health checks: `GET /healthz` (liveness), `GET /health` (readiness/dependencies)
+
+## References
+- API catalog: `docs/API.md`
+- OpenAI tooling: `docs/OPENAI_RESPONSES_TOOLS.md`
+- Configuration details: `docs/CONFIGURATION.md`
+- Documentation index: `docs/README.md`
+
 ## OpenAI integration map (current)
 Canonical boundaries / pipelines:
 - TypeScript OpenAI adapter boundary: `src/core/adapters/openai.adapter.ts`
@@ -26,12 +63,6 @@ Canonical boundaries / pipelines:
 ## Health endpoints
 - Liveness: `GET /healthz` (used by Railway healthchecks)
 - Readiness: `GET /health` (may reflect downstream dependencies and can return non-200)
-
-## Getting started
-See:
-- `QUICKSTART.md` (fast local run)
-- `docs/RUN_LOCAL.md` (runbook + validation)
-- `docs/RAILWAY_DEPLOYMENT.md` (Railway deploy workflow)
 
 ## OpenAI data retention
 Responses requests default to **stateless** (`store: false`). You can enable storage via:

@@ -33,6 +33,7 @@ import {
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 
 const router = express.Router();
 
@@ -555,4 +556,3 @@ export default router;
 
 export type { AskRequest, AskResponse };
 export { askValidationMiddleware };
-

@@ -33,10 +33,7 @@ export function convertNormalizedResponsesToRequest(
   const payload: ResponseCreateParamsNonStreaming = {
     model: normalized.model,
     store: shouldStoreOpenAIResponses(),
-    store: shouldStoreOpenAIResponses(),
     input: normalized.input,
-    // Best practice: disable server-side storage unless explicitly needed.
-    store: false,
     temperature: normalized.temperature,
     top_p: normalized.top_p,
     max_output_tokens: normalized.maxOutputTokens
@@ -69,7 +66,7 @@ export function convertNormalizedResponsesToRequest(
 
   // Best practice for stateless reasoning: request encrypted reasoning items when using reasoning models.
   if (isReasoningModel(normalized.model)) {
-    (payload as any).include = ['reasoning.encrypted_content'];
+    payload.include = ['reasoning.encrypted_content'];
   }
 
   return payload;

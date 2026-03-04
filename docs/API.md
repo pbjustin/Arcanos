@@ -29,7 +29,7 @@ Confirmation gate behavior (`src/middleware/confirmGate.ts`):
 ## Run locally
 Quick probes:
 ```bash
-curl http://localhost:3000/healthzz
+curl http://localhost:3000/healthz
 curl -X POST http://localhost:3000/api/ask -H "Content-Type: application/json" -d '{"message":"hello"}'
 ```
 

@@ -52,7 +52,7 @@ cp .env.example .env
 # set PORT and OPENAI_API_KEY
 npm run build
 npm start
-curl http://localhost:3000/healthzz
+curl http://localhost:3000/healthz
 ```
 
 ## Deploy (Railway)

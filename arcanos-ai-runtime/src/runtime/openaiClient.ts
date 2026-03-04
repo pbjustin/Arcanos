@@ -46,7 +46,7 @@ function buildRequestPayload(
     model: request.model,
     input: resolveRequestInput(request) as unknown as ResponseInput,
     store: shouldStore,
-    include: ['reasoning.encrypted_content'] as any,
+    include: ['reasoning.encrypted_content'],
   };
 
   if (request.maxTokens !== undefined) {

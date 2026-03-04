@@ -28,7 +28,13 @@ export function logRequestAttempt(model: string, attempt: number, total: number)
 }
 
 export function logRequestSuccess(activeModel: string, attempt: number, totalTokens: unknown) {
-  logOpenAISuccess(OPENAI_LOG_MESSAGES.REQUEST.SUCCESS, { attempt, model: activeModel, totalTokens: totalTokens ?? "unknown" });
+  const normalizedTokenCount =
+    typeof totalTokens === "number" && Number.isFinite(totalTokens) ? totalTokens : "unknown";
+  logOpenAISuccess(OPENAI_LOG_MESSAGES.REQUEST.SUCCESS, {
+    attempt,
+    model: activeModel,
+    totalTokens: normalizedTokenCount
+  });
 }
 
 export function logRequestPermanentFailure(model: string, attempt: number, errorType: string, errorMessage: string, error?: Error) {

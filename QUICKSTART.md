@@ -62,7 +62,7 @@ arcanos
 
 ## Quick checks
 ```bash
-curl http://localhost:3000/healthzz
+curl http://localhost:3000/healthz
 ```
 
 Next:

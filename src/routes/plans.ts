@@ -47,7 +47,11 @@ router.post('/plans', async (req: Request, res: Response) => {
 
     const parsed = actionPlanInputSchema.safeParse(req.body);
     if (!parsed.success) {
-      sendBadRequest(res, 'Invalid plan input', parsed.error.issues);
+      sendBadRequest(
+        res,
+        'Invalid plan input',
+        parsed.error.issues.map(issue => `${issue.path.join('.') || 'body'}: ${issue.message}`)
+      );
       return;
     }
 

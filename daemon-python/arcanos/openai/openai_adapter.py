@@ -136,7 +136,6 @@ def chat_stream(
         raise RuntimeError("OpenAI client does not support responses streaming")
 
     return create_stream(**request_payload)
-    return create_stream(**request_payload)
 
 
 def vision_completion(

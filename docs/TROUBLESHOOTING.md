@@ -25,7 +25,7 @@ Helpful probes:
 ```bash
 npm run build
 npm start
-curl http://localhost:3000/healthzz
+curl http://localhost:3000/healthz
 ```
 
 Daemon probe:
