@@ -73,7 +73,12 @@ export async function updateHeartbeat(agentId: string): Promise<AgentRecord | nu
     const record = agent as unknown as AgentRecord;
     agentCache.set(agentId, record);
     return record;
-  } catch {
+  } catch (error) {
+    aiLogger.error('Failed to update heartbeat', {
+      module: 'agentRegistry',
+      agentId,
+      error: String(error)
+    });
     return null;
   }
 }
@@ -90,7 +95,13 @@ export async function updateAgentStatus(agentId: string, status: string): Promis
     const record = agent as unknown as AgentRecord;
     agentCache.set(agentId, record);
     return record;
-  } catch {
+  } catch (error) {
+    aiLogger.error('Failed to update agent status', {
+      module: 'agentRegistry',
+      agentId,
+      status,
+      error: String(error)
+    });
     return null;
   }
 }
@@ -133,7 +144,13 @@ export async function grantCapabilities(agentId: string, capabilities: string[])
     agentCache.set(record.id, record);
     aiLogger.info('Capabilities granted', { module: 'agentRegistry', agentId, capabilities });
     return record;
-  } catch {
+  } catch (error) {
+    aiLogger.error('Failed to grant capabilities', {
+      module: 'agentRegistry',
+      agentId,
+      capabilities,
+      error: String(error)
+    });
     return null;
   }
 }

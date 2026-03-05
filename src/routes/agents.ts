@@ -7,6 +7,7 @@
  */
 
 import express from 'express';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { agentRegistrationSchema } from '@shared/types/actionPlan.js';
 import {
@@ -18,7 +19,6 @@ import {
 } from '../stores/agentRegistry.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
-import { getEnv } from '@platform/runtime/env.js';
 import { apiLogger } from '@platform/logging/structuredLogging.js';
 import { asyncHandler, validateBody, validateParams, sendNotFoundError, sendInternalError } from '@shared/http/index.js';
 
@@ -27,6 +27,13 @@ const router = express.Router();
 const agentIdSchema = z.object({
   agentId: z.string().min(1)
 });
+
+function timingSafeStringEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
 
 /**
  * POST /agents/register — Register a new agent
@@ -78,9 +85,9 @@ router.post(
   validateParams(agentIdSchema),
   validateBody(z.object({ capabilities: z.array(z.string().min(1)).min(1) })),
   asyncHandler(async (req, res) => {
-    const adminKey = getEnv('ADMIN_API_KEY');
-    const provided = req.headers['x-admin-api-key'];
-    if (!adminKey || provided !== adminKey) {
+    const adminKey = getConfig().adminKey;
+    const provided = req.header('x-admin-api-key') ?? '';
+    if (!adminKey || !timingSafeStringEqual(provided, adminKey)) {
       res.status(403).json({ error: 'Admin authorization required' });
       return;
     }
