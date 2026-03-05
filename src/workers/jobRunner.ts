@@ -7,6 +7,7 @@
  */
 
 import { claimNextPendingJob, updateJob } from "@core/db/repositories/jobRepository.js";
+import { initializeDatabaseWithSchema as initializeDatabase, getStatus as getDatabaseStatus } from "@core/db/index.js";
 import { runThroughBrain } from "@core/logic/trinity.js";
 import { createRuntimeBudget } from "@platform/resilience/runtimeBudget.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
@@ -50,6 +51,13 @@ function initOpenAIClient() {
 async function run(): Promise<void> {
   const pollMs = Number(process.env.JOB_WORKER_POLL_MS || 250);
   const idleBackoffMs = Number(process.env.JOB_WORKER_IDLE_BACKOFF_MS || 1000);
+  const dbInitialized = await initializeDatabase('job-runner');
+  const dbStatus = getDatabaseStatus();
+
+  //audit Assumption: job polling requires an initialized DB pool and schema; failure risk: immediate fatal "Database not configured" loop despite valid env vars; expected invariant: DB reports connected before queue claims start; handling strategy: fail fast with explicit status context.
+  if (!dbInitialized || !dbStatus.connected) {
+    throw new Error(`Database not configured (connected=${dbStatus.connected}, error=${dbStatus.error ?? 'none'})`);
+  }
 
   let openai = initOpenAIClient();
 

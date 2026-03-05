@@ -426,6 +426,9 @@ export const handleAIRequest = async (
     }
   }
 
+  //audit Assumption: async intent must be captured from the raw payload before schema normalization; failure risk: `mode:"async"` / `async:true` gets stripped and request runs synchronously; expected invariant: asyncRequested reflects caller intent; handling strategy: read once from original body.
+  const asyncRequested = wantsAsync(req.body);
+
   const lenientChatValidation = validateLenientChatRequest(req.body);
   if (!lenientChatValidation.ok) {
     return res.status(400).json(lenientChatValidation.errorPayload);
@@ -433,7 +436,6 @@ export const handleAIRequest = async (
 
   req.body = lenientChatValidation.normalizedBody;
   const bypassAuditFlag = lenientChatValidation.auditFlag;
-  const asyncRequested = wantsAsync(req.body);
 
   const { sessionId, overrideAuditSafe, metadata } = req.body;
   const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
