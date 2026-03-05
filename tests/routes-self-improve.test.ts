@@ -110,6 +110,21 @@ describe('routes/self-improve', () => {
     });
   });
 
+  it('defaults to an empty payload when request body is unavailable', async () => {
+    const app = express();
+    app.use(selfImproveRouter);
+    runSelfImproveCycleMock.mockResolvedValueOnce({ id: 'cycle-default', decision: 'PATCH_PROPOSAL' });
+
+    const response = await request(app)
+      .post('/api/self-improve/run')
+      .expect(200);
+
+    expect(runSelfImproveCycleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: 'manual' })
+    );
+    expect(response.body.result.id).toBe('cycle-default');
+  });
+
   it('handles freeze and unfreeze success flows', async () => {
     const app = createTestApp();
     freezeSelfImproveMock.mockResolvedValueOnce(undefined);
@@ -131,6 +146,31 @@ describe('routes/self-improve', () => {
       .expect(200);
     expect(unfreezeSelfImproveMock).toHaveBeenCalledWith('manual');
     expect(unfreezeResponse.body.killSwitch.frozen).toBe(false);
+  });
+
+  it('uses manual reason fallback for freeze/unfreeze/autonomy when reason is omitted', async () => {
+    const app = createTestApp();
+    freezeSelfImproveMock.mockResolvedValueOnce(undefined);
+    unfreezeSelfImproveMock.mockResolvedValueOnce(undefined);
+    setAutonomyLevelMock.mockResolvedValueOnce(undefined);
+
+    await request(app)
+      .post('/api/self-improve/freeze')
+      .send({})
+      .expect(200);
+    expect(freezeSelfImproveMock).toHaveBeenCalledWith('manual');
+
+    await request(app)
+      .post('/api/self-improve/unfreeze')
+      .send({})
+      .expect(200);
+    expect(unfreezeSelfImproveMock).toHaveBeenCalledWith('manual');
+
+    await request(app)
+      .post('/api/self-improve/autonomy')
+      .send({ level: 1 })
+      .expect(200);
+    expect(setAutonomyLevelMock).toHaveBeenCalledWith(1, 'manual');
   });
 
   it('handles freeze and unfreeze failures via internal error payload', async () => {

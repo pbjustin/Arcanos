@@ -111,6 +111,26 @@ describe('services/selfImprove/controller decision branches', () => {
       prohibitedPaths: [],
       rollback: { required: true }
     });
+    createImprovementQueueMock.mockResolvedValue([]);
+    generateComponentReflectionMock.mockResolvedValue({
+      metadata: { generated: '2026-03-05T00:00:00.000Z' }
+    });
+    gatherRepoContextMock.mockResolvedValue(null);
+    generatePatchProposalMock.mockResolvedValue({
+      goal: 'improve reliability',
+      summary: 'improve reliability paths',
+      risk: 'low',
+      files: ['src/services/selfImprove/controller.ts'],
+      diff: 'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-const x = 1;\n+const x = 2;\n',
+      commands: ['npm test'],
+      successMetrics: ['branch coverage increases']
+    });
+    createPullRequestFromPatchMock.mockResolvedValue({
+      success: true,
+      message: 'ok',
+      branch: 'codex/self-improve-test',
+      commitHash: 'abc1234'
+    });
     writeEvidencePackMock.mockResolvedValue('/tmp/evidence/cycle-id-123.json');
     isSelfImproveFrozenMock.mockResolvedValue(false);
     getAutonomyLevelMock.mockResolvedValue(1);
@@ -167,5 +187,52 @@ describe('services/selfImprove/controller decision branches', () => {
     expect(writeEvidencePackMock).toHaveBeenCalledWith(
       expect.objectContaining({ decision: 'ESCALATE', autonomyLevel: 1 })
     );
+  });
+
+  it('proposes patches when drift exists and policy allows proposing', async () => {
+    evaluateDriftMock.mockReturnValue({
+      kind: 'clear_drop',
+      severity: 'medium',
+      details: { clearOverall: 0.4, clearMin: 0.8 }
+    });
+    canProposePatchesMock.mockResolvedValue(true);
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'clear',
+      clearOverall: 0.4,
+      clearMin: 0.8
+    });
+
+    expect(result.decision).toBe('PATCH_PROPOSAL');
+  });
+
+  it('returns NOOP for non-manual runs when no drift is detected', async () => {
+    evaluateDriftMock.mockReturnValue({
+      kind: 'none',
+      severity: 'low',
+      details: {}
+    });
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'self_test',
+      selfTestFailed: false
+    });
+
+    expect(result.decision).toBe('NOOP');
+  });
+
+  it('uses manual no-drift branch to propose patches when allowed', async () => {
+    evaluateDriftMock.mockReturnValue({
+      kind: 'none',
+      severity: 'low',
+      details: {}
+    });
+    canProposePatchesMock.mockResolvedValue(true);
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'manual'
+    });
+
+    expect(result.decision).toBe('PATCH_PROPOSAL');
   });
 });

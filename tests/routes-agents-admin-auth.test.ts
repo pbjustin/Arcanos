@@ -63,6 +63,17 @@ describe('routes/agents admin capability auth', () => {
     expect(grantCapabilitiesMock).not.toHaveBeenCalled();
   });
 
+  it('rejects capability grants when admin header is missing', async () => {
+    const app = createAgentsApp();
+
+    await request(app)
+      .post('/agents/agent-1/capabilities/grant')
+      .send({ capabilities: ['self_improve_admin'] })
+      .expect(403);
+
+    expect(grantCapabilitiesMock).not.toHaveBeenCalled();
+  });
+
   it('rejects capability grants when header length matches but content differs', async () => {
     const app = createAgentsApp();
 

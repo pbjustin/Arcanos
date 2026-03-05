@@ -467,8 +467,7 @@ export async function createPullRequestFromPatch(options: {
     const hashRes = await executeProcessCommand('git', ['rev-parse', 'HEAD'], workingDir);
     const commitHash = hashRes.success ? hashRes.output : undefined;
 
-    const pushResult = await executeProcessCommandWithRetry('git', ['push', '-u', 'origin', branch], workingDir, { attempts: 4 });
-    if (!pushResult.success) throw new Error(pushResult.error || 'git push failed');
+    await executeProcessCommandWithRetry('git', ['push', '-u', 'origin', branch], workingDir, { attempts: 4 });
 
     const safeLabels = labels
       .map(label => sanitizeCliTextArg(label, 120).trim())

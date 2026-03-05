@@ -14,14 +14,16 @@ const execFileMock = jest.fn();
  * Inputs/outputs: none -> imported git service module.
  * Edge cases: preserves stdout/stderr data across promise rejections.
  */
-async function loadGitServiceModule(): Promise<GitServiceModule> {
+async function loadGitServiceModule(
+  resolveErrorMessageMock?: (error: unknown, fallback?: string) => string
+): Promise<GitServiceModule> {
   jest.resetModules();
   execMock.mockReset();
   execFileMock.mockReset();
 
   execMock[promisify.custom] = (...args: unknown[]) =>
     new Promise((resolve, reject) => {
-      execMock(...args, (error: Error | null, stdout = '', stderr = '') => {
+      execMock(...args, (error: Error | null, stdout?: string, stderr?: string) => {
         if (error) {
           const enrichedError = error as Error & { stdout?: string; stderr?: string };
           enrichedError.stdout = enrichedError.stdout ?? stdout;
@@ -35,7 +37,7 @@ async function loadGitServiceModule(): Promise<GitServiceModule> {
 
   execFileMock[promisify.custom] = (...args: unknown[]) =>
     new Promise((resolve, reject) => {
-      execFileMock(...args, (error: Error | null, stdout = '', stderr = '') => {
+      execFileMock(...args, (error: Error | null, stdout?: string, stderr?: string) => {
         if (error) {
           const enrichedError = error as Error & { stdout?: string; stderr?: string };
           enrichedError.stdout = enrichedError.stdout ?? stdout;
@@ -52,6 +54,12 @@ async function loadGitServiceModule(): Promise<GitServiceModule> {
     execFile: execFileMock
   }));
 
+  if (resolveErrorMessageMock) {
+    jest.unstable_mockModule('@core/lib/errors/index.js', () => ({
+      resolveErrorMessage: resolveErrorMessageMock
+    }));
+  }
+
   return await import('../src/services/git.js');
 }
 
@@ -60,6 +68,33 @@ function callbackExecFile(callback: unknown, error: Error | null, stdout = '', s
 }
 
 describe('services/git additional coverage', () => {
+  it('coerces undefined stdout and stderr to empty command output', async () => {
+    const gitService = await loadGitServiceModule();
+    execFileMock.mockImplementation((_command: string, _args: string[], _options: unknown, callback: unknown) => {
+      (callback as ExecFileCallback)(null);
+    });
+
+    const result = await gitService.checkoutBranch('main');
+
+    expect(result.success).toBe(true);
+    expect(result.output).toBe('');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('handles process errors that omit stdout and stderr', async () => {
+    const gitService = await loadGitServiceModule();
+    execFileMock.mockImplementation((_command: string, _args: string[], _options: unknown, callback: unknown) => {
+      (callback as ExecFileCallback)(new Error('exec failed'));
+    });
+
+    const result = await gitService.checkoutBranch('main');
+
+    expect(result.success).toBe(false);
+    expect(result.output).toBe('');
+    expect(typeof result.error).toBe('string');
+    expect((result.error ?? '').length).toBeGreaterThan(0);
+  });
+
   it('executes direct git command wrappers on success', async () => {
     const gitService = await loadGitServiceModule();
     execFileMock.mockImplementation((command: string, args: string[], _options: unknown, callback: unknown) => {
@@ -285,5 +320,72 @@ describe('services/git additional coverage', () => {
 
     expect(result.success).toBe(true);
     expect(pushAttempts).toBe(2);
+  });
+
+  it('sanitizes nullish CLI text args and retries with fallback command error text', async () => {
+    const gitService = await loadGitServiceModule(() => '');
+    let pushAttempts = 0;
+    const commandHistory: Array<{ command: string; args: string[] }> = [];
+
+    execFileMock.mockImplementation((command: string, args: string[], _options: unknown, callback: unknown) => {
+      commandHistory.push({ command, args: [...args] });
+
+      if (command === 'gh' && args[0] === '--version') {
+        callbackExecFile(callback, null, 'gh version 2.86.0', '');
+        return;
+      }
+      if (command === 'git' && args[0] === 'status') {
+        callbackExecFile(callback, null, '', '');
+        return;
+      }
+      if (command === 'git' && args[0] === 'checkout' && args[1] === '-b') {
+        callbackExecFile(callback, null, 'branch created', '');
+        return;
+      }
+      if (command === 'git' && args[0] === 'apply') {
+        callbackExecFile(callback, null, 'applied', '');
+        return;
+      }
+      if (command === 'git' && args[0] === 'add') {
+        callbackExecFile(callback, null, '', '');
+        return;
+      }
+      if (command === 'git' && args[0] === 'commit') {
+        callbackExecFile(callback, null, '[branch abc123] commit', '');
+        return;
+      }
+      if (command === 'git' && args[0] === 'rev-parse') {
+        callbackExecFile(callback, null, 'abc1234', '');
+        return;
+      }
+      if (command === 'git' && args[0] === 'push') {
+        pushAttempts += 1;
+        if (pushAttempts === 1) {
+          (callback as ExecFileCallback)(new Error('transient push failure'));
+          return;
+        }
+        callbackExecFile(callback, null, 'pushed', '');
+        return;
+      }
+      if (command === 'gh' && args[0] === 'pr' && args[1] === 'create') {
+        callbackExecFile(callback, null, 'https://github.com/pbjustin/Arcanos/pull/10001', '');
+        return;
+      }
+
+      callbackExecFile(callback, null, 'ok', '');
+    });
+
+    const result = await gitService.createPullRequestFromPatch({
+      base: 'main',
+      diff: 'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-const oldValue = 1;\n+const oldValue = 2;\n',
+      labels: ['coverage', undefined as unknown as string],
+      title: undefined as unknown as string,
+      body: undefined as unknown as string
+    });
+
+    expect(result.success).toBe(true);
+    expect(pushAttempts).toBe(2);
+    const commitCall = commandHistory.find((entry) => entry.command === 'git' && entry.args[0] === 'commit');
+    expect(commitCall?.args[2]).toBe('');
   });
 });

@@ -142,6 +142,16 @@ describe('incidentResponse/killSwitch', () => {
     expect(harness.createClientMock).not.toHaveBeenCalled();
   });
 
+  it('coerces non-finite autonomy values to zero', async () => {
+    const harness = await loadKillSwitchHarness({
+      config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 2 }
+    });
+
+    await harness.moduleUnderTest.setAutonomyLevel(Number.NaN, 'non-finite input');
+
+    expect(await harness.moduleUnderTest.getEffectiveAutonomyLevel()).toBe(0);
+  });
+
   it('reads shared redis state and clamps out-of-range autonomy values', async () => {
     const harness = await loadKillSwitchHarness({
       config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 1 },
@@ -164,6 +174,43 @@ describe('incidentResponse/killSwitch', () => {
     });
   });
 
+  it('builds redis urls from user/pass, pass-only, and default-port fallbacks', async () => {
+    const userPassHarness = await loadKillSwitchHarness({
+      env: {
+        REDISHOST: 'redis.internal',
+        REDISPORT: '6380',
+        REDISUSER: 'svc',
+        REDISPASSWORD: 'pwd'
+      },
+      redis: { getValue: null }
+    });
+    await userPassHarness.moduleUnderTest.getKillSwitchStatus();
+    expect((userPassHarness.createClientMock.mock.calls[0]?.[0] as { url?: string })?.url)
+      .toBe('redis://svc:pwd@redis.internal:6380');
+
+    const passOnlyHarness = await loadKillSwitchHarness({
+      env: {
+        REDIS_HOST: 'redis.internal',
+        REDIS_PORT: '6390',
+        REDIS_PASSWORD: 'secret'
+      },
+      redis: { getValue: null }
+    });
+    await passOnlyHarness.moduleUnderTest.getKillSwitchStatus();
+    expect((passOnlyHarness.createClientMock.mock.calls[0]?.[0] as { url?: string })?.url)
+      .toBe('redis://:secret@redis.internal:6390');
+
+    const defaultPortHarness = await loadKillSwitchHarness({
+      env: {
+        REDIS_HOST: 'redis.internal'
+      },
+      redis: { getValue: null }
+    });
+    await defaultPortHarness.moduleUnderTest.getKillSwitchStatus();
+    expect((defaultPortHarness.createClientMock.mock.calls[0]?.[0] as { url?: string })?.url)
+      .toBe('redis://redis.internal:6379');
+  });
+
   it('falls back safely when shared redis payload is malformed', async () => {
     const harness = await loadKillSwitchHarness({
       config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 2 },
@@ -181,6 +228,20 @@ describe('incidentResponse/killSwitch', () => {
       expect.stringContaining('Failed to read shared kill-switch state'),
       expect.objectContaining({ module: 'killSwitch' })
     );
+  });
+
+  it('normalizes invalid shared override field types to null', async () => {
+    const harness = await loadKillSwitchHarness({
+      config: { selfImproveFrozen: true, selfImproveAutonomyLevel: 2 },
+      env: { REDIS_URL: 'redis://localhost:6379' },
+      redis: { getValue: JSON.stringify({ freeze: 'true', autonomy: '3' }) }
+    });
+
+    const status = await harness.moduleUnderTest.getKillSwitchStatus();
+
+    expect(status.overrides).toEqual({ freeze: null, autonomy: null });
+    expect(status.frozen).toBe(true);
+    expect(status.autonomyLevel).toBe(2);
   });
 
   it('retains local freeze state when redis write fails', async () => {
