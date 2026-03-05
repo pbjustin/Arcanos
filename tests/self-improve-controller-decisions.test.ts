@@ -15,6 +15,7 @@ const generateComponentReflectionMock = jest.fn();
 const generatePatchProposalMock = jest.fn();
 const gatherRepoContextMock = jest.fn();
 const createPullRequestFromPatchMock = jest.fn();
+let analyzePRResult: { status: string; summary: string } = { status: '✅', summary: 'ok' };
 
 jest.unstable_mockModule('uuid', () => ({
   v4: () => 'cycle-id-123'
@@ -75,7 +76,7 @@ jest.unstable_mockModule('@core/lib/errors/index.js', () => ({
 jest.unstable_mockModule('@services/prAssistant.js', () => ({
   default: class MockPRAssistant {
     async analyzePR(): Promise<{ status: string; summary: string }> {
-      return { status: '✅', summary: 'ok' };
+      return analyzePRResult;
     }
   }
 }));
@@ -131,6 +132,7 @@ describe('services/selfImprove/controller decision branches', () => {
       branch: 'codex/self-improve-test',
       commitHash: 'abc1234'
     });
+    analyzePRResult = { status: '✅', summary: 'ok' };
     writeEvidencePackMock.mockResolvedValue('/tmp/evidence/cycle-id-123.json');
     isSelfImproveFrozenMock.mockResolvedValue(false);
     getAutonomyLevelMock.mockResolvedValue(1);
@@ -234,5 +236,76 @@ describe('services/selfImprove/controller decision branches', () => {
     });
 
     expect(result.decision).toBe('PATCH_PROPOSAL');
+  });
+
+  it('returns NOOP with frozen note when kill switch is active', async () => {
+    isSelfImproveFrozenMock.mockResolvedValue(true);
+    evaluateDriftMock.mockReturnValue({
+      kind: 'none',
+      severity: 'low',
+      details: {}
+    });
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'manual'
+    });
+
+    expect(result.decision).toBe('NOOP');
+    expect(result.notes).toBe('Frozen by kill switch');
+    expect(metricMock).toHaveBeenCalledWith('self_improve.frozen', expect.objectContaining({
+      reason: 'kill_switch'
+    }));
+  });
+
+  it('retains proposal but skips PR creation when PR gates fail', async () => {
+    evaluateDriftMock.mockReturnValue({
+      kind: 'clear_drop',
+      severity: 'medium',
+      details: { clearOverall: 0.3, clearMin: 0.8 }
+    });
+    canProposePatchesMock.mockResolvedValue(true);
+    createImprovementQueueMock.mockResolvedValue([
+      { metadata: {} },
+      { metadata: { generated: '2026-03-05T00:00:00.000Z' } }
+    ]);
+    gatherRepoContextMock.mockRejectedValueOnce(new Error('context read failed'));
+    analyzePRResult = { status: '❌', summary: 'policy gate blocked' };
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'clear',
+      component: 'dispatcher',
+      clearOverall: 0.3,
+      clearMin: 0.8
+    });
+
+    expect(result.decision).toBe('PATCH_PROPOSAL');
+    expect(result.notes).toContain('PR gates failed: policy gate blocked');
+    expect(generateComponentReflectionMock).toHaveBeenCalledWith('dispatcher', { priority: 'high', useMemory: true });
+    expect(createPullRequestFromPatchMock).not.toHaveBeenCalled();
+  });
+
+  it('records structured proposal failures and continues with evidence output', async () => {
+    evaluateDriftMock.mockReturnValue({
+      kind: 'clear_drop',
+      severity: 'medium',
+      details: { clearOverall: 0.2, clearMin: 0.9 }
+    });
+    canProposePatchesMock.mockResolvedValue(true);
+    generatePatchProposalMock.mockRejectedValueOnce(new Error('proposal build failed'));
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'clear',
+      clearOverall: 0.2,
+      clearMin: 0.9
+    });
+
+    expect(result.decision).toBe('PATCH_PROPOSAL');
+    expect(result.notes).toContain('Structured patch proposal failed');
+    expect(metricMock).toHaveBeenCalledWith('self_improve.patch_structured_error', expect.any(Object));
+    expect(writeEvidencePackMock).toHaveBeenCalledWith(expect.objectContaining({
+      errors: expect.arrayContaining([
+        expect.objectContaining({ stage: 'patch_proposal_or_pr' })
+      ])
+    }));
   });
 });

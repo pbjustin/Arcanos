@@ -25,7 +25,9 @@ export { createPendingDaemonActions, consumePendingDaemonActions };
 const router = express.Router();
 
 router.use(securityHeaders);
-router.use(createRateLimitMiddleware(DAEMON_RATE_LIMIT_MAX, DAEMON_RATE_LIMIT_WINDOW_MS));
+const daemonRateLimit = createRateLimitMiddleware(DAEMON_RATE_LIMIT_MAX, DAEMON_RATE_LIMIT_WINDOW_MS);
+router.use('/api/daemon', daemonRateLimit);
+router.use('/api/update', daemonRateLimit);
 
 
 const attachDaemonContext = (req: Request, _res: Response, next: (error?: unknown) => void): void => {

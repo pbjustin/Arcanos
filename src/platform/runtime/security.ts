@@ -189,12 +189,12 @@ export function createValidationMiddleware(schema: ValidationSchema) {
 /**
  * Rate limiting by IP for security
  */
-const requestCounts = new Map<string, { count: number; resetTime: number }>();
-
 export function createRateLimitMiddleware(
   maxRequests: number = 100,
   windowMs: number = 15 * 60 * 1000 // 15 minutes
 ): (req: Request, res: Response, next: NextFunction) => void {
+  const requestCounts = new Map<string, { count: number; resetTime: number }>();
+
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = req.ip || req.connection.remoteAddress || 'unknown';
     const now = Date.now();

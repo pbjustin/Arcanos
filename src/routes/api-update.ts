@@ -9,7 +9,7 @@ import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
 const router = express.Router();
 
 router.use(securityHeaders);
-router.use(createRateLimitMiddleware(60, 5 * 60 * 1000)); // 60 requests per 5 minutes
+router.use('/api/update', createRateLimitMiddleware(60, 5 * 60 * 1000)); // 60 requests per 5 minutes
 
 const MAX_DATA_SIZE = 10000; // 10KB max for update data
 
