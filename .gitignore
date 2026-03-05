@@ -238,3 +238,7 @@ converge-artifacts/**
 
 # generated / collected artifacts
 collected-ts/
+
+# Self-improve runtime artifacts
+governance/evidence_packs/
+memory/safety-runtime-state.json
