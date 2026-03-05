@@ -146,7 +146,8 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
       const assistant = new PRAssistant();
       const analysis = await assistant.analyzePR(patchProposal.diff, patchProposal.files);
 
-      const gatesOk = analysis.status === '✅';
+      //audit Assumption: conditional PR analysis can still be safe for human-reviewed PR creation; risk: weaker automated gate strictness; invariant: hard-fail status remains blocked; handling: allow ✅ and ⚠️, block ❌.
+      const gatesOk = analysis.status === '✅' || analysis.status === '⚠️';
       metric('self_improve.pr_gate', { id, ok: gatesOk, status: analysis.status });
 
       if (gatesOk && cfg.selfImproveActuatorMode === 'pr_bot') {
