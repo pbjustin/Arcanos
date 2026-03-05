@@ -233,3 +233,4 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
     notes
   };
 }
+//audit Assumption: deterministic fallback patch is comment-only; risk: model diff generation failed (git apply --check failed: error: corrupt patch at line 7); invariant: runtime behavior remains unchanged; handling: append observability breadcrumb.
