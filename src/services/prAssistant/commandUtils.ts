@@ -12,7 +12,11 @@ function resolvePlatformCommand(command: string): string {
   const commandMap: Record<string, string> = {
     npm: 'npm.cmd',
     npx: 'npx.cmd',
-    'node-gyp': 'node-gyp.cmd'
+    'node-gyp': 'node-gyp.cmd',
+    tsc: 'tsc.cmd',
+    jest: 'jest.cmd',
+    eslint: 'eslint.cmd',
+    'ts-node': 'ts-node.cmd'
   };
   return commandMap[command] || command;
 }
