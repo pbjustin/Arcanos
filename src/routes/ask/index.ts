@@ -533,7 +533,17 @@ export const handleAIRequest = async (
     }
 
     const runtimeBudget = createRuntimeBudget();
-    const output = await runThroughBrain(openai, prompt, sessionId, overrideAuditSafe, { cognitiveDomain: finalDomain }, runtimeBudget);
+    const output = await runThroughBrain(
+      openai,
+      prompt,
+      sessionId,
+      overrideAuditSafe,
+      {
+        cognitiveDomain: finalDomain,
+        sourceEndpoint: endpointName
+      },
+      runtimeBudget
+    );
     return res.json({
       ...(output as AskResponse),
       clientContext: req.body.clientContext,

@@ -11,6 +11,7 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { verifyIntegrityManifestConfiguration } from "@services/safety/configIntegrity.js";
 import { activateUnsafeCondition } from "@services/safety/runtimeState.js";
 import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
+import { hydrateJudgedResponseFeedbackContext } from "@services/judgedResponseFeedback.js";
 
 /**
  * Runs startup checks including environment validation, database init,
@@ -78,6 +79,16 @@ export async function performStartup(): Promise<void> {
     const dbConnected = await initializeDatabase('server');
     if (!dbConnected) {
       logger.warn('⚠️ DB CHECK - Database not available - continuing with in-memory fallback');
+    } else {
+      try {
+        const hydratedEntries = await hydrateJudgedResponseFeedbackContext();
+        //audit Assumption: judged feedback hydration is best-effort and should not block startup; risk: missing historical context after restart; invariant: startup continues even when hydration fails; handling: informational logging with fallback catch below.
+        logger.info('🧠 Reinforcement judged feedback hydrated', { hydratedEntries });
+      } catch (hydrationError: unknown) {
+        logger.warn('⚠️ Reinforcement judged feedback hydration failed - continuing without persisted judgment context', {
+          error: resolveErrorMessage(hydrationError)
+        });
+      }
     }
   } catch (err: unknown) {
     //audit Assumption: DB init errors should log and fallback

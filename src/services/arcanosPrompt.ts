@@ -29,7 +29,14 @@ export async function handleArcanosPrompt(prompt: string) {
   try {
     // Route the prompt through the main Trinity brain processing
     const runtimeBudget = createRuntimeBudget();
-    const output = await runThroughBrain(client, prompt, undefined, undefined, {}, runtimeBudget);
+    const output = await runThroughBrain(
+      client,
+      prompt,
+      undefined,
+      undefined,
+      { sourceEndpoint: 'arcanosPrompt' },
+      runtimeBudget
+    );
     return output;
   } catch (error: unknown) {
     //audit Assumption: map errors to friendly message when possible

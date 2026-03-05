@@ -3,7 +3,11 @@ import { auditTrace } from "@transport/http/middleware/auditTrace.js";
 import { registerContextEntry, getReinforcementHealth } from "@services/contextualReinforcement.js";
 import { getMemoryDigest } from "@services/memoryDigest.js";
 import { processClearFeedback } from "@services/audit.js";
-import type { ClearFeedbackPayload } from "@shared/types/reinforcement.js";
+import {
+  getJudgedFeedbackRuntimeTelemetry,
+  processJudgedResponseFeedback
+} from "@services/judgedResponseFeedback.js";
+import type { ClearFeedbackPayload, JudgedResponsePayload } from "@shared/types/reinforcement.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { sendBadRequest } from '@shared/http/index.js';
 
@@ -56,6 +60,26 @@ router.post('/audit', auditTrace, async (req: Request, res: Response) => {
   }
 });
 
+router.post('/reinforcement/judge', auditTrace, async (req: Request, res: Response) => {
+  const payload = req.body as JudgedResponsePayload;
+
+  try {
+    //audit Assumption: route-level trace id is always available from auditTrace middleware; risk: missing identifier breaks feedback traceability; invariant: every judged record has a trace id; handling: use middleware id fallback.
+    const result = await processJudgedResponseFeedback(payload, res.locals.auditTraceId);
+    return res.status(200).json({
+      status: 'ok',
+      traceId: result.traceId,
+      accepted: result.accepted,
+      score: result.score,
+      scoreScale: result.scoreScale,
+      normalizedScore: result.normalizedScore,
+      persisted: result.persisted
+    });
+  } catch (error) {
+    return sendBadRequest(res, resolveErrorMessage(error));
+  }
+});
+
 router.get('/memory/digest', (_: Request, res: Response) => {
   res.json(getMemoryDigest());
 });
@@ -66,6 +90,15 @@ router.get('/memory', (_: Request, res: Response) => {
 
 router.get('/health', (_: Request, res: Response) => {
   res.json(getReinforcementHealth());
+});
+
+router.get('/reinforcement/metrics', (_: Request, res: Response) => {
+  //audit Assumption: runtime telemetry is non-sensitive operational metadata; risk: overexposing internals; invariant: response contains aggregate counters only; handling: expose sanitized aggregate snapshot.
+  res.json({
+    status: 'ok',
+    judgedFeedback: getJudgedFeedbackRuntimeTelemetry(),
+    reinforcement: getReinforcementHealth()
+  });
 });
 
 export default router;

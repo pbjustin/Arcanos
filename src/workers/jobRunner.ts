@@ -86,7 +86,10 @@ async function run(): Promise<void> {
         prompt,
         sessionId,
         overrideAuditSafe,
-        { cognitiveDomain },
+        {
+          cognitiveDomain,
+          sourceEndpoint: 'worker.jobRunner.ask'
+        },
         runtimeBudget
       );
 

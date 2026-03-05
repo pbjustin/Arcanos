@@ -97,6 +97,18 @@ export interface TrinityResult {
     resilience: number;
     overall: number;
   };
+  judgedFeedback?: {
+    enabled: boolean;
+    attempted: boolean;
+    source: 'clear_audit';
+    reason?: string;
+    traceId?: string;
+    accepted?: boolean;
+    score?: number;
+    scoreScale?: import('@shared/types/reinforcement.js').ClearScoreScale;
+    normalizedScore?: number;
+    persisted?: boolean;
+  };
   confidence?: number;
 }
 
@@ -105,6 +117,7 @@ export interface TrinityRunOptions {
   dryRunReason?: string;
   cognitiveDomain?: import('@shared/types/cognitiveDomain.js').CognitiveDomain;
   internalMode?: boolean;
+  sourceEndpoint?: string;
 }
 
 export interface TrinityDryRunPreview {

@@ -56,6 +56,7 @@ import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js'
 import { trackEscalation } from '@analytics/escalationTracker.js';
 import { getClearMinThreshold, recordRun } from '@analytics/clearAutoTuner.js';
 import { runSelfImproveCycle } from '@services/selfImprove/controller.js';
+import { recordTrinityJudgedFeedback } from './trinityJudgedFeedback.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 
@@ -464,6 +465,18 @@ export async function runThroughBrain(
       latencyMs,
       latencyDriftDetected
     };
+
+    result.judgedFeedback = await recordTrinityJudgedFeedback({
+      requestId,
+      prompt: auditSafePrompt,
+      response: finalText,
+      clearAudit,
+      tier,
+      sessionId,
+      sourceEndpoint: options.sourceEndpoint,
+      internalMode,
+      remainingBudgetMs: result.guardInfo.remainingBudgetMs
+    });
 
     return result;
 

@@ -32,7 +32,14 @@ const handleSiriRequest = async (
 
   try {
     const runtimeBudget = createRuntimeBudget();
-    const output = await runThroughBrain(openai, input, sessionId, overrideAuditSafe, {}, runtimeBudget);
+    const output = await runThroughBrain(
+      openai,
+      input,
+      sessionId,
+      overrideAuditSafe,
+      { sourceEndpoint: 'siri' },
+      runtimeBudget
+    );
     return res.json({ ...output, content: output.result } as SiriResponse);
   } catch (err) {
     handleAIError(err, input, 'siri', res);
