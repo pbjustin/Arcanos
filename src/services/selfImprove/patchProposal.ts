@@ -93,11 +93,25 @@ function buildPatchProposalPrompt(args: {
   const cfg = getConfig();
   //audit Assumption: default security redaction config is sufficient for proposal context; risk: partial leakage in prompt context; invariant: context is always scrubbed before prompt interpolation; handling: apply centralized security compliance redaction.
   const safeContext = applySecurityCompliance(JSON.stringify(args.context ?? {})).content;
+  const outputContractExample = JSON.stringify(
+    {
+      kind: "self_improve_patch",
+      goal: "One-sentence objective of the change",
+      summary: "Short summary of what will change and why",
+      risk: "low",
+      files: ["src/example.ts"],
+      diff: "diff --git a/src/example.ts b/src/example.ts\\n--- a/src/example.ts\\n+++ b/src/example.ts\\n@@ -1,1 +1,1 @@\\n-console.log('old')\\n+console.log('new')\\n",
+      commands: ["npm run type-check", "npm test -- tests/ask-validation.test.ts"],
+      successMetrics: ["Type-check passes", "Targeted tests pass"]
+    },
+    null,
+    2
+  );
 
   return [
     "You are the ARCANOS patch-proposal engine.",
-    "Output ONLY valid JSON that matches this schema:",
-    JSON.stringify(patchProposalSchema.shape, null, 2),
+    "Output ONLY valid JSON that matches this contract example exactly (same keys and value types):",
+    outputContractExample,
     "",
     "Constraints:",
     `- Environment: ${cfg.selfImproveEnvironment}`,
