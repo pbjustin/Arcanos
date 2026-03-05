@@ -56,6 +56,39 @@ async function executeGitCommand(command: string, workingDir?: string): Promise<
   }
 }
 
+
+type RetryOptions = { attempts: number; baseDelayMs: number; maxDelayMs: number; jitterMs: number };
+const DEFAULT_RETRY: RetryOptions = { attempts: 3, baseDelayMs: 750, maxDelayMs: 8000, jitterMs: 250 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+async function retry<T>(fn: (attempt: number) => Promise<T>, opts: Partial<RetryOptions> = {}): Promise<T> {
+  const o: RetryOptions = { ...DEFAULT_RETRY, ...opts };
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= o.attempts; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (e) {
+      lastErr = e;
+      if (attempt === o.attempts) break;
+      const exp = Math.min(o.maxDelayMs, o.baseDelayMs * Math.pow(2, attempt - 1));
+      const jitter = Math.floor(Math.random() * o.jitterMs);
+      await sleep(exp + jitter);
+    }
+  }
+  throw lastErr;
+}
+
+async function executeGitCommandWithRetry(command: string, workingDir?: string, opts?: Partial<RetryOptions>): Promise<GitOperationResult> {
+  return retry(async () => {
+    const res = await executeGitCommand(command, workingDir);
+    if (!res.success) throw new Error(res.error || `Command failed: ${command}`);
+    return res;
+  }, opts);
+}
+
 /**
  * Check if GitHub CLI is available
  */
@@ -260,3 +293,99 @@ export async function isRepositoryClean(workingDir?: string): Promise<boolean> {
   const status = await getGitStatus(workingDir);
   return status.success && status.output.length === 0;
 }
+
+
+/**
+ * Create a new branch, apply a unified diff, commit, push, and open a PR via GitHub CLI.
+ *
+ * Requires:
+ * - git available
+ * - gh CLI authenticated (gh auth status)
+ *
+ * Notes:
+ * - This is an enterprise-safe actuator: it never auto-merges.
+ */
+export async function createPullRequestFromPatch(options: {
+  branchPrefix?: string;
+  title: string;
+  body: string;
+  base?: string;
+  diff: string;
+  workingDir?: string;
+  commitMessage?: string;
+  labels?: string[];
+}): Promise<PRResult> {
+  const {
+    branchPrefix = 'arcanos/self-improve',
+    title,
+    body,
+    base = 'main',
+    diff,
+    workingDir,
+    commitMessage = title,
+    labels = []
+  } = options;
+
+  const hasGH = await checkGitHubCLI();
+  if (!hasGH) {
+    return { success: false, message: 'GitHub CLI (gh) not available', error: 'Missing gh CLI' };
+  }
+
+  // Ensure repo is clean so we don't accidentally commit unrelated work
+  const clean = await isRepositoryClean(workingDir);
+  if (!clean) {
+    return { success: false, message: 'Repository has uncommitted changes', error: 'Dirty working tree' };
+  }
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const branch = `${branchPrefix}-${ts}`;
+
+  try {
+    // Create and checkout branch
+    const br = await executeGitCommand(`git checkout -b ${branch}`, workingDir);
+    if (!br.success) throw new Error(br.error || 'Failed to create branch');
+
+    // Apply diff via temporary file
+    const tmpName = `.arcanos_patch_${ts}.diff`;
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const tmpPath = path.join(workingDir || process.cwd(), tmpName);
+    await fs.writeFile(tmpPath, diff, 'utf-8');
+
+    const apply = await executeGitCommand(`git apply ${tmpName}`, workingDir);
+    // Cleanup temp file best-effort
+    try { await fs.unlink(tmpPath); } catch {}
+    if (!apply.success) throw new Error(apply.error || 'git apply failed');
+
+    const add = await executeGitCommand('git add -A', workingDir);
+    if (!add.success) throw new Error(add.error || 'git add failed');
+
+    const commit = await executeGitCommand(`git commit -m "${commitMessage.replace(/"/g, '\"')}"`, workingDir);
+    if (!commit.success) throw new Error(commit.error || 'git commit failed');
+
+    const hashRes = await executeGitCommand('git rev-parse HEAD', workingDir);
+    const commitHash = hashRes.success ? hashRes.output : undefined;
+
+    const push = await executeGitCommandWithRetry(`git push -u origin ${branch}`, workingDir, { attempts: 4 });
+
+    const labelArgs = labels.length ? ` --label "${labels.join(',').replace(/"/g, '\\"')}"` : '';
+
+    const pr = await executeGitCommandWithRetry(
+      `gh pr create --title "${title.replace(/"/g, '\"')}" --body "${body.replace(/"/g, '\"')}"${labelArgs} --base ${base} --head ${branch}`,
+      workingDir,
+      { attempts: 4 }
+    );
+
+    return {
+      success: true,
+      message: `PR created: ${pr.output}`,
+      branch,
+      commitHash
+    };
+  } catch (error: unknown) {
+    // Try to return to base branch to avoid leaving the repo in a weird state.
+    try { await executeGitCommand(`git checkout ${base}`, workingDir); } catch {}
+    return { success: false, message: 'Failed to create PR from patch', error: resolveErrorMessage(error) };
+  }
+}
+

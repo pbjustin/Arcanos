@@ -1,0 +1,38 @@
+# ARCANOS Self-Improve Loop Contract (human-readable)
+version: "1.0"
+decision_outputs: [NOOP, SOFT_UPDATE, PATCH_PROPOSAL, ESCALATE, ROLLBACK]
+
+autonomy_levels:
+  0: Observe only
+  1: Propose only (requires approval)
+  2: Auto-apply soft changes in non-prod; code via PR
+  3: Limited auto in prod with strict gates
+
+control_surfaces:
+  soft: [prompts, routing, thresholds, retrieval_config, non_security_config]
+  hard: [code_changes, tool_permissions, security_policies, deployment]
+
+prohibited_paths:
+  - "src/transport/http/middleware/**"
+  - "src/platform/runtime/security.*"
+  - "src/services/openai/**"
+  - ".env*"
+  - "Dockerfile"
+  - "docker-compose.yml"
+  - "Procfile"
+
+rollback:
+  required: true
+  max_auto_attempts: 1
+  triggers: [healthcheck_fail, self_test_fail, clear_drop_below_min]
+
+evidence:
+  required: true
+  store: filesystem
+  dir: governance/evidence_packs
+  retention_days: 30
+
+privacy:
+  pii_scrub: true
+  redact_credentials: true
+  minimize_payload: true

@@ -14,9 +14,11 @@ import {
   getAgent,
   updateHeartbeat,
   listAgents,
+  grantCapabilities,
 } from '../stores/agentRegistry.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { getEnv } from '@platform/runtime/env.js';
 import { apiLogger } from '@platform/logging/structuredLogging.js';
 import { asyncHandler, validateBody, validateParams, sendNotFoundError, sendInternalError } from '@shared/http/index.js';
 
@@ -62,6 +64,35 @@ router.get(
       apiLogger.error('List failed', { module: 'agents', error: resolveErrorMessage(error) });
       sendInternalError(res, 'Failed to list agents');
     }
+  })
+);
+
+
+/**
+ * POST /agents/:agentId/capabilities/grant — Grant capabilities (admin only)
+ *
+ * Admin auth: x-admin-api-key header must match ADMIN_API_KEY env var.
+ */
+router.post(
+  '/agents/:agentId/capabilities/grant',
+  validateParams(agentIdSchema),
+  validateBody(z.object({ capabilities: z.array(z.string().min(1)).min(1) })),
+  asyncHandler(async (req, res) => {
+    const adminKey = getEnv('ADMIN_API_KEY');
+    const provided = req.headers['x-admin-api-key'];
+    if (!adminKey || provided !== adminKey) {
+      res.status(403).json({ error: 'Admin authorization required' });
+      return;
+    }
+
+    const agentId = (req.validated!.params as any).agentId as string;
+    const caps = (req.validated!.body as any).capabilities as string[];
+    const updated = await grantCapabilities(agentId, caps);
+    if (!updated) {
+      sendNotFoundError(res, 'Agent not found');
+      return;
+    }
+    res.json({ agent: updated });
   })
 );
 
