@@ -29,7 +29,7 @@ Recommended reading order:
 Configuration source files:
 - `.env.example`
 - `config/env/*.env.example`
-- `src/config/` (see `docs/CONFIGURATION.md` for the authoritative list)dConfig.ts`
+- `src/config/` (see `docs/CONFIGURATION.md` for the authoritative list)
 - `src/config/env.ts`
 
 ## Run locally
