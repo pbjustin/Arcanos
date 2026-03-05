@@ -5,7 +5,10 @@ Backend I/O operations for the ARCANOS CLI.
 from __future__ import annotations
 
 import base64
+import json
+import re
 import time
+import uuid
 from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING
 
 from .audit import record as audit_record
@@ -26,6 +29,7 @@ from ..credential_bootstrap import CredentialBootstrapError, bootstrap_credentia
 from ..error_handler import logger as error_logger
 from .context import ConversationResult
 from . import state
+from arcanos.debug import log_audit_event
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
@@ -74,10 +78,11 @@ def request_with_auth_retry(
     cli: "ArcanosCLI",
     request_func: Callable[[], BackendResponse[Any]],
     action_label: str,
+    report_errors: bool = True,
 ) -> BackendResponse[Any]:
     """
     Purpose: Execute a backend request with one auth-refresh retry.
-    Inputs/Outputs: request function and action label; returns BackendResponse.
+    Inputs/Outputs: request function, action label, and report flag; returns BackendResponse.
     Edge cases: Confirmation responses are returned without retries beyond auth refresh.
     """
     response = request_func()
@@ -94,7 +99,7 @@ def request_with_auth_retry(
         # //audit assumption: confirmation path needs caller mediation; risk: auto-execution; invariant: no implicit fallback; strategy: return as-is.
         return response
 
-    if not response.ok:
+    if not response.ok and report_errors:
         # //audit assumption: unresolved backend failure should be surfaced to operator; risk: hidden failure; invariant: user-visible error; strategy: report.
         report_backend_error(cli, action_label, response.error)
 
@@ -229,6 +234,106 @@ def confirm_pending_actions(cli: "ArcanosCLI", confirmation_token: str) -> Optio
     )
 
 
+_ERROR_CODE_RE = re.compile(r'"code"\s*:\s*"([^"]+)"', re.IGNORECASE)
+
+
+def _extract_backend_error_code(error: Optional[BackendRequestError]) -> Optional[str]:
+    """
+    Purpose: Extract machine-readable backend error code from structured error details.
+    Inputs/Outputs: BackendRequestError (optional) -> error code string or None.
+    Edge cases: Gracefully handles non-JSON details by using regex fallback.
+    """
+    if error is None or not error.details:
+        return None
+
+    raw_details = error.details.strip()
+    if not raw_details:
+        return None
+
+    parsed_details: Any = None
+    try:
+        parsed_details = json.loads(raw_details)
+    except ValueError:
+        # //audit assumption: backend may wrap JSON with surrounding text; risk: parser failure hides code; invariant: best-effort extraction still occurs; handling strategy: parse JSON substring when present.
+        start_index = raw_details.find("{")
+        end_index = raw_details.rfind("}")
+        if start_index != -1 and end_index > start_index:
+            candidate_json = raw_details[start_index : end_index + 1]
+            try:
+                parsed_details = json.loads(candidate_json)
+            except ValueError:
+                parsed_details = None
+
+    if isinstance(parsed_details, dict):
+        # //audit assumption: backend code may appear at top-level or nested under error object; risk: missing code field; invariant: check both locations before fallback; handling strategy: layered key lookup.
+        top_level_code = parsed_details.get("code")
+        if isinstance(top_level_code, str) and top_level_code.strip():
+            return top_level_code.strip()
+        nested_error = parsed_details.get("error")
+        if isinstance(nested_error, dict):
+            nested_code = nested_error.get("code")
+            if isinstance(nested_code, str) and nested_code.strip():
+                return nested_code.strip()
+
+    regex_match = _ERROR_CODE_RE.search(raw_details)
+    if regex_match:
+        return regex_match.group(1).strip()
+
+    return None
+
+
+def _build_payload_mode_label(*, route: str, domain: Optional[str], includes_metadata: bool) -> str:
+    """
+    Purpose: Build canonical payload mode label for backend telemetry dimensions.
+    Inputs/Outputs: route/domain/metadata flags -> normalized payload mode string.
+    Edge cases: Empty domain is normalized to no_domain label.
+    """
+    domain_label = "domain" if bool(domain) else "no_domain"
+    metadata_label = "metadata" if includes_metadata else "minimal"
+    return f"{route}:{domain_label}:{metadata_label}"
+
+
+def _emit_backend_failure_telemetry(
+    cli: "ArcanosCLI",
+    *,
+    attempt_id: str,
+    user_message: str,
+    primary_payload_mode: str,
+    retry_payload_mode: Optional[str],
+    retry_outcome: str,
+    primary_error: Optional[BackendRequestError],
+    final_error: Optional[BackendRequestError],
+) -> None:
+    """
+    Purpose: Emit structured backend failure telemetry for regression isolation.
+    Inputs/Outputs: failure context fields; writes one structured telemetry event.
+    Edge cases: Handles missing primary/final errors without raising.
+    """
+    primary_error_code = _extract_backend_error_code(primary_error)
+    final_error_code = _extract_backend_error_code(final_error)
+
+    # //audit assumption: telemetry must remain stable and queryable across releases; risk: schema drift breaks dashboards; invariant: explicit schema version and fixed field names; handling strategy: emit versioned structured envelope.
+    log_audit_event(
+        "backend_chat_failure_telemetry",
+        source="cli.backend_ops",
+        telemetry_schema_version=1,
+        attempt_id=attempt_id,
+        instance_id=cli.instance_id,
+        message_length=len(user_message),
+        primary_payload_mode=primary_payload_mode,
+        retry_payload_mode=retry_payload_mode,
+        retry_outcome=retry_outcome,
+        primary_error_kind=getattr(primary_error, "kind", None),
+        primary_error_status_code=getattr(primary_error, "status_code", None),
+        primary_error_code=primary_error_code,
+        primary_error_message=getattr(primary_error, "message", None),
+        final_error_kind=getattr(final_error, "kind", None),
+        final_error_status_code=getattr(final_error, "status_code", None),
+        final_error_code=final_error_code,
+        final_error_message=getattr(final_error, "message", None),
+    )
+
+
 def perform_backend_conversation(
     cli: "ArcanosCLI",
     message: str,
@@ -259,8 +364,17 @@ def perform_backend_conversation(
     )
 
     metadata = build_backend_metadata(cli)
+    telemetry_attempt_id = str(uuid.uuid4())
+    primary_error: Optional[BackendRequestError] = None
+    retry_payload_mode: Optional[str] = None
+    retry_outcome = "not_attempted"
 
     if domain:
+        primary_payload_mode = _build_payload_mode_label(
+            route="ask",
+            domain=domain,
+            includes_metadata=True,
+        )
         response = request_with_auth_retry(
             cli,
             lambda: cli.backend_client.request_ask_with_domain(
@@ -269,8 +383,14 @@ def perform_backend_conversation(
                 metadata=metadata,
             ),
             "chat",
+            report_errors=False,
         )
     else:
+        primary_payload_mode = _build_payload_mode_label(
+            route="chat_completion",
+            domain=domain,
+            includes_metadata=True,
+        )
         response = request_with_auth_retry(
             cli,
             lambda: cli.backend_client.request_chat_completion(
@@ -280,9 +400,55 @@ def perform_backend_conversation(
                 metadata=metadata,
             ),
             "chat",
+            report_errors=False,
         )
 
+    if not response.ok or not response.value:
+        primary_error = response.error
+
+    error_details = (
+        f"{getattr(response.error, 'message', '')} {getattr(response.error, 'details', '')}"
+        if response and response.error
+        else ""
+    ).lower()
+    should_retry_minimal_request = (
+        (not response.ok or not response.value)
+        and "tools[0].name" in error_details
+    )
+    # //audit assumption: some backend deployments reject enriched metadata on tool-schema errors; risk: avoidable fallback to local even when backend is healthy; invariant: only one bounded retry is attempted and only for known schema failure signatures; handling strategy: retry with minimal ask payload and no metadata.
+    if should_retry_minimal_request:
+        retry_payload_mode = _build_payload_mode_label(
+            route="ask",
+            domain=domain,
+            includes_metadata=False,
+        )
+        response = request_with_auth_retry(
+            cli,
+                lambda: cli.backend_client.request_ask_with_domain(
+                    message=message,
+                    domain=domain,
+                    metadata=None,
+                ),
+                "chat (minimal payload fallback)",
+                report_errors=False,
+            )
+        if response.ok and response.value:
+            retry_outcome = "recovered_on_retry"
+        else:
+            retry_outcome = "retry_failed"
+
     if response.ok and response.value:
+        if primary_error is not None:
+            _emit_backend_failure_telemetry(
+                cli,
+                attempt_id=telemetry_attempt_id,
+                user_message=message,
+                primary_payload_mode=primary_payload_mode,
+                retry_payload_mode=retry_payload_mode,
+                retry_outcome=retry_outcome,
+                primary_error=primary_error,
+                final_error=None,
+            )
         # //audit assumption: ok response includes typed value; risk: partial payload; invariant: mapped ConversationResult on success; strategy: project payload fields.
         return ConversationResult(
             response_text=response.value.response_text,
@@ -311,7 +477,33 @@ def perform_backend_conversation(
         cli._last_confirmation_handled = True
         from .confirmation import handle_confirmation_required
 
+        if primary_error is not None:
+            _emit_backend_failure_telemetry(
+                cli,
+                attempt_id=telemetry_attempt_id,
+                user_message=message,
+                primary_payload_mode=primary_payload_mode,
+                retry_payload_mode=retry_payload_mode,
+                retry_outcome="confirmation_after_failure",
+                primary_error=primary_error,
+                final_error=response.error,
+            )
         return handle_confirmation_required(cli, response.error, from_debug=from_debug)
+
+    if response.error:
+        report_backend_error(cli, "chat", response.error)
+
+    if primary_error is not None or response.error is not None:
+        _emit_backend_failure_telemetry(
+            cli,
+            attempt_id=telemetry_attempt_id,
+            user_message=message,
+            primary_payload_mode=primary_payload_mode,
+            retry_payload_mode=retry_payload_mode,
+            retry_outcome=retry_outcome,
+            primary_error=primary_error or response.error,
+            final_error=response.error,
+        )
 
     # //audit assumption: backend failed without confirmation path; risk: no response; invariant: caller handles None; strategy: return None.
     return None

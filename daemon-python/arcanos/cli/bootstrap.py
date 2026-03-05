@@ -74,12 +74,23 @@ def first_run_setup(cli: "ArcanosCLI") -> None:
     cli.console.print(get_first_run_setup_header())
 
     if cli.memory.get_setting("telemetry_consent") is None:
+        # //audit assumption: non-interactive sessions cannot safely answer consent prompts; failure risk: prompt consumes command stream or hangs process; expected invariant: consent is explicitly set without blocking; handling strategy: default telemetry to disabled and skip prompt when stdin is not a TTY.
+        if not sys.stdin or not sys.stdin.isatty():
+            cli.memory.set_setting("telemetry_consent", False)
+            cli.console.print("[yellow]Non-interactive session detected; telemetry defaulted to disabled.[/yellow]")
+            cli.memory.set_setting("first_run", False)
+            return
+
         cli.console.print(get_telemetry_section_header())
         # //audit assumption: telemetry lines iterable; risk: missing lines; invariant: each description line printed; strategy: iterate descriptions.
         for line in get_telemetry_description_lines():
             cli.console.print(line)
 
-        consent = input(get_telemetry_prompt()).lower().strip()
+        try:
+            consent = input(get_telemetry_prompt()).lower().strip()
+        except EOFError:
+            # //audit assumption: stdin may close between TTY checks and prompt read; failure risk: startup crash on first run; expected invariant: first-run flow completes deterministically; handling strategy: fail closed by disabling telemetry.
+            consent = "n"
         cli.memory.set_setting("telemetry_consent", consent == "y")
 
         if consent == "y":

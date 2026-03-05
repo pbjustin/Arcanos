@@ -17,6 +17,30 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _sanitize_utf8_text(value: str) -> str:
+    """
+    Purpose: Normalize arbitrary strings into UTF-8 encodable text for SQLite writes.
+    Inputs/Outputs: raw text -> UTF-8-safe text.
+    Edge cases: Replaces lone surrogate code points that cannot be encoded.
+    """
+    return value.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    """
+    Purpose: Recursively sanitize JSON-like values before serialization/storage.
+    Inputs/Outputs: arbitrary value -> UTF-8-safe value with preserved shape.
+    Edge cases: Non-container values pass through unchanged.
+    """
+    if isinstance(value, str):
+        return _sanitize_utf8_text(value)
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(_sanitize_json_value(key)): _sanitize_json_value(item) for key, item in value.items()}
+    return value
+
+
 @dataclass
 class PatchLog:
     rollback_id: str
@@ -135,10 +159,13 @@ class HistoryDB:
     # Messages
     # -----------------------
     def log_message(self, session_id: str, role: str, content: str) -> None:
+        normalized_session_id = _sanitize_utf8_text(session_id)
+        normalized_role = _sanitize_utf8_text(role)
+        normalized_content = _sanitize_utf8_text(content)
         with self._conn() as c:
             c.execute(
                 "INSERT INTO messages(session_id, ts_ms, role, content) VALUES(?,?,?,?)",
-                (session_id, _now_ms(), role, content),
+                (normalized_session_id, _now_ms(), normalized_role, normalized_content),
             )
 
     # -----------------------
@@ -154,11 +181,25 @@ class HistoryDB:
         stderr: str,
     ) -> str:
         cmd_id = str(uuid.uuid4())
+        normalized_session_id = _sanitize_utf8_text(session_id)
+        normalized_command = _sanitize_utf8_text(command)
+        normalized_status = _sanitize_utf8_text(status)
+        normalized_stdout = _sanitize_utf8_text(stdout)
+        normalized_stderr = _sanitize_utf8_text(stderr)
         with self._conn() as c:
             c.execute(
                 "INSERT INTO commands(id, session_id, ts_ms, command, status, return_code, stdout, stderr) "
                 "VALUES(?,?,?,?,?,?,?,?)",
-                (cmd_id, session_id, _now_ms(), command, status, return_code, stdout, stderr),
+                (
+                    cmd_id,
+                    normalized_session_id,
+                    _now_ms(),
+                    normalized_command,
+                    normalized_status,
+                    return_code,
+                    normalized_stdout,
+                    normalized_stderr,
+                ),
             )
         return cmd_id
 
@@ -177,23 +218,29 @@ class HistoryDB:
         patch_sha256: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
+        normalized_patch_text = _sanitize_utf8_text(patch_text or "")
+        normalized_summary = _sanitize_utf8_text(summary)
+        normalized_error = _sanitize_utf8_text(error) if isinstance(error, str) else None
+        normalized_session_id = _sanitize_utf8_text(session_id)
+        sanitized_files = _sanitize_json_value(files)
+        sanitized_backups = _sanitize_json_value(backups)
         if patch_sha256 is None:
-            patch_sha256 = hashlib.sha256((patch_text or "").encode("utf-8")).hexdigest()
+            patch_sha256 = hashlib.sha256(normalized_patch_text.encode("utf-8")).hexdigest()
         with self._conn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO patches(rollback_id, session_id, ts_ms, status, summary, files_json, backups_json, patch_text, patch_sha256, error) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     rollback_id,
-                    session_id,
+                    normalized_session_id,
                     _now_ms(),
-                    status,
-                    summary,
-                    json.dumps(files),
-                    json.dumps(backups),
-                    patch_text,
+                    _sanitize_utf8_text(status),
+                    normalized_summary,
+                    json.dumps(sanitized_files),
+                    json.dumps(sanitized_backups),
+                    normalized_patch_text,
                     patch_sha256,
-                    error,
+                    normalized_error,
                 ),
             )
 
@@ -246,30 +293,49 @@ class HistoryDB:
         repo_index: dict[str, Any],
     ) -> str:
         snap_id = str(uuid.uuid4())
-        repo_index_json = json.dumps(repo_index, ensure_ascii=False)
+        sanitized_repo_index = _sanitize_json_value(repo_index)
+        sanitized_config = _sanitize_json_value(config)
+        repo_index_json = json.dumps(sanitized_repo_index, ensure_ascii=False)
         repo_index_sha = hashlib.sha256(repo_index_json.encode("utf-8")).hexdigest()
         with self._conn() as c:
             c.execute(
                 "INSERT INTO snapshots(id, session_id, ts_ms, git_head, repo_root, config_json, repo_index_json, repo_index_sha256) "
                 "VALUES(?,?,?,?,?,?,?,?)",
-                (snap_id, session_id, _now_ms(), git_head, repo_root, json.dumps(config), repo_index_json, repo_index_sha),
+                (
+                    snap_id,
+                    _sanitize_utf8_text(session_id),
+                    _now_ms(),
+                    _sanitize_utf8_text(git_head),
+                    _sanitize_utf8_text(repo_root),
+                    json.dumps(sanitized_config),
+                    repo_index_json,
+                    repo_index_sha,
+                ),
             )
         return snap_id
 
     def log_policy_event(self, session_id: str, event: str, detail: dict[str, Any]) -> str:
         ev_id = str(uuid.uuid4())
+        sanitized_detail = _sanitize_json_value(detail)
         with self._conn() as c:
             c.execute(
                 "INSERT INTO policy_events(id, session_id, ts_ms, event, detail_json) VALUES(?,?,?,?,?)",
-                (ev_id, session_id, _now_ms(), event, json.dumps(detail)),
+                (
+                    ev_id,
+                    _sanitize_utf8_text(session_id),
+                    _now_ms(),
+                    _sanitize_utf8_text(event),
+                    json.dumps(sanitized_detail),
+                ),
             )
         return ev_id
 
     def set_state(self, key: str, value: Any) -> None:
+        sanitized_value = _sanitize_json_value(value)
         with self._conn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO kv_state(key, value_json, ts_ms) VALUES(?,?,?)",
-                (key, json.dumps(value), _now_ms()),
+                (_sanitize_utf8_text(key), json.dumps(sanitized_value), _now_ms()),
             )
 
     def get_state(self, key: str, default: Any = None) -> Any:
@@ -287,7 +353,14 @@ class HistoryDB:
         with self._conn() as c:
             c.execute(
                 "INSERT INTO feedback(id, session_id, ts_ms, target_id, rating, note) VALUES(?,?,?,?,?,?)",
-                (fb_id, session_id, _now_ms(), target_id, rating, note),
+                (
+                    fb_id,
+                    _sanitize_utf8_text(session_id),
+                    _now_ms(),
+                    _sanitize_utf8_text(target_id),
+                    rating,
+                    _sanitize_utf8_text(note),
+                ),
             )
         return fb_id
 

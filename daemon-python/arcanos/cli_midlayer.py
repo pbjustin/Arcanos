@@ -115,6 +115,10 @@ _SYSTEM_LINE_INDICATORS: list[re.Pattern[str]] = [
     re.compile(r"linked memory", re.I),
     re.compile(r"deduplicated", re.I),
     re.compile(r"reinforcement cycle", re.I),
+    re.compile(r"system routing details", re.I),
+    re.compile(r"modules involved", re.I),
+    re.compile(r"backend endpoint", re.I),
+    re.compile(r"^\s*[•\-]\s*intent:", re.I),
 ]
 
 # ────────────────────────────────────────────
@@ -135,8 +139,11 @@ _STRUCTURAL_PATTERNS: list[re.Pattern[str]] = [
 
 _SYSTEM_TAIL_MARKERS = [
     "### 🛡️ Audit Summary",
+    "### 🛑 Audit Summary",
     "### Audit Summary",
     "🛡️ Audit Summary",
+    "🛑 Audit Summary",
+    "System Routing Details",
     "📊 COMPLIANCE STATUS",
     "🎯 STRUCTURED RECOMMENDATIONS",
     "---\n🧠",
@@ -144,6 +151,7 @@ _SYSTEM_TAIL_MARKERS = [
 
 _HUMAN_CONTENT_MARKERS = [
     "### 🧠 Answer",
+    "### 🧰 Answer",
     "### Answer",
     "### 📖 Narrative Output",
     "### Narrative Output",
@@ -204,6 +212,19 @@ _INTENT_FALLBACKS: dict[str, str] = {
 # ────────────────────────────────────────────
 # Core translation pipeline
 # ────────────────────────────────────────────
+
+
+def _contains_structured_artifact_markers(text: str) -> bool:
+    """Detect backend-style structured artifacts that should be stripped even on local source."""
+    lowered = text.lower()
+    has_audit_heading = "audit summary" in lowered
+    has_routing_heading = "system routing details" in lowered
+    has_module_line = "modules involved" in lowered
+    has_backend_endpoint_line = "backend endpoint" in lowered
+    has_answer_heading = "### 🧠 answer" in lowered or "### answer" in lowered
+    return has_audit_heading or (
+        has_routing_heading and (has_module_line or has_backend_endpoint_line or has_answer_heading)
+    )
 
 
 def _extract_human_content(text: str) -> str:
@@ -348,9 +369,12 @@ def translate(
     if debug:
         return response_text, True
 
-    # Local gpt-4.1-mini responses are clean — pass through as-is
+    # Local responses are normally clean. If they include backend-style
+    # scaffolding, route through the same cleanup pipeline for natural output.
     if source == "local":
-        return response_text.strip(), True
+        # //audit assumption: local fallback can occasionally emit structured audit scaffolding; risk: raw machine-format text shown to user; invariant: only artifact-like payloads are rewritten; handling strategy: heuristic marker gate before cleanup pipeline.
+        if not _contains_structured_artifact_markers(response_text):
+            return response_text.strip(), True
 
     # Backend / Trinity pipeline: full translation to strip narrative
     # structure, audit sections, and fine-tuned model artifacts

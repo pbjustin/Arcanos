@@ -11,6 +11,7 @@ from ..utils.telemetry import sanitize_sensitive_data
 
 _logger_lock = threading.Lock()
 _logger: Optional[logging.Logger] = None
+_STANDARD_LOG_RECORD_FIELDS = set(logging.makeLogRecord({}).__dict__.keys())
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -31,6 +32,16 @@ class JsonLogFormatter(logging.Formatter):
             value = getattr(record, key, None)
             if value is not None:
                 payload[key] = value
+
+        # //audit assumption: telemetry fields are supplied via logging extras; risk: dropping custom fields makes incident analysis impossible; invariant: all non-standard extra fields are preserved; handling: append every custom LogRecord attribute that is not a built-in field.
+        for key, value in record.__dict__.items():
+            if key in _STANDARD_LOG_RECORD_FIELDS:
+                continue
+            if key in payload:
+                continue
+            if value is None:
+                continue
+            payload[key] = value
 
         #audit Assumption: structured debug logs may include credential-like values in extras; risk: secret leakage to local files; invariant: payload sanitized before serialization; handling: apply shared telemetry sanitizer.
         sanitized_payload = sanitize_sensitive_data(payload)

@@ -59,6 +59,8 @@ class Memory:
         """Save memory to file"""
         try:
             self.data["updated_at"] = datetime.now().isoformat()
+            # //audit assumption: memory path parent may not exist for custom/test file paths; failure risk: persistence silently fails with FileNotFoundError; expected invariant: parent directory exists before write; handling strategy: create parent directories eagerly.
+            self.file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.file_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
             return True
@@ -132,6 +134,8 @@ class Memory:
     def export_backup(self, backup_path: Path) -> bool:
         """Export memory to backup file"""
         try:
+            # //audit assumption: backup destination parent may be missing; failure risk: backup export fails unexpectedly; expected invariant: destination parent exists before write; handling strategy: create parent directories eagerly.
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
             with open(backup_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2, ensure_ascii=False)
             return True
@@ -147,4 +151,3 @@ class Memory:
             return True
         except (json.JSONDecodeError, IOError):
             return False
-
