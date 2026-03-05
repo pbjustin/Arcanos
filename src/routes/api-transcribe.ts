@@ -14,7 +14,7 @@ import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platf
 const router = express.Router();
 
 router.use(securityHeaders);
-router.use(createRateLimitMiddleware(20, 15 * 60 * 1000)); // 20 requests per 15 minutes
+router.use('/api/transcribe', createRateLimitMiddleware(20, 15 * 60 * 1000)); // 20 requests per 15 minutes
 
 const MAX_AUDIO_BASE64_LENGTH = 8_000_000;
 const DEFAULT_FILENAME = 'audio.wav';

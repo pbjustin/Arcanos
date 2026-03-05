@@ -16,7 +16,7 @@ import { extractPromptFromBody, normalizePromptWithContext } from '@shared/promp
 const router = express.Router();
 
 router.use(securityHeaders);
-router.use(createRateLimitMiddleware(120, 10 * 60 * 1000));
+router.use('/api/ask', createRateLimitMiddleware(120, 10 * 60 * 1000));
 
 const actionSchema = {
   message: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },

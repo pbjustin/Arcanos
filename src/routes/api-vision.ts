@@ -12,7 +12,7 @@ import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platf
 const router = express.Router();
 
 router.use(securityHeaders);
-router.use(createRateLimitMiddleware(20, 15 * 60 * 1000)); // 20 requests per 15 minutes
+router.use('/api/vision', createRateLimitMiddleware(20, 15 * 60 * 1000)); // 20 requests per 15 minutes
 
 const MAX_IMAGE_BASE64_LENGTH = 8_000_000;
 const MAX_PROMPT_LENGTH = 2000;

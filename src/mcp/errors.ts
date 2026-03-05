@@ -33,5 +33,10 @@ export function mcpError(
 
 export function mcpText(content: unknown) {
   const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-  return { content: [{ type: 'text', text }], structuredContent: content };
+  //audit Assumption: MCP structuredContent should be an object for broad client compatibility; risk: array/scalar payload rejection; invariant: structuredContent is always a record; handling: wrap non-object values under `value`.
+  const structuredContent =
+    content && typeof content === 'object' && !Array.isArray(content)
+      ? content
+      : { value: content };
+  return { content: [{ type: 'text', text }], structuredContent };
 }

@@ -1,5 +1,4 @@
-import { createMcpServer } from './server.js';
-import { buildMcpStdioContext } from './context.js';
+import util from 'node:util';
 
 /**
  * Local stdio MCP entrypoint (Claude Desktop / Cursor).
@@ -12,6 +11,51 @@ async function getStdioTransport() {
   return (mod as any).StdioServerTransport;
 }
 
+/**
+ * Redirect console output to stderr for stdio transport safety.
+ *
+ * Purpose: prevent protocol corruption by keeping stdout reserved for MCP frames.
+ * Inputs/outputs: no inputs; mutates console log methods to write to stderr.
+ * Edge cases: falls back to a minimal error line when formatting fails.
+ */
+function redirectConsoleLogsToStderr(): void {
+  const writeToStderr = (...args: unknown[]): void => {
+    try {
+      process.stderr.write(`${util.format(...args)}\n`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[mcp-stdio] failed to forward console output: ${message}\n`);
+    }
+  };
+
+  console.log = writeToStderr as typeof console.log;
+  console.info = writeToStderr as typeof console.info;
+  console.warn = writeToStderr as typeof console.warn;
+  console.debug = writeToStderr as typeof console.debug;
+}
+
+/**
+ * Load MCP stdio dependencies after stdout guards are installed.
+ *
+ * Purpose: ensure import-time logging cannot leak to stdout in stdio mode.
+ * Inputs/outputs: no inputs; returns MCP server/context factory functions.
+ * Edge cases: import failures propagate to main error handler.
+ */
+async function loadStdioServerModules(): Promise<{
+  createMcpServer: typeof import('./server.js')['createMcpServer'];
+  buildMcpStdioContext: typeof import('./context.js')['buildMcpStdioContext'];
+}> {
+  const [serverModule, contextModule] = await Promise.all([
+    import('./server.js'),
+    import('./context.js')
+  ]);
+
+  return {
+    createMcpServer: serverModule.createMcpServer,
+    buildMcpStdioContext: contextModule.buildMcpStdioContext
+  };
+}
+
 function parseSessionIdFromArgs(argv: string[]): string | undefined {
   const idx = argv.findIndex(a => a === '--sessionId' || a === '--session-id');
   if (idx >= 0 && typeof argv[idx + 1] === 'string') return argv[idx + 1];
@@ -20,6 +64,10 @@ function parseSessionIdFromArgs(argv: string[]): string | undefined {
 }
 
 async function main() {
+  redirectConsoleLogsToStderr();
+
+  const { createMcpServer, buildMcpStdioContext } = await loadStdioServerModules();
+
   const sessionId = parseSessionIdFromArgs(process.argv.slice(2));
   const ctx = buildMcpStdioContext(sessionId);
 
@@ -48,4 +96,3 @@ main().catch((err) => {
   // eslint-disable-next-line no-process-exit
   process.exit(1);
 });
-
