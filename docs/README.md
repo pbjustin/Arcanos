@@ -16,12 +16,14 @@ Recommended reading order:
 5. `docs/API.md`
 6. `docs/OPENAI_RESPONSES_TOOLS.md`
 7. `docs/TRINITY_PIPELINE.md`
-8. `docs/CUSTOM_GPTS.md`
-9. `docs/FINE_TUNING.md`
-10. `docs/CLEAR_METHOD_2_0.md`
-11. `docs/RAILWAY_DEPLOYMENT.md`
-12. `docs/CI_CD.md`
-13. `docs/DOCUMENTATION.md`
+8. `docs/SELF_REFLECTIONS.md`
+9. `docs/ARCANOS_MCP_SERVER.md`
+10. `docs/CUSTOM_GPTS.md`
+11. `docs/FINE_TUNING.md`
+12. `docs/CLEAR_METHOD_2_0.md`
+13. `docs/RAILWAY_DEPLOYMENT.md`
+14. `docs/CI_CD.md`
+15. `docs/DOCUMENTATION.md`
 
 ## Configuration
 Configuration source files:
@@ -47,3 +49,5 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 - `docs/CI_CD.md`
 - `docs/REFERENCES.md`
 - `docs/CLEAR_METHOD_2_0.md`
+- `docs/SELF_REFLECTIONS.md`
+- `docs/ARCANOS_MCP_SERVER.md`

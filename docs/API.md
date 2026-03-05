@@ -71,6 +71,14 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - `POST /api/arcanos/ask` (confirmation required)
 - `POST /api/ask-hrc`
 
+### Reinforcement and reflection feedback
+- `POST /reinforce`
+- `POST /audit`
+- `POST /reinforcement/judge`
+- `GET /reinforcement/metrics`
+- `GET /memory/digest`
+- `GET /memory`
+
 ### AI utility and media
 - `POST /write` (confirmation required)
 - `POST /guide` (confirmation required)
@@ -117,6 +125,8 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - `POST /rag/query`
 
 ### Daemon, debug, and registry paths
+- `POST /mcp` (MCP Streamable HTTP, bearer token required, origin-restricted when configured)
+- `GET /mcp` (always `405 Method Not Allowed`)
 - `POST /api/daemon/heartbeat` (daemon auth required)
 - `GET /api/daemon/commands` (daemon auth required)
 - `POST /api/daemon/commands/ack` (daemon auth required)

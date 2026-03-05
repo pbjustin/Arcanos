@@ -84,6 +84,29 @@ The OpenAI client resolves keys in this order, skipping placeholders:
 | `ARCANOS_AUTOMATION_SECRET` | empty | Shared secret for automation bypass. |
 | `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
 
+### Self reflections and judged feedback
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARCANOS_CONTEXT_MODE` | `reinforcement` | Enables/disables contextual reinforcement recording (`off` disables storage in memory context window). |
+| `ARCANOS_CONTEXT_WINDOW` | `50` | Maximum in-memory reinforcement entries retained. |
+| `ARCANOS_MEMORY_DIGEST_SIZE` | `8` | Context digest length used in system prompt reinforcement section. |
+| `ARCANOS_CLEAR_MIN_SCORE` | `0.85` | Minimum normalized score threshold for judged acceptance. |
+| `TRINITY_JUDGED_FEEDBACK_ENABLED` | `true` | Enables automatic judged feedback writes from Trinity CLEAR audit output. |
+| `TRINITY_JUDGED_ALLOWED_ENDPOINTS` | `*` | Comma-separated source-endpoint allowlist for auto-judged feedback (`*` allows all). |
+| `JUDGED_FEEDBACK_CACHE_MAX_ENTRIES` | `2000` | Maximum entries retained in judged idempotency cache. |
+
+### MCP server
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MCP_BEARER_TOKEN` | none | Required bearer token for `POST /mcp`. |
+| `MCP_ALLOWED_ORIGINS` | empty | Comma-separated browser origin allowlist for MCP HTTP requests. |
+| `MCP_HTTP_BODY_LIMIT` | `1mb` | JSON body size limit for MCP transport route. |
+| `MCP_REQUIRE_CONFIRMATION` | `true` | Require nonce confirmation for gated MCP tools. |
+| `MCP_CONFIRM_TTL_MS` | `60000` | Nonce expiration window for MCP confirmation flow. |
+| `MCP_EXPOSE_DESTRUCTIVE` | `false` | Expose destructive MCP tools when set to true. |
+| `MCP_ENABLE_SESSIONS` | `false` | Enable transport session ID generation in MCP HTTP transport. |
+| `MCP_ALLOW_MODULE_ACTIONS` | empty | CSV allowlist controlling `modules.invoke` (`module:action` or `module:*`). |
+
 ### Daemon-specific core variables
 
 | Variable | Default | Purpose |
