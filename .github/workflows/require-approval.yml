@@ -1,0 +1,58 @@
+name: Require Human Approval (Self-Improve)
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+jobs:
+  require-approval:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required approvals
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request || (await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            })).data;
+
+            const labels = (pr.labels || []).map(l => (typeof l === 'string' ? l : l.name));
+            const needsApproval = labels.includes('requires-human-approval') || labels.some(l => /^autonomy-(2|3)$/.test(l));
+
+            core.info(`PR labels: ${labels.join(', ')}`);
+            core.info(`needsApproval: ${needsApproval}`);
+
+            if (!needsApproval) {
+              core.info('No approval required for this PR by policy.');
+              return;
+            }
+
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100
+            });
+
+            // Keep only the latest review state per user (GitHub behavior for approvals)
+            const latestByUser = new Map();
+            for (const r of reviews) latestByUser.set(r.user.login, r);
+
+            const approvers = [];
+            for (const [login, r] of latestByUser.entries()) {
+              if (r.state === 'APPROVED' && login !== pr.user.login) approvers.push(login);
+            }
+
+            core.info(`Approvers (excluding author): ${approvers.join(', ')}`);
+
+            if (approvers.length < 1) {
+              core.setFailed('This PR requires at least 1 human approval before merge (policy: autonomy >= 2).');
+            }

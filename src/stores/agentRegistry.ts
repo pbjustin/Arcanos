@@ -118,6 +118,26 @@ export async function validateCapability(agentId: string, capability: string): P
 /**
  * Warm the agent cache from Prisma on startup.
  */
+
+export async function grantCapabilities(agentId: string, capabilities: string[]): Promise<AgentRecord | null> {
+  const db = getPrisma();
+  try {
+    const current = await db.agent.findUnique({ where: { id: agentId } });
+    if (!current) return null;
+    const merged = Array.from(new Set([...(current.capabilities || []), ...capabilities]));
+    const updated = await db.agent.update({
+      where: { id: agentId },
+      data: { capabilities: merged }
+    });
+    const record = updated as unknown as AgentRecord;
+    agentCache.set(record.id, record);
+    aiLogger.info('Capabilities granted', { module: 'agentRegistry', agentId, capabilities });
+    return record;
+  } catch {
+    return null;
+  }
+}
+
 export async function warmAgentCache(): Promise<void> {
   try {
     const db = getPrisma();

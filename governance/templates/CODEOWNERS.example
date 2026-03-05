@@ -1,0 +1,11 @@
+# Example CODEOWNERS file
+# Copy to .github/CODEOWNERS and replace placeholders.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Require review for everything from the core maintainers team:
+* @YOUR_ORG/YOUR_TEAM
+
+# Require additional review for runtime/policy paths:
+# /src/services/selfImprove/ @YOUR_ORG/AI_PLATFORM
+# /src/services/safety/ @YOUR_ORG/SECURITY

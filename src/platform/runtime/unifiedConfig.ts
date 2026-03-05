@@ -18,6 +18,7 @@ import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { getEnv, getEnvNumber, getEnvBoolean } from "@platform/runtime/env.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
+import path from "path";
 
 /**
  * Application configuration interface
@@ -67,6 +68,17 @@ export interface AppConfig {
   // Railway Configuration
   railwayEnvironment: string | undefined;
   railwayProjectId: string | undefined;
+
+  // Self-Improve Loop Configuration
+  selfImproveEnabled: boolean;
+  selfImproveEnvironment: 'development' | 'staging' | 'production';
+  selfImproveAutonomyLevel: number; // 0..3
+  selfImproveFrozen: boolean;
+  selfImproveEvidenceDir: string;
+  selfImproveRetentionDays: number;
+  selfImprovePiiScrubEnabled: boolean;
+  selfImproveActuatorMode: 'pr_bot' | 'daemon';
+
 }
 
 /**
@@ -208,7 +220,16 @@ export function getConfig(): AppConfig {
 
     // Railway Configuration
     railwayEnvironment: getEnv('RAILWAY_ENVIRONMENT'),
-    railwayProjectId: getEnv('RAILWAY_PROJECT_ID')
+    railwayProjectId: getEnv('RAILWAY_PROJECT_ID'),
+    // Self-Improve Loop Configuration
+    selfImproveEnabled: getEnvBoolean('SELF_IMPROVE_ENABLED', false),
+    selfImproveEnvironment: (getEnv('SELF_IMPROVE_ENV', 'development') as any),
+    selfImproveAutonomyLevel: getEnvNumber('SELF_IMPROVE_AUTONOMY_LEVEL', 0),
+    selfImproveFrozen: getEnvBoolean('SELF_IMPROVE_FREEZE', false),
+    selfImproveEvidenceDir: getEnv('SELF_IMPROVE_EVIDENCE_DIR', path.join(process.cwd(), 'governance', 'evidence_packs')),
+    selfImproveRetentionDays: getEnvNumber('SELF_IMPROVE_RETENTION_DAYS', 30),
+    selfImprovePiiScrubEnabled: getEnvBoolean('SELF_IMPROVE_PII_SCRUB', true),
+    selfImproveActuatorMode: (getEnv('SELF_IMPROVE_ACTUATOR_MODE', 'pr_bot') as any)
   };
 
   return config;

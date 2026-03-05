@@ -38,7 +38,8 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
     - Patch/command proposals are extracted and (optionally) suppressed from the displayed message.
     """
     history = HistoryDB()
-    orchestrator = PatchOrchestrator(cli.console, history)
+    guard = PolicyGuard(history)
+    orchestrator = PatchOrchestrator(cli.console, history, guard)
 
     root_user_message = user_message
     prompt = user_message
@@ -108,7 +109,7 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
                 guard.record_success()
             else:
                 guard.record_failure(cli.instance_id, "command", {"command": c.command, "return_code": rc})
-            console.print(f"[green]Command finished[/green] rc={rc}")
+            cli.console.print(f"[green]Command finished[/green] rc={rc}")
             results.append(ToolResult("command", rc == 0, {"command": c.command, "return_code": rc, "stdout": out, "stderr": err}))
 
         prompt = _format_followup(results)
@@ -116,6 +117,13 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
         try:
             import subprocess
             from pathlib import Path
+            ctx = {}
+            if Config.REPO_INDEX_ENABLED:
+                try:
+                    ctx = to_context_payload(build_repo_index())
+                except Exception:
+                    ctx = {}
+
             repo_root = Path(ctx.get("repoRoot") or Path.cwd())
             git_head = ""
             try:
@@ -127,7 +135,7 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
                 "maxSteps": Config.AGENT_MAX_STEPS,
                 "repoIndex": Config.REPO_INDEX_ENABLED,
             }
-            history_db.log_snapshot(cli.instance_id, git_head=git_head, repo_root=str(repo_root), config=config_flags, repo_index=ctx)
+            history.log_snapshot(cli.instance_id, git_head=git_head, repo_root=str(repo_root), config=config_flags, repo_index=ctx)
         except Exception:
             pass
 
