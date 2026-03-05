@@ -17,6 +17,60 @@ export const patchProposalSchema = z.object({
 
 export type PatchProposal = z.infer<typeof patchProposalSchema>;
 
+/**
+ * Parse a JSON object from model text output with robust fallbacks.
+ * Inputs: raw model output text.
+ * Outputs: parsed JSON value.
+ * Edge cases: handles fenced JSON and extra prose before/after object payloads.
+ */
+function parseJsonObjectFromModelOutput(rawOutput: string): unknown {
+  const raw = (rawOutput || "").trim();
+  //audit Assumption: some model runs return clean JSON; risk: parse failure on decorated output; invariant: parser should accept strict JSON first; handling: direct JSON.parse attempt.
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Continue to robust extraction fallbacks.
+  }
+
+  //audit Assumption: model may wrap JSON in markdown fences; risk: non-JSON fence content; invariant: fenced payload should be tried before generic brace slicing; handling: extract fenced body and parse.
+  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fencedMatch?.[1]) {
+    const fencedBody = fencedMatch[1].trim();
+    try {
+      return JSON.parse(fencedBody);
+    } catch {
+      // Continue to brace extraction.
+    }
+  }
+
+  //audit Assumption: output may include prose around a JSON object; risk: first/last brace span may still include noise; invariant: parser should recover the largest plausible object; handling: slice from first "{" to last "}" and parse.
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const candidate = raw.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Continue to progressive trimming fallback.
+    }
+  }
+
+  //audit Assumption: model sometimes appends trailing non-JSON tokens; risk: O(n^2) parse attempts on very long output; invariant: bounded token limits keep this tractable; handling: progressively trim trailing chars until parse succeeds.
+  for (let end = raw.length - 1; end > 0; end--) {
+    if (raw[end] !== "}") continue;
+    const start = raw.indexOf("{");
+    if (start < 0 || end <= start) continue;
+    const candidate = raw.slice(start, end + 1);
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Keep scanning.
+    }
+  }
+
+  throw new Error("Patch proposal is not valid JSON.");
+}
+
 export function extractFilesFromUnifiedDiff(diff: string): string[] {
   const files = new Set<string>();
   const lines = diff.split(/\r?\n/);
@@ -84,16 +138,7 @@ export async function generatePatchProposal(args: {
     metadata: { feature: "self-improve-patch-proposal", trigger: args.trigger, component: args.component || "system" },
   });
 
-  const raw = (resp.output || "").trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // If the model included fencing or extra text, try to extract the first JSON object.
-    const m = raw.match(/\{[\s\S]*\}$/);
-    if (!m) throw new Error("Patch proposal is not valid JSON.");
-    parsed = JSON.parse(m[0]);
-  }
+  const parsed = parseJsonObjectFromModelOutput(resp.output || "");
 
   const proposal = patchProposalSchema.parse(parsed);
 
