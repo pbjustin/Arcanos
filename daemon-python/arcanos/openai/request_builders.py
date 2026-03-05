@@ -19,15 +19,7 @@ Features:
 from typing import Any, Dict, List, Optional, Union
 
 from ..config import Config
-
-
-def _sanitize_utf8_text(value: str) -> str:
-    """
-    Purpose: Normalize arbitrary Python strings into UTF-8 encodable text.
-    Inputs/Outputs: raw string -> UTF-8-safe string.
-    Edge cases: Replaces lone surrogate code points that would fail JSON encoding.
-    """
-    return value.encode("utf-8", errors="replace").decode("utf-8")
+from ..utils.text import sanitize_utf8_text
 
 
 def _normalize_content_to_text(content: Any) -> str:
@@ -104,20 +96,20 @@ def build_responses_request(
         for conversation_item in conversation_history[-5:]:
             #audit Assumption: conversation history keys follow user/ai schema; risk: malformed history breaks context reconstruction; invariant: only string values are emitted into response input; handling: guard each key before append.
             if isinstance(conversation_item.get("user"), str):
-                normalized_user = _sanitize_utf8_text(conversation_item["user"])
+                normalized_user = sanitize_utf8_text(conversation_item["user"])
                 input_items.append({
                     "role": "user",
                     "content": [{"type": "input_text", "text": normalized_user}]
                 })
             if isinstance(conversation_item.get("ai"), str):
                 #audit Assumption: assistant history must use output_text in Responses API; risk: invalid payload when using input_text for assistant role; invariant: assistant history items serialize as output_text; handling: map ai history to output_text.
-                normalized_assistant = _sanitize_utf8_text(conversation_item["ai"])
+                normalized_assistant = sanitize_utf8_text(conversation_item["ai"])
                 input_items.append({
                     "role": "assistant",
                     "content": [{"type": "output_text", "text": normalized_assistant}]
                 })
 
-    normalized_prompt = _sanitize_utf8_text(prompt)
+    normalized_prompt = sanitize_utf8_text(prompt)
     input_items.append({
         "role": "user",
         "content": [{"type": "input_text", "text": normalized_prompt}]
@@ -131,7 +123,7 @@ def build_responses_request(
     }
 
     if system_prompt:
-        payload["instructions"] = _sanitize_utf8_text(system_prompt)
+        payload["instructions"] = sanitize_utf8_text(system_prompt)
     if top_p is not None:
         payload["top_p"] = top_p
 

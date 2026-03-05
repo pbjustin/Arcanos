@@ -33,7 +33,14 @@ jest.unstable_mockModule('@prisma/client', () => ({
   })),
 }));
 
-const { createPlan, getPlan, approvePlan, blockPlan } = await import(
+const {
+  createPlan,
+  getPlan,
+  approvePlan,
+  blockPlan,
+  createExecutionResult,
+  getExecutionResults,
+} = await import(
   '../src/stores/actionPlanStore.js'
 );
 
@@ -142,6 +149,52 @@ describe('ActionPlan Store', () => {
       const result = await approvePlan('plan-3');
       expect(result).toBeDefined();
       expect(result?.status).toBe('approved');
+    });
+  });
+
+  describe('cache fallback eviction', () => {
+    it('removes execution-result fallback cache when a plan is evicted', async () => {
+      mockPrismaCreate.mockRejectedValue(new Error('db unavailable'));
+      mockExecutionCreate.mockRejectedValue(new Error('db unavailable'));
+      mockExecutionFindMany.mockRejectedValue(new Error('db unavailable'));
+
+      const anchorPlan = await createPlan({
+        ...sampleInput,
+        idempotency_key: 'eviction-anchor',
+      });
+
+      await createExecutionResult(
+        anchorPlan.id,
+        anchorPlan.actions[0]?.id ?? 'anchor-action',
+        'agent-1',
+        'success',
+        'allow',
+        { ok: true },
+        null,
+        'sig-anchor'
+      );
+
+      const cachedResults = await getExecutionResults(anchorPlan.id);
+      expect(cachedResults).toHaveLength(1);
+
+      // Force cache churn above MAX_CACHE_SIZE (200) so the oldest plan gets evicted.
+      for (let index = 0; index < 220; index++) {
+        await createPlan({
+          ...sampleInput,
+          idempotency_key: `evict-${index}`,
+          actions: [
+            {
+              agent_id: `agent-${index}`,
+              capability: 'terminal.run',
+              params: { command: `echo ${index}` },
+              timeout_ms: 5000,
+            },
+          ],
+        });
+      }
+
+      const resultsAfterEviction = await getExecutionResults(anchorPlan.id);
+      expect(resultsAfterEviction).toEqual([]);
     });
   });
 });

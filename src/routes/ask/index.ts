@@ -39,7 +39,7 @@ const router = express.Router();
 
 // Apply security middleware
 router.use(securityHeaders);
-router.use(createRateLimitMiddleware(60, 15 * 60 * 1000)); // 60 requests per 15 minutes
+const askRateLimit = createRateLimitMiddleware(60, 15 * 60 * 1000); // 60 requests per 15 minutes
 
 type AskRouteResponse =
   | AskResponse
@@ -545,12 +545,12 @@ export const handleAIRequest = async (
 };
 
 // Primary ask endpoint routed through the Trinity brain (no confirmation required)
-router.post('/ask', askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
-router.get('/ask', askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
+router.post('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
+router.get('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 
 // Brain endpoint (alias for ask with same functionality) still requires confirmation
-router.post('/brain', askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
-router.get('/brain', askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.post('/brain', askRateLimit, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.get('/brain', askRateLimit, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
 
 export default router;
 

@@ -7,6 +7,7 @@
  */
 
 import express from 'express';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { agentRegistrationSchema } from '@shared/types/actionPlan.js';
 import {
@@ -14,6 +15,7 @@ import {
   getAgent,
   updateHeartbeat,
   listAgents,
+  grantCapabilities,
 } from '../stores/agentRegistry.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
@@ -25,6 +27,13 @@ const router = express.Router();
 const agentIdSchema = z.object({
   agentId: z.string().min(1)
 });
+
+function timingSafeStringEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
 
 /**
  * POST /agents/register — Register a new agent
@@ -62,6 +71,35 @@ router.get(
       apiLogger.error('List failed', { module: 'agents', error: resolveErrorMessage(error) });
       sendInternalError(res, 'Failed to list agents');
     }
+  })
+);
+
+
+/**
+ * POST /agents/:agentId/capabilities/grant — Grant capabilities (admin only)
+ *
+ * Admin auth: x-admin-api-key header must match ADMIN_API_KEY env var.
+ */
+router.post(
+  '/agents/:agentId/capabilities/grant',
+  validateParams(agentIdSchema),
+  validateBody(z.object({ capabilities: z.array(z.string().min(1)).min(1) })),
+  asyncHandler(async (req, res) => {
+    const adminKey = getConfig().adminKey;
+    const provided = req.header('x-admin-api-key') ?? '';
+    if (!adminKey || !timingSafeStringEqual(provided, adminKey)) {
+      res.status(403).json({ error: 'Admin authorization required' });
+      return;
+    }
+
+    const agentId = (req.validated!.params as any).agentId as string;
+    const caps = (req.validated!.body as any).capabilities as string[];
+    const updated = await grantCapabilities(agentId, caps);
+    if (!updated) {
+      sendNotFoundError(res, 'Agent not found');
+      return;
+    }
+    res.json({ agent: updated });
   })
 );
 

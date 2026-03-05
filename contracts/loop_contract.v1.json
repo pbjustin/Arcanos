@@ -1,0 +1,73 @@
+{
+  "version": "1.0",
+  "name": "ARCANOS Self-Improve Loop Contract",
+  "decisionOutputs": [
+    "NOOP",
+    "SOFT_UPDATE",
+    "PATCH_PROPOSAL",
+    "ESCALATE",
+    "ROLLBACK"
+  ],
+  "autonomyLevels": {
+    "0": "Observe only",
+    "1": "Propose only (requires approval)",
+    "2": "Auto-apply soft changes in non-prod; code via PR",
+    "3": "Limited auto in prod with strict gates"
+  },
+  "allowedSurfaces": {
+    "soft": [
+      "prompts",
+      "routing",
+      "thresholds",
+      "retrieval_config",
+      "non_security_config"
+    ],
+    "hard": [
+      "code_changes",
+      "tool_permissions",
+      "security_policies",
+      "deployment"
+    ]
+  },
+  "gates": {
+    "hard": [
+      "pr_assistant_pass",
+      "path_allowlist",
+      "diff_size_limit",
+      "human_approval_or_pr_merge"
+    ],
+    "soft": [
+      "schema_valid",
+      "rollback_plan_present"
+    ]
+  },
+  "prohibitedPaths": [
+    "src/transport/http/middleware/**",
+    "src/platform/runtime/security.*",
+    "src/services/openai/**",
+    ".env*",
+    "Dockerfile",
+    "docker-compose.yml",
+    "Procfile"
+  ],
+  "rollback": {
+    "required": true,
+    "maxAutoRollbackAttempts": 1,
+    "rollbackOn": [
+      "healthcheck_fail",
+      "self_test_fail",
+      "clear_drop_below_min"
+    ]
+  },
+  "evidence": {
+    "required": true,
+    "store": "filesystem",
+    "defaultDir": "governance/evidence_packs",
+    "retentionDays": 30
+  },
+  "privacy": {
+    "piiScrub": true,
+    "redactCredentials": true,
+    "minimizePayload": true
+  }
+}

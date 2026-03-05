@@ -1,0 +1,18 @@
+# Data Policies for ARCANOS Telemetry and Evidence Packs
+version: "1.0"
+
+telemetry:
+  minimize: true
+  pii_scrub: true
+  redact_credentials: true
+  retain_days: 30
+
+evidence_packs:
+  store: filesystem
+  directory: governance/evidence_packs
+  pii_scrub: true
+  retain_days: 30
+
+access_control:
+  # Enforced by capability-based middleware in the API layer
+  required_capability: self_improve_admin

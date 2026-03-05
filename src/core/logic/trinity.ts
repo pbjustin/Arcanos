@@ -55,6 +55,7 @@ import { getInternalArchitecturalEvaluationPrompt } from "@platform/runtime/prom
 import { runClearAudit, type ClearAuditResult } from '../audit/runClearAudit.js';
 import { trackEscalation } from '@analytics/escalationTracker.js';
 import { getClearMinThreshold, recordRun } from '@analytics/clearAutoTuner.js';
+import { runSelfImproveCycle } from '@services/selfImprove/controller.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 
@@ -306,6 +307,18 @@ export async function runThroughBrain(
     if (reasoningLedger) {
       checkWatchdog();
       clearAudit = await runClearAudit(client, reasoningLedger);
+      // Self-improve loop trigger (non-blocking): feed CLEAR into controller.
+      try {
+        void runSelfImproveCycle({
+          trigger: 'clear',
+          clearOverall: clearAudit.overall,
+          clearMin: getClearMinThreshold(),
+          context: { requestId, tier }
+        }).catch(() => {});
+      } catch {
+        // ignore
+      }
+
       checkWatchdog();
 
       if (clearAudit.overall < getClearMinThreshold() && 

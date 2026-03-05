@@ -52,13 +52,23 @@ export async function getAgent(agentId: string): Promise<AgentRecord | null> {
   const cached = agentCache.get(agentId);
   if (cached) return cached;
 
-  const db = getPrisma();
-  const agent = await db.agent.findUnique({ where: { id: agentId } });
-  if (!agent) return null;
+  try {
+    const db = getPrisma();
+    const agent = await db.agent.findUnique({ where: { id: agentId } });
+    if (!agent) return null;
 
-  const record = agent as unknown as AgentRecord;
-  agentCache.set(agentId, record);
-  return record;
+    const record = agent as unknown as AgentRecord;
+    agentCache.set(agentId, record);
+    return record;
+  } catch (error) {
+    //audit Assumption: DB can be temporarily unavailable; risk: capability checks fail hard; invariant: cache remains source of truth fallback; handling: log warning and return null.
+    aiLogger.warn('Failed to fetch agent from DB; falling back to cache', {
+      module: 'agentRegistry',
+      agentId,
+      error: String(error)
+    });
+    return null;
+  }
 }
 
 export async function updateHeartbeat(agentId: string): Promise<AgentRecord | null> {
@@ -73,7 +83,12 @@ export async function updateHeartbeat(agentId: string): Promise<AgentRecord | nu
     const record = agent as unknown as AgentRecord;
     agentCache.set(agentId, record);
     return record;
-  } catch {
+  } catch (error) {
+    aiLogger.error('Failed to update heartbeat', {
+      module: 'agentRegistry',
+      agentId,
+      error: String(error)
+    });
     return null;
   }
 }
@@ -90,20 +105,36 @@ export async function updateAgentStatus(agentId: string, status: string): Promis
     const record = agent as unknown as AgentRecord;
     agentCache.set(agentId, record);
     return record;
-  } catch {
+  } catch (error) {
+    aiLogger.error('Failed to update agent status', {
+      module: 'agentRegistry',
+      agentId,
+      status,
+      error: String(error)
+    });
     return null;
   }
 }
 
 export async function listAgents(): Promise<AgentRecord[]> {
-  const db = getPrisma();
-  const agents = await db.agent.findMany({ orderBy: { createdAt: 'desc' } });
+  try {
+    const db = getPrisma();
+    const agents = await db.agent.findMany({ orderBy: { createdAt: 'desc' } });
 
-  for (const agent of agents) {
-    agentCache.set(agent.id, agent as unknown as AgentRecord);
+    for (const agent of agents) {
+      agentCache.set(agent.id, agent as unknown as AgentRecord);
+    }
+
+    return agents as unknown as AgentRecord[];
+  } catch (error) {
+    //audit Assumption: listing should remain available during DB outages; risk: stale/incomplete view; invariant: response stays shape-compatible; handling: return cached agents.
+    aiLogger.warn('Failed to list agents from DB; returning cached agents', {
+      module: 'agentRegistry',
+      error: String(error),
+      cacheSize: agentCache.size
+    });
+    return Array.from(agentCache.values());
   }
-
-  return agents as unknown as AgentRecord[];
 }
 
 /**
@@ -118,6 +149,32 @@ export async function validateCapability(agentId: string, capability: string): P
 /**
  * Warm the agent cache from Prisma on startup.
  */
+
+export async function grantCapabilities(agentId: string, capabilities: string[]): Promise<AgentRecord | null> {
+  const db = getPrisma();
+  try {
+    const current = await db.agent.findUnique({ where: { id: agentId } });
+    if (!current) return null;
+    const merged = Array.from(new Set([...(current.capabilities || []), ...capabilities]));
+    const updated = await db.agent.update({
+      where: { id: agentId },
+      data: { capabilities: merged }
+    });
+    const record = updated as unknown as AgentRecord;
+    agentCache.set(record.id, record);
+    aiLogger.info('Capabilities granted', { module: 'agentRegistry', agentId, capabilities });
+    return record;
+  } catch (error) {
+    aiLogger.error('Failed to grant capabilities', {
+      module: 'agentRegistry',
+      agentId,
+      capabilities,
+      error: String(error)
+    });
+    return null;
+  }
+}
+
 export async function warmAgentCache(): Promise<void> {
   try {
     const db = getPrisma();
