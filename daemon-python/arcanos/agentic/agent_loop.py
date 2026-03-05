@@ -33,7 +33,7 @@ def _format_followup(results: list[ToolResult]) -> str:
 
 def _contains_high_risk_shell_tokens(command: str) -> bool:
     """Purpose: detect high-risk shell chaining/injection tokens in LLM-proposed commands."""
-    risky_tokens = ("&&", "||", ";", "|", "`", "$(", "${", "<(", ">(")
+    risky_tokens = ("&&", "||", ";", "|", "`", "$(", "${", "<(", ">(", "\n", "\r", "&", ">", "<")
     lowered = command.lower()
     return any(token in lowered for token in risky_tokens)
 
