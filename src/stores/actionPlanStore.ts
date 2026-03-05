@@ -37,11 +37,41 @@ const planCache = new Map<string, ActionPlanRecord>();
 const planIdByIdempotencyKey = new Map<string, string>();
 const executionResultsCache = new Map<string, ExecutionResultRecord[]>();
 
+/**
+ * Remove one plan and all associated fallback indexes/caches.
+ *
+ * Purpose: prevent stale idempotency pointers and orphaned execution-result entries.
+ * Inputs/outputs: plan id -> deletes related cache entries when present.
+ * Edge cases: safe no-op when plan id is not cached.
+ */
+function removePlanFromCaches(planId: string): void {
+  const existing = planCache.get(planId);
+  if (!existing) {
+    return;
+  }
+
+  planCache.delete(planId);
+
+  //audit Assumption: idempotency key index must not outlive its backing plan; risk: stale key map growth; invariant: mapping points only to existing plans; handling: delete key only when it points to evicted plan id.
+  if (existing.idempotencyKey) {
+    const mappedPlanId = planIdByIdempotencyKey.get(existing.idempotencyKey);
+    if (mappedPlanId === planId) {
+      planIdByIdempotencyKey.delete(existing.idempotencyKey);
+    }
+  }
+
+  //audit Assumption: execution results are scoped to a plan lifecycle; risk: orphaned results memory growth; invariant: no results for evicted plan ids; handling: remove per-plan result cache.
+  executionResultsCache.delete(planId);
+}
+
 /** Evict oldest entries when cache exceeds MAX_CACHE_SIZE. Map iterates in insertion order. */
 function evictIfNeeded(): void {
   while (planCache.size > MAX_CACHE_SIZE) {
     const oldest = planCache.keys().next().value;
-    if (oldest) planCache.delete(oldest);
+    if (!oldest) {
+      break;
+    }
+    removePlanFromCaches(oldest);
   }
 }
 
@@ -53,6 +83,15 @@ function evictIfNeeded(): void {
  * Edge cases: ignores empty idempotency keys.
  */
 function cachePlanRecord(record: ActionPlanRecord): void {
+  const existing = planCache.get(record.id);
+  //audit Assumption: a plan's idempotency key can be replaced; risk: stale reverse index; invariant: at most one active mapping per plan id; handling: clear old mapping before re-indexing.
+  if (existing?.idempotencyKey && existing.idempotencyKey !== record.idempotencyKey) {
+    const mappedPlanId = planIdByIdempotencyKey.get(existing.idempotencyKey);
+    if (mappedPlanId === record.id) {
+      planIdByIdempotencyKey.delete(existing.idempotencyKey);
+    }
+  }
+
   planCache.set(record.id, record);
   if (record.idempotencyKey) {
     planIdByIdempotencyKey.set(record.idempotencyKey, record.id);
@@ -225,9 +264,9 @@ export async function createPlan(input: ActionPlanInput): Promise<ActionPlanReco
       planId,
       agentId: action.agent_id,
       capability: action.capability,
-      params: action.params as unknown,
+      params: action.params as object,
       timeoutMs: action.timeout_ms ?? 30000,
-      rollbackAction: action.rollback_action ?? null,
+      rollbackAction: action.rollback_action ? (action.rollback_action as object) : null,
       sortOrder: index,
     }));
     const fallbackClearScore = {
@@ -508,8 +547,8 @@ export async function createExecutionResult(
       actionId,
       agentId,
       status,
-      output: output ?? null,
-      error: error ?? null,
+      output: (output as object | null) ?? null,
+      error: (error as object | null) ?? null,
       signature: signature ?? null,
       clearDecision,
       createdAt: new Date(),

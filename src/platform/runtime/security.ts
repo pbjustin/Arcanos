@@ -194,19 +194,35 @@ export function createRateLimitMiddleware(
   windowMs: number = 15 * 60 * 1000 // 15 minutes
 ): (req: Request, res: Response, next: NextFunction) => void {
   const requestCounts = new Map<string, { count: number; resetTime: number }>();
+  const cleanupIntervalMs = Math.max(1000, Math.min(windowMs, 60 * 1000));
 
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  /**
+   * Purge expired rate-limit entries outside the request path.
+   *
+   * Purpose: keep request handling O(1) while bounding map growth.
+   * Inputs/outputs: inspects requestCounts and deletes expired records.
+   * Edge cases: no-op when cache is empty.
+   */
+  function purgeExpiredEntries(): void {
     const now = Date.now();
-    
-    // Clean up old entries
-    //audit Assumption: stale entries should be cleared to prevent memory bloat
     for (const [key, value] of requestCounts.entries()) {
+      //audit Assumption: entry is stale once reset window has elapsed; risk: stale map growth; invariant: only expired entries are deleted; handling: periodic purge.
       if (now > value.resetTime) {
         requestCounts.delete(key);
       }
     }
-    
+  }
+
+  const cleanupTimer = setInterval(() => {
+    //audit Assumption: periodic cleanup reduces request-path CPU spikes; risk: short-lived stale entries; invariant: eventual cleanup under continuous uptime; handling: bounded interval purge.
+    purgeExpiredEntries();
+  }, cleanupIntervalMs);
+  cleanupTimer.unref?.();
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    const now = Date.now();
+
     const current = requestCounts.get(ip) || { count: 0, resetTime: now + windowMs };
     
     //audit Assumption: reset window when elapsed; Handling: reset counters
