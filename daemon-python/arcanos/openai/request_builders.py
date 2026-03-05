@@ -19,6 +19,7 @@ Features:
 from typing import Any, Dict, List, Optional, Union
 
 from ..config import Config
+from ..utils.text import sanitize_utf8_text
 
 
 def _normalize_content_to_text(content: Any) -> str:
@@ -36,7 +37,7 @@ def _normalize_content_to_text(content: Any) -> str:
             if not isinstance(part, dict):
                 continue
             #audit Assumption: text-like parts should preserve deterministic prompt content; risk: silent data loss in multimodal lists; invariant: text and input_text parts are extracted when present; handling: collect supported text fields only.
-            if part.get("type") in {"text", "input_text"} and isinstance(part.get("text"), str):
+            if part.get("type") in {"text", "input_text", "output_text"} and isinstance(part.get("text"), str):
                 normalized_parts.append(part["text"])
         return "\n".join(part for part in normalized_parts if part)
 
@@ -95,19 +96,23 @@ def build_responses_request(
         for conversation_item in conversation_history[-5:]:
             #audit Assumption: conversation history keys follow user/ai schema; risk: malformed history breaks context reconstruction; invariant: only string values are emitted into response input; handling: guard each key before append.
             if isinstance(conversation_item.get("user"), str):
+                normalized_user = sanitize_utf8_text(conversation_item["user"])
                 input_items.append({
                     "role": "user",
-                    "content": [{"type": "input_text", "text": conversation_item["user"]}]
+                    "content": [{"type": "input_text", "text": normalized_user}]
                 })
             if isinstance(conversation_item.get("ai"), str):
+                #audit Assumption: assistant history must use output_text in Responses API; risk: invalid payload when using input_text for assistant role; invariant: assistant history items serialize as output_text; handling: map ai history to output_text.
+                normalized_assistant = sanitize_utf8_text(conversation_item["ai"])
                 input_items.append({
                     "role": "assistant",
-                    "content": [{"type": "input_text", "text": conversation_item["ai"]}]
+                    "content": [{"type": "output_text", "text": normalized_assistant}]
                 })
 
+    normalized_prompt = sanitize_utf8_text(prompt)
     input_items.append({
         "role": "user",
-        "content": [{"type": "input_text", "text": prompt}]
+        "content": [{"type": "input_text", "text": normalized_prompt}]
     })
 
     payload: Dict[str, Any] = {
@@ -118,7 +123,7 @@ def build_responses_request(
     }
 
     if system_prompt:
-        payload["instructions"] = system_prompt
+        payload["instructions"] = sanitize_utf8_text(system_prompt)
     if top_p is not None:
         payload["top_p"] = top_p
 

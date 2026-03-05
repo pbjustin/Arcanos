@@ -664,88 +664,121 @@ class ArcanosCLI:
         orch = PatchOrchestrator(self.console, db, guard)
         orch.rollback(self.instance_id, rollback_id)
 
-    
-def handle_audit(self, args: str) -> None:
-    """Audit utilities. Usage: /audit export <path> [--all]"""
-    parts = (args or "").strip().split()
-    if not parts or parts[0] != "export":
-        self.console.print("[yellow]Usage: /audit export <path> [--all][/yellow]")
-        return
-    if len(parts) < 2:
-        self.console.print("[yellow]Usage: /audit export <path> [--all][/yellow]")
-        return
-    out_path = parts[1]
-    export_all = "--all" in parts[2:]
-    from pathlib import Path
-    from ..agentic.history_db import HistoryDB
-    db = HistoryDB()
-    db.export_audit(Path(out_path), session_id=None if export_all else self.instance_id)
-    self.console.print(f"[green]Audit exported to[/green] {out_path}")
+    @handle_errors("exporting audit history")
+    def handle_audit(self, args: str) -> None:
+        """
+        Purpose: Export audit entries to a JSON file for the current session or all sessions.
+        Inputs/Outputs: raw `/audit` argument string; writes audit export file and prints result.
+        Edge cases: Invalid syntax returns usage text without writing files.
+        """
+        parts = (args or "").strip().split()
+        # //audit assumption: only explicit export command is supported; risk: silent unsupported subcommands; invariant: reject unknown forms; handling strategy: print usage and return.
+        if not parts or parts[0] != "export":
+            self.console.print("[yellow]Usage: /audit export <path> [--all][/yellow]")
+            return
+        # //audit assumption: export requires output path; risk: writing to unintended default path; invariant: explicit path required; handling strategy: print usage and return.
+        if len(parts) < 2:
+            self.console.print("[yellow]Usage: /audit export <path> [--all][/yellow]")
+            return
+        out_path = parts[1]
+        export_all = "--all" in parts[2:]
+        from pathlib import Path
+        from ..agentic.history_db import HistoryDB
 
-def handle_intents(self) -> None:
-    """Show last detected agent intents (patches/commands)."""
-    intents = getattr(self, "last_intents", None)
-    if not intents:
-        self.console.print("[yellow]No intents captured yet.[/yellow]")
-        return
-    patches = intents.get("patches") or []
-    commands = intents.get("commands") or []
-    self.console.print("[bold]Last intents[/bold]")
-    self.console.print(f"Step: {intents.get('step')}")
-    self.console.print(f"Patches: {len(patches)}") 
-    for i, p in enumerate(patches[:5], 1):
-        self.console.print(f"  {i}. {p.splitlines()[0][:120]}")
-    self.console.print(f"Commands: {len(commands)}")
-    for i, c in enumerate(commands[:10], 1):
-        self.console.print(f"  {i}. {c}")
+        db = HistoryDB()
+        db.export_audit(Path(out_path), session_id=None if export_all else self.instance_id)
+        self.console.print(f"[green]Audit exported to[/green] {out_path}")
 
-def handle_dryrun(self, args: str) -> None:
-    """Toggle dry-run mode (proposals only). Usage: /dryrun on|off"""
-    val = (args or "").strip().lower()
-    if val not in ("on", "off", "true", "false", "1", "0", ""):
-        self.console.print("[yellow]Usage: /dryrun on|off[/yellow]")
-        return
-    if val in ("",):
-        self.console.print(f"Dry-run is {'ON' if self.dry_run else 'OFF'}") 
-        return
-    self.dry_run = val in ("on", "true", "1")
-    self.console.print(f"[green]Dry-run set to[/green] {'ON' if self.dry_run else 'OFF'}")
+    def handle_intents(self) -> None:
+        """
+        Purpose: Display the most recent detected patch/command intents from the agent loop.
+        Inputs/Outputs: no inputs; prints current cached intent summary.
+        Edge cases: Prints empty-state notice when no intents exist yet.
+        """
+        intents = getattr(self, "last_intents", None)
+        if not intents:
+            self.console.print("[yellow]No intents captured yet.[/yellow]")
+            return
 
-def handle_feedback(self, args: str) -> None:
-    """Attach feedback to a patch/command id. Usage: /feedback <target_id> <rating 1-5> <note...>"""
-    parts = (args or "").strip().split()
-    if len(parts) < 2:
-        self.console.print("[yellow]Usage: /feedback <target_id> <rating 1-5> <note...>[/yellow]")
-        return
-    target_id = parts[0]
-    try:
-        rating = int(parts[1])
-    except ValueError:
-        self.console.print("[red]Rating must be an integer 1-5.[/red]")
-        return
-    rating = max(1, min(5, rating))
-    note = " ".join(parts[2:]).strip()
-    from ..agentic.history_db import HistoryDB
-    db = HistoryDB()
-    fb_id = db.log_feedback(self.instance_id, target_id, rating, note)
-    self.console.print(f"[green]Feedback recorded[/green] id={fb_id}")
+        patches = intents.get("patches") or []
+        commands = intents.get("commands") or []
+        self.console.print("[bold]Last intents[/bold]")
+        self.console.print(f"Step: {intents.get('step')}")
+        self.console.print(f"Patches: {len(patches)}")
+        for i, patch_preview in enumerate(patches[:5], 1):
+            self.console.print(f"  {i}. {patch_preview.splitlines()[0][:120]}")
+        self.console.print(f"Commands: {len(commands)}")
+        for i, command_preview in enumerate(commands[:10], 1):
+            self.console.print(f"  {i}. {command_preview}")
 
+    def handle_dryrun(self, args: str) -> None:
+        """
+        Purpose: Toggle or read dry-run mode for proposal execution.
+        Inputs/Outputs: `on|off` argument; mutates `self.dry_run`.
+        Edge cases: Empty args show current state; invalid args print usage.
+        """
+        value = (args or "").strip().lower()
+        # //audit assumption: dry-run accepts constrained truthy/falsy values; risk: ambiguous toggles; invariant: invalid values rejected; handling strategy: usage message and return.
+        if value not in ("on", "off", "true", "false", "1", "0", ""):
+            self.console.print("[yellow]Usage: /dryrun on|off[/yellow]")
+            return
+        if value == "":
+            self.console.print(f"Dry-run is {'ON' if self.dry_run else 'OFF'}")
+            return
 
-def handle_safemode(self, args: str) -> None:
-    """Toggle safe mode. Usage: /safemode on|off"""
-    val = (args or "").strip().lower()
-    from ..agentic.history_db import HistoryDB
-    from ..agentic.policy_guard import PolicyGuard
-    db = HistoryDB()
-    guard = PolicyGuard(db)
-    if val in ("on","true","1"):
-        guard.enable_safe_mode(self.instance_id, "user enabled")
-        self.console.print("[yellow]Safe mode enabled.[/yellow]")
-    elif val in ("off","false","0"):
-        guard.disable_safe_mode(self.instance_id)
-        self.console.print("[green]Safe mode disabled.[/green]")
-    else:
-        self.console.print(f"Safe mode is {'ON' if guard.is_safe_mode() else 'OFF'}")
+        self.dry_run = value in ("on", "true", "1")
+        self.console.print(f"[green]Dry-run set to[/green] {'ON' if self.dry_run else 'OFF'}")
+
+    @handle_errors("recording feedback")
+    def handle_feedback(self, args: str) -> None:
+        """
+        Purpose: Persist operator feedback for a patch/command execution target.
+        Inputs/Outputs: `target_id`, numeric rating, and note text; writes feedback entry.
+        Edge cases: Non-integer ratings are rejected with explicit error text.
+        """
+        parts = (args or "").strip().split()
+        # //audit assumption: feedback requires target and rating fields; risk: malformed records; invariant: minimum arg count enforced; handling strategy: print usage and return.
+        if len(parts) < 2:
+            self.console.print("[yellow]Usage: /feedback <target_id> <rating 1-5> <note...>[/yellow]")
+            return
+
+        target_id = parts[0]
+        try:
+            rating = int(parts[1])
+        except ValueError:
+            # //audit assumption: rating must be numeric; risk: invalid analytics data; invariant: integer-only rating; handling strategy: reject and return.
+            self.console.print("[red]Rating must be an integer 1-5.[/red]")
+            return
+
+        rating = max(1, min(5, rating))
+        note = " ".join(parts[2:]).strip()
+        from ..agentic.history_db import HistoryDB
+
+        db = HistoryDB()
+        feedback_id = db.log_feedback(self.instance_id, target_id, rating, note)
+        self.console.print(f"[green]Feedback recorded[/green] id={feedback_id}")
+
+    def handle_safemode(self, args: str) -> None:
+        """
+        Purpose: Toggle safety guard mode that blocks risky patch/command execution.
+        Inputs/Outputs: `on|off` argument; updates persisted policy state.
+        Edge cases: Unknown value prints current safe mode status.
+        """
+        value = (args or "").strip().lower()
+        from ..agentic.history_db import HistoryDB
+        from ..agentic.policy_guard import PolicyGuard
+
+        db = HistoryDB()
+        guard = PolicyGuard(db)
+        # //audit assumption: safe mode toggles are explicit; risk: accidental disablement; invariant: only explicit off turns off protections; handling strategy: strict branch handling with status fallback.
+        if value in ("on", "true", "1"):
+            guard.enable_safe_mode(self.instance_id, "user enabled")
+            self.console.print("[yellow]Safe mode enabled.[/yellow]")
+        elif value in ("off", "false", "0"):
+            guard.disable_safe_mode(self.instance_id)
+            self.console.print("[green]Safe mode disabled.[/green]")
+        else:
+            self.console.print(f"Safe mode is {'ON' if guard.is_safe_mode() else 'OFF'}")
 
     @handle_errors("speaking response")
     def handle_speak(self) -> None:
@@ -770,6 +803,7 @@ def handle_safemode(self, args: str) -> None:
         """
         Purpose: Run CLI loop in debug or interactive mode.
         Inputs/Outputs: debug_mode flag; blocks until exit.
+        Edge cases: Dispatches to debug runner when debug_mode=True.
         """
         if debug_mode:
             run_debug_mode(self)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 from typing import Any, Optional
 
 from rich.markdown import Markdown
@@ -75,7 +76,9 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             suppress_proposals_in_display=True,
         )
         if tr.should_show and tr.message:
-            cli.console.print("\n" + str(Markdown(tr.message)) + "\n")
+            cli.console.print()
+            cli.console.print(Markdown(tr.message))
+            cli.console.print()
 
         history.log_message(cli.instance_id, "user", prompt)
         history.log_message(cli.instance_id, "assistant", response_text)
@@ -107,6 +110,13 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
                 results.append(ToolResult("command", False, {"command": c.command, "blocked": reason}))
                 continue
 
+            # //audit assumption: command execution proposals require explicit human confirmation; failure risk: piped/non-interactive sessions auto-run commands; expected invariant: commands are denied when TTY confirmation is unavailable; handling strategy: fail closed with structured denial.
+            if not sys.stdin or not sys.stdin.isatty():
+                denial_reason = "non_interactive_confirmation_unavailable"
+                cli.console.print("[yellow]Non-interactive session: command proposal auto-denied.[/yellow]")
+                results.append(ToolResult("command", False, {"command": c.command, "denied": True, "reason": denial_reason}))
+                continue
+
             ans = input("\nRun command? [y/N] ").strip().lower()
             if ans not in ("y", "yes"):
                 results.append(ToolResult("command", False, {"command": c.command, "denied": True}))
@@ -131,16 +141,22 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
         try:
             import subprocess
             from pathlib import Path
-            ctx = {}
-            if Config.REPO_INDEX_ENABLED:
+
+            repo_index_context: dict[str, Any] = {}
+            if hasattr(cli, "_build_backend_metadata"):
+                # //audit assumption: metadata builder may be unavailable or return non-dict values; risk: snapshot serialization failure; invariant: repo index snapshot remains JSON-serializable; handling strategy: default to empty dict when metadata is unusable.
+                metadata = cli._build_backend_metadata()
+                if isinstance(metadata, dict) and isinstance(metadata.get("repoIndex"), dict):
+                    repo_index_context = metadata["repoIndex"]
+            if not repo_index_context and Config.REPO_INDEX_ENABLED:
                 try:
-                    ctx = to_context_payload(build_repo_index())
+                    repo_index_context = to_context_payload(build_repo_index())
                 except Exception as error:
                     # //audit assumption: repo index failures are non-fatal for loop continuity; risk: silent context loss; invariant: operator sees degraded mode; strategy: print warning and continue with empty context.
                     cli.console.print(f"[yellow]Warning: Failed to build repo index; continuing without it. Error: {error}[/yellow]")
-                    ctx = {}
+                    repo_index_context = {}
 
-            repo_root = Path(ctx.get("repoRoot") or Path.cwd())
+            repo_root = Path(repo_index_context.get("repoRoot") or Path.cwd())
             git_head = ""
             try:
                 git_head = subprocess.check_output(["git","rev-parse","HEAD"], cwd=str(repo_root), text=True).strip()
@@ -151,7 +167,13 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
                 "maxSteps": Config.AGENT_MAX_STEPS,
                 "repoIndex": Config.REPO_INDEX_ENABLED,
             }
-            history.log_snapshot(cli.instance_id, git_head=git_head, repo_root=str(repo_root), config=config_flags, repo_index=ctx)
+            history.log_snapshot(
+                cli.instance_id,
+                git_head=git_head,
+                repo_root=str(repo_root),
+                config=config_flags,
+                repo_index=repo_index_context,
+            )
         except Exception:
             pass
 

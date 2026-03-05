@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,6 +87,22 @@ class PatchOrchestrator:
 
         self.console.print("\n[bold]=== ARCANOS PATCH PROPOSAL ===[/bold]")
         self.console.print(Syntax(patch_text, "diff", line_numbers=False))
+
+        # //audit assumption: patch application requires explicit operator confirmation; failure risk: non-interactive sessions apply changes without review; expected invariant: patches are denied when confirmation input is unavailable; handling strategy: fail closed before prompts.
+        if not sys.stdin or not sys.stdin.isatty():
+            denial_reason = "non_interactive_confirmation_unavailable"
+            self.console.print("[yellow]Non-interactive session: patch proposal auto-denied.[/yellow]")
+            self.history.log_patch(
+                session_id,
+                rollback_id,
+                "denied",
+                summary or "non-interactive denied",
+                files,
+                {},
+                patch_text,
+                error=denial_reason,
+            )
+            return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error=denial_reason)
 
         if decision.requires_extra_confirm:
             self.console.print("[yellow]Large patch detected — extra confirmation required.[/yellow]")
