@@ -273,11 +273,13 @@ export function validateConfig(): ValidationResult {
     warnings.push('DATABASE_URL not set - database features will be unavailable');
   }
 
-  if (getEnv('SELF_IMPROVE_ENV') && parseSelfImproveEnvironment(getEnv('SELF_IMPROVE_ENV')) !== getEnv('SELF_IMPROVE_ENV')?.trim().toLowerCase()) {
+  const rawSelfImproveEnv = getEnv('SELF_IMPROVE_ENV');
+  if (rawSelfImproveEnv && parseSelfImproveEnvironment(rawSelfImproveEnv) !== rawSelfImproveEnv.trim().toLowerCase()) {
     warnings.push('SELF_IMPROVE_ENV invalid - defaulted to development');
   }
 
-  if (getEnv('SELF_IMPROVE_ACTUATOR_MODE') && parseSelfImproveActuatorMode(getEnv('SELF_IMPROVE_ACTUATOR_MODE')) !== getEnv('SELF_IMPROVE_ACTUATOR_MODE')?.trim().toLowerCase()) {
+  const rawActuatorMode = getEnv('SELF_IMPROVE_ACTUATOR_MODE');
+  if (rawActuatorMode && parseSelfImproveActuatorMode(rawActuatorMode) !== rawActuatorMode.trim().toLowerCase()) {
     warnings.push('SELF_IMPROVE_ACTUATOR_MODE invalid - defaulted to pr_bot');
   }
 
