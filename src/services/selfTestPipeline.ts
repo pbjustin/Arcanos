@@ -4,8 +4,6 @@ import { updateState } from './stateManager.js';
 import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from "@platform/runtime/selfTestConfig.js";
 import { getBackendBaseUrl, getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { runSelfImproveCycle } from "@services/selfImprove/controller.js";
-import { getConfig } from "@platform/runtime/unifiedConfig.js";
 
 export interface SelfTestResult {
   id: string;

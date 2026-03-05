@@ -31,8 +31,16 @@ export interface LoopContract {
   };
 }
 
+let cachedLoopContract: LoopContract | null = null;
+
 export function loadLoopContract(): LoopContract {
+  //audit Assumption: loop contract is static during process lifetime; risk: stale contract if file changes at runtime; invariant: repeated calls return validated object; handling: cache after first successful parse.
+  if (cachedLoopContract) {
+    return cachedLoopContract;
+  }
+
   const contractPath = path.join(process.cwd(), "contracts", "loop_contract.v1.json");
   const raw = fs.readFileSync(contractPath, "utf-8");
-  return JSON.parse(raw) as LoopContract;
+  cachedLoopContract = JSON.parse(raw) as LoopContract;
+  return cachedLoopContract;
 }

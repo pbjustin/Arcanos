@@ -266,6 +266,11 @@ function buildPatchProposalPrompt(args: {
   ].filter(Boolean).join("\n");
 }
 
+export const patchProposalTestUtils = {
+  parseJsonObjectFromModelOutput,
+  validateUnifiedDiffShape,
+};
+
 export async function generatePatchProposal(args: {
   trigger: string;
   component?: string;

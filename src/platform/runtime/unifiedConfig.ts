@@ -93,6 +93,22 @@ export interface ValidationResult {
   warnings: string[];
 }
 
+function parseSelfImproveEnvironment(raw: string | undefined): AppConfig['selfImproveEnvironment'] {
+  const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'production' || normalized === 'staging' || normalized === 'development') {
+    return normalized;
+  }
+  return 'development';
+}
+
+function parseSelfImproveActuatorMode(raw: string | undefined): AppConfig['selfImproveActuatorMode'] {
+  const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'daemon' || normalized === 'pr_bot') {
+    return normalized;
+  }
+  return 'pr_bot';
+}
+
 /**
  * Resolves environment variable with Railway fallbacks
  * 
@@ -223,13 +239,13 @@ export function getConfig(): AppConfig {
     railwayProjectId: getEnv('RAILWAY_PROJECT_ID'),
     // Self-Improve Loop Configuration
     selfImproveEnabled: getEnvBoolean('SELF_IMPROVE_ENABLED', false),
-    selfImproveEnvironment: (getEnv('SELF_IMPROVE_ENV', 'development') as any),
+    selfImproveEnvironment: parseSelfImproveEnvironment(getEnv('SELF_IMPROVE_ENV', 'development')),
     selfImproveAutonomyLevel: getEnvNumber('SELF_IMPROVE_AUTONOMY_LEVEL', 0),
     selfImproveFrozen: getEnvBoolean('SELF_IMPROVE_FREEZE', false),
     selfImproveEvidenceDir: getEnv('SELF_IMPROVE_EVIDENCE_DIR', path.join(process.cwd(), 'governance', 'evidence_packs')),
     selfImproveRetentionDays: getEnvNumber('SELF_IMPROVE_RETENTION_DAYS', 30),
     selfImprovePiiScrubEnabled: getEnvBoolean('SELF_IMPROVE_PII_SCRUB', true),
-    selfImproveActuatorMode: (getEnv('SELF_IMPROVE_ACTUATOR_MODE', 'pr_bot') as any)
+    selfImproveActuatorMode: parseSelfImproveActuatorMode(getEnv('SELF_IMPROVE_ACTUATOR_MODE', 'pr_bot'))
   };
 
   return config;
@@ -255,6 +271,16 @@ export function validateConfig(): ValidationResult {
 
   if (config.isProduction && !config.databaseUrl) {
     warnings.push('DATABASE_URL not set - database features will be unavailable');
+  }
+
+  const rawSelfImproveEnv = getEnv('SELF_IMPROVE_ENV');
+  if (rawSelfImproveEnv && parseSelfImproveEnvironment(rawSelfImproveEnv) !== rawSelfImproveEnv.trim().toLowerCase()) {
+    warnings.push('SELF_IMPROVE_ENV invalid - defaulted to development');
+  }
+
+  const rawActuatorMode = getEnv('SELF_IMPROVE_ACTUATOR_MODE');
+  if (rawActuatorMode && parseSelfImproveActuatorMode(rawActuatorMode) !== rawActuatorMode.trim().toLowerCase()) {
+    warnings.push('SELF_IMPROVE_ACTUATOR_MODE invalid - defaulted to pr_bot');
   }
 
   // Railway-specific checks

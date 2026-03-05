@@ -55,8 +55,8 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
   });
   logDriftSignal(drift);
 
-  const autonomyLevel = getAutonomyLevel();
-  const frozen = isSelfImproveFrozen();
+  const autonomyLevel = await getAutonomyLevel();
+  const frozen = await isSelfImproveFrozen();
 
   // Decide
   let decision: SelfImproveDecision['decision'] = 'NOOP';
@@ -70,15 +70,15 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
     metric('self_improve.triggered', { id, trigger: input.trigger, drift: drift.kind, severity: drift.severity });
     // High severity drift => rollback posture (freeze + escalate)
     if (drift.severity === 'high') {
-      freezeSelfImprove(`High severity drift: ${drift.kind}`);
+      await freezeSelfImprove(`High severity drift: ${drift.kind}`);
       decision = 'ROLLBACK';
       notes = 'High severity drift: system frozen and rollback posture activated';
     } else {
-      decision = canProposePatches() ? 'PATCH_PROPOSAL' : 'ESCALATE';
+      decision = (await canProposePatches()) ? 'PATCH_PROPOSAL' : 'ESCALATE';
       notes = decision === 'PATCH_PROPOSAL' ? 'Proposing improvements based on drift' : 'Autonomy too low; escalation required';
     }
   } else {
-    decision = input.trigger === 'manual' ? (canProposePatches() ? 'PATCH_PROPOSAL' : 'ESCALATE') : 'NOOP';
+    decision = input.trigger === 'manual' ? ((await canProposePatches()) ? 'PATCH_PROPOSAL' : 'ESCALATE') : 'NOOP';
     notes = decision === 'NOOP' ? 'No drift signal' : 'Manual run';
   }
 

@@ -78,16 +78,16 @@ export async function gatherRepoContext(opts: RepoContextOptions): Promise<{ sum
     snippets,
   };
 
-  //audit Assumption: sanitized payload remains JSON-parseable in normal operation; risk: malformed sanitized payload; invariant: function returns bounded context payload; handling: parse with fallback to unsanitized snippets.
+  //audit Assumption: sanitized payload remains JSON-parseable in normal operation; risk: malformed sanitized payload; invariant: function never returns unsanitized fallback content; handling: parse with empty-snippet fallback.
   const sanitizedPayload = applySecurityCompliance(JSON.stringify(raw, null, 2)).content;
-  let sanitizedSnippets = snippets;
+  let sanitizedSnippets: Snippet[] = [];
   try {
     const parsed = JSON.parse(sanitizedPayload) as { snippets?: Snippet[] };
     if (Array.isArray(parsed.snippets)) {
       sanitizedSnippets = parsed.snippets;
     }
   } catch {
-    //audit Assumption: parse failures should not break self-improve cycle; risk: returning less-redacted context; invariant: context remains size-bounded and source-constrained; handling: fallback to pre-sanitized in-memory snippets.
+    //audit Assumption: parse failures should not break self-improve cycle; risk: leaking raw grep content; invariant: failed sanitization returns empty snippets; handling: drop snippets when parse fails.
   }
 
   return {

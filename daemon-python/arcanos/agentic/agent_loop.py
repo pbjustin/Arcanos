@@ -10,6 +10,7 @@ from ..assistant.translator import translate_response
 from .history_db import HistoryDB
 from .patch_orchestrator import PatchOrchestrator
 from .policy_guard import PolicyGuard
+from .repo_indexer import build_repo_index, to_context_payload
 
 
 @dataclass
@@ -28,6 +29,13 @@ def _format_followup(results: list[ToolResult]) -> str:
             lines.append(f"- command ok={r.ok} rc={r.detail.get('return_code')} cmd={r.detail.get('command')}")
     lines.append("Continue with the next step. If no further action is needed, say DONE.")
     return "\n".join(lines)
+
+
+def _contains_high_risk_shell_tokens(command: str) -> bool:
+    """Purpose: detect high-risk shell chaining/injection tokens in LLM-proposed commands."""
+    risky_tokens = ("&&", "||", ";", "|", "`", "$(", "${", "<(", ">(", "\n", "\r", "&", ">", "<")
+    lowered = command.lower()
+    return any(token in lowered for token in risky_tokens)
 
 
 def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from_debug: bool) -> None:
@@ -87,6 +95,12 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
         for c in commands:
             cli.console.print("\n[bold]=== ARCANOS COMMAND PROPOSAL ===[/bold]")
             cli.console.print(f"Command:\n{c.command}\nReason: {c.reason}")
+            if _contains_high_risk_shell_tokens(c.command):
+                # //audit assumption: agentic commands should be single-step and non-chained; risk: prompt-injected multi-command execution; invariant: high-risk shell token commands are blocked; strategy: deny and require manual rewrite.
+                reason = "High-risk shell chaining token detected in command proposal"
+                cli.console.print(f"[red]Blocked:[/red] {reason}")
+                results.append(ToolResult("command", False, {"command": c.command, "blocked": reason}))
+                continue
             is_safe, reason = cli.terminal.is_command_safe(c.command)
             if not is_safe:
                 cli.console.print(f"[red]Blocked:[/red] {reason}")
@@ -121,7 +135,9 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             if Config.REPO_INDEX_ENABLED:
                 try:
                     ctx = to_context_payload(build_repo_index())
-                except Exception:
+                except Exception as error:
+                    # //audit assumption: repo index failures are non-fatal for loop continuity; risk: silent context loss; invariant: operator sees degraded mode; strategy: print warning and continue with empty context.
+                    cli.console.print(f"[yellow]Warning: Failed to build repo index; continuing without it. Error: {error}[/yellow]")
                     ctx = {}
 
             repo_root = Path(ctx.get("repoRoot") or Path.cwd())

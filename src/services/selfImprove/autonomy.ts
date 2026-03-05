@@ -9,19 +9,19 @@
 import { getEffectiveAutonomyLevel } from "@services/incidentResponse/killSwitch.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 
-export function getAutonomyLevel(): number {
-  const lvl = getEffectiveAutonomyLevel();
+export async function getAutonomyLevel(): Promise<number> {
+  const lvl = await getEffectiveAutonomyLevel();
   return Math.max(0, Math.min(3, lvl));
 }
 
-export function canAutoApplySoftChanges(): boolean {
+export async function canAutoApplySoftChanges(): Promise<boolean> {
   const cfg = getConfig();
-  const lvl = getAutonomyLevel();
+  const lvl = await getAutonomyLevel();
   if (lvl < 2) return false;
   if (cfg.selfImproveEnvironment === 'production') return lvl >= 3;
   return true;
 }
 
-export function canProposePatches(): boolean {
-  return getAutonomyLevel() >= 1;
+export async function canProposePatches(): Promise<boolean> {
+  return (await getAutonomyLevel()) >= 1;
 }
