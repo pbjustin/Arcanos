@@ -72,7 +72,14 @@ export function createWorkerContext(workerId: string): WorkerContext {
 
           // Use the trinity brain system for AI processing (pass adapter's client)
           const runtimeBudget = createRuntimeBudget();
-          const result = await runThroughBrain(client, prompt, undefined, undefined, {}, runtimeBudget);
+          const result = await runThroughBrain(
+            client,
+            prompt,
+            undefined,
+            undefined,
+            { sourceEndpoint: `worker:${workerId}` },
+            runtimeBudget
+          );
           return result.result;
         } catch (error: unknown) {
           //audit Assumption: AI failures should propagate with safe message

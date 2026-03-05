@@ -89,6 +89,7 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
     category = 'general',
     systemAnalysis = true
   } = options;
+  const shouldPersistReflection = useMemory;
 
   // Use config layer for env access (adapter boundary pattern)
   const reflectionModel = options.model || getEnv('AI_REFLECTION_MODEL') || getDefaultModel();
@@ -194,7 +195,10 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
       }
     };
 
-    await persistSelfReflection(patch);
+    //audit Assumption: stateless runs are transient and should avoid DB dependency; risk: losing historical traces for stateless calls; invariant: stateful runs continue persisting; handling: gate persistence on memory mode.
+    if (shouldPersistReflection) {
+      await persistSelfReflection(patch);
+    }
 
     return patch;
 
@@ -240,7 +244,10 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
       }
     };
 
-    await persistSelfReflection(fallbackPatch);
+    //audit Assumption: fallback should match persistence gating of primary path; risk: inconsistent behavior between success/failure; invariant: stateless mode remains DB-independent; handling: reuse same gate.
+    if (shouldPersistReflection) {
+      await persistSelfReflection(fallbackPatch);
+    }
 
     return fallbackPatch;
   }

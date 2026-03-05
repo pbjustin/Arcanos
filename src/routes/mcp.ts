@@ -13,27 +13,24 @@ const router = express.Router();
 // The MCP transport handler needs raw JSON body.
 router.use(express.json({ limit: process.env.MCP_HTTP_BODY_LIMIT ?? '1mb' }));
 
-let sharedMcpServerPromise: Promise<{ server: any; transport: any }> | null = null;
-
-async function getSharedMcpServer() {
-  if (!sharedMcpServerPromise) {
-    sharedMcpServerPromise = (async () => {
-      const proxyContext = createMcpRequestContextProxy();
-      const { buildMcpServer } = await import('../mcp/server.js');
-      return buildMcpServer(proxyContext);
-    })().catch((error) => {
-      sharedMcpServerPromise = null;
-      throw error;
-    });
-  }
-
-  return sharedMcpServerPromise;
+/**
+ * Build an isolated MCP server/transport pair for a single HTTP request.
+ *
+ * Purpose: avoid cross-request transport state leakage in streamable HTTP mode.
+ * Inputs/outputs: no inputs; returns a new MCP server + transport pair.
+ * Edge cases: throws import/build errors to caller for standardized error handling.
+ */
+async function buildMcpServerForRequest() {
+  const proxyContext = createMcpRequestContextProxy();
+  const { buildMcpServer } = await import('../mcp/server.js');
+  return buildMcpServer(proxyContext);
 }
 
 router.post('/mcp', mcpAuthMiddleware, async (req: Request, res: Response) => {
   try {
     const ctx = buildMcpRequestContext(req);
-    const { transport } = await getSharedMcpServer();
+    //audit Assumption: streamable transport instances are request-scoped; risk: shared transport state causes subsequent MCP calls to fail; invariant: each request gets a fresh transport; handling: build isolated server/transport pair per request.
+    const { transport } = await buildMcpServerForRequest();
 
     await runWithMcpRequestContext(ctx, async () => {
       await transport.handleRequest(req, res, req.body);

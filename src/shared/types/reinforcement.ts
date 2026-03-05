@@ -53,6 +53,27 @@ export interface ClearFeedbackPayload {
   };
 }
 
+export interface JudgedResponsePayload {
+  requestId?: string;
+  prompt: string;
+  response: string;
+  score: number;
+  scoreScale?: ClearScoreScale;
+  feedback?: string;
+  judge?: string;
+  improvements?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface JudgedResponseResult {
+  traceId: string;
+  accepted: boolean;
+  score: number;
+  scoreScale: ClearScoreScale;
+  normalizedScore: number;
+  persisted: boolean;
+}
+
 export interface AuditRecord {
   id: string;
   requestId: string;

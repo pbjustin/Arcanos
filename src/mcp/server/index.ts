@@ -102,7 +102,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         prompt,
         sessionId,
         args.overrideAuditSafe,
-        {},
+        { sourceEndpoint: 'mcp.trinity.ask' },
         ctx.runtimeBudget
       );
       return mcpText(result);
@@ -690,5 +690,4 @@ export async function buildMcpServer(ctx: McpRequestContext): Promise<{ server: 
   await server.connect(transport);
   return { server, transport };
 }
-
 

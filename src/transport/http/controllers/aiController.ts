@@ -46,7 +46,14 @@ export class AIController {
     try {
       // runThroughBrain enforces GPT-5.1 as the primary reasoning stage
       const runtimeBudget = createRuntimeBudget();
-      const output = await runThroughBrain(openai, input, body.sessionId, body.overrideAuditSafe, {}, runtimeBudget);
+      const output = await runThroughBrain(
+        openai,
+        input,
+        body.sessionId,
+        body.overrideAuditSafe,
+        { sourceEndpoint: endpointName },
+        runtimeBudget
+      );
 
       const responsePayload: AIResponse = {
         ...(output as AIResponse),
