@@ -25,7 +25,11 @@ const actionSchema = {
   content: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
   text: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
   query: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },
+  messages: { type: 'array' as const, required: false },
   gptId: { type: 'string' as const, required: false, maxLength: 120, sanitize: true },
+  action: { type: 'string' as const, required: false, maxLength: 120, sanitize: true },
+  payload: { required: false },
+  timeoutMs: { type: 'number' as const, required: false },
   domain: { type: 'string' as const, required: false, maxLength: 120, sanitize: true },
   useRAG: { type: 'boolean' as const, required: false },
   useHRC: { type: 'boolean' as const, required: false },
@@ -44,7 +48,10 @@ interface ChatGPTActionBody {
   content?: string;
   text?: string;
   query?: string;
+  messages?: Array<{ role?: string; content?: string }>;
   gptId?: string;
+  action?: string;
+  payload?: unknown;
   domain?: string;
   useRAG?: boolean;
   useHRC?: boolean;
@@ -56,7 +63,6 @@ interface ChatGPTActionBody {
     reason?: string;
     memoryVersion?: string;
   };
-  action?: string;
   timeoutMs?: number;
 }
 

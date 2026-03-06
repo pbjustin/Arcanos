@@ -45,7 +45,7 @@ export async function loadMemory(key: string): Promise<unknown | null> {
     'SELECT value FROM memory WHERE key = $1',
     [key],
     1,
-    true // Use cache for read operations
+    false // Avoid stale reads after immediate writes.
   );
   
   if (result.rows.length === 0) {

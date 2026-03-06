@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -10,15 +11,26 @@ const exactAliasTargetBySpecifier = new Map([
   ['@platform', 'platform/index.js'],
   ['@shared', 'shared/index.js'],
   ['@transport', 'transport/index.js'],
+  ['@arcanos/openai', '../packages/arcanos-openai/dist/index.js'],
+  ['@arcanos/runtime', '../packages/arcanos-runtime/dist/index.js'],
 ]);
 
 const aliasPrefixTargetMappings = [
+  { aliasPrefix: '@core/lib/', targetPrefix: 'lib/' },
   { aliasPrefix: '@platform/', targetPrefix: 'platform/' },
   { aliasPrefix: '@core/', targetPrefix: 'core/' },
   { aliasPrefix: '@routes/', targetPrefix: 'routes/' },
   { aliasPrefix: '@services/', targetPrefix: 'services/' },
   { aliasPrefix: '@transport/', targetPrefix: 'transport/' },
   { aliasPrefix: '@shared/', targetPrefix: 'shared/' },
+  { aliasPrefix: '@analytics/', targetPrefix: 'analytics/' },
+  { aliasPrefix: '@config/', targetPrefix: 'config/' },
+  { aliasPrefix: '@stores/', targetPrefix: 'stores/' },
+  { aliasPrefix: '@dispatcher/', targetPrefix: 'dispatcher/' },
+  { aliasPrefix: '@trinity/', targetPrefix: 'trinity/' },
+  { aliasPrefix: '@middleware/', targetPrefix: 'middleware/' },
+  { aliasPrefix: '@arcanos/openai/', targetPrefix: '../packages/arcanos-openai/dist/' },
+  { aliasPrefix: '@arcanos/runtime/', targetPrefix: '../packages/arcanos-runtime/dist/' },
 ];
 
 /**
@@ -117,6 +129,33 @@ function resolveAliasTargetPath(aliasSpecifier) {
 }
 
 /**
+ * Resolve extensionless alias targets to concrete Node ESM file paths.
+ * Inputs: dist-relative target path and dist root.
+ * Output: path that points to a real file (prefers `.js`, then `/index.js`).
+ * Edge cases: preserves explicit extensions and leaves unresolved paths unchanged.
+ */
+function resolveNodeEsmTargetPath(targetPathFromDistRoot, distRootPath) {
+  //audit Assumption: explicit extensions are already valid; risk: accidental double-extension; invariant: explicit extension paths are returned untouched; handling: early return.
+  if (path.extname(targetPathFromDistRoot)) {
+    return targetPathFromDistRoot;
+  }
+
+  const absoluteTargetPath = path.resolve(distRootPath, targetPathFromDistRoot);
+
+  //audit Assumption: extensionless file imports fail under strict ESM when only `.js` exists; risk: runtime ERR_MODULE_NOT_FOUND; invariant: prefer concrete file targets; handling: append `.js` when present.
+  if (fsSync.existsSync(`${absoluteTargetPath}.js`)) {
+    return `${targetPathFromDistRoot}.js`;
+  }
+
+  //audit Assumption: some imports point to module directories; risk: unresolved directory imports; invariant: directory modules should resolve to index.js; handling: map to `/index.js` when present.
+  if (fsSync.existsSync(path.join(absoluteTargetPath, 'index.js'))) {
+    return `${targetPathFromDistRoot}/index.js`;
+  }
+
+  return targetPathFromDistRoot;
+}
+
+/**
  * Build a relative import specifier from one dist file to another.
  * Inputs: current file path, dist-relative target path, dist root path.
  * Output: normalized relative module specifier using forward slashes.
@@ -124,7 +163,8 @@ function resolveAliasTargetPath(aliasSpecifier) {
  */
 function buildRelativeSpecifier(currentFilePath, targetPathFromDistRoot, distRootPath) {
   const currentDirectoryPath = path.dirname(currentFilePath);
-  const absoluteTargetPath = path.resolve(distRootPath, targetPathFromDistRoot);
+  const nodeResolvedTargetPath = resolveNodeEsmTargetPath(targetPathFromDistRoot, distRootPath);
+  const absoluteTargetPath = path.resolve(distRootPath, nodeResolvedTargetPath);
   let relativeSpecifier = path.relative(currentDirectoryPath, absoluteTargetPath).split(path.sep).join('/');
 
   //audit Assumption: ESM relative imports require explicit ./ prefix for sibling paths; risk: bare path interpreted as package name; invariant: specifier starts with ./ or ../; handling: prepend ./ when needed.

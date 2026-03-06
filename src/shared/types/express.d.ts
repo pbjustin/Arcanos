@@ -53,6 +53,18 @@ declare global {
        * Convenience request log helper attached by requestContext middleware.
        */
       log?: (event: string, data?: Record<string, unknown>, level?: RequestLogLevel) => void;
+      /**
+       * Optional signed user context attached by identity middleware when enabled.
+       */
+      authUser?: {
+        id: number;
+        email: string;
+        role: string;
+        plan: string;
+        profileId: number | null;
+        source: 'jwt' | 'header' | 'session';
+        externalSubject?: string | null;
+      };
     }
   }
 }

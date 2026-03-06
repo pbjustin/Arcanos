@@ -6,7 +6,7 @@ import {
   BOOKING_INSTRUCTIONS_SUFFIX,
   BOOKING_RESPONSE_GUIDELINES
 } from "@platform/runtime/prompts.js";
-import { query } from "@core/db/index.js";
+import { query, saveMemory } from "@core/db/index.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC, withHRC } from './hrcWrapper.js';
 
@@ -51,6 +51,75 @@ interface Storyline {
 const events: Array<{ id: string; data: EventData }> = [];
 let roster: Wrestler[] = [];
 const storylines: Array<Storyline> = [];
+
+/**
+ * Persist latest roster snapshot for cross-session recall.
+ * Inputs: wrestler list and source marker.
+ * Output: resolves when memory convenience key is updated.
+ * Edge cases: logs warning without throwing when persistence is unavailable.
+ */
+async function persistLatestRosterSnapshot(
+  nextRoster: Wrestler[],
+  source: "database" | "fallback"
+): Promise<void> {
+  await saveMemory("backstage-roster:latest", {
+    roster: nextRoster,
+    source,
+    updatedAt: new Date().toISOString()
+  }).catch((error: unknown) => {
+    //audit Assumption: convenience roster mirror is optional metadata; failure risk: stale roster recall in new chats; expected invariant: primary roster mutation still succeeds; handling strategy: warn and continue.
+    console.warn("Backstage Booker: failed to persist latest roster snapshot", (error as Error).message);
+  });
+}
+
+/**
+ * Persist latest storyline snapshot for cross-session recall.
+ * Inputs: storyline key, storyline text, source marker.
+ * Output: resolves when latest and keyed storyline convenience entries are updated.
+ * Edge cases: warns and continues on persistence failures.
+ */
+async function persistLatestStorylineSnapshot(
+  key: string,
+  storyline: string,
+  source: "database" | "fallback"
+): Promise<void> {
+  const snapshot = {
+    key,
+    storyline,
+    source,
+    updatedAt: new Date().toISOString()
+  };
+
+  await saveMemory("backstage-storyline:latest", snapshot).catch((error: unknown) => {
+    //audit Assumption: latest storyline mirror may fail independently; failure risk: no quick "latest" recall; expected invariant: primary storyline flow continues; handling strategy: warn and continue.
+    console.warn("Backstage Booker: failed to persist latest storyline snapshot", (error as Error).message);
+  });
+
+  await saveMemory(`backstage-storyline:${key}`, snapshot).catch((error: unknown) => {
+    //audit Assumption: keyed storyline mirror is convenience only; failure risk: key lookup misses; expected invariant: core save path unaffected; handling strategy: warn and continue.
+    console.warn(`Backstage Booker: failed to persist keyed storyline snapshot for ${key}`, (error as Error).message);
+  });
+}
+
+/**
+ * Persist latest storyline beats snapshot for cross-session recall.
+ * Inputs: storyline beat collection and source marker.
+ * Output: resolves when convenience key is updated.
+ * Edge cases: warns and continues when persistence is unavailable.
+ */
+async function persistLatestStoryBeatsSnapshot(
+  beats: Storyline[],
+  source: "database" | "fallback"
+): Promise<void> {
+  await saveMemory("backstage-storybeats:latest", {
+    beats,
+    source,
+    updatedAt: new Date().toISOString()
+  }).catch((error: unknown) => {
+    //audit Assumption: story beats mirror is best-effort; failure risk: reduced context continuity; expected invariant: storyline tracking still returns beats; handling strategy: warn and continue.
+    console.warn("Backstage Booker: failed to persist latest story beats snapshot", (error as Error).message);
+  });
+}
 
 function formatJsonSnippet(value: unknown, maxLength = 220): string {
   if (value === null || value === undefined) {
@@ -213,6 +282,7 @@ export async function updateRoster(wrestlers: Wrestler[]): Promise<Wrestler[]> {
     );
 
     roster = result.rows.map(row => ({ name: row.name as string, overall: Number(row.overall) }));
+    await persistLatestRosterSnapshot(roster, "database");
     return roster;
   } catch (error) {
     console.warn('Backstage Booker: roster DB unavailable, using in-memory roster', (error as Error).message);
@@ -224,6 +294,7 @@ export async function updateRoster(wrestlers: Wrestler[]): Promise<Wrestler[]> {
         roster.push(w);
       }
     });
+    await persistLatestRosterSnapshot(roster, "fallback");
     return roster;
   }
 }
@@ -239,10 +310,12 @@ export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
     );
     storylines.length = 0;
     storylines.push(...result.rows.map(row => row.data));
+    await persistLatestStoryBeatsSnapshot([...storylines], "database");
     return [...storylines];
   } catch (error) {
     console.warn('Backstage Booker: storyline DB unavailable, using in-memory log', (error as Error).message);
     storylines.push(data);
+    await persistLatestStoryBeatsSnapshot([...storylines], "fallback");
     return [...storylines];
   }
 }
@@ -283,6 +356,10 @@ export async function saveStoryline(key: string, storyline: string): Promise<boo
     } catch (error) {
       console.warn('Backstage Booker: failed to persist storyline to DB', (error as Error).message);
     }
+    await persistLatestStorylineSnapshot(key, storyline, "database");
+  } else {
+    //audit Assumption: failed audit-safe validation should still keep a transient breadcrumb for operators; failure risk: lost debugging context; expected invariant: invalid data not written to core storyline table; handling strategy: write fallback-tagged snapshot key only.
+    await persistLatestStorylineSnapshot(key, storyline, "fallback");
   }
   return result;
 }

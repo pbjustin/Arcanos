@@ -97,6 +97,9 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - `DELETE /api/memory/delete` (confirmation required)
 - `GET /api/memory/list`
 - `GET /api/memory/view`
+- `GET /api/memory/table`
+- `GET /api/memory/search`
+- `POST /api/memory/nl`
 - `POST /api/memory/bulk` (confirmation required)
 - `POST /memory/resolve`
 - `GET /api/codebase/tree`

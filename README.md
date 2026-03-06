@@ -57,6 +57,7 @@ Use the runbook docs for exact commands:
 
 ## References
 - API catalog: `docs/API.md`
+- Memory backend guide: `docs/MEMORY_BACKEND_USAGE.md`
 - OpenAI tooling: `docs/OPENAI_RESPONSES_TOOLS.md`
 - Configuration details: `docs/CONFIGURATION.md`
 - Documentation index: `docs/README.md`

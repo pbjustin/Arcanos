@@ -249,7 +249,7 @@ export const TABLE_DEFINITIONS = [
     output TEXT NOT NULL,
     metadata JSONB DEFAULT '{}'
   )`,
-  
+
   // Indexes for performance
   `CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_logs_worker_timestamp ON execution_logs(worker_id, timestamp DESC)`,

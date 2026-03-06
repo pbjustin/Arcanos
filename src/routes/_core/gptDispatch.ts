@@ -1,6 +1,11 @@
 import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
 import { dispatchModuleAction, getModuleMetadata } from "../modules.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
+import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
+import {
+  executeNaturalLanguageMemoryCommand,
+  parseNaturalLanguageMemoryCommand
+} from "@services/naturalLanguageMemory.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -25,6 +30,10 @@ export type RouteGptRequestInput = {
   logger?: any;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function extractPrompt(body: any): string | null {
   const direct =
     body?.message ||
@@ -42,6 +51,86 @@ function extractPrompt(body: any): string | null {
   }
 
   return null;
+}
+
+/**
+ * Build module action payload while preserving explicit caller payloads.
+ * Inputs: raw request body and resolved module action.
+ * Output: payload object passed to module action handlers.
+ * Edge cases: when body.payload exists, it is forwarded verbatim for strict action contracts.
+ */
+function buildDispatchPayload(body: unknown): unknown {
+  //audit Assumption: explicit payload should take precedence for module actions; failure risk: action contracts receiving reshaped fields; expected invariant: payload passed through unchanged when provided; handling strategy: prefer `body.payload`.
+  if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "payload")) {
+    return body.payload;
+  }
+
+  const prompt = extractPrompt(body);
+
+  //audit Assumption: legacy module handlers often inspect `prompt` even for non-query actions; failure risk: callers using message/query aliases break after dispatch normalization; expected invariant: prompt alias is preserved when extractable; handling strategy: inject prompt field for object payload fallbacks.
+  if (isRecord(body)) {
+    const normalizedPayload = { ...body };
+    if (prompt) {
+      normalizedPayload.prompt = prompt;
+    }
+    return normalizedPayload;
+  }
+
+  //audit Assumption: scalar request bodies should still map to text prompt payloads; failure risk: scalar body dropped by module handlers; expected invariant: string input remains routable as prompt; handling strategy: wrap scalar input in object payload.
+  if (typeof prompt === "string" && prompt.length > 0) {
+    return { prompt };
+  }
+
+  //audit Assumption: legacy callers send top-level fields instead of payload wrappers; failure risk: module breakage for compatibility clients; expected invariant: top-level body remains supported; handling strategy: forward raw body fallback.
+  return body;
+}
+
+function actionRequiresPrompt(action: string): boolean {
+  return action === "query";
+}
+
+function resolveSessionId(body: unknown, payload: unknown): string | undefined {
+  const bodySessionId = isRecord(body) && typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+  if (bodySessionId) {
+    return bodySessionId;
+  }
+
+  const payloadSessionId =
+    isRecord(payload) && typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
+  if (payloadSessionId) {
+    return payloadSessionId;
+  }
+
+  return undefined;
+}
+
+const UNIVERSAL_MEMORY_SESSION_ID = "global";
+
+function resolveMemorySessionId(body: unknown, payload: unknown, moduleName: string, gptId: string): string {
+  const explicitSessionId = resolveSessionId(body, payload);
+  if (explicitSessionId) {
+    return explicitSessionId;
+  }
+
+  //audit Assumption: ChatGPT-style memory should be universally addressable across modules when callers omit sessionId; failure risk: mixed tenants on shared infra; expected invariant: deterministic global fallback memory namespace; handling strategy: use explicit global session key and recommend per-user sessionId for multi-tenant contexts.
+  void moduleName;
+  void gptId;
+  return UNIVERSAL_MEMORY_SESSION_ID;
+}
+
+function hasExplicitMemoryCue(prompt: string): boolean {
+  const normalizedPrompt = normalize(prompt);
+
+  //audit Assumption: empty prompts cannot carry actionable memory commands; failure risk: false positives; expected invariant: cue checks run only for non-empty text; handling strategy: hard false on empty.
+  if (!normalizedPrompt) {
+    return false;
+  }
+
+  return (
+    /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:save|store|remember)\b/.test(normalizedPrompt) ||
+    /^(?:please\s+)?(?:lookup|look\s*up|find|search)\b/.test(normalizedPrompt) ||
+    /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedPrompt)
+  );
 }
 
 function pickAction(available: string[], requested?: string): string | null {
@@ -214,15 +303,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     return { ok: false, error: { code: "BAD_REQUEST", message: "gptId too long" }, _route: baseRoute };
   }
 
-  const prompt = extractPrompt(body);
-  if (!prompt) {
-    return {
-      ok: false,
-      error: { code: "BAD_REQUEST", message: "Request must include message/prompt (or messages[])" },
-      _route: baseRoute,
-    };
-  }
-
   const gptModuleMap = await getGptModuleMap();
   const resolved = resolveGptEntry(trimmedGptId, gptModuleMap as any);
   if (!resolved) {
@@ -236,8 +316,94 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const { entry, matchMethod } = resolved;
   const moduleMetadata = getModuleMetadata(entry.module);
   const availableActions = moduleMetadata?.actions ?? [];
-  const requestedAction = typeof body?.action === "string" ? body.action : undefined;
-  const action = pickAction(availableActions, requestedAction);
+  const requestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
+  const payload = buildDispatchPayload(body);
+  const prompt = extractPrompt(payload);
+  const parsedMemoryCommand =
+    typeof prompt === "string" ? parseNaturalLanguageMemoryCommand(prompt) : { intent: "unknown" };
+  const actionCandidate = pickAction(availableActions, requestedAction);
+  const hasNoRoutableAction = !actionCandidate;
+
+  const shouldInterceptMemoryInDispatcher =
+    typeof prompt === "string" &&
+    parsedMemoryCommand.intent !== "unknown" &&
+    (hasExplicitMemoryCue(prompt) || hasNoRoutableAction) &&
+    (!requestedAction || requestedAction === "query");
+
+  //audit Assumption: memory commands should bypass module action ambiguity (e.g., multi-action modules without default query); failure risk: user cannot use memory reliably via dispatcher; expected invariant: explicit memory intents always have a deterministic execution path; handling strategy: early memory execution branch before action resolution.
+  if (shouldInterceptMemoryInDispatcher) {
+    try {
+      const memorySessionId = resolveMemorySessionId(body, payload, entry.module, trimmedGptId);
+      const memoryResult = await executeNaturalLanguageMemoryCommand({
+        input: prompt,
+        sessionId: memorySessionId
+      });
+
+      const routedMemoryResult = {
+        handledBy: "memory-dispatcher",
+        memory: memoryResult
+      };
+
+      await persistModuleConversation({
+        moduleName: entry.module,
+        route: entry.route,
+        action: requestedAction || "memory",
+        gptId: trimmedGptId,
+        sessionId: memorySessionId,
+        requestId,
+        requestPayload: payload,
+        responsePayload: routedMemoryResult
+      }).catch((error: unknown) => {
+        //audit Assumption: memory intercept persistence failures should not block user-visible memory response; failure risk: transcript/history gaps; expected invariant: command result still returned; handling strategy: warn and continue.
+        logger?.warn?.("gpt.dispatch.memory_persistence_failed", {
+          requestId,
+          gptId: trimmedGptId,
+          module: entry.module,
+          action: requestedAction || "memory",
+          error: String((error as Error)?.message ?? error)
+        });
+      });
+
+      logger?.info?.("gpt.dispatch.memory_intercept", {
+        requestId,
+        gptId: trimmedGptId,
+        module: entry.module,
+        action: requestedAction || "memory",
+        memoryIntent: parsedMemoryCommand.intent,
+        memoryOperation: memoryResult.operation
+      });
+
+      return {
+        ok: true,
+        result: routedMemoryResult,
+        _route: {
+          ...baseRoute,
+          module: entry.module,
+          action: requestedAction || "memory",
+          matchMethod,
+          route: entry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null
+        }
+      };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: { code: "MODULE_ERROR", message: err?.message ?? "Memory command dispatch failed" },
+        _route: {
+          ...baseRoute,
+          module: entry.module,
+          action: requestedAction || "memory",
+          matchMethod,
+          route: entry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null
+        }
+      };
+    }
+  }
+
+  const action = actionCandidate;
 
   if (!action) {
     const message = requestedAction
@@ -266,11 +432,48 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   const timeoutMs = typeof body?.timeoutMs === "number" ? body.timeoutMs : 15000;
 
+  //audit Assumption: query actions depend on natural-language prompt content; failure risk: modules receiving empty prompt and failing deep in stack; expected invariant: query dispatch has message/prompt text; handling strategy: validate prompt at router boundary.
+  if (actionRequiresPrompt(action) && !prompt) {
+    return {
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "Query actions require message/prompt (or messages[])." },
+      _route: {
+        ...baseRoute,
+        module: entry.module,
+        action,
+        matchMethod,
+        route: entry.route,
+        availableActions,
+        moduleVersion: (moduleMetadata as any)?.version ?? null,
+      },
+    };
+  }
+
   logger?.info?.("gpt.dispatch.plan", { requestId, gptId: trimmedGptId, module: entry.module, action, matchMethod });
 
   try {
-    const payload = { prompt, domain: body?.domain, metadata: body?.metadata };
     const result = await withTimeout(dispatchModuleAction(entry.module, action, payload), timeoutMs);
+
+    const sessionId = resolveSessionId(body, payload);
+    await persistModuleConversation({
+      moduleName: entry.module,
+      route: entry.route,
+      action,
+      gptId: trimmedGptId,
+      sessionId,
+      requestId,
+      requestPayload: payload,
+      responsePayload: result
+    }).catch((error: unknown) => {
+      //audit Assumption: persistence failures should not fail successful module responses; failure risk: dropped conversation history; expected invariant: user still receives module output; handling strategy: warn and continue.
+      logger?.warn?.("gpt.dispatch.persistence_failed", {
+        requestId,
+        gptId: trimmedGptId,
+        module: entry.module,
+        action,
+        error: String((error as Error)?.message ?? error),
+      });
+    });
 
     logger?.info?.("gpt.dispatch.ok", { requestId, gptId: trimmedGptId, module: entry.module, action });
 

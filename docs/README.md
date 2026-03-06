@@ -24,6 +24,7 @@ Recommended reading order:
 13. `docs/RAILWAY_DEPLOYMENT.md`
 14. `docs/CI_CD.md`
 15. `docs/DOCUMENTATION.md`
+16. `docs/MEMORY_BACKEND_USAGE.md`
 
 ## Configuration
 Configuration source files:
@@ -47,6 +48,7 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 - `docs/API.md`
 - `docs/CONFIGURATION.md`
 - `docs/CI_CD.md`
+- `docs/MEMORY_BACKEND_USAGE.md`
 - `docs/REFERENCES.md`
 - `docs/CLEAR_METHOD_2_0.md`
 - `docs/SELF_REFLECTIONS.md`
