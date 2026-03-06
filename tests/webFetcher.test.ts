@@ -1,5 +1,5 @@
 import http from 'http';
-import { fetchAndClean } from '../src/shared/webFetcher.js';
+import { fetchAndClean, fetchAndCleanDocument } from '../src/shared/webFetcher.js';
 
 describe('fetchAndClean', () => {
   let server: http.Server;
@@ -67,6 +67,23 @@ describe('fetchAndClean', () => {
     expect(cleaned).toContain('[LINKS]');
     expect(cleaned).toContain('Guide Index ->');
     expect(cleaned).toContain('FAQ ->');
+  });
+
+  it('returns structured links for traversal-aware callers', async () => {
+    const document = await fetchAndCleanDocument(baseUrl);
+
+    expect(document.text).toContain('Hello World!');
+    expect(document.links).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        label: 'Guide Index',
+        url: `${baseUrl}/guide`
+      }),
+      expect.objectContaining({
+        label: 'FAQ',
+        url: 'https://example.com/faq'
+      })
+    ]));
+    expect(document.combined).toContain('[LINKS]');
   });
 
   it('blocks localhost fetches when local-development bypass is not explicitly enabled', async () => {

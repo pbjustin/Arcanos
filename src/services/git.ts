@@ -154,10 +154,33 @@ async function executeProcessCommandWithRetry(
   return retry(async () => {
     const res = await executeProcessCommand(command, args, workingDir);
     if (!res.success) {
-      throw new Error(res.error || `Command failed: ${command} ${args.join(' ')}`);
+      const commandSummary = `Command failed: ${command} ${args.join(' ')}`.trim();
+      const errorMessage = String(res.error ?? '').trim();
+      const genericError =
+        errorMessage.length === 0 ||
+        errorMessage === 'Unknown process command error' ||
+        errorMessage === 'Unknown error';
+      throw new Error(genericError ? commandSummary : `${commandSummary} (${errorMessage})`);
     }
     return res;
   }, opts);
+}
+
+async function resolvePatchWorkspace(workingDir?: string): Promise<string> {
+  const fs = await import('fs/promises');
+
+  if (workingDir) {
+    try {
+      const stat = await fs.stat(workingDir);
+      if (stat.isDirectory()) {
+        return workingDir;
+      }
+    } catch {
+      //audit Assumption: caller-provided working directories can be synthetic in tests or stale on disk; failure risk: patch-file creation fails before git apply runs; expected invariant: a writable directory exists for temporary patch materialization; handling strategy: fall back to process.cwd when the requested workingDir is unavailable.
+    }
+  }
+
+  return process.cwd();
 }
 
 /**
@@ -446,10 +469,11 @@ export async function createPullRequestFromPatch(options: {
     const tmpName = `.arcanos_patch_${ts}.diff`;
     const fs = await import('fs/promises');
     const path = await import('path');
-    const tmpPath = path.join(workingDir || process.cwd(), tmpName);
+    const patchWorkspace = await resolvePatchWorkspace(workingDir);
+    const tmpPath = path.join(patchWorkspace, tmpName);
     await fs.writeFile(tmpPath, diff, 'utf-8');
 
-    const apply = await executeProcessCommand('git', ['apply', tmpName], workingDir);
+    const apply = await executeProcessCommand('git', ['apply', tmpPath], workingDir);
     // Cleanup temp file best-effort
     try { await fs.unlink(tmpPath); } catch {}
     if (!apply.success) throw new Error(apply.error || 'git apply failed');
@@ -508,4 +532,3 @@ export async function createPullRequestFromPatch(options: {
     return { success: false, message: 'Failed to create PR from patch', error: resolveErrorMessage(error) };
   }
 }
-

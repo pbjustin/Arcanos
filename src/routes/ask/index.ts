@@ -7,7 +7,6 @@ import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
 import type {
   AIRequestDTO,
-  ConfirmationRequiredResponseDTO,
   ErrorResponseDTO
 } from "@shared/types/dto.js";
 import { aiRequestSchema } from "@shared/types/dto.js";
@@ -17,11 +16,15 @@ import type {
   AskRequest,
   AskResponse,
   SchemaValidationBypassAuditFlag,
-  SystemReviewResponse,
   SystemStateResponse
 } from './types.js';
 import { tryDispatchDaemonTools } from './daemonTools.js';
 import { getGPT5Model } from '@services/openai.js';
+import {
+  buildCompletedQueuedAskOutput,
+  buildQueuedAskJobInput,
+  buildQueuedAskPendingResponse
+} from '@shared/ask/asyncAskJob.js';
 import {
   getActiveIntentSnapshot,
   getLastRoutingUsed,
@@ -40,14 +43,6 @@ const router = express.Router();
 // Apply security middleware
 router.use(securityHeaders);
 const askRateLimit = createRateLimitMiddleware(60, 15 * 60 * 1000); // 60 requests per 15 minutes
-
-type AskRouteResponse =
-  | AskResponse
-  | ErrorResponseDTO
-  | ConfirmationRequiredResponseDTO
-  | SystemReviewResponse
-  | SystemStateResponse
-  | IntentConflict;
 
 const SYSTEM_REVIEW_PROMPT = `You are operating in SYSTEM_REVIEW mode.
 
@@ -481,6 +476,15 @@ export const handleAIRequest = async (
   }
 
   console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}, domain: ${finalDomain} (${finalConfidence})`);
+  const queuedAskJobInput = buildQueuedAskJobInput({
+    prompt,
+    sessionId,
+    overrideAuditSafe,
+    cognitiveDomain: finalDomain,
+    clientContext: req.body.clientContext ?? null,
+    endpointName,
+    auditFlag: bypassAuditFlag
+  });
 
   // Log request for feedback loop
   logRequestFeedback(prompt, endpointName);
@@ -499,6 +503,7 @@ export const handleAIRequest = async (
       //audit Assumption: daemon tool response is terminal; risk: skipping trinity; invariant: tool actions queued; handling: return early.
       return res.json({
         ...daemonToolResponse,
+        endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
       });
@@ -517,21 +522,9 @@ export const handleAIRequest = async (
     // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
     if (asyncRequested) {
       const workerId = process.env.WORKER_ID || 'api';
-      const job = await createJob(workerId, 'ask', {
-        prompt,
-        sessionId,
-        overrideAuditSafe,
-        cognitiveDomain: finalDomain,
-        clientContext: req.body.clientContext ?? null,
-        endpointName
-      });
+      const job = await createJob(workerId, 'ask', queuedAskJobInput);
 
-      return res.status(202).json({
-        ok: true,
-        status: 'pending',
-        jobId: job.id,
-        poll: `/jobs/${job.id}`
-      });
+      return res.status(202).json(buildQueuedAskPendingResponse(job.id));
     }
 
     const runtimeBudget = createRuntimeBudget();
@@ -546,11 +539,7 @@ export const handleAIRequest = async (
       },
       runtimeBudget
     );
-    return res.json({
-      ...(output as AskResponse),
-      clientContext: req.body.clientContext,
-      ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
-    });
+    return res.json(buildCompletedQueuedAskOutput(output, queuedAskJobInput));
   } catch (err) {
     handleAIError(err, prompt, endpointName, res);
   }

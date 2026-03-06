@@ -66,22 +66,8 @@ router.post(
     }
 
     try {
-      const result = await webSearchAgent(parsed.data.query, {
-        provider: parsed.data.provider,
-        limit: parsed.data.limit,
-        fetchPages: parsed.data.fetchPages,
-        pageMaxChars: parsed.data.pageMaxChars,
-        includePageContent: parsed.data.includePageContent,
-        synthesize: parsed.data.synthesize,
-        synthesisModel: parsed.data.synthesisModel,
-        allowDomains: parsed.data.allowDomains,
-        denyDomains: parsed.data.denyDomains,
-        traverseLinks: parsed.data.traverseLinks,
-        traversalDepth: parsed.data.traversalDepth,
-        maxTraversalPages: parsed.data.maxTraversalPages,
-        sameDomainOnly: parsed.data.sameDomainOnly,
-        traversalLinkLimit: parsed.data.traversalLinkLimit
-      });
+      const { query, ...searchOptions } = parsed.data;
+      const result = await webSearchAgent(query, searchOptions);
 
       res.json({
         ok: true,

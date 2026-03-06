@@ -7,8 +7,13 @@ import util from 'node:util';
  * If you need debugging, write to stderr.
  */
 async function getStdioTransport() {
-  const mod = await import('@modelcontextprotocol/sdk/server/stdio.js');
-  return (mod as any).StdioServerTransport;
+  try {
+    const mod = await import('@modelcontextprotocol/sdk/server/stdio.js');
+    return (mod as any).StdioServerTransport;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`MCP stdio transport is unavailable because @modelcontextprotocol/sdk is not installed: ${message}`);
+  }
 }
 
 /**
@@ -78,10 +83,9 @@ async function main() {
 
   await server.connect(transport);
 
-  const shutdown = async (signal: string) => {
+  const shutdown = async (_signal: string) => {
     try { await transport.close?.(); } catch (error) { console.error('[mcp-stdio] error closing transport:', error); }
     try { await server.close?.(); } catch (error) { console.error('[mcp-stdio] error closing server:', error); }
-    // eslint-disable-next-line no-process-exit
     process.exit(0);
   };
 
@@ -91,8 +95,6 @@ async function main() {
 
 main().catch((err) => {
   // Stderr only
-  // eslint-disable-next-line no-console
   console.error('[mcp-stdio] fatal:', err);
-  // eslint-disable-next-line no-process-exit
   process.exit(1);
 });
