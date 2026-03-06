@@ -18,6 +18,17 @@ interface ResolvedFetchTarget {
   tlsServerName: string;
 }
 
+export interface FetchAndCleanLinkSummary {
+  label: string;
+  url: string;
+}
+
+export interface FetchAndCleanDocument {
+  text: string;
+  links: FetchAndCleanLinkSummary[];
+  combined: string;
+}
+
 /**
  * Purpose: Parse and validate a user-provided URL for fetch usage.
  * Inputs/Outputs: raw URL string -> normalized URL object.
@@ -43,13 +54,32 @@ export function assertHttpUrl(rawUrl: string): URL {
   return parsed;
 }
 
+function buildLinkBlock(links: FetchAndCleanLinkSummary[]): string {
+  return links.length > 0
+    ? `\n\n[LINKS]\n- ${links.map((link) => `${link.label} -> ${link.url}`).join('\n- ')}`
+    : '';
+}
+
 /**
- * Purpose: Fetch a web page through SSRF-safe URL resolution and return cleaned text.
- * Inputs/Outputs: URL + optional max chars -> cleaned page text string.
+ * Purpose: Serialize cleaned text plus discovered links into the legacy string contract.
+ * Inputs/Outputs: structured fetch document + max chars -> compact string payload.
+ * Edge cases: Preserves the historical `[LINKS]` suffix while truncating the full payload safely.
+ */
+export function serializeFetchAndCleanDocument(
+  document: Pick<FetchAndCleanDocument, 'text' | 'links'>,
+  maxChars = DEFAULT_MAX_CHARS
+): string {
+  const linkBlock = buildLinkBlock(document.links);
+  return `${document.text}${linkBlock}`.slice(0, Math.max(0, maxChars));
+}
+
+/**
+ * Purpose: Fetch a web page through SSRF-safe URL resolution and return structured cleaned content.
+ * Inputs/Outputs: URL + optional max chars -> normalized text, absolute links, and legacy combined payload.
  * Edge cases: Blocks private/internal IP targets, enforces DNS-rebinding-safe host pinning,
  * and allows localhost only with explicit non-production opt-in.
  */
-export async function fetchAndClean(url: string, maxChars = DEFAULT_MAX_CHARS): Promise<string> {
+export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_CHARS): Promise<FetchAndCleanDocument> {
   const target = await resolveFetchTarget(url);
   const httpsAgent =
     target.parsedUrl.protocol === 'https:'
@@ -79,7 +109,7 @@ export async function fetchAndClean(url: string, maxChars = DEFAULT_MAX_CHARS): 
   const cleanedText = text.replace(/\s+/g, ' ').trim();
 
   const seenLinks = new Set<string>();
-  const linkSummaries: string[] = [];
+  const links: FetchAndCleanLinkSummary[] = [];
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
     if (!href) return;
@@ -97,17 +127,29 @@ export async function fetchAndClean(url: string, maxChars = DEFAULT_MAX_CHARS): 
 
       const anchorText = $(el).text().replace(/\s+/g, ' ').trim();
       const label = anchorText || resolved.href;
-      linkSummaries.push(`${label} -> ${resolved.href}`);
+      links.push({ label, url: resolved.href });
     } catch {
       return;
     }
   });
 
-  const linkBlock = linkSummaries.length
-    ? `\n\n[LINKS]\n- ${linkSummaries.slice(0, 15).join('\n- ')}`
-    : '';
+  const limitedLinks = links.slice(0, 15);
 
-  return `${cleanedText}${linkBlock}`.slice(0, Math.max(0, maxChars));
+  return {
+    text: cleanedText,
+    links: limitedLinks,
+    combined: serializeFetchAndCleanDocument({ text: cleanedText, links: limitedLinks }, maxChars)
+  };
+}
+
+/**
+ * Purpose: Fetch a web page through SSRF-safe URL resolution and return cleaned text.
+ * Inputs/Outputs: URL + optional max chars -> cleaned page text string.
+ * Edge cases: Preserves the historical compact string payload for existing callers.
+ */
+export async function fetchAndClean(url: string, maxChars = DEFAULT_MAX_CHARS): Promise<string> {
+  const document = await fetchAndCleanDocument(url, maxChars);
+  return document.combined;
 }
 
 /**

@@ -14,6 +14,7 @@ import reusableCodeRouter from "@routes/api-reusable-code.js";
 import prAnalysisRouter from "@routes/pr-analysis.js";
 import openaiRouter from "@routes/openai.js";
 import afolRouter from "@routes/afol.js";
+import webSearchRouter from "@routes/web-search.js";
 import { memoryConsistencyGate } from "@transport/http/middleware/memoryConsistencyGate.js";
 
 const router = Router();
@@ -35,5 +36,6 @@ router.use('/', apiTranscribeRouter);
 router.use('/', apiUpdateRouter);
 router.use('/', apiDaemonRouter);
 router.use('/', reusableCodeRouter);
+router.use('/', webSearchRouter);
 
 export default router;

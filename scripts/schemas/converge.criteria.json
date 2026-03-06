@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "requiredTools": {
+    "node": {
+      "commands": ["node"],
+      "minVersion": "18.0.0"
+    },
+    "npm": {
+      "commands": ["npm"],
+      "minVersion": "8.0.0"
+    }
+  },
+  "criteria": [
+    {
+      "id": "build-artifacts",
+      "command": "npm run build",
+      "description": "The backend and worker build pipeline must succeed before convergence passes."
+    }
+  ],
+  "autoFixers": [
+    {
+      "id": "lint-fix",
+      "command": "npm run lint:fix",
+      "description": "Apply repository lint autofixes when an approved fixer is requested."
+    },
+    {
+      "id": "audit-fix",
+      "command": "npm run audit:fix",
+      "description": "Run the repository audit fixer for eligible dependency issues."
+    }
+  ]
+}

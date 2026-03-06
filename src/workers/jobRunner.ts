@@ -13,20 +13,13 @@ import { createRuntimeBudget } from "@platform/resilience/runtimeBudget.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getOpenAIAdapter, resetOpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
+import {
+  buildCompletedQueuedAskOutput,
+  parseQueuedAskJobInput
+} from "@shared/ask/asyncAskJob.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-const COGNITIVE_DOMAIN_VALUES: readonly CognitiveDomain[] = ['diagnostic', 'code', 'creative', 'natural', 'execution'];
-
-function normalizeCognitiveDomain(value: unknown): CognitiveDomain | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-
-  return COGNITIVE_DOMAIN_VALUES.includes(value as CognitiveDomain) ? (value as CognitiveDomain) : undefined;
 }
 
 function initOpenAIClient() {
@@ -77,31 +70,37 @@ async function run(): Promise<void> {
         continue;
       }
 
-      const input = (job.input ?? {}) as Record<string, unknown>;
-      const prompt = typeof input.prompt === 'string' ? input.prompt : '';
-      const sessionId = typeof input.sessionId === 'string' ? input.sessionId : undefined;
-      const overrideAuditSafe = typeof input.overrideAuditSafe === 'string' ? input.overrideAuditSafe : undefined;
-      const cognitiveDomain = normalizeCognitiveDomain(input.cognitiveDomain);
+      const parsedJobInput = parseQueuedAskJobInput(job.input ?? {});
 
-      if (!prompt) {
-        await updateJob(job.id, 'failed', null, 'Missing prompt in job.input');
+      //audit Assumption: malformed queue payloads should fail only the affected job; failure risk: worker crash or poison-job retry loop; expected invariant: invalid `job.input` produces a deterministic failed job state; handling strategy: validate first and short-circuit with explicit error.
+      if (!parsedJobInput.ok) {
+        await updateJob(job.id, 'failed', null, `Invalid job.input: ${parsedJobInput.error}`);
         continue;
       }
 
+      const {
+        prompt,
+        sessionId,
+        overrideAuditSafe,
+        cognitiveDomain,
+        endpointName
+      } = parsedJobInput.value;
+
       const runtimeBudget = createRuntimeBudget();
-      const output = await runThroughBrain(
+      const trinityResult = await runThroughBrain(
         openai,
         prompt,
         sessionId,
         overrideAuditSafe,
         {
           cognitiveDomain,
-          sourceEndpoint: 'worker.jobRunner.ask'
+          sourceEndpoint: endpointName
         },
         runtimeBudget
       );
 
-      await updateJob(job.id, 'completed', output, null);
+      const completedOutput = buildCompletedQueuedAskOutput(trinityResult, parsedJobInput.value);
+      await updateJob(job.id, 'completed', completedOutput, null);
     } catch (err: unknown) {
       const msg = resolveErrorMessage(err);
 

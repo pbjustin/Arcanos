@@ -176,6 +176,9 @@ jobs:
           name: build-artifacts
           path: dist/
 
+      - name: 🔨 Restore workspace package builds
+        run: npm run build:packages
+
       - name: 🚀 Test server startup
         run: |
           export NODE_ENV=production
@@ -278,7 +281,7 @@ jobs:
       - name: 📦 Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install openai requests python-dotenv tenacity sentry-sdk pytest pytest-mock
+          pip install openai requests python-dotenv tenacity sentry-sdk pytest pytest-mock rich
 
       - name: 🧪 Validate CLI offline contract
         run: python daemon-python/validate_backend_cli_offline.py

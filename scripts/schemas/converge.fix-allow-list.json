@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "approvedFixers": [
+    "npm run lint:fix",
+    "npm run audit:fix"
+  ]
+}

@@ -51,10 +51,15 @@ type AnyMcpServer = any;
  * This file assumes @modelcontextprotocol/sdk is installed.
  */
 async function getMcpSdk() {
-  const mod = await import('@modelcontextprotocol/sdk/server/mcp.js');
-  return {
-    McpServer: (mod as any).McpServer,
-  };
+  try {
+    const mod = await import('@modelcontextprotocol/sdk/server/mcp.js');
+    return {
+      McpServer: (mod as any).McpServer,
+    };
+  } catch (error) {
+    const message = resolveErrorMessage(error);
+    throw new Error(`MCP server support is unavailable because @modelcontextprotocol/sdk is not installed: ${message}`);
+  }
 }
 
 async function findMissingCapability(plan: ActionPlanRecord) {
@@ -679,8 +684,14 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
 }
 
 export async function buildMcpServer(ctx: McpRequestContext): Promise<{ server: AnyMcpServer; transport: any }> {
-  const transportMod = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
-  const StreamableHTTPServerTransport = (transportMod as any).StreamableHTTPServerTransport;
+  let StreamableHTTPServerTransport: any;
+  try {
+    const transportMod = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
+    StreamableHTTPServerTransport = (transportMod as any).StreamableHTTPServerTransport;
+  } catch (error) {
+    const message = resolveErrorMessage(error);
+    throw new Error(`MCP HTTP transport is unavailable because @modelcontextprotocol/sdk is not installed: ${message}`);
+  }
 
   const server = await createMcpServer(ctx);
 
@@ -690,4 +701,3 @@ export async function buildMcpServer(ctx: McpRequestContext): Promise<{ server: 
   await server.connect(transport);
   return { server, transport };
 }
-

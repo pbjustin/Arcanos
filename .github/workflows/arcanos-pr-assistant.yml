@@ -17,6 +17,7 @@ jobs:
   arcanos-pr-analysis:
     runs-on: ubuntu-latest
     permissions:
+      checks: write
       contents: read
       pull-requests: write
       issues: write
@@ -112,23 +113,28 @@ jobs:
             exit 1
           fi
           
-          # Prepare analysis request
-          PR_DIFF=$(cat pr.diff | jq -Rs . || echo '""')
+          # Prepare analysis request payload in a file so large diffs do not exceed shell argument limits.
           PR_FILES=$(cat changed_files.txt | jq -Rs 'split("\n") | map(select(. != ""))' || echo '[]')
+          jq -n \
+            --rawfile prDiff pr.diff \
+            --argjson prFiles "$PR_FILES" \
+            --arg prNumber "${{ steps.pr-details.outputs.pr_number }}" \
+            --arg repository "${{ github.repository }}" \
+            '{
+              prDiff: $prDiff,
+              prFiles: $prFiles,
+              metadata: {
+                prNumber: ($prNumber | tonumber),
+                repository: $repository
+              }
+            }' > analysis_request.json
           
           # Run PR analysis
           echo "Running PR analysis..."
           HTTP_CODE=$(curl -X POST http://localhost:8080/api/pr-analysis/analyze \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CI_API_KEY" \
-            -d "{
-              \"prDiff\": $PR_DIFF,
-              \"prFiles\": $PR_FILES,
-              \"metadata\": {
-                \"prNumber\": ${{ steps.pr-details.outputs.pr_number }},
-                \"repository\": \"${{ github.repository }}\"
-              }
-            }" \
+            --data-binary @analysis_request.json \
             -w "%{http_code}" \
             -o analysis_result.json \
             -s)
@@ -254,6 +260,7 @@ jobs:
           name: arcanos-pr-analysis-${{ steps.pr-details.outputs.pr_number }}
           path: |
             analysis_result.json
+            analysis_request.json
             analysis_report.md
             pr.diff
             changed_files.txt

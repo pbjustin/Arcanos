@@ -31,4 +31,23 @@ describe('ask route validation', () => {
     expect(res.body.result).toBeDefined();
     expect(res.body.clientContext).toEqual({ routingDirectives: ['concise'] });
   });
+
+  it('treats CI mock OpenAI keys as placeholders and still returns a mock response', async () => {
+    const previousApiKey = process.env.OPENAI_API_KEY;
+    const ciMockApiKey = ['sk', 'mock', 'for', 'ci', 'testing'].join('-');
+    Reflect.set(process.env, 'OPENAI_API_KEY', ciMockApiKey);
+
+    try {
+      const res = await request(app).post('/ask').send({ prompt: 'Hello from CI mock key' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.result).toBeDefined();
+    } finally {
+      if (previousApiKey === undefined) {
+        Reflect.deleteProperty(process.env, 'OPENAI_API_KEY');
+      } else {
+        Reflect.set(process.env, 'OPENAI_API_KEY', previousApiKey);
+      }
+    }
+  });
 });

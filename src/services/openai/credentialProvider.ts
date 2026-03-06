@@ -1,16 +1,22 @@
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
-import { config } from "@platform/runtime/config.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
   'your-openai-api-key-here',
-  'your-openai-key-here'
+  'your-openai-key-here',
+  'mock-api-key',
+  'sk-mock-for-ci-testing'
 ]);
 
 let resolvedApiKey: string | null | undefined;
 let resolvedApiKeySource: string | null = null;
 let cachedDefaultModel: string | null = null;
+
+function isPlaceholderOpenAIKey(apiKey: string): boolean {
+  const trimmed = apiKey.trim();
+  return OPENAI_KEY_PLACEHOLDERS.has(trimmed) || trimmed.startsWith('sk-mock-');
+}
 
 /** Backend prefers fine-tuned model when set; otherwise OPENAI_MODEL then fallback. */
 function computeDefaultModelFromConfig(): string {
@@ -39,7 +45,8 @@ export function resolveOpenAIKey(): string | null {
   }
 
   const trimmed = apiKey.trim();
-  if (OPENAI_KEY_PLACEHOLDERS.has(trimmed)) {
+  //audit Assumption: CI and local test placeholder keys should never trigger live OpenAI calls; failure risk: deterministic test workflows attempt real network auth and fail noisily; expected invariant: mock/test sentinel keys are treated as missing credentials; handling strategy: reject known placeholders and mock-key prefixes.
+  if (isPlaceholderOpenAIKey(trimmed)) {
     resolvedApiKeySource = null;
     return null;
   }
@@ -95,4 +102,3 @@ export function getGPT5Model(): string {
   const appConfig = getConfig();
   return appConfig.gpt51Model || APPLICATION_CONSTANTS.MODEL_GPT_5_1;
 }
-
