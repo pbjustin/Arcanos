@@ -25,6 +25,7 @@ Recommended reading order:
 14. `docs/CI_CD.md`
 15. `docs/DOCUMENTATION.md`
 16. `docs/MEMORY_BACKEND_USAGE.md`
+17. `docs/WEB_SEARCH_AGENT.md`
 
 ## Configuration
 Configuration source files:
@@ -49,6 +50,7 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 - `docs/CONFIGURATION.md`
 - `docs/CI_CD.md`
 - `docs/MEMORY_BACKEND_USAGE.md`
+- `docs/WEB_SEARCH_AGENT.md`
 - `docs/REFERENCES.md`
 - `docs/CLEAR_METHOD_2_0.md`
 - `docs/SELF_REFLECTIONS.md`
