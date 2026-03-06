@@ -176,6 +176,9 @@ jobs:
           name: build-artifacts
           path: dist/
 
+      - name: 🔨 Restore workspace package builds
+        run: npm run build:packages
+
       - name: 🚀 Test server startup
         run: |
           export NODE_ENV=production
