@@ -5,15 +5,12 @@ const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
 const logRequestFeedbackMock = jest.fn();
 const tryDispatchDaemonToolsMock = jest.fn();
+const tryDispatchWorkerToolsMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
-  createJob: createJobMock,
-  updateJob: jest.fn(),
-  getJobById: jest.fn(),
-  getLatestJob: jest.fn(),
-  getJobQueueSummary: jest.fn()
+  createJob: createJobMock
 }));
 
 jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
@@ -24,6 +21,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
 
 jest.unstable_mockModule('../src/routes/ask/daemonTools.js', () => ({
   tryDispatchDaemonTools: tryDispatchDaemonToolsMock
+}));
+
+jest.unstable_mockModule('../src/routes/ask/workerTools.js', () => ({
+  tryDispatchWorkerTools: tryDispatchWorkerToolsMock
 }));
 
 jest.unstable_mockModule('@dispatcher/detectCognitiveDomain.js', () => ({
@@ -45,51 +46,46 @@ function buildApp() {
   return app;
 }
 
-describe('async /ask queue contract', () => {
+describe('/ask worker tools integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    createJobMock.mockResolvedValue({ id: 'job-123' });
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },
-      input: 'Refactor this TypeScript function.',
+      input: 'show me worker status',
       body: {}
     });
     tryDispatchDaemonToolsMock.mockResolvedValue(null);
-    detectCognitiveDomainMock.mockReturnValue({ domain: 'code', confidence: 0.9 });
-    gptFallbackClassifierMock.mockResolvedValue('code');
-    delete process.env.WORKER_ID;
-  });
-
-  it('queues async ask work with preserved endpoint and client context', async () => {
-    const response = await request(buildApp()).post('/ask').send({
-      message: 'Refactor this TypeScript function.',
-      async: true,
-      sessionId: 'session-123',
-      clientContext: {
-        routingDirectives: ['concise']
+    tryDispatchWorkerToolsMock.mockResolvedValue({
+      result: 'Workers are healthy.',
+      module: 'worker-tools',
+      fallbackFlag: false,
+      meta: {
+        id: 'worker-tool-1',
+        created: Date.now()
       }
     });
+    detectCognitiveDomainMock.mockReturnValue({ domain: 'execution', confidence: 0.95 });
+    gptFallbackClassifierMock.mockResolvedValue('execution');
+  });
 
-    expect(response.status).toBe(202);
-    expect(response.body).toEqual({
-      ok: true,
-      status: 'pending',
-      jobId: 'job-123',
-      poll: '/jobs/job-123'
-    });
-    expect(createJobMock).toHaveBeenCalledWith(
-      'api',
-      'ask',
+  it('returns worker tool responses before async queue handling', async () => {
+    const response = await request(buildApp())
+      .post('/ask')
+      .set('x-worker-helper-key', 'test-helper-key')
+      .send({
+        prompt: 'show me worker status'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
       expect.objectContaining({
-        prompt: 'Refactor this TypeScript function.',
-        sessionId: 'session-123',
-        cognitiveDomain: 'code',
-        endpointName: 'ask',
-        clientContext: {
-          routingDirectives: ['concise']
-        }
+        result: 'Workers are healthy.',
+        module: 'worker-tools',
+        endpoint: 'ask'
       })
     );
+    expect(tryDispatchWorkerToolsMock).toHaveBeenCalledTimes(1);
+    expect(createJobMock).not.toHaveBeenCalled();
     expect(handleAIErrorMock).not.toHaveBeenCalled();
   });
 });

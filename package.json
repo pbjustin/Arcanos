@@ -34,6 +34,7 @@
     "test:doc-workflow": "node scripts/test-doc-workflow.js",
     "self-test": "node --import ./scripts/register-esm-loader.mjs dist/commands/runSelfTest.js",
     "daily-summary": "node --import ./scripts/register-esm-loader.mjs dist/commands/runDailySummary.js",
+    "worker:helper": "node scripts/worker-helper.mjs",
     "validate:railway": "node scripts/validate-railway-compatibility.js",
     "railway:alert:timeouts": "node scripts/check-railway-timeout-regressions.js",
     "railway:alert:budget-abort": "node scripts/check-railway-timeout-regressions.js --since 15m --lines 500 --fail-on-budget-abort",

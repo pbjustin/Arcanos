@@ -1,6 +1,5 @@
 import { EventEmitter } from 'events';
-import { createGPT5Reasoning } from "@services/openai.js";
-import { runARCANOS } from "@core/logic/arcanos.js";
+import { runThroughBrain, type TrinityResult } from "@core/logic/trinity.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { config as runtimeConfig } from "@platform/runtime/config.js";
@@ -11,6 +10,8 @@ import { acquireExecutionLock } from "@services/safety/executionLock.js";
 import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 import { interpreterSupervisor } from "@services/safety/interpreterSupervisor.js";
 import { activateUnsafeCondition, incrementWorkerFailure } from "@services/safety/runtimeState.js";
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 
 // ✅ Environment setup
 // Use config layer for env access (adapter boundary pattern)
@@ -40,6 +41,49 @@ interface WorkerRuntimeState {
   lastError?: string | null;
 }
 
+/**
+ * Structured worker dispatch request for the in-process runtime.
+ *
+ * Purpose:
+ * - Preserve task metadata so direct worker dispatch uses the same Trinity routing hints as queued jobs.
+ *
+ * Inputs/outputs:
+ * - Input: prompt plus optional session, audit, and routing metadata.
+ * - Output: normalized worker request consumed by the task queue.
+ *
+ * Edge case behavior:
+ * - `sourceEndpoint` defaults later during execution when omitted.
+ */
+export interface WorkerDispatchRequest {
+  input: string;
+  sessionId?: string;
+  overrideAuditSafe?: string;
+  cognitiveDomain?: CognitiveDomain;
+  sourceEndpoint?: string;
+}
+
+/**
+ * Worker dispatch options including retry metadata.
+ *
+ * Purpose:
+ * - Allow callers to combine Trinity routing hints with queue retry controls.
+ *
+ * Inputs/outputs:
+ * - Input: worker request metadata plus retry configuration.
+ * - Output: normalized dispatch options for `dispatchArcanosTask`.
+ *
+ * Edge case behavior:
+ * - Retry settings fall back to runtime defaults when omitted.
+ */
+export interface WorkerDispatchOptions {
+  sessionId?: string;
+  overrideAuditSafe?: string;
+  cognitiveDomain?: CognitiveDomain;
+  sourceEndpoint?: string;
+  attempts?: number;
+  backoffMs?: number;
+}
+
 export interface WorkerRuntimeStatus {
   enabled: boolean;
   model: string;
@@ -65,40 +109,41 @@ const runtimeState: WorkerRuntimeState = {
 
 // Simple task queue based on EventEmitter with retry & backoff
 export class WorkerTaskQueue extends EventEmitter {
-  register(task: (input: string) => Promise<WorkerResult>): void {
+  register(task: (request: WorkerDispatchRequest) => Promise<WorkerResult>): void {
     this.on('task', task);
   }
 
   async dispatch(
-    input: string,
+    request: WorkerDispatchRequest,
     options: { attempts?: number; backoffMs?: number } = {}
   ): Promise<WorkerResult[]> {
     const listeners = this.listeners('task');
     const { attempts = 3, backoffMs = 1000 } = options;
     const results: WorkerResult[] = [];
+    const inputPreview = request.input.slice(0, 120);
 
     for (const listener of listeners) {
       let attempt = 0;
       let delay = backoffMs;
       while (attempt < attempts) {
         try {
-          const result = await (listener as (input: string) => Promise<WorkerResult>)(input);
+          const result = await (listener as (request: WorkerDispatchRequest) => Promise<WorkerResult>)(request);
           results.push(result);
-          logger.info('[WORKER] Task completed', { inputPreview: input.slice(0, 120) });
+          logger.info('[WORKER] Task completed', { inputPreview });
           break;
         } catch (err) {
           attempt++;
           if (attempt >= attempts) {
             const errorMessage = resolveErrorMessage(err);
             logger.error('[WORKER] Task failed after max retries', {
-              inputPreview: input.slice(0, 120),
+              inputPreview,
               error: errorMessage
             });
             results.push({ error: errorMessage });
           } else {
             logger.warn(`[WORKER] Task failed - retrying in ${delay}ms`, {
               attempt,
-              inputPreview: input.slice(0, 120),
+              inputPreview,
               error: resolveErrorMessage(err)
             });
             await new Promise(res => {
@@ -117,78 +162,66 @@ export class WorkerTaskQueue extends EventEmitter {
 }
 
 export const workerTaskQueue = new WorkerTaskQueue();
-
-// ✅ GPT-5.1 reasoning function using centralized helper
-export async function gpt5Reasoning(prompt: string): Promise<string> {
-  let client;
-  try {
-    ({ client } = requireOpenAIClientOrAdapter('OpenAI adapter unavailable'));
-  } catch {
-    return '[Fallback: GPT-5.1 unavailable]';
-  }
-
-  const result = await createGPT5Reasoning(
-    client,
-    prompt,
-    'ARCANOS: Use GPT-5.1 for deep reasoning on every request. Return structured analysis only.'
-  );
-
-  if (result.error) {
-    logger.warn('[WORKER] GPT-5.1 reasoning fallback triggered', {
-      error: result.error
-    });
-  } else if (result.model) {
-    logger.info('[WORKER] GPT-5.1 reasoning confirmed', {
-      model: result.model
-    });
-  }
-
-  return result.content;
-}
-
-// Use the return type of runARCANOS to keep compatibility
-type ArcanosResult = Awaited<ReturnType<typeof runARCANOS>>;
-export type WorkerResult = Partial<ArcanosResult> & {
-  reasoning?: string;
+export type WorkerResult = Partial<TrinityResult> & {
   error?: string;
-  requiresReasoning?: boolean;
-  reasoningPrompt?: string;
   workerId?: string;
 };
 
-// ✅ ARCANOS core logic alias for compatibility with problem statement
-export async function arcanosCoreLogic(input: string): Promise<WorkerResult> {
+function normalizeWorkerDispatchRequest(
+  input: string,
+  options: WorkerDispatchOptions = {}
+): {
+  request: WorkerDispatchRequest;
+  retry: { attempts?: number; backoffMs?: number };
+} {
+  return {
+    request: {
+      input,
+      sessionId: options.sessionId,
+      overrideAuditSafe: options.overrideAuditSafe,
+      cognitiveDomain: options.cognitiveDomain,
+      sourceEndpoint: options.sourceEndpoint
+    },
+    retry: {
+      attempts: options.attempts,
+      backoffMs: options.backoffMs
+    }
+  };
+}
+
+/**
+ * Execute one in-process worker task through the Trinity brain.
+ *
+ * Purpose:
+ * - Ensure direct worker dispatch uses the same backend AI pipeline as queued `jobRunner` execution.
+ *
+ * Inputs/outputs:
+ * - Input: structured worker dispatch request.
+ * - Output: Trinity result or a structured worker error.
+ *
+ * Edge case behavior:
+ * - Returns `{ error }` when the OpenAI adapter is unavailable.
+ */
+export async function workerTask(request: WorkerDispatchRequest): Promise<WorkerResult> {
   let client;
   try {
     ({ client } = requireOpenAIClientOrAdapter('OpenAI adapter unavailable'));
   } catch {
-    return { error: 'OpenAI adapter unavailable' } as WorkerResult;
+    return { error: 'OpenAI adapter unavailable' };
   }
 
-  const logicOutput = await runARCANOS(client, input);
-  
-  // Transform the output to match problem statement structure
-  const result: WorkerResult = {
-    ...logicOutput,
-    requiresReasoning: logicOutput.reasoningDelegation?.used || false,
-    reasoningPrompt: logicOutput.reasoningDelegation?.delegatedQuery
-  };
-
-  return result;
-}
-
-// ✅ Worker main task
-export async function workerTask(input: string): Promise<WorkerResult> {
-  // Step 1: Run ARCANOS core logic
-  const logicOutput = await arcanosCoreLogic(input);
-
-  // Step 2: If reasoning is required, consult GPT-5.1
-  if (logicOutput.requiresReasoning && logicOutput.reasoningPrompt) {
-    const reasoning = await gpt5Reasoning(logicOutput.reasoningPrompt);
-    return { ...logicOutput, reasoning };
-  }
-
-  return logicOutput;
+  const runtimeBudget = createRuntimeBudget();
+  return runThroughBrain(
+    client,
+    request.input,
+    request.sessionId,
+    request.overrideAuditSafe,
+    {
+      cognitiveDomain: request.cognitiveDomain,
+      sourceEndpoint: request.sourceEndpoint || 'worker.dispatch'
+    },
+    runtimeBudget
+  );
 }
 
 // ✅ Worker startup
@@ -204,7 +237,7 @@ export interface WorkerBootstrapSummary {
 }
 
 function createWorkerHandler(workerId: string) {
-  return async (input: string): Promise<WorkerResult> => {
+  return async (request: WorkerDispatchRequest): Promise<WorkerResult> => {
     const cycleId = interpreterSupervisor.beginCycle(`worker:${workerId}`, {
       category: 'worker',
       metadata: {
@@ -213,18 +246,19 @@ function createWorkerHandler(workerId: string) {
     });
     logger.info('[WORKER] Dispatching task', {
       workerId,
-      inputPreview: input.slice(0, 120)
+      inputPreview: request.input.slice(0, 120),
+      sourceEndpoint: request.sourceEndpoint || 'worker.dispatch'
     });
 
     try {
       interpreterSupervisor.heartbeat(cycleId);
-      const result = await workerTask(input);
+      const result = await workerTask(request);
       interpreterSupervisor.heartbeat(cycleId);
       interpreterSupervisor.completeCycle(cycleId);
 
       logger.info('[WORKER] Task processed', {
         workerId,
-        requiresReasoning: result.requiresReasoning,
+        activeModel: result.activeModel,
         error: result.error
       });
 
@@ -352,9 +386,10 @@ export async function startWorkers(force = false): Promise<WorkerBootstrapSummar
 
 export async function dispatchArcanosTask(
   input: string,
-  options: { attempts?: number; backoffMs?: number } = {}
+  options: WorkerDispatchOptions = {}
 ): Promise<WorkerResult[]> {
-  const inputPreview = input.slice(0, 120);
+  const normalizedDispatch = normalizeWorkerDispatchRequest(input, options);
+  const inputPreview = normalizedDispatch.request.input.slice(0, 120);
   logger.info('[WORKER] Incoming dispatch', { inputPreview });
 
   const bootstrap = await startWorkers();
@@ -363,12 +398,12 @@ export async function dispatchArcanosTask(
 
   if (!bootstrap.runWorkers) {
     // RUN_WORKERS disabled; execute synchronously via core logic
-    const directResult = await workerTask(input);
+    const directResult = await workerTask(normalizedDispatch.request);
     results = [{ ...directResult, workerId: 'arcanos-core-direct' }];
   } else {
-    results = await workerTaskQueue.dispatch(input, options);
+    results = await workerTaskQueue.dispatch(normalizedDispatch.request, normalizedDispatch.retry);
     if (results.length === 0) {
-      const fallbackResult = await workerTask(input);
+      const fallbackResult = await workerTask(normalizedDispatch.request);
       results = [{ ...fallbackResult, workerId: 'arcanos-core-direct' }];
     }
   }

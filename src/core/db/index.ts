@@ -64,7 +64,9 @@ export {
 export {
   createJob,
   updateJob,
-  getLatestJob
+  getJobById,
+  getLatestJob,
+  getJobQueueSummary
 } from './repositories/jobRepository.js';
 
 export {

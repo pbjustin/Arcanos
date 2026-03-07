@@ -19,6 +19,7 @@ import type {
   SystemStateResponse
 } from './types.js';
 import { tryDispatchDaemonTools } from './daemonTools.js';
+import { tryDispatchWorkerTools } from './workerTools.js';
 import { getGPT5Model } from '@services/openai.js';
 import {
   buildCompletedQueuedAskOutput,
@@ -37,6 +38,7 @@ import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
+import { resolveWorkerHelperAuth } from '@transport/http/middleware/workerHelperAuth.js';
 
 const router = express.Router();
 
@@ -503,6 +505,16 @@ export const handleAIRequest = async (
       //audit Assumption: daemon tool response is terminal; risk: skipping trinity; invariant: tool actions queued; handling: return early.
       return res.json({
         ...daemonToolResponse,
+        endpoint: endpointName,
+        clientContext: req.body.clientContext,
+        ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
+      });
+    }
+
+    const workerToolResponse = await tryDispatchWorkerTools(openai, prompt, resolveWorkerHelperAuth(req));
+    if (workerToolResponse) {
+      return res.json({
+        ...workerToolResponse,
         endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})

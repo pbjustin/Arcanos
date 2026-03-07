@@ -29,6 +29,7 @@ import plansRouter from './plans.js';
 import clearRouter from './clear.js';
 import agentsRouter from './agents.js';
 import selfImproveRouter from './self-improve.js';
+import workerHelperRouter from './worker-helper.js';
 import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHandler.js";
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -119,6 +120,8 @@ export function registerRoutes(app: Express): void {
   app.use('/', bridgeRouter);
   app.use('/', debugConfirmationRouter);
   app.use('/', reusableCodeRouter);
+  app.use('/', workerHelperRouter);
+  console.info('[ROUTES] Mounted /worker-helper helper endpoints and /ask worker-control interception support.');
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);
