@@ -45,8 +45,6 @@ function buildApp() {
 describe('/worker-helper routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.ADMIN_KEY = 'test-helper-key';
-    delete process.env.REGISTER_KEY;
     delete process.env.WORKER_ID;
 
     getDatabaseStatusMock.mockReturnValue({
@@ -97,21 +95,20 @@ describe('/worker-helper routes', () => {
     });
   });
 
-  it('rejects unauthenticated helper access', async () => {
+  it('returns combined status without helper auth', async () => {
     const response = await request(buildApp()).get('/worker-helper/status');
 
-    expect(response.status).toBe(403);
-    expect(response.body).toEqual({
-      error: 'WORKER_HELPER_AUTH_REQUIRED',
-      message:
-        'Provide x-worker-helper-key, x-admin-api-key, x-register-key, or Authorization: Bearer <key>.'
-    });
+    expect(response.status).toBe(200);
+    expect(response.body.mainApp.runtime).toEqual(
+      expect.objectContaining({
+        started: true,
+        activeListeners: 2
+      })
+    );
   });
 
-  it('returns combined status for authenticated requests', async () => {
-    const response = await request(buildApp())
-      .get('/worker-helper/status')
-      .set('x-worker-helper-key', 'test-helper-key');
+  it('returns combined status with queue visibility', async () => {
+    const response = await request(buildApp()).get('/worker-helper/status');
 
     expect(response.status).toBe(200);
     expect(response.body.mainApp).toEqual({
@@ -150,10 +147,23 @@ describe('/worker-helper routes', () => {
     });
   });
 
+  it('ignores legacy auth headers and still serves worker helper requests', async () => {
+    const response = await request(buildApp())
+      .get('/worker-helper/status')
+      .set('Authorization', 'Bearer test-helper-key');
+
+    expect(response.status).toBe(200);
+    expect(response.body.mainApp.runtime).toEqual(
+      expect.objectContaining({
+        started: true,
+        activeListeners: 2
+      })
+    );
+  });
+
   it('queues ask work with detected domain metadata', async () => {
     const response = await request(buildApp())
       .post('/worker-helper/queue/ask')
-      .set('x-worker-helper-key', 'test-helper-key')
       .send({
         prompt: 'Explain this stack trace.',
         sessionId: 'session-42',
@@ -190,7 +200,6 @@ describe('/worker-helper routes', () => {
   it('dispatches direct commands through the in-process worker runtime', async () => {
     const response = await request(buildApp())
       .post('/worker-helper/dispatch')
-      .set('x-worker-helper-key', 'test-helper-key')
       .send({
         input: 'Run a direct worker check.',
         attempts: 2,

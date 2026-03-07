@@ -42,6 +42,14 @@ function createOpenAiClientWithToolArgs(toolName: string, argumentsJson: string)
   } as unknown as OpenAI;
 }
 
+function createResponsesOpenAiClient(createMock: jest.Mock): OpenAI {
+  return {
+    responses: {
+      create: createMock
+    }
+  } as unknown as OpenAI;
+}
+
 describe('daemon tools trust boundary', () => {
   it('rejects malformed tool JSON and avoids queueing side effects', async () => {
     const client = createOpenAiClientWithToolArgs('run_command', '{invalid-json');
@@ -86,5 +94,45 @@ describe('daemon tools trust boundary', () => {
     expect(
       result && 'confirmation_required' in result ? result.pending_actions[0]?.daemon : undefined
     ).toBe('run');
+  });
+
+  it('uses responses-compatible tool schemas for daemon tool calling', async () => {
+    const createMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'resp-1',
+        model: 'gpt-4.1-mini',
+        output: [
+          {
+            type: 'function_call',
+            name: 'run_command',
+            call_id: 'call-1',
+            arguments: JSON.stringify({ command: 'echo "safety first"' })
+          }
+        ]
+      });
+
+    const result = await tryDispatchDaemonTools(
+      createResponsesOpenAiClient(createMock),
+      'run this command',
+      {
+        source: 'daemon',
+        instanceId: 'daemon-instance-4'
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result && 'confirmation_required' in result ? result.confirmation_required : false).toBe(true);
+    expect(createMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        tools: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'function',
+            name: 'run_command'
+          })
+        ])
+      })
+    );
   });
 });

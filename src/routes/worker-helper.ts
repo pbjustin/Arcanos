@@ -3,10 +3,10 @@
  *
  * Purpose:
  * - Provide a lightweight operator surface for CLI and ChatGPT automation to inspect queue state
- *   and send worker commands without the interactive confirmation workflow.
+ *   and send worker commands without the interactive confirmation workflow or helper-token setup.
  *
  * Inputs/outputs:
- * - Input: authenticated HTTP requests under `/worker-helper/*`.
+ * - Input: HTTP requests under `/worker-helper/*`.
  * - Output: JSON responses for status, queue inspection, async job enqueueing, direct dispatch,
  *   and in-process worker healing.
  *
@@ -19,7 +19,6 @@ import { z } from 'zod';
 import { asyncHandler, sendInternalErrorPayload, sendNotFound, validateBody, validateParams } from '@shared/http/index.js';
 import { clientContextSchema } from '@shared/types/dto.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
-import { workerHelperAuth } from '@transport/http/middleware/workerHelperAuth.js';
 import {
   dispatchWorkerInput,
   getLatestWorkerJobDetail,
@@ -60,8 +59,6 @@ const healRequestSchema = z.object({
   force: z.boolean().optional()
 });
 
-router.use('/worker-helper', workerHelperAuth);
-
 /**
  * GET /worker-helper/status
  *
@@ -69,7 +66,7 @@ router.use('/worker-helper', workerHelperAuth);
  * - Report main-app worker runtime state plus queue-observed dedicated worker activity.
  *
  * Inputs/outputs:
- * - Input: authenticated request headers only.
+ * - Input: request path only.
  * - Output: combined main-app runtime and DB queue summary JSON.
  *
  * Edge case behavior:
@@ -96,7 +93,7 @@ router.get(
  * - Return the most recent queued job for operator inspection.
  *
  * Inputs/outputs:
- * - Input: authenticated request headers only.
+ * - Input: request path only.
  * - Output: JSON snapshot of the latest job, including output when present.
  *
  * Edge case behavior:

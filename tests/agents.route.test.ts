@@ -39,7 +39,7 @@ const validRegistrationPayload = {
 describe('agents routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetConfig.mockReturnValue({ enableActionPlans: true, adminKey: 'admin-secret' });
+    mockGetConfig.mockReturnValue({ enableActionPlans: true });
   });
 
   it('returns 503 when action plans are disabled', async () => {
@@ -157,17 +157,7 @@ describe('agents routes', () => {
     expect(response.body.error).toBe('Failed to list agents');
   });
 
-  it('returns 403 when capability grant endpoint is called without admin key', async () => {
-    const response = await request(buildApp())
-      .post('/agents/agent-1/capabilities/grant')
-      .send({ capabilities: ['terminal.run'] });
-
-    expect(response.status).toBe(403);
-    expect(response.body.error).toBe('Admin authorization required');
-    expect(mockGrantCapabilities).not.toHaveBeenCalled();
-  });
-
-  it('grants capabilities when admin key is valid', async () => {
+  it('grants capabilities without admin header auth', async () => {
     mockGrantCapabilities.mockResolvedValue({
       id: 'agent-1',
       capabilities: ['terminal.run', 'vision.analyze']
@@ -175,7 +165,6 @@ describe('agents routes', () => {
 
     const response = await request(buildApp())
       .post('/agents/agent-1/capabilities/grant')
-      .set('x-admin-api-key', 'admin-secret')
       .send({ capabilities: ['vision.analyze'] });
 
     expect(response.status).toBe(200);
@@ -188,7 +177,6 @@ describe('agents routes', () => {
 
     const response = await request(buildApp())
       .post('/agents/missing/capabilities/grant')
-      .set('x-admin-api-key', 'admin-secret')
       .send({ capabilities: ['vision.analyze'] });
 
     expect(response.status).toBe(404);

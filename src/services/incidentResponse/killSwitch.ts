@@ -12,6 +12,7 @@ import { createClient } from "redis";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { resolveConfiguredRedisConnection } from "@platform/runtime/redis.js";
 
 type RedisClient = ReturnType<typeof createClient>;
 
@@ -45,37 +46,6 @@ function clampAutonomyLevel(level: number): number {
 }
 
 /**
- * Build Redis connection URL from env.
- *
- * Purpose: support both REDIS_URL and discrete Railway-style vars.
- * Inputs/outputs: none -> usable redis URL or null.
- * Edge cases: returns null when host/url is missing or malformed.
- */
-function resolveRedisUrl(): string | null {
-  const direct = getEnv('REDIS_URL');
-  if (direct) {
-    try {
-      const parsed = new URL(direct);
-      if (parsed.protocol === 'redis:' && parsed.hostname) return direct;
-    } catch {
-      //audit Assumption: malformed REDIS_URL should not crash kill-switch resolution; risk: boot-time failure path; invariant: fallback chain remains available; handling: ignore and continue to discrete env vars.
-    }
-  }
-
-  const host = getEnv('REDISHOST') || getEnv('REDIS_HOST');
-  if (!host) return null;
-  const port = getEnv('REDISPORT') || getEnv('REDIS_PORT') || '6379';
-  const user = getEnv('REDISUSER') || getEnv('REDIS_USER') || '';
-  const pass = getEnv('REDISPASSWORD') || getEnv('REDIS_PASSWORD') || '';
-  const auth = user
-    ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@`
-    : pass
-      ? `:${encodeURIComponent(pass)}@`
-      : '';
-  return `redis://${auth}${host}:${port}`;
-}
-
-/**
  * Resolve a shared Redis client for multi-instance kill-switch consistency.
  *
  * Purpose: centralize override state in a cluster-safe backend store.
@@ -85,7 +55,9 @@ function resolveRedisUrl(): string | null {
 async function getSharedKillSwitchRedisClient(): Promise<RedisClient | null> {
   if (redisClientPromise) return redisClientPromise;
 
-  const redisUrl = resolveRedisUrl();
+  const redisUrl = resolveConfiguredRedisConnection().url;
+
+  //audit Assumption: distributed kill-switch state should only be attempted against an explicitly configured Redis endpoint; failure risk: fallback to an unintended local Redis instance in production; expected invariant: shared state is disabled when Redis is unconfigured; handling strategy: return local-only mode when no configured URL is present.
   if (!redisUrl) return null;
 
   redisClientPromise = (async () => {

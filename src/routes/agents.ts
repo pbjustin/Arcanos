@@ -7,7 +7,6 @@
  */
 
 import express from 'express';
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import { agentRegistrationSchema } from '@shared/types/actionPlan.js';
 import {
@@ -27,13 +26,6 @@ const router = express.Router();
 const agentIdSchema = z.object({
   agentId: z.string().min(1)
 });
-
-function timingSafeStringEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  if (leftBuffer.length !== rightBuffer.length) return false;
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
 
 /**
  * POST /agents/register — Register a new agent
@@ -76,24 +68,27 @@ router.get(
 
 
 /**
- * POST /agents/:agentId/capabilities/grant — Grant capabilities (admin only)
+ * POST /agents/:agentId/capabilities/grant — Grant capabilities
  *
- * Admin auth: x-admin-api-key header must match ADMIN_API_KEY env var.
+ * Purpose:
+ * - Allow a solo operator deployment to change agent capabilities without separate token management.
+ *
+ * Inputs/outputs:
+ * - Input: agent identifier path param plus a validated capabilities array.
+ * - Output: updated agent payload after capability mutation.
+ *
+ * Edge case behavior:
+ * - Returns `404` when the target agent does not exist.
  */
 router.post(
   '/agents/:agentId/capabilities/grant',
   validateParams(agentIdSchema),
   validateBody(z.object({ capabilities: z.array(z.string().min(1)).min(1) })),
   asyncHandler(async (req, res) => {
-    const adminKey = getConfig().adminKey;
-    const provided = req.header('x-admin-api-key') ?? '';
-    if (!adminKey || !timingSafeStringEqual(provided, adminKey)) {
-      res.status(403).json({ error: 'Admin authorization required' });
-      return;
-    }
-
     const agentId = (req.validated!.params as any).agentId as string;
     const caps = (req.validated!.body as any).capabilities as string[];
+
+    //audit Assumption: this backend is operated by one trusted user who prefers no secondary admin token surface; failure risk: any reachable caller can mutate agent capabilities; expected invariant: route is only exposed in the operator's trusted environment; handling strategy: remove header auth and rely on deployment-level access control.
     const updated = await grantCapabilities(agentId, caps);
     if (!updated) {
       sendNotFoundError(res, 'Agent not found');

@@ -1,12 +1,12 @@
 import type OpenAI from 'openai';
 import { z } from 'zod';
 import { getDefaultModel } from '@services/openai.js';
+import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
 import { getTokenParameter } from '@shared/tokenParameterHelper.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import type { AskResponse } from './types.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
-import type { WorkerHelperAuthResolution } from '@transport/http/middleware/workerHelperAuth.js';
 import {
   dispatchWorkerInput,
   getLatestWorkerJobDetail,
@@ -26,121 +26,106 @@ const WORKER_TOOL_SYSTEM_PROMPT = [
   'If the prompt is not about worker control, do not call any tools.'
 ].join(' ');
 
-const workerControlTools: Array<Record<string, unknown>> = [
+const workerControlToolDefinitions: FunctionToolDefinition[] = [
   {
-    type: 'function',
-    function: {
-      name: 'get_worker_status',
-      description: 'Get combined status for the main app worker runtime and the dedicated async worker queue.',
-      parameters: {
-        type: 'object',
-        properties: {}
-      }
+    name: 'get_worker_status',
+    description: 'Get combined status for the main app worker runtime and the dedicated async worker queue.',
+    parameters: {
+      type: 'object',
+      properties: {}
     }
   },
   {
-    type: 'function',
-    function: {
-      name: 'get_latest_worker_job',
-      description: 'Get the latest queued worker job including output when available.',
-      parameters: {
-        type: 'object',
-        properties: {}
-      }
+    name: 'get_latest_worker_job',
+    description: 'Get the latest queued worker job including output when available.',
+    parameters: {
+      type: 'object',
+      properties: {}
     }
   },
   {
-    type: 'function',
-    function: {
-      name: 'get_worker_job',
-      description: 'Get one queued worker job by identifier.',
-      parameters: {
-        type: 'object',
-        properties: {
-          jobId: {
-            type: 'string',
-            description: 'The job identifier to inspect.'
-          }
+    name: 'get_worker_job',
+    description: 'Get one queued worker job by identifier.',
+    parameters: {
+      type: 'object',
+      properties: {
+        jobId: {
+          type: 'string',
+          description: 'The job identifier to inspect.'
+        }
+      },
+      required: ['jobId']
+    }
+  },
+  {
+    name: 'queue_worker_ask',
+    description: 'Queue a new async ask job for the dedicated DB-backed worker service.',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'Prompt to queue for async worker execution.' },
+        sessionId: { type: 'string', description: 'Optional session identifier.' },
+        cognitiveDomain: {
+          type: 'string',
+          enum: ['diagnostic', 'code', 'creative', 'natural', 'execution'],
+          description: 'Optional explicit cognitive domain override.'
         },
-        required: ['jobId']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'queue_worker_ask',
-      description: 'Queue a new async ask job for the dedicated DB-backed worker service.',
-      parameters: {
-        type: 'object',
-        properties: {
-          prompt: { type: 'string', description: 'Prompt to queue for async worker execution.' },
-          sessionId: { type: 'string', description: 'Optional session identifier.' },
-          cognitiveDomain: {
-            type: 'string',
-            enum: ['diagnostic', 'code', 'creative', 'natural', 'execution'],
-            description: 'Optional explicit cognitive domain override.'
-          },
-          overrideAuditSafe: {
-            type: 'string',
-            description: 'Optional audit-safe override flag.'
-          },
-          endpointName: {
-            type: 'string',
-            description: 'Optional source endpoint label for telemetry.'
-          }
+        overrideAuditSafe: {
+          type: 'string',
+          description: 'Optional audit-safe override flag.'
         },
-        required: ['prompt']
-      }
+        endpointName: {
+          type: 'string',
+          description: 'Optional source endpoint label for telemetry.'
+        }
+      },
+      required: ['prompt']
     }
   },
   {
-    type: 'function',
-    function: {
-      name: 'dispatch_worker_task',
-      description: 'Dispatch immediate work through the main app in-process worker runtime.',
-      parameters: {
-        type: 'object',
-        properties: {
-          input: { type: 'string', description: 'Prompt or command for immediate dispatch.' },
-          sessionId: { type: 'string', description: 'Optional session identifier.' },
-          cognitiveDomain: {
-            type: 'string',
-            enum: ['diagnostic', 'code', 'creative', 'natural', 'execution'],
-            description: 'Optional explicit cognitive domain override.'
-          },
-          overrideAuditSafe: {
-            type: 'string',
-            description: 'Optional audit-safe override flag.'
-          },
-          attempts: { type: 'integer', minimum: 1, maximum: 10 },
-          backoffMs: { type: 'integer', minimum: 0, maximum: 60000 },
-          sourceEndpoint: {
-            type: 'string',
-            description: 'Optional endpoint label for worker telemetry.'
-          }
+    name: 'dispatch_worker_task',
+    description: 'Dispatch immediate work through the main app in-process worker runtime.',
+    parameters: {
+      type: 'object',
+      properties: {
+        input: { type: 'string', description: 'Prompt or command for immediate dispatch.' },
+        sessionId: { type: 'string', description: 'Optional session identifier.' },
+        cognitiveDomain: {
+          type: 'string',
+          enum: ['diagnostic', 'code', 'creative', 'natural', 'execution'],
+          description: 'Optional explicit cognitive domain override.'
         },
-        required: ['input']
-      }
+        overrideAuditSafe: {
+          type: 'string',
+          description: 'Optional audit-safe override flag.'
+        },
+        attempts: { type: 'integer', minimum: 1, maximum: 10 },
+        backoffMs: { type: 'integer', minimum: 0, maximum: 60000 },
+        sourceEndpoint: {
+          type: 'string',
+          description: 'Optional endpoint label for worker telemetry.'
+        }
+      },
+      required: ['input']
     }
   },
   {
-    type: 'function',
-    function: {
-      name: 'heal_worker_runtime',
-      description: 'Restart or bootstrap the in-process worker runtime.',
-      parameters: {
-        type: 'object',
-        properties: {
-          force: {
-            type: 'boolean',
-            description: 'When true, force a restart. Defaults to true.'
-          }
+    name: 'heal_worker_runtime',
+    description: 'Restart or bootstrap the in-process worker runtime.',
+    parameters: {
+      type: 'object',
+      properties: {
+        force: {
+          type: 'boolean',
+          description: 'When true, force a restart. Defaults to true.'
         }
       }
     }
   }
 ];
+
+const { chatCompletionTools: workerControlChatCompletionTools, responsesTools: workerControlResponsesTools } =
+  buildFunctionToolSet(workerControlToolDefinitions);
 
 const getWorkerJobArgsSchema = z.object({
   jobId: z.string().trim().min(1)
@@ -441,21 +426,6 @@ function buildWorkerToolResponse(response: any, resultText: string): AskResponse
   };
 }
 
-function buildWorkerToolGuidance(authResolution: WorkerHelperAuthResolution): AskResponse | null {
-  if (authResolution.status === 'disabled') {
-    return buildWorkerToolResponse(null, 'Worker control is disabled until ADMIN_KEY or REGISTER_KEY is configured on the backend.');
-  }
-
-  if (authResolution.status === 'missing' || authResolution.status === 'invalid') {
-    return buildWorkerToolResponse(
-      null,
-      'Worker control requires x-worker-helper-key, x-admin-api-key, x-register-key, or Authorization: Bearer <key>.'
-    );
-  }
-
-  return null;
-}
-
 function summarizeToolExecution(toolName: string, payload: Record<string, unknown>): string {
   switch (toolName) {
     case 'get_worker_status': {
@@ -561,27 +531,21 @@ async function executeWorkerTool(
  * Attempt to let the backend AI control workers through tool-calling.
  *
  * Purpose:
- * - Give authorized operators natural-language worker control through `/ask` while preserving normal Trinity fallback for non-worker prompts.
+ * - Give operators natural-language worker control through `/ask` while preserving normal Trinity fallback for non-worker prompts.
  *
  * Inputs/outputs:
- * - Input: OpenAI client, prompt text, and helper-auth resolution from the HTTP request.
- * - Output: worker-tool AskResponse when tools execute or guidance is required; `null` when the prompt should continue through normal ask flow.
+ * - Input: OpenAI client and prompt text.
+ * - Output: worker-tool AskResponse when tools execute; `null` when the prompt should continue through normal ask flow.
  *
  * Edge case behavior:
- * - Unauthorized worker-control prompts return guidance instead of executing tools.
+ * - Non-worker prompts return `null` so normal ask routing can continue unchanged.
  */
 export async function tryDispatchWorkerTools(
   client: OpenAI,
-  prompt: string,
-  authResolution: WorkerHelperAuthResolution
+  prompt: string
 ): Promise<AskResponse | null> {
   if (!looksLikeWorkerControlPrompt(prompt)) {
     return null;
-  }
-
-  const guidanceResponse = buildWorkerToolGuidance(authResolution);
-  if (guidanceResponse) {
-    return guidanceResponse;
   }
 
   const deterministicResponse = await executeDeterministicWorkerOperations(
@@ -612,7 +576,7 @@ export async function tryDispatchWorkerTools(
         { role: 'system', content: WORKER_TOOL_SYSTEM_PROMPT },
         { role: 'user', content: prompt }
       ],
-      tools: workerControlTools,
+      tools: workerControlChatCompletionTools,
       tool_choice: 'auto',
       ...tokenParams
     });
@@ -640,7 +604,7 @@ export async function tryDispatchWorkerTools(
     store: shouldStoreOpenAIResponses(),
     instructions: WORKER_TOOL_SYSTEM_PROMPT,
     input: [{ role: 'user', content: prompt }],
-    tools: workerControlTools,
+    tools: workerControlResponsesTools,
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens
   });
@@ -699,7 +663,7 @@ export async function tryDispatchWorkerTools(
       previous_response_id: response.id,
       instructions: WORKER_TOOL_SYSTEM_PROMPT,
       input: functionCallOutputs,
-      tools: workerControlTools,
+      tools: workerControlResponsesTools,
       tool_choice: 'auto',
       max_output_tokens: maxOutputTokens
     });

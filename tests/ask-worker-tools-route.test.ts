@@ -71,7 +71,6 @@ describe('/ask worker tools integration', () => {
   it('returns worker tool responses before async queue handling', async () => {
     const response = await request(buildApp())
       .post('/ask')
-      .set('x-worker-helper-key', 'test-helper-key')
       .send({
         prompt: 'show me worker status'
       });
@@ -85,6 +84,10 @@ describe('/ask worker tools integration', () => {
       })
     );
     expect(tryDispatchWorkerToolsMock).toHaveBeenCalledTimes(1);
+    expect(tryDispatchWorkerToolsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'show me worker status'
+    );
     expect(createJobMock).not.toHaveBeenCalled();
     expect(handleAIErrorMock).not.toHaveBeenCalled();
   });

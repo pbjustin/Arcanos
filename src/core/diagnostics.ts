@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { config } from "@platform/runtime/config.js";
+import { checkRedisHealth } from "@platform/resilience/unifiedHealth.js";
 import { getDefaultModel } from "@services/openai.js";
 import { getEnv } from "@platform/runtime/env.js";
 
@@ -43,19 +44,28 @@ export function setupDiagnostics(app: Express): void {
 
   app.get('/health', async (_: Request, res: Response) => {
     const healthReport = await runHealthCheck();
+    const redisHealth = await checkRedisHealth();
     const defaultModel = getDefaultModel();
-    const statusCode = healthReport.status === 'ok' ? 200 : 503;
+    //audit Assumption: live `/health` should surface Redis dependency failures even though worker diagnostics remain healthy; failure risk: false-positive health responses when Redis is unavailable; expected invariant: unhealthy configured Redis degrades the endpoint status; handling strategy: fold Redis health into the final status code and payload.
+    const routeStatus = healthReport.status === 'ok' && redisHealth.healthy ? 'ok' : 'degraded';
+    const statusCode = routeStatus === 'ok' ? 200 : 503;
     const uptimeSeconds = healthReport.metrics.uptimeSeconds;
+    const summary = redisHealth.healthy
+      ? healthReport.summary
+      : `${healthReport.summary} | Redis: ${redisHealth.error || 'unhealthy'}`;
 
     res.status(statusCode).json({
-      status: healthReport.status,
+      status: routeStatus,
       timestamp: new Date().toISOString(),
       service: 'ARCANOS',
       // Use config layer for env access (adapter boundary pattern)
       // Note: npm_package_version is set by npm, not a standard env var
       version: getEnv('npm_package_version') || '1.0.0',
-      summary: healthReport.summary,
+      summary,
       components: healthReport.components,
+      dependencies: {
+        redis: redisHealth
+      },
       ai: {
         defaultModel: defaultModel,
         fallbackModel: config.ai.fallbackModel,

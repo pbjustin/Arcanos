@@ -14,18 +14,19 @@ Recommended reading order:
 3. `docs/CLI_DAEMON.md` (optional local Python agent)
 4. `docs/CONFIGURATION.md`
 5. `docs/API.md`
-6. `docs/OPENAI_RESPONSES_TOOLS.md`
-7. `docs/TRINITY_PIPELINE.md`
-8. `docs/SELF_REFLECTIONS.md`
-9. `docs/ARCANOS_MCP_SERVER.md`
-10. `docs/CUSTOM_GPTS.md`
-11. `docs/FINE_TUNING.md`
-12. `docs/CLEAR_METHOD_2_0.md`
-13. `docs/RAILWAY_DEPLOYMENT.md`
-14. `docs/CI_CD.md`
-15. `docs/DOCUMENTATION.md`
-16. `docs/MEMORY_BACKEND_USAGE.md`
-17. `docs/WEB_SEARCH_AGENT.md`
+6. `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
+7. `docs/OPENAI_RESPONSES_TOOLS.md`
+8. `docs/TRINITY_PIPELINE.md`
+9. `docs/SELF_REFLECTIONS.md`
+10. `docs/ARCANOS_MCP_SERVER.md`
+11. `docs/CUSTOM_GPTS.md`
+12. `docs/FINE_TUNING.md`
+13. `docs/CLEAR_METHOD_2_0.md`
+14. `docs/RAILWAY_DEPLOYMENT.md`
+15. `docs/CI_CD.md`
+16. `docs/DOCUMENTATION.md`
+17. `docs/MEMORY_BACKEND_USAGE.md`
+18. `docs/WEB_SEARCH_AGENT.md`
 
 ## Configuration
 Configuration source files:
@@ -45,6 +46,7 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 
 ## References
 - `docs/ARCHITECTURE.md`
+- `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
 - `docs/TRINITY_PIPELINE.md`
 - `docs/API.md`
 - `docs/CONFIGURATION.md`

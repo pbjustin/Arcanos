@@ -3,7 +3,7 @@
  * 
  * Kubernetes/Railway-style health check endpoints:
  * - /healthz: Application health (liveness probe)
- * - /readyz: Readiness probe (database connectivity)
+ * - /readyz: Readiness probe (OpenAI, database, Redis connectivity)
  * - /health: Comprehensive health check
  * 
  * Uses unified health utilities for consistent health checking.
@@ -17,6 +17,7 @@ import {
   createHealthCheck,
   checkOpenAIHealth,
   checkDatabaseHealth,
+  checkRedisHealth,
   checkApplicationHealth
 } from "@platform/resilience/unifiedHealth.js";
 
@@ -31,12 +32,13 @@ router.get('/healthz', buildLivenessEndpoint());
 
 /**
  * GET /readyz - Readiness probe
- * Returns 200 if the application is ready to serve traffic (DB connected, OpenAI available)
+ * Returns 200 if the application is ready to serve traffic (OpenAI, DB, and Redis available when configured)
  * Railway-compatible readiness check
  */
 router.get('/readyz', buildReadinessEndpoint([
   createHealthCheck('openai', checkOpenAIHealth, true),
   createHealthCheck('database', checkDatabaseHealth, true),
+  createHealthCheck('redis', checkRedisHealth, true),
   createHealthCheck('application', checkApplicationHealth, true)
 ]));
 
@@ -48,6 +50,7 @@ router.get('/readyz', buildReadinessEndpoint([
 router.get('/health', buildHealthEndpoint([
   createHealthCheck('openai', checkOpenAIHealth, true),
   createHealthCheck('database', checkDatabaseHealth, false), // Database is optional
+  createHealthCheck('redis', checkRedisHealth, false), // Redis is optional
   createHealthCheck('application', checkApplicationHealth, true)
 ]));
 

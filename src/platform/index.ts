@@ -17,6 +17,7 @@ export * from './runtime/environmentSecurity.js';
 export { validateEnvironment, type ValidationResult as EnvValidationResult } from './runtime/environmentValidation.js';
 export * from './runtime/envParsers.js';
 export * from './runtime/portUtils.js';
+export * from './runtime/redis.js';
 export { validateInput, createValidationMiddleware, createRateLimitMiddleware, securityHeaders, commonSchemas, type ValidationResult as SecurityValidationResult } from './runtime/security.js';
 export { getConfig, validateConfig, getEnvVar, isRailwayEnvironment, getConfigValue } from './runtime/unifiedConfig.js';
 export type { ValidationResult as ConfigValidationResult } from './runtime/unifiedConfig.js';

@@ -1,21 +1,18 @@
 #!/usr/bin/env node
 
 const DEFAULT_BASE_URL = process.env.ARCANOS_BASE_URL || 'http://127.0.0.1:3000';
-const DEFAULT_HELPER_KEY =
-  process.env.ARCANOS_WORKER_HELPER_KEY || process.env.ADMIN_KEY || process.env.REGISTER_KEY;
 
 function printUsage() {
   console.log(`Usage:
-  node scripts/worker-helper.mjs status [--base-url URL] [--key SECRET]
-  node scripts/worker-helper.mjs latest-job [--base-url URL] [--key SECRET]
-  node scripts/worker-helper.mjs job <jobId> [--base-url URL] [--key SECRET]
-  node scripts/worker-helper.mjs queue-ask "<prompt>" [--session-id ID] [--domain DOMAIN] [--override-audit-safe VALUE] [--endpoint-name NAME] [--client-context-json JSON] [--base-url URL] [--key SECRET]
-  node scripts/worker-helper.mjs dispatch "<input>" [--session-id ID] [--domain DOMAIN] [--override-audit-safe VALUE] [--source-endpoint NAME] [--attempts N] [--backoff-ms N] [--base-url URL] [--key SECRET]
-  node scripts/worker-helper.mjs heal [--force true|false] [--base-url URL] [--key SECRET]
+  node scripts/worker-helper.mjs status [--base-url URL]
+  node scripts/worker-helper.mjs latest-job [--base-url URL]
+  node scripts/worker-helper.mjs job <jobId> [--base-url URL]
+  node scripts/worker-helper.mjs queue-ask "<prompt>" [--session-id ID] [--domain DOMAIN] [--override-audit-safe VALUE] [--endpoint-name NAME] [--client-context-json JSON] [--base-url URL]
+  node scripts/worker-helper.mjs dispatch "<input>" [--session-id ID] [--domain DOMAIN] [--override-audit-safe VALUE] [--source-endpoint NAME] [--attempts N] [--backoff-ms N] [--base-url URL]
+  node scripts/worker-helper.mjs heal [--force true|false] [--base-url URL]
 
 Environment:
   ARCANOS_BASE_URL             Base URL for the main app helper surface.
-  ARCANOS_WORKER_HELPER_KEY    Helper auth key. Falls back to ADMIN_KEY or REGISTER_KEY.
 
 Accepted domains:
   diagnostic, code, creative, natural, execution`);
@@ -103,23 +100,13 @@ function parseClientContext(rawValue) {
   return JSON.parse(rawValue);
 }
 
-function assertConfiguredKey(key) {
-  //audit Assumption: helper auth should fail locally before making a network request when no secret is configured; failure risk: confusing 403/503 responses from the server without local remediation guidance; expected invariant: CLI requires one explicit secret source; handling strategy: abort with setup instructions.
-  if (!key) {
-    throw new Error(
-      'Missing helper key. Set ARCANOS_WORKER_HELPER_KEY, ADMIN_KEY, or REGISTER_KEY, or pass --key.'
-    );
-  }
-}
-
-async function sendHelperRequest({ method, path, body, baseUrl, helperKey }) {
+async function sendHelperRequest({ method, path, body, baseUrl }) {
   const requestUrl = new URL(path, baseUrl);
   const response = await fetch(requestUrl, {
     method,
     headers: {
       accept: 'application/json',
-      'content-type': 'application/json',
-      'x-worker-helper-key': helperKey
+      'content-type': 'application/json'
     },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
@@ -150,8 +137,6 @@ async function main() {
   }
 
   const baseUrl = getFlagValue(flags, 'base-url', DEFAULT_BASE_URL);
-  const helperKey = getFlagValue(flags, 'key', DEFAULT_HELPER_KEY);
-  assertConfiguredKey(helperKey);
 
   let responsePayload;
 
@@ -160,16 +145,14 @@ async function main() {
       responsePayload = await sendHelperRequest({
         method: 'GET',
         path: '/worker-helper/status',
-        baseUrl,
-        helperKey
+        baseUrl
       });
       break;
     case 'latest-job':
       responsePayload = await sendHelperRequest({
         method: 'GET',
         path: '/worker-helper/jobs/latest',
-        baseUrl,
-        helperKey
+        baseUrl
       });
       break;
     case 'job': {
@@ -181,8 +164,7 @@ async function main() {
       responsePayload = await sendHelperRequest({
         method: 'GET',
         path: `/worker-helper/jobs/${encodeURIComponent(jobId)}`,
-        baseUrl,
-        helperKey
+        baseUrl
       });
       break;
     }
@@ -196,7 +178,6 @@ async function main() {
         method: 'POST',
         path: '/worker-helper/queue/ask',
         baseUrl,
-        helperKey,
         body: {
           prompt,
           sessionId: getFlagValue(flags, 'session-id', undefined),
@@ -218,7 +199,6 @@ async function main() {
         method: 'POST',
         path: '/worker-helper/dispatch',
         baseUrl,
-        helperKey,
         body: {
           input,
           sessionId: getFlagValue(flags, 'session-id', undefined),
@@ -236,7 +216,6 @@ async function main() {
         method: 'POST',
         path: '/worker-helper/heal',
         baseUrl,
-        helperKey,
         body: {
           force: parseBooleanValue(getFlagValue(flags, 'force', undefined), true)
         }

@@ -53,12 +53,13 @@ Use the runbook docs for exact commands:
 
 ## Troubleshooting
 - `docs/TROUBLESHOOTING.md`
-- Health checks: `GET /healthz` (liveness), `GET /health` (readiness/dependencies)
+- Health checks: `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /health` (dependencies)
 
 ## References
 - API catalog: `docs/API.md`
 - Memory backend guide: `docs/MEMORY_BACKEND_USAGE.md`
 - OpenAI tooling: `docs/OPENAI_RESPONSES_TOOLS.md`
+- Solo operator runtime guide: `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
 - Configuration details: `docs/CONFIGURATION.md`
 - Documentation index: `docs/README.md`
 
@@ -75,7 +76,8 @@ Canonical boundaries / pipelines:
 
 ## Health endpoints
 - Liveness: `GET /healthz` (used by Railway healthchecks)
-- Readiness: `GET /health` (may reflect downstream dependencies and can return non-200)
+- Readiness: `GET /readyz` (critical dependencies ready for traffic)
+- Detailed dependency view: `GET /health` (includes Redis and other dependency state)
 
 ## OpenAI data retention
 Responses requests default to **stateless** (`store: false`). You can enable storage via:

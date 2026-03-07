@@ -39,22 +39,6 @@ describe('tryDispatchWorkerTools', () => {
     jest.clearAllMocks();
   });
 
-  it('returns auth guidance for worker-control prompts without helper auth', async () => {
-    const response = await tryDispatchWorkerTools(
-      {} as any,
-      'restart the workers and show me status',
-      { status: 'missing' }
-    );
-
-    expect(response).toEqual(
-      expect.objectContaining({
-        module: 'worker-tools',
-        result:
-          'Worker control requires x-worker-helper-key, x-admin-api-key, x-register-key, or Authorization: Bearer <key>.'
-      })
-    );
-  });
-
   it('executes deterministic worker operations for common operator prompts', async () => {
     getWorkerControlStatusMock.mockResolvedValue({
       timestamp: '2026-03-06T12:00:00.000Z',
@@ -95,14 +79,7 @@ describe('tryDispatchWorkerTools', () => {
 
     const response = await tryDispatchWorkerTools(
       {} as any,
-      'show me worker status and latest worker job',
-      {
-        status: 'authorized',
-        context: {
-          matchedCredential: 'admin',
-          headerSource: 'x-worker-helper-key'
-        }
-      }
+      'show me worker status and latest worker job'
     );
 
     expect(getWorkerControlStatusMock).toHaveBeenCalledTimes(1);
@@ -170,17 +147,21 @@ describe('tryDispatchWorkerTools', () => {
           create: createMock
         }
       } as any,
-      'inspect worker operations and decide what tool to call',
-      {
-        status: 'authorized',
-        context: {
-          matchedCredential: 'admin',
-          headerSource: 'x-worker-helper-key'
-        }
-      }
+      'inspect worker operations and decide what tool to call'
     );
 
     expect(getWorkerControlStatusMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        tools: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'function',
+            name: 'get_worker_status'
+          })
+        ])
+      })
+    );
     expect(response).toEqual(
       expect.objectContaining({
         module: 'worker-tools',

@@ -8,8 +8,6 @@ const updateHeartbeatMock = jest.fn();
 const listAgentsMock = jest.fn();
 const grantCapabilitiesMock = jest.fn();
 
-let currentAdminKey = 'secret123';
-
 jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
   registerAgent: registerAgentMock,
   getAgent: getAgentMock,
@@ -20,8 +18,7 @@ jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: () => ({
-    enableActionPlans: true,
-    adminKey: currentAdminKey
+    enableActionPlans: true
   })
 }));
 
@@ -48,45 +45,9 @@ describe('routes/agents admin capability auth', () => {
     updateHeartbeatMock.mockReset();
     listAgentsMock.mockReset();
     grantCapabilitiesMock.mockReset();
-    currentAdminKey = 'secret123';
   });
 
-  it('rejects capability grants when header length differs', async () => {
-    const app = createAgentsApp();
-
-    await request(app)
-      .post('/agents/agent-1/capabilities/grant')
-      .set('x-admin-api-key', 'short')
-      .send({ capabilities: ['self_improve_admin'] })
-      .expect(403);
-
-    expect(grantCapabilitiesMock).not.toHaveBeenCalled();
-  });
-
-  it('rejects capability grants when admin header is missing', async () => {
-    const app = createAgentsApp();
-
-    await request(app)
-      .post('/agents/agent-1/capabilities/grant')
-      .send({ capabilities: ['self_improve_admin'] })
-      .expect(403);
-
-    expect(grantCapabilitiesMock).not.toHaveBeenCalled();
-  });
-
-  it('rejects capability grants when header length matches but content differs', async () => {
-    const app = createAgentsApp();
-
-    await request(app)
-      .post('/agents/agent-1/capabilities/grant')
-      .set('x-admin-api-key', 'secret124')
-      .send({ capabilities: ['self_improve_admin'] })
-      .expect(403);
-
-    expect(grantCapabilitiesMock).not.toHaveBeenCalled();
-  });
-
-  it('allows capability grants with matching admin key', async () => {
+  it('allows capability grants without an auth header', async () => {
     const app = createAgentsApp();
     grantCapabilitiesMock.mockResolvedValueOnce({
       id: 'agent-1',
@@ -101,7 +62,6 @@ describe('routes/agents admin capability auth', () => {
 
     const response = await request(app)
       .post('/agents/agent-1/capabilities/grant')
-      .set('x-admin-api-key', 'secret123')
       .send({ capabilities: ['self_improve_admin'] })
       .expect(200);
 

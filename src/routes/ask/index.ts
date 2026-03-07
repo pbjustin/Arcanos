@@ -38,7 +38,6 @@ import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
-import { resolveWorkerHelperAuth } from '@transport/http/middleware/workerHelperAuth.js';
 
 const router = express.Router();
 
@@ -511,7 +510,7 @@ export const handleAIRequest = async (
       });
     }
 
-    const workerToolResponse = await tryDispatchWorkerTools(openai, prompt, resolveWorkerHelperAuth(req));
+    const workerToolResponse = await tryDispatchWorkerTools(openai, prompt);
     if (workerToolResponse) {
       return res.json({
         ...workerToolResponse,

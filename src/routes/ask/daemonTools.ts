@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { z } from 'zod';
 import { getDefaultModel } from "@services/openai.js";
+import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { shouldStoreOpenAIResponses } from "@config/openaiStore.js";
 import { getEnv } from "@platform/runtime/env.js";
@@ -39,40 +40,37 @@ export type ConfirmationRequiredResponse = {
   pending_actions: PendingDaemonAction[];
 };
 
-const DAEMON_TOOLS: Array<Record<string, unknown>> = [
+const daemonToolDefinitions: FunctionToolDefinition[] = [
   {
-    type: 'function',
-    function: {
-      name: 'run_command',
-      description:
-        'Run a command on the user machine via the connected daemon. The user may ask in natural or vague language; infer intent and build the appropriate command.',
-      parameters: {
-        type: 'object',
-        properties: {
-          command: { type: 'string', description: 'The command to execute.' }
-        },
-        required: ['command']
-      }
+    name: 'run_command',
+    description:
+      'Run a command on the user machine via the connected daemon. The user may ask in natural or vague language; infer intent and build the appropriate command.',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The command to execute.' }
+      },
+      required: ['command']
     }
   },
   {
-    type: 'function',
-    function: {
-      name: 'capture_screen',
-      description:
-        'Capture and analyze the user screen or camera via the connected daemon. The user may ask in natural or vague language (e.g. look at my screen, what do you see, show the camera); infer intent.',
-      parameters: {
-        type: 'object',
-        properties: {
-          use_camera: {
-            type: 'boolean',
-            description: 'Set true to use the camera instead of the screen.'
-          }
+    name: 'capture_screen',
+    description:
+      'Capture and analyze the user screen or camera via the connected daemon. The user may ask in natural or vague language (e.g. look at my screen, what do you see, show the camera); infer intent.',
+    parameters: {
+      type: 'object',
+      properties: {
+        use_camera: {
+          type: 'boolean',
+          description: 'Set true to use the camera instead of the screen.'
         }
       }
     }
   }
 ];
+
+const { chatCompletionTools: daemonChatCompletionTools, responsesTools: daemonResponsesTools } =
+  buildFunctionToolSet(daemonToolDefinitions);
 
 const DAEMON_TOOL_SYSTEM_PROMPT = [
   'You are ARCANOS in daemon mode. You may use run_command and capture_screen when the user asks; run_command is sensitive and always requires deterministic user confirmation.',
@@ -159,7 +157,7 @@ async function tryDispatchDaemonToolsWithChatCompletions(
       { role: 'system', content: DAEMON_TOOL_SYSTEM_PROMPT },
       { role: 'user', content: prompt }
     ],
-    tools: DAEMON_TOOLS,
+    tools: daemonChatCompletionTools,
     tool_choice: 'auto',
     ...tokenParams
   });
@@ -316,7 +314,7 @@ export async function tryDispatchDaemonTools(
     store: shouldStoreOpenAIResponses(),
     instructions: DAEMON_TOOL_SYSTEM_PROMPT,
     input: [{ role: 'user', content: prompt }],
-    tools: DAEMON_TOOLS,
+    tools: daemonResponsesTools,
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens
   });
@@ -491,7 +489,7 @@ export async function tryDispatchDaemonTools(
       previous_response_id: response.id,
       instructions: DAEMON_TOOL_SYSTEM_PROMPT,
       input: functionCallOutputs,
-      tools: DAEMON_TOOLS,
+      tools: daemonResponsesTools,
       tool_choice: 'auto',
       max_output_tokens: maxOutputTokens
     });
