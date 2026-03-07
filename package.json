@@ -61,7 +61,7 @@
     "guard:commit": "node check-commit-guard.js",
     "test:all:stacks": "npm test && cd daemon-python && python -m pytest tests/ -q",
     "validate:all": "npm run guard:commit && npm run type-check && npm run lint && npm run build && npm test && npm run validate:railway && npm run validate:backend-cli:contract && npm run validate:backend-cli:offline",
-    "postinstall": "node -e \"try { const fs = require('fs'); const path = require('path'); const scriptPath = path.join(process.cwd(), 'scripts', 'setup-auto-sync.js'); if (!fs.existsSync(scriptPath)) { process.exit(0); } try { require(scriptPath); } catch(e) { if (e.code === 'MODULE_NOT_FOUND') { process.exit(0); } throw e; } } catch(e) { process.exit(0); }\" || true",
+    "postinstall": "node scripts/postinstall.cjs",
     "boundary-check": "ts-node scripts/check-boundaries.ts",
     "build:packages": "npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
     "build:workers:only": "cd workers && npm run build:workers && cd ..",
@@ -103,7 +103,7 @@
   },
   "devDependencies": {
     "@jest/globals": "^30.2.0",
-    "@modelcontextprotocol/sdk": "1.24.3",
+    "@modelcontextprotocol/sdk": "1.26.0",
     "@types/busboy": "^1.5.4",
     "@types/cheerio": "^0.22.35",
     "@types/cors": "^2.8.19",
@@ -127,6 +127,34 @@
     "ts-node": "^10.9.2",
     "tsc-alias": "^1.8.16",
     "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "@hono/node-server": "https://codeload.github.com/honojs/node-server/tar.gz/refs/tags/v1.19.11",
+    "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",
+    "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.5",
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "git+https://github.com/isaacs/minimatch.git#v9.0.7"
+    },
+    "@eslint/config-array": {
+      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+    },
+    "@eslint/eslintrc": {
+      "ajv": "git+https://github.com/ajv-validator/ajv.git#v6.14.0",
+      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+    },
+    "eslint": {
+      "ajv": "git+https://github.com/ajv-validator/ajv.git#v6.14.0",
+      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+    },
+    "eslint-plugin-import": {
+      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+    },
+    "glob": {
+      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+    },
+    "test-exclude": {
+      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+    }
   },
   "engines": {
     "node": ">=18.0.0",
