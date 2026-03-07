@@ -6,6 +6,7 @@ import {
   getJobById,
   getJobQueueSummary,
   getLatestJob,
+  listFailedJobs,
   type JobQueueSummary
 } from '@core/db/repositories/jobRepository.js';
 import type { WorkerRuntimeSnapshotRecord } from '@core/db/repositories/workerRuntimeRepository.js';
@@ -27,6 +28,7 @@ import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import {
   getWorkerAutonomyHealthReport,
+  getWorkerAutonomySettings,
   planAutonomousWorkerJob,
   type WorkerAutonomyHealthReport
 } from './workerAutonomyService.js';
@@ -75,6 +77,72 @@ export interface WorkerJobDetailSnapshot extends WorkerJobSnapshot {
 }
 
 /**
+ * Compact failed-job view for operator inspection.
+ *
+ * Purpose:
+ * - Surface retained terminal queue failures without requiring direct DB access.
+ *
+ * Inputs/outputs:
+ * - Input: database `job_data` row subset for failed jobs.
+ * - Output: stable failed-job snapshot with retry metadata.
+ *
+ * Edge case behavior:
+ * - `last_worker_id` and `completed_at` normalize to `null` when absent.
+ */
+export interface FailedWorkerJobSnapshot {
+  id: string;
+  worker_id: string;
+  last_worker_id: string | null;
+  job_type: string;
+  status: 'failed';
+  error_message: string | null;
+  retry_count: number;
+  max_retries: number;
+  created_at: string | Date;
+  updated_at: string | Date;
+  completed_at: string | Date | null;
+}
+
+/**
+ * Semantics attached to queue counters exposed by worker-control routes.
+ *
+ * Purpose:
+ * - Prevent probes from misreading retained terminal rows as active runtime failures.
+ *
+ * Inputs/outputs:
+ * - Input: none.
+ * - Output: fixed semantics metadata describing the queue summary counters.
+ *
+ * Edge case behavior:
+ * - Always returns the same stable contract so external tooling can rely on the wording.
+ */
+export interface WorkerQueueSemantics {
+  failedCountMode: 'retained_terminal_jobs';
+  failedCountDescription: string;
+  activeFailureSignals: string[];
+}
+
+/**
+ * Retry policy summary for queue-backed Trinity workers.
+ *
+ * Purpose:
+ * - Expose the effective retry and stale-lease thresholds used by the dedicated worker service.
+ *
+ * Inputs/outputs:
+ * - Input: normalized worker autonomy settings.
+ * - Output: stable retry policy summary for operator probes.
+ *
+ * Edge case behavior:
+ * - Values always resolve from defaults when env overrides are absent.
+ */
+export interface WorkerRetryPolicySummary {
+  defaultMaxRetries: number;
+  retryBackoffBaseMs: number;
+  retryBackoffMaxMs: number;
+  staleAfterMs: number;
+}
+
+/**
  * Combined worker-control status view for the main app and dedicated worker service.
  *
  * Purpose:
@@ -98,6 +166,9 @@ export interface WorkerControlStatusResponse {
     observationMode: 'queue-observed';
     database: ReturnType<typeof getDatabaseStatus>;
     queueSummary: JobQueueSummary | null;
+    queueSemantics: WorkerQueueSemantics;
+    retryPolicy: WorkerRetryPolicySummary;
+    recentFailedJobs: FailedWorkerJobSnapshot[];
     latestJob: WorkerJobSnapshot | null;
     health: {
       overallStatus: WorkerAutonomyHealthReport['overallStatus'];
@@ -123,7 +194,11 @@ export interface WorkerControlStatusResponse {
  * Edge case behavior:
  * - Returns `offline` overall status when no worker snapshots exist and the queue is idle.
  */
-export interface WorkerControlHealthResponse extends WorkerAutonomyHealthReport {}
+export interface WorkerControlHealthResponse extends WorkerAutonomyHealthReport {
+  queueSemantics: WorkerQueueSemantics;
+  retryPolicy: WorkerRetryPolicySummary;
+  recentFailedJobs: FailedWorkerJobSnapshot[];
+}
 
 /**
  * Request payload for queueing dedicated-worker async `/ask` jobs.
@@ -264,6 +339,70 @@ function buildWorkerJobDetailSnapshot(job: JobData): WorkerJobDetailSnapshot {
   };
 }
 
+function buildFailedWorkerJobSnapshot(
+  failedJob: Awaited<ReturnType<typeof listFailedJobs>>[number]
+): FailedWorkerJobSnapshot {
+  return {
+    id: failedJob.id,
+    worker_id: failedJob.worker_id,
+    last_worker_id: failedJob.last_worker_id ?? null,
+    job_type: failedJob.job_type,
+    status: 'failed',
+    error_message: failedJob.error_message ?? null,
+    retry_count: Number(failedJob.retry_count ?? 0),
+    max_retries: Number(failedJob.max_retries ?? 0),
+    created_at: failedJob.created_at,
+    updated_at: failedJob.updated_at,
+    completed_at: failedJob.completed_at ?? null
+  };
+}
+
+/**
+ * Describe how queue failure counts should be interpreted by probes.
+ *
+ * Purpose:
+ * - Make the persisted queue summary self-describing so operators can distinguish retained failures from active incidents.
+ *
+ * Inputs/outputs:
+ * - Input: none.
+ * - Output: immutable queue semantics description.
+ *
+ * Edge case behavior:
+ * - Returns a stable payload even when the queue summary is unavailable.
+ */
+export function buildWorkerQueueSemantics(): WorkerQueueSemantics {
+  return {
+    failedCountMode: 'retained_terminal_jobs',
+    failedCountDescription:
+      'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+    activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+  };
+}
+
+/**
+ * Build the effective retry policy summary for queue-backed workers.
+ *
+ * Purpose:
+ * - Publish the retry and stale-lease settings that govern automatic recovery and backoff.
+ *
+ * Inputs/outputs:
+ * - Input: optional autonomy settings override.
+ * - Output: retry policy summary.
+ *
+ * Edge case behavior:
+ * - Uses normalized defaults when no explicit settings are supplied.
+ */
+export function buildWorkerRetryPolicySummary(): WorkerRetryPolicySummary {
+  const settings = getWorkerAutonomySettings();
+
+  return {
+    defaultMaxRetries: settings.defaultMaxRetries,
+    retryBackoffBaseMs: settings.retryBackoffBaseMs,
+    retryBackoffMaxMs: settings.retryBackoffMaxMs,
+    staleAfterMs: settings.staleAfterMs
+  };
+}
+
 /**
  * Resolve the worker identifier used for helper-originated jobs and status reports.
  *
@@ -330,9 +469,10 @@ export function resolveWorkerControlDomain(
 export async function getWorkerControlStatus(
   workerId?: string
 ): Promise<WorkerControlStatusResponse> {
-  const [latestJob, autonomyHealth] = await Promise.all([
+  const [latestJob, autonomyHealth, recentFailedJobs] = await Promise.all([
     getLatestJob(),
-    getWorkerAutonomyHealthReport()
+    getWorkerAutonomyHealthReport(),
+    listRecentFailedWorkerJobs()
   ]);
 
   return {
@@ -346,6 +486,9 @@ export async function getWorkerControlStatus(
       observationMode: 'queue-observed',
       database: getDatabaseStatus(),
       queueSummary: await getJobQueueSummary(),
+      queueSemantics: buildWorkerQueueSemantics(),
+      retryPolicy: buildWorkerRetryPolicySummary(),
+      recentFailedJobs,
       latestJob: latestJob ? buildWorkerJobSnapshot(latestJob) : null,
       health: {
         overallStatus: autonomyHealth.overallStatus,
@@ -398,6 +541,26 @@ export async function getLatestWorkerJobDetail(): Promise<WorkerJobDetailSnapsho
 export async function getWorkerJobDetailById(jobId: string): Promise<WorkerJobDetailSnapshot | null> {
   const job = await getJobById(jobId);
   return job ? buildWorkerJobDetailSnapshot(job) : null;
+}
+
+/**
+ * List recently retained failed jobs for operator inspection.
+ *
+ * Purpose:
+ * - Provide a stable inspection view over terminal failed queue rows.
+ *
+ * Inputs/outputs:
+ * - Input: optional result limit.
+ * - Output: most recently updated failed-job snapshots.
+ *
+ * Edge case behavior:
+ * - Falls back to five rows when the caller omits the limit.
+ */
+export async function listRecentFailedWorkerJobs(
+  limit = 5
+): Promise<FailedWorkerJobSnapshot[]> {
+  const failedJobs = await listFailedJobs(limit);
+  return failedJobs.map(buildFailedWorkerJobSnapshot);
 }
 
 /**
@@ -456,7 +619,17 @@ export async function queueWorkerAsk(
  * - Returns `offline` overall status when no worker snapshot has been persisted yet.
  */
 export async function getWorkerControlHealth(): Promise<WorkerControlHealthResponse> {
-  return getWorkerAutonomyHealthReport();
+  const [healthReport, recentFailedJobs] = await Promise.all([
+    getWorkerAutonomyHealthReport(),
+    listRecentFailedWorkerJobs()
+  ]);
+
+  return {
+    ...healthReport,
+    queueSemantics: buildWorkerQueueSemantics(),
+    retryPolicy: buildWorkerRetryPolicySummary(),
+    recentFailedJobs
+  };
 }
 
 /**

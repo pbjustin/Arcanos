@@ -41,11 +41,25 @@ export interface TrinityStatusResponse {
     pendingJobs: number;
     runningJobs: number;
   };
+  queue: {
+    idle: boolean;
+    pendingJobs: number;
+    runningJobs: number;
+    completedJobs: number;
+    retainedFailedJobs: number;
+    delayedJobs: number;
+    stalledRunningJobs: number;
+    lastUpdatedAt: string | null;
+    semantics: WorkerControlStatusResponse['workerService']['queueSemantics'];
+    retryPolicy: WorkerControlStatusResponse['workerService']['retryPolicy'];
+    recentFailedJobs: WorkerControlStatusResponse['workerService']['recentFailedJobs'];
+  };
   bindings: TrinityRuntimeBindings;
   telemetry: {
     sourceEndpoint: 'trinity.status';
     traceIdPropagation: 'not_exposed';
     pipelineBindingsPublished: true;
+    failedJobInspectionEndpoint: '/worker-helper/jobs/failed';
   };
 }
 
@@ -157,6 +171,62 @@ async function getWorkerControlStatusSafe(): Promise<WorkerControlStatusResponse
 }
 
 /**
+ * Build fallback queue semantics when worker-control telemetry is unavailable.
+ *
+ * Purpose:
+ * - Keep `/trinity/status` self-describing even if the worker-control layer cannot be read.
+ *
+ * Inputs/outputs:
+ * - Input: none.
+ * - Output: stable queue semantics metadata.
+ *
+ * Edge case behavior:
+ * - Returns the same contract regardless of runtime state so probes can rely on field presence.
+ */
+function buildFallbackQueueSemantics(): WorkerControlStatusResponse['workerService']['queueSemantics'] {
+  return {
+    failedCountMode: 'retained_terminal_jobs',
+    failedCountDescription:
+      'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+    activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+  };
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const rawValue = getEnv(name);
+  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+
+  //audit Assumption: status probes should reflect the effective retry policy, not leak invalid env parsing artifacts; failure risk: malformed env values produce NaN fields in health payloads; expected invariant: numeric policy fields always fall back to safe defaults; handling strategy: validate positivity before returning.
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return fallback;
+  }
+
+  return Math.trunc(parsedValue);
+}
+
+/**
+ * Build fallback retry policy values when worker-control telemetry is unavailable.
+ *
+ * Purpose:
+ * - Preserve retry-policy observability for `/trinity/status` even during degraded worker-control reads.
+ *
+ * Inputs/outputs:
+ * - Input: process env through the shared runtime helper.
+ * - Output: normalized retry policy summary.
+ *
+ * Edge case behavior:
+ * - Invalid or missing env values fall back to the documented defaults.
+ */
+function buildFallbackRetryPolicy(): WorkerControlStatusResponse['workerService']['retryPolicy'] {
+  return {
+    defaultMaxRetries: readPositiveIntegerEnv('JOB_WORKER_MAX_RETRIES', 2),
+    retryBackoffBaseMs: readPositiveIntegerEnv('JOB_WORKER_RETRY_BASE_MS', 2_000),
+    retryBackoffMaxMs: readPositiveIntegerEnv('JOB_WORKER_RETRY_MAX_MS', 60_000),
+    staleAfterMs: readPositiveIntegerEnv('JOB_WORKER_STALE_AFTER_MS', 60_000)
+  };
+}
+
+/**
  * Determine whether Trinity has live worker connectivity.
  *
  * Purpose:
@@ -238,6 +308,17 @@ export async function getTrinityStatus(): Promise<TrinityStatusResponse> {
   const lastWorkerHeartbeat = selectLatestIso(
     ...(workerStatus?.workerService.health.workers.map(worker => worker.lastHeartbeatAt) ?? [])
   );
+  const queueSemantics =
+    workerStatus?.workerService.queueSemantics ?? buildFallbackQueueSemantics();
+  const retryPolicy =
+    workerStatus?.workerService.retryPolicy ?? buildFallbackRetryPolicy();
+  const recentFailedJobs = workerStatus?.workerService.recentFailedJobs ?? [];
+  const pendingJobs = queueSummary?.pending ?? 0;
+  const runningJobs = queueSummary?.running ?? 0;
+  const completedJobs = queueSummary?.completed ?? 0;
+  const retainedFailedJobs = queueSummary?.failed ?? 0;
+  const delayedJobs = queueSummary?.delayed ?? 0;
+  const stalledRunningJobs = queueSummary?.stalledRunning ?? 0;
 
   return {
     pipeline: 'trinity',
@@ -251,15 +332,29 @@ export async function getTrinityStatus(): Promise<TrinityStatusResponse> {
     workerHealth: {
       overallStatus: workerStatus?.workerService.health.overallStatus ?? 'offline',
       observedWorkerIds,
-      queueDepth: (queueSummary?.pending ?? 0) + (queueSummary?.running ?? 0),
-      pendingJobs: queueSummary?.pending ?? 0,
-      runningJobs: queueSummary?.running ?? 0
+      queueDepth: pendingJobs + runningJobs,
+      pendingJobs,
+      runningJobs
+    },
+    queue: {
+      idle: pendingJobs === 0 && runningJobs === 0,
+      pendingJobs,
+      runningJobs,
+      completedJobs,
+      retainedFailedJobs,
+      delayedJobs,
+      stalledRunningJobs,
+      lastUpdatedAt: queueSummary?.lastUpdatedAt ?? null,
+      semantics: queueSemantics,
+      retryPolicy,
+      recentFailedJobs
     },
     bindings: buildTrinityRuntimeBindings(),
     telemetry: {
       sourceEndpoint: 'trinity.status',
       traceIdPropagation: 'not_exposed',
-      pipelineBindingsPublished: true
+      pipelineBindingsPublished: true,
+      failedJobInspectionEndpoint: '/worker-helper/jobs/failed'
     }
   };
 }

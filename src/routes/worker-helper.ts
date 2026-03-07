@@ -16,7 +16,14 @@
 
 import express from 'express';
 import { z } from 'zod';
-import { asyncHandler, sendInternalErrorPayload, sendNotFound, validateBody, validateParams } from '@shared/http/index.js';
+import {
+  asyncHandler,
+  sendInternalErrorPayload,
+  sendNotFound,
+  validateBody,
+  validateParams,
+  validateQuery
+} from '@shared/http/index.js';
 import { clientContextSchema } from '@shared/types/dto.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
@@ -26,6 +33,7 @@ import {
   getWorkerControlStatus,
   getWorkerJobDetailById,
   healWorkerRuntime,
+  listRecentFailedWorkerJobs,
   queueWorkerAsk
 } from '@services/workerControlService.js';
 
@@ -35,6 +43,10 @@ const cognitiveDomainSchema = z.enum(['diagnostic', 'code', 'creative', 'natural
 
 const workerHelperJobIdSchema = z.object({
   id: z.string().trim().min(1)
+});
+
+const workerHelperFailedJobsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional()
 });
 
 const queueAskRequestSchema = z.object({
@@ -143,6 +155,40 @@ router.get(
     } catch (error: unknown) {
       sendInternalErrorPayload(res, {
         error: 'WORKER_HELPER_JOB_LOOKUP_FAILED',
+        message: resolveErrorMessage(error)
+      });
+    }
+  })
+);
+
+/**
+ * GET /worker-helper/jobs/failed
+ *
+ * Purpose:
+ * - Return recently retained terminal failures so operators can inspect the failed queue backlog directly.
+ *
+ * Inputs/outputs:
+ * - Input: optional `limit` query param.
+ * - Output: JSON list of failed-job snapshots plus semantics describing the retained failure count.
+ *
+ * Edge case behavior:
+ * - Returns an empty list when the queue has no retained failed rows.
+ */
+router.get(
+  '/worker-helper/jobs/failed',
+  validateQuery(workerHelperFailedJobsQuerySchema, { errorCode: 'FAILED_JOB_QUERY_INVALID' }),
+  asyncHandler(async (req, res) => {
+    try {
+      const query = req.validated?.query as z.infer<typeof workerHelperFailedJobsQuerySchema> | undefined;
+      const limit = query?.limit ?? 10;
+
+      res.json({
+        failedCountMode: 'retained_terminal_jobs',
+        jobs: await listRecentFailedWorkerJobs(limit)
+      });
+    } catch (error: unknown) {
+      sendInternalErrorPayload(res, {
+        error: 'WORKER_HELPER_FAILED_JOBS_LOOKUP_FAILED',
         message: resolveErrorMessage(error)
       });
     }

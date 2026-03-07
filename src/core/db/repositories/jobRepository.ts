@@ -65,6 +65,20 @@ export interface JobExecutionStats {
   aiCalls: number;
 }
 
+export interface FailedJobSnapshot {
+  id: string;
+  worker_id: string;
+  last_worker_id: string | null;
+  job_type: string;
+  status: 'failed';
+  error_message: string | null;
+  retry_count: number;
+  max_retries: number;
+  created_at: string | Date;
+  updated_at: string | Date;
+  completed_at: string | Date | null;
+}
+
 function assertDatabaseReady(): void {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
@@ -655,4 +669,56 @@ function buildRecoveredAutonomyState(
     staleRecoveryCount: Number(baseState.staleRecoveryCount ?? 0) + 1,
     previousRetryCount: retryCount
   };
+}
+
+function normalizeInspectionLimit(limit: number | undefined, fallback: number): number {
+  const normalizedLimit = Number(limit ?? fallback);
+
+  //audit Assumption: failed-job inspection should remain cheap enough for status routes; failure risk: unbounded operator queries pressure the primary queue table; expected invariant: inspection limits stay within a small capped range; handling strategy: clamp to 1-100 before issuing SQL.
+  if (!Number.isFinite(normalizedLimit)) {
+    return fallback;
+  }
+
+  return Math.min(100, Math.max(1, Math.trunc(normalizedLimit)));
+}
+
+/**
+ * List recently failed queue jobs for operator inspection.
+ * Purpose: expose retained terminal failures without requiring raw database access.
+ * Inputs/outputs: accepts an optional limit and returns the most recently updated failed rows.
+ * Edge case behavior: returns an empty list when the database is unavailable or the query fails.
+ */
+export async function listFailedJobs(limit = 10): Promise<FailedJobSnapshot[]> {
+  if (!isDatabaseConnected()) {
+    return [];
+  }
+
+  try {
+    const normalizedLimit = normalizeInspectionLimit(limit, 10);
+    const result = await query(
+      `SELECT
+         id,
+         worker_id,
+         last_worker_id,
+         job_type,
+         status,
+         error_message,
+         retry_count,
+         max_retries,
+         created_at,
+         updated_at,
+         completed_at
+       FROM job_data
+       WHERE status = 'failed'
+       ORDER BY updated_at DESC, created_at DESC
+       LIMIT $1`,
+      [normalizedLimit]
+    );
+
+    return result.rows as FailedJobSnapshot[];
+  } catch (error: unknown) {
+    //audit Assumption: failed-job inspection should degrade observability rather than break helper and health endpoints; failure risk: one query failure cascades into probe failures; expected invariant: inspection errors are logged and return an empty list; handling strategy: fail closed.
+    console.error('Error listing failed jobs:', resolveErrorMessage(error));
+    return [];
+  }
 }

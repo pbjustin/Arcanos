@@ -4,6 +4,7 @@ const createJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const getJobQueueSummaryMock = jest.fn();
 const getLatestJobMock = jest.fn();
+const listFailedJobsMock = jest.fn();
 const dispatchArcanosTaskMock = jest.fn();
 const getWorkerRuntimeStatusMock = jest.fn();
 const startWorkersMock = jest.fn();
@@ -15,7 +16,8 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
   getJobById: getJobByIdMock,
   getJobQueueSummary: getJobQueueSummaryMock,
-  getLatestJob: getLatestJobMock
+  getLatestJob: getLatestJobMock,
+  listFailedJobs: listFailedJobsMock
 }));
 
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
@@ -34,6 +36,12 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
   getWorkerAutonomyHealthReport: getWorkerControlHealthMock,
+  getWorkerAutonomySettings: jest.fn(() => ({
+    defaultMaxRetries: 2,
+    retryBackoffBaseMs: 2000,
+    retryBackoffMaxMs: 60000,
+    staleAfterMs: 60000
+  })),
   planAutonomousWorkerJob: jest.fn(async () => ({
     status: 'pending',
     retryCount: 0,
@@ -100,6 +108,21 @@ describe('/worker-helper routes', () => {
       error_message: null,
       output: { result: 'ok' }
     });
+    listFailedJobsMock.mockResolvedValue([
+      {
+        id: 'job-failed-1',
+        worker_id: 'worker-helper',
+        last_worker_id: 'async-queue-slot-1',
+        job_type: 'ask',
+        status: 'failed',
+        error_message: 'OpenAI upstream timeout',
+        retry_count: 2,
+        max_retries: 2,
+        created_at: '2026-03-06T09:55:00.000Z',
+        updated_at: '2026-03-06T09:58:00.000Z',
+        completed_at: '2026-03-06T09:58:00.000Z'
+      }
+    ]);
     createJobMock.mockResolvedValue({ id: 'job-123' });
     getWorkerControlHealthMock.mockResolvedValue({
       overallStatus: 'healthy',
@@ -172,6 +195,33 @@ describe('/worker-helper routes', () => {
         oldestPendingJobAgeMs: 0,
         lastUpdatedAt: '2026-03-06T10:00:00.000Z'
       },
+      queueSemantics: {
+        failedCountMode: 'retained_terminal_jobs',
+        failedCountDescription:
+          'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+        activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+      },
+      retryPolicy: {
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2000,
+        retryBackoffMaxMs: 60000,
+        staleAfterMs: 60000
+      },
+      recentFailedJobs: [
+        {
+          id: 'job-failed-1',
+          worker_id: 'worker-helper',
+          last_worker_id: 'async-queue-slot-1',
+          job_type: 'ask',
+          status: 'failed',
+          error_message: 'OpenAI upstream timeout',
+          retry_count: 2,
+          max_retries: 2,
+          created_at: '2026-03-06T09:55:00.000Z',
+          updated_at: '2026-03-06T09:58:00.000Z',
+          completed_at: '2026-03-06T09:58:00.000Z'
+        }
+      ],
       latestJob: {
         id: 'job-latest',
         worker_id: 'worker-helper',
@@ -252,6 +302,31 @@ describe('/worker-helper routes', () => {
         priority: 100
       })
     );
+  });
+
+  it('lists recently retained failed jobs without helper auth', async () => {
+    const response = await request(buildApp()).get('/worker-helper/jobs/failed?limit=1');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      failedCountMode: 'retained_terminal_jobs',
+      jobs: [
+        {
+          id: 'job-failed-1',
+          worker_id: 'worker-helper',
+          last_worker_id: 'async-queue-slot-1',
+          job_type: 'ask',
+          status: 'failed',
+          error_message: 'OpenAI upstream timeout',
+          retry_count: 2,
+          max_retries: 2,
+          created_at: '2026-03-06T09:55:00.000Z',
+          updated_at: '2026-03-06T09:58:00.000Z',
+          completed_at: '2026-03-06T09:58:00.000Z'
+        }
+      ]
+    });
+    expect(listFailedJobsMock).toHaveBeenCalledWith(1);
   });
 
   it('returns autonomous worker health', async () => {

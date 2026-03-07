@@ -54,8 +54,40 @@ describe('getTrinityStatus', () => {
         },
         queueSummary: {
           pending: 2,
-          running: 1
+          running: 1,
+          completed: 8,
+          failed: 3,
+          delayed: 1,
+          stalledRunning: 0,
+          lastUpdatedAt: '2026-03-07T20:00:08.000Z'
         },
+        queueSemantics: {
+          failedCountMode: 'retained_terminal_jobs',
+          failedCountDescription:
+            'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+          activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+        },
+        retryPolicy: {
+          defaultMaxRetries: 2,
+          retryBackoffBaseMs: 2000,
+          retryBackoffMaxMs: 60000,
+          staleAfterMs: 60000
+        },
+        recentFailedJobs: [
+          {
+            id: 'job-failed-1',
+            worker_id: 'worker-helper',
+            last_worker_id: 'async-queue-slot-2',
+            job_type: 'ask',
+            status: 'failed',
+            error_message: 'OpenAI upstream timeout',
+            retry_count: 2,
+            max_retries: 2,
+            created_at: '2026-03-07T19:55:00.000Z',
+            updated_at: '2026-03-07T19:58:00.000Z',
+            completed_at: '2026-03-07T19:58:00.000Z'
+          }
+        ],
         latestJob: {
           id: 'job-1',
           worker_id: 'async-queue-slot-2',
@@ -141,6 +173,44 @@ describe('getTrinityStatus', () => {
       trustedSnapshotId: 'trusted-snapshot-1',
       routeCount: 1
     });
+    expect(status.queue).toEqual({
+      idle: false,
+      pendingJobs: 2,
+      runningJobs: 1,
+      completedJobs: 8,
+      retainedFailedJobs: 3,
+      delayedJobs: 1,
+      stalledRunningJobs: 0,
+      lastUpdatedAt: '2026-03-07T20:00:08.000Z',
+      semantics: {
+        failedCountMode: 'retained_terminal_jobs',
+        failedCountDescription:
+          'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+        activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+      },
+      retryPolicy: {
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2000,
+        retryBackoffMaxMs: 60000,
+        staleAfterMs: 60000
+      },
+      recentFailedJobs: [
+        {
+          id: 'job-failed-1',
+          worker_id: 'worker-helper',
+          last_worker_id: 'async-queue-slot-2',
+          job_type: 'ask',
+          status: 'failed',
+          error_message: 'OpenAI upstream timeout',
+          retry_count: 2,
+          max_retries: 2,
+          created_at: '2026-03-07T19:55:00.000Z',
+          updated_at: '2026-03-07T19:58:00.000Z',
+          completed_at: '2026-03-07T19:58:00.000Z'
+        }
+      ]
+    });
+    expect(status.telemetry.failedJobInspectionEndpoint).toBe('/worker-helper/jobs/failed');
   });
 
   it('degrades to offline memory status when the snapshot store is unavailable', async () => {
@@ -165,6 +235,19 @@ describe('getTrinityStatus', () => {
           connected: false
         },
         queueSummary: null,
+        queueSemantics: {
+          failedCountMode: 'retained_terminal_jobs',
+          failedCountDescription:
+            'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+          activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+        },
+        retryPolicy: {
+          defaultMaxRetries: 2,
+          retryBackoffBaseMs: 2000,
+          retryBackoffMaxMs: 60000,
+          staleAfterMs: 60000
+        },
+        recentFailedJobs: [],
         latestJob: null,
         health: {
           overallStatus: 'offline',
@@ -189,6 +272,29 @@ describe('getTrinityStatus', () => {
       bindingsVersion: null,
       trustedSnapshotId: null,
       routeCount: 0
+    });
+    expect(status.queue).toEqual({
+      idle: true,
+      pendingJobs: 0,
+      runningJobs: 0,
+      completedJobs: 0,
+      retainedFailedJobs: 0,
+      delayedJobs: 0,
+      stalledRunningJobs: 0,
+      lastUpdatedAt: null,
+      semantics: {
+        failedCountMode: 'retained_terminal_jobs',
+        failedCountDescription:
+          'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+        activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+      },
+      retryPolicy: {
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2000,
+        retryBackoffMaxMs: 60000,
+        staleAfterMs: 60000
+      },
+      recentFailedJobs: []
     });
   });
 });
