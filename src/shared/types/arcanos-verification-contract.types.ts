@@ -365,6 +365,7 @@ export interface DagVerificationLineage {
   workerEntryPoint: 'runWorkerTrinityPrompt';
   sessionId: string;
   sessionPropagationMode: 'inherit_run_session' | 'synthetic_fallback';
+  tokenAuditSessionMode: 'shared_session' | 'dag_node_branch';
   observedWorkerIds: string[];
   observedSourceEndpoints: string[];
 }

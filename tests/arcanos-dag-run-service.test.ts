@@ -58,7 +58,7 @@ function buildStoredRunRecord(updatedAt: string) {
       maxChildrenPerNode: 5,
       maxRetriesPerNode: 2,
       maxAiCallsPerRun: 20,
-      defaultNodeTimeoutMs: 60000
+      defaultNodeTimeoutMs: 180000
     },
     features: {
       dagOrchestration: true,
@@ -374,6 +374,7 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
       workerEntryPoint: 'runWorkerTrinityPrompt',
       sessionId: 'session-1',
       sessionPropagationMode: 'inherit_run_session',
+      tokenAuditSessionMode: 'dag_node_branch',
       observedWorkerIds: ['async-queue-slot-1', 'async-queue-slot-2'],
       observedSourceEndpoints: ['dag.agent.planner', 'dag.agent.audit']
     });

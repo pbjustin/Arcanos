@@ -110,7 +110,7 @@ describe('tryDispatchDagTools', () => {
         maxChildrenPerNode: 5,
         maxRetriesPerNode: 2,
         maxAiCallsPerRun: 20,
-        defaultNodeTimeoutMs: 60000
+        defaultNodeTimeoutMs: 180000
       },
       guardViolations: []
     });
@@ -146,7 +146,7 @@ describe('tryDispatchDagTools', () => {
       maxChildrenPerNode: 5,
       maxRetriesPerNode: 2,
       maxAiCallsPerRun: 20,
-      defaultNodeTimeoutMs: 60000
+      defaultNodeTimeoutMs: 180000
     });
 
     const createMock = jest

@@ -133,6 +133,7 @@ async function executeQueuedDagNode(
       return runWorkerTrinityPrompt(openai, {
         prompt,
         sessionId: options.sessionId,
+        tokenAuditSessionId: options.tokenAuditSessionId,
         overrideAuditSafe: options.overrideAuditSafe,
         cognitiveDomain: options.cognitiveDomain,
         sourceEndpoint: options.sourceEndpoint

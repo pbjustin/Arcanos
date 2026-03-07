@@ -11,6 +11,10 @@ import {
   type DagQueueJobRecord
 } from './jobSchema.js';
 import { sleep } from '@shared/sleep.js';
+import {
+  DEFAULT_DAG_NODE_TIMEOUT_MS,
+  getWorkerExecutionLimits
+} from '../workers/workerExecutionLimits.js';
 
 export interface EnqueueDagNodeJobRequest {
   dagId: string;
@@ -37,6 +41,26 @@ export interface DagJobQueue {
     jobId: string,
     options?: WaitForDagJobCompletionOptions
   ): Promise<DagQueueJobRecord>;
+}
+
+function resolvePositiveTimeoutMs(value: number | undefined, fallbackValue: number): number {
+  const normalizedValue = Number(value);
+
+  //audit Assumption: queue timeouts must remain positive finite integers; failure risk: invalid overrides create immediate failures or endless waits; expected invariant: polling always uses a bounded positive timeout; handling strategy: sanitize each timeout and fall back when invalid.
+  if (!Number.isFinite(normalizedValue) || normalizedValue <= 0) {
+    return fallbackValue;
+  }
+
+  return Math.trunc(normalizedValue);
+}
+
+function getDagQueueElapsedMs(record: DagQueueJobRecord, nowMs: number): number {
+  return Math.max(0, nowMs - Date.parse(record.timestamps.queuedAt));
+}
+
+function getDagExecutionElapsedMs(record: DagQueueJobRecord, nowMs: number): number {
+  const startedAtIso = record.timestamps.startedAt ?? record.timestamps.updatedAt;
+  return Math.max(0, nowMs - Date.parse(startedAtIso));
 }
 
 /**
@@ -115,8 +139,11 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
     options: WaitForDagJobCompletionOptions = {}
   ): Promise<DagQueueJobRecord> {
     const pollIntervalMs = options.pollIntervalMs ?? 250;
-    const timeoutMs = options.timeoutMs ?? 60000;
-    const startedAt = Date.now();
+    const executionTimeoutMs = resolvePositiveTimeoutMs(
+      options.timeoutMs,
+      DEFAULT_DAG_NODE_TIMEOUT_MS
+    );
+    const queueClaimGraceMs = getWorkerExecutionLimits().dagQueueClaimGraceMs;
     let previousStatus: DagQueueJobRecord['status'] | undefined;
 
     //audit Assumption: polling is acceptable for the first DAG scaffold on top of `job_data`; failure risk: excessive DB churn; expected invariant: poll interval remains bounded and terminal states stop the loop; handling strategy: use short configurable polling with an explicit timeout.
@@ -140,13 +167,38 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
         return normalizedRecord;
       }
 
-      //audit Assumption: long-running waits need an operator-visible timeout; failure risk: deadlocked DAG nodes hold orchestration slots forever; expected invariant: every queued node eventually becomes terminal; handling strategy: mark the job failed once the timeout is exceeded.
-      if (Date.now() - startedAt > timeoutMs) {
+      const nowMs = Date.now();
+      const effectiveExecutionTimeoutMs = resolvePositiveTimeoutMs(
+        normalizedRecord.waitingTimeoutMs,
+        executionTimeoutMs
+      );
+      const queueElapsedMs = getDagQueueElapsedMs(normalizedRecord, nowMs);
+      const executionElapsedMs = getDagExecutionElapsedMs(normalizedRecord, nowMs);
+
+      //audit Assumption: queue backlog and active execution are distinct failure modes; failure risk: healthy nodes are marked failed before they even start when the queue is busy; expected invariant: pending/queued jobs get extra claim grace while running jobs are judged against active execution time; handling strategy: branch on queue state and emit a precise timeout error.
+      if (
+        normalizedRecord.status !== 'running' &&
+        queueElapsedMs > effectiveExecutionTimeoutMs + queueClaimGraceMs
+      ) {
         const timedOutJob = await updateJob(
           jobId,
           'failed',
           null,
-          `Timed out waiting for DAG node job after ${timeoutMs}ms.`
+          `Timed out waiting ${queueElapsedMs}ms for DAG node claim (execution limit ${effectiveExecutionTimeoutMs}ms, queue grace ${queueClaimGraceMs}ms).`
+        );
+        return buildDagQueueJobRecord(timedOutJob);
+      }
+
+      //audit Assumption: once a node is running, the execution limit should measure active runtime rather than queue age; failure risk: long-running AI stages outlive their guardrails indefinitely; expected invariant: running nodes become terminal once they exceed the configured execution timeout; handling strategy: fail closed with an execution-specific timeout message.
+      if (
+        normalizedRecord.status === 'running' &&
+        executionElapsedMs > effectiveExecutionTimeoutMs
+      ) {
+        const timedOutJob = await updateJob(
+          jobId,
+          'failed',
+          null,
+          `Timed out after ${executionElapsedMs}ms of DAG node execution (limit ${effectiveExecutionTimeoutMs}ms).`
         );
         return buildDagQueueJobRecord(timedOutJob);
       }

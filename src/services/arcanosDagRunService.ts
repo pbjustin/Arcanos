@@ -631,6 +631,7 @@ function createVerificationLineage(snapshot: PersistedDagRunSnapshot): DagVerifi
       workerEntryPoint: 'runWorkerTrinityPrompt',
       sessionId: '',
       sessionPropagationMode: 'synthetic_fallback',
+      tokenAuditSessionMode: 'shared_session',
       observedWorkerIds,
       observedSourceEndpoints
     };
@@ -641,6 +642,7 @@ function createVerificationLineage(snapshot: PersistedDagRunSnapshot): DagVerifi
     workerEntryPoint: 'runWorkerTrinityPrompt',
     sessionId: normalizedSessionId,
     sessionPropagationMode: 'inherit_run_session',
+    tokenAuditSessionMode: 'dag_node_branch',
     observedWorkerIds,
     observedSourceEndpoints
   };

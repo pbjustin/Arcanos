@@ -3,6 +3,7 @@ import type { DAGNodeExecutionContext, DAGResult } from '../dag/dagNode.js';
 
 export interface DagAgentPromptOptions {
   sessionId?: string;
+  tokenAuditSessionId?: string;
   overrideAuditSafe?: string;
   cognitiveDomain?: CognitiveDomain;
   sourceEndpoint: string;
@@ -113,6 +114,26 @@ function buildSyntheticDagAgentSessionId(context: DAGNodeExecutionContext): stri
   ].join(':');
 }
 
+function buildDagAgentTokenAuditSessionId(context: DAGNodeExecutionContext): string {
+  const sharedSessionId =
+    typeof context.sharedState.sessionId === 'string'
+      ? context.sharedState.sessionId.trim()
+      : '';
+
+  //audit Assumption: large DAG runs need independent token-audit buckets per node attempt while still preserving the parent session for memory continuity; failure risk: sibling nodes exhaust one shared Trinity session ceiling and abort otherwise healthy runs; expected invariant: inherited DAG sessions branch token auditing by dag/node/attempt and standalone runs keep the synthetic fallback; handling strategy: derive a stable per-node token session id only when a parent session exists.
+  if (sharedSessionId.length > 0) {
+    return [
+      sharedSessionId,
+      'dag',
+      context.dagId || 'unknown',
+      context.node.id,
+      `a${context.attempt}`
+    ].join(':');
+  }
+
+  return buildSyntheticDagAgentSessionId(context);
+}
+
 function resolveDagAgentSessionId(context: DAGNodeExecutionContext): string {
   const sharedSessionId =
     typeof context.sharedState.sessionId === 'string'
@@ -169,9 +190,11 @@ function createPromptAgent(agentKey: string): DagAgentHandler {
       ? context.payload.overrideAuditSafe
       : undefined;
     const sessionId = resolveDagAgentSessionId(context);
+    const tokenAuditSessionId = buildDagAgentTokenAuditSessionId(context);
 
     return helpers.runPrompt(prompt, {
       sessionId,
+      tokenAuditSessionId,
       overrideAuditSafe,
       cognitiveDomain: inferAgentDomain(agentKey),
       sourceEndpoint: `dag.agent.${agentKey}`

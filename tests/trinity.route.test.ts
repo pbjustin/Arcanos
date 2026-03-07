@@ -52,10 +52,20 @@ describe('trinity route', () => {
         trinitySession: 'active',
         databaseConfigured: true
       },
+      limits: {
+        workerApiTimeoutMs: 180000,
+        workerTrinityRuntimeBudgetMs: 420000,
+        workerTrinityStageTimeoutMs: 180000,
+        dagMaxTokenBudget: 250000,
+        dagNodeTimeoutMs: 420000,
+        dagQueueClaimGraceMs: 120000,
+        sessionTokenLimit: 250000
+      },
       telemetry: {
         sourceEndpoint: 'trinity.status',
         traceIdPropagation: 'not_exposed',
-        pipelineBindingsPublished: true
+        pipelineBindingsPublished: true,
+        failedJobInspectionEndpoint: '/worker-helper/jobs/failed'
       }
     });
 
@@ -98,10 +108,20 @@ describe('trinity route', () => {
         trinitySession: null,
         databaseConfigured: false
       },
+      limits: {
+        workerApiTimeoutMs: 180000,
+        workerTrinityRuntimeBudgetMs: 420000,
+        workerTrinityStageTimeoutMs: 180000,
+        dagMaxTokenBudget: 250000,
+        dagNodeTimeoutMs: 420000,
+        dagQueueClaimGraceMs: 120000,
+        sessionTokenLimit: 250000
+      },
       telemetry: {
         sourceEndpoint: 'trinity.status',
         traceIdPropagation: 'not_exposed',
-        pipelineBindingsPublished: true
+        pipelineBindingsPublished: true,
+        failedJobInspectionEndpoint: '/worker-helper/jobs/failed'
       }
     });
 

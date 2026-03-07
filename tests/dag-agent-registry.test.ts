@@ -37,6 +37,7 @@ describe('DAG agent registry', () => {
       expect.any(String),
       expect.objectContaining({
         sessionId: 'user-session-123',
+        tokenAuditSessionId: 'user-session-123:dag:dagrun_live_test:audit:a2',
         cognitiveDomain: 'diagnostic',
         sourceEndpoint: 'dag.agent.audit'
       })
@@ -58,7 +59,8 @@ describe('DAG agent registry', () => {
     expect(runPromptMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        sessionId: 'dag:dagrun_live_test:audit:a2'
+        sessionId: 'dag:dagrun_live_test:audit:a2',
+        tokenAuditSessionId: 'dag:dagrun_live_test:audit:a2'
       })
     );
   });

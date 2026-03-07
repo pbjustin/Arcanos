@@ -118,6 +118,9 @@ export interface TrinityRunOptions {
   cognitiveDomain?: import('@shared/types/cognitiveDomain.js').CognitiveDomain;
   internalMode?: boolean;
   sourceEndpoint?: string;
+  memorySessionId?: string;
+  tokenAuditSessionId?: string;
+  watchdogModelTimeoutMs?: number;
 }
 
 export interface TrinityDryRunPreview {

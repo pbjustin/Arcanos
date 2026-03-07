@@ -71,13 +71,20 @@ export interface TrinityWatchdog {
 export function createTrinityWatchdog(
   tier: Tier,
   runtimeBudget: RuntimeBudget,
-  model = 'gpt-5'
+  model = 'gpt-5',
+  modelTimeoutOverrideMs?: number
 ): TrinityWatchdog {
   assertBudgetAvailable(runtimeBudget);
 
   const tierSoftCap = computeTierSoftCap(tier);
   const remainingBudgetMs = getSafeRemainingMs(runtimeBudget);
-  const modelCapMs = resolveTimeout(model);
+  //audit Assumption: worker-originated Trinity calls may need a larger per-stage ceiling than request-path defaults; failure risk: long-running DAG nodes are clipped by the generic model timeout even when the worker budget is higher; expected invariant: explicit positive overrides win, otherwise model-specific defaults still apply; handling strategy: sanitize the override and clamp it again when computing the final effective limit.
+  const modelCapMs =
+    typeof modelTimeoutOverrideMs === 'number' &&
+    Number.isFinite(modelTimeoutOverrideMs) &&
+    modelTimeoutOverrideMs > 0
+      ? Math.max(1, Math.trunc(modelTimeoutOverrideMs))
+      : resolveTimeout(model);
   const effectiveLimit = Math.max(1, Math.min(tierSoftCap, remainingBudgetMs, modelCapMs));
 
   if (process.env.DEBUG_WATCHDOG === 'true') {
@@ -149,9 +156,22 @@ export function enforceTokenCap(requested?: number): number {
 
 // --- Session Token Auditor ---
 
-const SESSION_TOKEN_LIMIT = 20_000;
+export const DEFAULT_TRINITY_SESSION_TOKEN_LIMIT = 250_000;
+const SESSION_TOKEN_LIMIT = readNumberEnv(
+  'TRINITY_SESSION_TOKEN_LIMIT',
+  DEFAULT_TRINITY_SESSION_TOKEN_LIMIT
+);
 const MAX_TRACKED_SESSIONS = 10_000;
 const sessionUsage: Map<string, number> = new Map();
+
+/**
+ * Return the effective Trinity session token limit after environment overrides.
+ * Input: none. Output: positive token limit integer.
+ * Edge case: invalid env overrides already fall back to the documented default.
+ */
+export function getConfiguredTrinitySessionTokenLimit(): number {
+  return SESSION_TOKEN_LIMIT;
+}
 
 export function recordSessionTokens(sessionId: string, tokens: number): void {
   const current = (sessionUsage.get(sessionId) ?? 0) + tokens;

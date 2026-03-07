@@ -105,7 +105,7 @@ function buildPersistedSnapshotRecord() {
         maxChildrenPerNode: 5,
         maxRetriesPerNode: 2,
         maxAiCallsPerRun: 20,
-        defaultNodeTimeoutMs: 60000
+        defaultNodeTimeoutMs: 180000
       },
       features: {
         dagOrchestration: true,

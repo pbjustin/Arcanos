@@ -19,18 +19,44 @@ export interface RuntimeBudget {
   readonly safetyBuffer: number;
 }
 
+function normalizePositiveInteger(value: number, fallback: number): number {
+  const truncatedValue = Math.trunc(value);
+
+  //audit Assumption: runtime budget metadata must remain positive integers; risk: invalid custom limits create negative deadlines or zero-width budgets; invariant: budget fields stay >= 1ms unless the caller intentionally allows a zero safety buffer elsewhere; handling: clamp invalid values to the provided fallback.
+  if (!Number.isFinite(truncatedValue) || truncatedValue <= 0) {
+    return fallback;
+  }
+
+  return truncatedValue;
+}
+
 /**
  * Creates a runtime budget anchored to a single hard deadline.
  * Input: none. Output: RuntimeBudget snapshot with deadline metadata.
  * Edge case: uses wall-clock now; callers should create only one budget per job.
  */
 export function createRuntimeBudget(): RuntimeBudget {
+  return createRuntimeBudgetWithLimit(WATCHDOG_LIMIT_MS);
+}
+
+/**
+ * Creates a runtime budget with a caller-provided watchdog limit.
+ * Input: explicit watchdog limit and optional safety buffer. Output: RuntimeBudget snapshot with deadline metadata.
+ * Edge case: invalid custom values fall back to the configured global defaults.
+ */
+export function createRuntimeBudgetWithLimit(
+  watchdogLimitMs: number,
+  safetyBufferMs: number = SAFETY_BUFFER_MS
+): RuntimeBudget {
   const startedAt = Date.now();
+  const normalizedWatchdogLimitMs = normalizePositiveInteger(watchdogLimitMs, WATCHDOG_LIMIT_MS);
+  const normalizedSafetyBufferMs = Math.max(0, Math.trunc(safetyBufferMs));
+
   return {
     startedAt,
-    hardDeadline: startedAt + WATCHDOG_LIMIT_MS,
-    watchdogLimit: WATCHDOG_LIMIT_MS,
-    safetyBuffer: SAFETY_BUFFER_MS
+    hardDeadline: startedAt + normalizedWatchdogLimitMs,
+    watchdogLimit: normalizedWatchdogLimitMs,
+    safetyBuffer: normalizedSafetyBufferMs
   };
 }
 

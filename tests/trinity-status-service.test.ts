@@ -24,6 +24,13 @@ describe('getTrinityStatus', () => {
     process.env.MEMORY_CONTAINER = 'trinity';
     process.env.TRINITY_SESSION = 'active';
     process.env.DATABASE_URL = 'postgres://example.invalid/trinity';
+    process.env.WORKER_API_TIMEOUT_MS = '180000';
+    process.env.WORKER_TRINITY_RUNTIME_BUDGET_MS = '420000';
+    process.env.WORKER_TRINITY_STAGE_TIMEOUT_MS = '180000';
+    process.env.DAG_MAX_TOKEN_BUDGET = '250000';
+    process.env.DAG_NODE_TIMEOUT_MS = '420000';
+    process.env.DAG_QUEUE_CLAIM_GRACE_MS = '120000';
+    process.env.TRINITY_SESSION_TOKEN_LIMIT = '250000';
   });
 
   afterEach(() => {
@@ -210,6 +217,15 @@ describe('getTrinityStatus', () => {
         }
       ]
     });
+    expect(status.limits).toEqual({
+      workerApiTimeoutMs: 180000,
+      workerTrinityRuntimeBudgetMs: 420000,
+      workerTrinityStageTimeoutMs: 180000,
+      dagMaxTokenBudget: 250000,
+      dagNodeTimeoutMs: 420000,
+      dagQueueClaimGraceMs: 120000,
+      sessionTokenLimit: 250000
+    });
     expect(status.telemetry.failedJobInspectionEndpoint).toBe('/worker-helper/jobs/failed');
   });
 
@@ -295,6 +311,15 @@ describe('getTrinityStatus', () => {
         staleAfterMs: 60000
       },
       recentFailedJobs: []
+    });
+    expect(status.limits).toEqual({
+      workerApiTimeoutMs: 180000,
+      workerTrinityRuntimeBudgetMs: 420000,
+      workerTrinityStageTimeoutMs: 180000,
+      dagMaxTokenBudget: 250000,
+      dagNodeTimeoutMs: 420000,
+      dagQueueClaimGraceMs: 120000,
+      sessionTokenLimit: 250000
     });
   });
 });

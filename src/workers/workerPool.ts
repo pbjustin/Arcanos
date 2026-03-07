@@ -1,3 +1,8 @@
+import {
+  DEFAULT_DAG_MAX_TOKEN_BUDGET,
+  DEFAULT_DAG_NODE_TIMEOUT_MS
+} from './workerExecutionLimits.js';
+
 export interface DagWorkerPoolSettings {
   maxConcurrentNodes: number;
   maxDepth: number;
@@ -43,8 +48,8 @@ export function getDagWorkerPoolSettings(
     maxChildrenPerNode: overrides.maxChildrenPerNode ?? readPositiveIntegerFromEnvironment('DAG_MAX_CHILDREN_PER_NODE', 5),
     maxRetries: overrides.maxRetries ?? readPositiveIntegerFromEnvironment('DAG_MAX_RETRIES', 2),
     maxAiCallsPerRun: overrides.maxAiCallsPerRun ?? readPositiveIntegerFromEnvironment('DAG_MAX_AI_CALLS_PER_RUN', 20),
-    maxTokenBudgetPerDag: overrides.maxTokenBudgetPerDag ?? readPositiveIntegerFromEnvironment('DAG_MAX_TOKEN_BUDGET', 20000),
-    nodeTimeoutMs: overrides.nodeTimeoutMs ?? readPositiveIntegerFromEnvironment('DAG_NODE_TIMEOUT_MS', 60000),
+    maxTokenBudgetPerDag: overrides.maxTokenBudgetPerDag ?? readPositiveIntegerFromEnvironment('DAG_MAX_TOKEN_BUDGET', DEFAULT_DAG_MAX_TOKEN_BUDGET),
+    nodeTimeoutMs: overrides.nodeTimeoutMs ?? readPositiveIntegerFromEnvironment('DAG_NODE_TIMEOUT_MS', DEFAULT_DAG_NODE_TIMEOUT_MS),
     pollIntervalMs: overrides.pollIntervalMs ?? readPositiveIntegerFromEnvironment('DAG_POLL_INTERVAL_MS', 250)
   };
 }

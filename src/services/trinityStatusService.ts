@@ -1,9 +1,12 @@
 import { getEnv } from '@platform/runtime/env.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { routeMemorySnapshotStore } from './routeMemorySnapshotStore.js';
 import {
   getWorkerControlStatus,
   type WorkerControlStatusResponse
 } from './workerControlService.js';
+import { getConfiguredTrinitySessionTokenLimit } from '@core/logic/trinityGuards.js';
+import { getWorkerExecutionLimits } from '../workers/workerExecutionLimits.js';
 
 export type TrinityStatusHealth = 'healthy' | 'degraded' | 'offline';
 export type TrinityMemorySyncState = 'active' | 'degraded' | 'offline';
@@ -23,6 +26,16 @@ export interface TrinityRuntimeBindings {
   memoryContainer: string | null;
   trinitySession: string | null;
   databaseConfigured: boolean;
+}
+
+export interface TrinityRuntimeLimits {
+  workerApiTimeoutMs: number;
+  workerTrinityRuntimeBudgetMs: number;
+  workerTrinityStageTimeoutMs: number;
+  dagMaxTokenBudget: number;
+  dagNodeTimeoutMs: number;
+  dagQueueClaimGraceMs: number;
+  sessionTokenLimit: number;
 }
 
 export interface TrinityStatusResponse {
@@ -55,6 +68,7 @@ export interface TrinityStatusResponse {
     recentFailedJobs: WorkerControlStatusResponse['workerService']['recentFailedJobs'];
   };
   bindings: TrinityRuntimeBindings;
+  limits: TrinityRuntimeLimits;
   telemetry: {
     sourceEndpoint: 'trinity.status';
     traceIdPropagation: 'not_exposed';
@@ -107,6 +121,34 @@ function buildTrinityRuntimeBindings(): TrinityRuntimeBindings {
     memoryContainer: getEnv('MEMORY_CONTAINER')?.trim() || null,
     trinitySession: getEnv('TRINITY_SESSION')?.trim() || null,
     databaseConfigured: Boolean(getEnv('DATABASE_URL'))
+  };
+}
+
+/**
+ * Build the effective runtime limit summary for Trinity worker and DAG execution.
+ *
+ * Purpose:
+ * - Expose the live timeout and token ceilings that govern long-running Trinity and DAG work.
+ *
+ * Inputs/outputs:
+ * - Input: environment-backed worker execution settings and Trinity session guardrails.
+ * - Output: sanitized runtime limit summary for `/trinity/status`.
+ *
+ * Edge case behavior:
+ * - Invalid environment overrides have already fallen back before this payload is assembled.
+ */
+function buildTrinityRuntimeLimits(): TrinityRuntimeLimits {
+  const config = getConfig();
+  const workerExecutionLimits = getWorkerExecutionLimits();
+
+  return {
+    workerApiTimeoutMs: config.workerApiTimeoutMs,
+    workerTrinityRuntimeBudgetMs: workerExecutionLimits.workerTrinityRuntimeBudgetMs,
+    workerTrinityStageTimeoutMs: workerExecutionLimits.workerTrinityStageTimeoutMs,
+    dagMaxTokenBudget: workerExecutionLimits.dagMaxTokenBudget,
+    dagNodeTimeoutMs: workerExecutionLimits.dagNodeTimeoutMs,
+    dagQueueClaimGraceMs: workerExecutionLimits.dagQueueClaimGraceMs,
+    sessionTokenLimit: getConfiguredTrinitySessionTokenLimit()
   };
 }
 
@@ -350,6 +392,7 @@ export async function getTrinityStatus(): Promise<TrinityStatusResponse> {
       recentFailedJobs
     },
     bindings: buildTrinityRuntimeBindings(),
+    limits: buildTrinityRuntimeLimits(),
     telemetry: {
       sourceEndpoint: 'trinity.status',
       traceIdPropagation: 'not_exposed',

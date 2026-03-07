@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { JobData } from '../core/db/schema.js';
 import type { DAGNode, DAGResult, QueuedDAGNodeDefinition } from '../dag/dagNode.js';
 import { stripDagNodeExecutor } from '../dag/dagNode.js';
+import { DEFAULT_DAG_NODE_TIMEOUT_MS } from '../workers/workerExecutionLimits.js';
 
 const dagNodeMetricsSchema = z.record(z.number().optional()).optional();
 
@@ -30,7 +31,7 @@ const dagNodeJobInputSchema = z.object({
   depth: z.number().int().min(0),
   attempt: z.number().int().min(0).default(0),
   maxRetries: z.number().int().min(0).default(2),
-  waitingTimeoutMs: z.number().int().positive().default(60000)
+  waitingTimeoutMs: z.number().int().positive().default(DEFAULT_DAG_NODE_TIMEOUT_MS)
 });
 
 export type DagQueueJobStatus = 'queued' | 'running' | 'completed' | 'failed';
@@ -66,6 +67,8 @@ export interface DagQueueJobRecord {
   timestamps: {
     queuedAt: string;
     updatedAt: string;
+    startedAt?: string;
+    lastHeartbeatAt?: string;
     completedAt?: string;
   };
 }
@@ -122,7 +125,7 @@ export function buildDagNodeJobInput(input: {
     depth: input.depth,
     attempt: input.attempt ?? 0,
     maxRetries: input.maxRetries ?? 2,
-    waitingTimeoutMs: input.waitingTimeoutMs ?? 60000
+    waitingTimeoutMs: input.waitingTimeoutMs ?? DEFAULT_DAG_NODE_TIMEOUT_MS
   };
 }
 
@@ -182,6 +185,10 @@ export function buildDagQueueJobRecord(job: JobData): DagQueueJobRecord {
   const parsedOutput = dagResultSchema.safeParse(job.output);
   const queuedAt = new Date(job.created_at).toISOString();
   const updatedAt = new Date(job.updated_at).toISOString();
+  const startedAt = job.started_at ? new Date(job.started_at).toISOString() : undefined;
+  const lastHeartbeatAt = job.last_heartbeat_at
+    ? new Date(job.last_heartbeat_at).toISOString()
+    : undefined;
   const completedAt = job.completed_at ? new Date(job.completed_at).toISOString() : undefined;
 
   return {
@@ -203,6 +210,8 @@ export function buildDagQueueJobRecord(job: JobData): DagQueueJobRecord {
     timestamps: {
       queuedAt,
       updatedAt,
+      startedAt,
+      lastHeartbeatAt,
       completedAt
     }
   };

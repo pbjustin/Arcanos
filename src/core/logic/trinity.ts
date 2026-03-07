@@ -237,6 +237,8 @@ export async function runThroughBrain(
   const routingStages: string[] = [];
   const gpt5Used = true;
   const start = Date.now();
+  const effectiveMemorySessionId = options.memorySessionId ?? sessionId;
+  const effectiveTokenAuditSessionId = options.tokenAuditSessionId ?? sessionId;
 
   // --- Tier detection ---
   const tier = internalContext?.originalTier ? getNextTier(internalContext.originalTier) : detectTier(prompt);
@@ -259,7 +261,7 @@ export async function runThroughBrain(
     escalated: !!internalContext?.escalated
   });
 
-  const memoryContext = getMemoryContext(prompt, sessionId);
+  const memoryContext = getMemoryContext(prompt, effectiveMemorySessionId);
   const relevanceScores = memoryContext.relevantEntries.map(entry => entry.relevanceScore ?? 0);
   const memoryScoreSummary = calculateMemoryScoreSummary(relevanceScores);
 
@@ -271,7 +273,12 @@ export async function runThroughBrain(
 
   // --- Concurrency governor + watchdog ---
   const [release] = await acquireTierSlot(tier);
-  const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(tier, runtimeBudget, getGPT5Model());
+  const { watchdog, tierSoftCap, effectiveLimit } = createTrinityWatchdog(
+    tier,
+    runtimeBudget,
+    getGPT5Model(),
+    options.watchdogModelTimeoutMs
+  );
   const checkWatchdog = () => {
     assertBudgetAvailable(runtimeBudget);
     watchdog.check();
@@ -392,7 +399,7 @@ export async function runThroughBrain(
         `Input pattern: ${auditSafePrompt.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
         `GPT-5.1 output pattern: ${gpt5Output.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`,
         `Final output pattern: ${finalText.substring(0, TRINITY_PREVIEW_SNIPPET_LENGTH)}...`
-      ], sessionId);
+      ], effectiveMemorySessionId);
     }
 
     logRoutingSummary(arcanosModel, true, 'ARCANOS-FINAL');
@@ -402,8 +409,9 @@ export async function runThroughBrain(
 
     // --- Post-execution guards ---
     const totalTokens = (finalOutput.usage?.total_tokens ?? 0) + (intakeOutput.usage?.total_tokens ?? 0);
-    if (sessionId) {
-      recordSessionTokens(sessionId, totalTokens);
+    //audit Assumption: DAG and worker flows may need a shared memory session but isolated token-audit buckets; failure risk: large multi-node runs exhaust one conversational token ceiling despite independent node work; expected invariant: memory continuity and token auditing can use different session identifiers when explicitly provided; handling strategy: audit against the optional token session id while preserving the original memory session for context lookup and storage.
+    if (effectiveTokenAuditSessionId) {
+      recordSessionTokens(effectiveTokenAuditSessionId, totalTokens);
     }
 
     const downgradeDetected = detectDowngrade(getGPT5Model(), gpt5ModelUsed);
@@ -460,7 +468,7 @@ export async function runThroughBrain(
       tierSoftCap,
       effectiveLimit,
       tokenCapApplied: TRINITY_HARD_TOKEN_CAP,
-      sessionTokensUsed: sessionId ? getSessionTokenUsage(sessionId) : undefined,
+      sessionTokensUsed: effectiveTokenAuditSessionId ? getSessionTokenUsage(effectiveTokenAuditSessionId) : undefined,
       downgradeDetected,
       latencyMs,
       latencyDriftDetected
@@ -472,7 +480,7 @@ export async function runThroughBrain(
       response: finalText,
       clearAudit,
       tier,
-      sessionId,
+      sessionId: effectiveMemorySessionId,
       sourceEndpoint: options.sourceEndpoint,
       internalMode,
       remainingBudgetMs: result.guardInfo.remainingBudgetMs
