@@ -1,4 +1,5 @@
 import { createVersionStamp } from './monotonicClock.js';
+import { isRecord } from '@shared/typeGuards.js';
 
 export interface MemoryMetadataEnvelope {
   versionId: string;
@@ -9,10 +10,6 @@ export interface MemoryMetadataEnvelope {
 export interface VersionedMemoryEnvelope<T = unknown> {
   metadata: MemoryMetadataEnvelope;
   payload: T;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -81,4 +78,3 @@ export function unwrapVersionedMemoryEnvelope<T = unknown>(value: unknown): {
     metadata: value.metadata
   };
 }
-

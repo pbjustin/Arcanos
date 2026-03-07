@@ -3,6 +3,8 @@ import path from 'path';
 import { createVersionId, getMonotonicTimestampMs } from '../monotonicClock.js';
 import { emitSafetyAuditEvent } from '../auditEvents.js';
 import crypto from 'crypto';
+import { cloneJson, createDefaultSnapshot } from './defaults.js';
+import { isRecord } from '@shared/typeGuards.js';
 
 export type UnsafeConditionCode =
   | 'MEMORY_VERSION_MISMATCH'
@@ -89,30 +91,6 @@ const MAX_ENTITY_KEYS = 1000;
 const IS_TEST_ENV = process.env.NODE_ENV === 'test';
 
 let pendingSaveTimeout: NodeJS.Timeout | null = null;
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function createDefaultSnapshot(): SafetyRuntimeSnapshot {
-  return {
-    updatedAt: new Date().toISOString(),
-    conditions: [],
-    quarantines: [],
-    counters: {
-      duplicateSuppressions: 0,
-      quarantineActivations: 0,
-      workerFailures: {},
-      heartbeatMisses: {},
-      healthyCycles: {}
-    },
-    trustedHashes: {}
-  };
-}
 
 function ensureStateDirectory(): void {
   const dir = path.dirname(SAFETY_STATE_FILE);

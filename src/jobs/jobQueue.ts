@@ -10,10 +10,7 @@ import {
   buildDagQueueJobRecord,
   type DagQueueJobRecord
 } from './jobSchema.js';
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
+import { sleep } from '@shared/sleep.js';
 
 export interface EnqueueDagNodeJobRequest {
   dagId: string;

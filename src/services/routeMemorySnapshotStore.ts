@@ -6,6 +6,7 @@ import type {
   DispatchMemorySnapshotV9,
   DispatchRouteStateV9
 } from "@shared/types/dispatchV9.js";
+import { isRecord } from '@shared/typeGuards.js';
 import { createVersionStamp } from "@services/safety/monotonicClock.js";
 
 export const DISPATCH_V9_SNAPSHOT_KEY = 'dispatch:v9:snapshot:global';
@@ -31,10 +32,6 @@ interface RouteMemorySnapshotStoreDependencies {
 interface SnapshotCacheEntry {
   expiresAt: number;
   record: RouteMemorySnapshotRecord;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function toIsoDate(value: unknown, fallbackIso: string): string {
@@ -509,4 +506,3 @@ export function createRouteMemorySnapshotStore(overrides: Partial<RouteMemorySna
 }
 
 export const routeMemorySnapshotStore = createRouteMemorySnapshotStore();
-

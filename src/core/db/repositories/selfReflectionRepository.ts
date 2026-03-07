@@ -7,6 +7,7 @@
 import { isDatabaseConnected, initializeDatabase } from "@core/db/client.js";
 import { query } from "@core/db/query.js";
 import { initializeTables } from "@core/db/schema.js";
+import { resolveErrorMessage } from "@shared/errorUtils.js";
 
 export interface SelfReflectionInsert {
   priority: string;
@@ -74,7 +75,7 @@ async function ensureSelfReflectionPersistenceReady(): Promise<boolean> {
     } catch (error: unknown) {
       //audit Assumption: bootstrap exceptions should not break reflection generation path; risk: persistence loss and noisy crashes; invariant: caller gets boolean readiness; handling: warn + cooldown fail-close.
       lastBootstrapFailureAtMs = Date.now();
-      console.warn('[🧠 Reflections] Failed to initialize database for persistence:', getErrorMessage(error));
+      console.warn('[🧠 Reflections] Failed to initialize database for persistence:', resolveErrorMessage(error));
       return false;
     } finally {
       pendingBootstrap = null;
@@ -207,14 +208,4 @@ function normalizeObjectRecord(value: unknown): Record<string, unknown> {
     }
   }
   return {};
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  return 'Unknown error';
 }

@@ -28,51 +28,63 @@ export function getLogPath(): string {
 }
 
 /**
+ * Build one log-file path under the active log directory.
+ *
+ * Purpose:
+ * - Keep filename-specific helpers behaviorally identical while removing repeated `path.join` logic.
+ *
+ * Inputs/outputs:
+ * - Input: log filename relative to the active log directory.
+ * - Output: absolute or configured log file path.
+ *
+ * Edge case behavior:
+ * - Assumes callers pass a stable filename segment rather than a nested user path.
+ */
+function buildNamedLogPath(fileName: string): string {
+  //audit Assumption: log filenames are static module-defined values; risk: path traversal if user-controlled segments were ever passed through; expected invariant: only trusted filenames reach this helper; handling strategy: keep the helper private to this module.
+  return path.join(getLogPath(), fileName);
+}
+
+/**
  * Get the session log file path
  */
 export function getSessionLogPath(): string {
-  const logDir = getLogPath();
-  return path.join(logDir, 'session.log');
+  return buildNamedLogPath('session.log');
 }
 
 /**
  * Get the audit log file path
  */
 export function getAuditLogPath(): string {
-  const logDir = getLogPath();
-  return path.join(logDir, 'audit.log');
+  return buildNamedLogPath('audit.log');
 }
 
 /**
  * Get the lineage log file path
  */
 export function getLineageLogPath(): string {
-  const logDir = getLogPath();
-  return path.join(logDir, 'lineage.log');
+  return buildNamedLogPath('lineage.log');
 }
 
 /**
  * Get the feedback log file path
  */
 export function getFeedbackLogPath(): string {
-  const logDir = getLogPath();
-  return path.join(logDir, 'feedback.log');
+  return buildNamedLogPath('feedback.log');
 }
 
 /**
  * Get the GPT-4 trace output log file path
  */
 export function getGPT4TracePath(): string {
-  const logDir = getLogPath();
-  return path.join(logDir, 'gpt4_trace_output');
+  return buildNamedLogPath('gpt4_trace_output');
 }
 
 /**
  * Get the audit shadow log file path
  */
 export function getAuditShadowPath(): string {
-  const logDir = getLogPath();
-  return path.join(logDir, 'audit_shadow_log');
+  return buildNamedLogPath('audit_shadow_log');
 }
 
 /**

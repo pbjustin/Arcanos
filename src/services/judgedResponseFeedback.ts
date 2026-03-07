@@ -8,6 +8,7 @@ import {
 import { getReinforcementConfig, registerContextEntry } from "@services/contextualReinforcement.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnvNumber } from "@platform/runtime/env.js";
+import { resolveErrorMessage } from '@shared/errorUtils.js';
 import type {
   ClearScoreScale,
   JudgedResponsePayload,
@@ -596,14 +597,4 @@ function truncateText(value: string, maxLength: number): string {
     return value;
   }
   return value.slice(0, maxLength);
-}
-
-function resolveErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  return 'Unknown error';
 }

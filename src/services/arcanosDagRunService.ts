@@ -29,6 +29,7 @@ import type {
   NodeMetrics,
   NodeStatus
 } from '../shared/types/arcanos-verification-contract.types.js';
+import { sleep } from '@shared/sleep.js';
 
 type DagRunExecutionState = 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';
 
@@ -385,13 +386,6 @@ function normalizePersistedDagRunSnapshot(
 
 function createNodeMapFromSnapshot(snapshot: PersistedDagRunSnapshot): Map<string, StoredNodeDetail> {
   return new Map(snapshot.nodes.map(node => [node.nodeId, cloneStoredNodeDetail(node)]));
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, milliseconds);
-    timer.unref?.();
-  });
 }
 
 function percentile(values: number[], percentileRank: number): number {
@@ -930,7 +924,7 @@ export class ArcanosDagRunService {
 
     while (Date.now() < deadlineMs) {
       const remainingMs = Math.max(0, deadlineMs - Date.now());
-      await sleep(Math.min(remainingMs, 250));
+      await sleep(Math.min(remainingMs, 250), { unref: true });
 
       const nextSnapshot = await this.getRunSnapshot(runId);
       //audit Assumption: a persisted run should remain readable while a client is waiting on it; failure risk: transient read miss could incorrectly downgrade to not-found; expected invariant: the last known snapshot remains usable; handling strategy: keep the latest successful snapshot when a poll read returns null.

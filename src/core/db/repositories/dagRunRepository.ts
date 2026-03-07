@@ -7,6 +7,7 @@
 import { initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
 import { initializeTables } from '@core/db/schema.js';
+import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONParse, safeJSONStringify } from '@shared/jsonHelpers.js';
 
 export interface DagRunSnapshotRecord {
@@ -68,7 +69,7 @@ async function ensureDagRunPersistenceReady(): Promise<boolean> {
     } catch (error: unknown) {
       //audit Assumption: persistence bootstrap failures should not crash orchestration flows; failure risk: DAG execution fails solely due to observability storage; expected invariant: callers receive boolean readiness; handling strategy: warn and fail closed.
       lastBootstrapFailureAtMs = Date.now();
-      console.warn('[DAG Runs] Failed to initialize database persistence:', getErrorMessage(error));
+      console.warn('[DAG Runs] Failed to initialize database persistence:', resolveErrorMessage(error));
       return false;
     } finally {
       pendingBootstrap = null;
@@ -218,14 +219,4 @@ function normalizeIsoString(value: unknown): string {
   }
 
   return new Date().toISOString();
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  return 'Unknown error';
 }

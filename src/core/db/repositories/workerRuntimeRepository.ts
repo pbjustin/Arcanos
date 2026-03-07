@@ -7,6 +7,7 @@
 import { initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
 import { initializeTables } from '@core/db/schema.js';
+import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONParse, safeJSONStringify } from '@shared/jsonHelpers.js';
 
 export interface WorkerRuntimeSnapshotRecord {
@@ -69,7 +70,7 @@ async function ensureWorkerRuntimePersistenceReady(): Promise<boolean> {
     } catch (error: unknown) {
       //audit Assumption: worker snapshot persistence failures should not crash request handling; failure risk: health endpoints become fatal during DB issues; expected invariant: callers receive a readiness boolean; handling strategy: warn and fail closed.
       lastBootstrapFailureAtMs = Date.now();
-      console.warn('[Worker Runtime] Failed to initialize database persistence:', getErrorMessage(error));
+      console.warn('[Worker Runtime] Failed to initialize database persistence:', resolveErrorMessage(error));
       return false;
     } finally {
       pendingBootstrap = null;
@@ -279,14 +280,4 @@ function normalizeNullableIsoString(value: unknown): string | null {
 
 function normalizeIsoString(value: unknown): string {
   return normalizeNullableIsoString(value) ?? new Date().toISOString();
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  return 'Unknown error';
 }

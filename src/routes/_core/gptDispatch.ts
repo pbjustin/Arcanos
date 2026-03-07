@@ -6,6 +6,7 @@ import {
   executeNaturalLanguageMemoryCommand,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
+import { isRecord } from "@shared/typeGuards.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -29,10 +30,6 @@ export type RouteGptRequestInput = {
   requestId?: string;
   logger?: any;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function extractPrompt(body: any): string | null {
   const direct =

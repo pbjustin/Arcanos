@@ -3,11 +3,11 @@
  * Handles git operations including PR checkout, merging, and force push operations
  */
 
-import { exec, execFile } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { sleep } from '@shared/sleep.js';
 
-const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 export interface PROptions {
@@ -97,36 +97,8 @@ async function executeProcessCommand(command: string, args: string[], workingDir
   }
 }
 
-/**
- * Execute a git command safely with error handling
- */
-async function executeGitCommand(command: string, workingDir?: string): Promise<GitOperationResult> {
-  try {
-    const options = workingDir ? { cwd: workingDir } : {};
-    const { stdout, stderr } = await execAsync(command, options);
-    
-    return {
-      success: true,
-      output: stdout.trim(),
-      error: stderr.trim() || undefined
-    };
-  } catch (error: unknown) {
-    //audit Assumption: command failures should return error text
-    return {
-      success: false,
-      output: '',
-      error: resolveErrorMessage(error, 'Unknown git command error')
-    };
-  }
-}
-
-
 type RetryOptions = { attempts: number; baseDelayMs: number; maxDelayMs: number; jitterMs: number };
 const DEFAULT_RETRY: RetryOptions = { attempts: 3, baseDelayMs: 750, maxDelayMs: 8000, jitterMs: 250 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(res => setTimeout(res, ms));
-}
 
 async function retry<T>(fn: (attempt: number) => Promise<T>, opts: Partial<RetryOptions> = {}): Promise<T> {
   const o: RetryOptions = { ...DEFAULT_RETRY, ...opts };

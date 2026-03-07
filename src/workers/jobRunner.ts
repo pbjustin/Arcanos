@@ -34,16 +34,13 @@ import {
   type JobRunnerSlotDefinition
 } from './jobRunnerRuntime.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
+import { sleep } from '@shared/sleep.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed';
   output: unknown;
   errorMessage?: string;
   retryable?: boolean;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function initOpenAIClient() {
