@@ -63,6 +63,7 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 ### Core AI interaction
 - `GET|POST /ask`
 - `GET|POST /brain` (confirmation required)
+- `GET /trinity/status`
 - `POST /arcanos` (confirmation required)
 - `POST /arcanos-pipeline`
 - `POST /arcanos-query`

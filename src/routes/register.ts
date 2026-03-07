@@ -35,6 +35,7 @@ import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import devopsRouter from './devops.js';
 import introspectionRouter from './introspection.js';
+import trinityRouter from './trinity.js';
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
 import { TRINITY_BASE_SOFT_CAP_MS, TRINITY_MULTIPLIERS } from "@core/logic/trinityGuards.js";
 import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS, BUDGET_DISABLED } from '../platform/resilience/runtimeBudget.js';
@@ -100,6 +101,7 @@ export function registerRoutes(app: Express): void {
 
   app.use('/', healthGroupRouter);
   app.use('/', introspectionRouter);
+  app.use('/', trinityRouter);
   app.use('/', safetyRouter);
   app.use('/', mcpRouter);
   app.use('/', jobsRouter);
