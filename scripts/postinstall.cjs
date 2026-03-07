@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { spawnSync } = require('child_process');
 
 /**
@@ -8,7 +9,7 @@ const { spawnSync } = require('child_process');
  * Outputs: none.
  * Edge cases: missing script or optional dependency failures are ignored.
  */
-function runAutoSyncSetupIfAvailable(repositoryRootDirectory) {
+async function runAutoSyncSetupIfAvailable(repositoryRootDirectory) {
   const autoSyncScriptPath = path.join(
     repositoryRootDirectory,
     'scripts',
@@ -26,6 +27,23 @@ function runAutoSyncSetupIfAvailable(repositoryRootDirectory) {
   try {
     require(autoSyncScriptPath);
   } catch (error) {
+    //audit assumption: the optional setup script may be authored as ESM in a package with `type: module`.
+    //audit failure risk: CommonJS `require()` throws ERR_REQUIRE_ESM and fails otherwise-valid installs.
+    //audit expected invariant: optional auto-sync setup runs when loadable and never blocks production installs.
+    //audit handling strategy: fall back to dynamic import for ESM, then continue suppressing only optional resolution failures.
+    if (error && error.code === 'ERR_REQUIRE_ESM') {
+      try {
+        await import(pathToFileURL(autoSyncScriptPath).href);
+        return;
+      } catch (esmError) {
+        if (esmError && esmError.code === 'MODULE_NOT_FOUND') {
+          return;
+        }
+
+        throw esmError;
+      }
+    }
+
     //audit assumption: only missing optional modules should be ignored here.
     //audit failure risk: swallowing unrelated exceptions would hide a real setup regression.
     //audit expected invariant: non-module resolution failures are surfaced to the installer.
@@ -207,11 +225,13 @@ function runTypeScriptBuildForMinimatch({
  * Outputs: process exit code via thrown errors.
  * Edge cases: optional auto-sync setup is non-fatal; dependency repair is fatal when required.
  */
-function main() {
+async function main() {
   const repositoryRootDirectory = process.cwd();
 
-  runAutoSyncSetupIfAvailable(repositoryRootDirectory);
+  await runAutoSyncSetupIfAvailable(repositoryRootDirectory);
   repairGitSourcedMinimatchBuild(repositoryRootDirectory);
 }
 
-main();
+main().catch((error) => {
+  throw error;
+});

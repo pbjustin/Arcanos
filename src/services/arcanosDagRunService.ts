@@ -18,6 +18,7 @@ import type {
   DagTreeData,
   DagTreeNode,
   DagVerification,
+  DagVerificationLineage,
   DagVerificationData,
   ErrorInfo,
   ExecutionLimits,
@@ -211,6 +212,65 @@ function toEpochMilliseconds(timestamp: string | undefined): number {
 
   const parsedValue = Date.parse(timestamp);
   return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function calculateMaxParallelNodesObserved(
+  nodeList: StoredNodeDetail[],
+  updatedAt: string
+): number {
+  const intervalBoundaries: Array<{
+    timestampMs: number;
+    delta: 1 | -1;
+    sortOrder: number;
+  }> = [];
+  const fallbackEndTimestampMs = toEpochMilliseconds(updatedAt);
+
+  for (const node of nodeList) {
+    const startedAtTimestampMs = toEpochMilliseconds(node.startedAt);
+    if (startedAtTimestampMs <= 0) {
+      continue;
+    }
+
+    const completedAtTimestampMs = node.completedAt
+      ? toEpochMilliseconds(node.completedAt)
+      : fallbackEndTimestampMs;
+    const normalizedCompletedAtTimestampMs =
+      completedAtTimestampMs > startedAtTimestampMs
+        ? completedAtTimestampMs
+        : startedAtTimestampMs + 1;
+
+    intervalBoundaries.push({
+      timestampMs: startedAtTimestampMs,
+      delta: 1,
+      sortOrder: 1
+    });
+    intervalBoundaries.push({
+      timestampMs: normalizedCompletedAtTimestampMs,
+      delta: -1,
+      sortOrder: 0
+    });
+  }
+
+  intervalBoundaries.sort((leftBoundary, rightBoundary) => {
+    if (leftBoundary.timestampMs !== rightBoundary.timestampMs) {
+      return leftBoundary.timestampMs - rightBoundary.timestampMs;
+    }
+
+    return leftBoundary.sortOrder - rightBoundary.sortOrder;
+  });
+
+  let currentlyRunningNodes = 0;
+  let maxParallelNodesObserved = 0;
+
+  for (const boundary of intervalBoundaries) {
+    currentlyRunningNodes += boundary.delta;
+    maxParallelNodesObserved = Math.max(
+      maxParallelNodesObserved,
+      currentlyRunningNodes
+    );
+  }
+
+  return maxParallelNodesObserved;
 }
 
 function cloneFinalOutput(finalOutput: FinalOutput | undefined): FinalOutput | undefined {
@@ -458,10 +518,15 @@ function recalculateMetrics(record: StoredDagRunRecord): DagRunMetrics {
     0,
     new Date(record.updatedAt).getTime() - new Date(record.createdAt).getTime()
   );
+  //audit Assumption: live DAG verification should infer concurrency from node timing windows even before the orchestrator emits its terminal summary; failure risk: genuinely parallel child execution is reported as serial until run completion; expected invariant: overlapping node intervals raise maxParallelNodesObserved mid-run; handling strategy: sweep started/completed timestamps and preserve the highest observed value.
+  const maxParallelNodesObserved = Math.max(
+    record.metrics.maxParallelNodesObserved,
+    calculateMaxParallelNodesObserved(nodeList, record.updatedAt)
+  );
 
   return {
     totalNodes: nodeList.length,
-    maxParallelNodesObserved: record.metrics.maxParallelNodesObserved,
+    maxParallelNodesObserved,
     maxSpawnDepthObserved: Math.max(0, ...nodeList.map(node => node.spawnDepth)),
     totalRetries: record.metrics.totalRetries,
     totalFailures,
@@ -500,6 +565,56 @@ function calculateVerification(record: StoredDagRunRecord): DagVerification {
     deadlockDetected: record.guardViolations.some(violation => violation.type === 'deadline_exceeded'),
     stalledJobsDetected: record.guardViolations.some(violation => violation.type === 'deadline_exceeded'),
     loopDetected: record.loopDetected
+  };
+}
+
+/**
+ * Build explicit Trinity lineage metadata for the verification payload.
+ *
+ * Purpose:
+ * - Let the verification API assert the worker AI pipeline and expose the concrete worker evidence seen so far.
+ *
+ * Inputs/outputs:
+ * - Input: persisted DAG snapshot containing nodes and the originating run session id.
+ * - Output: Trinity lineage metadata for the verification response.
+ *
+ * Edge case behavior:
+ * - Falls back to `synthetic_fallback` when the run snapshot lacks a non-empty session id.
+ */
+function createVerificationLineage(snapshot: PersistedDagRunSnapshot): DagVerificationLineage {
+  const normalizedSessionId = typeof snapshot.sessionId === 'string'
+    ? snapshot.sessionId.trim()
+    : '';
+  const observedWorkerIds = Array.from(
+    new Set(
+      snapshot.nodes
+        .map(node => node.workerId)
+        .filter((workerId): workerId is string => typeof workerId === 'string' && workerId.trim().length > 0)
+    )
+  );
+  const observedSourceEndpoints = Array.from(
+    new Set(snapshot.nodes.map(node => `dag.agent.${node.agentRole}`))
+  );
+
+  //audit Assumption: API-created DAG runs always propagate their session id into worker execution; failure risk: callers cannot distinguish inherited Trinity sessions from synthetic fallback sessions; expected invariant: non-empty run session ids are labeled as inherited and empty values are called out explicitly; handling strategy: branch on the normalized session id and surface the propagation mode in the verification payload.
+  if (normalizedSessionId.length === 0) {
+    return {
+      workerPipeline: 'trinity',
+      workerEntryPoint: 'runWorkerTrinityPrompt',
+      sessionId: '',
+      sessionPropagationMode: 'synthetic_fallback',
+      observedWorkerIds,
+      observedSourceEndpoints
+    };
+  }
+
+  return {
+    workerPipeline: 'trinity',
+    workerEntryPoint: 'runWorkerTrinityPrompt',
+    sessionId: normalizedSessionId,
+    sessionPropagationMode: 'inherit_run_session',
+    observedWorkerIds,
+    observedSourceEndpoints
   };
 }
 
@@ -868,6 +983,7 @@ export class ArcanosDagRunService {
       dependencyIds: [...node.dependencyIds],
       childNodeIds: [...node.childNodeIds],
       spawnDepth: node.spawnDepth,
+      workerId: node.workerId,
       startedAt: node.startedAt,
       completedAt: node.completedAt
     }));
@@ -1024,7 +1140,8 @@ export class ArcanosDagRunService {
 
     return {
       runId,
-      verification: cloneSerializable(snapshot.verification)
+      verification: cloneSerializable(snapshot.verification),
+      lineage: createVerificationLineage(snapshot)
     };
   }
 
@@ -1211,7 +1328,8 @@ export class ArcanosDagRunService {
         node.status = 'running';
         node.attempt = payload.attempt + 1;
         node.startedAt = payload.startedAt;
-        node.workerId = 'async-queue';
+        //audit Assumption: the DAG tree should expose the concrete queue worker slot when one is known; failure risk: hard-coded worker ids hide concurrency and make live node debugging misleading; expected invariant: `node.workerId` reflects the latest queue-reported worker and otherwise preserves any previous value; handling strategy: prefer the observer payload and fall back to existing node state when no worker id is available.
+        node.workerId = payload.workerId ?? node.workerId;
         this.recordEvent(record, 'node.started', payload);
         this.touchRecord(record);
       },
@@ -1334,6 +1452,9 @@ export class ArcanosDagRunService {
 
   private touchRecord(record: StoredDagRunRecord): void {
     record.updatedAt = new Date().toISOString();
+    //audit Assumption: verification endpoints may be queried mid-run; failure risk: stale metrics and verification flags misreport live DAG progress; expected invariant: persisted snapshots reflect the latest node state after every observer update; handling strategy: recompute aggregate metrics and verification before persisting.
+    record.metrics = recalculateMetrics(record);
+    record.verification = calculateVerification(record);
     record.summary = createApiSummary(record);
     this.queuePersistRecord(record);
   }

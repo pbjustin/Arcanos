@@ -4,6 +4,9 @@ FROM node:20.18.1-alpine
 # Set production environment
 ENV NODE_ENV=production
 
+# Install build-time VCS dependency required by git-based npm overrides.
+RUN apk add --no-cache git
+
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S arcanos -u 1001
@@ -14,6 +17,7 @@ WORKDIR /app
 # Copy package files for dependency installation
 # Include package-lock.json so `npm ci` has a complete lockfile
 COPY package*.json package-lock.json ./
+COPY scripts/ ./scripts/
 
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --omit=dev --no-audit --no-fund
@@ -23,7 +27,6 @@ COPY src/ ./src/
 COPY workers/ ./workers/
 COPY packages/ ./packages/
 COPY arcanos-ai-runtime/ ./arcanos-ai-runtime/
-COPY scripts/ ./scripts/
 COPY config/ ./config/
 COPY tsconfig.json ./
 
@@ -51,5 +54,3 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Start with Railway-optimized memory settings
 CMD ["sh", "-c", "NODE_OPTIONS='--max-old-space-size=7168' npm start"]
-
-

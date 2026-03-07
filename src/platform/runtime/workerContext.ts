@@ -5,11 +5,10 @@
 
 import { query as dbQuery, logExecution } from "@core/db/index.js";
 import { generateMockResponse } from "@services/openai.js";
-import { runThroughBrain } from "@core/logic/trinity.js";
 import type { QueryResult } from 'pg';
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { runWorkerTrinityPrompt } from '../../workers/trinityWorkerPipeline.js';
 
 export interface WorkerContext {
   log: (message: string) => Promise<void>;
@@ -70,16 +69,10 @@ export function createWorkerContext(workerId: string): WorkerContext {
             return mockResponse.result || 'Hello from the AI mock system!';
           }
 
-          // Use the trinity brain system for AI processing (pass adapter's client)
-          const runtimeBudget = createRuntimeBudget();
-          const result = await runThroughBrain(
-            client,
+          const result = await runWorkerTrinityPrompt(client, {
             prompt,
-            undefined,
-            undefined,
-            { sourceEndpoint: `worker:${workerId}` },
-            runtimeBudget
-          );
+            sourceEndpoint: `worker:${workerId}`
+          });
           return result.result;
         } catch (error: unknown) {
           //audit Assumption: AI failures should propagate with safe message

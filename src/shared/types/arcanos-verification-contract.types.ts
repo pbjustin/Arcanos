@@ -207,6 +207,7 @@ export interface DagTreeNode {
   dependencyIds: string[];
   childNodeIds: string[];
   spawnDepth: number;
+  workerId?: string;
   startedAt?: ISODateString;
   completedAt?: ISODateString;
 }
@@ -348,9 +349,19 @@ export interface DagVerification {
   loopDetected: boolean;
 }
 
+export interface DagVerificationLineage {
+  workerPipeline: 'trinity';
+  workerEntryPoint: 'runWorkerTrinityPrompt';
+  sessionId: string;
+  sessionPropagationMode: 'inherit_run_session' | 'synthetic_fallback';
+  observedWorkerIds: string[];
+  observedSourceEndpoints: string[];
+}
+
 export interface DagVerificationData {
   runId: string;
   verification: DagVerification;
+  lineage: DagVerificationLineage;
 }
 
 export type DagVerificationResponse = ApiEnvelope<DagVerificationData>;

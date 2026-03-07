@@ -13,8 +13,6 @@ import {
   initializeDatabaseWithSchema as initializeDatabase,
   getStatus as getDatabaseStatus
 } from '@core/db/index.js';
-import { runThroughBrain } from '@core/logic/trinity.js';
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { getOpenAIAdapter, resetOpenAIAdapter } from '@core/adapters/openai.adapter.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -26,8 +24,16 @@ import { parseDagNodeJobInput } from '../jobs/jobSchema.js';
 import { runDagNodeJob } from './taskRunners.js';
 import {
   WorkerAutonomyService,
+  getWorkerAutonomySettings,
   classifyWorkerExecutionError
 } from '@services/workerAutonomyService.js';
+import {
+  buildJobRunnerSlotDefinitions,
+  resolveJobRunnerRuntimeSettings,
+  type JobRunnerRuntimeSettings,
+  type JobRunnerSlotDefinition
+} from './jobRunnerRuntime.js';
+import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed';
@@ -89,18 +95,13 @@ async function executeQueuedPrompt(
     endpointName
   } = parsedJobInput.value;
 
-  const runtimeBudget = createRuntimeBudget();
-  const trinityResult = await runThroughBrain(
-    openai,
+  const trinityResult = await runWorkerTrinityPrompt(openai, {
     prompt,
     sessionId,
     overrideAuditSafe,
-    {
-      cognitiveDomain,
-      sourceEndpoint: endpointName
-    },
-    runtimeBudget
-  );
+    cognitiveDomain,
+    sourceEndpoint: endpointName
+  });
 
   return {
     status: 'completed',
@@ -132,18 +133,13 @@ async function executeQueuedDagNode(
 
   const dagResult = await runDagNodeJob(parsedDagJobInput.value, {
     runPrompt: async (prompt, options) => {
-      const runtimeBudget = createRuntimeBudget();
-      return runThroughBrain(
-        openai,
+      return runWorkerTrinityPrompt(openai, {
         prompt,
-        options.sessionId,
-        options.overrideAuditSafe,
-        {
-          cognitiveDomain: options.cognitiveDomain,
-          sourceEndpoint: options.sourceEndpoint
-        },
-        runtimeBudget
-      );
+        sessionId: options.sessionId,
+        overrideAuditSafe: options.overrideAuditSafe,
+        cognitiveDomain: options.cognitiveDomain,
+        sourceEndpoint: options.sourceEndpoint
+      });
     }
   });
 
@@ -168,11 +164,15 @@ async function executeQueuedDagNode(
 
 function startHeartbeatLoop(
   autonomyService: WorkerAutonomyService,
-  jobId: string
+  jobId: string,
+  workerId: string
 ): NodeJS.Timeout {
   const intervalHandle = setInterval(() => {
     void autonomyService.recordHeartbeat(jobId).catch((error: unknown) => {
-      console.warn('[jobRunner] Heartbeat failed:', resolveErrorMessage(error));
+      console.warn(
+        `[jobRunner] worker=${workerId} heartbeat failed:`,
+        resolveErrorMessage(error)
+      );
     });
   }, autonomyService.getClaimOptions().leaseMs ? Math.max(1_000, Math.floor((autonomyService.getClaimOptions().leaseMs ?? 30_000) / 3)) : 10_000);
 
@@ -187,7 +187,10 @@ function startInspectorLoop(autonomyService: WorkerAutonomyService): NodeJS.Time
   const intervalMs = Math.max(5_000, Number(process.env.JOB_WORKER_INSPECTOR_MS || 30_000));
   const intervalHandle = setInterval(() => {
     void autonomyService.inspect('scheduled').catch((error: unknown) => {
-      console.warn('[jobRunner] Inspector failed:', resolveErrorMessage(error));
+      console.warn(
+        `[jobRunner] worker=${autonomyService.getWorkerId()} inspector failed:`,
+        resolveErrorMessage(error)
+      );
     });
   }, intervalMs);
 
@@ -198,10 +201,118 @@ function startInspectorLoop(autonomyService: WorkerAutonomyService): NodeJS.Time
   return intervalHandle;
 }
 
+function buildAutonomyServiceForSlot(
+  slotDefinition: JobRunnerSlotDefinition
+): WorkerAutonomyService {
+  return new WorkerAutonomyService(
+    getWorkerAutonomySettings({
+      workerId: slotDefinition.workerId,
+      statsWorkerId: slotDefinition.statsWorkerId
+    })
+  );
+}
+
+/**
+ * Run one queue-consumer slot inside the Railway worker process.
+ * Purpose: allow one deployed worker container to claim and execute multiple queue jobs concurrently.
+ * Inputs/outputs: accepts one slot definition, the shared runtime settings, and an optional prebuilt autonomy service; does not resolve during normal operation.
+ * Edge case behavior: unsupported or invalid job payloads fail deterministically per slot without stopping sibling slots.
+ */
+async function runWorkerConsumerSlot(
+  slotDefinition: JobRunnerSlotDefinition,
+  runtimeSettings: JobRunnerRuntimeSettings,
+  autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition)
+): Promise<never> {
+  let openai = initOpenAIClient();
+
+  console.log(
+    `[jobRunner] worker=${slotDefinition.workerId} slot=${slotDefinition.slotNumber}/${runtimeSettings.concurrency} started`
+  );
+
+  while (true) {
+    const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
+    if (!budgetDecision.allowed) {
+      console.warn(
+        `[jobRunner] worker=${slotDefinition.workerId} claim paused: ${budgetDecision.reason}`
+      );
+      await sleep(budgetDecision.sleepMs);
+      continue;
+    }
+
+    const job = await claimNextPendingJob(autonomyService.getClaimOptions());
+
+    if (!job) {
+      await autonomyService.markIdle();
+      await sleep(runtimeSettings.idleBackoffMs);
+      continue;
+    }
+
+    await autonomyService.markJobStarted(job);
+    const heartbeatHandle = startHeartbeatLoop(
+      autonomyService,
+      job.id,
+      slotDefinition.workerId
+    );
+
+    try {
+      let outcome: JobExecutionOutcome;
+
+      //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
+      if (job.job_type === 'ask') {
+        outcome = await executeQueuedPrompt(openai, job.input ?? {});
+      } else if (job.job_type === 'dag-node') {
+        outcome = await executeQueuedDagNode(openai, job.input ?? {});
+      } else {
+        outcome = {
+          status: 'failed',
+          output: null,
+          errorMessage: `Unsupported job_type: ${job.job_type}`,
+          retryable: false
+        };
+      }
+
+      if (outcome.status === 'completed') {
+        await updateJob(job.id, 'completed', outcome.output, null);
+        await autonomyService.markJobCompleted(job.id);
+      } else {
+        await autonomyService.handleJobFailure(
+          job,
+          outcome.errorMessage ?? 'Job execution failed.',
+          outcome.retryable ?? false,
+          outcome.output
+        );
+      }
+    } catch (error: unknown) {
+      const classifiedError = classifyWorkerExecutionError(error);
+
+      if (classifiedError.message.toLowerCase().includes('api key') || classifiedError.message.toLowerCase().includes('openai')) {
+        try {
+          resetOpenAIAdapter();
+          openai = initOpenAIClient();
+        } catch (reinitError: unknown) {
+          console.error(
+            `[jobRunner] worker=${slotDefinition.workerId} failed to re-initialize OpenAI client during error recovery:`,
+            resolveErrorMessage(reinitError)
+          );
+        }
+      }
+
+      await autonomyService.handleJobFailure(
+        job,
+        classifiedError.message,
+        classifiedError.retryable,
+        null
+      );
+    } finally {
+      clearInterval(heartbeatHandle);
+    }
+
+    await sleep(runtimeSettings.pollMs);
+  }
+}
+
 async function run(): Promise<void> {
-  const pollMs = Number(process.env.JOB_WORKER_POLL_MS || 250);
-  const idleBackoffMs = Number(process.env.JOB_WORKER_IDLE_BACKOFF_MS || 1_000);
-  const autonomyService = new WorkerAutonomyService();
+  const runtimeSettings = resolveJobRunnerRuntimeSettings();
   const dbInitialized = await initializeDatabase('job-runner');
   const dbStatus = getDatabaseStatus();
 
@@ -210,89 +321,31 @@ async function run(): Promise<void> {
     throw new Error(`Database not configured (connected=${dbStatus.connected}, error=${dbStatus.error ?? 'none'})`);
   }
 
-  let openai = initOpenAIClient();
-  const bootstrapResult = await autonomyService.bootstrap(['Worker bootstrap completed.']);
+  const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);
+  const inspectorSlot = slotDefinitions[0];
+  const inspectorAutonomyService = buildAutonomyServiceForSlot(inspectorSlot);
+  const bootstrapResult = await inspectorAutonomyService.bootstrap([
+    `Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`
+  ]);
   console.log(
-    `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
+    `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} slots=${slotDefinitions.length} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
   );
 
-  const inspectorHandle = startInspectorLoop(autonomyService);
+  const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
 
   try {
-    while (true) {
-      const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
-      if (!budgetDecision.allowed) {
-        console.warn(`[jobRunner] claim paused: ${budgetDecision.reason}`);
-        await sleep(budgetDecision.sleepMs);
-        continue;
-      }
-
-      const job = await claimNextPendingJob(autonomyService.getClaimOptions());
-
-      if (!job) {
-        await autonomyService.markIdle();
-        await sleep(idleBackoffMs);
-        continue;
-      }
-
-      await autonomyService.markJobStarted(job);
-      const heartbeatHandle = startHeartbeatLoop(autonomyService, job.id);
-
-      try {
-        let outcome: JobExecutionOutcome;
-
-        //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
-        if (job.job_type === 'ask') {
-          outcome = await executeQueuedPrompt(openai, job.input ?? {});
-        } else if (job.job_type === 'dag-node') {
-          outcome = await executeQueuedDagNode(openai, job.input ?? {});
-        } else {
-          outcome = {
-            status: 'failed',
-            output: null,
-            errorMessage: `Unsupported job_type: ${job.job_type}`,
-            retryable: false
-          };
-        }
-
-        if (outcome.status === 'completed') {
-          await updateJob(job.id, 'completed', outcome.output, null);
-          await autonomyService.markJobCompleted(job.id);
-        } else {
-          await autonomyService.handleJobFailure(
-            job,
-            outcome.errorMessage ?? 'Job execution failed.',
-            outcome.retryable ?? false,
-            outcome.output
-          );
-        }
-      } catch (error: unknown) {
-        const classifiedError = classifyWorkerExecutionError(error);
-
-        if (classifiedError.message.toLowerCase().includes('api key') || classifiedError.message.toLowerCase().includes('openai')) {
-          try {
-            resetOpenAIAdapter();
-            openai = initOpenAIClient();
-          } catch (reinitError: unknown) {
-            console.error(
-              '[jobRunner] Failed to re-initialize OpenAI client during error recovery:',
-              resolveErrorMessage(reinitError)
-            );
-          }
-        }
-
-        await autonomyService.handleJobFailure(
-          job,
-          classifiedError.message,
-          classifiedError.retryable,
-          null
-        );
-      } finally {
-        clearInterval(heartbeatHandle);
-      }
-
-      await sleep(pollMs);
-    }
+    //audit Assumption: one Railway worker container should be able to host multiple queue-consumer slots safely; failure risk: slot startup regression leaves the process effectively single-threaded; expected invariant: every resolved slot starts a long-lived claim loop with a distinct worker id; handling strategy: start all slots together and fail the process if any slot exits unexpectedly.
+    await Promise.all(
+      slotDefinitions.map(slotDefinition =>
+        runWorkerConsumerSlot(
+          slotDefinition,
+          runtimeSettings,
+          slotDefinition.isInspectorSlot
+            ? inspectorAutonomyService
+            : buildAutonomyServiceForSlot(slotDefinition)
+        )
+      )
+    );
   } finally {
     clearInterval(inspectorHandle);
   }

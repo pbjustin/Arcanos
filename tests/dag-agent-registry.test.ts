@@ -26,7 +26,7 @@ function buildExecutionContext(overrides: Partial<DAGNodeExecutionContext> = {})
 }
 
 describe('DAG agent registry', () => {
-  it('isolates DAG node prompts into per-node retry-safe sessions', async () => {
+  it('reuses the parent Trinity session when the DAG run provides one', async () => {
     const runPromptMock = jest.fn().mockResolvedValue({ ok: true });
 
     await AGENTS.audit(buildExecutionContext(), {
@@ -36,9 +36,29 @@ describe('DAG agent registry', () => {
     expect(runPromptMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        sessionId: 'dag:dagrun_live_test:audit:a2',
+        sessionId: 'user-session-123',
         cognitiveDomain: 'diagnostic',
         sourceEndpoint: 'dag.agent.audit'
+      })
+    );
+  });
+
+  it('falls back to a deterministic synthetic session when no parent session exists', async () => {
+    const runPromptMock = jest.fn().mockResolvedValue({ ok: true });
+
+    await AGENTS.audit(
+      buildExecutionContext({
+        sharedState: {}
+      }),
+      {
+        runPrompt: runPromptMock
+      }
+    );
+
+    expect(runPromptMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        sessionId: 'dag:dagrun_live_test:audit:a2'
       })
     );
   });

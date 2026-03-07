@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { runThroughBrain, type TrinityResult } from "@core/logic/trinity.js";
+import type { TrinityResult } from "@core/logic/trinity.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { config as runtimeConfig } from "@platform/runtime/config.js";
@@ -10,8 +10,8 @@ import { acquireExecutionLock } from "@services/safety/executionLock.js";
 import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 import { interpreterSupervisor } from "@services/safety/interpreterSupervisor.js";
 import { activateUnsafeCondition, incrementWorkerFailure } from "@services/safety/runtimeState.js";
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
+import { runWorkerTrinityPrompt } from '../../workers/trinityWorkerPipeline.js';
 
 // ✅ Environment setup
 // Use config layer for env access (adapter boundary pattern)
@@ -210,18 +210,13 @@ export async function workerTask(request: WorkerDispatchRequest): Promise<Worker
     return { error: 'OpenAI adapter unavailable' };
   }
 
-  const runtimeBudget = createRuntimeBudget();
-  return runThroughBrain(
-    client,
-    request.input,
-    request.sessionId,
-    request.overrideAuditSafe,
-    {
-      cognitiveDomain: request.cognitiveDomain,
-      sourceEndpoint: request.sourceEndpoint || 'worker.dispatch'
-    },
-    runtimeBudget
-  );
+  return runWorkerTrinityPrompt(client, {
+    prompt: request.input,
+    sessionId: request.sessionId,
+    overrideAuditSafe: request.overrideAuditSafe,
+    cognitiveDomain: request.cognitiveDomain,
+    sourceEndpoint: request.sourceEndpoint
+  });
 }
 
 // ✅ Worker startup

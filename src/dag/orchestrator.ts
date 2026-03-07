@@ -101,6 +101,7 @@ export interface DAGRunObserver {
     jobId: string;
     attempt: number;
     startedAt: string;
+    workerId?: string;
   }): void;
   onNodeCompleted?(payload: {
     dagId: string;
@@ -509,7 +510,8 @@ export class DAGOrchestrator {
                   nodeId: statusRecord.nodeId,
                   jobId: statusRecord.jobId,
                   attempt: statusRecord.retries,
-                  startedAt: statusRecord.timestamps.updatedAt
+                  startedAt: statusRecord.timestamps.updatedAt,
+                  workerId: statusRecord.workerId ?? undefined
                 });
               }
             })

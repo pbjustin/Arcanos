@@ -104,13 +104,27 @@ function inferAgentDomain(agentKey: string): CognitiveDomain {
   }
 }
 
-function buildDagAgentSessionId(context: DAGNodeExecutionContext): string {
+function buildSyntheticDagAgentSessionId(context: DAGNodeExecutionContext): string {
   return [
     'dag',
     context.dagId || 'unknown',
     context.node.id,
     `a${context.attempt}`
   ].join(':');
+}
+
+function resolveDagAgentSessionId(context: DAGNodeExecutionContext): string {
+  const sharedSessionId =
+    typeof context.sharedState.sessionId === 'string'
+      ? context.sharedState.sessionId.trim()
+      : '';
+
+  //audit Assumption: DAG worker calls should reuse the originating request session when the orchestrator provided one; failure risk: worker-side Trinity calls drift from the main server pipeline and lose shared memory or lineage continuity; expected invariant: non-empty sharedState.sessionId wins, otherwise DAG execution still falls back to a deterministic synthetic session; handling strategy: prefer the inherited session id and preserve the legacy fallback for standalone DAG runs.
+  if (sharedSessionId.length > 0) {
+    return sharedSessionId;
+  }
+
+  return buildSyntheticDagAgentSessionId(context);
 }
 
 function buildAgentPrompt(
@@ -154,7 +168,7 @@ function createPromptAgent(agentKey: string): DagAgentHandler {
     const overrideAuditSafe = typeof context.payload.overrideAuditSafe === 'string'
       ? context.payload.overrideAuditSafe
       : undefined;
-    const sessionId = buildDagAgentSessionId(context);
+    const sessionId = resolveDagAgentSessionId(context);
 
     return helpers.runPrompt(prompt, {
       sessionId,

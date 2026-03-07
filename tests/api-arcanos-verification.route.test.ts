@@ -238,6 +238,14 @@ describe('api-arcanos-verification routes', () => {
         deadlockDetected: false,
         stalledJobsDetected: false,
         loopDetected: false
+      },
+      lineage: {
+        workerPipeline: 'trinity',
+        workerEntryPoint: 'runWorkerTrinityPrompt',
+        sessionId: 'session-1',
+        sessionPropagationMode: 'inherit_run_session',
+        observedWorkerIds: ['async-queue-slot-1', 'async-queue-slot-2'],
+        observedSourceEndpoints: ['dag.agent.planner', 'dag.agent.audit']
       }
     });
     mockCancelRun.mockReturnValue({
@@ -282,6 +290,8 @@ describe('api-arcanos-verification routes', () => {
 
     expect(verificationResponse.status).toBe(200);
     expect(verificationResponse.body.data.verification.parallelExecutionObserved).toBe(true);
+    expect(verificationResponse.body.data.lineage.workerPipeline).toBe('trinity');
+    expect(verificationResponse.body.data.lineage.workerEntryPoint).toBe('runWorkerTrinityPrompt');
 
     expect(cancelResponse.status).toBe(200);
     expect(cancelResponse.body.data.status).toBe('cancelled');

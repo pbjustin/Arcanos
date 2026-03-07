@@ -154,4 +154,307 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
       waited: true
     });
   });
+
+  it('recomputes live verification data when node state changes mid-run', () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:01.000Z');
+
+    (service as any).queuePersistRecord = jest.fn();
+
+    record.nodesById.set('planner', {
+      nodeId: 'planner',
+      runId: 'run-1',
+      parentNodeId: null,
+      agentRole: 'planner',
+      jobType: 'plan',
+      status: 'complete',
+      dependencyIds: [],
+      spawnDepth: 0,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['research', 'build', 'audit'],
+      error: null,
+      startedAt: '2026-03-07T00:00:00.500Z',
+      completedAt: '2026-03-07T00:00:01.000Z'
+    });
+
+    record.nodesById.set('research', {
+      nodeId: 'research',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'research',
+      jobType: 'search',
+      status: 'queued',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null
+    });
+
+    record.nodesById.set('build', {
+      nodeId: 'build',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'build',
+      jobType: 'execute',
+      status: 'queued',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null
+    });
+
+    record.nodesById.set('audit', {
+      nodeId: 'audit',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'audit',
+      jobType: 'verify',
+      status: 'queued',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null
+    });
+
+    (service as any).touchRecord(record);
+
+    expect(record.metrics.maxSpawnDepthObserved).toBe(1);
+    expect(record.summary.spawnDepthMaxObserved).toBe(1);
+    expect(record.verification.plannerSpawnedChildren).toBe(true);
+    expect(record.verification.parallelExecutionObserved).toBe(false);
+    expect((service as any).queuePersistRecord).toHaveBeenCalledWith(record);
+  });
+
+  it('records the concrete worker slot on node start events', () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:01.000Z');
+
+    (service as any).queuePersistRecord = jest.fn();
+
+    record.nodesById.set('research', {
+      nodeId: 'research',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'research',
+      jobType: 'search',
+      status: 'queued',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 0,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null
+    });
+
+    const observer = (service as any).createObserver(record);
+    observer.onNodeStarted?.({
+      dagId: 'run-1',
+      nodeId: 'research',
+      jobId: 'job-1',
+      attempt: 0,
+      startedAt: '2026-03-07T00:00:02.500Z',
+      workerId: 'async-queue-slot-2'
+    });
+
+    expect(record.nodesById.get('research')?.workerId).toBe('async-queue-slot-2');
+    expect(record.nodesById.get('research')?.status).toBe('running');
+    expect((service as any).queuePersistRecord).toHaveBeenCalledWith(record);
+  });
+
+  it('includes worker ids in tree responses when nodes have them', async () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:04.000Z');
+
+    record.nodesById.set('research', {
+      nodeId: 'research',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'research',
+      jobType: 'search',
+      status: 'running',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      workerId: 'async-queue-slot-2',
+      input: {},
+      childNodeIds: ['writer'],
+      error: null,
+      startedAt: '2026-03-07T00:00:03.000Z'
+    });
+
+    (service as any).runsById.set('run-1', record);
+
+    const tree = await service.getRunTree('run-1');
+    const researchNode = tree?.nodes.find(node => node.nodeId === 'research');
+
+    expect(researchNode?.workerId).toBe('async-queue-slot-2');
+  });
+
+  it('includes Trinity lineage metadata in verification responses', async () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:04.000Z');
+
+    record.nodesById.set('planner', {
+      nodeId: 'planner',
+      runId: 'run-1',
+      parentNodeId: null,
+      agentRole: 'planner',
+      jobType: 'plan',
+      status: 'complete',
+      dependencyIds: [],
+      spawnDepth: 0,
+      attempt: 1,
+      maxRetries: 2,
+      workerId: 'async-queue-slot-1',
+      input: {},
+      childNodeIds: ['research', 'build', 'audit'],
+      error: null,
+      completedAt: '2026-03-07T00:00:02.000Z'
+    });
+
+    record.nodesById.set('audit', {
+      nodeId: 'audit',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'audit',
+      jobType: 'verify',
+      status: 'running',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      workerId: 'async-queue-slot-2',
+      input: {},
+      childNodeIds: ['writer'],
+      error: null,
+      startedAt: '2026-03-07T00:00:03.000Z'
+    });
+
+    (service as any).runsById.set('run-1', record);
+
+    const verificationData = await service.getRunVerification('run-1');
+
+    expect(verificationData?.lineage).toEqual({
+      workerPipeline: 'trinity',
+      workerEntryPoint: 'runWorkerTrinityPrompt',
+      sessionId: 'session-1',
+      sessionPropagationMode: 'inherit_run_session',
+      observedWorkerIds: ['async-queue-slot-1', 'async-queue-slot-2'],
+      observedSourceEndpoints: ['dag.agent.planner', 'dag.agent.audit']
+    });
+  });
+
+  it('detects parallel node overlap from live timestamps before run completion', () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:39.000Z');
+
+    (service as any).queuePersistRecord = jest.fn();
+
+    record.nodesById.set('planner', {
+      nodeId: 'planner',
+      runId: 'run-1',
+      parentNodeId: null,
+      agentRole: 'planner',
+      jobType: 'plan',
+      status: 'complete',
+      dependencyIds: [],
+      spawnDepth: 0,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['research', 'build', 'audit'],
+      error: null,
+      startedAt: '2026-03-07T00:00:05.200Z',
+      completedAt: '2026-03-07T00:00:23.249Z'
+    });
+
+    record.nodesById.set('research', {
+      nodeId: 'research',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'research',
+      jobType: 'search',
+      status: 'running',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null,
+      startedAt: '2026-03-07T00:00:23.552Z'
+    });
+
+    record.nodesById.set('build', {
+      nodeId: 'build',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'build',
+      jobType: 'execute',
+      status: 'complete',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null,
+      startedAt: '2026-03-07T00:00:23.721Z',
+      completedAt: '2026-03-07T00:00:43.174Z'
+    });
+
+    record.nodesById.set('audit', {
+      nodeId: 'audit',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'audit',
+      jobType: 'verify',
+      status: 'complete',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null,
+      startedAt: '2026-03-07T00:00:24.146Z',
+      completedAt: '2026-03-07T00:00:36.329Z'
+    });
+
+    record.nodesById.set('writer', {
+      nodeId: 'writer',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'writer',
+      jobType: 'synthesize',
+      status: 'waiting',
+      dependencyIds: ['research', 'build', 'audit'],
+      spawnDepth: 1,
+      attempt: 0,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: [],
+      error: null
+    });
+
+    (service as any).touchRecord(record);
+
+    expect(record.metrics.maxParallelNodesObserved).toBe(3);
+    expect(record.verification.parallelExecutionObserved).toBe(true);
+    expect(record.summary.totalNodes).toBe(5);
+    expect((service as any).queuePersistRecord).toHaveBeenCalledWith(record);
+  });
 });

@@ -52,6 +52,7 @@ export interface DagQueueJobRecord {
   dagId: string;
   nodeId: string;
   status: DagQueueJobStatus;
+  workerId: string | null;
   retries: number;
   maxRetries: number;
   waitingTimeoutMs: number;
@@ -188,6 +189,7 @@ export function buildDagQueueJobRecord(job: JobData): DagQueueJobRecord {
     dagId: parsedInput.value.dagId,
     nodeId: parsedInput.value.node.id,
     status: normalizeDagQueueJobStatus(job.status),
+    workerId: job.last_worker_id ?? job.worker_id ?? null,
     retries: parsedInput.value.attempt,
     maxRetries: parsedInput.value.maxRetries,
     waitingTimeoutMs: parsedInput.value.waitingTimeoutMs,

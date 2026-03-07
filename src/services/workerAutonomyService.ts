@@ -23,6 +23,7 @@ export type WorkerAutonomyHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 
 
 export interface WorkerAutonomySettings {
   workerId: string;
+  statsWorkerId?: string;
   workerType: 'async_queue';
   heartbeatIntervalMs: number;
   leaseMs: number;
@@ -108,6 +109,11 @@ interface WorkerSnapshotContext {
 
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
+  statsWorkerId:
+    process.env.JOB_WORKER_STATS_ID?.trim() ||
+    process.env.JOB_WORKER_ID?.trim() ||
+    process.env.WORKER_ID?.trim() ||
+    'async-queue',
   workerType: 'async_queue',
   heartbeatIntervalMs: readNumberEnv('JOB_WORKER_HEARTBEAT_MS', 10_000),
   leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 30_000),
@@ -287,6 +293,19 @@ export class WorkerAutonomyService {
   }
 
   /**
+   * Return the shared stats identity used for budgets and alert cooldowns.
+   * Purpose: let multiple queue-consumer slots share one budget namespace while keeping distinct lease ids.
+   * Inputs/outputs: no inputs, returns the configured stats worker id or the slot worker id fallback.
+   * Edge case behavior: blank overrides degrade to the slot worker id instead of returning an empty string.
+   */
+  getStatsWorkerId(): string {
+    const normalizedStatsWorkerId = this.settings.statsWorkerId?.trim();
+    return normalizedStatsWorkerId && normalizedStatsWorkerId.length > 0
+      ? normalizedStatsWorkerId
+      : this.settings.workerId;
+  }
+
+  /**
    * Return claim options shared by the worker loop and heartbeat calls.
    * Purpose: avoid drift between the lease duration used at claim time and subsequent heartbeats.
    * Inputs/outputs: no inputs, returns normalized claim options.
@@ -338,7 +357,7 @@ export class WorkerAutonomyService {
     });
     const stats = await getJobExecutionStatsSince(
       new Date(Date.now() - 60 * 60 * 1000),
-      this.settings.workerId
+      this.getStatsWorkerId()
     );
     const queueSummary = await getJobQueueSummary();
 
@@ -384,7 +403,7 @@ export class WorkerAutonomyService {
   async evaluateBudgetsBeforeClaim(): Promise<WorkerAutonomyBudgetResult> {
     const stats = await getJobExecutionStatsSince(
       new Date(Date.now() - 60 * 60 * 1000),
-      this.settings.workerId
+      this.getStatsWorkerId()
     );
     const rssMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
 
@@ -535,7 +554,7 @@ export class WorkerAutonomyService {
       this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       [`Job ${job.id} failed: ${errorMessage}`],
       await getJobQueueSummary(),
-      await getJobExecutionStatsSince(new Date(Date.now() - 60 * 60 * 1000), this.settings.workerId),
+      await getJobExecutionStatsSince(new Date(Date.now() - 60 * 60 * 1000), this.getStatsWorkerId()),
       'job-failure'
     );
 
@@ -603,6 +622,7 @@ export class WorkerAutonomyService {
         recoveredJobs: this.state.recoveredJobs,
         maxObservedQueueDepth: this.state.maxObservedQueueDepth,
         lastBudgetPauseReason: this.state.lastBudgetPauseReason,
+        statsWorkerId: this.getStatsWorkerId(),
         alerts: context.alerts
       }
     };
@@ -632,7 +652,8 @@ export class WorkerAutonomyService {
     }
 
     const nowMs = Date.now();
-    const lastSentAtMs = failureWebhookHistory.get(this.settings.workerId) ?? 0;
+    const failureWebhookCooldownKey = this.getStatsWorkerId();
+    const lastSentAtMs = failureWebhookHistory.get(failureWebhookCooldownKey) ?? 0;
     if (nowMs - lastSentAtMs < this.settings.failureWebhookCooldownMs) {
       return;
     }
@@ -662,6 +683,7 @@ export class WorkerAutonomyService {
         },
         body: JSON.stringify({
           workerId: this.settings.workerId,
+          statsWorkerId: this.getStatsWorkerId(),
           workerType: this.settings.workerType,
           healthStatus,
           reason,
@@ -677,7 +699,7 @@ export class WorkerAutonomyService {
         throw new Error(`Failure webhook returned HTTP ${response.status}`);
       }
 
-      failureWebhookHistory.set(this.settings.workerId, nowMs);
+      failureWebhookHistory.set(failureWebhookCooldownKey, nowMs);
     } catch (error: unknown) {
       console.warn('[Worker Autonomy] Failure webhook send failed:', resolveErrorMessage(error));
     }

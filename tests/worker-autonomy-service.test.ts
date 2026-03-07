@@ -330,4 +330,34 @@ describe('workerAutonomyService', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.body).toContain('"reason":"scheduled"');
     expect(fetchMock.mock.calls[0]?.[1]?.body).toContain('Recovered 1 stale job');
   });
+
+  it('uses the shared stats worker id for slot-level budget evaluation', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-2',
+      statsWorkerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    await service.evaluateBudgetsBeforeClaim();
+
+    expect(getJobExecutionStatsSinceMock).toHaveBeenCalledWith(
+      expect.any(Date),
+      'async-queue'
+    );
+  });
 });
