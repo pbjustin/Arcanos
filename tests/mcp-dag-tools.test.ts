@@ -121,9 +121,10 @@ describe('registerDagMcpTools', () => {
   it('creates DAG runs from a natural-language goal and MCP context session', async () => {
     const { server, tools } = buildFakeServer();
     mockCreateRun.mockResolvedValue({
+      pipeline: 'trinity',
       runId: 'dagrun_1',
       sessionId: 'mcp-session-1',
-      template: 'default',
+      template: 'trinity-core',
       status: 'queued',
     });
 
@@ -137,7 +138,7 @@ describe('registerDagMcpTools', () => {
     expect(mockCreateRun).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'mcp-session-1',
-        template: 'default',
+        template: 'trinity-core',
         input: {
           goal: 'Research and audit the deployment pipeline',
         },

@@ -7,6 +7,7 @@ import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
+import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '../../dag/templates.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import type { AskResponse } from './types.js';
 
@@ -39,7 +40,7 @@ const dagControlToolDefinitions: FunctionToolDefinition[] = [
         },
         template: {
           type: 'string',
-          description: 'Optional DAG template name. Defaults to "default".'
+          description: `Optional DAG template name. Defaults to "${TRINITY_CORE_DAG_TEMPLATE_NAME}".`
         },
         sessionId: {
           type: 'string',
@@ -499,9 +500,9 @@ function summarizeDagToolExecution(toolName: string, payload: Record<string, unk
       return `DAG capabilities: orchestration=${features?.dagOrchestration ?? 'unknown'}, parallel=${features?.parallelExecution ?? 'unknown'}, maxConcurrency=${limits?.maxConcurrency ?? 'unknown'}, maxDepth=${limits?.maxSpawnDepth ?? 'unknown'}.`;
     }
     case 'create_dag_run':
-      return `Started DAG run ${payload.runId ?? 'unknown'} with status=${payload.status ?? 'unknown'} and template=${payload.template ?? 'unknown'}.`;
+      return `Started DAG run ${payload.runId ?? 'unknown'} with pipeline=${payload.pipeline ?? 'unknown'}, template=${payload.template ?? 'unknown'}, and status=${payload.status ?? 'unknown'}.`;
     case 'get_dag_run':
-      return `DAG run ${payload.runId ?? 'unknown'} is ${payload.status ?? 'unknown'} with completedNodes=${payload.completedNodes ?? 'unknown'} and failedNodes=${payload.failedNodes ?? 'unknown'}.`;
+      return `DAG run ${payload.runId ?? 'unknown'} uses pipeline=${payload.pipeline ?? 'unknown'}, template=${payload.template ?? 'unknown'}, status=${payload.status ?? 'unknown'}, completedNodes=${payload.completedNodes ?? 'unknown'}, and failedNodes=${payload.failedNodes ?? 'unknown'}.`;
     case 'get_dag_tree':
       return `DAG tree for ${payload.runId ?? 'unknown'}: ${summarizeDagTree(payload.nodes)}.`;
     case 'get_dag_node':
@@ -551,7 +552,7 @@ async function executeDagTool(
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, createDagRunArgsSchema, 'dagTools.create_dag_run');
       const output = await arcanosDagRunService.createRun({
         sessionId: parsedArgs.sessionId ?? context.sessionId ?? generateRequestId('session'),
-        template: parsedArgs.template ?? 'default',
+        template: parsedArgs.template ?? TRINITY_CORE_DAG_TEMPLATE_NAME,
         input: {
           goal: parsedArgs.goal
         },

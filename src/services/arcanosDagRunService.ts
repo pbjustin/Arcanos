@@ -4,7 +4,11 @@ import {
   upsertDagRunSnapshot
 } from '../core/db/repositories/dagRunRepository.js';
 import { DAGOrchestrator, type DAGRunObserver, type DAGRunSummary as InternalDagRunSummary } from '../dag/orchestrator.js';
-import { buildDagTemplate, type DagTemplateDefinition } from '../dag/templates.js';
+import {
+  buildDagTemplate,
+  resolvePublicDagTemplateName,
+  type DagTemplateDefinition
+} from '../dag/templates.js';
 import { getDagWorkerPoolSettings, type DagWorkerPoolSettings } from '../workers/workerPool.js';
 import type {
   CreateDagRunRequest,
@@ -310,6 +314,7 @@ function cloneDagRunSummary(summary: DagRunSummary): DagRunSummary {
   return {
     ...createTrinityRuntimeMetadata(),
     ...summary,
+    template: resolvePublicDagTemplateName(summary.template),
     finalOutput: cloneFinalOutput(summary.finalOutput)
   };
 }
@@ -390,13 +395,16 @@ function normalizePersistedDagRunSnapshot(
   return {
     runId,
     sessionId,
-    template,
+    template: resolvePublicDagTemplateName(template),
     plannerNodeId: typeof snapshot.plannerNodeId === 'string' ? snapshot.plannerNodeId : null,
     rootNodeId: typeof snapshot.rootNodeId === 'string' ? snapshot.rootNodeId : null,
     status,
     createdAt,
     updatedAt,
-    summary,
+    summary: {
+      ...summary,
+      template: resolvePublicDagTemplateName(summary.template)
+    },
     nodes,
     events,
     errors,
@@ -450,7 +458,7 @@ function createApiSummary(record: StoredDagRunRecord): DagRunSummary {
     ...createTrinityRuntimeMetadata(),
     runId: record.runId,
     sessionId: record.sessionId,
-    template: record.template,
+    template: resolvePublicDagTemplateName(record.template),
     status: convertRunStatus(record.status),
     plannerNodeId: record.plannerNodeId,
     rootNodeId: record.rootNodeId,
@@ -843,6 +851,7 @@ export class ArcanosDagRunService {
     const limits = createExecutionLimits(settings);
     const features = createFeatureFlags();
     const templateDefinition = buildDagTemplate(request);
+    const publicTemplateName = templateDefinition.templateName;
     const createdAt = new Date().toISOString();
     const nodesById = new Map<string, StoredNodeDetail>();
 
@@ -872,7 +881,7 @@ export class ArcanosDagRunService {
     const record: StoredDagRunRecord = {
       runId,
       sessionId: request.sessionId,
-      template: request.template,
+      template: publicTemplateName,
       plannerNodeId: templateDefinition.plannerNodeId,
       rootNodeId: templateDefinition.rootNodeId,
       status: 'queued',
@@ -882,7 +891,7 @@ export class ArcanosDagRunService {
         ...createTrinityRuntimeMetadata(),
         runId,
         sessionId: request.sessionId,
-        template: request.template,
+        template: publicTemplateName,
         status: 'queued',
         plannerNodeId: templateDefinition.plannerNodeId,
         rootNodeId: templateDefinition.rootNodeId,
@@ -912,7 +921,7 @@ export class ArcanosDagRunService {
     this.recordEvent(record, 'run.created', {
       runId,
       sessionId: request.sessionId,
-      template: request.template
+      template: publicTemplateName
     });
     await this.persistRecordNow(record);
 
@@ -1285,7 +1294,7 @@ export class ArcanosDagRunService {
         observer,
         sharedState: {
           sessionId: request.sessionId,
-          template: request.template
+          template: record.template
         },
         payloadByNodeId: Object.fromEntries(
           Object.entries(record.templateDefinition.graph.nodes).map(([nodeId, node]) => [

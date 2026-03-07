@@ -8,7 +8,7 @@ function buildStoredRunRecord(updatedAt: string) {
   return {
     runId: 'run-1',
     sessionId: 'session-1',
-    template: 'verification-default',
+    template: 'archetype-v2',
     plannerNodeId: 'planner',
     rootNodeId: 'writer',
     status: 'running',
@@ -17,7 +17,7 @@ function buildStoredRunRecord(updatedAt: string) {
     summary: {
       runId: 'run-1',
       sessionId: 'session-1',
-      template: 'verification-default',
+      template: 'archetype-v2',
       status: 'running',
       plannerNodeId: 'planner',
       rootNodeId: 'writer',
@@ -95,6 +95,7 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
     expect(result).toEqual({
       run: expect.objectContaining({
         runId: 'run-1',
+        template: 'trinity-core',
         updatedAt: '2026-03-07T00:00:05.000Z'
       }),
       updated: true,
@@ -148,11 +149,29 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
 
     await expect(waitPromise).resolves.toEqual({
       run: expect.objectContaining({
+        template: 'trinity-core',
         updatedAt: '2026-03-07T00:00:01.000Z'
       }),
       updated: false,
       waited: true
     });
+  });
+
+  it('canonicalizes legacy DAG template aliases in run summaries', async () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:01.000Z');
+
+    (service as any).runsById.set('run-1', record);
+
+    const run = await service.getRun('run-1');
+
+    expect(run).toEqual(
+      expect.objectContaining({
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        template: 'trinity-core'
+      })
+    );
   });
 
   it('recomputes live verification data when node state changes mid-run', () => {

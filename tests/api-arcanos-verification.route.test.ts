@@ -137,7 +137,7 @@ describe('api-arcanos-verification routes', () => {
       trinity_version: '1.0',
       runId: 'run-1',
       sessionId: 'session-1',
-      template: 'verification-default',
+      template: 'trinity-core',
       status: 'queued',
       plannerNodeId: 'planner',
       rootNodeId: 'writer',
@@ -149,7 +149,7 @@ describe('api-arcanos-verification routes', () => {
       trinity_version: '1.0',
       runId: 'run-1',
       sessionId: 'session-1',
-      template: 'verification-default',
+      template: 'trinity-core',
       status: 'running',
       plannerNodeId: 'planner',
       rootNodeId: 'writer',
@@ -162,7 +162,7 @@ describe('api-arcanos-verification routes', () => {
         trinity_version: '1.0',
         runId: 'run-1',
         sessionId: 'session-1',
-        template: 'verification-default',
+        template: 'trinity-core',
         status: 'running',
         plannerNodeId: 'planner',
         rootNodeId: 'writer',
@@ -281,6 +281,7 @@ describe('api-arcanos-verification routes', () => {
     expect(createResponse.status).toBe(202);
     expect(createResponse.body.data.run.runId).toBe('run-1');
     expect(createResponse.body.data.run.pipeline).toBe('trinity');
+    expect(createResponse.body.data.run.template).toBe('trinity-core');
 
     const runResponse = await request(buildApp()).get('/dag/runs/run-1');
     const treeResponse = await request(buildApp()).get('/dag/runs/run-1/tree');
@@ -323,7 +324,7 @@ describe('api-arcanos-verification routes', () => {
       run: {
         runId: 'run-1',
         sessionId: 'session-1',
-        template: 'verification-default',
+        template: 'trinity-core',
         status: 'complete',
         plannerNodeId: 'planner',
         rootNodeId: 'writer',

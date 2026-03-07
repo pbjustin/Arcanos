@@ -14,7 +14,7 @@ function buildPersistedSnapshotRecord() {
   return {
     runId: 'run-db-1',
     sessionId: 'session-db-1',
-    template: 'verification-default',
+    template: 'archetype-v2',
     status: 'running',
     plannerNodeId: 'planner',
     rootNodeId: 'writer',
@@ -23,7 +23,7 @@ function buildPersistedSnapshotRecord() {
     snapshot: {
       runId: 'run-db-1',
       sessionId: 'session-db-1',
-      template: 'verification-default',
+      template: 'archetype-v2',
       plannerNodeId: 'planner',
       rootNodeId: 'writer',
       status: 'running',
@@ -32,7 +32,7 @@ function buildPersistedSnapshotRecord() {
       summary: {
         runId: 'run-db-1',
         sessionId: 'session-db-1',
-        template: 'verification-default',
+        template: 'archetype-v2',
         status: 'running',
         plannerNodeId: 'planner',
         rootNodeId: 'writer',
@@ -135,6 +135,7 @@ describe('ArcanosDagRunService persistence fallback', () => {
       expect.objectContaining({
         runId: 'run-db-1',
         sessionId: 'session-db-1',
+        template: 'trinity-core',
         status: 'running'
       })
     );

@@ -13,11 +13,22 @@ export interface DagTemplateNodeMetadata {
 }
 
 export interface DagTemplateDefinition {
+  templateName: string;
   plannerNodeId: string | null;
   rootNodeId: string | null;
   graph: DAGGraph;
   nodeMetadataById: Record<string, DagTemplateNodeMetadata>;
 }
+
+export const TRINITY_CORE_DAG_TEMPLATE_NAME = 'trinity-core';
+
+const LEGACY_TRINITY_DAG_TEMPLATE_ALIASES = new Set([
+  'default',
+  'verification-default',
+  'simple-4-node',
+  'planner-research-build-audit-writer',
+  'archetype-v2'
+]);
 
 function getStringInput(input: Record<string, unknown>, key: string): string | null {
   const rawValue = input[key];
@@ -56,6 +67,33 @@ function createAgentNode(
 }
 
 /**
+ * Resolve one requested DAG template name to the canonical public template label.
+ *
+ * Purpose:
+ * - Keep legacy DAG aliases working while exposing one stable Trinity template name to probes and clients.
+ *
+ * Inputs/outputs:
+ * - Input: raw caller-provided template name.
+ * - Output: canonical public template label for supported Trinity graphs, otherwise the normalized original name.
+ *
+ * Edge case behavior:
+ * - Returns the normalized input for unknown names so callers can decide whether to reject or pass through.
+ */
+export function resolvePublicDagTemplateName(templateName: string): string {
+  const normalizedTemplateName = templateName.trim().toLowerCase();
+
+  //audit Assumption: multiple legacy DAG aliases still point to the same Trinity graph; failure risk: external probes misclassify identical runs as different pipelines; expected invariant: supported Trinity aliases collapse to one public label; handling strategy: normalize legacy names to the canonical Trinity template name before public exposure.
+  if (
+    normalizedTemplateName === TRINITY_CORE_DAG_TEMPLATE_NAME ||
+    LEGACY_TRINITY_DAG_TEMPLATE_ALIASES.has(normalizedTemplateName)
+  ) {
+    return TRINITY_CORE_DAG_TEMPLATE_NAME;
+  }
+
+  return normalizedTemplateName;
+}
+
+/**
  * Build a DAG template supported by the verification API.
  *
  * Purpose:
@@ -69,16 +107,11 @@ function createAgentNode(
  * - Throws when the template name is unknown so callers can return a clean `400`.
  */
 export function buildDagTemplate(request: CreateDagRunRequest): DagTemplateDefinition {
-  const normalizedTemplate = request.template.trim().toLowerCase();
+  const normalizedTemplate = resolvePublicDagTemplateName(request.template);
   const goalText = getGoalText(request.input);
 
   //audit Assumption: the first public DAG contract only supports the verification pipeline; failure risk: callers believe arbitrary templates are available and receive a malformed graph; expected invariant: unknown templates are rejected explicitly; handling strategy: guard template selection before graph construction.
-  if (![
-    'default',
-    'verification-default',
-    'simple-4-node',
-    'planner-research-build-audit-writer'
-  ].includes(normalizedTemplate)) {
+  if (normalizedTemplate !== TRINITY_CORE_DAG_TEMPLATE_NAME) {
     throw new Error(`Unsupported DAG template "${request.template}".`);
   }
 
@@ -127,11 +160,12 @@ export function buildDagTemplate(request: CreateDagRunRequest): DagTemplateDefin
   };
 
   return {
+    templateName: normalizedTemplate,
     plannerNodeId: 'planner',
     rootNodeId: 'writer',
     nodeMetadataById,
     graph: {
-      id: request.template,
+      id: normalizedTemplate,
       nodes: {
         planner: createAgentNode('planner', [], 'planner', {
           prompt: plannerPrompt

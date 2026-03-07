@@ -41,9 +41,10 @@ describe('tryDispatchDagTools', () => {
 
   it('executes deterministic DAG creation for explicit orchestration prompts', async () => {
     createRunMock.mockReturnValue({
+      pipeline: 'trinity',
       runId: 'dagrun_100_test-1',
       sessionId: 'session-123',
-      template: 'default',
+      template: 'trinity-core',
       status: 'queued',
       completedNodes: 0,
       failedNodes: 0,
@@ -60,7 +61,7 @@ describe('tryDispatchDagTools', () => {
     expect(createRunMock).toHaveBeenCalledTimes(1);
     expect(createRunMock).toHaveBeenCalledWith({
       sessionId: 'session-123',
-      template: 'default',
+      template: 'trinity-core',
       input: {
         goal: 'investigate cache invalidation regressions'
       },
@@ -72,14 +73,16 @@ describe('tryDispatchDagTools', () => {
     expect(response).toEqual(
       expect.objectContaining({
         module: 'dag-tools',
-        result: expect.stringContaining('Started DAG run dagrun_100_test-1')
+        result: expect.stringContaining('pipeline=trinity, template=trinity-core')
       })
     );
   });
 
   it('executes deterministic DAG metrics inspection when a run id is present', async () => {
     getRunMock.mockReturnValue({
+      pipeline: 'trinity',
       runId: 'dagrun_200_test-2',
+      template: 'trinity-core',
       status: 'running',
       completedNodes: 2,
       failedNodes: 0,
@@ -124,7 +127,7 @@ describe('tryDispatchDagTools', () => {
     expect(response).toEqual(
       expect.objectContaining({
         module: 'dag-tools',
-        result: expect.stringContaining('DAG metrics for dagrun_200_test-2')
+        result: expect.stringContaining('pipeline=trinity, template=trinity-core')
       })
     );
   });

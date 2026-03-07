@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { McpRequestContext } from '../context.js';
 import { mcpError, mcpText } from '../errors.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
+import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '../../dag/templates.js';
 import { requireNonceOrIssue, stripConfirmationFields, wrapTool } from './helpers.js';
 
 type AnyMcpServer = {
@@ -98,7 +99,7 @@ function normalizeDagCreateRequest(
 
   return {
     sessionId: args.sessionId ?? ctx.sessionId ?? ctx.requestId,
-    template: args.template ?? 'default',
+    template: args.template ?? TRINITY_CORE_DAG_TEMPLATE_NAME,
     input,
     options,
   };
