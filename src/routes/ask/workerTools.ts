@@ -9,6 +9,7 @@ import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 import {
   dispatchWorkerInput,
+  getWorkerControlHealth,
   getLatestWorkerJobDetail,
   getWorkerControlStatus,
   getWorkerJobDetailById,
@@ -27,6 +28,14 @@ const WORKER_TOOL_SYSTEM_PROMPT = [
 ].join(' ');
 
 const workerControlToolDefinitions: FunctionToolDefinition[] = [
+  {
+    name: 'get_worker_health',
+    description: 'Get the autonomous queue-worker health report, including alerts and persisted worker snapshots.',
+    parameters: {
+      type: 'object',
+      properties: {}
+    }
+  },
   {
     name: 'get_worker_status',
     description: 'Get combined status for the main app worker runtime and the dedicated async worker queue.',
@@ -161,6 +170,7 @@ type WorkerControlToolCall = {
 
 interface DeterministicWorkerOperation {
   toolName:
+    | 'get_worker_health'
     | 'get_worker_status'
     | 'get_latest_worker_job'
     | 'get_worker_job'
@@ -173,8 +183,10 @@ interface DeterministicWorkerOperation {
 
 const latestWorkerJobPattern =
   /\b(?:latest|recent|most recent)\b[^.!?\n]{0,40}\bjob\b|\bjob\b[^.!?\n]{0,40}\b(?:latest|recent|most recent)\b/i;
+const workerHealthPattern =
+  /\b(?:worker|workers|queue)\b[^.!?\n]{0,40}\bhealth\b|\bhealth\b[^.!?\n]{0,40}\b(?:worker|workers|queue)\b/i;
 const workerStatusPattern =
-  /\b(?:worker|workers|queue)\b[^.!?\n]{0,40}\b(?:status|health)\b|\b(?:status|health)\b[^.!?\n]{0,40}\b(?:worker|workers|queue)\b/i;
+  /\b(?:worker|workers|queue)\b[^.!?\n]{0,40}\bstatus\b|\bstatus\b[^.!?\n]{0,40}\b(?:worker|workers|queue)\b/i;
 const workerHealPattern =
   /\b(?:restart|heal|bootstrap)\b[^.!?\n]{0,40}\b(?:worker|workers|runtime)\b|\b(?:worker|workers|runtime)\b[^.!?\n]{0,40}\b(?:restart|heal|bootstrap)\b/i;
 const workerJobIdPattern = /\bjob(?:\s+id)?\s*[:#]?\s*([0-9a-f]{8}[0-9a-f-]{0,})\b/i;
@@ -327,10 +339,16 @@ function extractDispatchWorkerPrompt(prompt: string): { input: string; matchInde
 function collectDeterministicWorkerOperations(prompt: string): DeterministicWorkerOperation[] {
   const operations: DeterministicWorkerOperation[] = [];
   const jobIdMatch = workerJobIdPattern.exec(prompt);
+  const workerHealthMatch = workerHealthPattern.exec(prompt);
   const workerStatusMatch = workerStatusPattern.exec(prompt);
   const latestWorkerJobMatch = latestWorkerJobPattern.exec(prompt);
   const workerHealMatch = workerHealPattern.exec(prompt);
 
+  appendDeterministicWorkerOperation(
+    operations,
+    workerHealthMatch?.index,
+    'get_worker_health'
+  );
   appendDeterministicWorkerOperation(
     operations,
     workerStatusMatch?.index,
@@ -428,6 +446,8 @@ function buildWorkerToolResponse(response: any, resultText: string): AskResponse
 
 function summarizeToolExecution(toolName: string, payload: Record<string, unknown>): string {
   switch (toolName) {
+    case 'get_worker_health':
+      return `Worker health: overall=${String(payload.overallStatus ?? 'unknown')}, alerts=${Array.isArray(payload.alerts) ? payload.alerts.length : 0}, tracked_workers=${Array.isArray(payload.workers) ? payload.workers.length : 0}.`;
     case 'get_worker_status': {
       const mainApp = payload.mainApp as Record<string, unknown> | undefined;
       const workerService = payload.workerService as Record<string, unknown> | undefined;
@@ -456,6 +476,13 @@ async function executeWorkerTool(
   rawArgs: string
 ): Promise<{ output: Record<string, unknown>; summary: string }> {
   switch (toolName) {
+    case 'get_worker_health': {
+      const output = await getWorkerControlHealth();
+      return {
+        output: output as unknown as Record<string, unknown>,
+        summary: summarizeToolExecution(toolName, output as unknown as Record<string, unknown>)
+      };
+    }
     case 'get_worker_status': {
       const output = await getWorkerControlStatus();
       return {

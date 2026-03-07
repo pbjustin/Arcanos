@@ -63,6 +63,7 @@ node_modules/
 *.swp
 *.swo
 *~
+.codex/
 
 # OS generated files
 .DS_Store

@@ -4,7 +4,6 @@ import crypto from 'node:crypto';
 import type { McpRequestContext } from '../context.js';
 import { MCP_FLAGS } from '../registry.js';
 import { mcpError, mcpText } from '../errors.js';
-import { issueConfirmationNonce, verifyAndConsumeNonce } from '../confirm.js';
 import { isModuleActionAllowed } from '../modulesAllowlist.js';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -43,6 +42,7 @@ import { runHealthCheck } from '@platform/logging/diagnostics.js';
 import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
+import { registerDagMcpTools } from './dagTools.js';
 
 type AnyMcpServer = any;
 
@@ -536,6 +536,11 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       return mcpText(out);
     })
   );
+
+  // -------------------------
+  // DAG orchestration
+  // -------------------------
+  registerDagMcpTools(server, ctx);
 
   // -------------------------
   // Memory + Modules + Ops

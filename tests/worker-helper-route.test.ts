@@ -9,6 +9,7 @@ const getWorkerRuntimeStatusMock = jest.fn();
 const startWorkersMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const getDatabaseStatusMock = jest.fn();
+const getWorkerControlHealthMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
@@ -29,6 +30,22 @@ jest.unstable_mockModule('@dispatcher/detectCognitiveDomain.js', () => ({
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
   getStatus: getDatabaseStatusMock
+}));
+
+jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
+  getWorkerAutonomyHealthReport: getWorkerControlHealthMock,
+  planAutonomousWorkerJob: jest.fn(async () => ({
+    status: 'pending',
+    retryCount: 0,
+    maxRetries: 2,
+    priority: 100,
+    autonomyState: {
+      planner: {
+        reasons: []
+      }
+    },
+    planningReasons: []
+  }))
 }));
 
 const express = (await import('express')).default;
@@ -67,6 +84,9 @@ describe('/worker-helper routes', () => {
       completed: 3,
       failed: 1,
       total: 5,
+      delayed: 0,
+      stalledRunning: 0,
+      oldestPendingJobAgeMs: 0,
       lastUpdatedAt: '2026-03-06T10:00:00.000Z'
     });
     getLatestJobMock.mockResolvedValue({
@@ -81,6 +101,21 @@ describe('/worker-helper routes', () => {
       output: { result: 'ok' }
     });
     createJobMock.mockResolvedValue({ id: 'job-123' });
+    getWorkerControlHealthMock.mockResolvedValue({
+      overallStatus: 'healthy',
+      alerts: [],
+      workers: [
+        {
+          workerId: 'async-queue',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: null,
+          lastError: null,
+          lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
+          updatedAt: '2026-03-06T10:00:00.000Z'
+        }
+      ]
+    });
     detectCognitiveDomainMock.mockReturnValue({ domain: 'code', confidence: 0.91 });
     dispatchArcanosTaskMock.mockResolvedValue([{ workerId: 'arcanos-core-direct', result: 'ok' }]);
     startWorkersMock.mockResolvedValue({
@@ -132,6 +167,9 @@ describe('/worker-helper routes', () => {
         completed: 3,
         failed: 1,
         total: 5,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
         lastUpdatedAt: '2026-03-06T10:00:00.000Z'
       },
       latestJob: {
@@ -143,6 +181,21 @@ describe('/worker-helper routes', () => {
         updated_at: '2026-03-06T10:00:00.000Z',
         completed_at: '2026-03-06T10:00:00.000Z',
         error_message: null
+      },
+      health: {
+        overallStatus: 'healthy',
+        alerts: [],
+        workers: [
+          {
+            workerId: 'async-queue',
+            workerType: 'async_queue',
+            healthStatus: 'healthy',
+            currentJobId: null,
+            lastError: null,
+            lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
+            updatedAt: '2026-03-06T10:00:00.000Z'
+          }
+        ]
       }
     });
   });
@@ -193,6 +246,28 @@ describe('/worker-helper routes', () => {
         clientContext: {
           routingDirectives: ['cli']
         }
+      }),
+      expect.objectContaining({
+        maxRetries: 2,
+        priority: 100
+      })
+    );
+  });
+
+  it('returns autonomous worker health', async () => {
+    const response = await request(buildApp()).get('/worker-helper/health');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        overallStatus: 'healthy',
+        alerts: [],
+        workers: [
+          expect.objectContaining({
+            workerId: 'async-queue',
+            healthStatus: 'healthy'
+          })
+        ]
       })
     );
   });

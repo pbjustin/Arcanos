@@ -6,7 +6,7 @@ ARCANOS exposes MCP over two transports:
 1. HTTP streamable transport: `POST /mcp` (`src/routes/mcp.ts`)
 2. Local stdio transport: `src/mcp/mcp-stdio.ts`
 
-Tool registration lives in `src/mcp/server/index.ts` and includes reasoning, plans, agents, RAG, research, memory, modules, and ops health.
+Tool registration lives in `src/mcp/server/index.ts` and includes reasoning, plans, agents, DAG orchestration, RAG, research, memory, modules, and ops health.
 
 ## How It Works (HTTP)
 
@@ -91,6 +91,20 @@ Agents:
 - `agents.get`
 - `agents.heartbeat`
 
+DAG orchestration:
+- `dag.capabilities`
+- `dag.run.create`
+- `dag.run.get`
+- `dag.run.wait`
+- `dag.run.tree`
+- `dag.run.node`
+- `dag.run.events`
+- `dag.run.metrics`
+- `dag.run.errors`
+- `dag.run.lineage`
+- `dag.run.verification`
+- `dag.run.cancel`
+
 RAG and research:
 - `rag.ingest_url`
 - `rag.ingest_content`
@@ -144,6 +158,22 @@ curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"trinity.ask\",\"arguments\":{\"prompt\":\"Health check\"}}}"
+```
+
+Create a DAG run:
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"3\",\"method\":\"tools/call\",\"params\":{\"name\":\"dag.run.create\",\"arguments\":{\"goal\":\"Audit the current backend DAG path\",\"confirmationNonce\":\"<nonce-from-first-response>\"}}}"
+```
+
+Wait for a DAG run update:
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"4\",\"method\":\"tools/call\",\"params\":{\"name\":\"dag.run.wait\",\"arguments\":{\"runId\":\"dagrun_123\",\"updatedAfter\":\"2026-03-07T00:00:00.000Z\",\"waitForUpdateMs\":5000}}}"
 ```
 
 ## Troubleshooting

@@ -63,11 +63,36 @@ export {
 
 export {
   createJob,
+  claimNextPendingJob,
+  recordJobHeartbeat,
+  scheduleJobRetry,
+  recoverStaleJobs,
   updateJob,
   getJobById,
   getLatestJob,
-  getJobQueueSummary
+  getJobQueueSummary,
+  getJobExecutionStatsSince,
+  type JobQueueSummary,
+  type JobExecutionStats,
+  type CreateJobOptions,
+  type ClaimNextPendingJobOptions,
+  type ScheduleJobRetryOptions,
+  type RecoverStaleJobsOptions,
+  type RecoverStaleJobsResult
 } from './repositories/jobRepository.js';
+
+export {
+  upsertDagRunSnapshot,
+  getDagRunSnapshotById,
+  type DagRunSnapshotRecord
+} from './repositories/dagRunRepository.js';
+
+export {
+  upsertWorkerRuntimeSnapshot,
+  getWorkerRuntimeSnapshotById,
+  listWorkerRuntimeSnapshots,
+  type WorkerRuntimeSnapshotRecord
+} from './repositories/workerRuntimeRepository.js';
 
 export {
   logReasoning

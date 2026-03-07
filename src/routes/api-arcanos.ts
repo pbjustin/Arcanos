@@ -1,17 +1,28 @@
 import express, { Request, Response } from 'express';
 import { createCentralizedCompletion } from "@services/openai.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
-import { createValidationMiddleware, createRateLimitMiddleware } from "@platform/runtime/security.js";
+import {
+  createValidationMiddleware,
+  createRateLimitMiddleware,
+  getRequestActorKey
+} from "@platform/runtime/security.js";
 import { asyncHandler } from "@shared/http/index.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { IdleStateService } from "@services/idleStateService.js";
 import type OpenAI from 'openai';
 import { sendAIStatusError } from "@transport/http/requestHandler.js";
+import apiArcanosVerificationRouter from './api-arcanos-verification.js';
 
 const router = express.Router();
 
-// Apply rate limiting for API routes
-router.use(createRateLimitMiddleware(100, 15 * 60 * 1000)); // 100 requests per 15 minutes
+const arcanosAskRateLimit = createRateLimitMiddleware({
+  bucketName: 'api-arcanos-ask',
+  maxRequests: 120,
+  windowMs: 15 * 60 * 1000,
+  keyGenerator: (req) => `${getRequestActorKey(req)}:route:ask`
+});
+
+router.use('/', apiArcanosVerificationRouter);
 
 interface AskBody {
   prompt: string;
@@ -248,7 +259,7 @@ const handleArcanosAsk = createArcanosAskHandler({
   createCompletion: createCentralizedCompletion
 });
 
-router.post('/ask', confirmGate, createValidationMiddleware(arcanosSchema), handleArcanosAsk);
+router.post('/ask', arcanosAskRateLimit, confirmGate, createValidationMiddleware(arcanosSchema), handleArcanosAsk);
 
 // Test plan:
 // - Happy path: valid prompt returns success and metadata.

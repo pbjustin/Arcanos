@@ -5,10 +5,20 @@ import {
   createMcpRequestContextProxy,
   runWithMcpRequestContext,
 } from '../mcp/context.js';
+import {
+  createRateLimitMiddleware,
+  getRequestActorKey
+} from '@platform/runtime/security.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = express.Router();
+const mcpHttpRateLimit = createRateLimitMiddleware({
+  bucketName: 'mcp-http',
+  maxRequests: 300,
+  windowMs: 15 * 60 * 1000,
+  keyGenerator: (req) => `${getRequestActorKey(req)}:transport:http`
+});
 
 // The MCP transport handler needs raw JSON body.
 router.use(express.json({ limit: process.env.MCP_HTTP_BODY_LIMIT ?? '1mb' }));
@@ -26,7 +36,7 @@ async function buildMcpServerForRequest() {
   return buildMcpServer(proxyContext);
 }
 
-router.post('/mcp', mcpAuthMiddleware, async (req: Request, res: Response) => {
+router.post('/mcp', mcpAuthMiddleware, mcpHttpRateLimit, async (req: Request, res: Response) => {
   try {
     const ctx = buildMcpRequestContext(req);
     //audit Assumption: streamable transport instances are request-scoped; risk: shared transport state causes subsequent MCP calls to fail; invariant: each request gets a fresh transport; handling: build isolated server/transport pair per request.

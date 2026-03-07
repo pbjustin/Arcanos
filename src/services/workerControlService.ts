@@ -8,6 +8,7 @@ import {
   getLatestJob,
   type JobQueueSummary
 } from '@core/db/repositories/jobRepository.js';
+import type { WorkerRuntimeSnapshotRecord } from '@core/db/repositories/workerRuntimeRepository.js';
 import {
   dispatchArcanosTask,
   getWorkerRuntimeStatus,
@@ -24,6 +25,11 @@ import {
 import type { ClientContextDTO } from '@shared/types/dto.js';
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
+import {
+  getWorkerAutonomyHealthReport,
+  planAutonomousWorkerJob,
+  type WorkerAutonomyHealthReport
+} from './workerAutonomyService.js';
 
 const workerControlDomainSchema = z.enum(['diagnostic', 'code', 'creative', 'natural', 'execution']);
 
@@ -93,8 +99,31 @@ export interface WorkerControlStatusResponse {
     database: ReturnType<typeof getDatabaseStatus>;
     queueSummary: JobQueueSummary | null;
     latestJob: WorkerJobSnapshot | null;
+    health: {
+      overallStatus: WorkerAutonomyHealthReport['overallStatus'];
+      alerts: string[];
+      workers: Array<Pick<
+        WorkerRuntimeSnapshotRecord,
+        'workerId' | 'workerType' | 'healthStatus' | 'currentJobId' | 'lastError' | 'lastHeartbeatAt' | 'updatedAt'
+      >>;
+    };
   };
 }
+
+/**
+ * Dedicated health view for the autonomous queue worker.
+ *
+ * Purpose:
+ * - Surface persisted queue-worker health, budgets, and alerts without requiring callers to infer them from raw queue counts.
+ *
+ * Inputs/outputs:
+ * - Input: persisted worker snapshots and queue summary.
+ * - Output: autonomy-focused health report for CLI, HTTP, and AI tooling.
+ *
+ * Edge case behavior:
+ * - Returns `offline` overall status when no worker snapshots exist and the queue is idle.
+ */
+export interface WorkerControlHealthResponse extends WorkerAutonomyHealthReport {}
 
 /**
  * Request payload for queueing dedicated-worker async `/ask` jobs.
@@ -301,7 +330,10 @@ export function resolveWorkerControlDomain(
 export async function getWorkerControlStatus(
   workerId?: string
 ): Promise<WorkerControlStatusResponse> {
-  const latestJob = await getLatestJob();
+  const [latestJob, autonomyHealth] = await Promise.all([
+    getLatestJob(),
+    getWorkerAutonomyHealthReport()
+  ]);
 
   return {
     timestamp: new Date().toISOString(),
@@ -314,7 +346,20 @@ export async function getWorkerControlStatus(
       observationMode: 'queue-observed',
       database: getDatabaseStatus(),
       queueSummary: await getJobQueueSummary(),
-      latestJob: latestJob ? buildWorkerJobSnapshot(latestJob) : null
+      latestJob: latestJob ? buildWorkerJobSnapshot(latestJob) : null,
+      health: {
+        overallStatus: autonomyHealth.overallStatus,
+        alerts: autonomyHealth.alerts,
+        workers: autonomyHealth.workers.map(workerSnapshot => ({
+          workerId: workerSnapshot.workerId,
+          workerType: workerSnapshot.workerType,
+          healthStatus: workerSnapshot.healthStatus,
+          currentJobId: workerSnapshot.currentJobId,
+          lastError: workerSnapshot.lastError,
+          lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
+          updatedAt: workerSnapshot.updatedAt
+        }))
+      }
     }
   };
 }
@@ -380,11 +425,13 @@ export async function queueWorkerAsk(
     clientContext: request.clientContext ?? null,
     endpointName: request.endpointName || 'worker-helper'
   });
+  const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
 
   const createdJob = await createJob(
     getWorkerControlOriginWorkerId(request.workerId),
     'ask',
-    queuedAskJobInput
+    queuedAskJobInput,
+    plannedJob
   );
 
   return {
@@ -393,6 +440,23 @@ export async function queueWorkerAsk(
     cognitiveDomain: resolvedDomain.cognitiveDomain,
     cognitiveDomainSource: resolvedDomain.source
   };
+}
+
+/**
+ * Get the persisted health report for autonomous queue workers.
+ *
+ * Purpose:
+ * - Provide helper routes and AI tools with one stable worker health payload.
+ *
+ * Inputs/outputs:
+ * - Input: none.
+ * - Output: autonomy-focused health report.
+ *
+ * Edge case behavior:
+ * - Returns `offline` overall status when no worker snapshot has been persisted yet.
+ */
+export async function getWorkerControlHealth(): Promise<WorkerControlHealthResponse> {
+  return getWorkerAutonomyHealthReport();
 }
 
 /**

@@ -4,7 +4,11 @@ import { runThroughBrain } from "@core/logic/trinity.js";
 import { createJob } from "@core/db/repositories/jobRepository.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
-import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import {
+  createRateLimitMiddleware,
+  getRequestActorKey,
+  securityHeaders
+} from "@platform/runtime/security.js";
 import type {
   AIRequestDTO,
   ErrorResponseDTO
@@ -19,6 +23,7 @@ import type {
   SystemStateResponse
 } from './types.js';
 import { tryDispatchDaemonTools } from './daemonTools.js';
+import { tryDispatchDagTools } from './dagTools.js';
 import { tryDispatchWorkerTools } from './workerTools.js';
 import { getGPT5Model } from '@services/openai.js';
 import {
@@ -38,12 +43,18 @@ import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
+import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
 const router = express.Router();
 
 // Apply security middleware
 router.use(securityHeaders);
-const askRateLimit = createRateLimitMiddleware(60, 15 * 60 * 1000); // 60 requests per 15 minutes
+const askRateLimit = createRateLimitMiddleware({
+  bucketName: 'ask-route',
+  maxRequests: 120,
+  windowMs: 15 * 60 * 1000,
+  keyGenerator: (req) => `${getRequestActorKey(req)}:route:ask`
+});
 
 const SYSTEM_REVIEW_PROMPT = `You are operating in SYSTEM_REVIEW mode.
 
@@ -510,6 +521,16 @@ export const handleAIRequest = async (
       });
     }
 
+    const dagToolResponse = await tryDispatchDagTools(openai, prompt, { sessionId });
+    if (dagToolResponse) {
+      return res.json({
+        ...dagToolResponse,
+        endpoint: endpointName,
+        clientContext: req.body.clientContext,
+        ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
+      });
+    }
+
     const workerToolResponse = await tryDispatchWorkerTools(openai, prompt);
     if (workerToolResponse) {
       return res.json({
@@ -533,7 +554,8 @@ export const handleAIRequest = async (
     // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
     if (asyncRequested) {
       const workerId = process.env.WORKER_ID || 'api';
-      const job = await createJob(workerId, 'ask', queuedAskJobInput);
+      const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
+      const job = await createJob(workerId, 'ask', queuedAskJobInput, plannedJob);
 
       return res.status(202).json(buildQueuedAskPendingResponse(job.id));
     }

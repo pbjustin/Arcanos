@@ -5,6 +5,7 @@ const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
 const logRequestFeedbackMock = jest.fn();
 const tryDispatchDaemonToolsMock = jest.fn();
+const tryDispatchDagToolsMock = jest.fn();
 const tryDispatchWorkerToolsMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
@@ -23,6 +24,10 @@ jest.unstable_mockModule('../src/routes/ask/daemonTools.js', () => ({
   tryDispatchDaemonTools: tryDispatchDaemonToolsMock
 }));
 
+jest.unstable_mockModule('../src/routes/ask/dagTools.js', () => ({
+  tryDispatchDagTools: tryDispatchDagToolsMock
+}));
+
 jest.unstable_mockModule('../src/routes/ask/workerTools.js', () => ({
   tryDispatchWorkerTools: tryDispatchWorkerToolsMock
 }));
@@ -33,6 +38,21 @@ jest.unstable_mockModule('@dispatcher/detectCognitiveDomain.js', () => ({
 
 jest.unstable_mockModule('@dispatcher/gptDomainClassifier.js', () => ({
   gptFallbackClassifier: gptFallbackClassifierMock
+}));
+
+jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
+  planAutonomousWorkerJob: jest.fn(async () => ({
+    status: 'pending',
+    retryCount: 0,
+    maxRetries: 2,
+    priority: 100,
+    autonomyState: {
+      planner: {
+        reasons: []
+      }
+    },
+    planningReasons: []
+  }))
 }));
 
 const express = (await import('express')).default;
@@ -55,6 +75,7 @@ describe('/ask worker tools integration', () => {
       body: {}
     });
     tryDispatchDaemonToolsMock.mockResolvedValue(null);
+    tryDispatchDagToolsMock.mockResolvedValue(null);
     tryDispatchWorkerToolsMock.mockResolvedValue({
       result: 'Workers are healthy.',
       module: 'worker-tools',
@@ -90,5 +111,46 @@ describe('/ask worker tools integration', () => {
     );
     expect(createJobMock).not.toHaveBeenCalled();
     expect(handleAIErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('returns DAG tool responses before worker tool handling', async () => {
+    validateAIRequestMock.mockReturnValue({
+      client: { responses: { create: jest.fn() } },
+      input: 'start a dag workflow for: verify the worker queue',
+      body: {}
+    });
+    tryDispatchDagToolsMock.mockResolvedValue({
+      result: 'Started DAG run dagrun_test-3.',
+      module: 'dag-tools',
+      fallbackFlag: false,
+      meta: {
+        id: 'dag-tool-1',
+        created: Date.now()
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'start a dag workflow for: verify the worker queue',
+        sessionId: 'session-789'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        result: 'Started DAG run dagrun_test-3.',
+        module: 'dag-tools',
+        endpoint: 'ask'
+      })
+    );
+    expect(tryDispatchDagToolsMock).toHaveBeenCalledTimes(1);
+    expect(tryDispatchDagToolsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'start a dag workflow for: verify the worker queue',
+      { sessionId: 'session-789' }
+    );
+    expect(tryDispatchWorkerToolsMock).not.toHaveBeenCalled();
+    expect(createJobMock).not.toHaveBeenCalled();
   });
 });

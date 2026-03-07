@@ -21,6 +21,7 @@ import { clientContextSchema } from '@shared/types/dto.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   dispatchWorkerInput,
+  getWorkerControlHealth,
   getLatestWorkerJobDetail,
   getWorkerControlStatus,
   getWorkerJobDetailById,
@@ -80,6 +81,33 @@ router.get(
     } catch (error: unknown) {
       sendInternalErrorPayload(res, {
         error: 'WORKER_HELPER_STATUS_FAILED',
+        message: resolveErrorMessage(error)
+      });
+    }
+  })
+);
+
+/**
+ * GET /worker-helper/health
+ *
+ * Purpose:
+ * - Return the persisted autonomy health report for queue-backed workers.
+ *
+ * Inputs/outputs:
+ * - Input: request path only.
+ * - Output: JSON health report with alerts, budgets, queue summary, and worker snapshots.
+ *
+ * Edge case behavior:
+ * - Returns `offline` when no queue-worker snapshot has been persisted yet.
+ */
+router.get(
+  '/worker-helper/health',
+  asyncHandler(async (_req, res) => {
+    try {
+      res.json(await getWorkerControlHealth());
+    } catch (error: unknown) {
+      sendInternalErrorPayload(res, {
+        error: 'WORKER_HELPER_HEALTH_FAILED',
         message: resolveErrorMessage(error)
       });
     }

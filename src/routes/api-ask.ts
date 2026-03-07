@@ -1,5 +1,10 @@
 import express, { Request, Response } from 'express';
-import { createRateLimitMiddleware, createValidationMiddleware, securityHeaders } from "@platform/runtime/security.js";
+import {
+  createRateLimitMiddleware,
+  createValidationMiddleware,
+  getRequestActorKey,
+  securityHeaders
+} from "@platform/runtime/security.js";
 import { buildValidationErrorResponse } from "@core/lib/errors/index.js";
 import type {
   AIResponseDTO,
@@ -16,7 +21,12 @@ import { extractPromptFromBody, normalizePromptWithContext } from '@shared/promp
 const router = express.Router();
 
 router.use(securityHeaders);
-router.use('/api/ask', createRateLimitMiddleware(120, 10 * 60 * 1000));
+router.use('/api/ask', createRateLimitMiddleware({
+  bucketName: 'api-ask',
+  maxRequests: 120,
+  windowMs: 10 * 60 * 1000,
+  keyGenerator: (req) => `${getRequestActorKey(req)}:route:api-ask`
+}));
 
 const actionSchema = {
   message: { type: 'string' as const, required: false, minLength: 1, maxLength: 6000, sanitize: true },

@@ -3,7 +3,8 @@
  * Provides comprehensive input validation and security measures
  */
 
-import { Response } from 'express';
+import crypto from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 
 // Input validation schemas
 export interface ValidationRule {
@@ -161,15 +162,6 @@ export function validateInput<T extends Record<string, unknown> | unknown[]>(
   };
 }
 
-/**
- * Express middleware for input validation
- */
-/**
- * Express middleware type for validation
- * @confidence 1.0 - Standard Express middleware signature
- */
-import type { Request, NextFunction } from 'express';
-
 export function createValidationMiddleware(schema: ValidationSchema) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const validation = validateInput(req.body, schema);
@@ -187,14 +179,201 @@ export function createValidationMiddleware(schema: ValidationSchema) {
 }
 
 /**
- * Rate limiting by IP for security
+ * Rate-limit policy resolved for one request.
+ * Purpose: carry the selected bucket settings into the middleware execution path.
+ * Inputs/outputs: defines the bucket name, request ceiling, and reset window in milliseconds.
+ * Edge cases: bucket names must be stable because they are used in the in-memory key space.
+ */
+export interface RateLimitPolicy {
+  bucketName: string;
+  maxRequests: number;
+  windowMs: number;
+}
+
+/**
+ * Configures actor-aware rate limiting with optional per-request policy selection.
+ * Purpose: let routes isolate high-frequency status reads from heavier mutation or AI calls.
+ * Inputs/outputs: accepts static limits or an options object with policy/key resolvers; returns Express middleware.
+ * Edge cases: falls back to IP-based buckets when no richer actor identity is available.
+ */
+export interface RateLimitMiddlewareOptions {
+  bucketName?: string;
+  maxRequests?: number;
+  windowMs?: number;
+  keyGenerator?: (req: Request) => string;
+  policyResolver?: (req: Request, defaultPolicy: RateLimitPolicy) => RateLimitPolicy;
+  skip?: (req: Request) => boolean;
+}
+
+interface RateLimitEntry {
+  count: number;
+  resetTime: number;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function getNormalizedHeader(req: Request, headerName: string): string | undefined {
+  const value = req.header(headerName);
+  return isNonEmptyString(value) ? value.trim() : undefined;
+}
+
+function getFirstForwardedAddress(req: Request): string | undefined {
+  const forwardedFor = getNormalizedHeader(req, 'x-forwarded-for');
+  if (!forwardedFor) {
+    return undefined;
+  }
+
+  const [firstAddress] = forwardedFor.split(',');
+  return isNonEmptyString(firstAddress) ? firstAddress.trim() : undefined;
+}
+
+function getBodyOrQueryField(
+  source: unknown,
+  fieldName: string
+): string | undefined {
+  if (!source || typeof source !== 'object') {
+    return undefined;
+  }
+
+  const rawValue = (source as Record<string, unknown>)[fieldName];
+  const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+  return isNonEmptyString(value) ? value.trim() : undefined;
+}
+
+function fingerprintSecretValue(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 16);
+}
+
+/**
+ * Resolve the best-effort session id carried by the current request.
+ * Purpose: allow chat, DAG, and MCP traffic to rate-limit per active session instead of per shared IP.
+ * Inputs/outputs: inspects headers, body, and query string for a session identifier and returns it when present.
+ * Edge cases: returns `undefined` when the caller did not provide a stable session id.
+ */
+export function getRequestSessionId(req: Request): string | undefined {
+  const headerSessionId =
+    getNormalizedHeader(req, 'x-session-id') ??
+    getNormalizedHeader(req, 'mcp-session-id');
+  if (headerSessionId) {
+    return headerSessionId;
+  }
+
+  const bodySessionId = getBodyOrQueryField(req.body, 'sessionId');
+  if (bodySessionId) {
+    return bodySessionId;
+  }
+
+  return getBodyOrQueryField(req.query, 'sessionId');
+}
+
+/**
+ * Resolve the client address used as the final fallback rate-limit identity.
+ * Purpose: preserve the previous IP-based behavior when no user or session information exists.
+ * Inputs/outputs: reads proxy headers and Express connection metadata and returns one normalized address string.
+ * Edge cases: returns `unknown` when the runtime cannot determine a client address.
+ */
+export function getRequestClientAddress(req: Request): string {
+  const forwardedAddress = getFirstForwardedAddress(req);
+  if (forwardedAddress) {
+    return forwardedAddress;
+  }
+
+  const expressAddress = isNonEmptyString(req.ip) ? req.ip.trim() : undefined;
+  if (expressAddress) {
+    return expressAddress;
+  }
+
+  const socketAddress = isNonEmptyString(req.connection?.remoteAddress)
+    ? req.connection.remoteAddress.trim()
+    : undefined;
+  if (socketAddress) {
+    return socketAddress;
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Resolve the most specific actor identity available for rate limiting.
+ * Purpose: prevent one shared IP from throttling multiple AI sessions or DAG runs behind the same proxy.
+ * Inputs/outputs: inspects session id, authenticated user, bearer token, and IP metadata to build a stable actor key.
+ * Edge cases: hashes bearer credentials before use and falls back to IP when no richer identity is available.
+ */
+export function getRequestActorKey(req: Request): string {
+  const sessionId = getRequestSessionId(req);
+  if (sessionId) {
+    return `session:${sessionId}`;
+  }
+
+  if (req.authUser?.id !== undefined) {
+    return `user:${req.authUser.id}`;
+  }
+
+  const operatorActor = isNonEmptyString(req.operatorActor) ? req.operatorActor.trim() : undefined;
+  if (operatorActor) {
+    return `operator:${operatorActor}`;
+  }
+
+  const daemonToken = isNonEmptyString(req.daemonToken) ? req.daemonToken.trim() : undefined;
+  if (daemonToken) {
+    return `daemon:${fingerprintSecretValue(daemonToken)}`;
+  }
+
+  const authorizationHeader = getNormalizedHeader(req, 'authorization');
+  if (authorizationHeader) {
+    return `auth:${fingerprintSecretValue(authorizationHeader)}`;
+  }
+
+  return `ip:${getRequestClientAddress(req)}`;
+}
+
+function resolveRateLimitOptions(
+  maxRequestsOrOptions: number | RateLimitMiddlewareOptions,
+  windowMs: number
+): RateLimitMiddlewareOptions {
+  if (typeof maxRequestsOrOptions === 'number') {
+    return {
+      maxRequests: maxRequestsOrOptions,
+      windowMs
+    };
+  }
+
+  return maxRequestsOrOptions;
+}
+
+function resolveRateLimitPolicy(
+  req: Request,
+  options: RateLimitMiddlewareOptions
+): RateLimitPolicy {
+  const defaultPolicy: RateLimitPolicy = {
+    bucketName: options.bucketName ?? 'default',
+    maxRequests: options.maxRequests ?? 100,
+    windowMs: options.windowMs ?? 15 * 60 * 1000
+  };
+
+  //audit Assumption: routes may need per-request policies for read-heavy monitoring traffic; failure risk: all traffic shares one bucket and long-running workflows self-throttle; expected invariant: a valid policy is always returned; handling strategy: fall back to the default policy when no resolver is supplied.
+  if (!options.policyResolver) {
+    return defaultPolicy;
+  }
+
+  return options.policyResolver(req, defaultPolicy);
+}
+
+/**
+ * Build a reusable rate-limit middleware.
+ * Purpose: enforce request ceilings with actor-aware keys and route-selectable policies.
+ * Inputs/outputs: accepts legacy numeric arguments or an options object and returns Express middleware.
+ * Edge cases: skipped requests bypass counters, and per-request policies may override the default bucket settings.
  */
 export function createRateLimitMiddleware(
-  maxRequests: number = 100,
+  maxRequestsOrOptions: number | RateLimitMiddlewareOptions = 100,
   windowMs: number = 15 * 60 * 1000 // 15 minutes
 ): (req: Request, res: Response, next: NextFunction) => void {
-  const requestCounts = new Map<string, { count: number; resetTime: number }>();
-  const cleanupIntervalMs = Math.max(1000, Math.min(windowMs, 60 * 1000));
+  const options = resolveRateLimitOptions(maxRequestsOrOptions, windowMs);
+  const requestCounts = new Map<string, RateLimitEntry>();
+  const cleanupIntervalMs = Math.max(1000, Math.min(options.windowMs ?? windowMs, 60 * 1000));
 
   /**
    * Purge expired rate-limit entries outside the request path.
@@ -220,27 +399,42 @@ export function createRateLimitMiddleware(
   cleanupTimer.unref?.();
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    const ip = req.ip || req.connection.remoteAddress || 'unknown';
-    const now = Date.now();
+    //audit Assumption: some health or internal routes may intentionally bypass rate limiting; failure risk: internal control loops are throttled unnecessarily; expected invariant: only explicitly skipped requests bypass accounting; handling strategy: short-circuit before any counter mutation.
+    if (options.skip?.(req)) {
+      next();
+      return;
+    }
 
-    const current = requestCounts.get(ip) || { count: 0, resetTime: now + windowMs };
+    const now = Date.now();
+    const policy = resolveRateLimitPolicy(req, options);
+    const actorKey = options.keyGenerator ? options.keyGenerator(req) : getRequestActorKey(req);
+    const storageKey = `${policy.bucketName}:${actorKey}`;
+    const current = requestCounts.get(storageKey) || { count: 0, resetTime: now + policy.windowMs };
     
     //audit Assumption: reset window when elapsed; Handling: reset counters
     if (now > current.resetTime) {
       current.count = 1;
-      current.resetTime = now + windowMs;
+      current.resetTime = now + policy.windowMs;
     } else {
       current.count++;
     }
     
-    requestCounts.set(ip, current);
+    requestCounts.set(storageKey, current);
     
     //audit Assumption: enforce rate limit threshold; Handling: 429 response
-    if (current.count > maxRequests) {
+    if (current.count > policy.maxRequests) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((current.resetTime - now) / 1000));
+      res.set({
+        'Retry-After': retryAfterSeconds.toString(),
+        'X-RateLimit-Limit': policy.maxRequests.toString(),
+        'X-RateLimit-Remaining': '0',
+        'X-RateLimit-Reset': new Date(current.resetTime).toISOString(),
+        'X-RateLimit-Bucket': policy.bucketName
+      });
       void res.status(429).json({
         error: 'Rate limit exceeded',
-        message: `Too many requests from ${ip}. Try again later.`,
-        retryAfter: Math.ceil((current.resetTime - now) / 1000)
+        message: `Too many requests for ${policy.bucketName}. Try again later.`,
+        retryAfter: retryAfterSeconds
       });
       return;
     }
@@ -248,9 +442,10 @@ export function createRateLimitMiddleware(
     // Add rate limit headers
     //audit Assumption: headers help clients back off; Handling: include limits
     res.set({
-      'X-RateLimit-Limit': maxRequests.toString(),
-      'X-RateLimit-Remaining': Math.max(0, maxRequests - current.count).toString(),
-      'X-RateLimit-Reset': new Date(current.resetTime).toISOString()
+      'X-RateLimit-Limit': policy.maxRequests.toString(),
+      'X-RateLimit-Remaining': Math.max(0, policy.maxRequests - current.count).toString(),
+      'X-RateLimit-Reset': new Date(current.resetTime).toISOString(),
+      'X-RateLimit-Bucket': policy.bucketName
     });
     
     next();

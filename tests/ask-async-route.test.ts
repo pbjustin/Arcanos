@@ -10,10 +10,15 @@ const gptFallbackClassifierMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
+  claimNextPendingJob: jest.fn(),
+  recordJobHeartbeat: jest.fn(),
+  scheduleJobRetry: jest.fn(),
+  recoverStaleJobs: jest.fn(),
   updateJob: jest.fn(),
   getJobById: jest.fn(),
   getLatestJob: jest.fn(),
-  getJobQueueSummary: jest.fn()
+  getJobQueueSummary: jest.fn(),
+  getJobExecutionStatsSince: jest.fn()
 }));
 
 jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
@@ -32,6 +37,26 @@ jest.unstable_mockModule('@dispatcher/detectCognitiveDomain.js', () => ({
 
 jest.unstable_mockModule('@dispatcher/gptDomainClassifier.js', () => ({
   gptFallbackClassifier: gptFallbackClassifierMock
+}));
+
+jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
+  getWorkerAutonomyHealthReport: jest.fn(async () => ({
+    overallStatus: 'healthy',
+    alerts: [],
+    workers: []
+  })),
+  planAutonomousWorkerJob: jest.fn(async () => ({
+    status: 'pending',
+    retryCount: 0,
+    maxRetries: 2,
+    priority: 100,
+    autonomyState: {
+      planner: {
+        reasons: []
+      }
+    },
+    planningReasons: []
+  }))
 }));
 
 const express = (await import('express')).default;
@@ -88,6 +113,10 @@ describe('async /ask queue contract', () => {
         clientContext: {
           routingDirectives: ['concise']
         }
+      }),
+      expect.objectContaining({
+        maxRetries: 2,
+        priority: 100
       })
     );
     expect(handleAIErrorMock).not.toHaveBeenCalled();

@@ -2,13 +2,22 @@ import { Request, Response, Router } from 'express';
 
 import { DEFAULT_FINE_TUNE } from '../config/openai.js';
 import { runTrinity } from '../trinity/trinity.js';
-import { createRateLimitMiddleware, securityHeaders } from '@platform/runtime/security.js';
+import {
+  createRateLimitMiddleware,
+  getRequestActorKey,
+  securityHeaders
+} from '@platform/runtime/security.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = Router();
 
 router.use(securityHeaders);
-router.use(createRateLimitMiddleware(30, 15 * 60 * 1000));
+router.use('/query-finetune', createRateLimitMiddleware({
+  bucketName: 'query-finetune',
+  maxRequests: 30,
+  windowMs: 15 * 60 * 1000,
+  keyGenerator: (req) => `${getRequestActorKey(req)}:route:query-finetune`
+}));
 
 function getPrompt(body: { prompt?: unknown }): string | null {
   return typeof body.prompt === 'string' && body.prompt.trim().length > 0

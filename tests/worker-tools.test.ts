@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const getWorkerControlStatusMock = jest.fn();
+const getWorkerControlHealthMock = jest.fn();
 const getLatestWorkerJobDetailMock = jest.fn();
 const getWorkerJobDetailByIdMock = jest.fn();
 const queueWorkerAskMock = jest.fn();
@@ -25,6 +26,7 @@ jest.unstable_mockModule('@arcanos/openai/responseParsing', () => ({
 
 jest.unstable_mockModule('@services/workerControlService.js', () => ({
   getWorkerControlStatus: getWorkerControlStatusMock,
+  getWorkerControlHealth: getWorkerControlHealthMock,
   getLatestWorkerJobDetail: getLatestWorkerJobDetailMock,
   getWorkerJobDetailById: getWorkerJobDetailByIdMock,
   queueWorkerAsk: queueWorkerAskMock,
@@ -37,6 +39,11 @@ const { tryDispatchWorkerTools } = await import('../src/routes/ask/workerTools.j
 describe('tryDispatchWorkerTools', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getWorkerControlHealthMock.mockResolvedValue({
+      overallStatus: 'healthy',
+      alerts: [],
+      workers: []
+    });
   });
 
   it('executes deterministic worker operations for common operator prompts', async () => {
@@ -60,9 +67,17 @@ describe('tryDispatchWorkerTools', () => {
         queueSummary: {
           pending: 1,
           running: 0,
-          failed: 0
+          failed: 0,
+          delayed: 0,
+          stalledRunning: 0,
+          oldestPendingJobAgeMs: 0
         },
-        latestJob: null
+        latestJob: null,
+        health: {
+          overallStatus: 'healthy',
+          alerts: [],
+          workers: []
+        }
       }
     });
     getLatestWorkerJobDetailMock.mockResolvedValue({
@@ -114,9 +129,17 @@ describe('tryDispatchWorkerTools', () => {
         queueSummary: {
           pending: 1,
           running: 0,
-          failed: 0
+          failed: 0,
+          delayed: 0,
+          stalledRunning: 0,
+          oldestPendingJobAgeMs: 0
         },
-        latestJob: null
+        latestJob: null,
+        health: {
+          overallStatus: 'healthy',
+          alerts: [],
+          workers: []
+        }
       }
     });
 
