@@ -300,7 +300,10 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
     const tree = await service.getRunTree('run-1');
     const researchNode = tree?.nodes.find(node => node.nodeId === 'research');
 
+    expect(tree?.pipeline).toBe('trinity');
+    expect(tree?.trinity_version).toBe('1.0');
     expect(researchNode?.workerId).toBe('async-queue-slot-2');
+    expect(researchNode?.role).toBe('trinity_research');
   });
 
   it('includes Trinity lineage metadata in verification responses', async () => {
@@ -354,6 +357,51 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
       sessionPropagationMode: 'inherit_run_session',
       observedWorkerIds: ['async-queue-slot-1', 'async-queue-slot-2'],
       observedSourceEndpoints: ['dag.agent.planner', 'dag.agent.audit']
+    });
+  });
+
+  it('enriches DAG events with Trinity runtime markers', async () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:04.000Z');
+
+    record.nodesById.set('planner', {
+      nodeId: 'planner',
+      runId: 'run-1',
+      parentNodeId: null,
+      agentRole: 'planner',
+      jobType: 'plan',
+      status: 'running',
+      dependencyIds: [],
+      spawnDepth: 0,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null
+    });
+
+    record.events.push({
+      eventId: 'event-1',
+      type: 'node.started',
+      at: '2026-03-07T00:00:04.000Z',
+      data: {
+        runId: 'run-1',
+        nodeId: 'planner'
+      }
+    });
+
+    (service as any).runsById.set('run-1', record);
+
+    const events = await service.getRunEvents('run-1');
+
+    expect(events?.pipeline).toBe('trinity');
+    expect(events?.trinity_version).toBe('1.0');
+    expect(events?.events[0]?.data).toEqual({
+      runId: 'run-1',
+      nodeId: 'planner',
+      pipeline: 'trinity',
+      trinity_version: '1.0',
+      role: 'trinity_planner'
     });
   });
 

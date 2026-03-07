@@ -46,6 +46,17 @@ export type AgentRole =
   | 'tracker'
   | 'custom';
 
+export type TrinityPipelineRole = `trinity_${AgentRole}`;
+
+export interface TrinityRuntimeMetadata {
+  pipeline?: 'trinity';
+  trinity_version?: '1.0';
+}
+
+export interface TrinityNodeMetadata extends TrinityRuntimeMetadata {
+  role?: TrinityPipelineRole;
+}
+
 export type JobType =
   | 'plan'
   | 'search'
@@ -168,7 +179,7 @@ export interface FinalOutput {
   [key: string]: unknown;
 }
 
-export interface DagRunSummary {
+export interface DagRunSummary extends TrinityRuntimeMetadata {
   runId: string;
   sessionId: string;
   template: string;
@@ -198,7 +209,7 @@ export interface DagRunData {
 
 export type DagRunResponse = ApiEnvelope<DagRunData>;
 
-export interface DagTreeNode {
+export interface DagTreeNode extends TrinityNodeMetadata {
   nodeId: string;
   parentNodeId: string | null;
   agentRole: AgentRole;
@@ -212,7 +223,7 @@ export interface DagTreeNode {
   completedAt?: ISODateString;
 }
 
-export interface DagTreeData {
+export interface DagTreeData extends TrinityRuntimeMetadata {
   runId: string;
   nodes: DagTreeNode[];
 }
@@ -225,7 +236,7 @@ export interface NodeMetrics {
   completionTokens?: number;
 }
 
-export interface NodeDetail {
+export interface NodeDetail extends TrinityNodeMetadata {
   nodeId: string;
   runId: string;
   parentNodeId: string | null;
@@ -258,7 +269,7 @@ export interface DagEvent<T = Record<string, unknown>> {
   data: T;
 }
 
-export interface DagEventsData {
+export interface DagEventsData extends TrinityRuntimeMetadata {
   runId: string;
   events: DagEvent[];
 }
@@ -358,7 +369,7 @@ export interface DagVerificationLineage {
   observedSourceEndpoints: string[];
 }
 
-export interface DagVerificationData {
+export interface DagVerificationData extends TrinityRuntimeMetadata {
   runId: string;
   verification: DagVerification;
   lineage: DagVerificationLineage;

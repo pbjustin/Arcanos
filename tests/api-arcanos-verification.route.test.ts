@@ -133,6 +133,8 @@ describe('api-arcanos-verification routes', () => {
 
   it('creates and fetches DAG run resources in envelope form', async () => {
     mockCreateRun.mockReturnValue({
+      pipeline: 'trinity',
+      trinity_version: '1.0',
       runId: 'run-1',
       sessionId: 'session-1',
       template: 'verification-default',
@@ -143,6 +145,8 @@ describe('api-arcanos-verification routes', () => {
       updatedAt: '2026-03-07T00:00:00.000Z'
     });
     mockGetRun.mockReturnValue({
+      pipeline: 'trinity',
+      trinity_version: '1.0',
       runId: 'run-1',
       sessionId: 'session-1',
       template: 'verification-default',
@@ -154,6 +158,8 @@ describe('api-arcanos-verification routes', () => {
     });
     mockWaitForRunUpdate.mockResolvedValue({
       run: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
         runId: 'run-1',
         sessionId: 'session-1',
         template: 'verification-default',
@@ -170,6 +176,9 @@ describe('api-arcanos-verification routes', () => {
       runId: 'run-1',
       nodes: [
         {
+          pipeline: 'trinity',
+          trinity_version: '1.0',
+          role: 'trinity_planner',
           nodeId: 'planner',
           parentNodeId: null,
           agentRole: 'planner',
@@ -182,6 +191,9 @@ describe('api-arcanos-verification routes', () => {
       ]
     });
     mockGetNode.mockReturnValue({
+      pipeline: 'trinity',
+      trinity_version: '1.0',
+      role: 'trinity_planner',
       nodeId: 'planner',
       runId: 'run-1',
       parentNodeId: null,
@@ -196,6 +208,8 @@ describe('api-arcanos-verification routes', () => {
       error: null
     });
     mockGetRunEvents.mockReturnValue({
+      pipeline: 'trinity',
+      trinity_version: '1.0',
       runId: 'run-1',
       events: []
     });
@@ -227,6 +241,8 @@ describe('api-arcanos-verification routes', () => {
       loopDetected: false
     });
     mockGetRunVerification.mockReturnValue({
+      pipeline: 'trinity',
+      trinity_version: '1.0',
       runId: 'run-1',
       verification: {
         runCompleted: false,
@@ -264,6 +280,7 @@ describe('api-arcanos-verification routes', () => {
 
     expect(createResponse.status).toBe(202);
     expect(createResponse.body.data.run.runId).toBe('run-1');
+    expect(createResponse.body.data.run.pipeline).toBe('trinity');
 
     const runResponse = await request(buildApp()).get('/dag/runs/run-1');
     const treeResponse = await request(buildApp()).get('/dag/runs/run-1/tree');
@@ -274,6 +291,7 @@ describe('api-arcanos-verification routes', () => {
 
     expect(runResponse.status).toBe(200);
     expect(runResponse.body.data.run.status).toBe('running');
+    expect(runResponse.body.data.run.trinity_version).toBe('1.0');
     expect(mockWaitForRunUpdate).toHaveBeenCalledWith('run-1', {
       updatedAfter: undefined,
       waitForUpdateMs: undefined
@@ -281,15 +299,18 @@ describe('api-arcanos-verification routes', () => {
 
     expect(treeResponse.status).toBe(200);
     expect(treeResponse.body.data.nodes[0].nodeId).toBe('planner');
+    expect(treeResponse.body.data.nodes[0].role).toBe('trinity_planner');
 
     expect(nodeResponse.status).toBe(200);
     expect(nodeResponse.body.data.node.agentRole).toBe('planner');
+    expect(nodeResponse.body.data.node.pipeline).toBe('trinity');
 
     expect(metricsResponse.status).toBe(200);
     expect(metricsResponse.body.data.metrics.maxParallelNodesObserved).toBe(3);
 
     expect(verificationResponse.status).toBe(200);
     expect(verificationResponse.body.data.verification.parallelExecutionObserved).toBe(true);
+    expect(verificationResponse.body.data.pipeline).toBe('trinity');
     expect(verificationResponse.body.data.lineage.workerPipeline).toBe('trinity');
     expect(verificationResponse.body.data.lineage.workerEntryPoint).toBe('runWorkerTrinityPrompt');
 

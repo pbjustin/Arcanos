@@ -27,7 +27,10 @@ import type {
   GuardViolation,
   NodeDetail,
   NodeMetrics,
-  NodeStatus
+  NodeStatus,
+  TrinityNodeMetadata,
+  TrinityPipelineRole,
+  TrinityRuntimeMetadata
 } from '../shared/types/arcanos-verification-contract.types.js';
 import { sleep } from '@shared/sleep.js';
 
@@ -83,6 +86,9 @@ interface PersistedDagRunSnapshot {
   loopDetected: boolean;
 }
 
+const TRINITY_PIPELINE_NAME = 'trinity' as const;
+const TRINITY_PIPELINE_VERSION = '1.0' as const;
+
 export interface WaitForDagRunUpdateOptions {
   updatedAfter?: string;
   waitForUpdateMs?: number;
@@ -112,6 +118,24 @@ function createExecutionLimits(settings: DagWorkerPoolSettings): ExecutionLimits
     maxRetriesPerNode: settings.maxRetries,
     maxAiCallsPerRun: settings.maxAiCallsPerRun,
     defaultNodeTimeoutMs: settings.nodeTimeoutMs
+  };
+}
+
+function createTrinityRuntimeMetadata(): TrinityRuntimeMetadata {
+  return {
+    pipeline: TRINITY_PIPELINE_NAME,
+    trinity_version: TRINITY_PIPELINE_VERSION
+  };
+}
+
+function mapAgentRoleToTrinityPipelineRole(agentRole: NodeDetail['agentRole']): TrinityPipelineRole {
+  return `trinity_${agentRole}` as TrinityPipelineRole;
+}
+
+function createTrinityNodeMetadata(agentRole: NodeDetail['agentRole']): TrinityNodeMetadata {
+  return {
+    ...createTrinityRuntimeMetadata(),
+    role: mapAgentRoleToTrinityPipelineRole(agentRole)
   };
 }
 
@@ -284,6 +308,7 @@ function cloneFinalOutput(finalOutput: FinalOutput | undefined): FinalOutput | u
 
 function cloneDagRunSummary(summary: DagRunSummary): DagRunSummary {
   return {
+    ...createTrinityRuntimeMetadata(),
     ...summary,
     finalOutput: cloneFinalOutput(summary.finalOutput)
   };
@@ -422,6 +447,7 @@ function createApiSummary(record: StoredDagRunRecord): DagRunSummary {
   const failedNodes = Array.from(record.nodesById.values()).filter(node => node.status === 'failed').length;
 
   return {
+    ...createTrinityRuntimeMetadata(),
     runId: record.runId,
     sessionId: record.sessionId,
     template: record.template,
@@ -610,6 +636,41 @@ function createVerificationLineage(snapshot: PersistedDagRunSnapshot): DagVerifi
     observedWorkerIds,
     observedSourceEndpoints
   };
+}
+
+function createPublicNodeDetail(node: StoredNodeDetail): NodeDetail {
+  return {
+    ...cloneStoredNodeDetail(node),
+    ...createTrinityNodeMetadata(node.agentRole)
+  };
+}
+
+function enrichDagEventDataWithTrinityMetadata(
+  data: unknown,
+  nodesById: Map<string, StoredNodeDetail>
+): Record<string, unknown> {
+  //audit Assumption: every public event payload should remain object-shaped after Trinity enrichment; failure risk: primitive payloads would violate the public DagEvent contract and erase probe-visible markers; expected invariant: returned event data is always a record with pipeline metadata; handling strategy: wrap non-object payloads in a `value` field before adding Trinity metadata.
+  const normalizedData: Record<string, unknown> =
+    data && typeof data === 'object' && !Array.isArray(data)
+      ? {
+          ...(data as Record<string, unknown>),
+          ...createTrinityRuntimeMetadata()
+        }
+      : {
+          ...createTrinityRuntimeMetadata(),
+          value: data
+        };
+  const nodeId = typeof normalizedData.nodeId === 'string' ? normalizedData.nodeId : null;
+
+  //audit Assumption: node-scoped event payloads should expose an explicit Trinity role marker for probes and diagnostics; failure risk: runtime events prove orchestration but not the Trinity archetype; expected invariant: events with a known node id include a matching `role` marker; handling strategy: enrich object payloads opportunistically when the node exists in the current run snapshot.
+  if (nodeId) {
+    const node = nodesById.get(nodeId);
+    if (node) {
+      normalizedData.role = mapAgentRoleToTrinityPipelineRole(node.agentRole);
+    }
+  }
+
+  return normalizedData;
 }
 
 function createErrorInfo(message: string, details?: unknown, type?: string): ErrorInfo {
@@ -818,6 +879,7 @@ export class ArcanosDagRunService {
       createdAt,
       updatedAt: createdAt,
       summary: {
+        ...createTrinityRuntimeMetadata(),
         runId,
         sessionId: request.sessionId,
         template: request.template,
@@ -969,6 +1031,7 @@ export class ArcanosDagRunService {
     }
 
     const nodes: DagTreeNode[] = snapshot.nodes.map(node => ({
+      ...createTrinityNodeMetadata(node.agentRole),
       nodeId: node.nodeId,
       parentNodeId: node.parentNodeId,
       agentRole: node.agentRole,
@@ -983,6 +1046,7 @@ export class ArcanosDagRunService {
     }));
 
     return {
+      ...createTrinityRuntimeMetadata(),
       runId,
       nodes
     };
@@ -1007,7 +1071,8 @@ export class ArcanosDagRunService {
       return null;
     }
 
-    return snapshot.nodes.find(node => node.nodeId === nodeId) ?? null;
+    const node = snapshot.nodes.find(candidateNode => candidateNode.nodeId === nodeId);
+    return node ? createPublicNodeDetail(node) : null;
   }
 
   /**
@@ -1029,9 +1094,15 @@ export class ArcanosDagRunService {
       return null;
     }
 
+    const nodesById = new Map(snapshot.nodes.map(node => [node.nodeId, node] as const));
+
     return {
+      ...createTrinityRuntimeMetadata(),
       runId,
-      events: cloneSerializable(snapshot.events)
+      events: snapshot.events.map(event => ({
+        ...cloneSerializable(event),
+        data: enrichDagEventDataWithTrinityMetadata(event.data, nodesById)
+      }))
     };
   }
 
@@ -1133,6 +1204,7 @@ export class ArcanosDagRunService {
     }
 
     return {
+      ...createTrinityRuntimeMetadata(),
       runId,
       verification: cloneSerializable(snapshot.verification),
       lineage: createVerificationLineage(snapshot)
