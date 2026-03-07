@@ -1,19 +1,31 @@
 import express, { Request, Response } from 'express';
-import { createCentralizedCompletion } from "@services/openai.js";
-import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+import { runThroughBrain, type TrinityResult } from '@core/logic/trinity.js';
+import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   createValidationMiddleware,
   createRateLimitMiddleware,
   getRequestActorKey
-} from "@platform/runtime/security.js";
-import { asyncHandler } from "@shared/http/index.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import type { IdleStateService } from "@services/idleStateService.js";
-import type OpenAI from 'openai';
-import { sendAIStatusError } from "@transport/http/requestHandler.js";
+} from '@platform/runtime/security.js';
+import { asyncHandler } from '@shared/http/index.js';
+import type {
+  AIRequestDTO,
+  AIResponseDTO,
+  ErrorResponseDTO
+} from '@shared/types/dto.js';
+import type { IdleStateService } from '@services/idleStateService.js';
+import {
+  extractInput,
+  handleAIError,
+  validateAIRequest
+} from '@transport/http/requestHandler.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
 
 const router = express.Router();
+
+const ARCANOS_API_ENDPOINT_NAME = 'api-arcanos.ask';
+const TRINITY_PIPELINE_NAME = 'trinity' as const;
+const TRINITY_PIPELINE_VERSION = '1.0' as const;
 
 const arcanosAskRateLimit = createRateLimitMiddleware({
   bucketName: 'api-arcanos-ask',
@@ -24,8 +36,15 @@ const arcanosAskRateLimit = createRateLimitMiddleware({
 
 router.use('/', apiArcanosVerificationRouter);
 
-interface AskBody {
-  prompt: string;
+interface AskBody extends Partial<AIRequestDTO> {
+  prompt?: string;
+  message?: string;
+  userInput?: string;
+  content?: string;
+  text?: string;
+  query?: string;
+  sessionId?: string;
+  overrideAuditSafe?: string;
   options?: {
     temperature?: number;
     max_tokens?: number;
@@ -44,17 +63,85 @@ interface AskResponse {
     tokensUsed?: number;
     timestamp?: string;
     arcanosRouting?: boolean;
+    pipeline?: typeof TRINITY_PIPELINE_NAME;
+    trinityVersion?: typeof TRINITY_PIPELINE_VERSION;
+    endpoint?: string;
+    requestId?: string;
+    routingStages?: string[];
   };
+  module?: string;
+  activeModel?: string;
+  fallbackFlag?: boolean;
+  routingStages?: string[];
+  auditSafe?: TrinityResult['auditSafe'];
+  memoryContext?: TrinityResult['memoryContext'];
+  taskLineage?: TrinityResult['taskLineage'];
 }
 
-// Validation schema for ARCANOS requests
 const arcanosSchema = {
   prompt: {
-    required: true,
+    required: false,
     type: 'string' as const,
     minLength: 1,
     maxLength: 4000,
     sanitize: true
+  },
+  message: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 4000,
+    sanitize: true
+  },
+  userInput: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 4000,
+    sanitize: true
+  },
+  content: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 4000,
+    sanitize: true
+  },
+  text: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 4000,
+    sanitize: true
+  },
+  query: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 4000,
+    sanitize: true
+  },
+  sessionId: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 100,
+    sanitize: true
+  },
+  overrideAuditSafe: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 50,
+    sanitize: true
+  },
+  metadata: {
+    required: false,
+    type: 'object' as const
+  },
+  clientContext: {
+    required: false,
+    type: 'object' as const
   },
   options: {
     required: false,
@@ -63,220 +150,216 @@ const arcanosSchema = {
 };
 
 /**
- * Validates that content is a non-empty string.
- * Inputs: unknown content and a source label for diagnostics.
- * Outputs: the original content string if valid.
- * Edge cases: throws for non-string or empty content to prevent invalid AI calls.
+ * Build stable Trinity metadata for the compatibility response envelope.
+ *
+ * Purpose:
+ * - Make the legacy `/api/arcanos/ask` route explicitly identify the same Trinity pipeline used by the main `/ask` endpoint.
+ *
+ * Inputs/outputs:
+ * - Input: Trinity execution result.
+ * - Output: compatibility metadata block for the HTTP response.
+ *
+ * Edge case behavior:
+ * - Missing token usage resolves to `0` to preserve a numeric compatibility field.
  */
-function assertValidContent(input: unknown, source: string): string {
-  //audit Assumption: upstream validation can be bypassed; risk: empty or non-string content; invariant: non-empty string; handling: throw with context.
-  if (typeof input !== 'string' || input.trim().length === 0) {
-    throw new Error(
-      `ARCANOS_SCHEMA_VIOLATION: 'content' must be a non-empty string (source=${source})`
+function buildArcanosCompatibilityMetadata(result: TrinityResult): NonNullable<AskResponse['metadata']> {
+  return {
+    service: 'ARCANOS API',
+    version: '1.0.0',
+    model: result.activeModel,
+    tokensUsed: result.meta.tokens?.total_tokens ?? 0,
+    timestamp: new Date().toISOString(),
+    arcanosRouting: true,
+    pipeline: TRINITY_PIPELINE_NAME,
+    trinityVersion: TRINITY_PIPELINE_VERSION,
+    endpoint: ARCANOS_API_ENDPOINT_NAME,
+    requestId: result.taskLineage.requestId,
+    routingStages: result.routingStages
+  };
+}
+
+/**
+ * Convert a Trinity result into the legacy `/api/arcanos/ask` response envelope.
+ *
+ * Purpose:
+ * - Preserve the compatibility shape for existing clients while routing execution through Trinity.
+ *
+ * Inputs/outputs:
+ * - Input: Trinity execution result.
+ * - Output: compatibility response payload with explicit pipeline metadata.
+ *
+ * Edge case behavior:
+ * - Optional observability fields remain omitted when Trinity does not provide them.
+ */
+function buildArcanosCompatibilityResponse(result: TrinityResult): AskResponse {
+  return {
+    success: true,
+    result: result.result,
+    metadata: buildArcanosCompatibilityMetadata(result),
+    module: result.module,
+    activeModel: result.activeModel,
+    fallbackFlag: result.fallbackFlag,
+    routingStages: result.routingStages,
+    auditSafe: result.auditSafe,
+    memoryContext: result.memoryContext,
+    taskLineage: result.taskLineage
+  };
+}
+
+/**
+ * Serialize a Trinity compatibility result for SSE clients.
+ *
+ * Purpose:
+ * - Keep the streaming compatibility path alive even though Trinity returns one finalized payload.
+ *
+ * Inputs/outputs:
+ * - Input: compatibility response payload.
+ * - Output: string chunk content suitable for one SSE `data:` frame.
+ *
+ * Edge case behavior:
+ * - Non-string results are JSON encoded so structured outputs still reach streaming clients.
+ */
+function serializeCompatibilityResult(result: AskResponse['result']): string {
+  if (typeof result === 'string') {
+    return result;
+  }
+
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return String(result);
+  }
+}
+
+/**
+ * Stream one finalized Trinity compatibility response over SSE.
+ *
+ * Purpose:
+ * - Preserve the existing `options.stream` contract without falling back to the legacy non-Trinity completion path.
+ *
+ * Inputs/outputs:
+ * - Input: Express response plus compatibility payload.
+ * - Output: writes the terminal SSE frames and closes the connection.
+ *
+ * Edge case behavior:
+ * - Sends a single terminal chunk because Trinity currently resolves as one finalized response.
+ */
+function sendTrinityCompatibilityStream(
+  res: Response<AskResponse | ErrorResponseDTO>,
+  responsePayload: AskResponse
+): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  });
+
+  const content = serializeCompatibilityResult(responsePayload.result);
+
+  //audit Assumption: compatibility streaming clients still prefer SSE framing even when Trinity returns one finalized payload; failure risk: route-specific streaming clients break after the Trinity cleanup; expected invariant: the route emits one content frame and one done frame; handling strategy: serialize the final Trinity result into a terminal SSE sequence.
+  if (content.length > 0) {
+    res.write(`data: ${JSON.stringify({
+      success: true,
+      content,
+      type: 'chunk',
+      pipeline: TRINITY_PIPELINE_NAME
+    })}\n\n`);
+  }
+
+  res.write(`data: ${JSON.stringify({
+    success: true,
+    type: 'done',
+    metadata: responsePayload.metadata
+  })}\n\n`);
+  res.end();
+}
+
+/**
+ * Execute the legacy `/api/arcanos/ask` route through the Trinity pipeline.
+ *
+ * Purpose:
+ * - Remove the old centralized-completion split while preserving the compatibility response envelope for existing clients.
+ *
+ * Inputs/outputs:
+ * - Input: Express request carrying one prompt plus optional session and audit-safe overrides.
+ * - Output: JSON or SSE compatibility response derived from a Trinity result.
+ *
+ * Edge case behavior:
+ * - Ping requests bypass Trinity and return an immediate health response.
+ */
+const handleArcanosAsk = asyncHandler(async (
+  req: Request<{}, AskResponse | ErrorResponseDTO, AskBody>,
+  res: Response<AskResponse | ErrorResponseDTO>
+) => {
+  const pingCandidate = extractInput((req.body ?? {}) as AIRequestDTO)?.trim().toLowerCase();
+
+  //audit Assumption: `ping` remains a lightweight liveness check on this compatibility route; failure risk: needless Trinity traffic for health probes; expected invariant: ping requests bypass AI execution; handling strategy: short-circuit with a deterministic JSON response.
+  if (pingCandidate === 'ping') {
+    const idleStateService = req.app.locals.idleStateService as IdleStateService | undefined;
+    idleStateService?.noteUserPing({ route: '/api/arcanos/ask', source: ARCANOS_API_ENDPOINT_NAME });
+    return res.json({
+      success: true,
+      result: 'pong',
+      metadata: {
+        service: 'ARCANOS API',
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        arcanosRouting: true,
+        pipeline: TRINITY_PIPELINE_NAME,
+        trinityVersion: TRINITY_PIPELINE_VERSION,
+        endpoint: ARCANOS_API_ENDPOINT_NAME
+      }
+    });
+  }
+
+  let promptForError = pingCandidate ?? '';
+
+  try {
+    const validation = validateAIRequest(
+      req as unknown as Request<{}, AIResponseDTO | ErrorResponseDTO, AIRequestDTO>,
+      res as unknown as Response<AIResponseDTO | ErrorResponseDTO>,
+      ARCANOS_API_ENDPOINT_NAME
+    );
+
+    if (!validation) {
+      return;
+    }
+
+    const { client: openai, input: prompt } = validation;
+    promptForError = prompt;
+    const runtimeBudget = createRuntimeBudget();
+
+    //audit Assumption: legacy `/api/arcanos/ask` requests should now enter the same Trinity brain as the primary `/ask` route; failure risk: route-level pipeline drift persists even after the cleanup; expected invariant: every non-ping request on this route calls `runThroughBrain`; handling strategy: invoke Trinity directly and stamp the compatibility response with explicit pipeline metadata.
+    const trinityResult = await runThroughBrain(
+      openai,
+      prompt,
+      req.body.sessionId,
+      req.body.overrideAuditSafe,
+      {
+        sourceEndpoint: ARCANOS_API_ENDPOINT_NAME
+      },
+      runtimeBudget
+    );
+
+    const responsePayload = buildArcanosCompatibilityResponse(trinityResult);
+
+    if (req.body.options?.stream === true) {
+      sendTrinityCompatibilityStream(res, responsePayload);
+      return;
+    }
+
+    return res.json(responsePayload);
+  } catch (error: unknown) {
+    handleAIError(
+      error,
+      promptForError,
+      ARCANOS_API_ENDPOINT_NAME,
+      res as unknown as Response<AIResponseDTO | ErrorResponseDTO>
     );
   }
-  return input;
-}
-
-/**
- * Normalizes content for AI requests with a safe fallback.
- * Inputs: unknown content.
- * Outputs: trimmed content or a fallback marker string.
- * Edge cases: returns a sentinel string when input is empty or non-string.
- */
-function normalizeContent(input: unknown): string {
-  //audit Assumption: fallback is preferable to empty content; risk: degraded response quality; invariant: returns a string; handling: sentinel placeholder.
-  if (typeof input === 'string' && input.trim().length > 0) {
-    return input;
-  }
-  return '[ARCANOS:EMPTY_CONTENT_GUARD]';
-}
-
-/**
- * Builds the OpenAI chat messages array from a validated prompt.
- * Inputs: user prompt string.
- * Outputs: message array for OpenAI chat completion.
- * Edge cases: ensures content is always a string via normalization.
- */
-function buildArcanosMessages(prompt: string) {
-  //audit Assumption: system prompt is static; risk: prompt drift; invariant: message content is string; handling: normalize user content.
-  return [
-    {
-      role: 'system' as const,
-      content: 'You are ARCANOS, a logic-first operating intelligence.'
-    },
-    {
-      role: 'user' as const,
-      content: normalizeContent(prompt)
-    }
-  ];
-}
-
-/**
- * Creates the /ask handler with injected side-effect services.
- * Inputs: completion creator.
- * Outputs: Express handler for ARCANOS ask requests.
- * Edge cases: returns structured errors for invalid content or AI failures.
- */
-function createArcanosAskHandler(deps: {
-  createCompletion: typeof createCentralizedCompletion;
-}) {
-  const { createCompletion } = deps;
-  return asyncHandler(async (
-    req: Request<{}, AskResponse, AskBody>,
-    res: Response<AskResponse>
-  ) => {
-    try {
-      const { prompt: rawPrompt, options = {} } = req.body;
-      //audit Assumption: options defaults to empty object; risk: undefined options; invariant: options is object; handling: default value.
-
-      const prompt = assertValidContent(rawPrompt, 'REQUEST_BODY.prompt');
-
-      // Simple ping/pong healthcheck - bypass AI processing for ping
-      //audit Assumption: "ping" indicates user activity only; risk: false positives; invariant: ping refreshes idle timer; handling: record ping then respond.
-      if (prompt.toLowerCase().trim() === 'ping') {
-        const idleStateService = req.app.locals.idleStateService as IdleStateService | undefined;
-        idleStateService?.noteUserPing({ route: '/ask', source: 'api-arcanos' });
-        return res.json({
-          success: true,
-          result: 'pong',
-          metadata: {
-            service: 'ARCANOS API',
-            version: '1.0.0',
-            timestamp: new Date().toISOString()
-          }
-        });
-      }
-
-      const messages = buildArcanosMessages(prompt);
-
-      //audit Assumption: message content must be string; risk: schema violation; invariant: every content is string; handling: throw before AI call.
-      for (const message of messages) {
-        if (typeof message.content !== 'string') {
-          throw new Error('FATAL: message.content is not a string');
-        }
-      }
-
-      // Handle streaming response
-      //audit Assumption: stream option is boolean; risk: incorrect streaming path; invariant: stream true triggers SSE; handling: branch on options.stream.
-      if (options.stream) {
-        const response = await createCompletion(messages, {
-          temperature: typeof options.temperature === 'number' ? options.temperature : 0.7,
-          max_tokens: typeof options.max_tokens === 'number' ? Math.min(options.max_tokens, 4096) : 2048,
-          stream: true
-        });
-
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'Access-Control-Allow-Origin': '*'
-        });
-
-        // Stream ARCANOS results (response is already a stream when stream=true)
-        if (response && typeof response === 'object' && Symbol.asyncIterator in response) {
-          for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
-            const content = chunk.choices[0]?.delta?.content || '';
-            //audit Assumption: chunk delta may be empty; risk: noisy stream; invariant: only write non-empty content; handling: guard on content.
-            if (content) {
-              res.write(`data: ${JSON.stringify({ success: true, content, type: 'chunk' })}\n\n`);
-            }
-          }
-
-          res.write(`data: ${JSON.stringify({ success: true, type: 'done' })}\n\n`);
-          res.end();
-          return;
-        }
-      }
-
-      // Handle regular response
-      const response = await createCompletion(messages, {
-        temperature: options.temperature || 0.7,
-        max_tokens: options.max_tokens || 2048
-      });
-
-      //audit Assumption: non-stream responses are chat completions; risk: unexpected stream; invariant: chat completion structure; handling: throw.
-      if (!isChatCompletion(response)) {
-        throw new Error('Unexpected streaming response');
-      }
-      const result = response.choices[0]?.message?.content || '';
-
-      return res.json({
-        success: true,
-        result,
-        metadata: {
-          model: response.model,
-          tokensUsed: response.usage?.total_tokens || 0,
-          timestamp: new Date().toISOString(),
-          arcanosRouting: true
-        }
-      });
-    } catch (err: unknown) {
-      console.error('ARCANOS API error:', resolveErrorMessage(err));
-
-      const errorMessage = resolveErrorMessage(err, 'Unknown error occurred');
-
-      //audit Assumption: ENOTFOUND/ECONNREFUSED imply network failure; risk: misclassification; invariant: 503 on connectivity issue; handling: check message.
-      if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
-        return sendAIStatusError(
-          res,
-          503,
-          'Network connectivity issue - unable to reach AI services'
-        );
-      }
-
-      //audit Assumption: timeout strings imply upstream delay; risk: missed timeout types; invariant: 504 on timeout; handling: message check.
-      if (errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT')) {
-        return sendAIStatusError(
-          res,
-          504,
-          'Request timeout - AI service did not respond in time'
-        );
-      }
-
-      //audit Assumption: auth failures contain 401/unauthorized; risk: false positives; invariant: 503 with auth message; handling: message check.
-      if (errorMessage.includes('API key') || errorMessage.includes('unauthorized') || errorMessage.includes('401')) {
-        return sendAIStatusError(
-          res,
-          503,
-          'AI service configuration issue - authentication failed'
-        );
-      }
-
-      //audit Assumption: unknown errors should surface; risk: leaking details; invariant: 500 with error message; handling: fallback.
-      return sendAIStatusError(res, 500, 'An internal server error occurred');
-    }
-  });
-}
-
-/**
- * Minimal ARCANOS ask endpoint used by external services.
- * Uses centralized completion to ensure all requests pass through fine-tuned model.
- * Returns a success flag and the raw result from the centralized AI handler.
- * Includes simple ping/pong healthcheck functionality.
- */
-const handleArcanosAsk = createArcanosAskHandler({
-  createCompletion: createCentralizedCompletion
 });
 
 router.post('/ask', arcanosAskRateLimit, confirmGate, createValidationMiddleware(arcanosSchema), handleArcanosAsk);
 
-// Test plan:
-// - Happy path: valid prompt returns success and metadata.
-// - Edge case: prompt is "ping" returns pong without AI call.
-// - Failure modes: empty prompt triggers schema violation; upstream timeout returns 504.
-
 export default router;
-
-/**
- * Type guard for non-stream chat completions.
- * Inputs: completion response.
- * Outputs: boolean indicating chat completion shape.
- * Edge cases: returns false for streaming responses.
- */
-function isChatCompletion(
-  response: Awaited<ReturnType<typeof createCentralizedCompletion>>
-): response is OpenAI.Chat.Completions.ChatCompletion {
-  //audit Assumption: chat completion has choices property; risk: false positives; invariant: choices exists on chat completion; handling: property guard.
-  return !!response && typeof response === 'object' && 'choices' in response;
-}

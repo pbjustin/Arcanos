@@ -1,0 +1,202 @@
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const express = (await import('express')).default;
+const request = (await import('supertest')).default;
+
+const mockRunThroughBrain = jest.fn();
+const mockExtractInput = jest.fn();
+const mockValidateAIRequest = jest.fn();
+const mockHandleAIError = jest.fn();
+const mockCreateRuntimeBudget = jest.fn();
+
+const verificationRouter = express.Router();
+
+jest.unstable_mockModule('@core/logic/trinity.js', () => ({
+  runThroughBrain: mockRunThroughBrain
+}));
+
+jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
+  confirmGate: (_req: unknown, _res: unknown, next: () => void) => next()
+}));
+
+jest.unstable_mockModule('@platform/runtime/security.js', () => ({
+  createValidationMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  createRateLimitMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  getRequestActorKey: () => 'route-test-actor'
+}));
+
+jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
+  extractInput: mockExtractInput,
+  validateAIRequest: mockValidateAIRequest,
+  handleAIError: mockHandleAIError
+}));
+
+jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
+  createRuntimeBudget: mockCreateRuntimeBudget
+}));
+
+jest.unstable_mockModule('../src/routes/api-arcanos-verification.js', () => ({
+  default: verificationRouter
+}));
+
+const router = (await import('../src/routes/api-arcanos.js')).default;
+
+function buildApp() {
+  const app = express();
+  app.use(express.json());
+  app.use(router);
+  return app;
+}
+
+function buildTrinityResult(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    result: 'Trinity output',
+    module: 'trinity',
+    meta: {
+      tokens: {
+        prompt_tokens: 10,
+        completion_tokens: 20,
+        total_tokens: 30
+      },
+      id: 'trinity-meta-1',
+      created: 1772917000000
+    },
+    activeModel: 'gpt-5.1',
+    fallbackFlag: false,
+    routingStages: ['intake', 'reasoning', 'final'],
+    gpt5Used: true,
+    dryRun: false,
+    fallbackSummary: {
+      intakeFallbackUsed: false,
+      gpt5FallbackUsed: false,
+      finalFallbackUsed: false,
+      fallbackReasons: []
+    },
+    auditSafe: {
+      mode: true,
+      overrideUsed: false,
+      auditFlags: [],
+      processedSafely: true
+    },
+    memoryContext: {
+      entriesAccessed: 2,
+      contextSummary: 'Memory context summary',
+      memoryEnhanced: true,
+      maxRelevanceScore: 0.9,
+      averageRelevanceScore: 0.75
+    },
+    taskLineage: {
+      requestId: 'trinity-request-1',
+      logged: true
+    },
+    ...overrides
+  };
+}
+
+describe('api-arcanos route', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockExtractInput.mockImplementation((body: Record<string, unknown>) =>
+      typeof body.prompt === 'string' ? body.prompt : null
+    );
+    mockCreateRuntimeBudget.mockReturnValue({ budgetId: 'runtime-budget-1' });
+  });
+
+  it('routes non-ping requests through Trinity and returns explicit pipeline metadata', async () => {
+    const openaiClient = { clientId: 'openai-client-1' };
+    mockValidateAIRequest.mockReturnValue({
+      client: openaiClient,
+      input: 'Explain the deployment state.',
+      body: {
+        prompt: 'Explain the deployment state.'
+      }
+    });
+    mockRunThroughBrain.mockResolvedValue(
+      buildTrinityResult({
+        result: 'Deployment state explained.'
+      })
+    );
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Explain the deployment state.',
+        sessionId: 'session-route-1',
+        overrideAuditSafe: 'operator-approved'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.result).toBe('Deployment state explained.');
+    expect(response.body.metadata.pipeline).toBe('trinity');
+    expect(response.body.metadata.trinityVersion).toBe('1.0');
+    expect(response.body.metadata.endpoint).toBe('api-arcanos.ask');
+    expect(response.body.metadata.requestId).toBe('trinity-request-1');
+    expect(response.body.metadata.tokensUsed).toBe(30);
+    expect(mockRunThroughBrain).toHaveBeenCalledWith(
+      openaiClient,
+      'Explain the deployment state.',
+      'session-route-1',
+      'operator-approved',
+      expect.objectContaining({
+        sourceEndpoint: 'api-arcanos.ask'
+      }),
+      { budgetId: 'runtime-budget-1' }
+    );
+  });
+
+  it('keeps ping requests lightweight and skips Trinity execution', async () => {
+    const app = buildApp();
+    const noteUserPing = jest.fn();
+    app.locals.idleStateService = {
+      noteUserPing
+    };
+
+    const response = await request(app)
+      .post('/ask')
+      .send({
+        prompt: 'ping'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.result).toBe('pong');
+    expect(response.body.metadata.pipeline).toBe('trinity');
+    expect(noteUserPing).toHaveBeenCalledWith({
+      route: '/api/arcanos/ask',
+      source: 'api-arcanos.ask'
+    });
+    expect(mockValidateAIRequest).not.toHaveBeenCalled();
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
+  it('preserves the stream option with terminal SSE frames from Trinity output', async () => {
+    mockValidateAIRequest.mockReturnValue({
+      client: { clientId: 'openai-client-2' },
+      input: 'Stream the final result.',
+      body: {
+        prompt: 'Stream the final result.'
+      }
+    });
+    mockRunThroughBrain.mockResolvedValue(
+      buildTrinityResult({
+        result: 'Final streamed answer.'
+      })
+    );
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Stream the final result.',
+        options: {
+          stream: true
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.text).toContain('"type":"chunk"');
+    expect(response.text).toContain('"pipeline":"trinity"');
+    expect(response.text).toContain('"type":"done"');
+  });
+});
