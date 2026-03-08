@@ -6,6 +6,7 @@ import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { getEnv } from "@platform/runtime/env.js";
 import {
   buildExactNaturalLanguageMemorySelectorLabel,
+  extractNaturalLanguageMemoryPointerKey,
   extractNaturalLanguageExactMemorySelector,
   extractNaturalLanguageSessionId,
   queryExactNaturalLanguageMemoryEntries,
@@ -195,7 +196,7 @@ function findCachedSessionById(sessions: CachedSession[], sessionId: string): Ca
 
 async function resolvePersistedSession(sessionId: string): Promise<ResolveResult | null> {
   const latestPointerPayload = await safeLoadMemory(`nl-latest:${sessionId}`);
-  const latestKey = extractPersistedMemoryKey(latestPointerPayload);
+  const latestKey = extractNaturalLanguageMemoryPointerKey(latestPointerPayload);
 
   if (latestKey) {
     const latestPayload = await safeLoadMemory(latestKey);
@@ -238,23 +239,6 @@ async function safeLoadMemory(key: string): Promise<unknown | null> {
     //audit Assumption: persisted memory is optional during degraded DB conditions; failure risk: exact session resolution throws instead of degrading; expected invariant: resolver can continue to other fallbacks; handling strategy: swallow storage exceptions at this boundary and return null.
     return null;
   }
-}
-
-function extractPersistedMemoryKey(pointerPayload: unknown): string | null {
-  if (typeof pointerPayload === 'string' && pointerPayload.trim()) {
-    return pointerPayload.trim();
-  }
-
-  if (
-    pointerPayload &&
-    typeof pointerPayload === 'object' &&
-    'key' in pointerPayload &&
-    typeof (pointerPayload as { key?: unknown }).key === 'string'
-  ) {
-    return ((pointerPayload as { key: string }).key).trim();
-  }
-
-  return null;
 }
 
 function toPersistedConversationCore(payload: unknown, memoryKey: string): ConversationCore {

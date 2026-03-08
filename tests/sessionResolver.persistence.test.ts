@@ -11,6 +11,7 @@ const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const mockBuildExactNaturalLanguageMemorySelectorLabel = jest.fn();
+const mockExtractNaturalLanguageMemoryPointerKey = jest.fn();
 const mockExtractNaturalLanguageExactMemorySelector = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
 const mockQueryExactNaturalLanguageMemoryEntries = jest.fn();
@@ -43,6 +44,7 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 
 jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   buildExactNaturalLanguageMemorySelectorLabel: mockBuildExactNaturalLanguageMemorySelectorLabel,
+  extractNaturalLanguageMemoryPointerKey: mockExtractNaturalLanguageMemoryPointerKey,
   extractNaturalLanguageExactMemorySelector: mockExtractNaturalLanguageExactMemorySelector,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
   queryExactNaturalLanguageMemoryEntries: mockQueryExactNaturalLanguageMemoryEntries,
@@ -67,6 +69,15 @@ describe('sessionResolver persisted recall', () => {
     mockBuildExactNaturalLanguageMemorySelectorLabel.mockImplementation((selector: { recordId?: number; tag?: string }) =>
       selector.recordId ? `record-${selector.recordId}` : 'global'
     );
+    mockExtractNaturalLanguageMemoryPointerKey.mockImplementation((payload: unknown) => {
+      if (typeof payload === 'string' && payload.trim()) {
+        return payload.trim();
+      }
+      if (payload && typeof payload === 'object' && typeof (payload as { key?: unknown }).key === 'string') {
+        return ((payload as { key: string }).key).trim();
+      }
+      return null;
+    });
     mockExtractNaturalLanguageExactMemorySelector.mockReturnValue(null);
     mockResolveNaturalLanguageSessionAlias.mockResolvedValue(null);
     mockQueryExactNaturalLanguageMemoryEntries.mockResolvedValue([]);

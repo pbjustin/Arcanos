@@ -383,8 +383,6 @@ export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
     isMemoryInspectionPrompt(normalizedInput) ||
     /\b(last|latest)\b/.test(normalizedInput) && /\b(memory|saved|summary|story|roster|note)\b/.test(normalizedInput) ||
     /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedInput) ||
-    /\brecord\s*id\s*:/.test(normalizedInput) ||
-    /\btag\s*:/.test(normalizedInput) ||
     /\bsession\s*id\s*:/.test(normalizedInput) ||
     /\bstorage\s*label\s*:/.test(normalizedInput)
   );
@@ -489,7 +487,7 @@ export async function executeNaturalLanguageMemoryCommand(
   if (parsedCommand.intent === 'retrieve') {
     if (parsedCommand.latest) {
       const latestPointer = await loadMemory(buildLatestPointerKey(sessionId));
-      const latestKey = extractLatestKey(latestPointer);
+      const latestKey = extractNaturalLanguageMemoryPointerKey(latestPointer);
 
       //audit Assumption: latest pointer may not exist for new sessions; failure risk: null dereference; expected invariant: safe empty response for first-use sessions; handling strategy: early return with guidance.
       if (!latestKey) {
@@ -852,7 +850,7 @@ async function findReusableLatestSessionSave(
   normalizedContent: string
 ): Promise<ReusableLatestSessionSave | null> {
   const latestPointer = await loadMemory(buildLatestPointerKey(sessionId));
-  const latestKey = extractLatestKey(latestPointer);
+  const latestKey = extractNaturalLanguageMemoryPointerKey(latestPointer);
   if (!latestKey) {
     return null;
   }
@@ -935,11 +933,11 @@ async function updateSessionIndexes(sessionId: string, key: string): Promise<voi
 }
 
 /**
- * Extract latest key from pointer payloads.
- * Inputs/outputs: unknown pointer payload -> key or null.
- * Edge cases: legacy pointer shape as raw string is accepted.
+ * Extract a persisted memory key from latest-pointer payloads.
+ * Inputs/outputs: unknown pointer payload -> persisted memory key or null.
+ * Edge cases: legacy raw-string pointers remain supported for older rows.
  */
-function extractLatestKey(pointerPayload: unknown): string | null {
+export function extractNaturalLanguageMemoryPointerKey(pointerPayload: unknown): string | null {
   //audit Assumption: newest pointer format is object with `key`; failure risk: unable to resolve latest row after migrations; expected invariant: best-effort key extraction; handling strategy: support object and legacy string.
   if (typeof pointerPayload === 'string' && pointerPayload) {
     return pointerPayload;
