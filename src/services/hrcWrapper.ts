@@ -1,6 +1,10 @@
 import { hrcCore, type HRCResult } from './hrc.js';
 import { queryCache } from "@platform/resilience/cache.js";
 import { createSHA256Hash } from "@shared/hashUtils.js";
+import {
+  buildMemoryInspectionGuardMessage,
+  parseMemoryInspectionRequest
+} from './memoryInspectionGuard.js';
 
 const HRC_FALLBACK: HRCResult = { fidelity: 0, resilience: 0, verdict: 'HRC unavailable' };
 
@@ -38,4 +42,29 @@ export async function withHRC<T extends Record<string, unknown>>(
   const text = textExtractor(result);
   const hrc = await evaluateWithHRC(text);
   return { ...result, hrc };
+}
+
+/**
+ * Guard backend-memory inspection prompts so unsupported state never falls back to tutor prose.
+ * Inputs/outputs: original prompt plus optional session id -> grounded replacement text or null.
+ * Edge cases: non-inspection prompts return null so callers preserve normal text output.
+ */
+export function buildHrcMemoryInspectionGuard(params: {
+  prompt: string;
+  sessionId?: string | null;
+}): { text: string; reason: string } | null {
+  const inspectionRequest = parseMemoryInspectionRequest(params.prompt);
+
+  //audit Assumption: only explicit raw-memory inspection prompts should trigger the HRC grounding guard; failure risk: educational prompts are replaced by operational refusal text; expected invariant: the guard activates only for backend inspection requests; handling strategy: short-circuit null when no inspection request is parsed.
+  if (!inspectionRequest) {
+    return null;
+  }
+
+  return {
+    text: buildMemoryInspectionGuardMessage({
+      sessionId: params.sessionId,
+      unsupportedArtifacts: inspectionRequest.unsupportedArtifacts
+    }),
+    reason: 'unsupported_memory_inspection_prompt'
+  };
 }

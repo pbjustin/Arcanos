@@ -103,4 +103,30 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
 
     expect(rendered).toBe('Match one\n\n{\n  "note": "fallback object"\n}');
   });
+
+  it('renders inspection responses as structured exact rows instead of prose summaries', () => {
+    const rendered = renderNaturalLanguageMemoryRouteResult({
+      intent: 'inspect',
+      operation: 'inspected',
+      sessionId: 'raw_20260308_van',
+      message: 'Retrieved 1 exact memory row for session raw_20260308_van.',
+      entries: [
+        {
+          key: 'nl-memory:raw_20260308_van:entry-20260308152210',
+          value: { text: 'Persisted Summary (Stored)' },
+          metadata: null,
+          created_at: '2026-03-08T15:22:10.000Z',
+          updated_at: '2026-03-08T18:45:02.000Z'
+        }
+      ],
+      inspection: {
+        requestedArtifacts: ['raw_memory_rows'],
+        unsupportedArtifacts: []
+      }
+    });
+
+    expect(rendered).toContain('"operation": "inspected"');
+    expect(rendered).toContain('"requestedArtifacts": [');
+    expect(rendered).toContain('"nl-memory:raw_20260308_van:entry-20260308152210"');
+  });
 });

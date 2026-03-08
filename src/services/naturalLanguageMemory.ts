@@ -7,6 +7,12 @@ import {
   type RagQueryDiagnostics,
   type RagQueryMatch
 } from "@services/webRag.js";
+import {
+  buildUnsupportedMemoryInspectionNote,
+  isMemoryInspectionPrompt,
+  parseMemoryInspectionRequest,
+  type MemoryInspectionArtifact
+} from "@services/memoryInspectionGuard.js";
 
 const DEFAULT_SESSION_ID = 'global';
 const SESSION_KEY_PREFIX = 'nl-memory';
@@ -21,7 +27,7 @@ const MEMORY_RAG_MIN_SCORE = 0.12;
 const RAG_SOURCE_TYPES = ['memory', 'conversation'];
 const memoryLogger = logger.child({ module: 'naturalLanguageMemory' });
 
-export type NaturalLanguageMemoryIntent = 'save' | 'retrieve' | 'lookup' | 'list' | 'unknown';
+export type NaturalLanguageMemoryIntent = 'save' | 'retrieve' | 'lookup' | 'list' | 'inspect' | 'unknown';
 export type NaturalLanguageMemoryRagMode = 'supplemental' | 'fallback' | 'disabled';
 
 export interface NaturalLanguageMemoryRequest {
@@ -40,13 +46,17 @@ export interface NaturalLanguageMemoryEntry {
 
 export interface NaturalLanguageMemoryResponse {
   intent: NaturalLanguageMemoryIntent;
-  operation: 'saved' | 'retrieved' | 'searched' | 'listed' | 'ignored';
+  operation: 'saved' | 'retrieved' | 'searched' | 'listed' | 'inspected' | 'ignored';
   sessionId: string;
   message: string;
   key?: string;
   value?: unknown;
   entries?: NaturalLanguageMemoryEntry[];
   rag?: NaturalLanguageMemoryRagResult;
+  inspection?: {
+    requestedArtifacts: MemoryInspectionArtifact[];
+    unsupportedArtifacts: MemoryInspectionArtifact[];
+  };
 }
 
 interface ParsedMemoryCommand {
@@ -160,14 +170,17 @@ export function extractNaturalLanguageSessionId(rawInput: string): string | null
   const explicitPatterns = [
     /\bsession\s*id\s*[:=]\s*["'`]?([a-zA-Z0-9_-]{2,64})["'`]?/i,
     /\bfor\s+session\s+["'`]?([a-zA-Z0-9_-]{2,64})["'`]?/i,
-    /^(?:please\s+)?recall\b[:\s-]*["'`]?([a-zA-Z0-9_-]{2,64})["'`]?$/i
+    /^(?:please\s+)?recall\b[:\s-]*["'`]?([a-zA-Z0-9_-]{2,64})["'`]?$/i,
+    /\b(?:for|of)\s+["'`]?([a-zA-Z0-9_-]{2,64})["'`]?$/i
   ];
 
   for (const pattern of explicitPatterns) {
     const match = trimmedInput.match(pattern);
     const normalizedMatch = normalizeSessionIdCandidate(match?.[1]);
+    const requiresStructuredToken = pattern.source.includes('(?:for|of)');
+    const structuredToken = isStructuredSessionIdentifier(match?.[1]);
     //audit Assumption: explicit session-id syntax should outrank global fallback; failure risk: unrelated sessions bleed together under global memory; expected invariant: recognized session labels resolve deterministically; handling strategy: return the first valid normalized match.
-    if (normalizedMatch) {
+    if (normalizedMatch && (!requiresStructuredToken || structuredToken)) {
       return normalizedMatch;
     }
   }
@@ -227,6 +240,12 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
   }
 
   //audit Assumption: list verbs should return scoped session rows; failure risk: command confusion with lookup; expected invariant: explicit list/show all memories wording; handling strategy: keyword gating.
+  const inspectionRequest = parseMemoryInspectionRequest(trimmedInput);
+  //audit Assumption: raw-memory inspection cues should not fall through to generic lookup/model reasoning; failure risk: unsupported backend-state prompts are rephrased into hallucinated tables or audit scaffolds; expected invariant: inspection prompts resolve into deterministic DB-backed inspection mode; handling strategy: promote explicit inspection cues before generic lookup parsing.
+  if (inspectionRequest) {
+    return { intent: 'inspect' };
+  }
+
   if (/\b(list|show)\b/.test(loweredInput) && /\b(memories|memory|saved)\b/.test(loweredInput)) {
     return { intent: 'list' };
   }
@@ -277,6 +296,7 @@ export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
     /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:save|store|remember)\b/.test(normalizedInput) ||
     /^(?:please\s+)?(?:lookup|look\s*up|find)\b/.test(normalizedInput) ||
     /^(?:please\s+)?recall\b/.test(normalizedInput) ||
+    isMemoryInspectionPrompt(normalizedInput) ||
     /\b(last|latest)\b/.test(normalizedInput) && /\b(memory|saved|summary|story|roster|note)\b/.test(normalizedInput) ||
     /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedInput) ||
     /\bsession\s*id\s*:/.test(normalizedInput) ||
@@ -499,6 +519,31 @@ export async function executeNaturalLanguageMemoryCommand(
     };
   }
 
+  if (parsedCommand.intent === 'inspect') {
+    const rows = await querySessionEntries(sessionId, lookupLimit);
+    const inspectionRequest = parseMemoryInspectionRequest(request.input) ?? {
+      requestedArtifacts: ['raw_memory_rows'] as MemoryInspectionArtifact[],
+      unsupportedArtifacts: [] as MemoryInspectionArtifact[]
+    };
+    const unsupportedNote = buildUnsupportedMemoryInspectionNote(inspectionRequest.unsupportedArtifacts);
+    const rowMessage = rows.length > 0
+      ? `Retrieved ${rows.length} exact memory row${rows.length === 1 ? '' : 's'} for session ${sessionId}.`
+      : `No exact memory rows were found for session ${sessionId}.`;
+
+    return {
+      intent: 'inspect',
+      operation: 'inspected',
+      sessionId,
+      entries: rows,
+      message: unsupportedNote ? `${rowMessage} ${unsupportedNote}` : rowMessage,
+      rag: disabledRagResult('inspection_exact_only'),
+      inspection: {
+        requestedArtifacts: inspectionRequest.requestedArtifacts,
+        unsupportedArtifacts: inspectionRequest.unsupportedArtifacts
+      }
+    };
+  }
+
   const queryText = normalizeLookupQueryText(parsedCommand.queryText as string);
   if (!queryText) {
     return {
@@ -516,7 +561,8 @@ export async function executeNaturalLanguageMemoryCommand(
     resolveRagFallbackEntries({
       queryText,
       sessionId,
-      limit: lookupLimit
+      limit: lookupLimit,
+      allowSessionFallback: !requestIncludesExplicitSessionTarget
     })
   ]);
   const mergedRows = mergeMemoryEntries(searchRows, ragFallback.entries, lookupLimit);
@@ -915,6 +961,7 @@ async function resolveRagFallbackEntries(options: {
   queryText: string;
   sessionId: string;
   limit: number;
+  allowSessionFallback?: boolean;
 }): Promise<RagFallbackResolution> {
   const normalizedQuery = normalizeLookupQueryText(options.queryText);
   if (!normalizedQuery) {
@@ -929,7 +976,8 @@ async function resolveRagFallbackEntries(options: {
       limit: options.limit,
       minScore: MEMORY_RAG_MIN_SCORE,
       sessionId: options.sessionId,
-      sourceTypes: RAG_SOURCE_TYPES
+      sourceTypes: RAG_SOURCE_TYPES,
+      allowSessionFallback: options.allowSessionFallback
     });
 
     const entries = normalizeRagMatchesToEntries(ragResult.matches);
@@ -1064,6 +1112,25 @@ function normalizeNaturalLanguageStorageLabel(rawLabel: unknown): string | null 
 
   const normalizedLabel = normalizeNaturalLanguageSessionId(trimmedLabel);
   return normalizedLabel === DEFAULT_SESSION_ID ? null : normalizedLabel;
+}
+
+/**
+ * Decide whether a token looks like a machine-style session identifier instead of normal prose.
+ * Inputs/outputs: raw token -> boolean.
+ * Edge cases: plain words return false; identifiers with digits, underscores, or hyphens return true.
+ */
+function isStructuredSessionIdentifier(rawToken: unknown): boolean {
+  if (typeof rawToken !== 'string') {
+    return false;
+  }
+
+  const trimmedToken = rawToken.trim();
+  if (!trimmedToken) {
+    return false;
+  }
+
+  //audit Assumption: fallback `for/of <token>` extraction must not capture ordinary prose nouns; failure risk: prompts like "save this for monday" accidentally become new session ids; expected invariant: only machine-like identifiers are accepted; handling strategy: require visible structural markers such as digits, underscores, or hyphens.
+  return /[_-]/.test(trimmedToken) || /\d/.test(trimmedToken);
 }
 
 /**

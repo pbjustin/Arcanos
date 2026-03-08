@@ -28,6 +28,7 @@ export interface RagQueryOptions {
   minScore?: number;
   sessionId?: string | null;
   sourceTypes?: string[];
+  allowSessionFallback?: boolean;
 }
 
 export interface RagQueryMatch {
@@ -326,6 +327,7 @@ export async function queryRagDocuments(question: string, options: RagQueryOptio
   const minScore = resolveMinSimilarity(options.minScore);
   const normalizedSessionId = normalizeSessionFilter(options.sessionId);
   const sourceTypeFilters = normalizeSourceTypeFilters(options.sourceTypes);
+  const allowSessionFallback = options.allowSessionFallback !== false;
   const sourceTypeFilterApplied = sourceTypeFilters.length > 0;
 
   //audit Assumption: empty semantic queries are non-actionable; failure risk: unnecessary embedding calls; expected invariant: retrieval requires non-empty query text; handling strategy: return empty diagnostics quickly.
@@ -353,7 +355,7 @@ export async function queryRagDocuments(question: string, options: RagQueryOptio
   let sessionFallbackApplied = false;
 
   //audit Assumption: strict session filtering may be too narrow for some persisted data; failure risk: false "no memory found" responses; expected invariant: retrieval remains useful even with sparse session tags; handling strategy: fallback to source-filtered corpus when session slice is empty.
-  if (normalizedSessionId && candidateDocs.length === 0) {
+  if (allowSessionFallback && normalizedSessionId && candidateDocs.length === 0) {
     candidateDocs = sourceTypeScopedDocs;
     sessionFallbackApplied = true;
   }
@@ -722,6 +724,16 @@ export async function answerQuestion(question: string): Promise<{ answer: string
     verification = 'verification_unavailable';
   }
 
+  //audit Assumption: free-form model synthesis must not be returned when verification cannot affirm support from retrieved context; failure risk: RAG route emits plausible but unsupported claims; expected invariant: unsupported answers degrade to a grounded insufficiency message; handling strategy: replace answer unless verification clearly affirms support.
+  if (!hasAffirmativeVerification(verification)) {
+    return {
+      answer: 'The retrieved context is insufficient to answer that reliably.',
+      sources: topDocs.map((doc) => doc.url),
+      verification: `unsupported: ${verification || retrieval.diagnostics.reason}`,
+      sourceDetails: topDocs.map((doc) => ({ id: doc.id, url: doc.url, metadata: doc.metadata }))
+    };
+  }
+
   return {
     answer,
     sources: topDocs.map((doc) => doc.url),
@@ -730,3 +742,16 @@ export async function answerQuestion(question: string): Promise<{ answer: string
   };
 }
 
+/**
+ * Decide whether the verification pass explicitly affirmed grounding.
+ * Inputs/outputs: raw verification text -> true when it clearly starts with a positive support verdict.
+ * Edge cases: blank or ambiguous verifier text is treated as unsupported to fail closed.
+ */
+function hasAffirmativeVerification(rawVerification: string): boolean {
+  const normalized = rawVerification.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /^(?:yes|supported|grounded)\b/.test(normalized);
+}

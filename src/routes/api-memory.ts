@@ -439,7 +439,8 @@ router.get("/search", asyncHandler(async (req: Request, res: Response) => {
         limit,
         minScore: DEFAULT_SEARCH_MIN_SCORE,
         sessionId,
-        sourceTypes: SEARCH_SOURCE_TYPES
+        sourceTypes: SEARCH_SOURCE_TYPES,
+        allowSessionFallback: !sessionId
       })
     ]);
 

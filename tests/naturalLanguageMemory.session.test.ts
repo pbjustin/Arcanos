@@ -77,6 +77,12 @@ Main Event: Gunther def. AJ Styles clean`;
     });
   });
 
+  it('parses raw memory inspection prompts as deterministic inspection commands', () => {
+    expect(parseNaturalLanguageMemoryCommand('Show the full raw memory table for RAW_20260308_VAN')).toEqual({
+      intent: 'inspect'
+    });
+  });
+
   it('uses the inline session id when loading the latest saved memory', async () => {
     mockLoadMemory
       .mockResolvedValueOnce(null)
@@ -215,5 +221,52 @@ Main Event: Gunther def. AJ Styles clean`;
         storageLabel: 'RAW_Vancouver_Session'
       })
     );
+  });
+
+  it('returns exact raw memory rows for inspection prompts without semantic fallback', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          key: 'nl-memory:raw_20260308_van:entry-20260308152210',
+          value: {
+            sessionId: 'raw_20260308_van',
+            text: 'Persisted Summary (Stored)\nMain Event: Gunther def. AJ Styles clean'
+          },
+          created_at: '2026-03-08T15:22:10.000Z',
+          updated_at: '2026-03-08T18:45:02.000Z'
+        }
+      ],
+      rowCount: 1
+    });
+
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: 'Show the full raw memory table, audit log entries, and snapshot history for RAW_20260308_VAN'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'inspect',
+        operation: 'inspected',
+        sessionId: 'raw_20260308_van',
+        entries: [
+          expect.objectContaining({
+            key: 'nl-memory:raw_20260308_van:entry-20260308152210',
+            value: expect.objectContaining({
+              text: 'Persisted Summary (Stored)\nMain Event: Gunther def. AJ Styles clean'
+            })
+          })
+        ],
+        message: expect.stringContaining('audit log entries, snapshot history are not exposed by this route'),
+        rag: expect.objectContaining({
+          active: false,
+          reason: 'inspection_exact_only'
+        }),
+        inspection: {
+          requestedArtifacts: ['raw_memory_rows', 'audit_log_entries', 'snapshot_history'],
+          unsupportedArtifacts: ['audit_log_entries', 'snapshot_history']
+        }
+      })
+    );
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
   });
 });

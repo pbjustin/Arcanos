@@ -145,6 +145,7 @@ describe('/api/memory/nl', () => {
 
   it('retrieves the latest saved session memory when asked in natural language', async () => {
     mockLoadMemory
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ key: 'nl-memory:booker-thread-1:entry-20260306020202' })
       .mockResolvedValueOnce({
         sessionId: 'booker-thread-1',
@@ -163,8 +164,9 @@ describe('/api/memory/nl', () => {
     expect(response.body.data.value).toEqual(
       expect.objectContaining({ text: 'Latest stored recap' })
     );
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:booker-thread-1');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:booker-thread-1:entry-20260306020202');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:booker-thread-1');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:booker-thread-1');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:booker-thread-1:entry-20260306020202');
   });
 
   it('supports conversational save phrasing with optional helper words', async () => {
@@ -243,40 +245,14 @@ describe('/api/memory/nl', () => {
       'raw recap title match',
       expect.objectContaining({
         sessionId: 'booker-thread-1',
-        sourceTypes: ['memory', 'conversation']
+        sourceTypes: ['memory', 'conversation'],
+        allowSessionFallback: false
       })
     );
   });
 
-  it('uses semantic fallback for key retrieval when exact key is missing', async () => {
+  it('returns an exact miss when key retrieval cannot find the requested row', async () => {
     mockLoadMemory.mockResolvedValueOnce(null);
-    mockQueryRagDocuments.mockResolvedValue({
-      matches: [
-        {
-          id: 'memory:nl-memory:booker-thread-1:fallback-20260306040000',
-          url: 'memory:booker-thread-1',
-          content: 'Fallback key recall result',
-          score: 0.671,
-          metadata: {
-            memoryKey: 'nl-memory:booker-thread-1:fallback-20260306040000',
-            sessionId: 'booker-thread-1',
-            sourceType: 'memory',
-            savedAt: '2026-03-06T04:00:00.000Z'
-          }
-        }
-      ],
-      diagnostics: {
-        enabled: true,
-        reason: 'ok',
-        candidateCount: 2,
-        returnedCount: 1,
-        sessionFilterApplied: true,
-        sessionFallbackApplied: false,
-        sourceTypeFilterApplied: true,
-        minScore: 0.12,
-        limit: 10
-      }
-    });
 
     const response = await request(app).post('/api/memory/nl').send({
       input: 'load memory key missing-booker-key',
@@ -286,12 +262,9 @@ describe('/api/memory/nl', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.intent).toBe('retrieve');
     expect(response.body.data.operation).toBe('retrieved');
-    expect(response.body.data.message).toContain('closest semantic memory match');
-    expect(response.body.data.key).toBe('nl-memory:booker-thread-1:fallback-20260306040000');
-    expect(response.body.data.value).toEqual(
-      expect.objectContaining({
-        text: 'Fallback key recall result'
-      })
-    );
+    expect(response.body.data.message).toBe('No memory found for that key.');
+    expect(response.body.data.key).toBe('missing-booker-key');
+    expect(response.body.data.value).toBeNull();
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
   });
 });

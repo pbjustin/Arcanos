@@ -178,6 +178,39 @@ describe('webRag chunking and incremental ingestion', () => {
     );
   });
 
+  it('does not fall back across sessions when session fallback is disabled', async () => {
+    createEmbeddingMock
+      .mockResolvedValueOnce([1, 0, 0])
+      .mockResolvedValueOnce([1, 0, 0])
+      .mockResolvedValueOnce([1, 0, 0]);
+
+    await ingestContent({
+      id: 'memory:beta:guard-1',
+      content: 'Beta-only snippet',
+      source: 'memory:beta',
+      metadata: { sourceType: 'memory', sessionId: 'beta' }
+    });
+
+    const result = await queryRagDocuments('alpha recall', {
+      sessionId: 'alpha',
+      sourceTypes: ['memory'],
+      minScore: 0.2,
+      limit: 5,
+      allowSessionFallback: false
+    });
+
+    expect(result.matches).toHaveLength(0);
+    expect(result.diagnostics).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        reason: 'no_candidate_docs',
+        sessionFilterApplied: true,
+        sessionFallbackApplied: false,
+        sourceTypeFilterApplied: true
+      })
+    );
+  });
+
   it('skips persistent memory ingestion when OpenAI key is unavailable', async () => {
     hasValidApiKeyMock.mockReturnValue(false);
     createEmbeddingMock.mockClear();

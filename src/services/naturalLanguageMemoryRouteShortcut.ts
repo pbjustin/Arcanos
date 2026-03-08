@@ -44,6 +44,11 @@ export async function tryExecuteNaturalLanguageMemoryRouteShortcut(params: {
  * Edge cases: unknown payloads fall back to the memory layer message instead of invoking model interpretation.
  */
 export function renderNaturalLanguageMemoryRouteResult(memory: NaturalLanguageMemoryResponse): string {
+  const inspectionText = renderMemoryInspectionResult(memory);
+  if (inspectionText) {
+    return inspectionText;
+  }
+
   const primaryText = extractPrimaryMemoryText(memory);
   if (primaryText) {
     return primaryText;
@@ -54,6 +59,20 @@ export function renderNaturalLanguageMemoryRouteResult(memory: NaturalLanguageMe
   }
 
   return memory.message;
+}
+
+function renderMemoryInspectionResult(memory: NaturalLanguageMemoryResponse): string | null {
+  if (memory.operation !== 'inspected') {
+    return null;
+  }
+
+  return safeSerializeMemoryValue({
+    sessionId: memory.sessionId,
+    operation: memory.operation,
+    message: memory.message,
+    inspection: memory.inspection ?? null,
+    entries: memory.entries ?? []
+  });
 }
 
 function extractPrimaryMemoryText(memory: NaturalLanguageMemoryResponse): string | null {
