@@ -9,6 +9,7 @@ const mockDispatchModuleAction = jest.fn();
 const mockPersistModuleConversation = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
+const mockExtractNaturalLanguageSessionId = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap
@@ -25,7 +26,8 @@ jest.unstable_mockModule('@services/moduleConversationPersistence.js', () => ({
 
 jest.unstable_mockModule('@services/naturalLanguageMemory.js', () => ({
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
-  executeNaturalLanguageMemoryCommand: mockExecuteNaturalLanguageMemoryCommand
+  executeNaturalLanguageMemoryCommand: mockExecuteNaturalLanguageMemoryCommand,
+  extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId
 }));
 
 const { default: apiAskRouter } = await import('../src/routes/api-ask.js');
@@ -51,6 +53,7 @@ describe('/api/ask action selection', () => {
     app = createApiAskTestApp();
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
+    mockExtractNaturalLanguageSessionId.mockReturnValue(null);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
       intent: 'save',
       operation: 'saved',
@@ -297,6 +300,38 @@ describe('/api/ask action selection', () => {
     expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
       input: 'remember this as a universal memory',
       sessionId: 'global'
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('uses an inline prompt session id before falling back to the global memory session', async () => {
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'test-module',
+      description: null,
+      route: 'queryroute',
+      actions: ['query']
+    });
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'retrieve', latest: true });
+    mockExtractNaturalLanguageSessionId.mockReturnValue('raw_vancouver_2026');
+    mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
+      intent: 'retrieve',
+      operation: 'retrieved',
+      sessionId: 'raw_vancouver_2026',
+      key: 'nl-memory:raw_vancouver_2026:entry',
+      value: { text: 'Persisted show summary' },
+      message: 'Loaded latest saved memory.'
+    });
+
+    const response = await request(app).post('/api/ask').send({
+      gptId: 'tutor',
+      message: 'Recall: raw_vancouver_2026'
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result.handledBy).toBe('memory-dispatcher');
+    expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
+      input: 'Recall: raw_vancouver_2026',
+      sessionId: 'raw_vancouver_2026'
     });
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });

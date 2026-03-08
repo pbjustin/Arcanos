@@ -6,6 +6,7 @@ const mockGetModuleMetadata = jest.fn();
 const mockPersistModuleConversation = jest.fn();
 const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
+const mockExtractNaturalLanguageSessionId = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
@@ -23,6 +24,7 @@ jest.unstable_mockModule('../src/services/moduleConversationPersistence.js', () 
 jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   executeNaturalLanguageMemoryCommand: mockExecuteNaturalLanguageMemoryCommand,
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
+  extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
 }));
 
 jest.unstable_mockModule('../src/services/arcanosMcp.js', () => ({
@@ -53,6 +55,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
+    mockExtractNaturalLanguageSessionId.mockReturnValue(null);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
   });
 

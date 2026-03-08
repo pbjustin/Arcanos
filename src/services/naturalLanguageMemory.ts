@@ -88,6 +88,27 @@ export interface NaturalLanguageMemoryRagResult {
   };
 }
 
+const RESERVED_SESSION_ID_TOKENS = new Set([
+  'latest',
+  'memory',
+  'memories',
+  'saved',
+  'summary',
+  'session',
+  'story',
+  'stories',
+  'roster',
+  'note',
+  'notes',
+  'recall',
+  'retrieve',
+  'lookup',
+  'search',
+  'show',
+  'load',
+  'get'
+]);
+
 /**
  * Normalize external session identifiers into a safe bounded token.
  * Inputs/outputs: optional session ID input -> sanitized session ID string.
@@ -111,6 +132,33 @@ export function normalizeNaturalLanguageSessionId(rawSessionId: unknown): string
   }
 
   return normalized.slice(0, 64);
+}
+
+/**
+ * Extract an explicit session identifier from a natural-language prompt when one is present.
+ * Inputs/outputs: raw user prompt -> normalized session identifier or null.
+ * Edge cases: ignores reserved nouns and malformed tokens to avoid collapsing normal prose into session IDs.
+ */
+export function extractNaturalLanguageSessionId(rawInput: string): string | null {
+  const trimmedInput = rawInput.trim();
+
+  const explicitPatterns = [
+    /\bsession\s*id\s*[:=]\s*["'`]?([a-zA-Z0-9_-]{2,64})["'`]?/i,
+    /\bfor\s+session\s+["'`]?([a-zA-Z0-9_-]{2,64})["'`]?/i,
+    /^(?:please\s+)?recall\b[:\s-]*["'`]?([a-zA-Z0-9_-]{2,64})["'`]?$/i
+  ];
+
+  for (const pattern of explicitPatterns) {
+    const match = trimmedInput.match(pattern);
+    const normalizedMatch = normalizeSessionIdCandidate(match?.[1]);
+    //audit Assumption: explicit session-id syntax should outrank global fallback; failure risk: unrelated sessions bleed together under global memory; expected invariant: recognized session labels resolve deterministically; handling strategy: return the first valid normalized match.
+    if (normalizedMatch) {
+      return normalizedMatch;
+    }
+  }
+
+  //audit Assumption: some clients send the session token alone (for example, a recall picker); failure risk: exact session lookups fail and drift to semantic fallback; expected invariant: standalone session-like tokens resolve directly; handling strategy: accept only bounded safe identifiers.
+  return normalizeSessionIdCandidate(trimmedInput);
 }
 
 /**
@@ -143,6 +191,19 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
       content: normalizedContent,
       key: explicitKey
     };
+  }
+
+  const recallMatch = trimmedInput.match(/^(?:please\s+)?recall\b[:\s-]*(.*)$/i);
+  if (recallMatch) {
+    const recallTarget = recallMatch[1].trim();
+    const explicitSessionId = extractNaturalLanguageSessionId(trimmedInput);
+
+    //audit Assumption: "recall <session-id>" is a direct request for the latest session-scoped memory; failure risk: the command falls through to generic module routing and returns unrelated model output; expected invariant: explicit recall commands become deterministic memory reads; handling strategy: treat session-like recall targets as latest retrieval requests.
+    if (explicitSessionId || !recallTarget) {
+      return { intent: 'retrieve', latest: true };
+    }
+
+    return { intent: 'lookup', queryText: recallTarget };
   }
 
   //audit Assumption: "latest" retrieval should resolve to session pointer; failure risk: wrong row lookup; expected invariant: user explicitly asked for last/latest; handling strategy: dedicated latest intent flag.
@@ -183,7 +244,9 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
 export async function executeNaturalLanguageMemoryCommand(
   request: NaturalLanguageMemoryRequest
 ): Promise<NaturalLanguageMemoryResponse> {
-  const sessionId = normalizeNaturalLanguageSessionId(request.sessionId);
+  const sessionId = normalizeNaturalLanguageSessionId(
+    request.sessionId ?? extractNaturalLanguageSessionId(request.input)
+  );
   const parsedCommand = parseNaturalLanguageMemoryCommand(request.input);
   const lookupLimit = resolveLookupLimit(request.limit);
 
@@ -802,4 +865,23 @@ function cloneDiagnostics(diagnostics: RagQueryDiagnostics): NaturalLanguageMemo
     minScore: diagnostics.minScore,
     limit: diagnostics.limit
   };
+}
+
+function normalizeSessionIdCandidate(rawCandidate: unknown): string | null {
+  if (typeof rawCandidate !== 'string') {
+    return null;
+  }
+
+  const trimmedCandidate = rawCandidate.trim();
+  if (!/^[a-zA-Z0-9_-]{2,64}$/.test(trimmedCandidate)) {
+    return null;
+  }
+
+  const normalizedCandidate = normalizeNaturalLanguageSessionId(trimmedCandidate);
+  //audit Assumption: reserved memory verbs and nouns are not valid standalone session identifiers; failure risk: prose like "latest" gets misread as a session name; expected invariant: only caller-intended opaque tokens survive extraction; handling strategy: reject reserved tokens after normalization.
+  if (RESERVED_SESSION_ID_TOKENS.has(normalizedCandidate)) {
+    return null;
+  }
+
+  return normalizedCandidate;
 }

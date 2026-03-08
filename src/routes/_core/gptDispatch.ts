@@ -5,6 +5,7 @@ import { persistModuleConversation } from "@services/moduleConversationPersisten
 import { arcanosMcpService, type ArcanosMcpService, type ArcanosMcpToolCallResult, type ArcanosMcpToolListResult } from "@services/arcanosMcp.js";
 import {
   executeNaturalLanguageMemoryCommand,
+  extractNaturalLanguageSessionId,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
 import { isRecord } from "@shared/typeGuards.js";
@@ -351,10 +352,22 @@ function extractMcpToolError(result: ArcanosMcpToolCallResult | ArcanosMcpToolLi
 
 const UNIVERSAL_MEMORY_SESSION_ID = "global";
 
-function resolveMemorySessionId(body: unknown, payload: unknown, moduleName: string, gptId: string): string {
+function resolveMemorySessionId(
+  body: unknown,
+  payload: unknown,
+  moduleName: string,
+  gptId: string,
+  prompt: string | null
+): string {
   const explicitSessionId = resolveSessionId(body, payload);
   if (explicitSessionId) {
     return explicitSessionId;
+  }
+
+  const promptScopedSessionId = typeof prompt === 'string' ? extractNaturalLanguageSessionId(prompt) : null;
+  //audit Assumption: some clients communicate session scope inside the natural-language prompt rather than a structured field; failure risk: saves and recalls collapse into the global namespace; expected invariant: explicit prompt-level session labels outrank the global fallback; handling strategy: extract and honor safe inline session identifiers before defaulting.
+  if (promptScopedSessionId) {
+    return promptScopedSessionId;
   }
 
   //audit Assumption: ChatGPT-style memory should be universally addressable across modules when callers omit sessionId; failure risk: mixed tenants on shared infra; expected invariant: deterministic global fallback memory namespace; handling strategy: use explicit global session key and recommend per-user sessionId for multi-tenant contexts.
@@ -595,7 +608,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   //audit Assumption: memory commands should bypass module action ambiguity (e.g., multi-action modules without default query); failure risk: user cannot use memory reliably via dispatcher; expected invariant: explicit memory intents always have a deterministic execution path; handling strategy: early memory execution branch before action resolution.
   if (shouldInterceptMemoryInDispatcher) {
     try {
-      const memorySessionId = resolveMemorySessionId(body, payload, entry.module, trimmedGptId);
+      const memorySessionId = resolveMemorySessionId(body, payload, entry.module, trimmedGptId, prompt);
       const memoryResult = await executeNaturalLanguageMemoryCommand({
         input: prompt,
         sessionId: memorySessionId
