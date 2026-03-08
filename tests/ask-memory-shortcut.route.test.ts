@@ -10,8 +10,7 @@ const tryDispatchWorkerToolsMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 const mockRunThroughBrain = jest.fn();
-const mockTryExecuteNaturalLanguageMemoryRouteShortcut = jest.fn();
-const mockTryExecuteBackstageBookerRouteShortcut = jest.fn();
+const mockTryExecutePromptRouteShortcut = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
@@ -56,12 +55,8 @@ jest.unstable_mockModule('@dispatcher/gptDomainClassifier.js', () => ({
   gptFallbackClassifier: gptFallbackClassifierMock
 }));
 
-jest.unstable_mockModule('@services/naturalLanguageMemoryRouteShortcut.js', () => ({
-  tryExecuteNaturalLanguageMemoryRouteShortcut: mockTryExecuteNaturalLanguageMemoryRouteShortcut
-}));
-
-jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
-  tryExecuteBackstageBookerRouteShortcut: mockTryExecuteBackstageBookerRouteShortcut
+jest.unstable_mockModule('@services/promptRouteShortcuts.js', () => ({
+  tryExecutePromptRouteShortcut: mockTryExecutePromptRouteShortcut
 }));
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
@@ -95,7 +90,7 @@ function buildApp() {
   return app;
 }
 
-describe('/ask memory shortcut', () => {
+describe('/ask prompt shortcuts', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     createJobMock.mockResolvedValue({ id: 'job-123' });
@@ -110,17 +105,26 @@ describe('/ask memory shortcut', () => {
     detectCognitiveDomainMock.mockReturnValue({ domain: 'natural', confidence: 0.9 });
     gptFallbackClassifierMock.mockResolvedValue('natural');
     mockRunThroughBrain.mockResolvedValue({ result: 'unexpected trinity response' });
-    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue(null);
+    mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
   });
 
   it('returns deterministic memory text before Trinity executes', async () => {
-    mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue({
+    mockTryExecutePromptRouteShortcut.mockResolvedValue({
+      shortcutId: 'memory',
       resultText: 'Persisted summary for Vancouver Raw',
-      memory: {
-        intent: 'retrieve',
-        operation: 'retrieved',
+      response: {
+        requestIdPrefix: 'memory',
+        module: 'memory-dispatcher',
+        activeModel: 'memory-dispatcher',
+        routingStage: 'MEMORY-DISPATCH',
+        auditFlag: 'MEMORY_SHORTCUT_ACTIVE',
         sessionId: 'raw_20260308_van_probe2',
-        message: 'Loaded latest saved memory.'
+        contextSummary: 'Memory dispatcher retrieved for session raw_20260308_van_probe2.'
+      },
+      dispatcher: {
+        module: 'memory-dispatcher',
+        action: 'retrieved',
+        reason: 'retrieve'
       }
     });
 
@@ -133,7 +137,7 @@ describe('/ask memory shortcut', () => {
     expect(response.body.result).toBe('Persisted summary for Vancouver Raw');
     expect(response.body.module).toBe('memory-dispatcher');
     expect(response.body.routingStages).toEqual(['MEMORY-DISPATCH']);
-    expect(mockTryExecuteNaturalLanguageMemoryRouteShortcut).toHaveBeenCalledWith({
+    expect(mockTryExecutePromptRouteShortcut).toHaveBeenCalledWith({
       prompt: 'Recall: RAW_20260308_VAN_PROBE2',
       sessionId: 'RAW_20260308_VAN_PROBE2'
     });
@@ -141,14 +145,23 @@ describe('/ask memory shortcut', () => {
   });
 
   it('routes explicit wrestling-booking prompts through the backstage booker before Trinity executes', async () => {
-    mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue(null);
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },
       input: 'Generate three rivalries for RAW after WrestleMania.',
       body: {}
     });
-    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue({
+    mockTryExecutePromptRouteShortcut.mockResolvedValue({
+      shortcutId: 'backstage-booker',
       resultText: 'Week 1: Gunther vs AJ Styles escalates. Week 2: Seth Rollins targets CM Punk.',
+      response: {
+        requestIdPrefix: 'booker',
+        module: 'BACKSTAGE:BOOKER',
+        activeModel: 'backstage-booker',
+        routingStage: 'BACKSTAGE-BOOKER-DISPATCH',
+        auditFlag: 'BACKSTAGE_BOOKER_SHORTCUT_ACTIVE',
+        sessionId: 'RAW_RIVALRY_TEST',
+        contextSummary: 'Backstage Booker generated a booking response for session RAW_RIVALRY_TEST.'
+      },
       dispatcher: {
         module: 'BACKSTAGE:BOOKER',
         action: 'generateBooking',
@@ -165,7 +178,7 @@ describe('/ask memory shortcut', () => {
     expect(response.body.result).toContain('Gunther vs AJ Styles');
     expect(response.body.module).toBe('BACKSTAGE:BOOKER');
     expect(response.body.routingStages).toEqual(['BACKSTAGE-BOOKER-DISPATCH']);
-    expect(mockTryExecuteBackstageBookerRouteShortcut).toHaveBeenLastCalledWith({
+    expect(mockTryExecutePromptRouteShortcut).toHaveBeenLastCalledWith({
       prompt: 'Generate three rivalries for RAW after WrestleMania.',
       sessionId: 'RAW_RIVALRY_TEST'
     });

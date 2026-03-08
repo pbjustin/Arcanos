@@ -42,12 +42,13 @@ import {
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
-import { buildMemoryShortcutTelemetry } from '@routes/_core/memoryShortcutResponse.js';
-import { buildBackstageBookerShortcutTelemetry } from '@routes/_core/backstageBookerShortcutResponse.js';
+import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
-import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
-import { tryExecuteBackstageBookerRouteShortcut } from '@services/backstageBookerRouteShortcut.js';
+import {
+  tryExecutePromptRouteShortcut,
+  type PromptRouteShortcutResult
+} from '@services/promptRouteShortcuts.js';
 
 const router = express.Router();
 
@@ -314,63 +315,20 @@ function validateLenientChatRequest(body: AskRequest): {
 }
 
 /**
- * Build a deterministic `/ask` response for explicit memory commands.
- * Inputs/outputs: rendered shortcut payload + endpoint metadata -> route response payload.
- * Edge cases: memory operations without retrieved entries still expose the memory layer message via `result`.
+ * Build a deterministic `/ask` response for any registered prompt shortcut.
+ * Inputs/outputs: normalized shortcut result + endpoint metadata -> route response payload.
+ * Edge cases: shortcut-specific telemetry is derived from the shared shortcut contract so new shortcut types do not need route-specific response builders.
  */
-function buildAskMemoryShortcutResponse(params: {
-  resultText: string;
-  memoryOperation: string;
-  memorySessionId: string;
+function buildAskPromptShortcutResponse(params: {
+  shortcut: PromptRouteShortcutResult;
   endpointName: string;
   clientContext?: AskRequest['clientContext'];
   auditFlag?: SchemaValidationBypassAuditFlag;
 }): AskResponse {
-  const shortcutTelemetry = buildMemoryShortcutTelemetry({
-    memoryOperation: params.memoryOperation,
-    memorySessionId: params.memorySessionId,
-  });
+  const shortcutTelemetry = buildPromptShortcutTelemetry(params.shortcut);
 
   return {
-    result: params.resultText,
-    module: shortcutTelemetry.module,
-    meta: {
-      id: shortcutTelemetry.requestId,
-      created: Math.floor(new Date(shortcutTelemetry.timestamp).getTime() / 1000)
-    },
-    activeModel: shortcutTelemetry.activeModel,
-    fallbackFlag: shortcutTelemetry.fallbackFlag,
-    routingStages: shortcutTelemetry.routingStages,
-    gpt5Used: false,
-    auditSafe: shortcutTelemetry.auditSafe,
-    memoryContext: shortcutTelemetry.memoryContext,
-    taskLineage: shortcutTelemetry.taskLineage,
-    endpoint: params.endpointName,
-    ...(params.clientContext ? { clientContext: params.clientContext } : {}),
-    ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})
-  };
-}
-
-/**
- * Build a deterministic `/ask` response for explicit backstage-booker shortcuts.
- * Inputs/outputs: rendered shortcut payload + endpoint metadata -> route response payload.
- * Edge cases: sessionless requests are normalized to the shared `global` marker for telemetry stability.
- */
-function buildAskBackstageBookerShortcutResponse(params: {
-  resultText: string;
-  reason: string;
-  sessionId?: string;
-  endpointName: string;
-  clientContext?: AskRequest['clientContext'];
-  auditFlag?: SchemaValidationBypassAuditFlag;
-}): AskResponse {
-  const shortcutTelemetry = buildBackstageBookerShortcutTelemetry({
-    reason: params.reason,
-    sessionId: params.sessionId ?? 'global'
-  });
-
-  return {
-    result: params.resultText,
+    result: params.shortcut.resultText,
     module: shortcutTelemetry.module,
     meta: {
       id: shortcutTelemetry.requestId,
@@ -621,35 +579,15 @@ export const handleAIRequest = async (
       });
     }
 
-    const memoryShortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
+    const promptShortcut = await tryExecutePromptRouteShortcut({
       prompt,
       sessionId
     });
-    //audit Assumption: explicit memory commands should return deterministic stored content instead of entering Trinity reasoning; failure risk: semantic pattern memory hijacks exact recall and produces hallucinated session scaffolds; expected invariant: memory save/recall prompts bypass AI generation on `/ask`; handling strategy: short-circuit with a plain-text memory response.
-    if (memoryShortcut) {
+    //audit Assumption: deterministic prompt shortcuts should bypass Trinity generation when they have a confident route-specific execution path; failure risk: memory and booker prompts drift back into generic chat behavior; expected invariant: registered shortcuts return stable route-specific output before Trinity; handling strategy: execute the shared shortcut registry and short-circuit on the first match.
+    if (promptShortcut) {
       return res.json(
-        buildAskMemoryShortcutResponse({
-          resultText: memoryShortcut.resultText,
-          memoryOperation: memoryShortcut.memory.operation,
-          memorySessionId: memoryShortcut.memory.sessionId,
-          endpointName,
-          clientContext: req.body.clientContext,
-          auditFlag: bypassAuditFlag ?? undefined
-        })
-      );
-    }
-
-    const backstageBookerShortcut = await tryExecuteBackstageBookerRouteShortcut({
-      prompt,
-      sessionId
-    });
-    //audit Assumption: explicit wrestling-booking prompts should reach the backstage booker instead of the generic Trinity chat path; failure risk: rivalry/card requests degrade into empty or greeting-like Trinity output; expected invariant: clear booking prompts short-circuit to BACKSTAGE:BOOKER; handling strategy: execute the shared booker shortcut after memory interception and before Trinity.
-    if (backstageBookerShortcut) {
-      return res.json(
-        buildAskBackstageBookerShortcutResponse({
-          resultText: backstageBookerShortcut.resultText,
-          reason: backstageBookerShortcut.dispatcher.reason,
-          sessionId,
+        buildAskPromptShortcutResponse({
+          shortcut: promptShortcut,
           endpointName,
           clientContext: req.body.clientContext,
           auditFlag: bypassAuditFlag ?? undefined

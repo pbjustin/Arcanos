@@ -20,10 +20,11 @@ import {
 } from '@transport/http/requestHandler.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
-import { buildMemoryShortcutTelemetry } from '@routes/_core/memoryShortcutResponse.js';
-import { buildBackstageBookerShortcutTelemetry } from '@routes/_core/backstageBookerShortcutResponse.js';
-import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
-import { tryExecuteBackstageBookerRouteShortcut } from '@services/backstageBookerRouteShortcut.js';
+import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
+import {
+  tryExecutePromptRouteShortcut,
+  type PromptRouteShortcutResult
+} from '@services/promptRouteShortcuts.js';
 
 const router = express.Router();
 
@@ -280,60 +281,18 @@ function sendTrinityCompatibilityStream(
 }
 
 /**
- * Build a compatibility response for explicit memory commands on `/api/arcanos/ask`.
- * Inputs/outputs: rendered memory shortcut payload -> legacy-compatible response envelope.
- * Edge cases: memory operations without retrieved values fall back to the memory layer message as `result`.
+ * Build a compatibility response for any registered prompt shortcut on `/api/arcanos/ask`.
+ * Inputs/outputs: normalized shortcut result -> legacy-compatible response envelope.
+ * Edge cases: new shortcut types reuse the same compatibility envelope without bespoke per-shortcut route builders.
  */
-function buildArcanosMemoryShortcutResponse(params: {
-  resultText: string;
-  memoryOperation: string;
-  memorySessionId: string;
+function buildArcanosPromptShortcutResponse(params: {
+  shortcut: PromptRouteShortcutResult;
 }): AskResponse {
-  const shortcutTelemetry = buildMemoryShortcutTelemetry({
-    memoryOperation: params.memoryOperation,
-    memorySessionId: params.memorySessionId
-  });
+  const shortcutTelemetry = buildPromptShortcutTelemetry(params.shortcut);
 
   return {
     success: true,
-    result: params.resultText,
-    metadata: {
-      service: 'ARCANOS API',
-      version: '1.0.0',
-      timestamp: shortcutTelemetry.timestamp,
-      arcanosRouting: false,
-      endpoint: ARCANOS_API_ENDPOINT_NAME,
-      requestId: shortcutTelemetry.requestId,
-      routingStages: shortcutTelemetry.routingStages
-    },
-    module: shortcutTelemetry.module,
-    activeModel: shortcutTelemetry.activeModel,
-    fallbackFlag: shortcutTelemetry.fallbackFlag,
-    routingStages: shortcutTelemetry.routingStages,
-    auditSafe: shortcutTelemetry.auditSafe,
-    memoryContext: shortcutTelemetry.memoryContext,
-    taskLineage: shortcutTelemetry.taskLineage
-  };
-}
-
-/**
- * Build a compatibility response for deterministic backstage-booker shortcuts on `/api/arcanos/ask`.
- * Inputs/outputs: rendered booking shortcut payload -> legacy-compatible response envelope.
- * Edge cases: sessionless requests are normalized to the shared `global` marker for telemetry stability.
- */
-function buildArcanosBackstageBookerShortcutResponse(params: {
-  resultText: string;
-  reason: string;
-  sessionId?: string;
-}): AskResponse {
-  const shortcutTelemetry = buildBackstageBookerShortcutTelemetry({
-    reason: params.reason,
-    sessionId: params.sessionId ?? 'global'
-  });
-
-  return {
-    success: true,
-    result: params.resultText,
+    result: params.shortcut.resultText,
     metadata: {
       service: 'ARCANOS API',
       version: '1.0.0',
@@ -406,32 +365,15 @@ const handleArcanosAsk = asyncHandler(async (
 
     const { client: openai, input: prompt } = validation;
     promptForError = prompt;
-    const memoryShortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
+    const promptShortcut = await tryExecutePromptRouteShortcut({
       prompt,
       sessionId: req.body.sessionId
     });
-    //audit Assumption: explicit memory save/recall on the ARCANOS compatibility route should bypass Trinity generation; failure risk: semantic pattern recall produces synthesized summaries instead of the stored session text; expected invariant: memory commands return deterministic memory content; handling strategy: short-circuit before runtime budget and Trinity execution.
-    if (memoryShortcut) {
+    //audit Assumption: deterministic prompt shortcuts should bypass Trinity generation on the compatibility route when they have a confident route-specific execution path; failure risk: route-specific prompts regress into generic Trinity output; expected invariant: registered shortcuts return stable deterministic content before Trinity; handling strategy: short-circuit through the shared shortcut registry.
+    if (promptShortcut) {
       return res.json(
-        buildArcanosMemoryShortcutResponse({
-          resultText: memoryShortcut.resultText,
-          memoryOperation: memoryShortcut.memory.operation,
-          memorySessionId: memoryShortcut.memory.sessionId
-        })
-      );
-    }
-
-    const backstageBookerShortcut = await tryExecuteBackstageBookerRouteShortcut({
-      prompt,
-      sessionId: req.body.sessionId
-    });
-    //audit Assumption: rivalry/card/feud prompts on the compatibility route should use the dedicated backstage booker instead of generic Trinity chat; failure risk: callers receive greeting-like filler despite clear booking requests; expected invariant: strong wrestling-booking prompts short-circuit to BACKSTAGE:BOOKER; handling strategy: execute the shared booker shortcut before runtime budget allocation and Trinity.
-    if (backstageBookerShortcut) {
-      return res.json(
-        buildArcanosBackstageBookerShortcutResponse({
-          resultText: backstageBookerShortcut.resultText,
-          reason: backstageBookerShortcut.dispatcher.reason,
-          sessionId: req.body.sessionId
+        buildArcanosPromptShortcutResponse({
+          shortcut: promptShortcut
         })
       );
     }

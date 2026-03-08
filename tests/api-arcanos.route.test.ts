@@ -8,8 +8,7 @@ const mockExtractInput = jest.fn();
 const mockValidateAIRequest = jest.fn();
 const mockHandleAIError = jest.fn();
 const mockCreateRuntimeBudget = jest.fn();
-const mockTryExecuteNaturalLanguageMemoryRouteShortcut = jest.fn();
-const mockTryExecuteBackstageBookerRouteShortcut = jest.fn();
+const mockTryExecutePromptRouteShortcut = jest.fn();
 
 const verificationRouter = express.Router();
 
@@ -37,12 +36,8 @@ jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   createRuntimeBudget: mockCreateRuntimeBudget
 }));
 
-jest.unstable_mockModule('@services/naturalLanguageMemoryRouteShortcut.js', () => ({
-  tryExecuteNaturalLanguageMemoryRouteShortcut: mockTryExecuteNaturalLanguageMemoryRouteShortcut
-}));
-
-jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
-  tryExecuteBackstageBookerRouteShortcut: mockTryExecuteBackstageBookerRouteShortcut
+jest.unstable_mockModule('@services/promptRouteShortcuts.js', () => ({
+  tryExecutePromptRouteShortcut: mockTryExecutePromptRouteShortcut
 }));
 
 jest.unstable_mockModule('../src/routes/api-arcanos-verification.js', () => ({
@@ -110,8 +105,7 @@ describe('api-arcanos route', () => {
       typeof body.prompt === 'string' ? body.prompt : null
     );
     mockCreateRuntimeBudget.mockReturnValue({ budgetId: 'runtime-budget-1' });
-    mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue(null);
-    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue(null);
+    mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
   });
 
   it('routes non-ping requests through Trinity and returns explicit pipeline metadata', async () => {
@@ -221,13 +215,22 @@ describe('api-arcanos route', () => {
         prompt: 'Recall: RAW_20260308_VAN_PROBE2'
       }
     });
-    mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue({
+    mockTryExecutePromptRouteShortcut.mockResolvedValue({
+      shortcutId: 'memory',
       resultText: 'Persisted summary for Vancouver Raw',
-      memory: {
-        intent: 'retrieve',
-        operation: 'retrieved',
+      response: {
+        requestIdPrefix: 'memory',
+        module: 'memory-dispatcher',
+        activeModel: 'memory-dispatcher',
+        routingStage: 'MEMORY-DISPATCH',
+        auditFlag: 'MEMORY_SHORTCUT_ACTIVE',
         sessionId: 'raw_20260308_van_probe2',
-        message: 'Loaded latest saved memory.'
+        contextSummary: 'Memory dispatcher retrieved for session raw_20260308_van_probe2.'
+      },
+      dispatcher: {
+        module: 'memory-dispatcher',
+        action: 'retrieved',
+        reason: 'retrieve'
       }
     });
 
@@ -244,7 +247,7 @@ describe('api-arcanos route', () => {
     expect(response.body.module).toBe('memory-dispatcher');
     expect(response.body.metadata.endpoint).toBe('api-arcanos.ask');
     expect(response.body.routingStages).toEqual(['MEMORY-DISPATCH']);
-    expect(mockTryExecuteNaturalLanguageMemoryRouteShortcut).toHaveBeenCalledWith({
+    expect(mockTryExecutePromptRouteShortcut).toHaveBeenCalledWith({
       prompt: 'Recall: RAW_20260308_VAN_PROBE2',
       sessionId: 'RAW_20260308_VAN_PROBE2'
     });
@@ -260,8 +263,18 @@ describe('api-arcanos route', () => {
         prompt: 'Generate three rivalries for RAW after WrestleMania.'
       }
     });
-    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue({
+    mockTryExecutePromptRouteShortcut.mockResolvedValue({
+      shortcutId: 'backstage-booker',
       resultText: 'Rivalry one: Gunther vs AJ Styles.',
+      response: {
+        requestIdPrefix: 'booker',
+        module: 'BACKSTAGE:BOOKER',
+        activeModel: 'backstage-booker',
+        routingStage: 'BACKSTAGE-BOOKER-DISPATCH',
+        auditFlag: 'BACKSTAGE_BOOKER_SHORTCUT_ACTIVE',
+        sessionId: 'RAW_RIVALRY_TEST',
+        contextSummary: 'Backstage Booker generated a booking response for session RAW_RIVALRY_TEST.'
+      },
       dispatcher: {
         module: 'BACKSTAGE:BOOKER',
         action: 'generateBooking',
@@ -281,7 +294,7 @@ describe('api-arcanos route', () => {
     expect(response.body.result).toBe('Rivalry one: Gunther vs AJ Styles.');
     expect(response.body.module).toBe('BACKSTAGE:BOOKER');
     expect(response.body.routingStages).toEqual(['BACKSTAGE-BOOKER-DISPATCH']);
-    expect(mockTryExecuteBackstageBookerRouteShortcut).toHaveBeenCalledWith({
+    expect(mockTryExecutePromptRouteShortcut).toHaveBeenCalledWith({
       prompt: 'Generate three rivalries for RAW after WrestleMania.',
       sessionId: 'RAW_RIVALRY_TEST'
     });
