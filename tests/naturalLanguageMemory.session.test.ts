@@ -104,6 +104,51 @@ Main Event: Gunther def. AJ Styles clean`;
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_vancouver_2026:entry-20260308070000');
   });
 
+  it('does not semantically fallback across sessions for explicit session recall misses', async () => {
+    mockLoadMemory.mockResolvedValueOnce(null);
+    mockQueryRagDocuments.mockResolvedValue({
+      matches: [{
+        id: 'rag-1',
+        content: 'Recall: raw_vancouver_2026_probe2',
+        score: 0.91,
+        url: 'session:raw_vancouver_2026_probe2',
+        metadata: {
+          sessionId: 'raw_vancouver_2026_probe2',
+          sourceType: 'conversation'
+        }
+      }],
+      diagnostics: {
+        enabled: true,
+        reason: 'ok',
+        candidateCount: 1,
+        returnedCount: 1,
+        sessionFilterApplied: true,
+        sessionFallbackApplied: true,
+        sourceTypeFilterApplied: true,
+        minScore: 0.12,
+        limit: 10
+      }
+    });
+
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: 'Recall: raw_vancouver_2026'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'retrieve',
+        operation: 'retrieved',
+        sessionId: 'raw_vancouver_2026',
+        message: 'No saved memory found yet for this session.',
+        rag: expect.objectContaining({
+          active: false,
+          reason: 'exact_session_not_found'
+        })
+      })
+    );
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
+  });
+
   it('saves structured session payloads under the inline session id', async () => {
     const result = await executeNaturalLanguageMemoryCommand({
       input: structuredSessionSavePrompt

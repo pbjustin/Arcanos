@@ -62,6 +62,12 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
     if (persistedSession) {
       return persistedSession;
     }
+
+    //audit Assumption: explicit session-id recalls must not degrade into semantic matching when the exact session is absent; failure risk: `/memory/resolve` returns a neighboring or most-recent session and hides the miss; expected invariant: explicit session misses stay exact and inspectable; handling strategy: return the requested session id with null conversation payload.
+    return {
+      sessionId: explicitSessionId,
+      conversations_core: null,
+    };
   }
 
   //audit Assumption: sessions must exist to resolve; Handling: throw when empty

@@ -284,6 +284,7 @@ export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
 export async function executeNaturalLanguageMemoryCommand(
   request: NaturalLanguageMemoryRequest
 ): Promise<NaturalLanguageMemoryResponse> {
+  const requestIncludesExplicitSessionTarget = hasExplicitSessionTarget(request);
   const sessionId = normalizeNaturalLanguageSessionId(
     request.sessionId ?? extractNaturalLanguageSessionId(request.input)
   );
@@ -360,6 +361,17 @@ export async function executeNaturalLanguageMemoryCommand(
 
       //audit Assumption: latest pointer may not exist for new sessions; failure risk: null dereference; expected invariant: safe empty response for first-use sessions; handling strategy: early return with guidance.
       if (!latestKey) {
+        //audit Assumption: explicit session-targeted recall must not drift into semantically similar sessions; failure risk: exact recall for `raw_x` returns `raw_x_probe` or unrelated scaffold content; expected invariant: explicit session misses return a deterministic empty result; handling strategy: skip RAG fallback when the caller named the session explicitly.
+        if (requestIncludesExplicitSessionTarget) {
+          return {
+            intent: 'retrieve',
+            operation: 'retrieved',
+            sessionId,
+            message: 'No saved memory found yet for this session.',
+            rag: disabledRagResult('exact_session_not_found')
+          };
+        }
+
         const ragFallback = await resolveRagFallbackEntries({
           queryText: request.input,
           sessionId,
@@ -392,6 +404,19 @@ export async function executeNaturalLanguageMemoryCommand(
 
       const latestValue = await loadMemory(latestKey);
       if (latestValue === null) {
+        //audit Assumption: explicit session-targeted recall must surface broken pointers instead of rerouting across sessions; failure risk: missing pointer rows resolve to unrelated semantic neighbors; expected invariant: pointer corruption remains visible to operators; handling strategy: return the exact-pointer-missing message without semantic fallback.
+        if (requestIncludesExplicitSessionTarget) {
+          return {
+            intent: 'retrieve',
+            operation: 'retrieved',
+            sessionId,
+            key: latestKey,
+            value: null,
+            message: 'Latest pointer exists, but the referenced memory row is missing.',
+            rag: disabledRagResult('exact_pointer_missing')
+          };
+        }
+
         const ragFallback = await resolveRagFallbackEntries({
           queryText: request.input,
           sessionId,
@@ -428,28 +453,17 @@ export async function executeNaturalLanguageMemoryCommand(
 
     const key = parsedCommand.key as string;
     const value = await loadMemory(key);
-    let missRagResult: NaturalLanguageMemoryRagResult | undefined;
     if (value === null) {
-      const ragFallback = await resolveRagFallbackEntries({
-        queryText: `${request.input} ${key}`,
+      //audit Assumption: exact key retrieval should remain exact even on misses; failure risk: callers inspecting a missing key receive semantically similar but incorrect payloads; expected invariant: key misses are reported directly; handling strategy: skip semantic fallback for exact-key retrieval commands.
+      return {
+        intent: 'retrieve',
+        operation: 'retrieved',
         sessionId,
-        limit: lookupLimit
-      });
-      missRagResult = ragFallback.rag;
-
-      if (ragFallback.entries.length > 0) {
-        const firstEntry = ragFallback.entries[0];
-        return {
-          intent: 'retrieve',
-          operation: 'retrieved',
-          sessionId,
-          key: firstEntry.key,
-          value: firstEntry.value,
-          entries: ragFallback.entries,
-          message: 'No exact key match. Returning the closest semantic memory match.',
-          rag: ragFallback.rag
-        };
-      }
+        key,
+        value: null,
+        message: 'No memory found for that key.',
+        rag: disabledRagResult('exact_key_not_found')
+      };
     }
 
     return {
@@ -458,8 +472,8 @@ export async function executeNaturalLanguageMemoryCommand(
       sessionId,
       key,
       value,
-      message: value === null ? 'No memory found for that key.' : 'Loaded memory by key.',
-      rag: value === null ? missRagResult : disabledRagResult('exact_hit')
+      message: 'Loaded memory by key.',
+      rag: disabledRagResult('exact_hit')
     };
   }
 
@@ -508,6 +522,19 @@ export async function executeNaturalLanguageMemoryCommand(
       : `Found ${mergedRows.length} matching entr${mergedRows.length === 1 ? 'y' : 'ies'} for "${queryText}".`,
     rag: ragFallback.rag
   };
+}
+
+/**
+ * Determine whether a command explicitly targets a session rather than relying on general memory lookup.
+ * Inputs/outputs: natural-language request -> true when a session id is provided out of band or inline.
+ * Edge cases: blank/undefined transport session ids are ignored so generic global lookups can still use semantic fallback.
+ */
+function hasExplicitSessionTarget(request: NaturalLanguageMemoryRequest): boolean {
+  if (typeof request.sessionId === 'string' && request.sessionId.trim().length > 0) {
+    return true;
+  }
+
+  return extractNaturalLanguageSessionId(request.input) !== null;
 }
 
 /**

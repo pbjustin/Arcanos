@@ -107,4 +107,23 @@ describe('sessionResolver persisted recall', () => {
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_vancouver_2026');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_vancouver_2026:entry-20260308073000');
   });
+
+  it('returns an exact-session miss instead of drifting to semantic fallback sessions', async () => {
+    mockGetCachedSessions.mockReturnValue([
+      {
+        sessionId: 'raw_vancouver_2026_probe2',
+        conversations_core: [{ role: 'assistant', content: 'Probe session recap' }]
+      }
+    ]);
+    mockLoadMemory.mockResolvedValue(null);
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+
+    const result = await resolveSession('Recall: raw_vancouver_2026');
+
+    expect(result).toEqual({
+      sessionId: 'raw_vancouver_2026',
+      conversations_core: null
+    });
+    expect(mockCreateEmbedding).not.toHaveBeenCalled();
+  });
 });
