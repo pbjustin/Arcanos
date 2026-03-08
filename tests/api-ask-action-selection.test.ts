@@ -47,6 +47,12 @@ function createApiAskTestApp(): Express {
 
 describe('/api/ask action selection', () => {
   let app: Express;
+  const structuredSessionSavePrompt = `Session ID: RAW_20260308_VAN
+Storage Label: RAW_Vancouver_Session
+
+Persisted Summary (Stored)
+Vaquer def. Natalya -> Raquel Rodriguez kendo attack
+Main Event: Gunther def. AJ Styles clean`;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -300,6 +306,37 @@ describe('/api/ask action selection', () => {
     expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
       input: 'remember this as a universal memory',
       sessionId: 'global'
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('intercepts structured session save payloads even without a leading save verb', async () => {
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'test-module',
+      description: null,
+      route: 'queryroute',
+      actions: ['query']
+    });
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'save', content: structuredSessionSavePrompt });
+    mockExtractNaturalLanguageSessionId.mockReturnValue('raw_20260308_van');
+    mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
+      intent: 'save',
+      operation: 'saved',
+      sessionId: 'raw_20260308_van',
+      key: 'nl-memory:raw_20260308_van:entry',
+      message: 'Saved to memory successfully.'
+    });
+
+    const response = await request(app).post('/api/ask').send({
+      gptId: 'tutor',
+      message: structuredSessionSavePrompt
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result.handledBy).toBe('memory-dispatcher');
+    expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
+      input: structuredSessionSavePrompt,
+      sessionId: 'raw_20260308_van'
     });
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });

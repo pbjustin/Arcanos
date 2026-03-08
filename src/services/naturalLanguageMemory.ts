@@ -109,6 +109,13 @@ const RESERVED_SESSION_ID_TOKENS = new Set([
   'get'
 ]);
 
+const STRUCTURED_SESSION_METADATA_LINE_PATTERN =
+  /^(?:session\s*id|storage\s*label|activation\s*timestamp|status)\s*:/i;
+const STRUCTURED_SESSION_SECTION_CUE_PATTERN =
+  /(?:^|\n)\s*(?:persisted\s+summary(?:\s*\(stored\))?|session\s+behavior|session\s+capabilities\s+enabled|available\s+actions)\b/i;
+const MIN_STRUCTURED_SESSION_PAYLOAD_LINES = 3;
+const MIN_STRUCTURED_SESSION_PAYLOAD_LENGTH = 80;
+
 /**
  * Normalize external session identifiers into a safe bounded token.
  * Inputs/outputs: optional session ID input -> sanitized session ID string.
@@ -231,6 +238,15 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
     if (queryText) {
       return { intent: 'lookup', queryText };
     }
+  }
+
+  const structuredSessionSaveContent = extractStructuredSessionSaveContent(trimmedInput);
+  //audit Assumption: some clients submit session registration payloads without an explicit save verb; failure risk: these prompts fall through to model routing and fabricate acknowledgements instead of persisting memory; expected invariant: session-scoped recap payloads still become deterministic save operations; handling strategy: promote structured session payloads into save intents after explicit command parsing fails.
+  if (structuredSessionSaveContent) {
+    return {
+      intent: 'save',
+      content: structuredSessionSaveContent
+    };
   }
 
   return { intent: 'unknown' };
@@ -484,6 +500,42 @@ function resolveLookupLimit(rawLimit: unknown): number {
   }
 
   return Math.min(parsed, MAX_LOOKUP_LIMIT);
+}
+
+/**
+ * Detect session-registration style save payloads that omit an explicit save verb.
+ * Inputs/outputs: normalized raw prompt -> original content to persist or null.
+ * Edge cases: short metadata-only prompts are ignored to avoid hijacking ordinary chat.
+ */
+function extractStructuredSessionSaveContent(rawInput: string): string | null {
+  const explicitSessionId = extractNaturalLanguageSessionId(rawInput);
+  if (!explicitSessionId) {
+    return null;
+  }
+
+  const nonEmptyLines = rawInput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const hasMetadataLine = nonEmptyLines.some((line) => STRUCTURED_SESSION_METADATA_LINE_PATTERN.test(line));
+  const contentLines = nonEmptyLines.filter((line) => !STRUCTURED_SESSION_METADATA_LINE_PATTERN.test(line));
+  const hasStructuredSectionCue = STRUCTURED_SESSION_SECTION_CUE_PATTERN.test(rawInput);
+
+  //audit Assumption: standalone session identifiers should not be auto-saved; failure risk: recall-only prompts are misclassified as writes; expected invariant: structured save fallback requires explicit metadata formatting; handling strategy: require at least one recognized metadata line.
+  if (!hasMetadataLine) {
+    return null;
+  }
+
+  const hasSubstantiveStructuredPayload =
+    contentLines.length >= MIN_STRUCTURED_SESSION_PAYLOAD_LINES ||
+    rawInput.length >= MIN_STRUCTURED_SESSION_PAYLOAD_LENGTH;
+
+  //audit Assumption: metadata-only payloads are not enough evidence of a save request; failure risk: tiny session setup snippets create noisy memory rows; expected invariant: auto-save fallback only runs for substantial recap payloads; handling strategy: require bounded content volume or a structured section cue.
+  if (!hasSubstantiveStructuredPayload || (!hasStructuredSectionCue && contentLines.length < 2)) {
+    return null;
+  }
+
+  return rawInput;
 }
 
 /**

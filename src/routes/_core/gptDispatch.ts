@@ -387,7 +387,9 @@ function hasExplicitMemoryCue(prompt: string): boolean {
   return (
     /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:save|store|remember)\b/.test(normalizedPrompt) ||
     /^(?:please\s+)?(?:lookup|look\s*up|find|search)\b/.test(normalizedPrompt) ||
-    /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedPrompt)
+    /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedPrompt) ||
+    /\bsession\s*id\s*:/.test(normalizedPrompt) ||
+    /\bstorage\s*label\s*:/.test(normalizedPrompt)
   );
 }
 

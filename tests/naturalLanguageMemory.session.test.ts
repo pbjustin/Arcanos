@@ -24,6 +24,13 @@ const {
 } = await import('../src/services/naturalLanguageMemory.js');
 
 describe('naturalLanguageMemory session targeting', () => {
+  const structuredSessionSavePrompt = `Session ID: RAW_20260308_VAN
+Storage Label: RAW_Vancouver_Session
+
+Persisted Summary (Stored)
+Vaquer def. Natalya -> Raquel Rodriguez kendo attack
+Main Event: Gunther def. AJ Styles clean`;
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockLoadMemory.mockResolvedValue(null);
@@ -63,6 +70,13 @@ describe('naturalLanguageMemory session targeting', () => {
     });
   });
 
+  it('parses structured session payloads without an explicit save verb as save commands', () => {
+    expect(parseNaturalLanguageMemoryCommand(structuredSessionSavePrompt)).toEqual({
+      intent: 'save',
+      content: structuredSessionSavePrompt
+    });
+  });
+
   it('uses the inline session id when loading the latest saved memory', async () => {
     mockLoadMemory
       .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308070000' })
@@ -88,5 +102,30 @@ describe('naturalLanguageMemory session targeting', () => {
     );
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_vancouver_2026:entry-20260308070000');
+  });
+
+  it('saves structured session payloads under the inline session id', async () => {
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: structuredSessionSavePrompt
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'save',
+        operation: 'saved',
+        sessionId: 'raw_20260308_van',
+        value: expect.objectContaining({
+          sessionId: 'raw_20260308_van',
+          text: structuredSessionSavePrompt
+        })
+      })
+    );
+    expect(mockSaveMemory).toHaveBeenCalledWith(
+      expect.stringMatching(/^nl-memory:raw_20260308_van:/),
+      expect.objectContaining({
+        sessionId: 'raw_20260308_van',
+        text: structuredSessionSavePrompt
+      })
+    );
   });
 });
