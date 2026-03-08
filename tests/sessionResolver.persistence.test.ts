@@ -13,7 +13,9 @@ const mockGetEnvBoolean = jest.fn();
 const mockBuildExactNaturalLanguageMemorySelectorLabel = jest.fn();
 const mockExtractNaturalLanguageMemoryPointerKey = jest.fn();
 const mockExtractNaturalLanguageExactMemorySelector = jest.fn();
+const mockExtractNaturalLanguageStorageLabel = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
+const mockNormalizeNaturalLanguageSessionId = jest.fn();
 const mockQueryExactNaturalLanguageMemoryEntries = jest.fn();
 const mockResolveNaturalLanguageSessionAlias = jest.fn();
 
@@ -46,7 +48,9 @@ jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   buildExactNaturalLanguageMemorySelectorLabel: mockBuildExactNaturalLanguageMemorySelectorLabel,
   extractNaturalLanguageMemoryPointerKey: mockExtractNaturalLanguageMemoryPointerKey,
   extractNaturalLanguageExactMemorySelector: mockExtractNaturalLanguageExactMemorySelector,
+  extractNaturalLanguageStorageLabel: mockExtractNaturalLanguageStorageLabel,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
+  normalizeNaturalLanguageSessionId: mockNormalizeNaturalLanguageSessionId,
   queryExactNaturalLanguageMemoryEntries: mockQueryExactNaturalLanguageMemoryEntries,
   resolveNaturalLanguageSessionAlias: mockResolveNaturalLanguageSessionAlias,
 }));
@@ -79,7 +83,11 @@ describe('sessionResolver persisted recall', () => {
       return null;
     });
     mockExtractNaturalLanguageExactMemorySelector.mockReturnValue(null);
+    mockExtractNaturalLanguageStorageLabel.mockReturnValue(null);
     mockResolveNaturalLanguageSessionAlias.mockResolvedValue(null);
+    mockNormalizeNaturalLanguageSessionId.mockImplementation((input: string) =>
+      input.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    );
     mockQueryExactNaturalLanguageMemoryEntries.mockResolvedValue([]);
     mockExtractNaturalLanguageSessionId.mockImplementation((input: string) => {
       if (/raw_vancouver_2026/i.test(input)) {
@@ -219,6 +227,59 @@ describe('sessionResolver persisted recall', () => {
     expect(mockResolveNaturalLanguageSessionAlias).toHaveBeenCalledWith('raw_vancouver_session');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_vancouver_2026:entry-20260308090000');
+  });
+
+  it('resolves quoted session labels before looking up persisted sessions', async () => {
+    mockExtractNaturalLanguageStorageLabel.mockReturnValueOnce('ARCANOS backend diagnostics session');
+    mockResolveNaturalLanguageSessionAlias.mockResolvedValueOnce('raw_backend_diagnostics_session');
+    mockLoadMemory
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_backend_diagnostics_session:entry-20260308184502' })
+      .mockResolvedValueOnce({
+        sessionId: 'raw_backend_diagnostics_session',
+        text: 'Deterministic diagnostics recap'
+      });
+
+    const result = await resolveSession(
+      'Look up the stored session labeled "ARCANOS backend diagnostics session"'
+    );
+
+    expect(result).toEqual({
+      sessionId: 'raw_backend_diagnostics_session',
+      conversations_core: [{
+        role: 'assistant',
+        content: 'Deterministic diagnostics recap',
+        memoryKey: 'nl-memory:raw_backend_diagnostics_session:entry-20260308184502',
+        savedAt: undefined
+      }]
+    });
+    expect(mockResolveNaturalLanguageSessionAlias).toHaveBeenCalledWith('ARCANOS backend diagnostics session');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_backend_diagnostics_session');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_backend_diagnostics_session:entry-20260308184502');
+  });
+
+  it('returns an exact label miss instead of drifting to semantic fallback sessions', async () => {
+    mockExtractNaturalLanguageStorageLabel.mockReturnValueOnce('ARCANOS backend diagnostics session');
+    mockNormalizeNaturalLanguageSessionId.mockReturnValueOnce('arcanos-backend-diagnostics-session');
+    mockGetCachedSessions.mockReturnValue([
+      {
+        sessionId: 'diagnostic-probe-session',
+        conversations_core: [{ role: 'assistant', content: 'Probe diagnostics session recap' }]
+      }
+    ]);
+    mockLoadMemory
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+
+    const result = await resolveSession(
+      'Look up the stored session labeled "ARCANOS backend diagnostics session"'
+    );
+
+    expect(result).toEqual({
+      sessionId: 'arcanos-backend-diagnostics-session',
+      conversations_core: null
+    });
+    expect(mockCreateEmbedding).not.toHaveBeenCalled();
   });
 
   it('returns an exact selector miss instead of drifting to cached sessions', async () => {

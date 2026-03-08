@@ -77,6 +77,33 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
     );
   });
 
+  it('short-circuits quoted session-label lookups into deterministic memory output', async () => {
+    mockLoadMemory
+      .mockResolvedValueOnce({
+        sessionId: 'raw_20260308_van',
+        storageLabel: 'ARCANOS backend diagnostics session'
+      })
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_20260308_van:entry-20260308184502' })
+      .mockResolvedValueOnce({
+        sessionId: 'raw_20260308_van',
+        text: 'Persisted diagnostic session recap'
+      });
+
+    const shortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
+      prompt: 'Look up the stored session labeled "ARCANOS backend diagnostics session"'
+    });
+
+    expect(shortcut).toEqual(
+      expect.objectContaining({
+        resultText: 'Persisted diagnostic session recap',
+        memory: expect.objectContaining({
+          operation: 'retrieved',
+          sessionId: 'raw_20260308_van'
+        })
+      })
+    );
+  });
+
   it('short-circuits exact record-id and tag prompts into deterministic memory output', async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [

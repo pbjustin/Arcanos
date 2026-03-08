@@ -19,6 +19,7 @@ jest.unstable_mockModule('@services/webRag.js', () => ({
 
 const {
   extractNaturalLanguageExactMemorySelector,
+  extractNaturalLanguageStorageLabel,
   extractNaturalLanguageSessionId,
   executeNaturalLanguageMemoryCommand,
   parseNaturalLanguageMemoryCommand
@@ -60,6 +61,14 @@ Main Event: Gunther def. AJ Styles clean`;
     expect(extractNaturalLanguageSessionId('latest')).toBeNull();
   });
 
+  it('extracts quoted session labels from lookup prompts', () => {
+    expect(
+      extractNaturalLanguageStorageLabel(
+        'Look up the stored session labeled "ARCANOS backend diagnostics session"'
+      )
+    ).toBe('ARCANOS backend diagnostics session');
+  });
+
   it('parses recall <session> prompts as deterministic retrieval commands', () => {
     expect(parseNaturalLanguageMemoryCommand('Recall: raw_vancouver_2026')).toEqual({
       intent: 'retrieve',
@@ -68,6 +77,14 @@ Main Event: Gunther def. AJ Styles clean`;
     expect(parseNaturalLanguageMemoryCommand('Recall vaquer recap summary')).toEqual({
       intent: 'lookup',
       queryText: 'vaquer recap summary'
+    });
+    expect(
+      parseNaturalLanguageMemoryCommand(
+        'Look up the stored session labeled "ARCANOS backend diagnostics session"'
+      )
+    ).toEqual({
+      intent: 'retrieve',
+      latest: true
     });
   });
 
@@ -175,6 +192,32 @@ Main Event: Gunther def. AJ Styles clean`;
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:raw_vancouver_session');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_20260308_van');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_20260308_van:entry-20260308120000');
+  });
+
+  it('treats explicit session-label misses as exact misses without semantic fallback', async () => {
+    mockLoadMemory
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: 'Look up the stored session labeled "ARCANOS backend diagnostics session"'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'retrieve',
+        operation: 'retrieved',
+        sessionId: 'arcanos-backend-diagnostics-session',
+        message: 'No saved memory found yet for this session.',
+        rag: expect.objectContaining({
+          active: false,
+          reason: 'exact_session_not_found'
+        })
+      })
+    );
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:arcanos-backend-diagnostics-session');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:arcanos-backend-diagnostics-session');
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
   });
 
   it('does not semantically fallback across sessions for explicit session recall misses', async () => {

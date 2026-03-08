@@ -8,7 +8,9 @@ import {
   buildExactNaturalLanguageMemorySelectorLabel,
   extractNaturalLanguageMemoryPointerKey,
   extractNaturalLanguageExactMemorySelector,
+  extractNaturalLanguageStorageLabel,
   extractNaturalLanguageSessionId,
+  normalizeNaturalLanguageSessionId,
   queryExactNaturalLanguageMemoryEntries,
   resolveNaturalLanguageSessionAlias
 } from './naturalLanguageMemory.js';
@@ -172,13 +174,30 @@ async function resolveExactSelectorSession(
 
 async function resolveExplicitSessionId(nlQuery: string): Promise<string | null> {
   const explicitSessionId = extractNaturalLanguageSessionId(nlQuery);
-  if (!explicitSessionId) {
-    return null;
+  const explicitStorageLabel = extractNaturalLanguageStorageLabel(nlQuery);
+
+  for (const aliasCandidate of [explicitStorageLabel, explicitSessionId]) {
+    if (!aliasCandidate) {
+      continue;
+    }
+
+    //audit Assumption: callers may recall sessions by storage label instead of canonical session id; failure risk: resolver reports a false exact miss even though an alias pointer exists; expected invariant: registered storage labels resolve to the same canonical session as the original save; handling strategy: consult the alias pointer before returning the extracted token.
+    const aliasedSessionId = await resolveNaturalLanguageSessionAlias(aliasCandidate);
+    if (aliasedSessionId) {
+      return aliasedSessionId;
+    }
   }
 
-  //audit Assumption: callers may recall sessions by storage label instead of canonical session id; failure risk: resolver reports a false exact miss even though an alias pointer exists; expected invariant: registered storage labels resolve to the same canonical session as the original save; handling strategy: consult the alias pointer before returning the extracted session token.
-  const aliasedSessionId = await resolveNaturalLanguageSessionAlias(explicitSessionId);
-  return aliasedSessionId ?? explicitSessionId;
+  //audit Assumption: explicit storage-label lookups must remain exact even when no alias pointer exists yet; failure risk: resolver falls through to semantic matching for a caller-specified session label; expected invariant: unresolved labels still map to a deterministic synthetic session token; handling strategy: normalize the explicit label before returning a miss.
+  if (explicitSessionId) {
+    return explicitSessionId;
+  }
+
+  if (explicitStorageLabel) {
+    return normalizeNaturalLanguageSessionId(explicitStorageLabel);
+  }
+
+  return null;
 }
 
 function findCachedSessionById(sessions: CachedSession[], sessionId: string): CachedSession | null {

@@ -137,6 +137,10 @@ const RESERVED_SESSION_ID_TOKENS = new Set([
 const STRUCTURED_SESSION_METADATA_LINE_PATTERN =
   /^(?:session\s*id|storage\s*label|activation\s*timestamp|status)\s*:/i;
 const STORAGE_LABEL_LINE_PATTERN = /\bstorage\s*label\s*[:=]\s*([^\r\n]+)/i;
+const SESSION_LABEL_QUERY_PATTERN =
+  /\b(?:storage\s*label|session\s*label)\b\s*(?::|=)?\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\r\n]+))/i;
+const SESSION_LABEL_PHRASE_PATTERN =
+  /\b(?:stored\s+session|session)\s+(?:labeled|labelled)\s+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|`([^`\r\n]+)`|([^\r\n?.!]+))/i;
 const RECORD_ID_LINE_PATTERN = /\brecord\s*id\s*[:=]\s*(\d{1,12})\b/i;
 const TAG_LINE_PATTERN = /(?:^|\n)\s*tag\s*[:=]\s*([^\r\n]+)/i;
 const TAG_INLINE_PATTERN = /\btag\s*[:=]\s*([a-zA-Z0-9_.:-]{2,120})/i;
@@ -304,6 +308,17 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
     };
   }
 
+  const inspectionRequest = parseMemoryInspectionRequest(trimmedInput);
+  //audit Assumption: raw-memory inspection cues should not fall through to generic lookup/model reasoning; failure risk: unsupported backend-state prompts are rephrased into hallucinated tables or audit scaffolds; expected invariant: inspection prompts resolve into deterministic DB-backed inspection mode; handling strategy: promote explicit inspection cues before session-target and generic lookup parsing.
+  if (inspectionRequest) {
+    return { intent: 'inspect' };
+  }
+
+  //audit Assumption: prompts that explicitly name a session id or storage label and ask to query or retrieve it should resolve to the latest session-scoped memory row; failure risk: session-label lookups degrade into generic search text and model-generated backend summaries; expected invariant: explicit session targets become deterministic retrievals; handling strategy: promote exact session-target phrasing before broader recall/search parsing.
+  if (hasExplicitNaturalLanguageSessionTargetCue(trimmedInput)) {
+    return { intent: 'retrieve', latest: true };
+  }
+
   const recallMatch = trimmedInput.match(/^(?:please\s+)?recall\b[:\s-]*(.*)$/i);
   if (recallMatch) {
     const recallTarget = recallMatch[1].trim();
@@ -323,12 +338,6 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
   }
 
   //audit Assumption: list verbs should return scoped session rows; failure risk: command confusion with lookup; expected invariant: explicit list/show all memories wording; handling strategy: keyword gating.
-  const inspectionRequest = parseMemoryInspectionRequest(trimmedInput);
-  //audit Assumption: raw-memory inspection cues should not fall through to generic lookup/model reasoning; failure risk: unsupported backend-state prompts are rephrased into hallucinated tables or audit scaffolds; expected invariant: inspection prompts resolve into deterministic DB-backed inspection mode; handling strategy: promote explicit inspection cues before generic lookup parsing.
-  if (inspectionRequest) {
-    return { intent: 'inspect' };
-  }
-
   if (/\b(list|show)\b/.test(loweredInput) && /\b(memories|memory|saved)\b/.test(loweredInput)) {
     return { intent: 'list' };
   }
@@ -379,6 +388,7 @@ export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
     /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:save|store|remember)\b/.test(normalizedInput) ||
     /^(?:please\s+)?(?:lookup|look\s*up|find)\b/.test(normalizedInput) ||
     /^(?:please\s+)?recall\b/.test(normalizedInput) ||
+    hasExplicitNaturalLanguageSessionTargetCue(normalizedInput) ||
     hasExactNaturalLanguageMemorySelectorCue(normalizedInput) ||
     isMemoryInspectionPrompt(normalizedInput) ||
     /\b(last|latest)\b/.test(normalizedInput) && /\b(memory|saved|summary|story|roster|note)\b/.test(normalizedInput) ||
@@ -709,7 +719,8 @@ function hasExplicitSessionTarget(request: NaturalLanguageMemoryRequest): boolea
     return true;
   }
 
-  return extractNaturalLanguageSessionId(request.input) !== null;
+  return extractNaturalLanguageSessionId(request.input) !== null
+    || extractNaturalLanguageStorageLabel(request.input) !== null;
 }
 
 /**
@@ -1269,12 +1280,16 @@ function cloneDiagnostics(diagnostics: RagQueryDiagnostics): NaturalLanguageMemo
  * Edge cases: missing/blank labels return null.
  */
 export function extractNaturalLanguageStorageLabel(rawInput: string): string | null {
-  const labelMatch = rawInput.match(STORAGE_LABEL_LINE_PATTERN);
-  if (!labelMatch?.[1]) {
+  const labelMatch =
+    rawInput.match(STORAGE_LABEL_LINE_PATTERN) ??
+    rawInput.match(SESSION_LABEL_PHRASE_PATTERN) ??
+    rawInput.match(SESSION_LABEL_QUERY_PATTERN);
+  const rawLabel = extractRegexCaptureValue(labelMatch);
+  if (!rawLabel) {
     return null;
   }
 
-  const trimmedLabel = labelMatch[1].trim();
+  const trimmedLabel = rawLabel.trim();
   return trimmedLabel.length > 0 ? trimmedLabel : null;
 }
 
@@ -1320,6 +1335,10 @@ async function resolveRequestedSessionId(request: NaturalLanguageMemoryRequest):
   const rawStorageLabel = extractNaturalLanguageStorageLabel(request.input);
 
   for (const aliasCandidate of [rawStorageLabel, rawTransportSessionId, inlineSessionId]) {
+    if (!aliasCandidate) {
+      continue;
+    }
+
     //audit Assumption: storage labels should resolve to the canonical session id before fallback normalization; failure risk: `Recall: RAW_Vancouver_Session` becomes a brand-new empty session namespace; expected invariant: saved label aliases round-trip to the originating session id; handling strategy: check persisted alias pointers in priority order and short-circuit on the first match.
     const resolvedAliasSessionId = await resolveNaturalLanguageSessionAlias(aliasCandidate);
     if (resolvedAliasSessionId) {
@@ -1327,7 +1346,8 @@ async function resolveRequestedSessionId(request: NaturalLanguageMemoryRequest):
     }
   }
 
-  return normalizeNaturalLanguageSessionId(rawTransportSessionId ?? inlineSessionId);
+  //audit Assumption: explicit storage-label lookups should remain exact even when no alias pointer has been registered yet; failure risk: label-targeted prompts silently collapse into the global namespace and drift through semantic fallback; expected invariant: any explicit label or session target maps to its own deterministic normalized session token; handling strategy: include the raw storage label in fallback normalization order.
+  return normalizeNaturalLanguageSessionId(rawTransportSessionId ?? inlineSessionId ?? rawStorageLabel);
 }
 
 /**
@@ -1363,6 +1383,25 @@ function normalizeExactMemoryTag(rawTag: unknown): string | null {
   return trimmedTag.slice(0, 120);
 }
 
+/**
+ * Determine whether a prompt explicitly names a session target by id or label and asks to retrieve it.
+ * Inputs/outputs: raw user prompt -> boolean exact session-target cue.
+ * Edge cases: structured save payloads without retrieval verbs remain false so they can continue through save parsing.
+ */
+function hasExplicitNaturalLanguageSessionTargetCue(rawInput: string): boolean {
+  const explicitSessionId = extractNaturalLanguageSessionId(rawInput);
+  const explicitStorageLabel = extractNaturalLanguageStorageLabel(rawInput);
+
+  //audit Assumption: only prompts with an explicit session id or storage label can safely bypass generic lookup routing; failure risk: narrative text with broad session nouns is over-classified as exact retrieval; expected invariant: exact session-target routing requires a concrete id or label token; handling strategy: short-circuit false when neither selector exists.
+  if (!explicitSessionId && !explicitStorageLabel) {
+    return false;
+  }
+
+  //audit Assumption: explicit session targets should only auto-route when the caller is clearly asking to retrieve or verify stored backend state; failure risk: structured save payloads or descriptive prose get misread as retrievals; expected invariant: at least one retrieval/inspection verb and one storage/session noun are present; handling strategy: gate on both cue families.
+  return /\b(?:recall|get|load|retrieve|show|find|lookup|look\s*up|search|inspect|check|verify|query)\b/i.test(rawInput)
+    && /\b(?:session|stored|saved|memory|payload|transcript|record)\b/i.test(rawInput);
+}
+
 function describeExactNaturalLanguageMemorySelector(selector: ExactNaturalLanguageMemorySelector): string {
   const descriptorParts: string[] = [];
 
@@ -1394,6 +1433,21 @@ function isStructuredSessionIdentifier(rawToken: unknown): boolean {
 
   //audit Assumption: fallback `for/of <token>` extraction must not capture ordinary prose nouns; failure risk: prompts like "save this for monday" accidentally become new session ids; expected invariant: only machine-like identifiers are accepted; handling strategy: require visible structural markers such as digits, underscores, or hyphens.
   return /[_-]/.test(trimmedToken) || /\d/.test(trimmedToken);
+}
+
+function extractRegexCaptureValue(match: RegExpMatchArray | null): string | null {
+  if (!match) {
+    return null;
+  }
+
+  for (let captureIndex = 1; captureIndex < match.length; captureIndex += 1) {
+    const captureValue = match[captureIndex];
+    if (typeof captureValue === 'string' && captureValue.trim()) {
+      return captureValue.trim();
+    }
+  }
+
+  return null;
 }
 
 /**
