@@ -18,6 +18,7 @@ jest.unstable_mockModule('@services/webRag.js', () => ({
 }));
 
 const {
+  extractNaturalLanguageExactMemorySelector,
   extractNaturalLanguageSessionId,
   executeNaturalLanguageMemoryCommand,
   parseNaturalLanguageMemoryCommand
@@ -80,6 +81,28 @@ Main Event: Gunther def. AJ Styles clean`;
   it('parses raw memory inspection prompts as deterministic inspection commands', () => {
     expect(parseNaturalLanguageMemoryCommand('Show the full raw memory table for RAW_20260308_VAN')).toEqual({
       intent: 'inspect'
+    });
+  });
+
+  it('extracts exact record-id and tag selectors from diagnostic retrieval prompts', () => {
+    expect(
+      extractNaturalLanguageExactMemorySelector(
+        'Recall the saved payload for Record ID: 18342\nTag: session_diagnostic_2026-03-08'
+      )
+    ).toEqual({
+      recordId: 18342,
+      tag: 'session_diagnostic_2026-03-08'
+    });
+    expect(
+      parseNaturalLanguageMemoryCommand(
+        'Recall the saved payload for Record ID: 18342\nTag: session_diagnostic_2026-03-08'
+      )
+    ).toEqual({
+      intent: 'lookup',
+      exactSelectors: {
+        recordId: 18342,
+        tag: 'session_diagnostic_2026-03-08'
+      }
     });
   });
 
@@ -315,6 +338,55 @@ Main Event: Gunther def. AJ Styles clean`,
           requestedArtifacts: ['raw_memory_rows', 'audit_log_entries', 'snapshot_history'],
           unsupportedArtifacts: ['audit_log_entries', 'snapshot_history']
         }
+      })
+    );
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
+  });
+
+  it('returns exact selector matches without semantic fallback for record-id and tag prompts', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 18342,
+          key: 'session:diagnostic-2026:system_meta',
+          value: [
+            {
+              audit_tag: 'session_diagnostic_2026-03-08',
+              note: 'Exact diagnostic payload'
+            }
+          ],
+          created_at: '2026-03-08T15:22:10.000Z',
+          updated_at: '2026-03-08T18:45:02.000Z'
+        }
+      ],
+      rowCount: 1
+    });
+
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: 'Recall the saved payload for Record ID: 18342\nTag: session_diagnostic_2026-03-08'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'lookup',
+        operation: 'searched',
+        sessionId: 'global',
+        message: 'Found 1 exact persisted memory entry for record id 18342 and tag session_diagnostic_2026-03-08.',
+        entries: [
+          expect.objectContaining({
+            recordId: 18342,
+            key: 'session:diagnostic-2026:system_meta',
+            value: [
+              expect.objectContaining({
+                audit_tag: 'session_diagnostic_2026-03-08'
+              })
+            ]
+          })
+        ],
+        rag: expect.objectContaining({
+          active: false,
+          reason: 'exact_selector_hit'
+        })
       })
     );
     expect(mockQueryRagDocuments).not.toHaveBeenCalled();

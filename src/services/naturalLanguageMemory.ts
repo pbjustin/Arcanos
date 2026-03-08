@@ -37,6 +37,7 @@ export interface NaturalLanguageMemoryRequest {
 }
 
 export interface NaturalLanguageMemoryEntry {
+  recordId?: number | null;
   key: string;
   value: unknown;
   metadata: Record<string, unknown> | null;
@@ -65,13 +66,20 @@ interface ParsedMemoryCommand {
   key?: string;
   queryText?: string;
   latest?: boolean;
+  exactSelectors?: ExactNaturalLanguageMemorySelector;
 }
 
 interface MemoryTableRow {
+  id?: number | string | null;
   key: string;
   value: unknown;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExactNaturalLanguageMemorySelector {
+  recordId?: number;
+  tag?: string;
 }
 
 export interface NaturalLanguageMemoryRagMatch {
@@ -129,6 +137,8 @@ const RESERVED_SESSION_ID_TOKENS = new Set([
 const STRUCTURED_SESSION_METADATA_LINE_PATTERN =
   /^(?:session\s*id|storage\s*label|activation\s*timestamp|status)\s*:/i;
 const STORAGE_LABEL_LINE_PATTERN = /\bstorage\s*label\s*[:=]\s*([^\r\n]+)/i;
+const RECORD_ID_LINE_PATTERN = /\brecord\s*id\s*[:=]\s*(\d{1,12})\b/i;
+const TAG_LINE_PATTERN = /(?:^|\n)\s*tag\s*[:=]\s*([^\r\n]+)/i;
 const STRUCTURED_SESSION_SECTION_CUE_PATTERN =
   /(?:^|\n)\s*(?:persisted\s+summary(?:\s*\(stored\))?|session\s+behavior|session\s+capabilities\s+enabled|available\s+actions)\b/i;
 const MIN_STRUCTURED_SESSION_PAYLOAD_LINES = 3;
@@ -190,6 +200,67 @@ export function extractNaturalLanguageSessionId(rawInput: string): string | null
 }
 
 /**
+ * Extract exact persisted-memory selectors such as record id and diagnostic tag.
+ * Inputs/outputs: raw user prompt -> normalized selector bundle or null.
+ * Edge cases: malformed ids/tags are ignored so callers can fail closed without inventing selector state.
+ */
+export function extractNaturalLanguageExactMemorySelector(
+  rawInput: string
+): ExactNaturalLanguageMemorySelector | null {
+  const recordIdMatch = rawInput.match(RECORD_ID_LINE_PATTERN);
+  const parsedRecordId = recordIdMatch?.[1] ? Number.parseInt(recordIdMatch[1], 10) : Number.NaN;
+  const normalizedRecordId = Number.isInteger(parsedRecordId) && parsedRecordId > 0 ? parsedRecordId : null;
+  const normalizedTag = normalizeExactMemoryTag(rawInput.match(TAG_LINE_PATTERN)?.[1]);
+
+  //audit Assumption: selector extraction should only activate when at least one exact selector is present; failure risk: generic prompts are treated as exact DB inspections; expected invariant: null means "no exact selector"; handling strategy: require a valid record id or normalized tag.
+  if (normalizedRecordId === null && !normalizedTag) {
+    return null;
+  }
+
+  return {
+    ...(normalizedRecordId === null ? {} : { recordId: normalizedRecordId }),
+    ...(normalizedTag ? { tag: normalizedTag } : {})
+  };
+}
+
+/**
+ * Build a stable synthetic session token for exact selector requests.
+ * Inputs/outputs: exact selector bundle -> normalized session-like label.
+ * Edge cases: missing fields fall back to the default global token.
+ */
+export function buildExactNaturalLanguageMemorySelectorLabel(
+  selector: ExactNaturalLanguageMemorySelector
+): string {
+  const descriptorParts: string[] = [];
+
+  if (typeof selector.recordId === 'number') {
+    descriptorParts.push(`record-${selector.recordId}`);
+  }
+
+  if (typeof selector.tag === 'string' && selector.tag.trim()) {
+    descriptorParts.push(`tag-${selector.tag}`);
+  }
+
+  return normalizeNaturalLanguageSessionId(descriptorParts.join('-'));
+}
+
+/**
+ * Determine whether a prompt explicitly asks for exact persisted-memory retrieval by selector.
+ * Inputs/outputs: raw user prompt -> boolean exact-selector cue.
+ * Edge cases: raw selector mentions without retrieval verbs stay false to avoid hijacking narrative text.
+ */
+export function hasExactNaturalLanguageMemorySelectorCue(rawInput: string): boolean {
+  const selector = extractNaturalLanguageExactMemorySelector(rawInput);
+  if (!selector) {
+    return false;
+  }
+
+  //audit Assumption: record/tag prompts should bypass model reasoning only when the user is clearly asking to retrieve or inspect stored payloads; failure risk: narrative diagnostics that merely mention a record id get intercepted; expected invariant: exact-selector mode requires both selectors and retrieval cues; handling strategy: gate on bounded retrieval verbs and memory nouns.
+  return /\b(?:recall|get|load|retrieve|show|find|lookup|look\s*up|search|inspect)\b/i.test(rawInput)
+    && /\b(?:payload|record\s*id|tag|stored|saved|memory)\b/i.test(rawInput);
+}
+
+/**
  * Parse a natural-language memory command into an executable intent.
  * Inputs/outputs: user command text -> parsed intent/arguments.
  * Edge cases: ambiguous text is downgraded to lookup or unknown.
@@ -218,6 +289,15 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
       intent: 'save',
       content: normalizedContent,
       key: explicitKey
+    };
+  }
+
+  const exactSelector = extractNaturalLanguageExactMemorySelector(trimmedInput);
+  //audit Assumption: exact record/tag selectors should become deterministic DB retrieval instead of generic lookup text or model reasoning; failure risk: record-id diagnostics drift to semantic matches or hallucinated status prose; expected invariant: selector prompts keep their exact selector bundle; handling strategy: promote exact-selector requests before broader recall/search parsing.
+  if (exactSelector && hasExactNaturalLanguageMemorySelectorCue(trimmedInput)) {
+    return {
+      intent: 'lookup',
+      exactSelectors: exactSelector
     };
   }
 
@@ -296,9 +376,12 @@ export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
     /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:save|store|remember)\b/.test(normalizedInput) ||
     /^(?:please\s+)?(?:lookup|look\s*up|find)\b/.test(normalizedInput) ||
     /^(?:please\s+)?recall\b/.test(normalizedInput) ||
+    hasExactNaturalLanguageMemorySelectorCue(normalizedInput) ||
     isMemoryInspectionPrompt(normalizedInput) ||
     /\b(last|latest)\b/.test(normalizedInput) && /\b(memory|saved|summary|story|roster|note)\b/.test(normalizedInput) ||
     /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedInput) ||
+    /\brecord\s*id\s*:/.test(normalizedInput) ||
+    /\btag\s*:/.test(normalizedInput) ||
     /\bsession\s*id\s*:/.test(normalizedInput) ||
     /\bstorage\s*label\s*:/.test(normalizedInput)
   );
@@ -557,6 +640,25 @@ export async function executeNaturalLanguageMemoryCommand(
         requestedArtifacts: inspectionRequest.requestedArtifacts,
         unsupportedArtifacts: inspectionRequest.unsupportedArtifacts
       }
+    };
+  }
+
+  if (parsedCommand.exactSelectors) {
+    const exactSelectorEntries = await queryExactNaturalLanguageMemoryEntries(
+      parsedCommand.exactSelectors,
+      lookupLimit
+    );
+    const selectorDescription = describeExactNaturalLanguageMemorySelector(parsedCommand.exactSelectors);
+
+    return {
+      intent: 'lookup',
+      operation: 'searched',
+      sessionId,
+      entries: exactSelectorEntries,
+      message: exactSelectorEntries.length > 0
+        ? `Found ${exactSelectorEntries.length} exact persisted memory entr${exactSelectorEntries.length === 1 ? 'y' : 'ies'} for ${selectorDescription}.`
+        : `No exact persisted memory rows matched ${selectorDescription}.`,
+      rag: disabledRagResult(exactSelectorEntries.length > 0 ? 'exact_selector_hit' : 'exact_selector_not_found')
     };
   }
 
@@ -872,6 +974,33 @@ async function querySessionEntries(sessionId: string, limit: number): Promise<Na
 }
 
 /**
+ * Query persisted memory rows by exact record-id and/or tag selectors.
+ * Inputs/outputs: selector bundle + limit -> normalized exact-match entry list.
+ * Edge cases: tag matching uses literal substring search against key/value text so callers still avoid semantic fallback.
+ */
+export async function queryExactNaturalLanguageMemoryEntries(
+  selector: ExactNaturalLanguageMemorySelector,
+  limit: number
+): Promise<NaturalLanguageMemoryEntry[]> {
+  const normalizedLimit = resolveLookupLimit(limit);
+  const tagPattern = typeof selector.tag === 'string' && selector.tag.trim()
+    ? `%${escapeSqlLikePattern(selector.tag)}%`
+    : null;
+
+  const result = await query(
+    `SELECT id, key, value, created_at, updated_at
+     FROM memory
+     WHERE ($1::integer IS NULL OR id = $1)
+       AND ($2::text IS NULL OR key ILIKE $2 ESCAPE '\\' OR value::text ILIKE $2 ESCAPE '\\')
+     ORDER BY updated_at DESC
+     LIMIT $3`,
+    [selector.recordId ?? null, tagPattern, normalizedLimit]
+  );
+
+  return normalizeMemoryTableRows(result.rows as MemoryTableRow[]);
+}
+
+/**
  * Search session-scoped memory entries by query text.
  * Inputs/outputs: session id + query + limit -> normalized matching entries.
  * Edge cases: empty results return empty array.
@@ -927,6 +1056,7 @@ function normalizeMemoryTableRows(rows: MemoryTableRow[]): NaturalLanguageMemory
   return rows.map((row) => {
     const { payload, metadata } = unwrapVersionedMemoryEnvelope<unknown>(row.value);
     return {
+      recordId: normalizeExactMemoryRecordId(row.id),
       key: row.key,
       value: payload,
       metadata: metadata ? (metadata as unknown as Record<string, unknown>) : null,
@@ -934,6 +1064,17 @@ function normalizeMemoryTableRows(rows: MemoryTableRow[]): NaturalLanguageMemory
       updated_at: row.updated_at
     };
   });
+}
+
+function normalizeExactMemoryRecordId(rawRecordId: unknown): number | null {
+  const numericRecordId =
+    typeof rawRecordId === 'number'
+      ? rawRecordId
+      : typeof rawRecordId === 'string'
+        ? Number.parseInt(rawRecordId, 10)
+        : Number.NaN;
+
+  return Number.isInteger(numericRecordId) && numericRecordId > 0 ? numericRecordId : null;
 }
 
 /**
@@ -1205,6 +1346,34 @@ function normalizeNaturalLanguageStorageLabel(rawLabel: unknown): string | null 
 
   const normalizedLabel = normalizeNaturalLanguageSessionId(trimmedLabel);
   return normalizedLabel === DEFAULT_SESSION_ID ? null : normalizedLabel;
+}
+
+function normalizeExactMemoryTag(rawTag: unknown): string | null {
+  if (typeof rawTag !== 'string') {
+    return null;
+  }
+
+  const trimmedTag = rawTag.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+  if (!trimmedTag) {
+    return null;
+  }
+
+  //audit Assumption: exact tag selectors should stay short enough for deterministic literal SQL matching; failure risk: very large pasted payload lines become accidental "tags" and degrade search; expected invariant: selector tags stay bounded; handling strategy: trim and clamp to a safe fixed length.
+  return trimmedTag.slice(0, 120);
+}
+
+function describeExactNaturalLanguageMemorySelector(selector: ExactNaturalLanguageMemorySelector): string {
+  const descriptorParts: string[] = [];
+
+  if (typeof selector.recordId === 'number') {
+    descriptorParts.push(`record id ${selector.recordId}`);
+  }
+
+  if (typeof selector.tag === 'string' && selector.tag.trim()) {
+    descriptorParts.push(`tag ${selector.tag}`);
+  }
+
+  return descriptorParts.join(' and ') || 'the requested selector';
 }
 
 /**

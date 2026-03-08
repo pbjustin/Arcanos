@@ -5,7 +5,10 @@ import { createEmbedding } from './openai/embeddings.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { getEnv } from "@platform/runtime/env.js";
 import {
+  buildExactNaturalLanguageMemorySelectorLabel,
+  extractNaturalLanguageExactMemorySelector,
   extractNaturalLanguageSessionId,
+  queryExactNaturalLanguageMemoryEntries,
   resolveNaturalLanguageSessionAlias
 } from './naturalLanguageMemory.js';
 
@@ -46,6 +49,21 @@ interface PersistedSessionRow {
  */
 export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   const sessions = getCachedSessions() as CachedSession[];
+  const exactMemorySelector = extractNaturalLanguageExactMemorySelector(nlQuery);
+
+  if (exactMemorySelector) {
+    const exactSelectorSession = await resolveExactSelectorSession(exactMemorySelector);
+    if (exactSelectorSession) {
+      return exactSelectorSession;
+    }
+
+    //audit Assumption: exact record/tag selector misses must not degrade into semantic session matching; failure risk: `/memory/resolve` returns an unrelated active transcript for a missing record id; expected invariant: exact selector misses are explicit and null; handling strategy: return a deterministic synthetic selector label with null payload.
+    return {
+      sessionId: buildExactNaturalLanguageMemorySelectorLabel(exactMemorySelector),
+      conversations_core: null,
+    };
+  }
+
   const explicitSessionId = await resolveExplicitSessionId(nlQuery);
 
   if (explicitSessionId) {
@@ -128,6 +146,26 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   return {
     sessionId: chosen.sessionId,
     conversations_core: chosen.conversations_core ?? null,
+  };
+}
+
+async function resolveExactSelectorSession(
+  selector: Parameters<typeof queryExactNaturalLanguageMemoryEntries>[0]
+): Promise<ResolveResult | null> {
+  const entries = await queryExactNaturalLanguageMemoryEntries(selector, 1);
+  const firstEntry = entries[0];
+  if (!firstEntry) {
+    return null;
+  }
+
+  const conversationCore = toPersistedConversationCore(firstEntry.value, firstEntry.key);
+  if (!conversationCore) {
+    return null;
+  }
+
+  return {
+    sessionId: extractPersistedSessionId(firstEntry.value) ?? buildExactNaturalLanguageMemorySelectorLabel(selector),
+    conversations_core: conversationCore,
   };
 }
 
@@ -244,6 +282,17 @@ function toPersistedConversationCore(payload: unknown, memoryKey: string): Conve
   }
 
   return null;
+}
+
+function extractPersistedSessionId(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const rawSessionId = (payload as { sessionId?: unknown }).sessionId;
+  return typeof rawSessionId === 'string' && rawSessionId.trim()
+    ? rawSessionId.trim()
+    : null;
 }
 
 async function loadLatestPersistedMemoryRow(sessionId: string): Promise<PersistedSessionRow | null> {

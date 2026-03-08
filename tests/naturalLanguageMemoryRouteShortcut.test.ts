@@ -77,6 +77,44 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
     );
   });
 
+  it('short-circuits exact record-id and tag prompts into deterministic memory output', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 18342,
+          key: 'session:diagnostic-2026:system_meta',
+          value: [
+            {
+              audit_tag: 'session_diagnostic_2026-03-08',
+              note: 'Exact diagnostic payload'
+            }
+          ],
+          created_at: '2026-03-08T15:22:10.000Z',
+          updated_at: '2026-03-08T18:45:02.000Z'
+        }
+      ],
+      rowCount: 1
+    });
+
+    const shortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
+      prompt: 'Recall the saved payload for Record ID: 18342\nTag: session_diagnostic_2026-03-08'
+    });
+
+    expect(shortcut).toEqual(
+      expect.objectContaining({
+        resultText: expect.stringContaining('session_diagnostic_2026-03-08'),
+        memory: expect.objectContaining({
+          operation: 'searched',
+          entries: [
+            expect.objectContaining({
+              recordId: 18342
+            })
+          ]
+        })
+      })
+    );
+  });
+
   it('formats search results deterministically when multiple entries are returned', () => {
     const rendered = renderNaturalLanguageMemoryRouteResult({
       intent: 'lookup',

@@ -10,7 +10,10 @@ const mockGetOpenAIClientOrAdapter = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvBoolean = jest.fn();
+const mockBuildExactNaturalLanguageMemorySelectorLabel = jest.fn();
+const mockExtractNaturalLanguageExactMemorySelector = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
+const mockQueryExactNaturalLanguageMemoryEntries = jest.fn();
 const mockResolveNaturalLanguageSessionAlias = jest.fn();
 
 jest.unstable_mockModule('../src/services/sessionMemoryService.js', () => ({
@@ -39,7 +42,10 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
+  buildExactNaturalLanguageMemorySelectorLabel: mockBuildExactNaturalLanguageMemorySelectorLabel,
+  extractNaturalLanguageExactMemorySelector: mockExtractNaturalLanguageExactMemorySelector,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
+  queryExactNaturalLanguageMemoryEntries: mockQueryExactNaturalLanguageMemoryEntries,
   resolveNaturalLanguageSessionAlias: mockResolveNaturalLanguageSessionAlias,
 }));
 
@@ -58,7 +64,12 @@ describe('sessionResolver persisted recall', () => {
     mockGetEnv.mockReturnValue(undefined);
     mockGetEnvNumber.mockReturnValue(0);
     mockGetEnvBoolean.mockReturnValue(false);
+    mockBuildExactNaturalLanguageMemorySelectorLabel.mockImplementation((selector: { recordId?: number; tag?: string }) =>
+      selector.recordId ? `record-${selector.recordId}` : 'global'
+    );
+    mockExtractNaturalLanguageExactMemorySelector.mockReturnValue(null);
     mockResolveNaturalLanguageSessionAlias.mockResolvedValue(null);
+    mockQueryExactNaturalLanguageMemoryEntries.mockResolvedValue([]);
     mockExtractNaturalLanguageSessionId.mockImplementation((input: string) => {
       if (/raw_vancouver_2026/i.test(input)) {
         return 'raw_vancouver_2026';
@@ -197,5 +208,72 @@ describe('sessionResolver persisted recall', () => {
     expect(mockResolveNaturalLanguageSessionAlias).toHaveBeenCalledWith('raw_vancouver_session');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_vancouver_2026:entry-20260308090000');
+  });
+
+  it('returns an exact selector miss instead of drifting to cached sessions', async () => {
+    mockExtractNaturalLanguageExactMemorySelector.mockReturnValueOnce({
+      recordId: 18342,
+      tag: 'session_diagnostic_2026-03-08'
+    });
+    mockBuildExactNaturalLanguageMemorySelectorLabel.mockReturnValueOnce(
+      'record-18342-tag-session_diagnostic_2026-03-08'
+    );
+    mockGetCachedSessions.mockReturnValue([
+      {
+        sessionId: 'raw_vancouver_2026_probe2',
+        conversations_core: [{ role: 'assistant', content: 'Probe recap' }]
+      }
+    ]);
+
+    const result = await resolveSession(
+      'Recall the saved payload for Record ID: 18342\nTag: session_diagnostic_2026-03-08'
+    );
+
+    expect(result).toEqual({
+      sessionId: 'record-18342-tag-session_diagnostic_2026-03-08',
+      conversations_core: null
+    });
+    expect(mockQueryExactNaturalLanguageMemoryEntries).toHaveBeenCalledWith(
+      {
+        recordId: 18342,
+        tag: 'session_diagnostic_2026-03-08'
+      },
+      1
+    );
+    expect(mockCreateEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('returns the exact persisted row for record-id and tag selectors when present', async () => {
+    mockExtractNaturalLanguageExactMemorySelector.mockReturnValueOnce({
+      recordId: 18342,
+      tag: 'session_diagnostic_2026-03-08'
+    });
+    mockQueryExactNaturalLanguageMemoryEntries.mockResolvedValueOnce([
+      {
+        recordId: 18342,
+        key: 'nl-memory:diagnostic:18342',
+        value: {
+          sessionId: 'session_diagnostic_2026-03-08',
+          text: 'Exact diagnostic recap'
+        },
+        metadata: null,
+        created_at: '2026-03-08T15:22:10.000Z',
+        updated_at: '2026-03-08T18:45:02.000Z'
+      }
+    ]);
+
+    const result = await resolveSession(
+      'Recall the saved payload for Record ID: 18342\nTag: session_diagnostic_2026-03-08'
+    );
+
+    expect(result).toEqual({
+      sessionId: 'session_diagnostic_2026-03-08',
+      conversations_core: [{
+        role: 'assistant',
+        content: 'Exact diagnostic recap',
+        memoryKey: 'nl-memory:diagnostic:18342',
+        savedAt: undefined
+      }]
+    });
   });
 });

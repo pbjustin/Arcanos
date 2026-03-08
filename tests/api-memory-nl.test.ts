@@ -267,4 +267,27 @@ describe('/api/memory/nl', () => {
     expect(response.body.data.value).toBeNull();
     expect(mockQueryRagDocuments).not.toHaveBeenCalled();
   });
+
+  it('returns an exact selector miss for record-id and tag prompts without semantic fallback', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const response = await request(app).post('/api/memory/nl').send({
+      input: 'Recall the saved payload for Record ID: 18342\nTag: session_diagnostic_2026-03-08'
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.intent).toBe('lookup');
+    expect(response.body.data.operation).toBe('searched');
+    expect(response.body.data.entries).toEqual([]);
+    expect(response.body.data.message).toBe(
+      'No exact persisted memory rows matched record id 18342 and tag session_diagnostic_2026-03-08.'
+    );
+    expect(response.body.data.rag).toEqual(
+      expect.objectContaining({
+        active: false,
+        reason: 'exact_selector_not_found'
+      })
+    );
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
+  });
 });
