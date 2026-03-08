@@ -49,19 +49,19 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   const explicitSessionId = await resolveExplicitSessionId(nlQuery);
 
   if (explicitSessionId) {
+    const persistedSession = await resolvePersistedSession(explicitSessionId);
+    //audit Assumption: explicit recall should prefer persisted recap rows over live transcript state; failure risk: `/memory/resolve` returns the active chat transcript instead of the saved show recap; expected invariant: exact session recalls surface the latest persisted recap when one exists; handling strategy: consult persisted memory before cache fallback.
+    if (persistedSession) {
+      return persistedSession;
+    }
+
     const exactCachedMatch = findCachedSessionById(sessions, explicitSessionId);
-    //audit Assumption: explicit session-id references should return the named session before any semantic heuristics; failure risk: user asks for one saved recap and receives another cached session; expected invariant: exact cache id wins when present; handling strategy: short-circuit on direct cached match.
+    //audit Assumption: cached session state is still useful when no persisted recap exists yet; failure risk: operators lose active in-memory context for newly created sessions; expected invariant: exact cache fallback stays available only after persisted recap lookup misses; handling strategy: short-circuit on direct cached match after persisted lookup fails.
     if (exactCachedMatch) {
       return {
         sessionId: exactCachedMatch.sessionId,
         conversations_core: exactCachedMatch.conversations_core ?? null,
       };
-    }
-
-    const persistedSession = await resolvePersistedSession(explicitSessionId);
-    //audit Assumption: persisted memory rows may exist even when the in-process cache is empty after restart or deploy; failure risk: recall silently drifts to unrelated active sessions; expected invariant: persisted exact session recall wins before fuzzy matching; handling strategy: return memory-backed conversation surrogate when available.
-    if (persistedSession) {
-      return persistedSession;
     }
 
     //audit Assumption: explicit session-id recalls must not degrade into semantic matching when the exact session is absent; failure risk: `/memory/resolve` returns a neighboring or most-recent session and hides the miss; expected invariant: explicit session misses stay exact and inspectable; handling strategy: return the requested session id with null conversation payload.
@@ -156,14 +156,6 @@ function findCachedSessionById(sessions: CachedSession[], sessionId: string): Ca
 }
 
 async function resolvePersistedSession(sessionId: string): Promise<ResolveResult | null> {
-  const conversationPayload = await safeLoadMemory(`session:${sessionId}:conversations_core`);
-  if (Array.isArray(conversationPayload)) {
-    return {
-      sessionId,
-      conversations_core: conversationPayload as ConversationCore,
-    };
-  }
-
   const latestPointerPayload = await safeLoadMemory(`nl-latest:${sessionId}`);
   const latestKey = extractPersistedMemoryKey(latestPointerPayload);
 
@@ -179,19 +171,26 @@ async function resolvePersistedSession(sessionId: string): Promise<ResolveResult
   }
 
   const fallbackRow = await loadLatestPersistedMemoryRow(sessionId);
-  if (!fallbackRow) {
-    return null;
+  if (fallbackRow) {
+    const fallbackConversationCore = toPersistedConversationCore(fallbackRow.value, fallbackRow.key);
+    if (fallbackConversationCore) {
+      return {
+        sessionId,
+        conversations_core: fallbackConversationCore,
+      };
+    }
   }
 
-  const fallbackConversationCore = toPersistedConversationCore(fallbackRow.value, fallbackRow.key);
-  if (!fallbackConversationCore) {
-    return null;
+  const conversationPayload = await safeLoadMemory(`session:${sessionId}:conversations_core`);
+  //audit Assumption: legacy session transcripts remain valuable only when no explicit saved recap row exists; failure risk: transcript payloads overshadow the recap rows users expect from recall; expected invariant: transcript fallback runs only after latest pointer and persisted row scans miss; handling strategy: defer conversation-core fallback to the end of persisted resolution.
+  if (Array.isArray(conversationPayload)) {
+    return {
+      sessionId,
+      conversations_core: conversationPayload as ConversationCore,
+    };
   }
 
-  return {
-    sessionId,
-    conversations_core: fallbackConversationCore,
-  };
+  return null;
 }
 
 async function safeLoadMemory(key: string): Promise<unknown | null> {

@@ -70,7 +70,7 @@ describe('sessionResolver persisted recall', () => {
     });
   });
 
-  it('returns an exact cached session before semantic matching', async () => {
+  it('returns the latest persisted recap before an exact cached transcript match', async () => {
     mockGetCachedSessions.mockReturnValue([
       {
         sessionId: 'raw_vancouver_2026',
@@ -82,23 +82,64 @@ describe('sessionResolver persisted recall', () => {
       }
     ]);
 
+    mockLoadMemory
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308071500' })
+      .mockResolvedValueOnce({
+        sessionId: 'raw_vancouver_2026',
+        text: 'Persisted Vancouver recap'
+      });
+
+    const result = await resolveSession('Recall: raw_vancouver_2026');
+
+    expect(result).toEqual({
+      sessionId: 'raw_vancouver_2026',
+      conversations_core: [{
+        role: 'assistant',
+        content: 'Persisted Vancouver recap',
+        memoryKey: 'nl-memory:raw_vancouver_2026:entry-20260308071500',
+        savedAt: undefined
+      }]
+    });
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_vancouver_2026:entry-20260308071500');
+  });
+
+  it('falls back to the exact cached session when no persisted recap exists yet', async () => {
+    mockGetCachedSessions.mockReturnValue([
+      {
+        sessionId: 'raw_vancouver_2026',
+        conversations_core: [{ role: 'assistant', content: 'Cached exact session recap' }]
+      }
+    ]);
+    mockLoadMemory
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+
     const result = await resolveSession('Recall: raw_vancouver_2026');
 
     expect(result).toEqual({
       sessionId: 'raw_vancouver_2026',
       conversations_core: [{ role: 'assistant', content: 'Cached exact session recap' }]
     });
-    expect(mockLoadMemory).not.toHaveBeenCalled();
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'session:raw_vancouver_2026:conversations_core');
   });
 
   it('falls back to persisted nl-memory rows when the cache does not contain the requested session', async () => {
-    mockLoadMemory
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308073000' })
-      .mockResolvedValueOnce({
-        sessionId: 'raw_vancouver_2026',
-        text: 'Vaquer def. Natalya -> Raquel Rodriguez kendo attack'
-      });
+    mockLoadMemory.mockResolvedValueOnce(null);
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          key: 'nl-memory:raw_vancouver_2026:entry-20260308073000',
+          value: {
+            sessionId: 'raw_vancouver_2026',
+            text: 'Vaquer def. Natalya -> Raquel Rodriguez kendo attack'
+          }
+        }
+      ],
+      rowCount: 1
+    });
 
     const result = await resolveSession('Recall: raw_vancouver_2026');
 
@@ -111,9 +152,7 @@ describe('sessionResolver persisted recall', () => {
         savedAt: undefined
       }]
     });
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'session:raw_vancouver_2026:conversations_core');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_vancouver_2026');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_vancouver_2026:entry-20260308073000');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
   });
 
   it('returns an exact-session miss instead of drifting to semantic fallback sessions', async () => {
@@ -138,7 +177,6 @@ describe('sessionResolver persisted recall', () => {
   it('resolves storage label aliases before looking up persisted sessions', async () => {
     mockResolveNaturalLanguageSessionAlias.mockResolvedValueOnce('raw_vancouver_2026');
     mockLoadMemory
-      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308090000' })
       .mockResolvedValueOnce({
         sessionId: 'raw_vancouver_2026',
@@ -157,8 +195,7 @@ describe('sessionResolver persisted recall', () => {
       }]
     });
     expect(mockResolveNaturalLanguageSessionAlias).toHaveBeenCalledWith('raw_vancouver_session');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'session:raw_vancouver_2026:conversations_core');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_vancouver_2026');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_vancouver_2026:entry-20260308090000');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_vancouver_2026:entry-20260308090000');
   });
 });

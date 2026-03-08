@@ -223,6 +223,56 @@ Main Event: Gunther def. AJ Styles clean`;
     );
   });
 
+  it('reuses the latest identical session save instead of writing a duplicate memory row', async () => {
+    const retrySavePrompt = `Save this recap
+Session ID: RAW_VANCOUVER_RETRY_2026
+
+Main Event: Gunther def. AJ Styles clean`;
+
+    mockLoadMemory
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_retry_2026:entry-20260308193000' })
+      .mockResolvedValueOnce({
+        sessionId: 'raw_vancouver_retry_2026',
+        text: `this recap
+Session ID: RAW_VANCOUVER_RETRY_2026
+
+Main Event: Gunther def. AJ Styles clean`,
+        savedAt: '2026-03-08T19:30:00.000Z'
+      });
+
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: retrySavePrompt
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'save',
+        operation: 'saved',
+        sessionId: 'raw_vancouver_retry_2026',
+        key: 'nl-memory:raw_vancouver_retry_2026:entry-20260308193000',
+        value: expect.objectContaining({
+          sessionId: 'raw_vancouver_retry_2026',
+          text: `this recap
+Session ID: RAW_VANCOUVER_RETRY_2026
+
+Main Event: Gunther def. AJ Styles clean`,
+          savedAt: '2026-03-08T19:30:00.000Z'
+        }),
+        rag: expect.objectContaining({
+          active: false,
+          reason: 'already_indexed'
+        })
+      })
+    );
+
+    const memoryRowWrites = mockSaveMemory.mock.calls.filter(([key]) =>
+      typeof key === 'string' && key.startsWith('nl-memory:raw_vancouver_retry_2026:')
+    );
+    expect(memoryRowWrites).toHaveLength(0);
+    expect(mockRecordPersistentMemorySnippet).not.toHaveBeenCalled();
+  });
+
   it('returns exact raw memory rows for inspection prompts without semantic fallback', async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [

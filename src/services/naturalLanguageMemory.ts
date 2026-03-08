@@ -329,38 +329,54 @@ export async function executeNaturalLanguageMemoryCommand(
 
   if (parsedCommand.intent === 'save') {
     const content = normalizeSaveContent(parsedCommand.content as string);
-    const key = parsedCommand.key || buildAutoMemoryKey(sessionId, content);
-    const savedPayload = {
+    const explicitKey = typeof parsedCommand.key === 'string' ? parsedCommand.key : null;
+    const reusableSave = explicitKey
+      ? null
+      : await findReusableLatestSessionSave(sessionId, content);
+    const key = reusableSave?.key ?? explicitKey ?? buildAutoMemoryKey(sessionId, content);
+    const savedPayload = reusableSave?.payload ?? {
       sessionId,
       text: content,
       savedAt: new Date().toISOString()
     };
 
-    await saveMemory(key, savedPayload);
+    //audit Assumption: retrying the exact same session save should not create duplicate nl-memory rows; failure risk: repeated writes bloat the table and distort recall inspection output; expected invariant: latest identical session payload reuses the existing key; handling strategy: reuse the latest matching row when the normalized content is unchanged.
+    if (!reusableSave) {
+      await saveMemory(key, savedPayload);
+    }
+
     await updateSessionIndexes(sessionId, key);
     await updateSessionLabelPointer({
       sessionId,
       storageLabel: extractNaturalLanguageStorageLabel(content) ?? extractNaturalLanguageStorageLabel(request.input)
     });
-    const ragIngested = await recordPersistentMemorySnippet({
-      key,
-      sessionId,
-      content,
-      metadata: {
-        sourceType: 'memory',
-        intent: 'save'
-      },
-      timestamp: Date.now()
-    });
+
+    const ragIngested = reusableSave
+      ? false
+      : await recordPersistentMemorySnippet({
+        key,
+        sessionId,
+        content,
+        metadata: {
+          sourceType: 'memory',
+          intent: 'save'
+        },
+        timestamp: Date.now()
+      });
+    const ragReason = reusableSave
+      ? 'already_indexed'
+      : ragIngested
+        ? 'ingested'
+        : 'ingestion_skipped_or_failed';
 
     const ragResult: NaturalLanguageMemoryRagResult = {
       active: ragIngested,
       mode: ragIngested ? 'supplemental' : 'disabled',
-      reason: ragIngested ? 'ingested' : 'ingestion_skipped_or_failed',
+      reason: ragReason,
       matches: [],
       diagnostics: {
         enabled: ragIngested,
-        reason: ragIngested ? 'ok' : 'ingestion_skipped_or_failed',
+        reason: reusableSave ? 'already_indexed' : ragIngested ? 'ok' : 'ingestion_skipped_or_failed',
         candidateCount: 0,
         returnedCount: 0,
         sessionFilterApplied: true,
@@ -709,6 +725,83 @@ function buildAutoMemoryKey(sessionId: string, content: string): string {
 
   //audit Assumption: memory keys must remain under DB varchar(255); failure risk: persistence write failures; expected invariant: key length <= 255 chars; handling strategy: truncate final key.
   return key.slice(0, 255);
+}
+
+interface ReusableLatestSessionSave {
+  key: string;
+  payload: {
+    sessionId: string;
+    text: string;
+    savedAt?: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Reuse the latest session memory row when a retry submits the same payload again.
+ * Inputs/outputs: session id plus normalized content -> reusable key/payload or null.
+ * Edge cases: malformed or legacy latest rows simply fall back to creating a new row.
+ */
+async function findReusableLatestSessionSave(
+  sessionId: string,
+  normalizedContent: string
+): Promise<ReusableLatestSessionSave | null> {
+  const latestPointer = await loadMemory(buildLatestPointerKey(sessionId));
+  const latestKey = extractLatestKey(latestPointer);
+  if (!latestKey) {
+    return null;
+  }
+
+  const latestValue = await loadMemory(latestKey);
+  const reusablePayload = normalizeReusableLatestSessionPayload(latestValue);
+  //audit Assumption: only the latest identical session payload should be treated as an idempotent retry; failure risk: older historical rows are collapsed unintentionally; expected invariant: reuse is limited to the current latest row with the same normalized text and session id; handling strategy: compare the latest row's canonical fields and return null on any mismatch.
+  if (
+    !reusablePayload ||
+    reusablePayload.sessionId !== sessionId ||
+    normalizeSaveContent(reusablePayload.text) !== normalizedContent
+  ) {
+    return null;
+  }
+
+  return {
+    key: latestKey,
+    payload: reusablePayload
+  };
+}
+
+/**
+ * Normalize persisted latest-row payloads into the save-response shape used by retries.
+ * Inputs/outputs: latest memory payload -> reusable save payload or null.
+ * Edge cases: legacy string rows are supported by projecting them into `{ text }` payloads.
+ */
+function normalizeReusableLatestSessionPayload(
+  payload: unknown
+): ReusableLatestSessionSave['payload'] | null {
+  if (typeof payload === 'string' && payload.trim()) {
+    return {
+      sessionId: DEFAULT_SESSION_ID,
+      text: payload.trim()
+    };
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const payloadRecord = payload as Record<string, unknown>;
+  if (
+    typeof payloadRecord.sessionId !== 'string' ||
+    typeof payloadRecord.text !== 'string' ||
+    !payloadRecord.text.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    ...payloadRecord,
+    sessionId: normalizeNaturalLanguageSessionId(payloadRecord.sessionId),
+    text: payloadRecord.text
+  };
 }
 
 /**
