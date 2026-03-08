@@ -1,13 +1,14 @@
 import express from 'express';
-import { logExecution } from "@core/db/index.js";
-import { confirmGate } from "@transport/http/middleware/confirmGate.js";
+
+import { logExecution } from '@core/db/index.js';
+import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   getWorkerRuntimeStatus,
   startWorkers,
-  type WorkerBootstrapSummary
-} from "@platform/runtime/workerConfig.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { sendInternalErrorPayload } from '@shared/http/index.js';
+  type WorkerBootstrapSummary,
+} from '@platform/runtime/workerConfig.js';
+
+import { sendSdkFailure, sendSdkJson } from './shared.js';
 
 const router = express.Router();
 
@@ -20,22 +21,13 @@ router.post('/workers/init', confirmGate, async (_, res) => {
 
     await logExecution('sdk-interface', 'info', 'Workers initialized via SDK', { results });
 
-    res.json({
+    sendSdkJson(res, {
       success: true,
       message: 'Workers initialized successfully',
       results,
-      timestamp: new Date().toISOString()
     });
   } catch (error: unknown) {
-    //audit Assumption: init failures should return 500
-    const errorMessage = resolveErrorMessage(error);
-    await logExecution('sdk-interface', 'error', 'Worker initialization failed via SDK', { error: errorMessage });
-    
-    sendInternalErrorPayload(res, {
-      success: false,
-      error: errorMessage,
-      timestamp: new Date().toISOString()
-    });
+    await sendSdkFailure(res, 'Worker initialization failed via SDK', error);
   }
 });
 
@@ -46,21 +38,12 @@ router.get('/workers/status', async (_, res) => {
   try {
     const status = getWorkerRuntimeStatus();
 
-    res.json({
+    sendSdkJson(res, {
       success: true,
       status,
-      timestamp: new Date().toISOString()
     });
   } catch (error: unknown) {
-    //audit Assumption: status failures should return 500
-    const errorMessage = resolveErrorMessage(error);
-    await logExecution('sdk-interface', 'error', 'Worker status check failed via SDK', { error: errorMessage });
-    
-    sendInternalErrorPayload(res, {
-      success: false,
-      error: errorMessage,
-      timestamp: new Date().toISOString()
-    });
+    await sendSdkFailure(res, 'Worker status check failed via SDK', error);
   }
 });
 

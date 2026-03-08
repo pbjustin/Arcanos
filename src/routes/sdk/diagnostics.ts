@@ -1,20 +1,23 @@
 import express from 'express';
-import { runSystemDiagnostics } from "@platform/logging/systemDiagnostics.js";
-import { logExecution, type JobData } from "@core/db/index.js";
-import { confirmGate } from "@transport/http/middleware/confirmGate.js";
-import { dispatchArcanosTask, startWorkers } from "@platform/runtime/workerConfig.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { sendInternalErrorPayload } from '@shared/http/index.js';
+
+import { runSystemDiagnostics } from '@platform/logging/systemDiagnostics.js';
+import { logExecution } from '@core/db/index.js';
+import { confirmGate } from '@transport/http/middleware/confirmGate.js';
+import { startWorkers } from '@platform/runtime/workerConfig.js';
+
+import {
+  buildSdkJobExecutionResult,
+  buildSdkRouteStatuses,
+  buildSdkSchedulerJobs,
+  completeJobRecord,
+  createOrMockJobRecord,
+  dispatchSingleArcanosTask,
+  SDK_TEST_JOB_DATA,
+  sendSdkFailure,
+  sendSdkJson,
+} from './shared.js';
 
 const router = express.Router();
-
-type JobRecord = Omit<JobData, 'created_at' | 'updated_at' | 'completed_at'> & {
-  created_at?: string | Date;
-  updated_at?: string | Date;
-  completed_at?: string | Date;
-  output?: unknown;
-  status?: string;
-};
 
 /**
  * System test results structure
@@ -50,31 +53,21 @@ interface SystemTestResults {
 router.get('/diagnostics', async (req, res) => {
   try {
     const format = req.query.format || 'json';
-    
     const diagnosticsResult = await runSystemDiagnostics();
-    
-    //audit Assumption: yaml format requested explicitly
+
     if (format === 'yaml') {
       res.type('text/yaml');
       res.send(diagnosticsResult.yaml);
-    } else {
-      res.json({
-        success: true,
-        diagnostics: diagnosticsResult.diagnostics,
-        yaml: diagnosticsResult.yaml,
-        timestamp: new Date().toISOString()
-      });
+      return;
     }
-  } catch (error: unknown) {
-    //audit Assumption: diagnostic failures should return 500
-    const errorMessage = resolveErrorMessage(error);
-    await logExecution('sdk-interface', 'error', 'Diagnostics failed via SDK', { error: errorMessage });
-    
-    sendInternalErrorPayload(res, {
-      success: false,
-      error: errorMessage,
-      timestamp: new Date().toISOString()
+
+    sendSdkJson(res, {
+      success: true,
+      diagnostics: diagnosticsResult.diagnostics,
+      yaml: diagnosticsResult.yaml,
     });
+  } catch (error: unknown) {
+    await sendSdkFailure(res, 'Diagnostics failed via SDK', error);
   }
 });
 
@@ -86,87 +79,30 @@ router.post('/system-test', confirmGate, async (_, res) => {
     const results: SystemTestResults = {
       workers: null,
       routes: [],
-      scheduler: { jobs: [] }
+      scheduler: { jobs: [] },
     };
 
-    // 1. Initialize 4 workers with specified environment
     const workerBootstrap = await startWorkers();
     results.workers = workerBootstrap;
+    results.routes = buildSdkRouteStatuses('./workers/');
+    results.scheduler = { jobs: buildSdkSchedulerJobs() };
 
-    // 2. Register SDK routes
-    const routes = [
-      { name: 'worker.queue', active: true, handler: './workers/taskProcessor.js', metadata: { status: 'active', retries: 3, timeout: 30 } },
-      { name: 'audit.cron', active: true, handler: './workers/auditRunner.js', metadata: { status: 'active', retries: 3, timeout: 30 } },
-      { name: 'job.cleanup', active: true, handler: './workers/cleanup.js', metadata: { status: 'active', retries: 3, timeout: 30 } }
-    ];
-    results.routes = routes;
+    const testJobData = { ...SDK_TEST_JOB_DATA };
+    let jobRecord = await createOrMockJobRecord('worker-1', 'test_job', testJobData);
 
-    // 3. Activate scheduler with patch-defined jobs
-    const scheduledJobs = [
-      { name: 'nightly-audit', schedule: '0 2 * * *', route: 'audit.cron' },
-      { name: 'hourly-cleanup', schedule: '0 * * * *', route: 'job.cleanup' },
-      { name: 'async-processing', schedule: '*/5 * * * *', route: 'worker.queue' }
-    ];
-    results.scheduler = { jobs: scheduledJobs };
+    const workerResult = await dispatchSingleArcanosTask(testJobData.input);
+    const taskResult = buildSdkJobExecutionResult(workerResult, {
+      fallbackModel: workerBootstrap.model,
+      includeWorkerId: true,
+    });
 
-    // 4. Dispatch test job to worker.queue
-    const testJobData = {
-      type: 'test_job',
-      input: 'Diagnostics verification task'
-    };
-
-    // Create job record
-    let jobRecord: JobRecord | null = null;
-    try {
-      const { createJob } = await import("@core/db/index.js");
-      jobRecord = await createJob('worker-1', 'test_job', testJobData);
-    } catch (error: unknown) {
-      //audit Assumption: DB may be unavailable; Handling: mock record
-      void error;
-      jobRecord = {
-        id: `test-job-${Date.now()}`,
-        worker_id: 'worker-1',
-        job_type: 'test_job',
-        status: 'pending',
-        input: JSON.stringify(testJobData),
-        created_at: new Date().toISOString()
-      };
-    }
-
-    // Process the test job
-    const [workerResult] = await dispatchArcanosTask(testJobData.input);
-
-    if (!workerResult) {
-      throw new Error('ARCANOS worker did not return a result');
-    }
-
-    const taskResult = {
-      success: !workerResult?.error,
-      processed: true,
-      taskId: `task-${Date.now()}`,
-      aiResponse: workerResult?.result || workerResult?.error || 'No response generated',
-      processedAt: new Date().toISOString(),
-      model: workerResult?.activeModel || workerBootstrap.model,
-      workerId: workerResult?.workerId || 'arcanos-core'
-    };
-
-    // Update job status
-    //audit Assumption: update job if record exists
-    if (jobRecord) {
-      try {
-        const { updateJob } = await import("@core/db/index.js");
-        jobRecord = await updateJob(jobRecord.id, 'completed', taskResult);
-      } catch (error: unknown) {
-        //audit Assumption: update failure should not block response
-        void error;
-      }
-    }
+    jobRecord = (await completeJobRecord(jobRecord, taskResult)) ?? jobRecord;
 
     results.job = {
       id: jobRecord?.id || `test-job-${Date.now()}`,
       worker_id: jobRecord?.worker_id || 'worker-1',
       job_type: jobRecord?.job_type || 'test_job',
-      job_data: testJobData
+      job_data: testJobData,
     };
 
     await logExecution('sdk-interface', 'info', 'System test completed via SDK', {
@@ -174,25 +110,17 @@ router.post('/system-test', confirmGate, async (_, res) => {
         workers: results.workers,
         routes: results.routes,
         scheduler: results.scheduler,
-        job: results.job
-      }
+        job: results.job,
+      },
     });
 
-    res.json({
+    sendSdkJson(res, {
       success: true,
       message: 'System test completed',
       results,
-      timestamp: new Date().toISOString()
     });
   } catch (error: unknown) {
-    const errorMessage = resolveErrorMessage(error);
-    await logExecution('sdk-interface', 'error', 'System test failed via SDK', { error: errorMessage });
-
-    sendInternalErrorPayload(res, {
-      success: false,
-      error: errorMessage,
-      timestamp: new Date().toISOString()
-    });
+    await sendSdkFailure(res, 'System test failed via SDK', error);
   }
 });
 

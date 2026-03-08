@@ -1,17 +1,7 @@
 import type OpenAI from 'openai';
 import { z } from 'zod';
-import { getDefaultModel } from '@services/openai.js';
 import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
-import { getTokenParameter } from '@shared/tokenParameterHelper.js';
-import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
-import type { AskResponse } from './types.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
-import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
-import {
-  buildInitialToolLoopTranscript,
-  buildToolLoopContinuationRequest,
-  type ToolLoopFunctionCallOutput
-} from './toolLoop.js';
 import {
   dispatchWorkerInput,
   getWorkerControlHealth,
@@ -21,6 +11,15 @@ import {
   healWorkerRuntime,
   queueWorkerAsk
 } from '@services/workerControlService.js';
+import {
+  appendUniqueDeterministicOperation,
+  buildToolAskResponse,
+  executeDeterministicToolOperations,
+  runAskToolMode,
+  type DeterministicToolOperation,
+  type ToolExecutionResult
+} from './toolRuntime.js';
+import type { AskResponse } from './types.js';
 
 const WORKER_TOOL_SYSTEM_PROMPT = [
   'You are ARCANOS in worker-operations mode.',
@@ -167,24 +166,16 @@ const healWorkerRuntimeArgsSchema = z.object({
   force: z.boolean().optional()
 });
 
-type WorkerControlToolCall = {
-  name?: string;
-  call_id?: string;
-  arguments?: string;
-};
+type WorkerControlToolName =
+  | 'get_worker_health'
+  | 'get_worker_status'
+  | 'get_latest_worker_job'
+  | 'get_worker_job'
+  | 'queue_worker_ask'
+  | 'dispatch_worker_task'
+  | 'heal_worker_runtime';
 
-interface DeterministicWorkerOperation {
-  toolName:
-    | 'get_worker_health'
-    | 'get_worker_status'
-    | 'get_latest_worker_job'
-    | 'get_worker_job'
-    | 'queue_worker_ask'
-    | 'dispatch_worker_task'
-    | 'heal_worker_runtime';
-  matchIndex: number;
-  rawArgs: string;
-}
+interface DeterministicWorkerOperation extends DeterministicToolOperation<WorkerControlToolName> {}
 
 const latestWorkerJobPattern =
   /\b(?:latest|recent|most recent)\b[^.!?\n]{0,40}\bjob\b|\bjob\b[^.!?\n]{0,40}\b(?:latest|recent|most recent)\b/i;
@@ -217,59 +208,6 @@ function looksLikeWorkerControlPrompt(prompt: string): boolean {
   ];
 
   return workerControlPatterns.some(pattern => pattern.test(normalizedPrompt));
-}
-
-/**
- * Build serialized tool arguments for deterministic worker operations.
- *
- * Purpose:
- * - Keep the deterministic fast-path aligned with the tool execution contract.
- *
- * Inputs/outputs:
- * - Input: optional argument payload.
- * - Output: JSON string consumed by `executeWorkerTool`.
- *
- * Edge case behavior:
- * - Omits undefined values so downstream schema parsing receives clean payloads.
- */
-function buildDeterministicToolArguments(args: Record<string, unknown> = {}): string {
-  const sanitizedEntries = Object.entries(args).filter(([, value]) => value !== undefined);
-  return JSON.stringify(Object.fromEntries(sanitizedEntries));
-}
-
-/**
- * Append one deterministic worker operation when a pattern is present.
- *
- * Purpose:
- * - Collect stable worker-control actions without duplicating the same tool call.
- *
- * Inputs/outputs:
- * - Input: mutable operation list, regex match, tool name, and optional args.
- * - Output: mutates `operations` in place when a new operation is discovered.
- *
- * Edge case behavior:
- * - Duplicate tool names are ignored to keep execution idempotent for one prompt.
- */
-function appendDeterministicWorkerOperation(
-  operations: DeterministicWorkerOperation[],
-  matchIndex: number | undefined,
-  toolName: DeterministicWorkerOperation['toolName'],
-  args: Record<string, unknown> = {}
-): void {
-  if (typeof matchIndex !== 'number') {
-    return;
-  }
-
-  //audit Assumption: one prompt should execute each deterministic worker tool at most once; failure risk: duplicate mutations or noisy status calls; expected invariant: one tool call per inferred action; handling strategy: ignore repeated tool names after first match.
-  if (operations.some(operation => operation.toolName === toolName)) {
-    return;
-  }
-
-  operations.push({
-    toolName,
-    matchIndex,
-    rawArgs: buildDeterministicToolArguments(args)
-  });
 }
 
 /**
@@ -349,22 +287,22 @@ function collectDeterministicWorkerOperations(prompt: string): DeterministicWork
   const latestWorkerJobMatch = latestWorkerJobPattern.exec(prompt);
   const workerHealMatch = workerHealPattern.exec(prompt);
 
-  appendDeterministicWorkerOperation(
+  appendUniqueDeterministicOperation(
     operations,
     workerHealthMatch?.index,
     'get_worker_health'
   );
-  appendDeterministicWorkerOperation(
+  appendUniqueDeterministicOperation(
     operations,
     workerStatusMatch?.index,
     'get_worker_status'
   );
-  appendDeterministicWorkerOperation(
+  appendUniqueDeterministicOperation(
     operations,
     latestWorkerJobMatch?.index,
     'get_latest_worker_job'
   );
-  appendDeterministicWorkerOperation(
+  appendUniqueDeterministicOperation(
     operations,
     workerHealMatch?.index,
     'heal_worker_runtime',
@@ -372,14 +310,14 @@ function collectDeterministicWorkerOperations(prompt: string): DeterministicWork
   );
 
   if (jobIdMatch?.[1]) {
-    appendDeterministicWorkerOperation(operations, jobIdMatch.index, 'get_worker_job', {
+    appendUniqueDeterministicOperation(operations, jobIdMatch.index, 'get_worker_job', {
       jobId: jobIdMatch[1]
     });
   }
 
   const queuedPrompt = extractQueueWorkerPrompt(prompt);
   if (queuedPrompt) {
-    appendDeterministicWorkerOperation(operations, queuedPrompt.matchIndex, 'queue_worker_ask', {
+    appendUniqueDeterministicOperation(operations, queuedPrompt.matchIndex, 'queue_worker_ask', {
       prompt: queuedPrompt.input,
       endpointName: 'ask.worker-tools'
     });
@@ -387,66 +325,13 @@ function collectDeterministicWorkerOperations(prompt: string): DeterministicWork
 
   const dispatchedPrompt = extractDispatchWorkerPrompt(prompt);
   if (dispatchedPrompt) {
-    appendDeterministicWorkerOperation(operations, dispatchedPrompt.matchIndex, 'dispatch_worker_task', {
+    appendUniqueDeterministicOperation(operations, dispatchedPrompt.matchIndex, 'dispatch_worker_task', {
       input: dispatchedPrompt.input,
       sourceEndpoint: 'ask.worker-tools.dispatch'
     });
   }
 
   return operations.sort((left, right) => left.matchIndex - right.matchIndex);
-}
-
-/**
- * Execute deterministic worker operations without an OpenAI round-trip.
- *
- * Purpose:
- * - Provide a reliable fast-path for explicit operator commands in `/ask`.
- *
- * Inputs/outputs:
- * - Input: ordered deterministic operations inferred from the prompt.
- * - Output: worker-tool AskResponse summarizing executed actions.
- *
- * Edge case behavior:
- * - Returns `null` when no deterministic operations were inferred.
- */
-async function executeDeterministicWorkerOperations(
-  operations: DeterministicWorkerOperation[]
-): Promise<AskResponse | null> {
-  if (operations.length === 0) {
-    return null;
-  }
-
-  const executionSummaries: string[] = [];
-
-  for (const operation of operations) {
-    const executed = await executeWorkerTool(operation.toolName, operation.rawArgs);
-    executionSummaries.push(executed.summary);
-  }
-
-  return buildWorkerToolResponse(null, executionSummaries.join(' '));
-}
-
-function buildWorkerToolResponse(response: any, resultText: string): AskResponse {
-  const usage = response?.usage;
-  const tokens = usage
-    ? {
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        total_tokens: usage.total_tokens
-      }
-    : undefined;
-
-  return {
-    result: resultText,
-    module: 'worker-tools',
-    activeModel: response?.model,
-    fallbackFlag: false,
-    meta: {
-      tokens,
-      id: response?.id || `worker-tool-${Date.now()}`,
-      created: typeof response?.created === 'number' ? response.created : Date.now()
-    }
-  };
 }
 
 function summarizeToolExecution(toolName: string, payload: Record<string, unknown>): string {
@@ -479,7 +364,7 @@ function summarizeToolExecution(toolName: string, payload: Record<string, unknow
 async function executeWorkerTool(
   toolName: string,
   rawArgs: string
-): Promise<{ output: Record<string, unknown>; summary: string }> {
+): Promise<ToolExecutionResult> {
   switch (toolName) {
     case 'get_worker_health': {
       const output = await getWorkerControlHealth();
@@ -580,131 +465,23 @@ export async function tryDispatchWorkerTools(
     return null;
   }
 
-  const deterministicResponse = await executeDeterministicWorkerOperations(
-    collectDeterministicWorkerOperations(prompt)
+  const deterministicSummary = await executeDeterministicToolOperations(
+    collectDeterministicWorkerOperations(prompt),
+    executeWorkerTool
   );
-  if (deterministicResponse) {
-    return deterministicResponse;
+  if (deterministicSummary) {
+    return buildToolAskResponse('worker-tools', null, deterministicSummary, 'worker-tool');
   }
 
-  const model = getDefaultModel();
-  const tokenParams = getTokenParameter(model, 512) as Record<string, unknown>;
-  const maxOutputTokens =
-    (tokenParams as { max_completion_tokens?: number; max_tokens?: number }).max_completion_tokens ??
-    (tokenParams as { max_completion_tokens?: number; max_tokens?: number }).max_tokens ??
-    512;
-
-  const responsesApi = (client as any)?.responses;
-  const chatCompletionsApi = (client as any)?.chat?.completions;
-
-  if (!responsesApi?.create && !chatCompletionsApi?.create) {
-    throw new Error('OpenAI client does not expose responses.create or chat.completions.create');
-  }
-
-  if (!responsesApi?.create && chatCompletionsApi?.create) {
-    const response = await chatCompletionsApi.create({
-      model,
-      messages: [
-        { role: 'system', content: WORKER_TOOL_SYSTEM_PROMPT },
-        { role: 'user', content: prompt }
-      ],
-      tools: workerControlChatCompletionTools,
-      tool_choice: 'auto',
-      ...tokenParams
-    });
-
-    const toolCalls = response?.choices?.[0]?.message?.tool_calls ?? [];
-    if (!toolCalls.length) {
-      return null;
-    }
-
-    const summaries: string[] = [];
-    for (const toolCall of toolCalls) {
-      if (toolCall.type !== 'function' || !toolCall.function?.name) {
-        continue;
-      }
-      const executed = await executeWorkerTool(toolCall.function.name, toolCall.function.arguments || '{}');
-      summaries.push(executed.summary);
-    }
-
-    return buildWorkerToolResponse(response, summaries.join(' '));
-  }
-
-  const MAX_TURNS = 8;
-  const storeOpenAIResponses = shouldStoreOpenAIResponses();
-  let toolLoopTranscript = buildInitialToolLoopTranscript(prompt);
-  let response: any = await responsesApi.create({
-    model,
-    store: storeOpenAIResponses,
+  return runAskToolMode({
+    client,
+    prompt,
     instructions: WORKER_TOOL_SYSTEM_PROMPT,
-    input: toolLoopTranscript,
-    tools: workerControlResponsesTools,
-    tool_choice: 'auto',
-    max_output_tokens: maxOutputTokens
+    moduleName: 'worker-tools',
+    responseIdPrefix: 'worker-tool',
+    chatCompletionTools: workerControlChatCompletionTools,
+    responsesTools: workerControlResponsesTools,
+    executeTool: executeWorkerTool,
+    maxOutputTokens: 512
   });
-  let lastText = extractResponseOutputText(response, '');
-  const executionSummaries: string[] = [];
-
-  for (let turn = 0; turn < MAX_TURNS; turn += 1) {
-    const toolCalls = (Array.isArray(response?.output) ? response.output : []).filter(
-      (item: unknown): item is WorkerControlToolCall & { type: string } =>
-        Boolean(item) && typeof item === 'object' && (item as { type?: string }).type === 'function_call'
-    );
-
-    if (!toolCalls.length) {
-      if (!lastText || lastText.trim().length === 0) {
-        const summaryText = executionSummaries.join(' ');
-        return summaryText ? buildWorkerToolResponse(response, summaryText) : null;
-      }
-      return buildWorkerToolResponse(response, lastText);
-    }
-
-    const functionCallOutputs: ToolLoopFunctionCallOutput[] = [];
-
-    for (const toolCall of toolCalls) {
-      const toolName = typeof toolCall.name === 'string' ? toolCall.name : '';
-      const callId = typeof toolCall.call_id === 'string' ? toolCall.call_id : '';
-      if (!toolName || !callId) {
-        continue;
-      }
-
-      try {
-        const executed = await executeWorkerTool(toolName, toolCall.arguments || '{}');
-        executionSummaries.push(executed.summary);
-        functionCallOutputs.push({
-          type: 'function_call_output',
-          call_id: callId,
-          output: JSON.stringify({
-            ok: true,
-            ...executed.output
-          })
-        });
-      } catch (error: unknown) {
-        functionCallOutputs.push({
-          type: 'function_call_output',
-          call_id: callId,
-          output: JSON.stringify({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error)
-          })
-        });
-      }
-    }
-
-    const continuationRequest = buildToolLoopContinuationRequest({
-      instructions: WORKER_TOOL_SYSTEM_PROMPT,
-      maxOutputTokens,
-      model,
-      previousResponse: response,
-      storeResponses: storeOpenAIResponses,
-      tools: workerControlResponsesTools,
-      transcript: toolLoopTranscript,
-      functionCallOutputs
-    });
-    toolLoopTranscript = continuationRequest.nextTranscript;
-    response = await responsesApi.create(continuationRequest.request);
-    lastText = extractResponseOutputText(response, lastText);
-  }
-
-  return executionSummaries.length > 0 ? buildWorkerToolResponse(response, executionSummaries.join(' ')) : null;
 }

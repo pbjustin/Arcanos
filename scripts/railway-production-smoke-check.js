@@ -575,7 +575,7 @@ export function evaluateDatabaseLogEntries(entries) {
 /**
  * Purpose: Evaluate recent Redis logs for readiness and actionable warnings.
  * Inputs/Outputs: Parsed Redis log entries -> one result object.
- * Edge cases: The standard kernel overcommit warning is surfaced as WARN because it is advisory on Railway but worth keeping visible.
+ * Edge cases: The standard kernel overcommit warning remains visible, but a ready Redis instance is treated as healthy because Railway does not expose host-level sysctl tuning for service containers.
  *
  * @param {Array<Record<string, unknown>>} entries - Parsed Redis log entries.
  * @returns {{ name: string; status: 'PASS'|'WARN'|'FAIL'; detail: string }}
@@ -614,11 +614,12 @@ export function evaluateRedisLogEntries(entries) {
     );
   }
 
+  //audit assumption: Railway-managed Redis can emit the vm.overcommit_memory advisory even when the instance is healthy and persisting successfully; failure risk: host-level noise degrades the smoke-check summary and obscures real failures; expected invariant: a recent readiness marker is sufficient to treat the Redis role as healthy unless fatal markers are also present; handling strategy: return PASS while keeping the advisory text in the detail.
   if (hasReadySignal && hasOvercommitWarning) {
     return createResult(
       'Redis runtime logs',
-      RESULT_STATUS.WARN,
-      'Redis reports ready-to-accept-connections, but the standard vm.overcommit_memory advisory is still present.'
+      RESULT_STATUS.PASS,
+      'Redis reports ready-to-accept-connections; the standard vm.overcommit_memory advisory remains visible in Railway startup logs but is treated as non-actionable host-level noise.'
     );
   }
 

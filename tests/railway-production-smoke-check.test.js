@@ -153,7 +153,7 @@ describe('railway-production-smoke-check', () => {
     expect(result.detail).toMatch(/relation "User" does not exist/i);
   });
 
-  it('warns for the standard Redis overcommit advisory while preserving the readiness signal', () => {
+  it('passes when Railway Redis reports readiness alongside the standard overcommit advisory', () => {
     const result = evaluateRedisLogEntries(
       parseJsonLines([
         JSON.stringify({ level: 'info', message: '1:C 24 Feb 2026 06:38:47.711 # WARNING Memory overcommit must be enabled!' }),
@@ -161,7 +161,19 @@ describe('railway-production-smoke-check', () => {
       ].join('\n'))
     );
 
-    expect(result.status).toBe(RESULT_STATUS.WARN);
+    expect(result.status).toBe(RESULT_STATUS.PASS);
     expect(result.detail).toMatch(/ready-to-accept-connections/i);
+    expect(result.detail).toMatch(/vm\.overcommit_memory/i);
+  });
+
+  it('warns when only the Redis overcommit advisory is present without a readiness marker', () => {
+    const result = evaluateRedisLogEntries(
+      parseJsonLines([
+        JSON.stringify({ level: 'info', message: '1:C 24 Feb 2026 06:38:47.711 # WARNING Memory overcommit must be enabled!' })
+      ].join('\n'))
+    );
+
+    expect(result.status).toBe(RESULT_STATUS.WARN);
+    expect(result.detail).toMatch(/vm\.overcommit_memory/i);
   });
 });

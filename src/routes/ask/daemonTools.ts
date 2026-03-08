@@ -14,6 +14,7 @@ import type { AskResponse } from './types.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
+import { buildToolAskResponse } from './toolRuntime.js';
 import {
   buildInitialToolLoopTranscript,
   buildToolLoopContinuationRequest,
@@ -96,31 +97,6 @@ const captureScreenArgsSchema = z.object({
 
 const DAEMON_RESULT_WAIT_MS = Number.parseInt(getEnv('DAEMON_RESULT_WAIT_MS', '8000'), 10) || 8000;
 const DAEMON_RESULT_POLL_MS = Number.parseInt(getEnv('DAEMON_RESULT_POLL_MS', '250'), 10) || 250;
-
-function buildDaemonToolResponse(response: any, resultText: string): AskResponse {
-  const usage = response?.usage;
-  const tokens = usage
-    ? {
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        total_tokens: usage.total_tokens
-      }
-    : undefined;
-  const responseId = response?.id || `daemon-tool-${Date.now()}`;
-  const created = typeof response?.created === 'number' ? response.created : Date.now();
-
-  return {
-    result: resultText,
-    module: 'daemon-tools',
-    activeModel: response?.model,
-    fallbackFlag: false,
-    meta: {
-      tokens,
-      id: responseId,
-      created
-    }
-  };
-}
 
 async function waitForDaemonCommandResult(
   instanceId: string,
@@ -271,7 +247,7 @@ async function tryDispatchDaemonToolsWithChatCompletions(
     resultText = 'Unable to queue daemon actions. Please try again.';
   }
 
-  return buildDaemonToolResponse(response, resultText);
+  return buildToolAskResponse('daemon-tools', response, resultText, 'daemon-tool');
 }
 
 export async function tryDispatchDaemonTools(
@@ -339,7 +315,7 @@ export async function tryDispatchDaemonTools(
         //audit Assumption: empty model output should fall back to null (let main ask path handle); risk: confusing empty reply; invariant: don't return empty; handling: return null.
         return null;
       }
-      return buildDaemonToolResponse(response, lastText);
+      return buildToolAskResponse('daemon-tools', response, lastText, 'daemon-tool');
     }
 
     const pendingActions: PendingDaemonAction[] = [];
