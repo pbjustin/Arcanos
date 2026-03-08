@@ -248,8 +248,13 @@ export async function runAskToolMode<TToolName extends string>({
   const chatCompletionsApi = (client as unknown as {
     chat?: { completions?: Partial<ToolCapableChatCompletionsApi> };
   }).chat?.completions;
-  const responsesCreate = responsesApi?.create;
-  const chatCompletionsCreate = chatCompletionsApi?.create;
+  //audit Assumption: OpenAI SDK resource methods depend on their owning resource as `this`; failure risk: extracting `.create` and calling it unbound throws `Cannot read properties of undefined (reading '_client')`; expected invariant: tool-runtime calls preserve SDK method context; handling strategy: bind both create methods to their original resource objects before invocation.
+  const responsesCreate =
+    typeof responsesApi?.create === 'function' ? responsesApi.create.bind(responsesApi) : null;
+  const chatCompletionsCreate =
+    typeof chatCompletionsApi?.create === 'function'
+      ? chatCompletionsApi.create.bind(chatCompletionsApi)
+      : null;
 
   //audit Assumption: tool dispatch needs at least one OpenAI surface that can select tools; failure risk: prompts silently bypass tool routing; expected invariant: Responses or Chat Completions is available; handling strategy: throw an explicit capability error.
   if (!responsesCreate && !chatCompletionsCreate) {

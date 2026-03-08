@@ -210,4 +210,86 @@ describe('tryDispatchWorkerTools', () => {
       })
     );
   });
+
+  it('binds responses.create so SDK-style methods keep their resource context', async () => {
+    getWorkerControlStatusMock.mockResolvedValue({
+      timestamp: '2026-03-06T12:00:00.000Z',
+      mainApp: {
+        connected: true,
+        workerId: 'worker-helper',
+        runtime: {
+          started: true,
+          activeListeners: 2
+        }
+      },
+      workerService: {
+        observationMode: 'queue-observed',
+        database: {
+          connected: true,
+          hasPool: true,
+          error: null
+        },
+        queueSummary: {
+          pending: 1,
+          running: 0,
+          failed: 0,
+          delayed: 0,
+          stalledRunning: 0,
+          oldestPendingJobAgeMs: 0
+        },
+        latestJob: null,
+        health: {
+          overallStatus: 'healthy',
+          alerts: [],
+          workers: []
+        }
+      }
+    });
+
+    const responsesResource = {
+      _client: {
+        callCount: 0
+      },
+      async create(payload: Record<string, unknown>) {
+        this._client.callCount += 1;
+
+        if (this._client.callCount === 1) {
+          return {
+            id: 'resp-bind-1',
+            model: 'gpt-4.1-mini',
+            output: [
+              {
+                type: 'function_call',
+                name: 'get_worker_status',
+                call_id: 'call-bind-1',
+                arguments: '{}'
+              }
+            ]
+          };
+        }
+
+        return {
+          id: 'resp-bind-2',
+          model: 'gpt-4.1-mini',
+          output: [],
+          output_text: 'Bound create method preserved OpenAI resource context.'
+        };
+      }
+    };
+
+    const response = await tryDispatchWorkerTools(
+      {
+        responses: responsesResource
+      } as any,
+      'inspect worker operations and decide what tool to call'
+    );
+
+    expect(responsesResource._client.callCount).toBe(2);
+    expect(response).toEqual(
+      expect.objectContaining({
+        module: 'worker-tools',
+        result: 'Bound create method preserved OpenAI resource context.'
+      })
+    );
+  });
 });
