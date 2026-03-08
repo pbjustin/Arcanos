@@ -8,6 +8,7 @@ const mockExtractInput = jest.fn();
 const mockValidateAIRequest = jest.fn();
 const mockHandleAIError = jest.fn();
 const mockCreateRuntimeBudget = jest.fn();
+const mockTryExecuteNaturalLanguageMemoryRouteShortcut = jest.fn();
 
 const verificationRouter = express.Router();
 
@@ -33,6 +34,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   createRuntimeBudget: mockCreateRuntimeBudget
+}));
+
+jest.unstable_mockModule('@services/naturalLanguageMemoryRouteShortcut.js', () => ({
+  tryExecuteNaturalLanguageMemoryRouteShortcut: mockTryExecuteNaturalLanguageMemoryRouteShortcut
 }));
 
 jest.unstable_mockModule('../src/routes/api-arcanos-verification.js', () => ({
@@ -100,6 +105,7 @@ describe('api-arcanos route', () => {
       typeof body.prompt === 'string' ? body.prompt : null
     );
     mockCreateRuntimeBudget.mockReturnValue({ budgetId: 'runtime-budget-1' });
+    mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue(null);
   });
 
   it('routes non-ping requests through Trinity and returns explicit pipeline metadata', async () => {
@@ -198,5 +204,44 @@ describe('api-arcanos route', () => {
     expect(response.text).toContain('"type":"chunk"');
     expect(response.text).toContain('"pipeline":"trinity"');
     expect(response.text).toContain('"type":"done"');
+  });
+
+  it('bypasses Trinity for deterministic memory shortcuts', async () => {
+    const openaiClient = { clientId: 'openai-client-3' };
+    mockValidateAIRequest.mockReturnValue({
+      client: openaiClient,
+      input: 'Recall: RAW_20260308_VAN_PROBE2',
+      body: {
+        prompt: 'Recall: RAW_20260308_VAN_PROBE2'
+      }
+    });
+    mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue({
+      resultText: 'Persisted summary for Vancouver Raw',
+      memory: {
+        intent: 'retrieve',
+        operation: 'retrieved',
+        sessionId: 'raw_20260308_van_probe2',
+        message: 'Loaded latest saved memory.'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Recall: RAW_20260308_VAN_PROBE2',
+        sessionId: 'RAW_20260308_VAN_PROBE2'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.result).toBe('Persisted summary for Vancouver Raw');
+    expect(response.body.module).toBe('memory-dispatcher');
+    expect(response.body.metadata.endpoint).toBe('api-arcanos.ask');
+    expect(response.body.routingStages).toEqual(['MEMORY-DISPATCH']);
+    expect(mockTryExecuteNaturalLanguageMemoryRouteShortcut).toHaveBeenCalledWith({
+      prompt: 'Recall: RAW_20260308_VAN_PROBE2',
+      sessionId: 'RAW_20260308_VAN_PROBE2'
+    });
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
 });

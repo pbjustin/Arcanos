@@ -253,6 +253,30 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
 }
 
 /**
+ * Detect explicit natural-language memory cues before routing a prompt into generic model execution.
+ * Inputs/outputs: raw user prompt -> true when the prompt is clearly memory-oriented.
+ * Edge cases: generic "show/get" prompts without memory/session cues stay false to avoid hijacking normal tutoring requests.
+ */
+export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
+  const normalizedInput = rawInput.trim().toLowerCase();
+
+  //audit Assumption: empty prompts cannot carry actionable memory intent; failure risk: false-positive interception on blank requests; expected invariant: cue detection only runs on non-empty prompts; handling strategy: short-circuit false.
+  if (!normalizedInput) {
+    return false;
+  }
+
+  return (
+    /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:save|store|remember)\b/.test(normalizedInput) ||
+    /^(?:please\s+)?(?:lookup|look\s*up|find)\b/.test(normalizedInput) ||
+    /^(?:please\s+)?recall\b/.test(normalizedInput) ||
+    /\b(last|latest)\b/.test(normalizedInput) && /\b(memory|saved|summary|story|roster|note)\b/.test(normalizedInput) ||
+    /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedInput) ||
+    /\bsession\s*id\s*:/.test(normalizedInput) ||
+    /\bstorage\s*label\s*:/.test(normalizedInput)
+  );
+}
+
+/**
  * Execute a natural-language memory command against persisted DB memory.
  * Inputs/outputs: command request -> structured operation response.
  * Edge cases: unknown commands are ignored safely without side effects.

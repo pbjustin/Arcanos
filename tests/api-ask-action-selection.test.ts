@@ -10,6 +10,7 @@ const mockPersistModuleConversation = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
+const mockHasNaturalLanguageMemoryCue = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap
@@ -27,7 +28,8 @@ jest.unstable_mockModule('@services/moduleConversationPersistence.js', () => ({
 jest.unstable_mockModule('@services/naturalLanguageMemory.js', () => ({
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
   executeNaturalLanguageMemoryCommand: mockExecuteNaturalLanguageMemoryCommand,
-  extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId
+  extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
+  hasNaturalLanguageMemoryCue: mockHasNaturalLanguageMemoryCue
 }));
 
 const { default: apiAskRouter } = await import('../src/routes/api-ask.js');
@@ -60,6 +62,7 @@ Main Event: Gunther def. AJ Styles clean`;
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
+    mockHasNaturalLanguageMemoryCue.mockReturnValue(true);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
       intent: 'save',
       operation: 'saved',

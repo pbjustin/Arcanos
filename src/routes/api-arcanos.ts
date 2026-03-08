@@ -20,6 +20,7 @@ import {
 } from '@transport/http/requestHandler.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
+import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
 
 const router = express.Router();
 
@@ -276,6 +277,55 @@ function sendTrinityCompatibilityStream(
 }
 
 /**
+ * Build a compatibility response for explicit memory commands on `/api/arcanos/ask`.
+ * Inputs/outputs: rendered memory shortcut payload -> legacy-compatible response envelope.
+ * Edge cases: memory operations without retrieved values fall back to the memory layer message as `result`.
+ */
+function buildArcanosMemoryShortcutResponse(params: {
+  resultText: string;
+  memoryOperation: string;
+  memorySessionId: string;
+}): AskResponse {
+  const timestamp = new Date().toISOString();
+  const requestId = `memory_${Date.now()}`;
+
+  return {
+    success: true,
+    result: params.resultText,
+    metadata: {
+      service: 'ARCANOS API',
+      version: '1.0.0',
+      timestamp,
+      arcanosRouting: false,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      requestId,
+      routingStages: ['MEMORY-DISPATCH']
+    },
+    module: 'memory-dispatcher',
+    activeModel: 'memory-dispatcher',
+    fallbackFlag: false,
+    routingStages: ['MEMORY-DISPATCH'],
+    auditSafe: {
+      mode: false,
+      overrideUsed: false,
+      auditFlags: ['MEMORY_SHORTCUT_ACTIVE'],
+      processedSafely: true
+    },
+    memoryContext: {
+      entriesAccessed: 0,
+      contextSummary: `Memory dispatcher ${params.memoryOperation} for session ${params.memorySessionId}.`,
+      memoryEnhanced: false,
+      maxRelevanceScore: 0,
+      averageRelevanceScore: 0
+    },
+    taskLineage: {
+      requestId,
+      logged: false
+    }
+  };
+}
+
+/**
  * Execute the legacy `/api/arcanos/ask` route through the Trinity pipeline.
  *
  * Purpose:
@@ -328,6 +378,21 @@ const handleArcanosAsk = asyncHandler(async (
 
     const { client: openai, input: prompt } = validation;
     promptForError = prompt;
+    const memoryShortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
+      prompt,
+      sessionId: req.body.sessionId
+    });
+    //audit Assumption: explicit memory save/recall on the ARCANOS compatibility route should bypass Trinity generation; failure risk: semantic pattern recall produces synthesized summaries instead of the stored session text; expected invariant: memory commands return deterministic memory content; handling strategy: short-circuit before runtime budget and Trinity execution.
+    if (memoryShortcut) {
+      return res.json(
+        buildArcanosMemoryShortcutResponse({
+          resultText: memoryShortcut.resultText,
+          memoryOperation: memoryShortcut.memory.operation,
+          memorySessionId: memoryShortcut.memory.sessionId
+        })
+      );
+    }
+
     const runtimeBudget = createRuntimeBudget();
 
     //audit Assumption: legacy `/api/arcanos/ask` requests should now enter the same Trinity brain as the primary `/ask` route; failure risk: route-level pipeline drift persists even after the cleanup; expected invariant: every non-ping request on this route calls `runThroughBrain`; handling strategy: invoke Trinity directly and stamp the compatibility response with explicit pipeline metadata.

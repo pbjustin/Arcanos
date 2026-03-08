@@ -6,6 +6,7 @@ import { arcanosMcpService, type ArcanosMcpService, type ArcanosMcpToolCallResul
 import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
+  hasNaturalLanguageMemoryCue,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
 import { isRecord } from "@shared/typeGuards.js";
@@ -376,23 +377,6 @@ function resolveMemorySessionId(
   return UNIVERSAL_MEMORY_SESSION_ID;
 }
 
-function hasExplicitMemoryCue(prompt: string): boolean {
-  const normalizedPrompt = normalize(prompt);
-
-  //audit Assumption: empty prompts cannot carry actionable memory commands; failure risk: false positives; expected invariant: cue checks run only for non-empty text; handling strategy: hard false on empty.
-  if (!normalizedPrompt) {
-    return false;
-  }
-
-  return (
-    /^(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:save|store|remember)\b/.test(normalizedPrompt) ||
-    /^(?:please\s+)?(?:lookup|look\s*up|find|search)\b/.test(normalizedPrompt) ||
-    /\b(memory|memories|remember|remembered|recall|saved)\b/.test(normalizedPrompt) ||
-    /\bsession\s*id\s*:/.test(normalizedPrompt) ||
-    /\bstorage\s*label\s*:/.test(normalizedPrompt)
-  );
-}
-
 function pickAction(available: string[], requested?: string): string | null {
   if (requested) return available.includes(requested) ? requested : null;
   if (available.includes("query")) return "query";
@@ -604,7 +588,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const shouldInterceptMemoryInDispatcher =
     typeof prompt === "string" &&
     parsedMemoryCommand.intent !== "unknown" &&
-    (hasExplicitMemoryCue(prompt) || hasNoRoutableAction) &&
+    (hasNaturalLanguageMemoryCue(prompt) || hasNoRoutableAction) &&
     (!requestedAction || requestedAction === "query");
 
   //audit Assumption: memory commands should bypass module action ambiguity (e.g., multi-action modules without default query); failure risk: user cannot use memory reliably via dispatcher; expected invariant: explicit memory intents always have a deterministic execution path; handling strategy: early memory execution branch before action resolution.

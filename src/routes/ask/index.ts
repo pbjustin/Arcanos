@@ -44,6 +44,7 @@ import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
+import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
 
 const router = express.Router();
 
@@ -310,6 +311,53 @@ function validateLenientChatRequest(body: AskRequest): {
 }
 
 /**
+ * Build a deterministic `/ask` response for explicit memory commands.
+ * Inputs/outputs: rendered shortcut payload + endpoint metadata -> route response payload.
+ * Edge cases: memory operations without retrieved entries still expose the memory layer message via `result`.
+ */
+function buildAskMemoryShortcutResponse(params: {
+  resultText: string;
+  memoryOperation: string;
+  memorySessionId: string;
+  endpointName: string;
+  clientContext?: AskRequest['clientContext'];
+  auditFlag?: SchemaValidationBypassAuditFlag;
+}): AskResponse {
+  const requestId = `memory_${Date.now()}`;
+
+  return {
+    result: params.resultText,
+    module: 'memory-dispatcher',
+    meta: {
+      id: requestId,
+      created: Math.floor(Date.now() / 1000)
+    },
+    activeModel: 'memory-dispatcher',
+    fallbackFlag: false,
+    routingStages: ['MEMORY-DISPATCH'],
+    gpt5Used: false,
+    auditSafe: {
+      mode: false,
+      overrideUsed: false,
+      auditFlags: ['MEMORY_SHORTCUT_ACTIVE'],
+      processedSafely: true
+    },
+    memoryContext: {
+      entriesAccessed: 0,
+      contextSummary: `Memory dispatcher ${params.memoryOperation} for session ${params.memorySessionId}.`,
+      memoryEnhanced: false
+    },
+    taskLineage: {
+      requestId,
+      logged: false
+    },
+    endpoint: params.endpointName,
+    ...(params.clientContext ? { clientContext: params.clientContext } : {}),
+    ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})
+  };
+}
+
+/**
  * Shared handler for both ask and brain endpoints
  * Handles AI request processing with standardized error handling and validation
  */
@@ -539,6 +587,24 @@ export const handleAIRequest = async (
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
       });
+    }
+
+    const memoryShortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
+      prompt,
+      sessionId
+    });
+    //audit Assumption: explicit memory commands should return deterministic stored content instead of entering Trinity reasoning; failure risk: semantic pattern memory hijacks exact recall and produces hallucinated session scaffolds; expected invariant: memory save/recall prompts bypass AI generation on `/ask`; handling strategy: short-circuit with a plain-text memory response.
+    if (memoryShortcut) {
+      return res.json(
+        buildAskMemoryShortcutResponse({
+          resultText: memoryShortcut.resultText,
+          memoryOperation: memoryShortcut.memory.operation,
+          memorySessionId: memoryShortcut.memory.sessionId,
+          endpointName,
+          clientContext: req.body.clientContext,
+          auditFlag: bypassAuditFlag ?? undefined
+        })
+      );
     }
 
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
