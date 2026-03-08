@@ -89,6 +89,7 @@ const SAFETY_STATE_FILE = path.join(process.cwd(), 'memory', 'safety-runtime-sta
 const SAVE_DEBOUNCE_MS = 100;
 const MAX_ENTITY_KEYS = 1000;
 const IS_TEST_ENV = process.env.NODE_ENV === 'test';
+const PROCESS_STARTED_AT_ISO = new Date().toISOString();
 
 let pendingSaveTimeout: NodeJS.Timeout | null = null;
 
@@ -293,6 +294,7 @@ function readStateFromDisk(): SafetyRuntimeSnapshot {
 }
 
 let runtimeSnapshot: SafetyRuntimeSnapshot = readStateFromDisk();
+reconcileAutoRecoverableQuarantinesForProcessStart(PROCESS_STARTED_AT_ISO);
 
 async function flushStateToDisk(reason?: string): Promise<void> {
   try {
@@ -425,6 +427,79 @@ export function getActiveQuarantines(kind?: QuarantineKind): SafetyQuarantineRec
     }
     return kind ? record.kind === kind : true;
   });
+}
+
+/**
+ * Purpose: Release stale auto-recoverable quarantines that were persisted by a previous process.
+ * Inputs/Outputs: Optional process start timestamp and actor label; returns released quarantine IDs plus reset entities.
+ * Edge cases: Integrity quarantines and quarantines created by the current process are preserved.
+ */
+export function reconcileAutoRecoverableQuarantinesForProcessStart(
+  processStartedAtIso: string = PROCESS_STARTED_AT_ISO,
+  actor = 'runtime:auto-recovery:process-start'
+): {
+  releasedQuarantineIds: string[];
+  resetEntityIds: string[];
+} {
+  const processStartedAtMs = Date.parse(processStartedAtIso);
+  //audit Assumption: reconciliation must only run with a valid process-start timestamp; failure risk: malformed timestamps clear active safeguards; expected invariant: process start time is parseable before stale quarantine release; handling strategy: no-op on invalid timestamps.
+  if (!Number.isFinite(processStartedAtMs)) {
+    return {
+      releasedQuarantineIds: [],
+      resetEntityIds: []
+    };
+  }
+
+  const releasedQuarantineIds: string[] = [];
+  const resetEntityIds = new Set<string>();
+  const releasableQuarantines = getActiveQuarantines().filter(record => {
+    //audit Assumption: integrity and explicitly non-recoverable quarantines must survive process restarts; failure risk: restart bypasses hard safety blocks; expected invariant: only non-integrity auto-recoverable quarantines are candidates; handling strategy: strict filter on quarantine flags.
+    if (record.integrityFailure || record.autoRecoverable === false) {
+      return false;
+    }
+    const createdAtMs = Date.parse(record.createdAt);
+    //audit Assumption: only quarantines older than the current process are stale; failure risk: newly-created runtime quarantine released immediately after activation; expected invariant: current-process quarantines remain active; handling strategy: require a valid older createdAt timestamp.
+    if (!Number.isFinite(createdAtMs)) {
+      return false;
+    }
+    return createdAtMs < processStartedAtMs;
+  });
+
+  for (const quarantine of releasableQuarantines) {
+    const releaseResult = releaseQuarantine(quarantine.quarantineId, {
+      actor,
+      releaseNote: 'Released stale auto-recoverable quarantine after process restart',
+      integrityOnly: false
+    });
+    if (!releaseResult.released) {
+      continue;
+    }
+    releasedQuarantineIds.push(quarantine.quarantineId);
+    const entityId = typeof quarantine.metadata?.entityId === 'string' ? quarantine.metadata.entityId : undefined;
+    //audit Assumption: worker heartbeat counters from a prior process should not count against the restarted runtime; failure risk: stale counters trigger immediate re-quarantine after restart; expected invariant: prior-process entities restart with clean failure signals; handling strategy: reset counters when entity metadata is available.
+    if (entityId) {
+      resetEntitySignalsForProcessRecovery(entityId);
+      resetEntityIds.add(entityId);
+    }
+  }
+
+  if (releasedQuarantineIds.length > 0) {
+    emitSafetyAuditEvent({
+      event: 'process_restart_auto_recovery',
+      severity: 'info',
+      details: {
+        actor,
+        processStartedAtIso,
+        releasedQuarantineIds,
+        resetEntityIds: Array.from(resetEntityIds)
+      }
+    });
+  }
+
+  return {
+    releasedQuarantineIds,
+    resetEntityIds: Array.from(resetEntityIds)
+  };
 }
 
 /**
@@ -699,6 +774,10 @@ export function resetFailureSignals(entityId: string): void {
   delete runtimeSnapshot.counters.heartbeatMisses[key];
   runtimeSnapshot.counters.healthyCycles[key] = 0;
   saveState('resetFailureSignals');
+}
+
+function resetEntitySignalsForProcessRecovery(entityId: string): void {
+  resetFailureSignals(entityId);
 }
 
 /**

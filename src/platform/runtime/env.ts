@@ -12,6 +12,7 @@
 
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { resolveErrorMessage } from "@shared/errorUtils.js";
+import dotenv from "dotenv";
 
 export interface EnvConfig {
   // Required for Railway deployment
@@ -39,6 +40,29 @@ const SYSTEM_ENV_ALLOWLIST = new Set([
   'CI',
   'GITHUB_ACTIONS'
 ]);
+
+let hasLoadedDotenv = false;
+
+/**
+ * Load local `.env` values before any runtime env reads.
+ *
+ * Purpose: make runtime config deterministic for local execution paths that do
+ * not import other modules which happen to call `dotenv.config()`.
+ * Inputs/outputs: none.
+ * Edge cases: missing `.env` is acceptable because hosted environments inject
+ * variables directly into `process.env`.
+ */
+function ensureRuntimeDotenvLoaded(): void {
+  //audit Assumption: local runtime config should not depend on unrelated import order; failure risk: DATABASE_URL and other local secrets appear unset even when present in .env; expected invariant: dotenv bootstrap runs once before env access; handling strategy: guard repeated loads with a module-local flag.
+  if (hasLoadedDotenv) {
+    return;
+  }
+
+  dotenv.config();
+  hasLoadedDotenv = true;
+}
+
+ensureRuntimeDotenvLoaded();
 
 /**
  * Read runtime environment variables for application configuration.

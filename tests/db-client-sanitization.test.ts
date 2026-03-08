@@ -6,10 +6,18 @@ const poolSpy = jest.fn(() => ({
   end: jest.fn().mockResolvedValue(undefined)
 }));
 
+const mockDotenvConfig = jest.fn();
+
 jest.mock('pg', () => ({
   __esModule: true,
   default: { Pool: poolSpy },
   Pool: poolSpy
+}));
+
+jest.mock('dotenv', () => ({
+  __esModule: true,
+  config: mockDotenvConfig,
+  default: { config: mockDotenvConfig }
 }));
 
 const deleteEnvKeys = () => {
@@ -21,6 +29,7 @@ describe('initializeDatabase env handling', () => {
   beforeEach(() => {
     jest.resetModules();
     poolSpy.mockClear();
+    mockDotenvConfig.mockClear();
     deleteEnvKeys();
   });
 

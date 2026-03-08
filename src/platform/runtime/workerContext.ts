@@ -9,6 +9,12 @@ import type { QueryResult } from 'pg';
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { runWorkerTrinityPrompt } from '../../workers/trinityWorkerPipeline.js';
+import {
+  invokeArcanosMcpTool,
+  listArcanosMcpTools,
+  type ArcanosMcpToolCallResult,
+  type ArcanosMcpToolListResult
+} from '@services/arcanosMcp.js';
 
 export interface WorkerContext {
   log: (message: string) => Promise<void>;
@@ -18,6 +24,10 @@ export interface WorkerContext {
   };
   ai: {
     ask: (prompt: string) => Promise<string>;
+  };
+  mcp: {
+    invokeTool: (toolName: string, toolArguments?: Record<string, unknown>) => Promise<ArcanosMcpToolCallResult>;
+    listTools: () => Promise<ArcanosMcpToolListResult>;
   };
 }
 
@@ -78,6 +88,22 @@ export function createWorkerContext(workerId: string): WorkerContext {
           //audit Assumption: AI failures should propagate with safe message
           throw new Error(`AI request failed: ${resolveErrorMessage(error)}`);
         }
+      }
+    },
+
+    mcp: {
+      invokeTool: async (toolName: string, toolArguments: Record<string, unknown> = {}) => {
+        return invokeArcanosMcpTool({
+          toolName,
+          toolArguments,
+          sessionId: `worker:${workerId}`
+        });
+      },
+
+      listTools: async () => {
+        return listArcanosMcpTools({
+          sessionId: `worker:${workerId}`
+        });
       }
     }
   };

@@ -27,6 +27,7 @@ interface InterpreterCycleRecord {
 interface CycleOptions {
   category?: SupervisorCategory;
   metadata?: Record<string, unknown>;
+  keepAliveIntervalMs?: number;
 }
 
 interface InterpreterSupervisor {
@@ -65,6 +66,19 @@ export function createInterpreterSupervisor(): InterpreterSupervisor {
       clearTimeout(cycle.timer);
       cycle.timer = undefined;
     }
+  };
+
+  const resolveKeepAliveIntervalMs = (options: CycleOptions): number => {
+    const configuredIntervalMs = options.keepAliveIntervalMs;
+    //audit Assumption: explicit keepalive values are authoritative when finite; failure risk: caller-provided NaN or negative values break timer behavior; expected invariant: keepalive interval is a non-negative integer; handling strategy: clamp invalid values to zero and normalize valid values.
+    if (typeof configuredIntervalMs === 'number' && Number.isFinite(configuredIntervalMs)) {
+      return Math.max(0, Math.floor(configuredIntervalMs));
+    }
+    //audit Assumption: worker cycles can legitimately spend longer than the heartbeat timeout awaiting external I/O; failure risk: healthy long-running worker tasks get quarantined; expected invariant: worker supervision emits progress heartbeats before timeout elapses; handling strategy: default worker keepalive to one-third of the timeout with a 1s floor.
+    if (options.category === 'worker') {
+      return Math.max(1000, Math.floor(heartbeatTimeoutMs / 3));
+    }
+    return 0;
   };
 
   const removeCycle = (cycle: InterpreterCycleRecord): void => {
@@ -288,19 +302,46 @@ export function createInterpreterSupervisor(): InterpreterSupervisor {
     options: CycleOptions = {}
   ): Promise<T> => {
     const cycleId = beginCycle(entityId, options);
+    const keepAliveIntervalMs = resolveKeepAliveIntervalMs(options);
     const heartbeatRunner = (): void => {
       heartbeat(cycleId);
+    };
+    let keepAliveTimer: NodeJS.Timeout | undefined;
+
+    const stopKeepAliveTimer = (): void => {
+      if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = undefined;
+      }
+    };
+
+    const startKeepAliveTimer = (): void => {
+      //audit Assumption: zero keepalive means caller accepts manual heartbeat responsibility; failure risk: unnecessary interval churn for short-lived cycles; expected invariant: only positive intervals schedule autonomous heartbeats; handling strategy: no-op when interval is zero.
+      if (keepAliveIntervalMs <= 0) {
+        return;
+      }
+      keepAliveTimer = setInterval(() => {
+        heartbeatRunner();
+      }, keepAliveIntervalMs);
+      if (typeof keepAliveTimer.unref === 'function') {
+        keepAliveTimer.unref();
+      }
     };
 
     try {
       heartbeatRunner();
+      startKeepAliveTimer();
       const result = await work(heartbeatRunner);
+      stopKeepAliveTimer();
       heartbeatRunner();
       completeCycle(cycleId);
       return result;
     } catch (error) {
+      stopKeepAliveTimer();
       failCycle(cycleId, error instanceof Error ? error.message : String(error));
       throw error;
+    } finally {
+      stopKeepAliveTimer();
     }
   };
 

@@ -171,6 +171,7 @@ router.post(
         body: req.body,
         requestId: (req as any).requestId,
         logger: (req as any).logger,
+        request: req,
       });
 
       if (!envelope.ok) {

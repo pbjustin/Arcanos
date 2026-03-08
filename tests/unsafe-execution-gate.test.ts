@@ -5,6 +5,7 @@ import safetyRouter from '../src/routes/safety.js';
 import unsafeExecutionGate from '../src/middleware/unsafeExecutionGate.js';
 import {
   activateUnsafeCondition,
+  reconcileAutoRecoverableQuarantinesForProcessStart,
   registerQuarantine,
   resetSafetyRuntimeStateForTests
 } from '../src/services/safety/runtimeState.js';
@@ -103,6 +104,42 @@ describe('unsafeExecutionGate', () => {
       });
     expect(releaseResponse.status).toBe(200);
     expect(releaseResponse.body.released).toBe(true);
+
+    const unblockedResponse = await request(app).post('/mutate').send({ action: 'write' });
+    expect(unblockedResponse.status).toBe(200);
+    expect(unblockedResponse.body.ok).toBe(true);
+  });
+
+  it('releases stale auto-recoverable worker quarantines after process restart reconciliation', async () => {
+    const app = createUnsafeApp();
+    const quarantine = registerQuarantine({
+      kind: 'worker',
+      reason: 'test heartbeat loss',
+      integrityFailure: false,
+      autoRecoverable: true,
+      metadata: {
+        entityId: 'worker:test-restart-recovery'
+      }
+    });
+
+    activateUnsafeCondition({
+      code: 'INTERPRETER_HEARTBEAT_LOSS',
+      message: 'Heartbeat loss during test',
+      quarantineId: quarantine.quarantineId,
+      metadata: {
+        entityId: 'worker:test-restart-recovery'
+      }
+    });
+
+    const blockedResponse = await request(app).post('/mutate').send({ action: 'write' });
+    expect(blockedResponse.status).toBe(503);
+
+    const recoveryResult = reconcileAutoRecoverableQuarantinesForProcessStart(
+      new Date(Date.now() + 1000).toISOString(),
+      'operator:test-process-restart'
+    );
+    expect(recoveryResult.releasedQuarantineIds).toContain(quarantine.quarantineId);
+    expect(recoveryResult.resetEntityIds).toContain('worker:test-restart-recovery');
 
     const unblockedResponse = await request(app).post('/mutate').send({ action: 'write' });
     expect(unblockedResponse.status).toBe(200);

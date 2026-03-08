@@ -13,12 +13,19 @@ logs/
 npm_logs/
 tmp/
 temp/
+coverage/
 *.log
 *.tmp
 
 # Version control and CI files
 .git/
 .github/
+.codex/
+.codex-pr-*/
+.deploy-pr-*/
+.claude/
+.workspace/
+.tmp-locktest/
 
 # IDE and OS files
 .vscode/
