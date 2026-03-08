@@ -20,6 +20,7 @@ import {
 } from '@transport/http/requestHandler.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
+import { buildMemoryShortcutTelemetry } from '@routes/_core/memoryShortcutResponse.js';
 import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
 
 const router = express.Router();
@@ -286,8 +287,10 @@ function buildArcanosMemoryShortcutResponse(params: {
   memoryOperation: string;
   memorySessionId: string;
 }): AskResponse {
-  const timestamp = new Date().toISOString();
-  const requestId = `memory_${Date.now()}`;
+  const shortcutTelemetry = buildMemoryShortcutTelemetry({
+    memoryOperation: params.memoryOperation,
+    memorySessionId: params.memorySessionId
+  });
 
   return {
     success: true,
@@ -295,33 +298,19 @@ function buildArcanosMemoryShortcutResponse(params: {
     metadata: {
       service: 'ARCANOS API',
       version: '1.0.0',
-      timestamp,
+      timestamp: shortcutTelemetry.timestamp,
       arcanosRouting: false,
       endpoint: ARCANOS_API_ENDPOINT_NAME,
-      requestId,
-      routingStages: ['MEMORY-DISPATCH']
+      requestId: shortcutTelemetry.requestId,
+      routingStages: shortcutTelemetry.routingStages
     },
-    module: 'memory-dispatcher',
-    activeModel: 'memory-dispatcher',
-    fallbackFlag: false,
-    routingStages: ['MEMORY-DISPATCH'],
-    auditSafe: {
-      mode: false,
-      overrideUsed: false,
-      auditFlags: ['MEMORY_SHORTCUT_ACTIVE'],
-      processedSafely: true
-    },
-    memoryContext: {
-      entriesAccessed: 0,
-      contextSummary: `Memory dispatcher ${params.memoryOperation} for session ${params.memorySessionId}.`,
-      memoryEnhanced: false,
-      maxRelevanceScore: 0,
-      averageRelevanceScore: 0
-    },
-    taskLineage: {
-      requestId,
-      logged: false
-    }
+    module: shortcutTelemetry.module,
+    activeModel: shortcutTelemetry.activeModel,
+    fallbackFlag: shortcutTelemetry.fallbackFlag,
+    routingStages: shortcutTelemetry.routingStages,
+    auditSafe: shortcutTelemetry.auditSafe,
+    memoryContext: shortcutTelemetry.memoryContext,
+    taskLineage: shortcutTelemetry.taskLineage
   };
 }
 

@@ -42,6 +42,7 @@ import {
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { buildMemoryShortcutTelemetry } from '@routes/_core/memoryShortcutResponse.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
@@ -323,34 +324,25 @@ function buildAskMemoryShortcutResponse(params: {
   clientContext?: AskRequest['clientContext'];
   auditFlag?: SchemaValidationBypassAuditFlag;
 }): AskResponse {
-  const requestId = `memory_${Date.now()}`;
+  const shortcutTelemetry = buildMemoryShortcutTelemetry({
+    memoryOperation: params.memoryOperation,
+    memorySessionId: params.memorySessionId,
+  });
 
   return {
     result: params.resultText,
-    module: 'memory-dispatcher',
+    module: shortcutTelemetry.module,
     meta: {
-      id: requestId,
-      created: Math.floor(Date.now() / 1000)
+      id: shortcutTelemetry.requestId,
+      created: Math.floor(new Date(shortcutTelemetry.timestamp).getTime() / 1000)
     },
-    activeModel: 'memory-dispatcher',
-    fallbackFlag: false,
-    routingStages: ['MEMORY-DISPATCH'],
+    activeModel: shortcutTelemetry.activeModel,
+    fallbackFlag: shortcutTelemetry.fallbackFlag,
+    routingStages: shortcutTelemetry.routingStages,
     gpt5Used: false,
-    auditSafe: {
-      mode: false,
-      overrideUsed: false,
-      auditFlags: ['MEMORY_SHORTCUT_ACTIVE'],
-      processedSafely: true
-    },
-    memoryContext: {
-      entriesAccessed: 0,
-      contextSummary: `Memory dispatcher ${params.memoryOperation} for session ${params.memorySessionId}.`,
-      memoryEnhanced: false
-    },
-    taskLineage: {
-      requestId,
-      logged: false
-    },
+    auditSafe: shortcutTelemetry.auditSafe,
+    memoryContext: shortcutTelemetry.memoryContext,
+    taskLineage: shortcutTelemetry.taskLineage,
     endpoint: params.endpointName,
     ...(params.clientContext ? { clientContext: params.clientContext } : {}),
     ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})

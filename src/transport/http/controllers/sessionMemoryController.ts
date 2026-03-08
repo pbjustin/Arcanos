@@ -6,7 +6,9 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { sendBadRequest, sendInternalErrorCode } from '@shared/http/index.js';
 
 /**
- * Helper function to normalize message input
+ * Normalize a session message into the persisted conversation shape.
+ * Inputs/outputs: session message payload -> `{ role, content }` pair or null when content is blank.
+ * Edge cases: bare strings default to the `user` role.
  */
 function normalizeMessage(message: SessionMessage): { role: string; content: string } | null {
   const clean = typeof message === 'string'
@@ -20,7 +22,9 @@ function normalizeMessage(message: SessionMessage): { role: string; content: str
 }
 
 /**
- * Helper function to extract message metadata
+ * Extract the system-meta payload that accompanies a persisted session message.
+ * Inputs/outputs: raw message payload + timestamp -> persisted metadata record.
+ * Edge cases: missing token/tag fields degrade to deterministic defaults.
  */
 function extractMessageMeta(message: SessionMessage, timestamp: number): Record<string, unknown> {
   return {
@@ -31,7 +35,9 @@ function extractMessageMeta(message: SessionMessage, timestamp: number): Record<
 }
 
 /**
- * Helper function to handle session memory save validation
+ * Validate the required fields for a session-memory save request.
+ * Inputs/outputs: Express request/response -> validated `{ sessionId, message }` or null after responding.
+ * Edge cases: missing fields short-circuit through `requireField`.
  */
 function validateSaveRequest(req: Request, res: Response): { sessionId: string; message: SessionMessage } | null {
   const { sessionId, message } = req.body as { sessionId?: string; message?: SessionMessage };
@@ -43,24 +49,82 @@ function validateSaveRequest(req: Request, res: Response): { sessionId: string; 
   return { sessionId: sessionId!, message: message! };
 }
 
-export const sessionMemoryController = {
-  saveDual: async (req: Request, res: Response) => {
-    const validation = validateSaveRequest(req, res);
-    if (!validation) return;
+interface SessionSaveState {
+  sessionId: string;
+  normalizedMessage: { role: string; content: string; timestamp: number };
+  meta: Record<string, unknown>;
+}
 
-    const { sessionId, message } = validation;
-    const normalizedMessage = normalizeMessage(message);
-    
-    if (!normalizedMessage) {
-      sendBadRequest(res, 'message content is required');
-      return;
-    }
+/**
+ * Resolve all validated save-state dependencies for the dual-write session endpoint.
+ * Inputs/outputs: Express request/response -> normalized save state or null after responding.
+ * Edge cases: invalid message content returns a 400 before any persistence is attempted.
+ */
+function resolveSessionSaveState(req: Request, res: Response): SessionSaveState | null {
+  const validation = validateSaveRequest(req, res);
+  if (!validation) {
+    return null;
+  }
 
-    const timestamp = Date.now();
-    const meta = extractMessageMeta(message, timestamp);
+  const normalizedMessage = normalizeMessage(validation.message);
+  //audit Assumption: empty message bodies should fail before persistence; failure risk: blank rows pollute both conversation and meta channels; expected invariant: saveDual writes only non-empty content; handling strategy: respond with 400 and short-circuit.
+  if (!normalizedMessage) {
+    sendBadRequest(res, 'message content is required');
+    return null;
+  }
+
+  const timestamp = Date.now();
+  return {
+    sessionId: validation.sessionId,
+    normalizedMessage: {
+      ...normalizedMessage,
+      timestamp,
+    },
+    meta: extractMessageMeta(validation.message, timestamp),
+  };
+}
+
+interface SessionReadHandlerConfig {
+  operation: 'getCore' | 'getMeta' | 'getFull';
+  load: (sessionId: string) => Promise<unknown>;
+  failureMessage: string;
+}
+
+/**
+ * Build a consistent session-memory read handler with shared logging and error mapping.
+ * Inputs/outputs: loader config -> Express handler for the requested session channel.
+ * Edge cases: loader errors are logged once and mapped to the supplied internal-error message.
+ */
+function createSessionReadHandler(config: SessionReadHandlerConfig) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { sessionId } = req.params;
 
     try {
-      await saveMessage(sessionId, 'conversations_core', { ...normalizedMessage, timestamp });
+      const data = await config.load(sessionId);
+      res.json(data);
+    } catch (error: unknown) {
+      //audit Assumption: read handlers should share one logging/error path so route maintenance stays consistent; failure risk: channel-specific handlers drift in status codes or log metadata; expected invariant: each read operation logs the same module + operation contract; handling strategy: centralize the catch block in the handler factory.
+      logger.error(`Failed to ${config.operation} session data`, {
+        module: 'sessionMemory',
+        operation: config.operation,
+        sessionId,
+        error: resolveErrorMessage(error)
+      });
+
+      sendInternalErrorCode(res, config.failureMessage);
+    }
+  };
+}
+
+export const sessionMemoryController = {
+  saveDual: async (req: Request, res: Response) => {
+    const sessionSaveState = resolveSessionSaveState(req, res);
+    if (!sessionSaveState) return;
+
+    const { sessionId, normalizedMessage, meta } = sessionSaveState;
+
+    try {
+      await saveMessage(sessionId, 'conversations_core', normalizedMessage);
       await saveMessage(sessionId, 'system_meta', meta);
 
       logger.info('Session memory saved', {
@@ -84,57 +148,21 @@ export const sessionMemoryController = {
     }
   },
 
-  getCore: async (req: Request, res: Response) => {
-    const { sessionId } = req.params;
-    
-    try {
-      const data = await getChannel(sessionId, 'conversations_core');
-      res.json(data);
-    } catch (error: unknown) {
-      logger.error('Failed to get core session data', {
-        module: 'sessionMemory',
-        operation: 'getCore',
-        sessionId,
-        error: resolveErrorMessage(error)
-      });
+  getCore: createSessionReadHandler({
+    operation: 'getCore',
+    load: (sessionId: string) => getChannel(sessionId, 'conversations_core'),
+    failureMessage: 'Failed to retrieve core data'
+  }),
 
-      sendInternalErrorCode(res, 'Failed to retrieve core data');
-    }
-  },
+  getMeta: createSessionReadHandler({
+    operation: 'getMeta',
+    load: (sessionId: string) => getChannel(sessionId, 'system_meta'),
+    failureMessage: 'Failed to retrieve meta data'
+  }),
 
-  getMeta: async (req: Request, res: Response) => {
-    const { sessionId } = req.params;
-    
-    try {
-      const data = await getChannel(sessionId, 'system_meta');
-      res.json(data);
-    } catch (error: unknown) {
-      logger.error('Failed to get meta session data', {
-        module: 'sessionMemory',
-        operation: 'getMeta',
-        sessionId,
-        error: resolveErrorMessage(error)
-      });
-
-      sendInternalErrorCode(res, 'Failed to retrieve meta data');
-    }
-  },
-
-  getFull: async (req: Request, res: Response) => {
-    const { sessionId } = req.params;
-    
-    try {
-      const data = await getConversation(sessionId);
-      res.json(data);
-    } catch (error: unknown) {
-      logger.error('Failed to get full conversation', {
-        module: 'sessionMemory',
-        operation: 'getFull',
-        sessionId,
-        error: resolveErrorMessage(error)
-      });
-
-      sendInternalErrorCode(res, 'Failed to retrieve conversation');
-    }
-  }
+  getFull: createSessionReadHandler({
+    operation: 'getFull',
+    load: getConversation,
+    failureMessage: 'Failed to retrieve conversation'
+  })
 };
