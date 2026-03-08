@@ -104,6 +104,16 @@ Main Event: Gunther def. AJ Styles clean`;
         tag: 'session_diagnostic_2026-03-08'
       }
     });
+    expect(
+      parseNaturalLanguageMemoryCommand(
+        'Recall the saved payload for Tag: session_diagnostic_e2e_210700'
+      )
+    ).toEqual({
+      intent: 'lookup',
+      exactSelectors: {
+        tag: 'session_diagnostic_e2e_210700'
+      }
+    });
   });
 
   it('uses the inline session id when loading the latest saved memory', async () => {

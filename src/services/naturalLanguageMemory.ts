@@ -139,6 +139,7 @@ const STRUCTURED_SESSION_METADATA_LINE_PATTERN =
 const STORAGE_LABEL_LINE_PATTERN = /\bstorage\s*label\s*[:=]\s*([^\r\n]+)/i;
 const RECORD_ID_LINE_PATTERN = /\brecord\s*id\s*[:=]\s*(\d{1,12})\b/i;
 const TAG_LINE_PATTERN = /(?:^|\n)\s*tag\s*[:=]\s*([^\r\n]+)/i;
+const TAG_INLINE_PATTERN = /\btag\s*[:=]\s*([a-zA-Z0-9_.:-]{2,120})/i;
 const STRUCTURED_SESSION_SECTION_CUE_PATTERN =
   /(?:^|\n)\s*(?:persisted\s+summary(?:\s*\(stored\))?|session\s+behavior|session\s+capabilities\s+enabled|available\s+actions)\b/i;
 const MIN_STRUCTURED_SESSION_PAYLOAD_LINES = 3;
@@ -210,7 +211,9 @@ export function extractNaturalLanguageExactMemorySelector(
   const recordIdMatch = rawInput.match(RECORD_ID_LINE_PATTERN);
   const parsedRecordId = recordIdMatch?.[1] ? Number.parseInt(recordIdMatch[1], 10) : Number.NaN;
   const normalizedRecordId = Number.isInteger(parsedRecordId) && parsedRecordId > 0 ? parsedRecordId : null;
-  const normalizedTag = normalizeExactMemoryTag(rawInput.match(TAG_LINE_PATTERN)?.[1]);
+  const normalizedTag = normalizeExactMemoryTag(
+    rawInput.match(TAG_LINE_PATTERN)?.[1] ?? rawInput.match(TAG_INLINE_PATTERN)?.[1]
+  );
 
   //audit Assumption: selector extraction should only activate when at least one exact selector is present; failure risk: generic prompts are treated as exact DB inspections; expected invariant: null means "no exact selector"; handling strategy: require a valid record id or normalized tag.
   if (normalizedRecordId === null && !normalizedTag) {
