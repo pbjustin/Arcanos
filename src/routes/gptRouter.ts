@@ -18,6 +18,7 @@ router.post("/:gptId", async (req, res, next) => {
       body: req.body,
       requestId: (req as any).requestId,
       logger: (req as any).logger,
+      request: req,
     });
 
     if (!envelope.ok) {

@@ -185,6 +185,24 @@ describe('tryDispatchWorkerTools', () => {
         ])
       })
     );
+    expect(createMock.mock.calls[1]?.[0]?.previous_response_id).toBeUndefined();
+    expect(createMock.mock.calls[1]?.[0]?.input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'inspect worker operations and decide what tool to call'
+        }),
+        expect.objectContaining({
+          type: 'function_call',
+          name: 'get_worker_status',
+          call_id: 'call-1'
+        }),
+        expect.objectContaining({
+          type: 'function_call_output',
+          call_id: 'call-1'
+        })
+      ])
+    );
     expect(response).toEqual(
       expect.objectContaining({
         module: 'worker-tools',

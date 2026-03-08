@@ -72,16 +72,26 @@ export function buildMcpRequestContext(req: Request): McpRequestContext {
 }
 
 /**
- * Build context for stdio-based MCP (no Express Request available).
+ * Build context for detached MCP transports that run without an Express Request.
+ *
+ * Purpose:
+ * - Reuse one context constructor for stdio and in-process backend MCP execution.
+ *
+ * Inputs/outputs:
+ * - Input: optional session id plus a transport label for logging.
+ * - Output: MCP request context with OpenAI client, runtime budget, and detached logger metadata.
+ *
+ * Edge case behavior:
+ * - Throws when the OpenAI adapter is unavailable because detached transports cannot proceed without it.
  */
-export function buildMcpStdioContext(sessionId?: string): McpRequestContext {
+function buildDetachedMcpContext(sessionId: string | undefined, transport: 'internal' | 'stdio'): McpRequestContext {
   const { client } = getOpenAIClientOrAdapter();
   if (!client) {
     throw new Error('OpenAI client unavailable (adapter not initialized)');
   }
 
   const requestId = generateRequestId('mcp');
-  const logger = createMcpLogger({ requestId, sessionId, transport: 'stdio' });
+  const logger = createMcpLogger({ requestId, sessionId, transport });
 
   return {
     requestId,
@@ -92,4 +102,38 @@ export function buildMcpStdioContext(sessionId?: string): McpRequestContext {
     req: {} as any,
     logger,
   };
+}
+
+/**
+ * Build context for stdio-based MCP (no Express Request available).
+ *
+ * Purpose:
+ * - Support desktop MCP clients that communicate over stdio.
+ *
+ * Inputs/outputs:
+ * - Input: optional session identifier supplied by the stdio client.
+ * - Output: detached MCP request context tagged with `stdio` transport metadata.
+ *
+ * Edge case behavior:
+ * - Throws when the OpenAI adapter is unavailable.
+ */
+export function buildMcpStdioContext(sessionId?: string): McpRequestContext {
+  return buildDetachedMcpContext(sessionId, 'stdio');
+}
+
+/**
+ * Build context for in-process backend MCP calls (no Express Request available).
+ *
+ * Purpose:
+ * - Let backend services and workers reuse the ARCANOS MCP registry without routing through HTTP.
+ *
+ * Inputs/outputs:
+ * - Input: optional backend-managed session identifier.
+ * - Output: detached MCP request context tagged with `internal` transport metadata.
+ *
+ * Edge case behavior:
+ * - Throws when the OpenAI adapter is unavailable.
+ */
+export function buildMcpInternalContext(sessionId?: string): McpRequestContext {
+  return buildDetachedMcpContext(sessionId, 'internal');
 }

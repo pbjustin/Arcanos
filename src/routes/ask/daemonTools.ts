@@ -14,6 +14,11 @@ import type { AskResponse } from './types.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
+import {
+  buildInitialToolLoopTranscript,
+  buildToolLoopContinuationRequest,
+  type ToolLoopFunctionCallOutput
+} from './toolLoop.js';
 
 type DaemonMetadata = {
   source?: string;
@@ -308,12 +313,14 @@ export async function tryDispatchDaemonTools(
   // Tool-calling loop: keep executing function calls until the model returns a text response
   // or we reach a hard cap. This enables "tool output continuation".
   const MAX_TURNS = 8;
+  const storeOpenAIResponses = shouldStoreOpenAIResponses();
+  let toolLoopTranscript = buildInitialToolLoopTranscript(prompt);
 
   let response: any = await responsesApi.create({
     model,
-    store: shouldStoreOpenAIResponses(),
+    store: storeOpenAIResponses,
     instructions: DAEMON_TOOL_SYSTEM_PROMPT,
-    input: [{ role: 'user', content: prompt }],
+    input: toolLoopTranscript,
     tools: daemonResponsesTools,
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens
@@ -336,7 +343,7 @@ export async function tryDispatchDaemonTools(
     }
 
     const pendingActions: PendingDaemonAction[] = [];
-    const functionCallOutputs: Array<{ type: 'function_call_output'; call_id: string; output: string }> = [];
+    const functionCallOutputs: ToolLoopFunctionCallOutput[] = [];
 
     for (const call of toolCalls) {
       const toolName = typeof call?.name === 'string' ? call.name : '';
@@ -483,16 +490,18 @@ export async function tryDispatchDaemonTools(
       };
     }
 
-    response = await responsesApi.create({
-      model,
-      store: shouldStoreOpenAIResponses(),
-      previous_response_id: response.id,
+    const continuationRequest = buildToolLoopContinuationRequest({
       instructions: DAEMON_TOOL_SYSTEM_PROMPT,
-      input: functionCallOutputs,
+      maxOutputTokens,
+      model,
+      previousResponse: response,
+      storeResponses: storeOpenAIResponses,
       tools: daemonResponsesTools,
-      tool_choice: 'auto',
-      max_output_tokens: maxOutputTokens
+      transcript: toolLoopTranscript,
+      functionCallOutputs
     });
+    toolLoopTranscript = continuationRequest.nextTranscript;
+    response = await responsesApi.create(continuationRequest.request);
 
     lastText = extractResponseOutputText(response, lastText);
   }

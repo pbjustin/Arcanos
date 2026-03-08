@@ -10,6 +10,7 @@ import errorHandler from "@transport/http/middleware/errorHandler.js";
 import { requestContext, sendNotFound } from '@shared/http/index.js';
 import getGptModuleMap from '@platform/runtime/gptRouterConfig.js';
 import { getEnv } from '@platform/runtime/env.js';
+import { arcanosMcpService } from '@services/arcanosMcp.js';
 
 function hasConfiguredOpenAIKey(): boolean {
   const key = getEnv('OPENAI_API_KEY');
@@ -33,6 +34,12 @@ export function createApp(): Express {
   Object.defineProperty(app.locals, 'openai', {
     writable: false,
     configurable: false,
+  });
+  Object.defineProperty(app.locals, 'arcanosMcp', {
+    value: arcanosMcpService,
+    writable: false,
+    configurable: false,
+    enumerable: true,
   });
 
   app.get('/healthz', async (_req: Request, res: Response, next: NextFunction) => {

@@ -8,6 +8,11 @@ import type { AskResponse } from './types.js';
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 import {
+  buildInitialToolLoopTranscript,
+  buildToolLoopContinuationRequest,
+  type ToolLoopFunctionCallOutput
+} from './toolLoop.js';
+import {
   dispatchWorkerInput,
   getWorkerControlHealth,
   getLatestWorkerJobDetail,
@@ -626,11 +631,13 @@ export async function tryDispatchWorkerTools(
   }
 
   const MAX_TURNS = 8;
+  const storeOpenAIResponses = shouldStoreOpenAIResponses();
+  let toolLoopTranscript = buildInitialToolLoopTranscript(prompt);
   let response: any = await responsesApi.create({
     model,
-    store: shouldStoreOpenAIResponses(),
+    store: storeOpenAIResponses,
     instructions: WORKER_TOOL_SYSTEM_PROMPT,
-    input: [{ role: 'user', content: prompt }],
+    input: toolLoopTranscript,
     tools: workerControlResponsesTools,
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens
@@ -652,7 +659,7 @@ export async function tryDispatchWorkerTools(
       return buildWorkerToolResponse(response, lastText);
     }
 
-    const functionCallOutputs: Array<{ type: 'function_call_output'; call_id: string; output: string }> = [];
+    const functionCallOutputs: ToolLoopFunctionCallOutput[] = [];
 
     for (const toolCall of toolCalls) {
       const toolName = typeof toolCall.name === 'string' ? toolCall.name : '';
@@ -684,16 +691,18 @@ export async function tryDispatchWorkerTools(
       }
     }
 
-    response = await responsesApi.create({
-      model,
-      store: shouldStoreOpenAIResponses(),
-      previous_response_id: response.id,
+    const continuationRequest = buildToolLoopContinuationRequest({
       instructions: WORKER_TOOL_SYSTEM_PROMPT,
-      input: functionCallOutputs,
+      maxOutputTokens,
+      model,
+      previousResponse: response,
+      storeResponses: storeOpenAIResponses,
       tools: workerControlResponsesTools,
-      tool_choice: 'auto',
-      max_output_tokens: maxOutputTokens
+      transcript: toolLoopTranscript,
+      functionCallOutputs
     });
+    toolLoopTranscript = continuationRequest.nextTranscript;
+    response = await responsesApi.create(continuationRequest.request);
     lastText = extractResponseOutputText(response, lastText);
   }
 

@@ -10,6 +10,11 @@ import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '../../dag/templates.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import type { AskResponse } from './types.js';
+import {
+  buildInitialToolLoopTranscript,
+  buildToolLoopContinuationRequest,
+  type ToolLoopFunctionCallOutput
+} from './toolLoop.js';
 
 const DAG_TOOL_SYSTEM_PROMPT = [
   'You are ARCANOS in DAG orchestration mode.',
@@ -803,11 +808,13 @@ export async function tryDispatchDagTools(
   }
 
   const MAX_TURNS = 8;
+  const storeOpenAIResponses = shouldStoreOpenAIResponses();
+  let toolLoopTranscript = buildInitialToolLoopTranscript(prompt);
   let response: any = await responsesApi.create({
     model,
-    store: shouldStoreOpenAIResponses(),
+    store: storeOpenAIResponses,
     instructions: DAG_TOOL_SYSTEM_PROMPT,
-    input: [{ role: 'user', content: prompt }],
+    input: toolLoopTranscript,
     tools: dagControlResponsesTools,
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens
@@ -829,7 +836,7 @@ export async function tryDispatchDagTools(
       return buildDagToolResponse(response, lastText);
     }
 
-    const functionCallOutputs: Array<{ type: 'function_call_output'; call_id: string; output: string }> = [];
+    const functionCallOutputs: ToolLoopFunctionCallOutput[] = [];
 
     for (const toolCall of toolCalls) {
       const toolName = typeof toolCall.name === 'string' ? toolCall.name : '';
@@ -862,16 +869,18 @@ export async function tryDispatchDagTools(
       }
     }
 
-    response = await responsesApi.create({
-      model,
-      store: shouldStoreOpenAIResponses(),
-      previous_response_id: response.id,
+    const continuationRequest = buildToolLoopContinuationRequest({
       instructions: DAG_TOOL_SYSTEM_PROMPT,
-      input: functionCallOutputs,
+      maxOutputTokens,
+      model,
+      previousResponse: response,
+      storeResponses: storeOpenAIResponses,
       tools: dagControlResponsesTools,
-      tool_choice: 'auto',
-      max_output_tokens: maxOutputTokens
+      transcript: toolLoopTranscript,
+      functionCallOutputs
     });
+    toolLoopTranscript = continuationRequest.nextTranscript;
+    response = await responsesApi.create(continuationRequest.request);
     lastText = extractResponseOutputText(response, lastText);
   }
 

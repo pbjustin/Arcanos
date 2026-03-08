@@ -45,6 +45,32 @@ describe('interpreter supervisor safety escalation', () => {
     expect(thresholdConditions[0]?.metadata?.entityId).toBe(entityId);
   });
 
+  it('keeps worker supervised cycles alive while async work is still running', async () => {
+    const supervisor = createInterpreterSupervisor();
+    const entityId = 'worker:test-keepalive';
+    const longRunningTaskPromise = supervisor.runSupervisedCycle(
+      entityId,
+      async () => {
+        await new Promise<void>(resolve => {
+          const timeout = setTimeout(resolve, config.safety.heartbeatTimeoutMs * 2);
+          if (typeof timeout.unref === 'function') {
+            timeout.unref();
+          }
+        });
+        return 'ok';
+      },
+      { category: 'worker' }
+    );
+
+    await jest.advanceTimersByTimeAsync(config.safety.heartbeatTimeoutMs * 2 + 5);
+
+    await expect(longRunningTaskPromise).resolves.toBe('ok');
+    expect(getActiveUnsafeConditions('INTERPRETER_HEARTBEAT_LOSS')).toHaveLength(0);
+    expect(
+      getActiveQuarantines('worker').filter(record => record.metadata?.entityId === entityId)
+    ).toHaveLength(0);
+  });
+
   it('auto-recovers non-integrity quarantine after cooldown and healthy cycles', async () => {
     const originalCooldownMs = config.safety.quarantineCooldownMs;
     config.safety.quarantineCooldownMs = 0;

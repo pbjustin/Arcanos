@@ -2,11 +2,13 @@ import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
 import { dispatchModuleAction, getModuleMetadata } from "../modules.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
+import { arcanosMcpService, type ArcanosMcpService, type ArcanosMcpToolCallResult, type ArcanosMcpToolListResult } from "@services/arcanosMcp.js";
 import {
   executeNaturalLanguageMemoryCommand,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
 import { isRecord } from "@shared/typeGuards.js";
+import type { Request } from "express";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -29,6 +31,7 @@ export type RouteGptRequestInput = {
   body: any;
   requestId?: string;
   logger?: any;
+  request?: Request;
 };
 
 function extractPrompt(body: any): string | null {
@@ -99,6 +102,251 @@ function resolveSessionId(body: unknown, payload: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+type McpDispatchIntent =
+  | {
+      action: 'mcp.invoke';
+      toolName: string;
+      toolArguments: Record<string, unknown>;
+      dispatchMode: 'automatic' | 'explicit';
+      reason: string;
+    }
+  | {
+      action: 'mcp.list_tools';
+      dispatchMode: 'automatic' | 'explicit';
+      reason: string;
+    };
+
+function getRecordString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function getRecordObject(record: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
+  const value = record[key];
+  return isRecord(value) ? value : undefined;
+}
+
+function normalizeMcpDispatchAction(rawAction: string | undefined): 'mcp.invoke' | 'mcp.list_tools' | null {
+  if (!rawAction) {
+    return null;
+  }
+
+  const normalizedAction = normalize(rawAction);
+  if (normalizedAction === 'mcp.invoke' || normalizedAction === 'mcp.run') {
+    return 'mcp.invoke';
+  }
+  if (
+    normalizedAction === 'mcp.list_tools' ||
+    normalizedAction === 'mcp.listtools' ||
+    normalizedAction === 'mcp.list-tools'
+  ) {
+    return 'mcp.list_tools';
+  }
+
+  return null;
+}
+
+/**
+ * Resolve explicit dispatcher requests for the internal ARCANOS MCP service.
+ * Inputs/Outputs: requested action plus normalized payload; returns MCP intent, validation error, or null.
+ * Edge cases: ignores payload.mcp when a non-MCP action was explicitly requested.
+ */
+function parseMcpDispatchIntent(
+  requestedAction: string | undefined,
+  payload: unknown
+): { intent: McpDispatchIntent | null; error?: string } {
+  const normalizedRequestedAction = normalizeMcpDispatchAction(requestedAction);
+
+  //audit Assumption: explicit non-MCP actions must keep existing dispatcher semantics; failure risk: payload fields accidentally reroute normal module calls into MCP; expected invariant: MCP branch only activates for explicit MCP actions or when no action was requested and payload.mcp is present; handling strategy: short-circuit on non-MCP requested actions.
+  if (requestedAction && !normalizedRequestedAction) {
+    return { intent: null };
+  }
+
+  const payloadRecord = isRecord(payload) ? payload : null;
+  const embeddedEnvelope = payloadRecord ? getRecordObject(payloadRecord, 'mcp') : undefined;
+  const envelope = embeddedEnvelope ?? payloadRecord;
+
+  if (!envelope) {
+    return { intent: null };
+  }
+
+  const normalizedEnvelopeAction =
+    normalizedRequestedAction ??
+    normalizeMcpDispatchAction(getRecordString(envelope, 'action') ?? getRecordString(envelope, 'operation'));
+
+  if (!normalizedEnvelopeAction) {
+    return { intent: null };
+  }
+
+  if (normalizedEnvelopeAction === 'mcp.list_tools') {
+    return {
+      intent: {
+        action: 'mcp.list_tools',
+        dispatchMode: 'explicit',
+        reason: 'payload_mcp_list_tools',
+      }
+    };
+  }
+
+  const toolName =
+    getRecordString(envelope, 'toolName') ??
+    getRecordString(envelope, 'name');
+
+  //audit Assumption: MCP invoke dispatch requires a concrete tool identifier; failure risk: opening a dispatcher MCP session with an empty target creates opaque downstream errors; expected invariant: every MCP invoke request names one tool; handling strategy: reject malformed requests at dispatcher boundary.
+  if (!toolName) {
+    return { intent: null, error: 'MCP invoke dispatch requires payload.toolName (or payload.mcp.toolName).' };
+  }
+
+  const toolArguments =
+    getRecordObject(envelope, 'toolArguments') ??
+    getRecordObject(envelope, 'arguments') ??
+    {};
+
+  return {
+    intent: {
+      action: 'mcp.invoke',
+      toolName,
+      toolArguments,
+      dispatchMode: 'explicit',
+      reason: 'payload_mcp_invoke',
+    }
+  };
+}
+
+const automaticMcpListToolsPattern =
+  /\b(?:list|show|get|what(?:\s+are)?)\b[^.!?\n]{0,24}\b(?:mcp\s+)?tools?\b|\bmcp\s+tools?\b/i;
+const automaticMcpModulesListPattern =
+  /\b(?:list|show|get)\b[^.!?\n]{0,20}\bmodules?\b|\bmodules?\b[^.!?\n]{0,20}\b(?:list|show|get)\b/i;
+const automaticMcpHealthReportPattern =
+  /\b(?:ops|system|backend|service|deployment|railway)\b[^.!?\n]{0,28}\bhealth\b|\bhealth\b[^.!?\n]{0,28}\b(?:ops|system|backend|service|deployment|railway)\b|\bhealth\s+report\b/i;
+const automaticMcpStrongCuePattern = /\b(?:use|via|through)\s+mcp\b|\bmcp\s+(?:server|tools?|tooling)\b/i;
+const automaticMcpOpsVerbPattern =
+  /\b(?:diagnose|debug|inspect|audit|analyze|check|report|trace|verify|investigate|orchestrate|manage)\b/i;
+const automaticMcpBackendNounPattern =
+  /\b(?:backend|system|deployment|service|worker|queue|database|postgres|redis|railway|dag|workflow|plan|plans|agent|agents|module|modules|research|memory)\b/i;
+
+/**
+ * Infer conservative automatic MCP dispatch for query-like operational prompts.
+ * Inputs/Outputs: module, action context, prompt text, and session id; returns MCP intent or null.
+ * Edge cases: only auto-routes generic tutor-like query flows so domain-specific modules keep their existing handlers.
+ */
+function inferAutomaticMcpDispatchIntent(params: {
+  moduleName: string;
+  prompt: string | null;
+  requestedAction: string | undefined;
+  actionCandidate: string | null;
+  sessionId: string | undefined;
+}): McpDispatchIntent | null {
+  const { moduleName, prompt, requestedAction, actionCandidate, sessionId } = params;
+
+  //audit Assumption: automatic MCP selection should never override explicit non-query actions; failure risk: dispatcher bypasses strict module contracts; expected invariant: auto MCP only applies to query-like traffic; handling strategy: gate on absent/`query` action intent.
+  if (requestedAction && requestedAction !== 'query') {
+    return null;
+  }
+
+  //audit Assumption: auto MCP routing is safest on the generic ARCANOS tutor path; failure risk: domain-specific modules lose specialized behavior; expected invariant: gaming/booker/etc. keep existing module dispatch unless MCP was explicit; handling strategy: restrict automatic inference to the tutor module.
+  if (moduleName !== 'ARCANOS:TUTOR') {
+    return null;
+  }
+
+  //audit Assumption: only query/default-query routes can be safely upgraded to MCP automatically; failure risk: ambiguous modules or non-query actions get rerouted unexpectedly; expected invariant: automatic MCP stays within generic query execution; handling strategy: require null-or-query action candidate.
+  if (actionCandidate && actionCandidate !== 'query') {
+    return null;
+  }
+
+  if (!prompt) {
+    return null;
+  }
+
+  if (automaticMcpListToolsPattern.test(prompt)) {
+    return {
+      action: 'mcp.list_tools',
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_mcp_tools',
+    };
+  }
+
+  if (automaticMcpModulesListPattern.test(prompt)) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'modules.list',
+      toolArguments: {},
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_module_inventory',
+    };
+  }
+
+  if (automaticMcpHealthReportPattern.test(prompt)) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'ops.health_report',
+      toolArguments: {},
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_ops_health',
+    };
+  }
+
+  //audit Assumption: broad operational prompts benefit from the generic Trinity MCP tool when they mention backend state or explicitly ask to use MCP; failure risk: normal tutoring prompts are over-routed into MCP; expected invariant: fallback only triggers on strong MCP cues or combined ops-verb/backend-noun prompts; handling strategy: require explicit regex evidence before delegating to `trinity.ask`.
+  if (
+    automaticMcpStrongCuePattern.test(prompt) ||
+    (automaticMcpOpsVerbPattern.test(prompt) && automaticMcpBackendNounPattern.test(prompt))
+  ) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'trinity.ask',
+      toolArguments: {
+        prompt,
+        sessionId,
+      },
+      dispatchMode: 'automatic',
+      reason: automaticMcpStrongCuePattern.test(prompt)
+        ? 'prompt_requests_mcp_routing'
+        : 'prompt_requests_backend_operations',
+    };
+  }
+
+  return null;
+}
+
+function getDispatcherMcpService(request: Request | undefined): ArcanosMcpService {
+  const requestScopedService = request?.app?.locals?.arcanosMcp;
+  //audit Assumption: app.locals may expose a request-scoped MCP facade; failure risk: missing app-local wiring breaks HTTP context reuse; expected invariant: fallback singleton remains available when locals are absent; handling strategy: validate shape and fall back to the shared service instance.
+  if (
+    requestScopedService &&
+    typeof requestScopedService.invokeTool === 'function' &&
+    typeof requestScopedService.listTools === 'function'
+  ) {
+    return requestScopedService as ArcanosMcpService;
+  }
+
+  return arcanosMcpService;
+}
+
+function extractMcpToolError(result: ArcanosMcpToolCallResult | ArcanosMcpToolListResult): {
+  code: string;
+  message: string;
+  details?: unknown;
+} | null {
+  if (!('isError' in result) || result.isError !== true) {
+    return null;
+  }
+
+  const structuredContent = isRecord(result.structuredContent) ? result.structuredContent : null;
+  const errorBody = structuredContent && isRecord(structuredContent.error) ? structuredContent.error : null;
+  if (!errorBody) {
+    return {
+      code: 'MCP_TOOL_ERROR',
+      message: 'ARCANOS MCP tool returned an error result.',
+    };
+  }
+
+  return {
+    code: typeof errorBody.code === 'string' ? errorBody.code : 'MCP_TOOL_ERROR',
+    message: typeof errorBody.message === 'string' ? errorBody.message : 'ARCANOS MCP tool returned an error result.',
+    details: errorBody.details,
+  };
 }
 
 const UNIVERSAL_MEMORY_SESSION_ID = "global";
@@ -284,7 +532,7 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   };
 }
 export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskEnvelope> {
-  const { gptId, body, requestId, logger } = input;
+  const { gptId, body, requestId, logger, request } = input;
   const trimmedGptId = (gptId ?? "").trim();
 
   const baseRoute: RouteMeta = {
@@ -316,10 +564,27 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const requestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
   const payload = buildDispatchPayload(body);
   const prompt = extractPrompt(payload);
+  const mcpDispatch = parseMcpDispatchIntent(requestedAction, payload);
+  if (mcpDispatch.error) {
+    return {
+      ok: false,
+      error: { code: "BAD_REQUEST", message: mcpDispatch.error },
+      _route: {
+        ...baseRoute,
+        module: entry.module,
+        action: requestedAction ?? 'mcp.invoke',
+        matchMethod,
+        route: entry.route,
+        availableActions,
+        moduleVersion: (moduleMetadata as any)?.version ?? null,
+      },
+    };
+  }
   const parsedMemoryCommand =
     typeof prompt === "string" ? parseNaturalLanguageMemoryCommand(prompt) : { intent: "unknown" };
   const actionCandidate = pickAction(availableActions, requestedAction);
   const hasNoRoutableAction = !actionCandidate;
+  const sessionId = resolveSessionId(body, payload);
 
   const shouldInterceptMemoryInDispatcher =
     typeof prompt === "string" &&
@@ -396,6 +661,169 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           availableActions,
           moduleVersion: (moduleMetadata as any)?.version ?? null
         }
+      };
+    }
+  }
+
+  const automaticMcpDispatchIntent = mcpDispatch.intent
+    ? null
+    : inferAutomaticMcpDispatchIntent({
+        moduleName: entry.module,
+        prompt,
+        requestedAction,
+        actionCandidate,
+        sessionId,
+      });
+  const resolvedMcpDispatchIntent = mcpDispatch.intent ?? automaticMcpDispatchIntent;
+
+  if (resolvedMcpDispatchIntent) {
+    const dispatcherMcpService = getDispatcherMcpService(request);
+    const dispatcherAction = resolvedMcpDispatchIntent.action;
+    const dispatcherRouteAction =
+      resolvedMcpDispatchIntent.dispatchMode === 'automatic'
+        ? `mcp.auto.${dispatcherAction === 'mcp.invoke' ? 'invoke' : 'list_tools'}`
+        : dispatcherAction;
+
+    if (resolvedMcpDispatchIntent.dispatchMode === 'automatic') {
+      logger?.info?.("gpt.dispatch.mcp.auto_selected", {
+        requestId,
+        gptId: trimmedGptId,
+        module: entry.module,
+        action: dispatcherAction,
+        matchMethod,
+        reason: resolvedMcpDispatchIntent.reason,
+        toolName: resolvedMcpDispatchIntent.action === 'mcp.invoke' ? resolvedMcpDispatchIntent.toolName : undefined,
+      });
+    }
+
+    logger?.info?.("gpt.dispatch.mcp.plan", {
+      requestId,
+      gptId: trimmedGptId,
+      module: entry.module,
+      action: dispatcherAction,
+      matchMethod,
+      dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
+      reason: resolvedMcpDispatchIntent.reason,
+      toolName: resolvedMcpDispatchIntent.action === 'mcp.invoke' ? resolvedMcpDispatchIntent.toolName : undefined,
+    });
+
+    try {
+      const mcpResult =
+        resolvedMcpDispatchIntent.action === 'mcp.invoke'
+          ? await dispatcherMcpService.invokeTool({
+              toolName: resolvedMcpDispatchIntent.toolName,
+              toolArguments: resolvedMcpDispatchIntent.toolArguments,
+              request,
+              sessionId,
+            })
+          : await dispatcherMcpService.listTools({
+              request,
+              sessionId,
+            });
+
+      const mcpToolError = extractMcpToolError(mcpResult);
+      if (mcpToolError) {
+        return {
+          ok: false,
+          error: mcpToolError,
+          _route: {
+            ...baseRoute,
+            module: entry.module,
+            action: dispatcherRouteAction,
+            matchMethod,
+            route: entry.route,
+            availableActions,
+            moduleVersion: (moduleMetadata as any)?.version ?? null
+          }
+        };
+      }
+
+      const routedMcpResult = {
+        handledBy: "mcp-dispatcher",
+        mcp:
+          resolvedMcpDispatchIntent.action === 'mcp.invoke'
+            ? {
+                action: 'invoke',
+                toolName: resolvedMcpDispatchIntent.toolName,
+                dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
+                reason: resolvedMcpDispatchIntent.reason,
+                result: mcpResult,
+              }
+            : {
+                action: 'list_tools',
+                dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
+                reason: resolvedMcpDispatchIntent.reason,
+                result: mcpResult,
+              }
+      };
+
+      await persistModuleConversation({
+        moduleName: entry.module,
+        route: entry.route,
+        action: dispatcherRouteAction,
+        gptId: trimmedGptId,
+        sessionId,
+        requestId,
+        requestPayload: payload,
+        responsePayload: routedMcpResult
+      }).catch((error: unknown) => {
+        //audit Assumption: MCP dispatch persistence failures should not hide successful dispatcher output; failure risk: conversation history gaps; expected invariant: MCP result still returns to caller; handling strategy: warn and continue.
+        logger?.warn?.("gpt.dispatch.mcp.persistence_failed", {
+          requestId,
+          gptId: trimmedGptId,
+          module: entry.module,
+          action: dispatcherRouteAction,
+          error: String((error as Error)?.message ?? error),
+        });
+      });
+
+      logger?.info?.("gpt.dispatch.mcp.ok", {
+        requestId,
+        gptId: trimmedGptId,
+        module: entry.module,
+        action: dispatcherAction,
+        dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
+        reason: resolvedMcpDispatchIntent.reason,
+        toolName: resolvedMcpDispatchIntent.action === 'mcp.invoke' ? resolvedMcpDispatchIntent.toolName : undefined,
+      });
+
+      return {
+        ok: true,
+        result: routedMcpResult,
+        _route: {
+          ...baseRoute,
+          module: entry.module,
+          action: dispatcherRouteAction,
+          matchMethod,
+          route: entry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null
+        },
+      };
+    } catch (err: any) {
+      logger?.error?.("gpt.dispatch.mcp.error", {
+        requestId,
+        gptId: trimmedGptId,
+        module: entry.module,
+        action: dispatcherAction,
+        matchMethod,
+        dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
+        reason: resolvedMcpDispatchIntent.reason,
+        error: String(err?.message ?? err),
+      });
+
+      return {
+        ok: false,
+        error: { code: "MODULE_ERROR", message: err?.message ?? "MCP dispatch failed" },
+        _route: {
+          ...baseRoute,
+          module: entry.module,
+          action: dispatcherRouteAction,
+          matchMethod,
+          route: entry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null
+        },
       };
     }
   }

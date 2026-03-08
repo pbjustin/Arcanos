@@ -10,4 +10,11 @@ export interface WorkerContext {
   ai: {
     ask: (prompt: string) => Promise<string>;
   };
+  mcp: {
+    invokeTool: (
+      toolName: string,
+      toolArguments?: Record<string, unknown>
+    ) => Promise<Record<string, unknown>>;
+    listTools: () => Promise<Record<string, unknown>>;
+  };
 }

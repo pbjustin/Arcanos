@@ -211,20 +211,22 @@ async function initializeWorkers(): Promise<WorkerInitResult> {
                   return;
                 }
 
-                const cycleId = interpreterSupervisor.beginCycle(`worker:${workerId}`, {
-                  category: 'worker',
-                  metadata: {
-                    schedule: workerModule.schedule
-                  }
-                });
                 try {
-                  interpreterSupervisor.heartbeat(cycleId);
-                  await context.log(`Running scheduled worker: ${workerModule.name}`);
-                  await workerModule.run(context);
-                  interpreterSupervisor.completeCycle(cycleId);
+                  await interpreterSupervisor.runSupervisedCycle(
+                    `worker:${workerId}`,
+                    async () => {
+                      await context.log(`Running scheduled worker: ${workerModule.name}`);
+                      await workerModule.run(context);
+                    },
+                    {
+                      category: 'worker',
+                      metadata: {
+                        schedule: workerModule.schedule
+                      }
+                    }
+                  );
                 } catch (error) {
                   const errorMsg = resolveErrorMessage(error);
-                  interpreterSupervisor.failCycle(cycleId, errorMsg);
                   await context.error(`Scheduled execution failed: ${errorMsg}`);
                 } finally {
                   await cycleLock.release();

@@ -192,6 +192,24 @@ describe('tryDispatchDagTools', () => {
         ])
       })
     );
+    expect(createMock.mock.calls[1]?.[0]?.previous_response_id).toBeUndefined();
+    expect(createMock.mock.calls[1]?.[0]?.input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'inspect the orchestration workflow and decide which DAG control tool to use'
+        }),
+        expect.objectContaining({
+          type: 'function_call',
+          name: 'get_dag_capabilities',
+          call_id: 'call-1'
+        }),
+        expect.objectContaining({
+          type: 'function_call_output',
+          call_id: 'call-1'
+        })
+      ])
+    );
     expect(response).toEqual(
       expect.objectContaining({
         module: 'dag-tools',

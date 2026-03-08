@@ -233,36 +233,32 @@ export interface WorkerBootstrapSummary {
 
 function createWorkerHandler(workerId: string) {
   return async (request: WorkerDispatchRequest): Promise<WorkerResult> => {
-    const cycleId = interpreterSupervisor.beginCycle(`worker:${workerId}`, {
-      category: 'worker',
-      metadata: {
-        source: 'worker-task-queue'
-      }
-    });
     logger.info('[WORKER] Dispatching task', {
       workerId,
       inputPreview: request.input.slice(0, 120),
       sourceEndpoint: request.sourceEndpoint || 'worker.dispatch'
     });
 
-    try {
-      interpreterSupervisor.heartbeat(cycleId);
-      const result = await workerTask(request);
-      interpreterSupervisor.heartbeat(cycleId);
-      interpreterSupervisor.completeCycle(cycleId);
+    const result = await interpreterSupervisor.runSupervisedCycle(
+      `worker:${workerId}`,
+      async () => {
+        return workerTask(request);
+      },
+      {
+        category: 'worker',
+        metadata: {
+          source: 'worker-task-queue'
+        }
+      }
+    );
 
-      logger.info('[WORKER] Task processed', {
-        workerId,
-        activeModel: result.activeModel,
-        error: result.error
-      });
+    logger.info('[WORKER] Task processed', {
+      workerId,
+      activeModel: result.activeModel,
+      error: result.error
+    });
 
-      return { ...result, workerId };
-    } catch (error) {
-      const message = resolveErrorMessage(error);
-      interpreterSupervisor.failCycle(cycleId, message);
-      throw error;
-    }
+    return { ...result, workerId };
   };
 }
 
