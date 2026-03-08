@@ -5,7 +5,8 @@ import { createEmbedding } from './openai/embeddings.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { getEnv } from "@platform/runtime/env.js";
 import {
-  extractNaturalLanguageSessionId
+  extractNaturalLanguageSessionId,
+  resolveNaturalLanguageSessionAlias
 } from './naturalLanguageMemory.js';
 
 interface ConversationMessage {
@@ -45,7 +46,7 @@ interface PersistedSessionRow {
  */
 export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   const sessions = getCachedSessions() as CachedSession[];
-  const explicitSessionId = resolveExplicitSessionId(nlQuery);
+  const explicitSessionId = await resolveExplicitSessionId(nlQuery);
 
   if (explicitSessionId) {
     const exactCachedMatch = findCachedSessionById(sessions, explicitSessionId);
@@ -130,8 +131,15 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
   };
 }
 
-function resolveExplicitSessionId(nlQuery: string): string | null {
-  return extractNaturalLanguageSessionId(nlQuery);
+async function resolveExplicitSessionId(nlQuery: string): Promise<string | null> {
+  const explicitSessionId = extractNaturalLanguageSessionId(nlQuery);
+  if (!explicitSessionId) {
+    return null;
+  }
+
+  //audit Assumption: callers may recall sessions by storage label instead of canonical session id; failure risk: resolver reports a false exact miss even though an alias pointer exists; expected invariant: registered storage labels resolve to the same canonical session as the original save; handling strategy: consult the alias pointer before returning the extracted session token.
+  const aliasedSessionId = await resolveNaturalLanguageSessionAlias(explicitSessionId);
+  return aliasedSessionId ?? explicitSessionId;
 }
 
 function findCachedSessionById(sessions: CachedSession[], sessionId: string): CachedSession | null {

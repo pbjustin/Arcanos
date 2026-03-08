@@ -12,6 +12,7 @@ const DEFAULT_SESSION_ID = 'global';
 const SESSION_KEY_PREFIX = 'nl-memory';
 const SESSION_INDEX_KEY_PREFIX = 'nl-session-index';
 const SESSION_LATEST_KEY_PREFIX = 'nl-latest';
+const SESSION_LABEL_POINTER_KEY_PREFIX = 'nl-session-label';
 const DEFAULT_LOOKUP_LIMIT = 10;
 const MAX_LOOKUP_LIMIT = 25;
 const MAX_SAVE_CONTENT_LENGTH = 12_000;
@@ -88,6 +89,12 @@ export interface NaturalLanguageMemoryRagResult {
   };
 }
 
+interface SessionLabelPointerPayload {
+  sessionId: string;
+  storageLabel: string;
+  updatedAt: string;
+}
+
 const RESERVED_SESSION_ID_TOKENS = new Set([
   'latest',
   'memory',
@@ -111,6 +118,7 @@ const RESERVED_SESSION_ID_TOKENS = new Set([
 
 const STRUCTURED_SESSION_METADATA_LINE_PATTERN =
   /^(?:session\s*id|storage\s*label|activation\s*timestamp|status)\s*:/i;
+const STORAGE_LABEL_LINE_PATTERN = /\bstorage\s*label\s*[:=]\s*([^\r\n]+)/i;
 const STRUCTURED_SESSION_SECTION_CUE_PATTERN =
   /(?:^|\n)\s*(?:persisted\s+summary(?:\s*\(stored\))?|session\s+behavior|session\s+capabilities\s+enabled|available\s+actions)\b/i;
 const MIN_STRUCTURED_SESSION_PAYLOAD_LINES = 3;
@@ -285,9 +293,7 @@ export async function executeNaturalLanguageMemoryCommand(
   request: NaturalLanguageMemoryRequest
 ): Promise<NaturalLanguageMemoryResponse> {
   const requestIncludesExplicitSessionTarget = hasExplicitSessionTarget(request);
-  const sessionId = normalizeNaturalLanguageSessionId(
-    request.sessionId ?? extractNaturalLanguageSessionId(request.input)
-  );
+  const sessionId = await resolveRequestedSessionId(request);
   const parsedCommand = parseNaturalLanguageMemoryCommand(request.input);
   const lookupLimit = resolveLookupLimit(request.limit);
 
@@ -312,6 +318,10 @@ export async function executeNaturalLanguageMemoryCommand(
 
     await saveMemory(key, savedPayload);
     await updateSessionIndexes(sessionId, key);
+    await updateSessionLabelPointer({
+      sessionId,
+      storageLabel: extractNaturalLanguageStorageLabel(content) ?? extractNaturalLanguageStorageLabel(request.input)
+    });
     const ragIngested = await recordPersistentMemorySnippet({
       key,
       sessionId,
@@ -968,6 +978,124 @@ function cloneDiagnostics(diagnostics: RagQueryDiagnostics): NaturalLanguageMemo
     minScore: diagnostics.minScore,
     limit: diagnostics.limit
   };
+}
+
+/**
+ * Extract a storage label from structured natural-language memory payloads.
+ * Inputs/outputs: raw prompt text -> raw storage label or null.
+ * Edge cases: missing/blank labels return null.
+ */
+export function extractNaturalLanguageStorageLabel(rawInput: string): string | null {
+  const labelMatch = rawInput.match(STORAGE_LABEL_LINE_PATTERN);
+  if (!labelMatch?.[1]) {
+    return null;
+  }
+
+  const trimmedLabel = labelMatch[1].trim();
+  return trimmedLabel.length > 0 ? trimmedLabel : null;
+}
+
+/**
+ * Resolve a storage-label alias back to the canonical session id when one has been registered.
+ * Inputs/outputs: raw alias candidate -> canonical session id or null.
+ * Edge cases: malformed aliases or missing pointers return null without throwing.
+ */
+export async function resolveNaturalLanguageSessionAlias(rawAlias: unknown): Promise<string | null> {
+  const normalizedAlias = normalizeNaturalLanguageStorageLabel(rawAlias);
+  if (!normalizedAlias) {
+    return null;
+  }
+
+  const aliasPayload = await loadMemory(buildSessionLabelPointerKey(normalizedAlias));
+  if (typeof aliasPayload === 'string' && aliasPayload.trim()) {
+    return normalizeNaturalLanguageSessionId(aliasPayload);
+  }
+
+  if (
+    aliasPayload &&
+    typeof aliasPayload === 'object' &&
+    'sessionId' in aliasPayload &&
+    typeof (aliasPayload as { sessionId?: unknown }).sessionId === 'string'
+  ) {
+    return normalizeNaturalLanguageSessionId((aliasPayload as { sessionId: string }).sessionId);
+  }
+
+  return null;
+}
+
+/**
+ * Resolve the effective session id for a natural-language command, including storage-label aliases.
+ * Inputs/outputs: natural-language request -> canonical normalized session id.
+ * Edge cases: unknown aliases fall back to direct session-id normalization.
+ */
+async function resolveRequestedSessionId(request: NaturalLanguageMemoryRequest): Promise<string> {
+  const inlineSessionId = extractNaturalLanguageSessionId(request.input);
+  const rawTransportSessionId =
+    typeof request.sessionId === 'string' && request.sessionId.trim().length > 0
+      ? request.sessionId.trim()
+      : null;
+  const rawStorageLabel = extractNaturalLanguageStorageLabel(request.input);
+
+  for (const aliasCandidate of [rawStorageLabel, rawTransportSessionId, inlineSessionId]) {
+    //audit Assumption: storage labels should resolve to the canonical session id before fallback normalization; failure risk: `Recall: RAW_Vancouver_Session` becomes a brand-new empty session namespace; expected invariant: saved label aliases round-trip to the originating session id; handling strategy: check persisted alias pointers in priority order and short-circuit on the first match.
+    const resolvedAliasSessionId = await resolveNaturalLanguageSessionAlias(aliasCandidate);
+    if (resolvedAliasSessionId) {
+      return resolvedAliasSessionId;
+    }
+  }
+
+  return normalizeNaturalLanguageSessionId(rawTransportSessionId ?? inlineSessionId);
+}
+
+/**
+ * Normalize storage labels into the alias-key token space.
+ * Inputs/outputs: raw storage label -> normalized alias token or null.
+ * Edge cases: blank/invalid labels resolve to null so alias pointers are not created accidentally.
+ */
+function normalizeNaturalLanguageStorageLabel(rawLabel: unknown): string | null {
+  if (typeof rawLabel !== 'string') {
+    return null;
+  }
+
+  const trimmedLabel = rawLabel.trim();
+  if (!trimmedLabel) {
+    return null;
+  }
+
+  const normalizedLabel = normalizeNaturalLanguageSessionId(trimmedLabel);
+  return normalizedLabel === DEFAULT_SESSION_ID ? null : normalizedLabel;
+}
+
+/**
+ * Build the pointer key used to map storage labels back to canonical session ids.
+ * Inputs/outputs: normalized storage label token -> pointer key string.
+ * Edge cases: none.
+ */
+function buildSessionLabelPointerKey(normalizedStorageLabel: string): string {
+  return `${SESSION_LABEL_POINTER_KEY_PREFIX}:${normalizedStorageLabel}`;
+}
+
+/**
+ * Persist a storage-label pointer when a structured session payload declares one.
+ * Inputs/outputs: session id plus optional raw storage label -> pointer row persisted as a side effect.
+ * Edge cases: blank or invalid labels are ignored so saves stay idempotent.
+ */
+async function updateSessionLabelPointer(params: {
+  sessionId: string;
+  storageLabel: string | null;
+}): Promise<void> {
+  const normalizedStorageLabel = normalizeNaturalLanguageStorageLabel(params.storageLabel);
+  if (!normalizedStorageLabel || !params.storageLabel) {
+    return;
+  }
+
+  const pointerPayload: SessionLabelPointerPayload = {
+    sessionId: params.sessionId,
+    storageLabel: params.storageLabel,
+    updatedAt: new Date().toISOString()
+  };
+
+  await saveMemory(buildSessionLabelPointerKey(normalizedStorageLabel), pointerPayload);
 }
 
 function normalizeSessionIdCandidate(rawCandidate: unknown): string | null {

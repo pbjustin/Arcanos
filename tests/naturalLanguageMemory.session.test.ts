@@ -79,6 +79,7 @@ Main Event: Gunther def. AJ Styles clean`;
 
   it('uses the inline session id when loading the latest saved memory', async () => {
     mockLoadMemory
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308070000' })
       .mockResolvedValueOnce({
         sessionId: 'raw_vancouver_2026',
@@ -100,12 +101,47 @@ Main Event: Gunther def. AJ Styles clean`;
         })
       })
     );
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-latest:raw_vancouver_2026');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-memory:raw_vancouver_2026:entry-20260308070000');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:raw_vancouver_2026');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_vancouver_2026');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_vancouver_2026:entry-20260308070000');
+  });
+
+  it('resolves storage label aliases back to the canonical session id for recall', async () => {
+    mockLoadMemory
+      .mockResolvedValueOnce({
+        sessionId: 'raw_20260308_van',
+        storageLabel: 'RAW_Vancouver_Session'
+      })
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_20260308_van:entry-20260308120000' })
+      .mockResolvedValueOnce({
+        sessionId: 'raw_20260308_van',
+        text: 'Canonical Vancouver session recap'
+      });
+
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: 'Recall: RAW_Vancouver_Session'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'retrieve',
+        operation: 'retrieved',
+        sessionId: 'raw_20260308_van',
+        key: 'nl-memory:raw_20260308_van:entry-20260308120000',
+        value: expect.objectContaining({
+          text: 'Canonical Vancouver session recap'
+        })
+      })
+    );
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:raw_vancouver_session');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_20260308_van');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_20260308_van:entry-20260308120000');
   });
 
   it('does not semantically fallback across sessions for explicit session recall misses', async () => {
-    mockLoadMemory.mockResolvedValueOnce(null);
+    mockLoadMemory
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
     mockQueryRagDocuments.mockResolvedValue({
       matches: [{
         id: 'rag-1',
@@ -170,6 +206,13 @@ Main Event: Gunther def. AJ Styles clean`;
       expect.objectContaining({
         sessionId: 'raw_20260308_van',
         text: structuredSessionSavePrompt
+      })
+    );
+    expect(mockSaveMemory).toHaveBeenCalledWith(
+      'nl-session-label:raw_vancouver_session',
+      expect.objectContaining({
+        sessionId: 'raw_20260308_van',
+        storageLabel: 'RAW_Vancouver_Session'
       })
     );
   });

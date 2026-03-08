@@ -11,6 +11,7 @@ const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
+const mockResolveNaturalLanguageSessionAlias = jest.fn();
 
 jest.unstable_mockModule('../src/services/sessionMemoryService.js', () => ({
   getCachedSessions: mockGetCachedSessions,
@@ -39,6 +40,7 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 
 jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
+  resolveNaturalLanguageSessionAlias: mockResolveNaturalLanguageSessionAlias,
 }));
 
 const { resolveSession } = await import('../src/services/sessionResolver.js');
@@ -56,9 +58,15 @@ describe('sessionResolver persisted recall', () => {
     mockGetEnv.mockReturnValue(undefined);
     mockGetEnvNumber.mockReturnValue(0);
     mockGetEnvBoolean.mockReturnValue(false);
+    mockResolveNaturalLanguageSessionAlias.mockResolvedValue(null);
     mockExtractNaturalLanguageSessionId.mockImplementation((input: string) => {
-      const match = input.match(/raw_vancouver_2026/i);
-      return match ? 'raw_vancouver_2026' : null;
+      if (/raw_vancouver_2026/i.test(input)) {
+        return 'raw_vancouver_2026';
+      }
+      if (/raw_vancouver_session/i.test(input)) {
+        return 'raw_vancouver_session';
+      }
+      return null;
     });
   });
 
@@ -125,5 +133,32 @@ describe('sessionResolver persisted recall', () => {
       conversations_core: null
     });
     expect(mockCreateEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('resolves storage label aliases before looking up persisted sessions', async () => {
+    mockResolveNaturalLanguageSessionAlias.mockResolvedValueOnce('raw_vancouver_2026');
+    mockLoadMemory
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308090000' })
+      .mockResolvedValueOnce({
+        sessionId: 'raw_vancouver_2026',
+        text: 'Alias recall landed on the canonical Vancouver session'
+      });
+
+    const result = await resolveSession('Recall: raw_vancouver_session');
+
+    expect(result).toEqual({
+      sessionId: 'raw_vancouver_2026',
+      conversations_core: [{
+        role: 'assistant',
+        content: 'Alias recall landed on the canonical Vancouver session',
+        memoryKey: 'nl-memory:raw_vancouver_2026:entry-20260308090000',
+        savedAt: undefined
+      }]
+    });
+    expect(mockResolveNaturalLanguageSessionAlias).toHaveBeenCalledWith('raw_vancouver_session');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'session:raw_vancouver_2026:conversations_core');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_vancouver_2026');
+    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_vancouver_2026:entry-20260308090000');
   });
 });

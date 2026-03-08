@@ -55,6 +55,7 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
 
   it('renders retrieved text directly for exact recall prompts', async () => {
     mockLoadMemory
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308070000' })
       .mockResolvedValueOnce({
         sessionId: 'raw_vancouver_2026',
