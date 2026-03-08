@@ -9,10 +9,30 @@ import type { MemoryEntry } from "@core/db/schema.js";
 import { query } from "@core/db/query.js";
 import { createVersionedMemoryEnvelope, unwrapVersionedMemoryEnvelope } from "@services/safety/memoryEnvelope.js";
 
+export interface SaveMemoryOptions {
+  ttlSeconds?: number;
+}
+
+/**
+ * Normalize TTL input into a bounded integer or null when expiry is disabled.
+ */
+function resolveTtlSeconds(ttlSeconds: number | undefined): number | null {
+  //audit Assumption: callers may omit TTL for non-expiring memory entries; failure risk: undefined values produce invalid SQL interval math; expected invariant: persistence receives a positive integer TTL or null; handling strategy: coerce undefined to null and reject invalid numeric values explicitly.
+  if (ttlSeconds === undefined) {
+    return null;
+  }
+
+  if (!Number.isInteger(ttlSeconds) || ttlSeconds < 1) {
+    throw new Error(`Invalid memory TTL seconds: ${ttlSeconds}`);
+  }
+
+  return ttlSeconds;
+}
+
 /**
  * Save or update memory entry
  */
-export async function saveMemory(key: string, value: unknown): Promise<MemoryEntry> {
+export async function saveMemory(key: string, value: unknown, options: SaveMemoryOptions = {}): Promise<MemoryEntry> {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
   }
@@ -20,14 +40,15 @@ export async function saveMemory(key: string, value: unknown): Promise<MemoryEnt
   const envelopedValue = createVersionedMemoryEnvelope(value, {
     prefix: 'db-memory'
   });
+  const ttlSeconds = resolveTtlSeconds(options.ttlSeconds);
 
   const result = await query(
-    `INSERT INTO memory (key, value, updated_at) 
-     VALUES ($1, $2, NOW()) 
+    `INSERT INTO memory (key, value, expires_at, updated_at) 
+     VALUES ($1, $2, CASE WHEN $3::INTEGER IS NULL THEN NULL ELSE NOW() + ($3::INTEGER * INTERVAL '1 second') END, NOW()) 
      ON CONFLICT (key) 
-     DO UPDATE SET value = $2, updated_at = NOW() 
+     DO UPDATE SET value = $2, expires_at = EXCLUDED.expires_at, updated_at = NOW() 
      RETURNING *`,
-    [key, JSON.stringify(envelopedValue)]
+    [key, JSON.stringify(envelopedValue), ttlSeconds]
   );
   
   return result.rows[0];
@@ -42,7 +63,7 @@ export async function loadMemory(key: string): Promise<unknown | null> {
   }
 
   const result = await query(
-    'SELECT value FROM memory WHERE key = $1',
+    'SELECT value FROM memory WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())',
     [key],
     1,
     false // Avoid stale reads after immediate writes.

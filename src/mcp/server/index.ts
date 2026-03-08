@@ -37,6 +37,7 @@ import { saveMemory, loadMemory, deleteMemory, query as dbQuery } from '@core/db
 
 import { loadModuleDefinitions } from '@services/moduleLoader.js';
 import { dispatchModuleAction } from '@routes/modules.js';
+import { buildActiveMemorySelect, normalizeMemoryEntries, type MemoryListRow } from '@services/memoryListing.js';
 
 import { runHealthCheck } from '@platform/logging/diagnostics.js';
 import { acquireExecutionLock } from '@services/safety/executionLock.js';
@@ -563,7 +564,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       const gate = requireNonceOrIssue(args, 'memory.save', ctx, stripConfirmationFields(args));
       if (!gate.ok) return gate.error;
 
-      const out = await saveMemory(args.key, args.value);
+      const out = await saveMemory(args.key, args.value, { ttlSeconds: args.ttlSeconds });
       return mcpText(out);
     })
   );
@@ -591,10 +592,14 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       inputSchema: z.object({ limit: z.number().int().min(1).max(200).optional() }).passthrough(),
     },
     wrapTool('memory.list', ctx, async (args: any) => {
-      // dbQuery signature depends on your DB module; keep simple.
       const limit = args.limit ?? 50;
-      const out = await dbQuery('SELECT key, updated_at FROM memory ORDER BY updated_at DESC LIMIT $1', [limit] as any);
-      return mcpText(out);
+      const statement = buildActiveMemorySelect(limit, null);
+      const out = await dbQuery(statement.text, statement.params as any);
+      const entries = normalizeMemoryEntries(out.rows as MemoryListRow[]);
+      return mcpText({
+        count: entries.length,
+        entries
+      });
     })
   );
 

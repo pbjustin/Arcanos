@@ -5,31 +5,21 @@ import { requireField } from "@shared/validation.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware } from "@platform/runtime/security.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { unwrapVersionedMemoryEnvelope } from "@services/safety/memoryEnvelope.js";
 import { renderMemoryTablePage } from "@services/memoryTablePage.js";
 import { executeNaturalLanguageMemoryCommand } from "@services/naturalLanguageMemory.js";
 import { queryRagDocuments, type RagQueryMatch } from "@services/webRag.js";
+import {
+  buildActiveMemorySelect,
+  normalizeMemoryEntries,
+  type MemoryListEntry as MemoryApiEntry,
+  type MemoryListRow as MemoryTableRow
+} from "@services/memoryListing.js";
 
 const router = express.Router();
 const DEFAULT_SEARCH_LIMIT = 15;
 const MAX_SEARCH_LIMIT = 50;
 const DEFAULT_SEARCH_MIN_SCORE = 0.1;
 const SEARCH_SOURCE_TYPES = ['memory', 'conversation'];
-
-interface MemoryTableRow {
-  key: string;
-  value: unknown;
-  created_at: string;
-  updated_at: string;
-}
-
-interface MemoryApiEntry {
-  key: string;
-  value: unknown;
-  metadata: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
-}
 
 interface MemorySearchHit extends MemoryApiEntry {
   match_type: 'exact' | 'semantic';
@@ -74,45 +64,6 @@ function resolveKeyPrefix(rawPrefix: unknown): string | null {
 
   //audit Assumption: prefix filters should stay bounded to avoid pathological scans; failure risk: heavy wildcard scans; expected invariant: concise prefix key filter; handling strategy: clamp length.
   return normalized.slice(0, 120);
-}
-
-/**
- * Build memory table select query with optional key prefix filter.
- * Inputs: row limit and optional key prefix.
- * Output: SQL text and parameter list.
- * Edge cases: no prefix returns unfiltered latest rows.
- */
-function buildMemorySelect(limit: number, prefix: string | null): { text: string; params: unknown[] } {
-  if (!prefix) {
-    return {
-      text: 'SELECT key, value, created_at, updated_at FROM memory ORDER BY updated_at DESC LIMIT $1',
-      params: [limit]
-    };
-  }
-
-  return {
-    text: 'SELECT key, value, created_at, updated_at FROM memory WHERE key ILIKE $2 ORDER BY updated_at DESC LIMIT $1',
-    params: [limit, `${prefix}%`]
-  };
-}
-
-/**
- * Convert raw memory table rows into API-safe entries with envelope payload unwrapped.
- * Inputs: database memory rows.
- * Output: normalized entries with `value` (payload) and optional metadata.
- * Edge cases: legacy rows without envelope metadata are returned as-is.
- */
-function normalizeMemoryEntries(rows: MemoryTableRow[]): MemoryApiEntry[] {
-  return rows.map((row) => {
-    const { payload, metadata } = unwrapVersionedMemoryEnvelope<Record<string, unknown> | unknown>(row.value);
-    return {
-      key: row.key,
-      value: payload,
-      metadata: metadata ? (metadata as unknown as Record<string, unknown>) : null,
-      created_at: row.created_at,
-      updated_at: row.updated_at
-    };
-  });
 }
 
 /**
@@ -238,6 +189,7 @@ function toSemanticSearchHits(matches: RagQueryMatch[]): MemorySearchHit[] {
       },
       created_at: timestamp,
       updated_at: timestamp,
+      expires_at: null,
       match_type: 'semantic',
       score: Number(match.score.toFixed(6)),
       source: match.url
@@ -289,10 +241,11 @@ async function searchExactMemoryEntries(
 
   if (!sessionId) {
     const result = await query(
-      `SELECT key, value, created_at, updated_at
+      `SELECT key, value, created_at, updated_at, expires_at
        FROM memory
-       WHERE key ILIKE $1 ESCAPE '\\'
-          OR value::text ILIKE $1 ESCAPE '\\'
+       WHERE (expires_at IS NULL OR expires_at > NOW())
+         AND (key ILIKE $1 ESCAPE '\\'
+          OR value::text ILIKE $1 ESCAPE '\\')
        ORDER BY updated_at DESC
        LIMIT $2`,
       [wildcardQuery, limit]
@@ -304,9 +257,10 @@ async function searchExactMemoryEntries(
   const sessionConversationPattern = `session:${sessionId}:%`;
 
   const result = await query(
-    `SELECT key, value, created_at, updated_at
+    `SELECT key, value, created_at, updated_at, expires_at
      FROM memory
-     WHERE (key ILIKE $1 ESCAPE '\\' OR key ILIKE $2 ESCAPE '\\')
+     WHERE (expires_at IS NULL OR expires_at > NOW())
+       AND (key ILIKE $1 ESCAPE '\\' OR key ILIKE $2 ESCAPE '\\')
        AND (key ILIKE $3 ESCAPE '\\' OR value::text ILIKE $3 ESCAPE '\\')
      ORDER BY updated_at DESC
      LIMIT $4`,
@@ -334,19 +288,29 @@ router.get("/health", (_: Request, res: Response) => {
 
 // Save memory endpoint
 router.post("/save", confirmGate, asyncHandler(async (req: Request, res: Response) => {
-  const { key, value } = req.body;
+  const { key, value, ttlSeconds } = req.body;
 
   if (!requireField(res, key, 'key') || !requireField(res, value, 'value')) {
     return;
   }
+
+  //audit Assumption: TTL is optional but must be a positive integer when supplied; failure risk: malformed TTL values produce invalid expiry state or 500s; expected invariant: ttlSeconds is omitted or >= 1 integer; handling strategy: reject invalid request payloads with a 400 response.
+  if (ttlSeconds !== undefined && (!Number.isInteger(ttlSeconds) || ttlSeconds < 1)) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'ttlSeconds must be a positive integer when provided',
+      timestamp: new Date().toISOString()
+    });
+  }
   
-  const result = await saveMemory(key, value);
+  const result = await saveMemory(key, value, { ttlSeconds });
   res.json({
     status: 'success',
     message: 'Memory saved successfully',
     data: {
       key,
-      timestamp: result.updated_at
+      timestamp: result.updated_at,
+      expiresAt: result.expires_at ?? null
     }
   });
 }));
@@ -436,7 +400,7 @@ router.delete("/delete", confirmGate, asyncHandler(async (req: Request, res: Res
 router.get("/list", asyncHandler(async (req: Request, res: Response) => {
   const limit = resolveQueryLimit(req.query.limit, 50, 500);
   const prefix = resolveKeyPrefix(req.query.prefix);
-  const statement = buildMemorySelect(limit, prefix);
+  const statement = buildActiveMemorySelect(limit, prefix);
 
   const result = await query(statement.text, statement.params);
   const entries = normalizeMemoryEntries(result.rows as MemoryTableRow[]);
@@ -527,7 +491,7 @@ router.get("/view", asyncHandler(async (req: Request, res: Response) => {
   try {
     const limit = resolveQueryLimit(req.query.limit, 200, 1000);
     const prefix = resolveKeyPrefix(req.query.prefix);
-    const statement = buildMemorySelect(limit, prefix);
+    const statement = buildActiveMemorySelect(limit, prefix);
     const result = await query(statement.text, statement.params);
     const entries = normalizeMemoryEntries(result.rows as MemoryTableRow[]);
 
@@ -558,7 +522,7 @@ router.get("/table", asyncHandler(async (req: Request, res: Response) => {
   try {
     const limit = resolveQueryLimit(req.query.limit, 200, 1000);
     const prefix = resolveKeyPrefix(req.query.prefix);
-    const statement = buildMemorySelect(limit, prefix);
+    const statement = buildActiveMemorySelect(limit, prefix);
     const result = await query(statement.text, statement.params);
     const entries = normalizeMemoryEntries(result.rows as MemoryTableRow[]);
     const htmlPage = renderMemoryTablePage({
@@ -628,7 +592,9 @@ router.post("/bulk", confirmGate, asyncHandler(async (req: Request, res: Respons
     try {
       switch (op.type) {
         case 'save':
-          await saveMemory(op.key, op.value);
+          await saveMemory(op.key, op.value, {
+            ttlSeconds: typeof op.ttlSeconds === 'number' ? op.ttlSeconds : undefined
+          });
           results.push({ key: op.key, status: 'saved' });
           break;
         case 'delete':

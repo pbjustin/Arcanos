@@ -172,7 +172,7 @@ describe('/api/memory/search', () => {
     );
 
     expect(mockQuery).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE (key ILIKE $1 ESCAPE'),
+      expect.stringContaining('(expires_at IS NULL OR expires_at > NOW())'),
       ['nl-memory:booker-thread-1:%', 'session:booker-thread-1:%', '%raw summary%', 5]
     );
     expect(mockQueryRagDocuments).toHaveBeenCalledWith(
@@ -222,7 +222,7 @@ describe('/api/memory/search', () => {
     expect(response.body.data.sessionId).toBeNull();
     expect(response.body.data.hits).toEqual([]);
     expect(mockQuery).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE key ILIKE $1 ESCAPE'),
+      expect.stringContaining('(expires_at IS NULL OR expires_at > NOW())'),
       ['%universal note%', 10]
     );
   });

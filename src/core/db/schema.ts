@@ -13,6 +13,7 @@ export const MemoryEntrySchema = z.object({
   id: z.number(),
   key: z.string(),
   value: z.unknown(),
+  expires_at: z.date().nullable().optional(),
   created_at: z.date(),
   updated_at: z.date()
 });
@@ -170,9 +171,11 @@ export const TABLE_DEFINITIONS = [
     id SERIAL PRIMARY KEY,
     key VARCHAR(255) UNIQUE NOT NULL,
     value JSONB NOT NULL,
+    expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
   )`,
+  `ALTER TABLE memory ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
 
   // RAG documents table for persistent embeddings
   `CREATE TABLE IF NOT EXISTS rag_docs (
@@ -306,6 +309,7 @@ export const TABLE_DEFINITIONS = [
 
   // Indexes for performance
   `CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key)`,
+  `CREATE INDEX IF NOT EXISTS idx_memory_expires_at ON memory(expires_at)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_logs_worker_timestamp ON execution_logs(worker_id, timestamp DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_job_data_worker_status ON job_data(worker_id, status)`,
   `CREATE INDEX IF NOT EXISTS idx_job_data_pending_schedule ON job_data(status, next_run_at ASC, priority ASC, created_at ASC)`,

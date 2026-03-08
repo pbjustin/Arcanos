@@ -79,6 +79,7 @@
   "author": "Justin",
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@prisma/client": "^5.22.0",
     "@types/pg": "^8.15.5",
     "async-mutex": "^0.5.0",
@@ -103,7 +104,6 @@
   },
   "devDependencies": {
     "@jest/globals": "^30.2.0",
-    "@modelcontextprotocol/sdk": "1.26.0",
     "@types/busboy": "^1.5.4",
     "@types/cheerio": "^0.22.35",
     "@types/cors": "^2.8.19",
@@ -129,7 +129,7 @@
     "typescript": "^5.9.2"
   },
   "overrides": {
-    "@hono/node-server": "https://codeload.github.com/honojs/node-server/tar.gz/refs/tags/v1.19.11",
+    "@hono/node-server": "1.19.9",
     "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",
     "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.5",
     "@typescript-eslint/typescript-estree": {
