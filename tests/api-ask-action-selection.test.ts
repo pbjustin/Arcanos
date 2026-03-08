@@ -10,6 +10,7 @@ const mockPersistModuleConversation = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
+const mockExtractNaturalLanguageStorageLabel = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
@@ -29,6 +30,7 @@ jest.unstable_mockModule('@services/naturalLanguageMemory.js', () => ({
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
   executeNaturalLanguageMemoryCommand: mockExecuteNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
+  extractNaturalLanguageStorageLabel: mockExtractNaturalLanguageStorageLabel,
   hasNaturalLanguageMemoryCue: mockHasNaturalLanguageMemoryCue
 }));
 
@@ -62,6 +64,7 @@ Main Event: Gunther def. AJ Styles clean`;
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
+    mockExtractNaturalLanguageStorageLabel.mockReturnValue(null);
     mockHasNaturalLanguageMemoryCue.mockReturnValue(true);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
       intent: 'save',
@@ -372,6 +375,38 @@ Main Event: Gunther def. AJ Styles clean`;
     expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
       input: 'Recall: raw_vancouver_2026',
       sessionId: 'raw_vancouver_2026'
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('passes prompt-level storage labels into memory dispatch instead of defaulting to global', async () => {
+    mockGetModuleMetadata.mockReturnValue({
+      name: 'test-module',
+      description: null,
+      route: 'queryroute',
+      actions: ['query']
+    });
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'retrieve', latest: true });
+    mockExtractNaturalLanguageStorageLabel.mockReturnValue('ARCANOS backend diagnostics session E2E');
+    mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
+      intent: 'retrieve',
+      operation: 'retrieved',
+      sessionId: 'arcanos_label_e2e',
+      key: 'nl-memory:arcanos_label_e2e:entry',
+      value: { text: 'Persisted diagnostic session recap' },
+      message: 'Loaded latest saved memory.'
+    });
+
+    const response = await request(app).post('/api/ask').send({
+      gptId: 'tutor',
+      message: 'Look up the stored session labeled "ARCANOS backend diagnostics session E2E"'
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result.handledBy).toBe('memory-dispatcher');
+    expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
+      input: 'Look up the stored session labeled "ARCANOS backend diagnostics session E2E"',
+      sessionId: 'ARCANOS backend diagnostics session E2E'
     });
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });

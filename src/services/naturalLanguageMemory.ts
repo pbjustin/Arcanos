@@ -1397,6 +1397,11 @@ function hasExplicitNaturalLanguageSessionTargetCue(rawInput: string): boolean {
     return false;
   }
 
+  //audit Assumption: structured session recap payloads may contain incidental words like "lookup" inside the saved content; failure risk: save payloads are misclassified as retrievals and never persisted; expected invariant: substantial structured save payloads stay on the save path; handling strategy: detect structured save content first and opt out of exact-retrieval promotion.
+  if (extractStructuredSessionSaveContent(rawInput)) {
+    return false;
+  }
+
   //audit Assumption: explicit session targets should only auto-route when the caller is clearly asking to retrieve or verify stored backend state; failure risk: structured save payloads or descriptive prose get misread as retrievals; expected invariant: at least one retrieval/inspection verb and one storage/session noun are present; handling strategy: gate on both cue families.
   return /\b(?:recall|get|load|retrieve|show|find|lookup|look\s*up|search|inspect|check|verify|query)\b/i.test(rawInput)
     && /\b(?:session|stored|saved|memory|payload|transcript|record)\b/i.test(rawInput);

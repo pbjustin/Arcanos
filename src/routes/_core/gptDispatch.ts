@@ -6,6 +6,7 @@ import { arcanosMcpService, type ArcanosMcpService, type ArcanosMcpToolCallResul
 import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
+  extractNaturalLanguageStorageLabel,
   hasNaturalLanguageMemoryCue,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
@@ -370,6 +371,12 @@ function resolveMemorySessionId(
   //audit Assumption: some clients communicate session scope inside the natural-language prompt rather than a structured field; failure risk: saves and recalls collapse into the global namespace; expected invariant: explicit prompt-level session labels outrank the global fallback; handling strategy: extract and honor safe inline session identifiers before defaulting.
   if (promptScopedSessionId) {
     return promptScopedSessionId;
+  }
+
+  const promptScopedStorageLabel = typeof prompt === 'string' ? extractNaturalLanguageStorageLabel(prompt) : null;
+  //audit Assumption: some callers specify memory scope via a quoted storage label instead of a structured sessionId; failure risk: dispatcher routes label-based recall to the global namespace and returns unrelated memory rows; expected invariant: explicit prompt-level storage labels remain exact memory targets; handling strategy: pass the raw label through so the memory service can resolve its alias deterministically.
+  if (promptScopedStorageLabel) {
+    return promptScopedStorageLabel;
   }
 
   //audit Assumption: ChatGPT-style memory should be universally addressable across modules when callers omit sessionId; failure risk: mixed tenants on shared infra; expected invariant: deterministic global fallback memory namespace; handling strategy: use explicit global session key and recommend per-user sessionId for multi-tenant contexts.

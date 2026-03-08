@@ -95,6 +95,20 @@ Main Event: Gunther def. AJ Styles clean`;
     });
   });
 
+  it('keeps structured session payloads on the save path even when recap text mentions lookup wording', () => {
+    const lookupHeavyStructuredPrompt = `Session ID: RAW_20260308_LOOKUP_GUARD
+Storage Label: RAW_Lookup_Guard
+
+Persisted Summary (Stored)
+Lookup guard note line.
+This recap mentions lookup text but should still save.`;
+
+    expect(parseNaturalLanguageMemoryCommand(lookupHeavyStructuredPrompt)).toEqual({
+      intent: 'save',
+      content: lookupHeavyStructuredPrompt
+    });
+  });
+
   it('parses raw memory inspection prompts as deterministic inspection commands', () => {
     expect(parseNaturalLanguageMemoryCommand('Show the full raw memory table for RAW_20260308_VAN')).toEqual({
       intent: 'inspect'

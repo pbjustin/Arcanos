@@ -7,6 +7,7 @@ const mockPersistModuleConversation = jest.fn();
 const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
+const mockExtractNaturalLanguageStorageLabel = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
@@ -26,6 +27,7 @@ jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   executeNaturalLanguageMemoryCommand: mockExecuteNaturalLanguageMemoryCommand,
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
+  extractNaturalLanguageStorageLabel: mockExtractNaturalLanguageStorageLabel,
   hasNaturalLanguageMemoryCue: mockHasNaturalLanguageMemoryCue,
 }));
 
@@ -58,6 +60,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
+    mockExtractNaturalLanguageStorageLabel.mockReturnValue(null);
     mockHasNaturalLanguageMemoryCue.mockReturnValue(false);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
   });
