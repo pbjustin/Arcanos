@@ -8,6 +8,23 @@ export interface AutoscalingLoopDependencies {
   onError?: (error: unknown) => void;
 }
 
+function ensureUniqueScalingActionsByPool(
+  scalingActions: ReturnType<typeof evaluateScaling>
+): ReturnType<typeof evaluateScaling> {
+  const actionsByPool = new Map<string, ReturnType<typeof evaluateScaling>[number]>();
+
+  for (const scalingAction of scalingActions) {
+    //audit Assumption: each pool should receive at most one target per tick; failure risk: parallel same-pool actions race inside WorkerManager and leave counts inconsistent; expected invariant: one action per pool per tick; handling strategy: fail fast on duplicate pool entries before executing actions concurrently.
+    if (actionsByPool.has(scalingAction.pool)) {
+      throw new Error(`Duplicate scaling action generated for pool "${scalingAction.pool}".`);
+    }
+
+    actionsByPool.set(scalingAction.pool, scalingAction);
+  }
+
+  return [...actionsByPool.values()];
+}
+
 /**
  * Start the periodic autoscaling loop.
  *
@@ -30,11 +47,12 @@ export function startAutoscalingLoop(
   const executeScalingTick = async (): Promise<void> => {
     try {
       const currentMetrics = dependencies.metricsAgent.collectMetrics();
-      const scalingActions = evaluateScaling(currentMetrics);
+      const scalingActions = ensureUniqueScalingActionsByPool(evaluateScaling(currentMetrics));
 
-      for (const action of scalingActions) {
-        await dependencies.workerManager.scale(action.pool, action.scaleTo);
-      }
+      //audit Assumption: pool lifecycle operations are independent across distinct pools; failure risk: serial execution slows reaction time during multi-pool pressure events; expected invariant: each tick can apply one target per pool concurrently; handling strategy: execute distinct pool scale calls in parallel after duplicate-pool validation.
+      await Promise.all(
+        scalingActions.map(action => dependencies.workerManager.scale(action.pool, action.scaleTo))
+      );
     } catch (error) {
       //audit Assumption: transient metrics or scaling failures should not permanently stop autoscaling; failure risk: one exception disables all future scale decisions; expected invariant: loop continues after each failed tick; handling strategy: report through callback and continue next interval tick.
       dependencies.onError?.(error);

@@ -106,6 +106,36 @@ describe('Trinity autoscaling architecture', () => {
     expect(metrics.async.oldestJobAgeSeconds).toBe(1);
   });
 
+  it('uses the FIFO queue head as the oldest-job latency signal', () => {
+    const queueService = new WorkerQueueService();
+
+    queueService.enqueue({
+      id: 'job-head',
+      payload: { step: 'head' },
+      metadata: {
+        domain: 'async',
+        priority: 1,
+        auditSafe: false,
+        sessionId: 'fifo-1'
+      },
+      enqueuedAtMs: 1_000
+    });
+
+    queueService.enqueue({
+      id: 'job-tail',
+      payload: { step: 'tail' },
+      metadata: {
+        domain: 'async',
+        priority: 1,
+        auditSafe: false,
+        sessionId: 'fifo-2'
+      },
+      enqueuedAtMs: 500
+    });
+
+    expect(queueService.getOldestJobAgeSeconds('async_queue_pool', 2_600)).toBe(1);
+  });
+
   it('tracks Trinity run state transitions with idempotent node updates', () => {
     const orchestrator = new TrinityOrchestrator();
 
@@ -232,6 +262,85 @@ describe('Trinity autoscaling architecture', () => {
       clearInterval(intervalHandle);
       const secondScaleResolver = pendingScaleResolvers.shift();
       secondScaleResolver?.();
+      await Promise.resolve();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('executes distinct pool scale actions in parallel within one tick', async () => {
+    jest.useFakeTimers();
+
+    try {
+      const resolveEvents: string[] = [];
+      let releaseScaleCalls: (() => void) | null = null;
+      const collectMetrics = jest.fn(() => ({
+        async: {
+          depth: 101,
+          oldestJobAgeSeconds: 0
+        },
+        main: {
+          cpuRatio: 0.9,
+          workers: 2
+        },
+        audit: {
+          depth: 0,
+          oldestJobAgeSeconds: 0
+        },
+        creative: {
+          depth: 0,
+          oldestJobAgeSeconds: 0
+        },
+        baselineTrafficByDomain: {
+          main: 1,
+          async: 1,
+          audit: 1,
+          creative: 1
+        },
+        currentTrafficByDomain: {
+          main: 1,
+          async: 1,
+          audit: 4,
+          creative: 1
+        }
+      }));
+
+      const scale = jest.fn(
+        async (pool: string) =>
+          new Promise<void>(resolve => {
+            resolveEvents.push(`started:${pool}`);
+
+            const previousReleaseScaleCalls = releaseScaleCalls;
+            releaseScaleCalls = () => {
+              previousReleaseScaleCalls?.();
+              resolveEvents.push(`resolved:${pool}`);
+              resolve();
+            };
+          })
+      );
+
+      const intervalHandle = startAutoscalingLoop(
+        {
+          metricsAgent: { collectMetrics } as any,
+          workerManager: { scale } as any
+        },
+        1_000
+      );
+
+      await Promise.resolve();
+
+      expect(scale).toHaveBeenCalledTimes(3);
+      expect(scale.mock.calls.map(call => call[0])).toEqual(
+        expect.arrayContaining(['async_queue_pool', 'main_runtime_pool', 'audit_safe_pool'])
+      );
+      expect(resolveEvents).toEqual([
+        'started:async_queue_pool',
+        'started:main_runtime_pool',
+        'started:audit_safe_pool'
+      ]);
+
+      clearInterval(intervalHandle);
+      releaseScaleCalls?.();
       await Promise.resolve();
     } finally {
       jest.useRealTimers();

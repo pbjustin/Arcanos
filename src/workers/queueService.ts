@@ -64,9 +64,8 @@ export class WorkerQueueService {
       return 0;
     }
 
-    const oldestQueuedJob = queue.reduce((oldest, current) =>
-      current.enqueuedAtMs < oldest.enqueuedAtMs ? current : oldest
-    );
+    //audit Assumption: this in-memory queue is strict FIFO because enqueue uses push and dequeue uses shift; failure risk: scanning timestamps can misreport age if caller-supplied timestamps are skewed; expected invariant: the queue head is the oldest still-waiting job; handling strategy: compute lag from queue[0] in O(1).
+    const oldestQueuedJob = queue[0];
 
     return Math.max(0, Math.floor((nowMs - oldestQueuedJob.enqueuedAtMs) / 1000));
   }
