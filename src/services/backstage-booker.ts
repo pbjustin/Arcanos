@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { callOpenAI } from "@services/openai.js";
+import { callOpenAI, getGPT5Model } from "@services/openai.js";
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
 import {
   BACKSTAGE_BOOKER_PERSONA,
@@ -241,6 +241,21 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
   }
 }
 
+/**
+ * Resolve the model used for backstage booking generation.
+ * Inputs/outputs: none -> explicit USER_GPT_ID override when present, otherwise the shared GPT-5 model fallback.
+ * Edge cases: trims legacy env overrides so blank strings do not block the standard fallback model.
+ */
+function resolveBackstageBookerModel(): string {
+  const configuredUserModel = getEnv('USER_GPT_ID')?.trim();
+  //audit Assumption: legacy USER_GPT_ID overrides should remain supported, but blank/missing values must not break backstage generation; failure risk: booker path 500s in environments that only configure the shared model stack; expected invariant: a usable model is always selected when global OpenAI config is healthy; handling strategy: prefer USER_GPT_ID when present, else fall back to getGPT5Model().
+  if (configuredUserModel) {
+    return configuredUserModel;
+  }
+
+  return getGPT5Model();
+}
+
 export async function bookEvent(data: EventData): Promise<string> {
   const id = randomUUID();
   try {
@@ -321,10 +336,7 @@ export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
 }
 
 export async function generateBooking(prompt: string): Promise<string> {
-  const model = getEnv('USER_GPT_ID');
-  if (!model) {
-    throw new Error('USER_GPT_ID not configured');
-  }
+  const model = resolveBackstageBookerModel();
   const tokenLimit = getEnvNumber('BOOKER_TOKEN_LIMIT', 512);
   const instructions = await buildStructuredBookingPrompt(prompt);
   try {

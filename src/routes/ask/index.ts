@@ -43,9 +43,11 @@ import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildMemoryShortcutTelemetry } from '@routes/_core/memoryShortcutResponse.js';
+import { buildBackstageBookerShortcutTelemetry } from '@routes/_core/backstageBookerShortcutResponse.js';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
+import { tryExecuteBackstageBookerRouteShortcut } from '@services/backstageBookerRouteShortcut.js';
 
 const router = express.Router();
 
@@ -350,6 +352,44 @@ function buildAskMemoryShortcutResponse(params: {
 }
 
 /**
+ * Build a deterministic `/ask` response for explicit backstage-booker shortcuts.
+ * Inputs/outputs: rendered shortcut payload + endpoint metadata -> route response payload.
+ * Edge cases: sessionless requests are normalized to the shared `global` marker for telemetry stability.
+ */
+function buildAskBackstageBookerShortcutResponse(params: {
+  resultText: string;
+  reason: string;
+  sessionId?: string;
+  endpointName: string;
+  clientContext?: AskRequest['clientContext'];
+  auditFlag?: SchemaValidationBypassAuditFlag;
+}): AskResponse {
+  const shortcutTelemetry = buildBackstageBookerShortcutTelemetry({
+    reason: params.reason,
+    sessionId: params.sessionId ?? 'global'
+  });
+
+  return {
+    result: params.resultText,
+    module: shortcutTelemetry.module,
+    meta: {
+      id: shortcutTelemetry.requestId,
+      created: Math.floor(new Date(shortcutTelemetry.timestamp).getTime() / 1000)
+    },
+    activeModel: shortcutTelemetry.activeModel,
+    fallbackFlag: shortcutTelemetry.fallbackFlag,
+    routingStages: shortcutTelemetry.routingStages,
+    gpt5Used: false,
+    auditSafe: shortcutTelemetry.auditSafe,
+    memoryContext: shortcutTelemetry.memoryContext,
+    taskLineage: shortcutTelemetry.taskLineage,
+    endpoint: params.endpointName,
+    ...(params.clientContext ? { clientContext: params.clientContext } : {}),
+    ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})
+  };
+}
+
+/**
  * Shared handler for both ask and brain endpoints
  * Handles AI request processing with standardized error handling and validation
  */
@@ -592,6 +632,24 @@ export const handleAIRequest = async (
           resultText: memoryShortcut.resultText,
           memoryOperation: memoryShortcut.memory.operation,
           memorySessionId: memoryShortcut.memory.sessionId,
+          endpointName,
+          clientContext: req.body.clientContext,
+          auditFlag: bypassAuditFlag ?? undefined
+        })
+      );
+    }
+
+    const backstageBookerShortcut = await tryExecuteBackstageBookerRouteShortcut({
+      prompt,
+      sessionId
+    });
+    //audit Assumption: explicit wrestling-booking prompts should reach the backstage booker instead of the generic Trinity chat path; failure risk: rivalry/card requests degrade into empty or greeting-like Trinity output; expected invariant: clear booking prompts short-circuit to BACKSTAGE:BOOKER; handling strategy: execute the shared booker shortcut after memory interception and before Trinity.
+    if (backstageBookerShortcut) {
+      return res.json(
+        buildAskBackstageBookerShortcutResponse({
+          resultText: backstageBookerShortcut.resultText,
+          reason: backstageBookerShortcut.dispatcher.reason,
+          sessionId,
           endpointName,
           clientContext: req.body.clientContext,
           auditFlag: bypassAuditFlag ?? undefined

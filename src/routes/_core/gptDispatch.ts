@@ -9,6 +9,7 @@ import {
   hasNaturalLanguageMemoryCue,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
+import { detectBackstageBookerIntent } from "@services/backstageBookerRouteShortcut.js";
 import { isRecord } from "@shared/typeGuards.js";
 import type { Request } from "express";
 
@@ -385,6 +386,65 @@ function pickAction(available: string[], requested?: string): string | null {
   return null;
 }
 
+interface AutomaticBackstageBookerDispatchIntent {
+  module: 'BACKSTAGE:BOOKER';
+  route: string;
+  action: 'generateBooking';
+  reason: string;
+}
+
+/**
+ * Resolve an automatic backstage-booker dispatch when a prompt clearly requests wrestling booking.
+ * Inputs/outputs: current module context + prompt + GPT map -> backstage-booker dispatch intent or null.
+ * Edge cases: only upgrades default/query-style traffic so explicit non-booker actions keep their existing semantics.
+ */
+function inferAutomaticBackstageBookerDispatchIntent(params: {
+  currentModuleName: string;
+  currentRoute: string;
+  prompt: string | null;
+  requestedAction: string | undefined;
+  gptModuleMap: Record<string, GptMapEntry>;
+}): AutomaticBackstageBookerDispatchIntent | null {
+  const { currentModuleName, currentRoute, prompt, requestedAction, gptModuleMap } = params;
+
+  //audit Assumption: explicit non-query actions must preserve caller intent; failure risk: dispatcher rewrites specialized action contracts into booking generation; expected invariant: only default/query-style traffic can auto-route; handling strategy: reject non-query explicit actions.
+  if (requestedAction && requestedAction !== "query") {
+    return null;
+  }
+
+  const intentMatch = detectBackstageBookerIntent(prompt);
+  //audit Assumption: booker auto-routing should require a strong scored match; failure risk: generic prompts hijack to backstage booking; expected invariant: no reroute without deterministic detection; handling strategy: return null when no intent match exists.
+  if (!intentMatch) {
+    return null;
+  }
+
+  if (currentModuleName === "BACKSTAGE:BOOKER") {
+    return {
+      module: "BACKSTAGE:BOOKER",
+      route: currentRoute,
+      action: "generateBooking",
+      reason: intentMatch.reason
+    };
+  }
+
+  //audit Assumption: tutor/default GPT traffic may need to hand off to the dedicated booker module for wrestling-booking prompts; failure risk: prompt remains in generic chat path and returns filler/greetings; expected invariant: a registered backstage route exists before reroute; handling strategy: scan the GPT map for the canonical booker route and reroute only when found.
+  if (currentModuleName === "ARCANOS:TUTOR") {
+    const backstageEntry = Object.values(gptModuleMap).find(entry => entry.module === "BACKSTAGE:BOOKER");
+    if (!backstageEntry) {
+      return null;
+    }
+
+    return {
+      module: "BACKSTAGE:BOOKER",
+      route: backstageEntry.route,
+      action: "generateBooking",
+      reason: intentMatch.reason
+    };
+  }
+
+  return null;
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     p,
@@ -558,11 +618,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   }
 
   const { entry, matchMethod } = resolved;
-  const moduleMetadata = getModuleMetadata(entry.module);
-  const availableActions = moduleMetadata?.actions ?? [];
   const requestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
   const payload = buildDispatchPayload(body);
   const prompt = extractPrompt(payload);
+  let activeEntry = entry;
+  let moduleMetadata = getModuleMetadata(activeEntry.module);
+  let availableActions = moduleMetadata?.actions ?? [];
   const mcpDispatch = parseMcpDispatchIntent(requestedAction, payload);
   if (mcpDispatch.error) {
     return {
@@ -570,19 +631,20 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       error: { code: "BAD_REQUEST", message: mcpDispatch.error },
       _route: {
         ...baseRoute,
-        module: entry.module,
-        action: requestedAction ?? 'mcp.invoke',
+        module: activeEntry.module,
+        action: requestedAction ?? "mcp.invoke",
         matchMethod,
-        route: entry.route,
+        route: activeEntry.route,
         availableActions,
         moduleVersion: (moduleMetadata as any)?.version ?? null,
       },
     };
   }
+
   const parsedMemoryCommand =
     typeof prompt === "string" ? parseNaturalLanguageMemoryCommand(prompt) : { intent: "unknown" };
-  const actionCandidate = pickAction(availableActions, requestedAction);
-  const hasNoRoutableAction = !actionCandidate;
+  const initialActionCandidate = pickAction(availableActions, requestedAction);
+  const hasNoRoutableAction = !initialActionCandidate;
   const sessionId = resolveSessionId(body, payload);
 
   const shouldInterceptMemoryInDispatcher =
@@ -594,7 +656,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   //audit Assumption: memory commands should bypass module action ambiguity (e.g., multi-action modules without default query); failure risk: user cannot use memory reliably via dispatcher; expected invariant: explicit memory intents always have a deterministic execution path; handling strategy: early memory execution branch before action resolution.
   if (shouldInterceptMemoryInDispatcher) {
     try {
-      const memorySessionId = resolveMemorySessionId(body, payload, entry.module, trimmedGptId, prompt);
+      const memorySessionId = resolveMemorySessionId(body, payload, activeEntry.module, trimmedGptId, prompt);
       const memoryResult = await executeNaturalLanguageMemoryCommand({
         input: prompt,
         sessionId: memorySessionId
@@ -606,8 +668,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       };
 
       await persistModuleConversation({
-        moduleName: entry.module,
-        route: entry.route,
+        moduleName: activeEntry.module,
+        route: activeEntry.route,
         action: requestedAction || "memory",
         gptId: trimmedGptId,
         sessionId: memorySessionId,
@@ -619,7 +681,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         logger?.warn?.("gpt.dispatch.memory_persistence_failed", {
           requestId,
           gptId: trimmedGptId,
-          module: entry.module,
+          module: activeEntry.module,
           action: requestedAction || "memory",
           error: String((error as Error)?.message ?? error)
         });
@@ -628,7 +690,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       logger?.info?.("gpt.dispatch.memory_intercept", {
         requestId,
         gptId: trimmedGptId,
-        module: entry.module,
+        module: activeEntry.module,
         action: requestedAction || "memory",
         memoryIntent: parsedMemoryCommand.intent,
         memoryOperation: memoryResult.operation
@@ -639,10 +701,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         result: routedMemoryResult,
         _route: {
           ...baseRoute,
-          module: entry.module,
+          module: activeEntry.module,
           action: requestedAction || "memory",
           matchMethod,
-          route: entry.route,
+          route: activeEntry.route,
           availableActions,
           moduleVersion: (moduleMetadata as any)?.version ?? null
         }
@@ -653,10 +715,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         error: { code: "MODULE_ERROR", message: err?.message ?? "Memory command dispatch failed" },
         _route: {
           ...baseRoute,
-          module: entry.module,
+          module: activeEntry.module,
           action: requestedAction || "memory",
           matchMethod,
-          route: entry.route,
+          route: activeEntry.route,
           availableActions,
           moduleVersion: (moduleMetadata as any)?.version ?? null
         }
@@ -664,10 +726,38 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     }
   }
 
+  const automaticBackstageBookerDispatch = inferAutomaticBackstageBookerDispatchIntent({
+    currentModuleName: activeEntry.module,
+    currentRoute: activeEntry.route,
+    prompt,
+    requestedAction,
+    gptModuleMap: gptModuleMap as Record<string, GptMapEntry>
+  });
+
+  if (automaticBackstageBookerDispatch) {
+    activeEntry = {
+      module: automaticBackstageBookerDispatch.module,
+      route: automaticBackstageBookerDispatch.route
+    };
+    moduleMetadata = getModuleMetadata(activeEntry.module);
+    availableActions = moduleMetadata?.actions ?? [];
+    logger?.info?.("gpt.dispatch.booker.auto_selected", {
+      requestId,
+      gptId: trimmedGptId,
+      originalModule: entry.module,
+      module: activeEntry.module,
+      action: automaticBackstageBookerDispatch.action,
+      reason: automaticBackstageBookerDispatch.reason,
+      route: activeEntry.route,
+      matchMethod
+    });
+  }
+
+  const actionCandidate = automaticBackstageBookerDispatch?.action ?? pickAction(availableActions, requestedAction);
   const automaticMcpDispatchIntent = mcpDispatch.intent
     ? null
     : inferAutomaticMcpDispatchIntent({
-        moduleName: entry.module,
+        moduleName: activeEntry.module,
         prompt,
         requestedAction,
         actionCandidate,
@@ -679,36 +769,36 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     const dispatcherMcpService = getDispatcherMcpService(request);
     const dispatcherAction = resolvedMcpDispatchIntent.action;
     const dispatcherRouteAction =
-      resolvedMcpDispatchIntent.dispatchMode === 'automatic'
-        ? `mcp.auto.${dispatcherAction === 'mcp.invoke' ? 'invoke' : 'list_tools'}`
+      resolvedMcpDispatchIntent.dispatchMode === "automatic"
+        ? `mcp.auto.${dispatcherAction === "mcp.invoke" ? "invoke" : "list_tools"}`
         : dispatcherAction;
 
-    if (resolvedMcpDispatchIntent.dispatchMode === 'automatic') {
+    if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
       logger?.info?.("gpt.dispatch.mcp.auto_selected", {
         requestId,
         gptId: trimmedGptId,
-        module: entry.module,
+        module: activeEntry.module,
         action: dispatcherAction,
         matchMethod,
         reason: resolvedMcpDispatchIntent.reason,
-        toolName: resolvedMcpDispatchIntent.action === 'mcp.invoke' ? resolvedMcpDispatchIntent.toolName : undefined,
+        toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
       });
     }
 
     logger?.info?.("gpt.dispatch.mcp.plan", {
       requestId,
       gptId: trimmedGptId,
-      module: entry.module,
+      module: activeEntry.module,
       action: dispatcherAction,
       matchMethod,
       dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
       reason: resolvedMcpDispatchIntent.reason,
-      toolName: resolvedMcpDispatchIntent.action === 'mcp.invoke' ? resolvedMcpDispatchIntent.toolName : undefined,
+      toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
     });
 
     try {
       const mcpResult =
-        resolvedMcpDispatchIntent.action === 'mcp.invoke'
+        resolvedMcpDispatchIntent.action === "mcp.invoke"
           ? await dispatcherMcpService.invokeTool({
               toolName: resolvedMcpDispatchIntent.toolName,
               toolArguments: resolvedMcpDispatchIntent.toolArguments,
@@ -727,10 +817,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           error: mcpToolError,
           _route: {
             ...baseRoute,
-            module: entry.module,
+            module: activeEntry.module,
             action: dispatcherRouteAction,
             matchMethod,
-            route: entry.route,
+            route: activeEntry.route,
             availableActions,
             moduleVersion: (moduleMetadata as any)?.version ?? null
           }
@@ -740,16 +830,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const routedMcpResult = {
         handledBy: "mcp-dispatcher",
         mcp:
-          resolvedMcpDispatchIntent.action === 'mcp.invoke'
+          resolvedMcpDispatchIntent.action === "mcp.invoke"
             ? {
-                action: 'invoke',
+                action: "invoke",
                 toolName: resolvedMcpDispatchIntent.toolName,
                 dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
                 reason: resolvedMcpDispatchIntent.reason,
                 result: mcpResult,
               }
             : {
-                action: 'list_tools',
+                action: "list_tools",
                 dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
                 reason: resolvedMcpDispatchIntent.reason,
                 result: mcpResult,
@@ -757,8 +847,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       };
 
       await persistModuleConversation({
-        moduleName: entry.module,
-        route: entry.route,
+        moduleName: activeEntry.module,
+        route: activeEntry.route,
         action: dispatcherRouteAction,
         gptId: trimmedGptId,
         sessionId,
@@ -770,7 +860,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         logger?.warn?.("gpt.dispatch.mcp.persistence_failed", {
           requestId,
           gptId: trimmedGptId,
-          module: entry.module,
+          module: activeEntry.module,
           action: dispatcherRouteAction,
           error: String((error as Error)?.message ?? error),
         });
@@ -779,11 +869,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       logger?.info?.("gpt.dispatch.mcp.ok", {
         requestId,
         gptId: trimmedGptId,
-        module: entry.module,
+        module: activeEntry.module,
         action: dispatcherAction,
         dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
         reason: resolvedMcpDispatchIntent.reason,
-        toolName: resolvedMcpDispatchIntent.action === 'mcp.invoke' ? resolvedMcpDispatchIntent.toolName : undefined,
+        toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
       });
 
       return {
@@ -791,10 +881,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         result: routedMcpResult,
         _route: {
           ...baseRoute,
-          module: entry.module,
+          module: activeEntry.module,
           action: dispatcherRouteAction,
           matchMethod,
-          route: entry.route,
+          route: activeEntry.route,
           availableActions,
           moduleVersion: (moduleMetadata as any)?.version ?? null
         },
@@ -803,7 +893,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       logger?.error?.("gpt.dispatch.mcp.error", {
         requestId,
         gptId: trimmedGptId,
-        module: entry.module,
+        module: activeEntry.module,
         action: dispatcherAction,
         matchMethod,
         dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
@@ -816,10 +906,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         error: { code: "MODULE_ERROR", message: err?.message ?? "MCP dispatch failed" },
         _route: {
           ...baseRoute,
-          module: entry.module,
+          module: activeEntry.module,
           action: dispatcherRouteAction,
           matchMethod,
-          route: entry.route,
+          route: activeEntry.route,
           availableActions,
           moduleVersion: (moduleMetadata as any)?.version ?? null
         },
@@ -831,10 +921,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   if (!action) {
     const message = requestedAction
-      ? `Requested action '${requestedAction}' is not available for module ${entry.module}`
+      ? `Requested action '${requestedAction}' is not available for module ${activeEntry.module}`
       : availableActions.length > 1
-      ? `Ambiguous actions and no default 'query' action found for module ${entry.module}`
-      : `No actions available for module ${entry.module}`;
+      ? `Ambiguous actions and no default 'query' action found for module ${activeEntry.module}`
+      : `No actions available for module ${activeEntry.module}`;
 
     return {
       ok: false,
@@ -845,9 +935,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
       _route: {
         ...baseRoute,
-        module: entry.module,
+        module: activeEntry.module,
         matchMethod,
-        route: entry.route,
+        route: activeEntry.route,
         availableActions,
         moduleVersion: (moduleMetadata as any)?.version ?? null,
       },
@@ -863,28 +953,28 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       error: { code: "BAD_REQUEST", message: "Query actions require message/prompt (or messages[])." },
       _route: {
         ...baseRoute,
-        module: entry.module,
+        module: activeEntry.module,
         action,
         matchMethod,
-        route: entry.route,
+        route: activeEntry.route,
         availableActions,
         moduleVersion: (moduleMetadata as any)?.version ?? null,
       },
     };
   }
 
-  logger?.info?.("gpt.dispatch.plan", { requestId, gptId: trimmedGptId, module: entry.module, action, matchMethod });
+  logger?.info?.("gpt.dispatch.plan", { requestId, gptId: trimmedGptId, module: activeEntry.module, action, matchMethod });
 
   try {
-    const result = await withTimeout(dispatchModuleAction(entry.module, action, payload), timeoutMs);
+    const result = await withTimeout(dispatchModuleAction(activeEntry.module, action, payload), timeoutMs);
 
-    const sessionId = resolveSessionId(body, payload);
+    const resolvedSessionId = resolveSessionId(body, payload);
     await persistModuleConversation({
-      moduleName: entry.module,
-      route: entry.route,
+      moduleName: activeEntry.module,
+      route: activeEntry.route,
       action,
       gptId: trimmedGptId,
-      sessionId,
+      sessionId: resolvedSessionId,
       requestId,
       requestPayload: payload,
       responsePayload: result
@@ -893,23 +983,23 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       logger?.warn?.("gpt.dispatch.persistence_failed", {
         requestId,
         gptId: trimmedGptId,
-        module: entry.module,
+        module: activeEntry.module,
         action,
         error: String((error as Error)?.message ?? error),
       });
     });
 
-    logger?.info?.("gpt.dispatch.ok", { requestId, gptId: trimmedGptId, module: entry.module, action });
+    logger?.info?.("gpt.dispatch.ok", { requestId, gptId: trimmedGptId, module: activeEntry.module, action });
 
     return {
       ok: true,
       result,
       _route: {
         ...baseRoute,
-        module: entry.module,
+        module: activeEntry.module,
         action,
         matchMethod,
-        route: entry.route,
+        route: activeEntry.route,
         availableActions,
         moduleVersion: (moduleMetadata as any)?.version ?? null,
       },
@@ -918,7 +1008,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     logger?.error?.("gpt.dispatch.error", {
       requestId,
       gptId: trimmedGptId,
-      module: entry.module,
+      module: activeEntry.module,
       action,
       matchMethod,
       error: String(err?.message ?? err),
@@ -929,10 +1019,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       error: { code: "MODULE_ERROR", message: err?.message ?? "Module dispatch failed" },
       _route: {
         ...baseRoute,
-        module: entry.module,
+        module: activeEntry.module,
         action,
         matchMethod,
-        route: entry.route,
+        route: activeEntry.route,
         availableActions,
         moduleVersion: (moduleMetadata as any)?.version ?? null,
       },

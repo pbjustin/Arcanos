@@ -21,7 +21,9 @@ import {
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
 import { buildMemoryShortcutTelemetry } from '@routes/_core/memoryShortcutResponse.js';
+import { buildBackstageBookerShortcutTelemetry } from '@routes/_core/backstageBookerShortcutResponse.js';
 import { tryExecuteNaturalLanguageMemoryRouteShortcut } from '@services/naturalLanguageMemoryRouteShortcut.js';
+import { tryExecuteBackstageBookerRouteShortcut } from '@services/backstageBookerRouteShortcut.js';
 
 const router = express.Router();
 
@@ -315,6 +317,43 @@ function buildArcanosMemoryShortcutResponse(params: {
 }
 
 /**
+ * Build a compatibility response for deterministic backstage-booker shortcuts on `/api/arcanos/ask`.
+ * Inputs/outputs: rendered booking shortcut payload -> legacy-compatible response envelope.
+ * Edge cases: sessionless requests are normalized to the shared `global` marker for telemetry stability.
+ */
+function buildArcanosBackstageBookerShortcutResponse(params: {
+  resultText: string;
+  reason: string;
+  sessionId?: string;
+}): AskResponse {
+  const shortcutTelemetry = buildBackstageBookerShortcutTelemetry({
+    reason: params.reason,
+    sessionId: params.sessionId ?? 'global'
+  });
+
+  return {
+    success: true,
+    result: params.resultText,
+    metadata: {
+      service: 'ARCANOS API',
+      version: '1.0.0',
+      timestamp: shortcutTelemetry.timestamp,
+      arcanosRouting: false,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      requestId: shortcutTelemetry.requestId,
+      routingStages: shortcutTelemetry.routingStages
+    },
+    module: shortcutTelemetry.module,
+    activeModel: shortcutTelemetry.activeModel,
+    fallbackFlag: shortcutTelemetry.fallbackFlag,
+    routingStages: shortcutTelemetry.routingStages,
+    auditSafe: shortcutTelemetry.auditSafe,
+    memoryContext: shortcutTelemetry.memoryContext,
+    taskLineage: shortcutTelemetry.taskLineage
+  };
+}
+
+/**
  * Execute the legacy `/api/arcanos/ask` route through the Trinity pipeline.
  *
  * Purpose:
@@ -378,6 +417,21 @@ const handleArcanosAsk = asyncHandler(async (
           resultText: memoryShortcut.resultText,
           memoryOperation: memoryShortcut.memory.operation,
           memorySessionId: memoryShortcut.memory.sessionId
+        })
+      );
+    }
+
+    const backstageBookerShortcut = await tryExecuteBackstageBookerRouteShortcut({
+      prompt,
+      sessionId: req.body.sessionId
+    });
+    //audit Assumption: rivalry/card/feud prompts on the compatibility route should use the dedicated backstage booker instead of generic Trinity chat; failure risk: callers receive greeting-like filler despite clear booking requests; expected invariant: strong wrestling-booking prompts short-circuit to BACKSTAGE:BOOKER; handling strategy: execute the shared booker shortcut before runtime budget allocation and Trinity.
+    if (backstageBookerShortcut) {
+      return res.json(
+        buildArcanosBackstageBookerShortcutResponse({
+          resultText: backstageBookerShortcut.resultText,
+          reason: backstageBookerShortcut.dispatcher.reason,
+          sessionId: req.body.sessionId
         })
       );
     }

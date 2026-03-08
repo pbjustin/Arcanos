@@ -11,6 +11,7 @@ const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 const mockRunThroughBrain = jest.fn();
 const mockTryExecuteNaturalLanguageMemoryRouteShortcut = jest.fn();
+const mockTryExecuteBackstageBookerRouteShortcut = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
@@ -59,6 +60,10 @@ jest.unstable_mockModule('@services/naturalLanguageMemoryRouteShortcut.js', () =
   tryExecuteNaturalLanguageMemoryRouteShortcut: mockTryExecuteNaturalLanguageMemoryRouteShortcut
 }));
 
+jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
+  tryExecuteBackstageBookerRouteShortcut: mockTryExecuteBackstageBookerRouteShortcut
+}));
+
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
   getWorkerAutonomyHealthReport: jest.fn(async () => ({
     overallStatus: 'healthy',
@@ -105,6 +110,7 @@ describe('/ask memory shortcut', () => {
     detectCognitiveDomainMock.mockReturnValue({ domain: 'natural', confidence: 0.9 });
     gptFallbackClassifierMock.mockResolvedValue('natural');
     mockRunThroughBrain.mockResolvedValue({ result: 'unexpected trinity response' });
+    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue(null);
   });
 
   it('returns deterministic memory text before Trinity executes', async () => {
@@ -130,6 +136,38 @@ describe('/ask memory shortcut', () => {
     expect(mockTryExecuteNaturalLanguageMemoryRouteShortcut).toHaveBeenCalledWith({
       prompt: 'Recall: RAW_20260308_VAN_PROBE2',
       sessionId: 'RAW_20260308_VAN_PROBE2'
+    });
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
+  it('routes explicit wrestling-booking prompts through the backstage booker before Trinity executes', async () => {
+    mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue(null);
+    validateAIRequestMock.mockReturnValue({
+      client: { responses: { create: jest.fn() } },
+      input: 'Generate three rivalries for RAW after WrestleMania.',
+      body: {}
+    });
+    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue({
+      resultText: 'Week 1: Gunther vs AJ Styles escalates. Week 2: Seth Rollins targets CM Punk.',
+      dispatcher: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        reason: 'booking_verb+storyline_request+wrestling_brand'
+      }
+    });
+
+    const response = await request(buildApp()).post('/ask').send({
+      prompt: 'Generate three rivalries for RAW after WrestleMania.',
+      sessionId: 'RAW_RIVALRY_TEST'
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toContain('Gunther vs AJ Styles');
+    expect(response.body.module).toBe('BACKSTAGE:BOOKER');
+    expect(response.body.routingStages).toEqual(['BACKSTAGE-BOOKER-DISPATCH']);
+    expect(mockTryExecuteBackstageBookerRouteShortcut).toHaveBeenLastCalledWith({
+      prompt: 'Generate three rivalries for RAW after WrestleMania.',
+      sessionId: 'RAW_RIVALRY_TEST'
     });
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });

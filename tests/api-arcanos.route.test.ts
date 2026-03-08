@@ -9,6 +9,7 @@ const mockValidateAIRequest = jest.fn();
 const mockHandleAIError = jest.fn();
 const mockCreateRuntimeBudget = jest.fn();
 const mockTryExecuteNaturalLanguageMemoryRouteShortcut = jest.fn();
+const mockTryExecuteBackstageBookerRouteShortcut = jest.fn();
 
 const verificationRouter = express.Router();
 
@@ -38,6 +39,10 @@ jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
 
 jest.unstable_mockModule('@services/naturalLanguageMemoryRouteShortcut.js', () => ({
   tryExecuteNaturalLanguageMemoryRouteShortcut: mockTryExecuteNaturalLanguageMemoryRouteShortcut
+}));
+
+jest.unstable_mockModule('@services/backstageBookerRouteShortcut.js', () => ({
+  tryExecuteBackstageBookerRouteShortcut: mockTryExecuteBackstageBookerRouteShortcut
 }));
 
 jest.unstable_mockModule('../src/routes/api-arcanos-verification.js', () => ({
@@ -106,6 +111,7 @@ describe('api-arcanos route', () => {
     );
     mockCreateRuntimeBudget.mockReturnValue({ budgetId: 'runtime-budget-1' });
     mockTryExecuteNaturalLanguageMemoryRouteShortcut.mockResolvedValue(null);
+    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue(null);
   });
 
   it('routes non-ping requests through Trinity and returns explicit pipeline metadata', async () => {
@@ -241,6 +247,43 @@ describe('api-arcanos route', () => {
     expect(mockTryExecuteNaturalLanguageMemoryRouteShortcut).toHaveBeenCalledWith({
       prompt: 'Recall: RAW_20260308_VAN_PROBE2',
       sessionId: 'RAW_20260308_VAN_PROBE2'
+    });
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
+  it('bypasses Trinity for deterministic backstage-booker shortcuts', async () => {
+    const openaiClient = { clientId: 'openai-client-4' };
+    mockValidateAIRequest.mockReturnValue({
+      client: openaiClient,
+      input: 'Generate three rivalries for RAW after WrestleMania.',
+      body: {
+        prompt: 'Generate three rivalries for RAW after WrestleMania.'
+      }
+    });
+    mockTryExecuteBackstageBookerRouteShortcut.mockResolvedValue({
+      resultText: 'Rivalry one: Gunther vs AJ Styles.',
+      dispatcher: {
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        reason: 'booking_verb+storyline_request+wrestling_brand'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Generate three rivalries for RAW after WrestleMania.',
+        sessionId: 'RAW_RIVALRY_TEST'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.result).toBe('Rivalry one: Gunther vs AJ Styles.');
+    expect(response.body.module).toBe('BACKSTAGE:BOOKER');
+    expect(response.body.routingStages).toEqual(['BACKSTAGE-BOOKER-DISPATCH']);
+    expect(mockTryExecuteBackstageBookerRouteShortcut).toHaveBeenCalledWith({
+      prompt: 'Generate three rivalries for RAW after WrestleMania.',
+      sessionId: 'RAW_RIVALRY_TEST'
     });
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
