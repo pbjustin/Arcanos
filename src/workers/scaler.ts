@@ -1,5 +1,14 @@
 import type { AutoscalingMetricsSnapshot, ScalingAction } from './autoscalingTypes.js';
 
+const ASYNC_QUEUE_BACKLOG_THRESHOLD = 50;
+const ASYNC_QUEUE_SEVERE_BACKLOG_THRESHOLD = 100;
+const ASYNC_JOB_LATENCY_THRESHOLD_SECONDS = 120;
+const ASYNC_QUEUE_SCALE_TARGET = 3;
+const ASYNC_QUEUE_SEVERE_SCALE_TARGET = 5;
+const MAIN_CPU_PRESSURE_THRESHOLD = 0.85;
+const DOMAIN_SURGE_MULTIPLIER = 3;
+const DOMAIN_SURGE_SCALE_TARGET = 2;
+
 function evaluateDomainSurge(
   baselineTraffic: number,
   currentTraffic: number
@@ -9,7 +18,7 @@ function evaluateDomainSurge(
     return false;
   }
 
-  return currentTraffic > baselineTraffic * 3;
+  return currentTraffic > baselineTraffic * DOMAIN_SURGE_MULTIPLIER;
 }
 
 /**
@@ -29,16 +38,22 @@ export function evaluateScaling(metrics: AutoscalingMetricsSnapshot): ScalingAct
   const scalingActions: ScalingAction[] = [];
 
   //audit Assumption: async backlog is the strongest leading signal of DAG pressure; failure risk: stale async jobs accumulate and breach SLA; expected invariant: high depth or lag triggers async scale-up; handling strategy: push async scale action based on severity tiers.
-  if (metrics.async.depth > 50 || metrics.async.oldestJobAgeSeconds > 120) {
+  if (
+    metrics.async.depth > ASYNC_QUEUE_BACKLOG_THRESHOLD ||
+    metrics.async.oldestJobAgeSeconds > ASYNC_JOB_LATENCY_THRESHOLD_SECONDS
+  ) {
     scalingActions.push({
       pool: 'async_queue_pool',
-      scaleTo: metrics.async.depth > 100 ? 5 : 3,
-      reason: metrics.async.depth > 50 ? 'queue_backlog' : 'job_latency'
+      scaleTo:
+        metrics.async.depth > ASYNC_QUEUE_SEVERE_BACKLOG_THRESHOLD
+          ? ASYNC_QUEUE_SEVERE_SCALE_TARGET
+          : ASYNC_QUEUE_SCALE_TARGET,
+      reason: metrics.async.depth > ASYNC_QUEUE_BACKLOG_THRESHOLD ? 'queue_backlog' : 'job_latency'
     });
   }
 
   //audit Assumption: main runtime pool should respond to CPU pressure quickly; failure risk: infra tasks starve and API latency spikes; expected invariant: CPU > 85% adds at least one worker; handling strategy: increment pool size by one relative to current.
-  if (metrics.main.cpuRatio > 0.85) {
+  if (metrics.main.cpuRatio > MAIN_CPU_PRESSURE_THRESHOLD) {
     scalingActions.push({
       pool: 'main_runtime_pool',
       scaleTo: metrics.main.workers + 1,
@@ -59,7 +74,7 @@ export function evaluateScaling(metrics: AutoscalingMetricsSnapshot): ScalingAct
     if (evaluateDomainSurge(baselineTraffic, currentTraffic)) {
       scalingActions.push({
         pool: domainToPool[domain],
-        scaleTo: 2,
+        scaleTo: DOMAIN_SURGE_SCALE_TARGET,
         reason: 'domain_surge'
       });
     }

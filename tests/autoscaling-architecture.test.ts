@@ -4,6 +4,7 @@ import { WorkerManager, type WorkerLifecycleAdapter } from '../src/workers/manag
 import { evaluateScaling } from '../src/workers/scaler.js';
 import { MetricsAgent } from '../src/workers/metricsAgent.js';
 import { TrinityOrchestrator } from '../src/workers/orchestrator.js';
+import { startAutoscalingLoop } from '../src/workers/autoscalingLoop.js';
 
 function createLifecycleAdapterMock(): WorkerLifecycleAdapter {
   return {
@@ -121,5 +122,119 @@ describe('Trinity autoscaling architecture', () => {
     expect(record.completedNodes).toEqual(['node-a']);
     expect(record.artifacts).toEqual(['artifact://a']);
     expect(record.status).toBe('completed');
+  });
+
+  it('returns defensive snapshots and rejects duplicate run ids', () => {
+    const orchestrator = new TrinityOrchestrator();
+
+    const startedRecord = orchestrator.startRun('run-dup');
+    startedRecord.activeNodes.push('mutated-outside');
+
+    const latestRecord = orchestrator.getRun('run-dup');
+    expect(latestRecord?.activeNodes).toEqual([]);
+    expect(() => orchestrator.startRun('run-dup')).toThrow('Run "run-dup" already exists.');
+
+    latestRecord?.artifacts.push('artifact://mutated-outside');
+    expect(orchestrator.getRun('run-dup')?.artifacts).toEqual([]);
+  });
+
+  it('reconciles replayed terminal node updates and retires expired terminal runs', () => {
+    let nowMs = 1_000;
+    const orchestrator = new TrinityOrchestrator({
+      terminalRunRetentionMs: 50,
+      readNowMs: () => nowMs
+    });
+
+    orchestrator.startRun('run-replay');
+    orchestrator.markNodeActive('run-replay', 'node-a');
+    orchestrator.markNodeCompleted('run-replay', 'node-a');
+    const failedRecord = orchestrator.markNodeFailed('run-replay', 'node-a');
+
+    expect(failedRecord.completedNodes).toEqual([]);
+    expect(failedRecord.failedNodes).toEqual(['node-a']);
+    expect(failedRecord.status).toBe('failed');
+
+    const reconciledRecord = orchestrator.markNodeCompleted('run-replay', 'node-a');
+    expect(reconciledRecord.completedNodes).toEqual(['node-a']);
+    expect(reconciledRecord.failedNodes).toEqual([]);
+    expect(reconciledRecord.status).toBe('failed');
+
+    nowMs += 51;
+    expect(orchestrator.retireExpiredRuns()).toBe(1);
+    expect(orchestrator.getRun('run-replay')).toBeNull();
+  });
+
+  it('serializes autoscaling ticks when one tick runs longer than the interval', async () => {
+    jest.useFakeTimers();
+
+    try {
+      const pendingScaleResolvers: Array<() => void> = [];
+      const collectMetrics = jest.fn(() => ({
+        async: {
+          depth: 101,
+          oldestJobAgeSeconds: 0
+        },
+        main: {
+          cpuRatio: 0,
+          workers: 1
+        },
+        audit: {
+          depth: 0,
+          oldestJobAgeSeconds: 0
+        },
+        creative: {
+          depth: 0,
+          oldestJobAgeSeconds: 0
+        },
+        baselineTrafficByDomain: {
+          main: 1,
+          async: 1,
+          audit: 1,
+          creative: 1
+        },
+        currentTrafficByDomain: {
+          main: 1,
+          async: 1,
+          audit: 1,
+          creative: 1
+        }
+      }));
+      const scale = jest.fn(
+        () =>
+          new Promise<void>(resolve => {
+            pendingScaleResolvers.push(resolve);
+          })
+      );
+
+      const intervalHandle = startAutoscalingLoop(
+        {
+          metricsAgent: { collectMetrics } as any,
+          workerManager: { scale } as any
+        },
+        100
+      );
+
+      await Promise.resolve();
+      expect(scale).toHaveBeenCalledTimes(1);
+
+      await jest.advanceTimersByTimeAsync(300);
+      expect(scale).toHaveBeenCalledTimes(1);
+      expect(collectMetrics).toHaveBeenCalledTimes(1);
+
+      const firstScaleResolver = pendingScaleResolvers.shift();
+      firstScaleResolver?.();
+      await Promise.resolve();
+
+      await jest.advanceTimersByTimeAsync(100);
+      expect(scale).toHaveBeenCalledTimes(2);
+      expect(collectMetrics).toHaveBeenCalledTimes(2);
+
+      clearInterval(intervalHandle);
+      const secondScaleResolver = pendingScaleResolvers.shift();
+      secondScaleResolver?.();
+      await Promise.resolve();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

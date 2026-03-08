@@ -25,6 +25,8 @@ export function startAutoscalingLoop(
   dependencies: AutoscalingLoopDependencies,
   intervalMs: number = 5_000
 ): NodeJS.Timeout {
+  let currentTickPromise: Promise<void> | null = null;
+
   const executeScalingTick = async (): Promise<void> => {
     try {
       const currentMetrics = dependencies.metricsAgent.collectMetrics();
@@ -39,8 +41,25 @@ export function startAutoscalingLoop(
     }
   };
 
-  void executeScalingTick();
+  const runSerializedTick = (): Promise<void> => {
+    //audit Assumption: overlapping ticks can compute scale targets from stale worker counts; failure risk: duplicate scale operations overshoot or thrash pool sizes; expected invariant: at most one autoscaling tick runs at a time; handling strategy: reuse the in-flight promise and skip interval-triggered overlap.
+    if (currentTickPromise) {
+      return currentTickPromise;
+    }
+
+    currentTickPromise = executeScalingTick().finally(() => {
+      currentTickPromise = null;
+    });
+
+    return currentTickPromise;
+  };
+
+  void runSerializedTick();
   return setInterval(() => {
-    void executeScalingTick();
+    if (currentTickPromise) {
+      return;
+    }
+
+    void runSerializedTick();
   }, intervalMs);
 }
