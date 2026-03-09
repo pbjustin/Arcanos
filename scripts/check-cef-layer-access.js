@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,16 +27,62 @@ const BLOCKED_IMPORT_RULES = [
   }
 ];
 
-function listTrackedFiles() {
-  const stdout = execFileSync('git', ['ls-files'], {
-    cwd: process.cwd(),
-    encoding: 'utf8'
-  });
+function collectRepositoryFilesFromFilesystem(rootPath) {
+  if (!existsSync(rootPath)) {
+    return [];
+  }
 
-  return stdout
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
+  const discoveredFiles = [];
+  const pendingDirectories = [rootPath];
+
+  while (pendingDirectories.length > 0) {
+    const currentDirectory = pendingDirectories.pop();
+    const directoryEntries = readdirSync(currentDirectory, { withFileTypes: true });
+
+    for (const entry of directoryEntries) {
+      const absoluteEntryPath = path.join(currentDirectory, entry.name);
+      const relativeEntryPath = path.relative(process.cwd(), absoluteEntryPath).replace(/\\/g, '/');
+
+      if (entry.isDirectory()) {
+        //audit Assumption: the fallback filesystem scan should stay constrained to source files and avoid vendor/build artifacts; failure risk: false positives or excessive scan time from `node_modules`, `.git`, and `dist`; expected invariant: only relevant repository source trees are traversed; handling strategy: skip known non-source directories during recursion.
+        if (['.git', 'node_modules', 'dist', '.next', 'coverage'].includes(entry.name)) {
+          continue;
+        }
+
+        pendingDirectories.push(absoluteEntryPath);
+        continue;
+      }
+
+      if (entry.isFile() && /\.(ts|js)$/.test(relativeEntryPath)) {
+        discoveredFiles.push(relativeEntryPath);
+      }
+    }
+  }
+
+  return discoveredFiles;
+}
+
+function listTrackedFiles() {
+  try {
+    const stdout = execFileSync('git', ['ls-files'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    return stdout
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+  } catch (error) {
+    //audit Assumption: CI and Docker builds may not include `.git`, but the layer-access policy must still run; failure risk: builds fail for environmental reasons instead of real policy violations; expected invariant: the scanner works with or without git metadata; handling strategy: fall back to a bounded filesystem scan rooted in the source tree when `git ls-files` is unavailable.
+    const fallbackFiles = [
+      ...collectRepositoryFilesFromFilesystem(path.resolve(process.cwd(), 'src')),
+      ...collectRepositoryFilesFromFilesystem(path.resolve(process.cwd(), 'scripts'))
+    ];
+
+    return Array.from(new Set(fallbackFiles));
+  }
 }
 
 /**
