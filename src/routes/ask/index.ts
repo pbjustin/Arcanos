@@ -54,7 +54,6 @@ import {
   tryExecutePromptRouteShortcut,
   type PromptRouteShortcutResult
 } from '@services/promptRouteShortcuts.js';
-import { handleReplayRequest } from './replay.js';
 
 const router = express.Router();
 
@@ -720,11 +719,7 @@ export const handleAIRequest = async (
 };
 
 // Primary ask endpoint routed through the Trinity brain.
-//audit Assumption: /ask should remain publicly callable; failure risk: broader anonymous traffic; expected invariant: rate limits and schema validation remain active; handling strategy: keep askRateLimit + askValidationMiddleware.
-router.post('/replay', askRateLimit, asyncHandler(handleReplayRequest));
-router.get('/replay', askRateLimit, asyncHandler(handleReplayRequest));
-router.post('/ask/replay', askRateLimit, asyncHandler(handleReplayRequest));
-router.get('/ask/replay', askRateLimit, asyncHandler(handleReplayRequest));
+//audit Assumption: the canonical session API now owns replay/restore endpoints; failure risk: duplicate public replay aliases create contract ambiguity; expected invariant: `/ask` remains the only publicly mounted ask route here; handling strategy: remove legacy replay aliases from this router.
 router.post('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 router.get('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 

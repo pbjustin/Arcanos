@@ -67,12 +67,34 @@ export const RagDocSchema = z.object({
   updated_at: z.date().optional()
 });
 
+export const SessionRecordSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  tag: z.string().nullable().optional(),
+  memory_type: z.string(),
+  payload: z.unknown(),
+  transcript_summary: z.string().nullable().optional(),
+  audit_trace_id: z.string().nullable().optional(),
+  created_at: z.date(),
+  updated_at: z.date()
+});
+
+export const SessionVersionRecordSchema = z.object({
+  id: z.string(),
+  session_id: z.string(),
+  version_number: z.number().int(),
+  payload: z.unknown(),
+  created_at: z.date()
+});
+
 // TypeScript types from Zod schemas
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
 export type ExecutionLog = z.infer<typeof ExecutionLogSchema>;
 export type JobData = z.infer<typeof JobDataSchema>;
 export type ReasoningLog = z.infer<typeof ReasoningLogSchema>;
 export type RagDoc = z.infer<typeof RagDocSchema>;
+export type SessionRecord = z.infer<typeof SessionRecordSchema>;
+export type SessionVersionRecord = z.infer<typeof SessionVersionRecordSchema>;
 
 /**
  * Refresh database collation if version mismatch detected
@@ -309,7 +331,34 @@ export const TABLE_DEFINITIONS = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     snapshot JSONB NOT NULL DEFAULT '{}'::jsonb
   )`,
-  
+
+  // Canonical durable session storage for the public ARCANOS session API
+  `CREATE TABLE IF NOT EXISTS sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    label TEXT NOT NULL,
+    tag TEXT,
+    memory_type TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    transcript_summary TEXT,
+    audit_trace_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS tag TEXT`,
+  `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS transcript_summary TEXT`,
+  `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS audit_trace_id TEXT`,
+  `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+
+  // Immutable session version history used by replay/restore operations
+  `CREATE TABLE IF NOT EXISTS session_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    version_number INTEGER NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (session_id, version_number)
+  )`,
+
   // Reasoning logs table for GPT-5.1 reasoning results
   `CREATE TABLE IF NOT EXISTS reasoning_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -331,6 +380,10 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_dag_artifacts_run_created ON dag_artifacts(run_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_artifacts_node_attempt ON dag_artifacts(node_id, attempt DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_worker_runtime_health_updated ON worker_runtime_snapshots(health_status, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_tag_updated_at ON sessions(tag, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_memory_type_updated_at ON sessions(memory_type, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_session_versions_session_version ON session_versions(session_id, version_number DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_saves_module_timestamp ON saves(module, timestamp)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_logs_event_timestamp ON audit_logs(event, timestamp DESC)`,

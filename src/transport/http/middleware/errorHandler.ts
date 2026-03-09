@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { resolveSafeRequestPath } from "@shared/requestPathSanitizer.js";
-import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 function isAppError(err: unknown): err is AppError {
   //audit Assumption: AppError may cross module boundaries and fail instanceof in some build contexts; failure risk: valid operational errors treated as 500; expected invariant: error-like objects with numeric httpCode and string message are treated as AppError; handling strategy: structural guard plus instanceof.
@@ -73,14 +72,14 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     const appError = err as AppError;
     res.status(appError.httpCode).json({
       error: appError.message,
-      requestId
+      code: appError.httpCode
     });
     return;
   }
 
-  sendInternalErrorPayload(res, {
-    error: 'An unexpected error occurred.',
-    requestId
+  res.status(500).json({
+    error: 'Internal Server Error',
+    code: 500
   });
 };
 

@@ -102,6 +102,20 @@ export {
   saveSelfReflection
 } from './repositories/selfReflectionRepository.js';
 
+export {
+  createStoredSession,
+  getStoredSessionById,
+  listStoredSessions,
+  getStoredSessionVersion,
+  getSessionStorageMetrics,
+  type CreateStoredSessionInput,
+  type StoredSessionRecord,
+  type StoredSessionVersionRecord,
+  type StoredSessionListOptions,
+  type StoredSessionListResult,
+  type SessionStorageMetrics
+} from './repositories/sessionRepository.js';
+
 // Adapter exports
 export {
   createAuditStore,

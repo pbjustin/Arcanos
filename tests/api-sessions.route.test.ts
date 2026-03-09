@@ -1,455 +1,338 @@
 import express, { type Express } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import errorHandler from '../src/transport/http/middleware/errorHandler.js';
 
-const mockListUserSessions = jest.fn();
-const mockGetUserSessionDetail = jest.fn();
-const mockGetConversation = jest.fn();
-const mockGetChannel = jest.fn();
-const mockGetCachedSessions = jest.fn();
-const mockSaveMessage = jest.fn();
-const mockBuildSessionReplayRestoreState = jest.fn();
-const mockRecordTraceEvent = jest.fn();
+const mockWriteSession = jest.fn();
+const mockReadSession = jest.fn();
+const mockListSessions = jest.fn();
+const mockReplaySession = jest.fn();
+const mockGetSessionSystemDiagnostics = jest.fn();
+const mockGetQueueDiagnostics = jest.fn();
+const mockGetStorageDiagnostics = jest.fn();
 
-jest.unstable_mockModule('@services/sessionCatalogService.js', () => ({
-  listUserSessions: mockListUserSessions,
-  getUserSessionDetail: mockGetUserSessionDetail
+jest.unstable_mockModule('@services/sessionStorage.js', () => ({
+  writeSession: mockWriteSession,
+  readSession: mockReadSession,
+  listSessions: mockListSessions,
+  replaySession: mockReplaySession,
+  getSessionStorageBackendType: () => 'postgres'
 }));
 
-jest.unstable_mockModule('@services/sessionMemoryService.js', () => ({
-  getConversation: mockGetConversation,
-  getChannel: mockGetChannel,
-  getCachedSessions: mockGetCachedSessions,
-  saveMessage: mockSaveMessage
-}));
-
-jest.unstable_mockModule('@services/sessionReplayStateService.js', () => ({
-  buildSessionReplayRestoreState: mockBuildSessionReplayRestoreState
-}));
-
-jest.unstable_mockModule('@platform/logging/telemetry.js', () => ({
-  recordTraceEvent: mockRecordTraceEvent,
-  recordLogEvent: jest.fn(),
-  markOperation: jest.fn(),
-  getTelemetrySnapshot: jest.fn(),
-  onTelemetry: jest.fn(),
-  resetTelemetry: jest.fn()
+jest.unstable_mockModule('@services/sessionSystemDiagnosticsService.js', () => ({
+  getSessionSystemDiagnostics: mockGetSessionSystemDiagnostics,
+  getQueueDiagnostics: mockGetQueueDiagnostics,
+  getStorageDiagnostics: mockGetStorageDiagnostics
 }));
 
 jest.unstable_mockModule('@transport/http/middleware/auditTrace.js', () => ({
   auditTrace: (_req: express.Request, res: express.Response, next: express.NextFunction) => {
-    res.locals.auditTraceId = 'trace-session-api';
+    res.locals.auditTraceId = 'trace-api-session-system';
     next();
   }
 }));
 
-const { default: apiSessionsRouter } = await import('../src/routes/api-sessions.js');
+const { default: apiSessionSystemRouter } = await import('../src/routes/api-session-system.js');
 
 /**
- * Build an isolated test app for `/api/sessions` route coverage.
- * Inputs/outputs: none -> Express app with the API sessions router mounted.
- * Edge cases: mocked audit middleware injects a stable trace id for deterministic assertions.
+ * Build an isolated test app for the canonical session system routes.
+ *
+ * Purpose:
+ * - Exercise the public route contract without unrelated app middleware.
+ *
+ * Inputs/outputs:
+ * - Input: none.
+ * - Output: Express app with the canonical session system router mounted.
+ *
+ * Edge case behavior:
+ * - `/api/*` misses return the same JSON contract as the main app fallback.
  */
-function createApiSessionsTestApp(): Express {
+function createCanonicalSessionApiTestApp(): Express {
   const app = express();
   app.use(express.json());
-  app.use('/', apiSessionsRouter);
+  app.use('/', apiSessionSystemRouter);
+  app.use(errorHandler);
+  app.use((req, res) => {
+    res.status(404).json({
+      error: 'Route Not Found',
+      code: 404
+    });
+  });
   return app;
 }
 
-describe('/api/sessions routes', () => {
+describe('canonical /api session system routes', () => {
   let app: Express;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    app = createApiSessionsTestApp();
+    app = createCanonicalSessionApiTestApp();
   });
 
-  it('returns the hydrated session catalog from GET /api/sessions', async () => {
-    mockListUserSessions.mockResolvedValue([
-      {
-        sessionId: 'session-alpha',
-        updatedAt: '2026-03-09T04:00:00.000Z',
-        messageCount: 3,
-        replayable: true,
-        topic: 'Alpha session',
-        summary: 'Alpha summary',
-        tags: ['alpha'],
-        latestRole: 'assistant',
-        latestContentPreview: 'Latest alpha update'
-      }
-    ]);
-
-    const response = await request(app).get('/api/sessions').query({ limit: 25, q: 'alpha' });
-
-    expect(response.status).toBe(200);
-    expect(response.body.status).toBe('success');
-    expect(response.body.traceId).toBe('trace-session-api');
-    expect(response.body.data.count).toBe(1);
-    expect(response.body.data.sessions[0].sessionId).toBe('session-alpha');
-    expect(mockListUserSessions).toHaveBeenCalledWith({
-      limit: 25,
-      search: 'alpha'
-    });
-    expect(mockRecordTraceEvent).toHaveBeenCalledWith(
-      'sessions.api.list.succeeded',
-      expect.objectContaining({
-        traceId: 'trace-session-api',
-        method: 'GET',
-        path: '/api/sessions',
-        count: 1,
-        search: 'alpha'
-      })
-    );
-  });
-
-  it('returns normalized session detail from GET /api/sessions/:sessionId', async () => {
-    mockGetUserSessionDetail.mockResolvedValue({
-      sessionId: 'session-detail-1',
-      updatedAt: '2026-03-09T04:00:00.000Z',
-      messageCount: 2,
-      replayable: true,
-      topic: 'Replay candidate',
-      summary: 'Replay summary',
-      tags: ['replay'],
-      latestRole: 'assistant',
-      latestContentPreview: 'Assistant reply',
-      versionId: 'session-v1',
-      monotonicTimestampMs: 123456,
-      droppedMessageCount: 0,
-      metadata: {
-        topic: 'Replay candidate',
-        summary: 'Replay summary',
-        tags: ['replay']
+  it('persists a session through POST /api/sessions', async () => {
+    mockWriteSession.mockResolvedValue({
+      id: '8e8349d6-42b0-43eb-b8f8-86845c498451',
+      label: 'ARCANOS backend diagnostics session',
+      tag: 'session_diagnostic_2026-03-08',
+      memoryType: 'diagnostic',
+      payload: {
+        probeValue: 'ARCANOS-CHECK-VALUE'
       },
-      conversation: [
-        {
-          index: 0,
-          role: 'user',
-          content: 'Restore this',
-          timestamp: 100,
-          meta: { audit_tag: 'restore-user' }
-        },
-        {
-          index: 1,
-          role: 'assistant',
-          content: 'Session restored',
-          timestamp: 101,
-          meta: { audit_tag: 'restore-assistant' }
+      transcriptSummary: null,
+      auditTraceId: 'trace-api-session-system',
+      createdAt: '2026-03-09T12:00:00.000Z',
+      updatedAt: '2026-03-09T12:00:00.000Z'
+    });
+
+    const response = await request(app)
+      .post('/api/sessions')
+      .send({
+        label: 'ARCANOS backend diagnostics session',
+        tag: 'session_diagnostic_2026-03-08',
+        memoryType: 'diagnostic',
+        payload: {
+          probeValue: 'ARCANOS-CHECK-VALUE'
         }
-      ]
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toEqual({
+      id: '8e8349d6-42b0-43eb-b8f8-86845c498451',
+      saved: true,
+      storage: 'postgres',
+      createdAt: '2026-03-09T12:00:00.000Z'
     });
-
-    const response = await request(app).get('/api/sessions/session-detail-1');
-
-    expect(response.status).toBe(200);
-    expect(response.body.status).toBe('success');
-    expect(response.body.traceId).toBe('trace-session-api');
-    expect(response.body.data.session.sessionId).toBe('session-detail-1');
-    expect(response.body.data.session.conversation).toHaveLength(2);
-    expect(mockGetUserSessionDetail).toHaveBeenCalledWith('session-detail-1');
-    expect(mockRecordTraceEvent).toHaveBeenCalledWith(
-      'sessions.api.detail.succeeded',
+    expect(mockWriteSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        traceId: 'trace-session-api',
-        method: 'GET',
-        path: '/api/sessions/session-detail-1',
-        sessionId: 'session-detail-1',
-        messageCount: 2,
-        replayable: true
+        label: 'ARCANOS backend diagnostics session',
+        tag: 'session_diagnostic_2026-03-08',
+        memoryType: 'diagnostic',
+        payload: {
+          probeValue: 'ARCANOS-CHECK-VALUE'
+        },
+        auditTraceId: 'trace-api-session-system'
       })
     );
   });
 
-  it('replays a session transcript from GET /api/sessions/replay using query sessionId', async () => {
-    mockGetConversation.mockResolvedValue([
-      {
-        role: 'user',
-        content: 'Restore collection replay session',
-        timestamp: 201,
-        meta: { audit_tag: 'restore-user' }
+  it('returns the exact stored payload from GET /api/sessions/:id', async () => {
+    mockReadSession.mockResolvedValue({
+      id: '8e8349d6-42b0-43eb-b8f8-86845c498451',
+      label: 'ARCANOS backend diagnostics session',
+      tag: 'session_diagnostic_2026-03-08',
+      memoryType: 'diagnostic',
+      payload: {
+        probeValue: 'ARCANOS-CHECK-VALUE'
       },
-      {
-        role: 'assistant',
-        content: 'Collection replay restored',
-        timestamp: 202,
-        meta: { audit_tag: 'restore-assistant' }
-      }
-    ]);
-    mockBuildSessionReplayRestoreState.mockResolvedValue({
-      sessionId: 'session-replay-query-1',
-      reconstructedAt: '2026-03-09T05:00:00.000Z',
-      source: 'session-cache+memory-channels',
-      session: {
-        sessionId: 'session-replay-query-1',
-        updatedAt: '2026-03-09T05:00:00.000Z',
-        messageCount: 2,
-        replayable: true,
-        topic: 'Collection replay',
-        summary: 'Replay restore state',
-        tags: ['restore'],
-        latestRole: 'assistant',
-        latestContentPreview: 'Collection replay restored',
-        versionId: 'session-v1',
-        monotonicTimestampMs: 202,
-        droppedMessageCount: 0,
-        metadata: { topic: 'Collection replay' },
-        conversation: []
-      },
-      channels: {
-        conversations_core: [
-          { role: 'user', content: 'Restore collection replay session', timestamp: 201 },
-          { role: 'assistant', content: 'Collection replay restored', timestamp: 202 }
-        ],
-        system_meta: [
-          { audit_tag: 'restore-user', timestamp: 201 },
-          { audit_tag: 'restore-assistant', timestamp: 202 }
-        ]
-      },
-      state: {
-        sessionId: 'session-replay-query-1',
-        updatedAt: '2026-03-09T05:00:00.000Z',
-        versionId: 'session-v1',
-        monotonicTimestampMs: 202,
-        metadata: { topic: 'Collection replay' },
-        replayable: true,
-        messageCount: 2,
-        droppedMessageCount: 0,
-        conversation: [
-          {
-            index: 0,
-            role: 'user',
-            content: 'Restore collection replay session',
-            timestamp: 201,
-            meta: { audit_tag: 'restore-user' }
-          },
-          {
-            index: 1,
-            role: 'assistant',
-            content: 'Collection replay restored',
-            timestamp: 202,
-            meta: { audit_tag: 'restore-assistant' }
-          }
-        ]
-      },
-      diagnostics: {
-        conversationChannelCount: 2,
-        systemMetaCount: 2,
-        metadataSource: 'session-detail'
-      }
+      transcriptSummary: null,
+      auditTraceId: 'trace-api-session-system',
+      createdAt: '2026-03-09T12:00:00.000Z',
+      updatedAt: '2026-03-09T12:00:00.000Z'
+    });
+
+    const response = await request(app).get('/api/sessions/8e8349d6-42b0-43eb-b8f8-86845c498451');
+
+    expect(response.status).toBe(200);
+    expect(response.body.payload).toEqual({
+      probeValue: 'ARCANOS-CHECK-VALUE'
+    });
+    expect(mockReadSession).toHaveBeenCalledWith('8e8349d6-42b0-43eb-b8f8-86845c498451');
+  });
+
+  it('lists real session rows from GET /api/sessions', async () => {
+    mockListSessions.mockResolvedValue({
+      items: [
+        {
+          id: '8e8349d6-42b0-43eb-b8f8-86845c498451',
+          label: 'ARCANOS backend diagnostics session',
+          tag: 'session_diagnostic_2026-03-08',
+          memoryType: 'diagnostic',
+          createdAt: '2026-03-09T12:00:00.000Z',
+          updatedAt: '2026-03-09T12:00:00.000Z'
+        }
+      ],
+      total: 1
     });
 
     const response = await request(app)
-      .get('/api/sessions/replay')
-      .query({ sessionId: 'session-replay-query-1', limit: 1 });
+      .get('/api/sessions')
+      .query({ q: 'session_diagnostic_2026-03-08', limit: 10 });
 
     expect(response.status).toBe(200);
-    expect(response.body.status).toBe('success');
-    expect(response.body.traceId).toBe('trace-session-api');
-    expect(response.body.data.sessionId).toBe('session-replay-query-1');
-    expect(response.body.data.transcript).toEqual([
-      { role: 'assistant', content: 'Collection replay restored' }
+    expect(response.body).toEqual({
+      items: [
+        {
+          id: '8e8349d6-42b0-43eb-b8f8-86845c498451',
+          label: 'ARCANOS backend diagnostics session',
+          tag: 'session_diagnostic_2026-03-08',
+          memoryType: 'diagnostic',
+          createdAt: '2026-03-09T12:00:00.000Z',
+          updatedAt: '2026-03-09T12:00:00.000Z'
+        }
+      ],
+      total: 1
+    });
+    expect(mockListSessions).toHaveBeenCalledWith({
+      limit: 10,
+      search: 'session_diagnostic_2026-03-08'
+    });
+  });
+
+  it('replays a stored version through POST /api/sessions/:id/replay', async () => {
+    mockReplaySession.mockResolvedValue({
+      sessionId: '8e8349d6-42b0-43eb-b8f8-86845c498451',
+      replayedVersion: 3,
+      mode: 'readonly',
+      payload: {
+        probeValue: 'ARCANOS-CHECK-VALUE'
+      },
+      auditTraceId: 'trace-api-session-system',
+      replayedAt: '2026-03-09T12:00:01.000Z'
+    });
+
+    const response = await request(app)
+      .post('/api/sessions/8e8349d6-42b0-43eb-b8f8-86845c498451/replay')
+      .send({
+        version_number: 3
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      sessionId: '8e8349d6-42b0-43eb-b8f8-86845c498451',
+      replayedVersion: 3,
+      mode: 'readonly',
+      payload: {
+        probeValue: 'ARCANOS-CHECK-VALUE'
+      },
+      auditTraceId: 'trace-api-session-system',
+      replayedAt: '2026-03-09T12:00:01.000Z'
+    });
+    expect(mockReplaySession).toHaveBeenCalledWith('8e8349d6-42b0-43eb-b8f8-86845c498451', 3);
+  });
+
+  it('returns machine-verifiable diagnostics JSON only', async () => {
+    mockGetSessionSystemDiagnostics.mockResolvedValue({
+      status: 'live',
+      storage: 'postgres',
+      routes: [
+        'GET /api/health',
+        'GET /api/health/routes',
+        'POST /api/sessions'
+      ],
+      queueConnected: true,
+      buildId: 'abc123',
+      timestamp: '2026-03-09T12:00:00.000Z'
+    });
+    mockGetQueueDiagnostics.mockResolvedValue({
+      status: 'live',
+      workerRunning: true,
+      queueDepth: 0,
+      lastJobId: 'job-1',
+      lastJobStatus: 'completed',
+      lastJobFinishedAt: '2026-03-09T12:00:00.000Z',
+      timestamp: '2026-03-09T12:00:00.000Z'
+    });
+    mockGetStorageDiagnostics.mockResolvedValue({
+      status: 'live',
+      storage: 'postgres',
+      databaseConnected: true,
+      sessionCount: 3,
+      sessionVersionCount: 3,
+      buildId: 'abc123',
+      timestamp: '2026-03-09T12:00:00.000Z'
+    });
+
+    const [sessionSystemResponse, queueResponse, storageResponse] = await Promise.all([
+      request(app).get('/api/diagnostics/session-system'),
+      request(app).get('/api/diagnostics/queues'),
+      request(app).get('/api/diagnostics/storage')
     ]);
-    expect(response.body.data.restore.state.sessionId).toBe('session-replay-query-1');
-    expect(response.body.data.restore.state.conversation).toHaveLength(2);
-    expect(response.body.data.restore.channels.system_meta).toHaveLength(2);
-    expect(mockGetConversation).toHaveBeenCalledWith('session-replay-query-1');
-    expect(mockBuildSessionReplayRestoreState).toHaveBeenCalledWith('session-replay-query-1');
-    expect(mockGetUserSessionDetail).not.toHaveBeenCalled();
-    expect(mockRecordTraceEvent).toHaveBeenCalledWith(
-      'sessions.replay.succeeded',
-      expect.objectContaining({
-        traceId: 'trace-session-api',
-        method: 'GET',
-        path: '/api/sessions/replay',
-        sessionId: 'session-replay-query-1',
-        returnedCount: 1,
-        truncated: true
-      })
+
+    expect(sessionSystemResponse.status).toBe(200);
+    expect(sessionSystemResponse.body).toEqual({
+      status: 'live',
+      storage: 'postgres',
+      routes: [
+        'GET /api/health',
+        'GET /api/health/routes',
+        'POST /api/sessions'
+      ],
+      queueConnected: true,
+      buildId: 'abc123',
+      timestamp: '2026-03-09T12:00:00.000Z'
+    });
+    expect(queueResponse.body.queueDepth).toBe(0);
+    expect(storageResponse.body.sessionCount).toBe(3);
+  });
+
+  it('returns the mounted canonical route table from GET /api/health/routes', async () => {
+    const response = await request(app).get('/api/health/routes');
+
+    expect(response.status).toBe(200);
+    expect(response.body.routes).toEqual(
+      expect.arrayContaining([
+        'GET /api/diagnostics/queues',
+        'GET /api/diagnostics/session-system',
+        'GET /api/diagnostics/storage',
+        'GET /api/health',
+        'GET /api/health/routes',
+        'GET /api/sessions',
+        'GET /api/sessions/:id',
+        'POST /api/sessions',
+        'POST /api/sessions/:id/replay'
+      ])
+    );
+    expect(response.body.routes).not.toEqual(
+      expect.arrayContaining([
+        'GET /api/sessions/replay',
+        'GET /ask/replay',
+        'POST /api/ask/replay',
+        'POST /sessions/:id/replay'
+      ])
     );
   });
 
-  it('replays a session transcript from POST /api/sessions/replay using body sessionId', async () => {
-    mockGetConversation.mockResolvedValue([
-      {
-        role: 'user',
-        content: 'Restore collection replay session',
-        timestamp: 301,
-        meta: { audit_tag: 'restore-user' }
-      },
-      {
-        role: 'assistant',
-        content: 'Collection replay restored',
-        timestamp: 302,
-        meta: { audit_tag: 'restore-assistant' }
-      }
-    ]);
-    mockBuildSessionReplayRestoreState.mockResolvedValue({
-      sessionId: 'session-replay-body-1',
-      reconstructedAt: '2026-03-09T05:01:00.000Z',
-      source: 'memory-channels',
-      session: null,
-      channels: {
-        conversations_core: [
-          { role: 'user', content: 'Restore collection replay session', timestamp: 301 },
-          { role: 'assistant', content: 'Collection replay restored', timestamp: 302 }
-        ],
-        system_meta: [
-          { audit_tag: 'restore-user', timestamp: 301 },
-          { audit_tag: 'restore-assistant', timestamp: 302 }
-        ]
-      },
-      state: {
-        sessionId: 'session-replay-body-1',
-        updatedAt: '2026-03-09T05:01:00.000Z',
-        versionId: null,
-        monotonicTimestampMs: null,
-        metadata: {},
-        replayable: true,
-        messageCount: 2,
-        droppedMessageCount: 0,
-        conversation: [
-          {
-            index: 0,
-            role: 'user',
-            content: 'Restore collection replay session',
-            timestamp: 301,
-            meta: { audit_tag: 'restore-user' }
-          },
-          {
-            index: 1,
-            role: 'assistant',
-            content: 'Collection replay restored',
-            timestamp: 302,
-            meta: { audit_tag: 'restore-assistant' }
-          }
-        ]
-      },
-      diagnostics: {
-        conversationChannelCount: 2,
-        systemMetaCount: 2,
-        metadataSource: 'empty'
-      }
+  it('treats legacy alias paths as missing routes instead of valid session ids', async () => {
+    const response = await request(app).get('/api/sessions/get').query({ sessionId: 'test123' });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      error: 'Route Not Found',
+      code: 404
     });
-
-    const response = await request(app)
-      .post('/api/sessions/replay')
-      .send({ sessionId: 'session-replay-body-1', limit: 2 });
-
-    expect(response.status).toBe(200);
-    expect(response.body.status).toBe('success');
-    expect(response.body.traceId).toBe('trace-session-api');
-    expect(response.body.data.sessionId).toBe('session-replay-body-1');
-    expect(response.body.data.transcript).toEqual([
-      { role: 'user', content: 'Restore collection replay session' },
-      { role: 'assistant', content: 'Collection replay restored' }
-    ]);
-    expect(response.body.data.restore.source).toBe('memory-channels');
-    expect(response.body.data.restore.state.messageCount).toBe(2);
-    expect(mockGetConversation).toHaveBeenCalledWith('session-replay-body-1');
-    expect(mockBuildSessionReplayRestoreState).toHaveBeenCalledWith('session-replay-body-1');
-    expect(mockGetUserSessionDetail).not.toHaveBeenCalled();
-    expect(mockRecordTraceEvent).toHaveBeenCalledWith(
-      'sessions.replay.succeeded',
-      expect.objectContaining({
-        traceId: 'trace-session-api',
-        method: 'POST',
-        path: '/api/sessions/replay',
-        sessionId: 'session-replay-body-1',
-        returnedCount: 2,
-        truncated: false
-      })
-    );
   });
 
-  it('replays a session transcript from POST /api/sessions/:sessionId/replay', async () => {
-    mockGetConversation.mockResolvedValue([
-      {
-        role: 'user',
-        content: 'Restore this session',
-        timestamp: 101,
-        meta: { audit_tag: 'restore-user' }
-      },
-      {
-        role: 'assistant',
-        content: 'Session restored',
-        timestamp: 102,
-        meta: { audit_tag: 'restore-assistant' }
-      }
-    ]);
-    mockBuildSessionReplayRestoreState.mockResolvedValue({
-      sessionId: 'session-replay-1',
-      reconstructedAt: '2026-03-09T05:02:00.000Z',
-      source: 'session-cache+memory-channels',
-      session: null,
-      channels: {
-        conversations_core: [
-          { role: 'user', content: 'Restore this session', timestamp: 101 },
-          { role: 'assistant', content: 'Session restored', timestamp: 102 }
-        ],
-        system_meta: [
-          { audit_tag: 'restore-user', timestamp: 101 },
-          { audit_tag: 'restore-assistant', timestamp: 102 }
-        ]
-      },
-      state: {
-        sessionId: 'session-replay-1',
-        updatedAt: '2026-03-09T05:02:00.000Z',
-        versionId: null,
-        monotonicTimestampMs: null,
-        metadata: {},
-        replayable: true,
-        messageCount: 2,
-        droppedMessageCount: 0,
-        conversation: [
-          {
-            index: 0,
-            role: 'user',
-            content: 'Restore this session',
-            timestamp: 101,
-            meta: { audit_tag: 'restore-user' }
-          },
-          {
-            index: 1,
-            role: 'assistant',
-            content: 'Session restored',
-            timestamp: 102,
-            meta: { audit_tag: 'restore-assistant' }
-          }
-        ]
-      },
-      diagnostics: {
-        conversationChannelCount: 2,
-        systemMetaCount: 2,
-        metadataSource: 'empty'
-      }
+  it('returns structured validation errors for invalid session create payloads', async () => {
+    const response = await request(app)
+      .post('/api/sessions')
+      .send({
+        label: '',
+        memoryType: 'diagnostic'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('Invalid Session Create Payload');
+    expect(response.body.code).toBe(400);
+    expect(Array.isArray(response.body.details)).toBe(true);
+  });
+
+  it('fails closed when a diagnostics payload violates the public schema', async () => {
+    mockGetStorageDiagnostics.mockResolvedValue({
+      status: 'live',
+      storage: 'postgres',
+      databaseConnected: true,
+      sessionCount: 3,
+      sessionVersionCount: 'invalid-count',
+      buildId: 'abc123',
+      timestamp: '2026-03-09T12:00:00.000Z'
     });
 
-    const response = await request(app)
-      .post('/api/sessions/session-replay-1/replay')
-      .send({ sessionId: 'ignored-body-session', limit: 1 });
+    const response = await request(app).get('/api/diagnostics/storage');
 
-    expect(response.status).toBe(200);
-    expect(response.body.status).toBe('success');
-    expect(response.body.traceId).toBe('trace-session-api');
-    expect(response.body.data.sessionId).toBe('session-replay-1');
-    expect(response.body.data.transcript).toEqual([
-      { role: 'assistant', content: 'Session restored' }
-    ]);
-    expect(response.body.data.restore.state.sessionId).toBe('session-replay-1');
-    expect(response.body.data.restore.channels.conversations_core).toHaveLength(2);
-    expect(mockGetConversation).toHaveBeenCalledWith('session-replay-1');
-    expect(mockBuildSessionReplayRestoreState).toHaveBeenCalledWith('session-replay-1');
-    expect(mockRecordTraceEvent).toHaveBeenCalledWith(
-      'sessions.replay.succeeded',
-      expect.objectContaining({
-        traceId: 'trace-session-api',
-        method: 'POST',
-        path: '/api/sessions/session-replay-1/replay',
-        sessionId: 'session-replay-1',
-        returnedCount: 1,
-        truncated: true
-      })
-    );
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'Internal Server Error',
+      code: 500
+    });
   });
 });

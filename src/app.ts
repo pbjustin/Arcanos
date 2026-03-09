@@ -78,7 +78,16 @@ export function createApp(): Express {
   app.use(createFallbackMiddleware());
   app.use(errorHandler);
 
-  app.use((_: Request, res: Response) => {
+  app.use((req: Request, res: Response) => {
+    //audit Assumption: missing `/api/*` endpoints must return machine-verifiable JSON instead of narrative fallbacks; failure risk: clients infer nonexistent features from generic HTML/text errors; expected invariant: API misses always produce explicit JSON; handling strategy: emit a structured missing payload for `/api/*` and preserve the legacy fallback elsewhere.
+    if (req.path.startsWith('/api/')) {
+      res.status(404).json({
+        error: 'Route Not Found',
+        code: 404
+      });
+      return;
+    }
+
     sendNotFound(res, 'Endpoint not found');
   });
 
