@@ -8,6 +8,7 @@ import {
   createDagSuccessResult,
   stripDagNodeExecutor,
   type DAGNode,
+  type DAGResult,
   type DAGNodeExecutionContext
 } from '../dag/dagNode.js';
 import {
@@ -16,12 +17,6 @@ import {
   type DAGRunSummary
 } from '../dag/orchestrator.js';
 import type { DAGGraph } from '../dag/dagGraph.js';
-import type {
-  DagJobQueue,
-  EnqueueDagNodeJobRequest,
-  WaitForDagJobCompletionOptions
-} from '../jobs/jobQueue.js';
-import type { DagQueueJobRecord } from '../jobs/jobSchema.js';
 import {
   executeCommand,
   type CommandExecutionContext,
@@ -40,6 +35,55 @@ import type {
   AgentPlannedCapabilityStep
 } from './agentExecutionTypes.js';
 
+interface AgentDagQueueJobRecord {
+  jobId: string;
+  dagId: string;
+  nodeId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  workerId: string | null;
+  retries: number;
+  maxRetries: number;
+  waitingTimeoutMs: number;
+  payload: Record<string, unknown>;
+  node: ReturnType<typeof stripDagNodeExecutor>;
+  dependencyResults: Record<string, DAGResult>;
+  sharedState: Record<string, unknown>;
+  depth: number;
+  output: DAGResult | null;
+  errorMessage: string | null;
+  timestamps: {
+    queuedAt: string;
+    updatedAt: string;
+    startedAt?: string;
+    completedAt?: string;
+  };
+}
+
+interface AgentEnqueueDagNodeJobRequest {
+  dagId: string;
+  node: DAGNode;
+  payload?: Record<string, unknown>;
+  dependencyResults?: Record<string, DAGResult>;
+  sharedState?: Record<string, unknown>;
+  depth: number;
+  attempt?: number;
+  maxRetries?: number;
+  waitingTimeoutMs?: number;
+}
+
+interface AgentWaitForDagJobCompletionOptions {
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+}
+
+interface AgentDagJobQueue {
+  enqueueDagNodeJob(request: AgentEnqueueDagNodeJobRequest): Promise<AgentDagQueueJobRecord>;
+  waitForDagJobCompletion(
+    jobId: string,
+    options?: AgentWaitForDagJobCompletionOptions
+  ): Promise<AgentDagQueueJobRecord>;
+}
+
 interface AgentExecutionServiceDependencies {
   commandExecutor?: (
     command: CommandName,
@@ -50,10 +94,10 @@ interface AgentExecutionServiceDependencies {
   createDagOrchestrator?: () => DAGOrchestrator;
 }
 
-class InProcessCapabilityDagJobQueue implements DagJobQueue {
+class InProcessCapabilityDagJobQueue implements AgentDagJobQueue {
   private jobCounter = 0;
 
-  private readonly jobsById = new Map<string, Promise<DagQueueJobRecord>>();
+  private readonly jobsById = new Map<string, Promise<AgentDagQueueJobRecord>>();
 
   /**
    * Enqueue one DAG step for immediate in-process execution.
@@ -68,7 +112,7 @@ class InProcessCapabilityDagJobQueue implements DagJobQueue {
    * Edge case behavior:
    * - Stores the completion promise immediately so orchestrator polling can observe the job.
    */
-  async enqueueDagNodeJob(request: EnqueueDagNodeJobRequest): Promise<DagQueueJobRecord> {
+  async enqueueDagNodeJob(request: AgentEnqueueDagNodeJobRequest): Promise<AgentDagQueueJobRecord> {
     const jobId = `agent-dag-job-${++this.jobCounter}`;
     const queuedAt = new Date().toISOString();
     const completionPromise = this.executeQueuedNode(jobId, request, queuedAt);
@@ -112,8 +156,8 @@ class InProcessCapabilityDagJobQueue implements DagJobQueue {
    */
   async waitForDagJobCompletion(
     jobId: string,
-    _options: WaitForDagJobCompletionOptions = {}
-  ): Promise<DagQueueJobRecord> {
+    _options: AgentWaitForDagJobCompletionOptions = {}
+  ): Promise<AgentDagQueueJobRecord> {
     const completionPromise = this.jobsById.get(jobId);
 
     //audit Assumption: the orchestrator only waits on jobs previously enqueued in this queue instance; failure risk: a mismatched queue/orchestrator pair waits forever or returns nonsense; expected invariant: each waited job id exists in the local queue map; handling strategy: throw on unknown ids.
@@ -126,9 +170,9 @@ class InProcessCapabilityDagJobQueue implements DagJobQueue {
 
   private async executeQueuedNode(
     jobId: string,
-    request: EnqueueDagNodeJobRequest,
+    request: AgentEnqueueDagNodeJobRequest,
     queuedAt: string
-  ): Promise<DagQueueJobRecord> {
+  ): Promise<AgentDagQueueJobRecord> {
     const startedAt = new Date().toISOString();
     const executionContext: DAGNodeExecutionContext = {
       dagId: request.dagId,

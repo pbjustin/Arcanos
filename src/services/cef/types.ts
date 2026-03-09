@@ -15,6 +15,7 @@ export interface CommandExecutionContext {
 export interface CommandExecutionError {
   code: string;
   message: string;
+  httpStatusCode: number;
   details?: Record<string, unknown>;
 }
 
@@ -75,3 +76,11 @@ export interface CefHandlerRetryPolicy {
   maxAttempts: number;
   shouldRetry?: (error: unknown, attemptNumber: number) => boolean;
 }
+
+export type CefTraceStatus =
+  | 'start'
+  | 'success'
+  | 'error'
+  | 'fallback'
+  | 'retry'
+  | 'rejected';

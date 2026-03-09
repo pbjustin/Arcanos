@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { sanitizeInput } from '@platform/runtime/security.js';
 import { getAuditSafeMode, interpretCommand, setAuditSafeMode } from '@services/auditSafeToggle.js';
 import { dispatchValidatedHandler, enforceAllowedHandlerMethod } from '../handlerRuntime.js';
@@ -7,39 +6,94 @@ import { buildCommandError } from '../commandErrors.js';
 
 const VALID_AUDIT_MODES = ['true', 'false', 'passive', 'log-only'] as const;
 
-export const AuditSafeSetModeInputSchema = z.object({
-  mode: z.enum(VALID_AUDIT_MODES)
-});
+interface AuditSafeSetModePayload extends Record<string, unknown> {
+  mode: (typeof VALID_AUDIT_MODES)[number];
+}
 
-export const AuditSafeSetModeOutputSchema = z.object({
-  mode: z.enum(VALID_AUDIT_MODES)
-});
+interface AuditSafeInterpretPayload extends Record<string, unknown> {
+  instruction: string;
+}
 
-export const AuditSafeInterpretInputSchema = z.object({
-  instruction: z.string().trim().min(1)
-});
+interface AuditSafeSetModeOutput extends Record<string, unknown> {
+  mode: (typeof VALID_AUDIT_MODES)[number];
+}
 
-export const AuditSafeInterpretOutputSchema = z.object({
-  instruction: z.string().min(1),
-  mode: z.string().min(1)
-});
+interface AuditSafeInterpretOutput extends Record<string, unknown> {
+  instruction: string;
+  mode: (typeof VALID_AUDIT_MODES)[number];
+}
 
-export const allowedHandlers = ['set-mode', 'interpret'] as const;
+type AuditSafeHandlerActionDefinition =
+  | {
+      inputSchemaName: 'AuditSafeSetModeInputSchema';
+      outputSchemaName: 'AuditSafeSetModeOutputSchema';
+      errorSchemaName: 'CommandErrorSchema';
+      invokeValidatedMethod: (
+        payload: AuditSafeSetModePayload,
+        context: CefHandlerContext
+      ) => Promise<{ message: string; output: AuditSafeSetModeOutput }>;
+    }
+  | {
+      inputSchemaName: 'AuditSafeInterpretInputSchema';
+      outputSchemaName: 'AuditSafeInterpretOutputSchema';
+      errorSchemaName: 'CommandErrorSchema';
+      invokeValidatedMethod: (
+        payload: AuditSafeInterpretPayload,
+        context: CefHandlerContext
+      ) => Promise<{ message: string; output: AuditSafeInterpretOutput }>;
+    };
 
-export type AuditSafeHandlerMethod = (typeof allowedHandlers)[number];
+const allowedHandlerActions = {
+  'set-mode': {
+    inputSchemaName: 'AuditSafeSetModeInputSchema',
+    outputSchemaName: 'AuditSafeSetModeOutputSchema',
+    errorSchemaName: 'CommandErrorSchema',
+    async invokeValidatedMethod(payload: AuditSafeSetModePayload) {
+      setAuditSafeMode(payload.mode);
+      return {
+        message: `Audit-Safe mode set to ${payload.mode}.`,
+        output: {
+          mode: payload.mode
+        }
+      };
+    }
+  },
+  interpret: {
+    inputSchemaName: 'AuditSafeInterpretInputSchema',
+    outputSchemaName: 'AuditSafeInterpretOutputSchema',
+    errorSchemaName: 'CommandErrorSchema',
+    async invokeValidatedMethod(payload: AuditSafeInterpretPayload) {
+      const instruction = sanitizeInput(payload.instruction);
+      await interpretCommand(instruction);
+      return {
+        message: 'Instruction processed. Audit-Safe mode updated if recognized.',
+        output: {
+          instruction,
+          mode: getAuditSafeMode()
+        }
+      };
+    }
+  }
+} as const satisfies Record<string, AuditSafeHandlerActionDefinition>;
+
+export const allowedHandlers = Object.freeze(
+  Object.keys(allowedHandlerActions)
+) as ReadonlyArray<keyof typeof allowedHandlerActions>;
+
+export type AuditSafeHandlerMethod = keyof typeof allowedHandlerActions;
 
 /**
- * Dispatch one whitelisted audit-safe handler method.
+ * Dispatch one whitelisted audit-safe handler action.
  *
  * Purpose:
- * - Route audit-safe CEF commands through explicit method allow-lists and schema-validated handlers.
+ * - Route audit-safe CEF commands through explicit action allow-lists and schema-validated handlers.
  *
  * Inputs/outputs:
- * - Input: handler method name, raw payload, and CEF handler context.
+ * - Input: handler action name, raw payload, and CEF handler context.
  * - Output: structured handler dispatch result.
  *
  * Edge case behavior:
- * - Blocks undeclared methods before validation or side effects and returns a typed error when a method is unreachable.
+ * - Blocks undeclared actions before validation or side effects and returns a typed error when an action is unreachable.
  */
 export async function dispatchAuditSafeHandler(
   method: string,
@@ -58,52 +112,31 @@ export async function dispatchAuditSafeHandler(
     };
   }
 
-  switch (method as AuditSafeHandlerMethod) {
-    case 'set-mode':
-      return dispatchValidatedHandler(rawPayload, context, {
-        inputSchemaName: 'AuditSafeSetModeInputSchema',
-        outputSchemaName: 'AuditSafeSetModeOutputSchema',
-        inputSchema: AuditSafeSetModeInputSchema,
-        outputSchema: AuditSafeSetModeOutputSchema,
-        async invokeValidatedMethod(payload) {
-          setAuditSafeMode(payload.mode);
-          return {
-            message: `Audit-Safe mode set to ${payload.mode}.`,
-            output: {
-              mode: payload.mode
-            }
-          };
-        }
-      });
-    case 'interpret':
-      return dispatchValidatedHandler(rawPayload, context, {
-        inputSchemaName: 'AuditSafeInterpretInputSchema',
-        outputSchemaName: 'AuditSafeInterpretOutputSchema',
-        inputSchema: AuditSafeInterpretInputSchema,
-        outputSchema: AuditSafeInterpretOutputSchema,
-        async invokeValidatedMethod(payload) {
-          const instruction = sanitizeInput(payload.instruction);
-          await interpretCommand(instruction);
-          return {
-            message: 'Instruction processed. Audit-Safe mode updated if recognized.',
-            output: {
-              instruction,
-              mode: getAuditSafeMode()
-            }
-          };
-        }
-      });
-    default:
-      //audit Assumption: whitelist enforcement makes the default branch unreachable; failure risk: a future method addition forgets to wire a dispatcher branch; expected invariant: every allowed handler has an explicit case; handling strategy: fail closed with a typed internal mapping error.
-      return {
-        success: false,
-        message: 'Audit-safe handler method is not wired to a dispatcher branch.',
-        output: null,
-        error: buildCommandError('HANDLER_METHOD_NOT_IMPLEMENTED', 'Audit-safe handler method is not wired to a dispatcher branch.', {
-          method
-        }),
-        fallbackUsed: false,
-        fallbackReason: null
-      };
+  //audit Assumption: whitelist enforcement guarantees an action definition exists; failure risk: an allowed action key is added without a dispatch config and silently bypasses the handler; expected invariant: every allowlisted action resolves to one config entry; handling strategy: fail closed with a typed internal mapping error.
+  if (method !== 'set-mode' && method !== 'interpret') {
+    return {
+      success: false,
+      message: 'Audit-safe handler action is not wired to a dispatcher mapping.',
+      output: null,
+      error: buildCommandError('HANDLER_ACTION_NOT_IMPLEMENTED', 'Audit-safe handler action is not wired to a dispatcher mapping.', {
+        action: method
+      }),
+      fallbackUsed: false,
+      fallbackReason: null
+    };
   }
+
+  if (method === 'set-mode') {
+    return dispatchValidatedHandler<AuditSafeSetModePayload, AuditSafeSetModeOutput>(
+      rawPayload,
+      context,
+      allowedHandlerActions['set-mode']
+    );
+  }
+
+  return dispatchValidatedHandler<AuditSafeInterpretPayload, AuditSafeInterpretOutput>(
+    rawPayload,
+    context,
+    allowedHandlerActions.interpret
+  );
 }

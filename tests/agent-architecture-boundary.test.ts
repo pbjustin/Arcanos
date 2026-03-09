@@ -1,40 +1,51 @@
-import fs from 'fs';
-import path from 'path';
 import { describe, expect, it } from '@jest/globals';
-
-const workspaceRoot = 'C:/pbjustin/Arcanos';
-const protectedFiles = [
-  'src/services/agentCapabilityRegistry.ts',
-  'src/services/agentGoalPlanner.ts',
-  'src/services/agentExecutionService.ts',
-  'src/services/agentExecutionTraceService.ts',
-  'src/routes/api-agent.ts'
-];
-
-const forbiddenPatterns = [
-  /@core\/db/,
-  /\.\.\/core\/db/,
-  /logExecution/,
-  /createCentralizedCompletion/,
-  /generateMockResponse/,
-  /hasValidAPIKey/,
-  /from ['"].*openai\.js['"]/,
-  /\bquery\(/,
-  /\btransaction\(/,
-  /\bfetch\(/,
-  /DatabaseBackedDagJobQueue/
-];
+import {
+  findLayerAccessViolations,
+  scanFileForLayerAccessViolations
+} from '../scripts/check-boundaries.js';
 
 describe('agent boundary architecture', () => {
-  it('prevents planner and agent-layer files from importing infrastructure directly', () => {
-    for (const relativeFilePath of protectedFiles) {
-      const absoluteFilePath = path.join(workspaceRoot, relativeFilePath);
-      const fileContents = fs.readFileSync(absoluteFilePath, 'utf8');
+  it('prevents planner modules from importing infrastructure directly', () => {
+    const plannerViolations = findLayerAccessViolations().filter(violation =>
+      /planner/i.test(violation.filePath)
+    );
 
-      for (const forbiddenPattern of forbiddenPatterns) {
-        //audit Assumption: the planner/capability layer must remain infrastructure-blind to preserve the CEF boundary; failure risk: future edits reintroduce direct DB, queue, or external-API access outside the CEF; expected invariant: protected files contain no forbidden infrastructure tokens; handling strategy: fail the architecture test on the first forbidden match.
-        expect(fileContents).not.toMatch(forbiddenPattern);
-      }
-    }
+    //audit Assumption: planner modules must remain infrastructure-blind so every side effect flows through capability -> CEF; failure risk: direct infra imports bypass validation, tracing, and handler allowlists; expected invariant: no planner file triggers the boundary scanner; handling strategy: fail on any planner violation.
+    expect(plannerViolations).toEqual([]);
+  });
+
+  it('prevents capability modules from importing infrastructure directly', () => {
+    const capabilityViolations = findLayerAccessViolations().filter(violation =>
+      /capability/i.test(violation.filePath)
+    );
+
+    //audit Assumption: capability modules may translate goals to commands but must not touch infrastructure directly; failure risk: capability code bypasses CEF schema validation and durable tracing; expected invariant: no capability file triggers the boundary scanner; handling strategy: fail on any capability violation.
+    expect(capabilityViolations).toEqual([]);
+  });
+
+  it('flags blocked planner imports deterministically', () => {
+    const violations = scanFileForLayerAccessViolations(
+      'src/services/examplePlanner.ts',
+      "import fs from 'fs';\nimport axios from 'axios';\n"
+    );
+
+    expect(violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        filePath: 'src/services/examplePlanner.ts'
+      })
+    ]));
+  });
+
+  it('flags blocked capability imports deterministically', () => {
+    const violations = scanFileForLayerAccessViolations(
+      'src/services/exampleCapability.ts',
+      "import { query } from '@core/db/query.js';\nimport { DatabaseBackedDagJobQueue } from '../src/jobs/jobQueue.js';\n"
+    );
+
+    expect(violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        filePath: 'src/services/exampleCapability.ts'
+      })
+    ]));
   });
 });

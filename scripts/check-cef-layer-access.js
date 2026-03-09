@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const PROTECTED_FILE_PATTERNS = [
   /^src\/services\/.*planner.*\.ts$/i,
-  /^src\/services\/.*capability.*\.ts$/i
+  /^src\/services\/.*capability.*\.ts$/i,
+  /^src\/services\/agentExecutionService\.ts$/i,
+  /^src\/services\/agentExecutionTraceService\.ts$/i,
+  /^src\/routes\/api-agent\.ts$/i
 ];
 
 const BLOCKED_IMPORT_RULES = [
@@ -14,16 +17,28 @@ const BLOCKED_IMPORT_RULES = [
     reason: 'filesystem and process access must stay behind the CEF boundary'
   },
   {
+    pattern: /\bfrom ['"](node:path|path)['"]|\brequire\(['"](node:path|path)['"]\)/,
+    reason: 'path-based storage wiring must stay behind the CEF boundary'
+  },
+  {
     pattern: /\bfrom ['"][^'"]*(?:@core\/db|\/core\/db\/)[^'"]*['"]|\brequire\(['"][^'"]*(?:@core\/db|\/core\/db\/)[^'"]*['"]\)/,
     reason: 'database access must stay behind the CEF boundary'
+  },
+  {
+    pattern: /\bfrom ['"](?:@prisma\/client|knex|sequelize)['"]|\brequire\(['"](?:@prisma\/client|knex|sequelize)['"]\)/,
+    reason: 'ORM and query-builder access must stay behind the CEF boundary'
   },
   {
     pattern: /\bfrom ['"][^'"]*(?:\/infrastructure\/|@services\/sessionStorage\.js|@services\/memory\/storage\.js|@shared\/fileStorage\.js)[^'"]*['"]|\brequire\(['"][^'"]*(?:\/infrastructure\/|@services\/sessionStorage\.js|@services\/memory\/storage\.js|@shared\/fileStorage\.js)[^'"]*['"]\)/,
     reason: 'storage and infrastructure access must stay behind the CEF boundary'
   },
   {
-    pattern: /\bfrom ['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]|\brequire\(['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]\)/,
+    pattern: /\bfrom ['"](?:axios)['"]|\brequire\(['"](?:axios)['"]\)|\bfrom ['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]|\brequire\(['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]\)/,
     reason: 'external API access must stay behind the CEF boundary'
+  },
+  {
+    pattern: /\bfrom ['"][^'"]*(?:\/jobs\/|jobQueue|DatabaseBackedDagJobQueue)[^'"]*['"]|\brequire\(['"][^'"]*(?:\/jobs\/|jobQueue|DatabaseBackedDagJobQueue)[^'"]*['"]\)/,
+    reason: 'queue client access must stay behind the CEF boundary'
   }
 ];
 
@@ -162,7 +177,7 @@ export function findLayerAccessViolations(trackedFiles = listTrackedFiles()) {
   return violations;
 }
 
-function runCliCheck() {
+export function runCliCheck() {
   const violations = findLayerAccessViolations();
 
   if (violations.length === 0) {

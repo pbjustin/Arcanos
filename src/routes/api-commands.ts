@@ -25,6 +25,20 @@ const commandExecutionSchema = {
   }
 };
 
+function resolveCommandResponseStatusCode(result: {
+  success: boolean;
+  error?: {
+    httpStatusCode?: number;
+  } | null;
+}): number {
+  if (result.success) {
+    return 200;
+  }
+
+  const statusCode = result.error?.httpStatusCode;
+  return typeof statusCode === 'number' ? statusCode : 400;
+}
+
 router.get(
   '/',
   (_: Request, res: Response) => {
@@ -66,7 +80,7 @@ router.post(
         traceId: res.locals.auditTraceId,
         source: '/api/commands/execute'
       });
-      return res.status(reroutedResult.success ? 200 : 400).json({
+      return res.status(resolveCommandResponseStatusCode(reroutedResult)).json({
         ...reroutedResult,
         metadata: {
           ...reroutedResult.metadata,
@@ -81,8 +95,8 @@ router.post(
       source: '/api/commands/execute'
     });
 
-    //audit Assumption: success flag maps to HTTP 200/400; risk: incorrect status mapping for partial failures; invariant: failures return non-200; handling: map via ternary.
-    res.status(result.success ? 200 : 400).json(result);
+    //audit Assumption: typed CEF errors carry the correct HTTP class for deterministic API failures; risk: callers receive a misleading success-like 400 for authorization or internal errors; invariant: route status mirrors `error.httpStatusCode` when present; handling: resolve the response status from the structured command result.
+    res.status(resolveCommandResponseStatusCode(result)).json(result);
   })
 );
 

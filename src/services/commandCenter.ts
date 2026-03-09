@@ -2,6 +2,10 @@ import { getAuditSafeMode } from '@services/auditSafeToggle.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { traceCefBoundary } from './cef/boundaryTrace.js';
 import { buildCommandError } from './cef/commandErrors.js';
+import {
+  assertCefSchemaRegistered,
+  listRegisteredCommandSchemaCoverage
+} from './cef/schemaRegistry.js';
 import { dispatchAiHandler } from './cef/handlers/ai.handler.js';
 import { dispatchAuditSafeHandler } from './cef/handlers/auditSafe.handler.js';
 import type {
@@ -24,6 +28,12 @@ export type {
 interface RoutedCommandDefinition extends CommandDefinition {
   description: string;
 }
+
+type HandlerDomainDispatcher = (
+  method: string,
+  payload: Record<string, unknown>,
+  context: CefHandlerContext
+) => Promise<Awaited<ReturnType<typeof dispatchAuditSafeHandler>>>;
 
 const COMMAND_DEFINITIONS: Record<CommandName, RoutedCommandDefinition> = {
   'audit-safe:set-mode': {
@@ -61,6 +71,20 @@ const COMMAND_DEFINITIONS: Record<CommandName, RoutedCommandDefinition> = {
   }
 };
 
+const HANDLER_DOMAIN_DISPATCHERS: Record<string, HandlerDomainDispatcher> = {
+  'audit-safe': dispatchAuditSafeHandler,
+  ai: dispatchAiHandler
+};
+
+function assertCommandDefinitionSchemasRegistered(): void {
+  for (const definition of Object.values(COMMAND_DEFINITIONS)) {
+    //audit Assumption: every public CEF command must declare registered input, output, and error schemas; failure risk: handlers execute without runtime validation coverage; expected invariant: command registration fails when any declared schema is missing; handling strategy: assert each schema name during command-center initialization and access.
+    assertCefSchemaRegistered(definition.inputSchemaName);
+    assertCefSchemaRegistered(definition.outputSchemaName);
+    assertCefSchemaRegistered(definition.errorSchemaName);
+  }
+}
+
 function buildCommandMetadata(
   commandTraceId: string,
   context: CommandExecutionContext = {}
@@ -88,6 +112,20 @@ function buildHandlerContext(
     commandTraceId,
     domain: definition.handlerDomain,
     handlerMethod: definition.handlerMethod
+  };
+}
+
+function buildUnsupportedCommandContext(
+  command: string,
+  commandTraceId: string,
+  context: CommandExecutionContext = {}
+): CefHandlerContext {
+  return {
+    ...context,
+    command: command as CommandName,
+    commandTraceId,
+    domain: 'unknown',
+    handlerMethod: 'unknown'
   };
 }
 
@@ -129,25 +167,24 @@ async function routeCommandToHandler(
   payload: Record<string, unknown>,
   handlerContext: CefHandlerContext
 ) {
-  switch (definition.handlerDomain) {
-    case 'audit-safe':
-      return dispatchAuditSafeHandler(definition.handlerMethod, payload, handlerContext);
-    case 'ai':
-      return dispatchAiHandler(definition.handlerMethod, payload, handlerContext);
-    default:
-      //audit Assumption: every registered command must resolve to a supported handler domain; failure risk: command metadata drifts from the real handler registry and silently bypasses dispatch; expected invariant: all `handlerDomain` values are routed explicitly; handling strategy: fail closed with a typed internal-routing error.
-      return {
-        success: false,
-        message: 'Command handler domain is not wired to the CEF router.',
-        output: null,
-        error: buildCommandError('UNSUPPORTED_HANDLER_DOMAIN', 'Command handler domain is not wired to the CEF router.', {
-          handlerDomain: definition.handlerDomain,
-          command: definition.name
-        }),
-        fallbackUsed: false,
-        fallbackReason: null
-      };
+  const handlerDispatcher = HANDLER_DOMAIN_DISPATCHERS[definition.handlerDomain];
+
+  //audit Assumption: every registered command must resolve to a supported handler domain dispatcher; failure risk: command metadata drifts from the real handler registry and silently bypasses dispatch; expected invariant: all `handlerDomain` values are routed explicitly; handling strategy: fail closed with a typed internal-routing error.
+  if (!handlerDispatcher) {
+    return {
+      success: false,
+      message: 'Command handler domain is not wired to the CEF router.',
+      output: null,
+      error: buildCommandError('UNSUPPORTED_HANDLER_DOMAIN', 'Command handler domain is not wired to the CEF router.', {
+        handlerDomain: definition.handlerDomain,
+        command: definition.name
+      }),
+      fallbackUsed: false,
+      fallbackReason: null
+    };
   }
+
+  return handlerDispatcher(definition.handlerMethod, payload, handlerContext);
 }
 
 /**
@@ -161,29 +198,33 @@ async function routeCommandToHandler(
  * - Output: structured success or failure result with command metadata.
  *
  * Edge case behavior:
- * - Unsupported commands, blocked handler methods, invalid payloads, invalid outputs, and fallback paths all remain typed and observable.
+ * - Unsupported commands, blocked handler actions, invalid payloads, invalid outputs, retries, and fallback paths all remain typed and observable.
  */
 export async function executeCommand(
   command: CommandName,
   payload: Record<string, unknown> = {},
   context: CommandExecutionContext = {}
 ): Promise<CommandExecutionResult> {
+  assertCommandDefinitionSchemasRegistered();
+
   const commandTraceId = generateRequestId('cef');
   const definition = COMMAND_DEFINITIONS[command];
+  const dispatchStartedAtMs = Date.now();
 
   //audit Assumption: planner/capability callers may only target declared CEF commands; failure risk: a fabricated command name reaches the handler layer and bypasses routing guarantees; expected invariant: every dispatched command exists in `COMMAND_DEFINITIONS`; handling strategy: reject unknown commands before handler routing and trace the rejection.
   if (!definition) {
     const unsupportedError = buildCommandError('UNSUPPORTED_COMMAND', 'Unsupported command.', {
       payloadKeys: Object.keys(payload ?? {})
     });
-    await traceCefBoundary('warn', 'cef.command.rejected', {
-      command,
-      commandTraceId,
-      domain: 'unknown',
-      handlerMethod: 'unknown',
-      ...context
-    }, {
-      reason: unsupportedError.code
+    await traceCefBoundary('warn', 'cef.dispatch.rejected', buildUnsupportedCommandContext(command, commandTraceId, context), {
+      status: 'rejected',
+      startedAtMs: dispatchStartedAtMs,
+      errorCode: unsupportedError.code,
+      fallbackUsed: false,
+      retryCount: 0,
+      metadata: {
+        payloadKeys: Object.keys(payload ?? {})
+      }
     });
     return {
       success: false,
@@ -196,9 +237,15 @@ export async function executeCommand(
   }
 
   const handlerContext = buildHandlerContext(definition, commandTraceId, context);
-  await traceCefBoundary('info', 'cef.command.started', handlerContext, {
-    payloadKeys: Object.keys(payload ?? {}),
-    handlerDomain: definition.handlerDomain
+  await traceCefBoundary('info', 'cef.dispatch.start', handlerContext, {
+    status: 'start',
+    startedAtMs: dispatchStartedAtMs,
+    fallbackUsed: false,
+    retryCount: 0,
+    metadata: {
+      payloadKeys: Object.keys(payload ?? {}),
+      handlerDomain: definition.handlerDomain
+    }
   });
 
   const handlerResult = await routeCommandToHandler(definition, payload, handlerContext);
@@ -206,18 +253,29 @@ export async function executeCommand(
   //audit Assumption: command-level success should reflect the normalized handler result instead of duplicating handler internals; failure risk: command and handler traces disagree on success/failure; expected invariant: command completion mirrors handler completion exactly; handling strategy: emit command completion or failure after handler dispatch resolves.
   if (!handlerResult.success || !handlerResult.output) {
     const error = handlerResult.error ?? buildCommandError('COMMAND_HANDLER_FAILED', handlerResult.message);
-    await traceCefBoundary('warn', 'cef.command.failed', handlerContext, {
-      error: error.message,
+    await traceCefBoundary('warn', 'cef.dispatch.error', handlerContext, {
+      status: 'error',
+      startedAtMs: dispatchStartedAtMs,
+      errorCode: error.code,
       fallbackUsed: handlerResult.fallbackUsed,
-      fallbackReason: handlerResult.fallbackReason
+      retryCount: 0,
+      metadata: {
+        error: error.message,
+        fallbackReason: handlerResult.fallbackReason
+      }
     });
     return buildFailureResult(definition, error, commandTraceId, context);
   }
 
-  await traceCefBoundary('info', 'cef.command.completed', handlerContext, {
+  await traceCefBoundary('info', 'cef.dispatch.success', handlerContext, {
+    status: 'success',
+    startedAtMs: dispatchStartedAtMs,
     fallbackUsed: handlerResult.fallbackUsed,
-    fallbackReason: handlerResult.fallbackReason,
-    outputKeys: Object.keys(handlerResult.output)
+    retryCount: 0,
+    metadata: {
+      fallbackReason: handlerResult.fallbackReason,
+      outputKeys: Object.keys(handlerResult.output)
+    }
   });
 
   return buildSuccessResult(
@@ -243,6 +301,8 @@ export async function executeCommand(
  * - Returns the static registry directly; no fallback commands are invented at runtime.
  */
 export function listAvailableCommands(): CommandDefinition[] {
+  assertCommandDefinitionSchemasRegistered();
+
   return Object.values(COMMAND_DEFINITIONS)
     .sort((left, right) => left.name.localeCompare(right.name))
     .map(definition => ({
@@ -250,7 +310,30 @@ export function listAvailableCommands(): CommandDefinition[] {
     }));
 }
 
+/**
+ * List per-command schema coverage for the registered CEF surface.
+ *
+ * Purpose:
+ * - Expose deterministic schema coverage for tests, diagnostics, and final verification output.
+ *
+ * Inputs/outputs:
+ * - Input: none.
+ * - Output: command-to-schema coverage map.
+ *
+ * Edge case behavior:
+ * - Returns only registered command coverage and throws if command definitions reference missing schemas.
+ */
+export function listCommandSchemaCoverage(): Record<string, {
+  inputSchemaName: string;
+  outputSchemaName: string;
+  errorSchemaName: string;
+}> {
+  assertCommandDefinitionSchemasRegistered();
+  return listRegisteredCommandSchemaCoverage();
+}
+
 export default {
   executeCommand,
-  listAvailableCommands
+  listAvailableCommands,
+  listCommandSchemaCoverage
 };
