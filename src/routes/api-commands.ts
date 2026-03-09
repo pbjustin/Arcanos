@@ -62,7 +62,10 @@ router.post(
     //audit Assumption: rerouted command dispatch should avoid sensitive command path; risk: conflicting execution; invariant: safe prompt command used; handling: force ai:prompt.
     if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
       const reroutePrompt = resolveReroutePrompt(payload, req.body);
-      const reroutedResult = await executeCommand('ai:prompt', { prompt: reroutePrompt });
+      const reroutedResult = await executeCommand('ai:prompt', { prompt: reroutePrompt }, {
+        traceId: res.locals.auditTraceId,
+        source: '/api/commands/execute'
+      });
       return res.status(reroutedResult.success ? 200 : 400).json({
         ...reroutedResult,
         metadata: {
@@ -73,7 +76,10 @@ router.post(
       });
     }
 
-    const result = await executeCommand(command, payload);
+    const result = await executeCommand(command, payload, {
+      traceId: res.locals.auditTraceId,
+      source: '/api/commands/execute'
+    });
 
     //audit Assumption: success flag maps to HTTP 200/400; risk: incorrect status mapping for partial failures; invariant: failures return non-200; handling: map via ternary.
     res.status(result.success ? 200 : 400).json(result);

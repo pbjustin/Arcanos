@@ -5,6 +5,7 @@
 import type { Application } from 'express';
 
 const CANONICAL_PUBLIC_PREFIXES = [
+  '/api/agent',
   '/api/health',
   '/api/diagnostics',
   '/api/sessions'
