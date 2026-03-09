@@ -1,7 +1,18 @@
+//audit These directories are ephemeral workspace mirrors and deploy snapshots.
+//audit Invariant: Jest should only index the active workspace to avoid duplicate module names and duplicate test execution.
+const ignoredWorkspaceMirrorPatterns = [
+  '<rootDir>/\\.codex-pr-.*',
+  '<rootDir>/\\.deploy-pr-.*',
+  '<rootDir>/tmp/phase7-ref/.*'
+];
+
 export default {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.[tj]s'],
+  testPathIgnorePatterns: ignoredWorkspaceMirrorPatterns,
+  modulePathIgnorePatterns: ignoredWorkspaceMirrorPatterns,
+  watchPathIgnorePatterns: ignoredWorkspaceMirrorPatterns,
   extensionsToTreatAsEsm: ['.ts'],
   transform: {
     '^.+\\.[tj]s$': ['ts-jest', {
