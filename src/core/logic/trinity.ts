@@ -22,6 +22,7 @@ import {
   getAuditSafeConfig,
   applyAuditSafeConstraints,
   logAITaskLineage,
+  createAuditSummary,
   validateAuditSafeOutput,
   type AuditLogEntry
 } from "@services/auditSafe.js";
@@ -59,8 +60,12 @@ import { runSelfImproveCycle } from '@services/selfImprove/controller.js';
 import { recordTrinityJudgedFeedback } from './trinityJudgedFeedback.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
+import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
+const EXACT_LITERAL_DISPATCH_MODULE = 'exact-literal-dispatcher';
+const EXACT_LITERAL_DISPATCH_STAGE = 'EXACT-LITERAL-DISPATCH';
+const EXACT_LITERAL_AUDIT_FLAG = 'EXACT_LITERAL_SHORTCUT_ACTIVE';
 
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
@@ -211,6 +216,98 @@ function buildTrinityResult(
   return result;
 }
 
+function buildDeterministicAuditLogEntry(
+  requestId: string,
+  prompt: string,
+  finalText: string,
+  auditConfig: ReturnType<typeof getAuditSafeConfig>,
+  memoryContext: ReturnType<typeof getMemoryContext>,
+  modelUsed: string,
+  processedSafely: boolean,
+  auditFlags: string[]
+): AuditLogEntry {
+  return {
+    timestamp: new Date().toISOString(),
+    requestId,
+    endpoint: getTrinityMessages().audit_endpoint_name,
+    auditSafeMode: auditConfig.auditSafeMode,
+    overrideUsed: !!auditConfig.explicitOverride,
+    overrideReason: auditConfig.overrideReason,
+    inputSummary: createAuditSummary(prompt),
+    outputSummary: createAuditSummary(finalText),
+    modelUsed,
+    gpt5Delegated: false,
+    memoryAccessed: memoryContext.accessLog,
+    processedSafely,
+    auditFlags
+  };
+}
+
+function buildExactLiteralTrinityResult(params: {
+  literal: string;
+  requestId: string;
+  created: number;
+  routingStages: string[];
+  auditConfig: ReturnType<typeof getAuditSafeConfig>;
+  auditFlags: string[];
+  finalProcessedSafely: boolean;
+  memoryContext: ReturnType<typeof getMemoryContext>;
+  memoryScoreSummary: { maxScore: number; averageScore: number };
+  tier: Tier;
+  reasoningConfig?: { effort: 'high' };
+  budgetLimit: number;
+  internalMode: boolean;
+  clarificationAllowed: boolean;
+}): TrinityResult {
+  return {
+    result: params.literal,
+    module: EXACT_LITERAL_DISPATCH_MODULE,
+    activeModel: EXACT_LITERAL_DISPATCH_MODULE,
+    fallbackFlag: false,
+    routingStages: params.routingStages,
+    gpt5Used: false,
+    dryRun: false,
+    fallbackSummary: {
+      intakeFallbackUsed: false,
+      gpt5FallbackUsed: false,
+      finalFallbackUsed: false,
+      fallbackReasons: []
+    },
+    auditSafe: {
+      mode: params.auditConfig.auditSafeMode,
+      overrideUsed: !!params.auditConfig.explicitOverride,
+      overrideReason: params.auditConfig.overrideReason,
+      auditFlags: params.auditFlags,
+      processedSafely: params.finalProcessedSafely
+    },
+    memoryContext: {
+      entriesAccessed: params.memoryContext.relevantEntries.length,
+      contextSummary: params.memoryContext.contextSummary,
+      memoryEnhanced: params.memoryContext.relevantEntries.length > 0,
+      maxRelevanceScore: params.memoryScoreSummary.maxScore,
+      averageRelevanceScore: params.memoryScoreSummary.averageScore
+    },
+    taskLineage: {
+      requestId: params.requestId,
+      logged: true
+    },
+    meta: {
+      tokens: undefined,
+      id: params.requestId,
+      created: params.created
+    },
+    tierInfo: {
+      tier: params.tier,
+      reasoningEffort: params.reasoningConfig?.effort,
+      reflectionApplied: false,
+      invocationsUsed: 0,
+      invocationBudget: params.budgetLimit,
+      internalMode: params.internalMode,
+      clarificationAllowed: params.clarificationAllowed
+    }
+  };
+}
+
 /**
  * Universal Trinity pipeline - Core AI processing workflow for ARCANOS
  *
@@ -269,6 +366,72 @@ export async function runThroughBrain(
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason);
     return buildDryRunTrinityResult(requestId, dryRunPreview, memoryContext, auditConfig, auditFlags, memoryScoreSummary, gpt5Used, tier, reasoningConfig, budget.used(), budget.limit(), internalMode, clarificationAllowed);
+  }
+
+  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(prompt);
+  //audit Assumption: explicit exact-literal prompts should bypass generative model stages to preserve strict caller-visible output contracts; failure risk: queued and direct `/ask` responses add explanatory text or formatting around required literals; expected invariant: recognized exact-literal prompts return the extracted literal verbatim and skip model invocation; handling strategy: short-circuit before concurrency, OpenAI calls, and translation layers.
+  if (exactLiteralShortcut) {
+    const createdAt = Date.now();
+    const { auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
+    routingStages.push(EXACT_LITERAL_DISPATCH_STAGE);
+    auditFlags.push(EXACT_LITERAL_AUDIT_FLAG);
+
+    const finalProcessedSafely = validateAuditSafeOutput(exactLiteralShortcut.literal, auditConfig);
+    if (!finalProcessedSafely) {
+      auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
+    }
+
+    const auditLogEntry = buildDeterministicAuditLogEntry(
+      requestId,
+      prompt,
+      exactLiteralShortcut.literal,
+      auditConfig,
+      memoryContext,
+      EXACT_LITERAL_DISPATCH_MODULE,
+      finalProcessedSafely,
+      auditFlags
+    );
+    logAITaskLineage(auditLogEntry);
+
+    const latencyMs = createdAt - start;
+    recordLatency(latencyMs);
+    logTrinityTelemetry({
+      tier,
+      totalTokens: 0,
+      downgradeDetected: false,
+      latencyMs,
+      reflectionApplied: false,
+      requestId
+    });
+    recordRun(!!internalContext?.escalated);
+
+    const shortcutResult = buildExactLiteralTrinityResult({
+      literal: exactLiteralShortcut.literal,
+      requestId,
+      created: createdAt,
+      routingStages,
+      auditConfig,
+      auditFlags,
+      finalProcessedSafely,
+      memoryContext,
+      memoryScoreSummary,
+      tier,
+      reasoningConfig,
+      budgetLimit: budget.limit(),
+      internalMode,
+      clarificationAllowed
+    });
+    shortcutResult.judgedFeedback = await recordTrinityJudgedFeedback({
+      requestId,
+      prompt,
+      response: exactLiteralShortcut.literal,
+      tier,
+      sessionId: effectiveMemorySessionId,
+      sourceEndpoint: options.sourceEndpoint,
+      internalMode,
+      remainingBudgetMs: getSafeRemainingMs(runtimeBudget)
+    });
+    return shortcutResult;
   }
 
   // --- Concurrency governor + watchdog ---

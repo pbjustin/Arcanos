@@ -46,9 +46,15 @@ import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutRespon
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import {
+  waitForQueuedAskJobCompletion,
+  resolveAsyncAskWaitForResultMs,
+  resolveAsyncAskPollIntervalMs
+} from '@services/queuedAskCompletionService.js';
+import {
   tryExecutePromptRouteShortcut,
   type PromptRouteShortcutResult
 } from '@services/promptRouteShortcuts.js';
+import { handleReplayRequest } from './replay.js';
 
 const router = express.Router();
 
@@ -347,6 +353,47 @@ function buildAskPromptShortcutResponse(params: {
   };
 }
 
+function readRequestedAsyncAskWaitMs(body: AskRequest): number | undefined {
+  return typeof body.waitForResultMs === 'number'
+    ? body.waitForResultMs
+    : undefined;
+}
+
+/**
+ * Convert a completed async queue job payload into the standard `/ask` response contract.
+ * Purpose: keep queued and synchronous ask responses shape-compatible when the worker finishes inside the wait window.
+ * Inputs/outputs: accepts the raw terminal queue output and returns the route response payload or `null`.
+ * Edge case behavior: non-object or null outputs are treated as invalid so callers do not receive ambiguous success payloads.
+ */
+function normalizeCompletedAsyncAskResponse(output: unknown): AskResponse | null {
+  //audit Assumption: successful queued `/ask` jobs persist the same structured output shape returned by sync Trinity execution; failure risk: malformed job output gets returned as a false-success payload; expected invariant: completed async output is a non-null object; handling strategy: fail closed on invalid shapes.
+  if (!output || typeof output !== 'object' || Array.isArray(output)) {
+    return null;
+  }
+
+  return output as AskResponse;
+}
+
+/**
+ * Build a stable internal-error payload for terminal async `/ask` job failures.
+ * Purpose: surface queue failures immediately when the worker fails inside the bounded wait window.
+ * Inputs/outputs: accepts the queued job id plus error context and returns a JSON-safe error payload.
+ * Edge case behavior: missing error messages fall back to a deterministic generic failure string.
+ */
+function buildAsyncAskFailurePayload(jobId: string, errorMessage?: string | null): {
+  error: string;
+  message: string;
+  jobId: string;
+  poll: string;
+} {
+  return {
+    error: 'ASYNC_ASK_JOB_FAILED',
+    message: errorMessage?.trim() || 'Async ask job failed.',
+    jobId,
+    poll: `/jobs/${jobId}`
+  };
+}
+
 /**
  * Shared handler for both ask and brain endpoints
  * Handles AI request processing with standardized error handling and validation
@@ -473,6 +520,7 @@ export const handleAIRequest = async (
 
   //audit Assumption: async intent must be captured from the raw payload before schema normalization; failure risk: `mode:"async"` / `async:true` gets stripped and request runs synchronously; expected invariant: asyncRequested reflects caller intent; handling strategy: read once from original body.
   const asyncRequested = wantsAsync(req.body);
+  const requestedAsyncAskWaitMs = readRequestedAsyncAskWaitMs(req.body);
 
   const lenientChatValidation = validateLenientChatRequest(req.body);
   if (!lenientChatValidation.ok) {
@@ -610,6 +658,45 @@ export const handleAIRequest = async (
       const workerId = process.env.WORKER_ID || 'api';
       const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
       const job = await createJob(workerId, 'ask', queuedAskJobInput, plannedJob);
+      const waitedJob = await waitForQueuedAskJobCompletion(
+        job.id,
+        {
+          waitForResultMs: resolveAsyncAskWaitForResultMs(requestedAsyncAskWaitMs),
+          pollIntervalMs: resolveAsyncAskPollIntervalMs(undefined)
+        }
+      );
+
+      //audit Assumption: most user-visible frustration comes from fast jobs still requiring a second poll hop; failure risk: clients perceive working queue jobs as hung because they only receive a job id; expected invariant: terminal jobs inside the bounded wait window return immediately; handling strategy: branch on the waited queue state before falling back to HTTP 202.
+      if (waitedJob.state === 'completed') {
+        const completedResponse = normalizeCompletedAsyncAskResponse(waitedJob.job.output);
+
+        if (!completedResponse) {
+          return sendInternalErrorPayload(res, {
+            error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
+            message: 'Async ask job completed without a structured output payload.',
+            jobId: job.id,
+            poll: `/jobs/${job.id}`
+          });
+        }
+
+        return res.json(completedResponse);
+      }
+
+      if (waitedJob.state === 'failed') {
+        return sendInternalErrorPayload(
+          res,
+          buildAsyncAskFailurePayload(job.id, waitedJob.job.error_message)
+        );
+      }
+
+      if (waitedJob.state === 'missing') {
+        return sendInternalErrorPayload(res, {
+          error: 'ASYNC_ASK_JOB_MISSING',
+          message: 'Async ask job disappeared before completion.',
+          jobId: job.id,
+          poll: `/jobs/${job.id}`
+        });
+      }
 
       return res.status(202).json(buildQueuedAskPendingResponse(job.id));
     }
@@ -634,6 +721,10 @@ export const handleAIRequest = async (
 
 // Primary ask endpoint routed through the Trinity brain.
 //audit Assumption: /ask should remain publicly callable; failure risk: broader anonymous traffic; expected invariant: rate limits and schema validation remain active; handling strategy: keep askRateLimit + askValidationMiddleware.
+router.post('/replay', askRateLimit, asyncHandler(handleReplayRequest));
+router.get('/replay', askRateLimit, asyncHandler(handleReplayRequest));
+router.post('/ask/replay', askRateLimit, asyncHandler(handleReplayRequest));
+router.get('/ask/replay', askRateLimit, asyncHandler(handleReplayRequest));
 router.post('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 router.get('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 

@@ -17,6 +17,7 @@ import { routeGptRequest } from "./_core/gptDispatch.js";
 import { hasValidAPIKey } from '@services/openai.js';
 import { createMockAIResponse } from '@transport/http/requestHandler.js';
 import { extractPromptFromBody, normalizePromptWithContext } from '@shared/promptUtils.js';
+import { handleReplayRequest } from './ask/replay.js';
 
 const router = express.Router();
 
@@ -130,6 +131,9 @@ function buildLegacyClientContext(
     }
   };
 }
+
+router.get('/api/ask/replay', asyncHandler(handleReplayRequest));
+router.post('/api/ask/replay', asyncHandler(handleReplayRequest));
 
 router.post(
   '/api/ask',

@@ -53,4 +53,26 @@ describe('Trinity pipeline', () => {
     expect(result.routingStages).toEqual(result.dryRunPreview!.routingPlan);
     expect(typeof result.gpt5Model).toBe('string');
   });
+
+  it('short-circuits explicit exact-literal prompts before model execution', async () => {
+    const client = {} as unknown as OpenAI;
+    const result = await runThroughBrain(
+      client,
+      'Write exactly this token and nothing else: BLUE-RIVER-1773037986080',
+      'session-literal-1',
+      undefined,
+      {},
+      createRuntimeBudget()
+    );
+
+    expect(result.result).toBe('BLUE-RIVER-1773037986080');
+    expect(result.module).toBe('exact-literal-dispatcher');
+    expect(result.activeModel).toBe('exact-literal-dispatcher');
+    expect(result.gpt5Used).toBe(false);
+    expect(result.dryRun).toBe(false);
+    expect(result.routingStages).toEqual(['EXACT-LITERAL-DISPATCH']);
+    expect(result.fallbackFlag).toBe(false);
+    expect(result.taskLineage.logged).toBe(true);
+    expect(result.tierInfo?.invocationsUsed).toBe(0);
+  });
 });
