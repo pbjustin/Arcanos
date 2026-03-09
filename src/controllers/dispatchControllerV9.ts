@@ -14,7 +14,7 @@ export async function dispatchControllerV9(
 
   const brain = getActiveBrain();
 
-  const response = await brain.execute({
+  const response = await brain.runPrompt({
     prompt,
     sessionId,
     lineageId

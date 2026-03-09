@@ -21,7 +21,20 @@ export interface BrainResponse {
 }
 
 export interface Brain {
-  execute(payload: BrainPayload): Promise<BrainResponse>;
+  /**
+   * Run one prompt through the concrete brain implementation.
+   *
+   * Purpose:
+   * - Provide the single domain-specific execution entrypoint for brain adapters.
+   *
+   * Inputs/outputs:
+   * - Input: normalized prompt payload with session and lineage identifiers.
+   * - Output: structured brain response.
+   *
+   * Edge case behavior:
+   * - Implementations are expected to throw when the underlying model call cannot be completed.
+   */
+  runPrompt(payload: BrainPayload): Promise<BrainResponse>;
 }
 
 const registry: Record<string, Brain> = {};

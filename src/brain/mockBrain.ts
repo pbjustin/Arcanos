@@ -6,7 +6,7 @@
 import type { Brain, BrainPayload, BrainResponse } from "./brainRegistry.js";
 
 export class MockBrain implements Brain {
-  async execute(_payload: BrainPayload): Promise<BrainResponse> {
+  async runPrompt(_payload: BrainPayload): Promise<BrainResponse> {
     return {
       module: "MockBrain",
       activeModel: "MOCK",
