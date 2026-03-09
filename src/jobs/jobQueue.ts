@@ -10,6 +10,11 @@ import {
   buildDagQueueJobRecord,
   type DagQueueJobRecord
 } from './jobSchema.js';
+import {
+  createDagArtifactStore,
+  persistDagDependencyArtifactsForQueue,
+  type DagArtifactStore
+} from '../dag/artifactStore.js';
 import { sleep } from '@shared/sleep.js';
 import {
   DEFAULT_DAG_NODE_TIMEOUT_MS,
@@ -78,9 +83,14 @@ function getDagExecutionElapsedMs(record: DagQueueJobRecord, nowMs: number): num
  */
 export class DatabaseBackedDagJobQueue implements DagJobQueue {
   private readonly defaultWorkerId: string;
+  private readonly artifactStore: DagArtifactStore;
 
-  constructor(defaultWorkerId: string = 'dag-orchestrator') {
+  constructor(
+    defaultWorkerId: string = 'dag-orchestrator',
+    artifactStore: DagArtifactStore = createDagArtifactStore()
+  ) {
     this.defaultWorkerId = defaultWorkerId;
+    this.artifactStore = artifactStore;
   }
 
   /**
@@ -97,11 +107,16 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
    * - Uses the orchestrator worker identifier when the caller does not provide a specific worker id.
    */
   async enqueueDagNodeJob(request: EnqueueDagNodeJobRequest): Promise<DagQueueJobRecord> {
+    const queueSafeDependencyResults = await persistDagDependencyArtifactsForQueue({
+      artifactStore: this.artifactStore,
+      runId: request.dagId,
+      dependencyResults: request.dependencyResults ?? {}
+    });
     const jobInput = buildDagNodeJobInput({
       dagId: request.dagId,
       node: request.node,
       payload: request.payload,
-      dependencyResults: request.dependencyResults,
+      dependencyResults: queueSafeDependencyResults,
       sharedState: request.sharedState,
       depth: request.depth,
       attempt: request.attempt,

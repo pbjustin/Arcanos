@@ -6,6 +6,11 @@ import {
   type DAGResult,
   type DAGNodeExecutionContext
 } from '../dag/dagNode.js';
+import {
+  createDagArtifactStore,
+  restoreDagDependencyArtifactsForExecution,
+  type DagArtifactStore
+} from '../dag/artifactStore.js';
 import type { DagNodeJobInput } from '../jobs/jobSchema.js';
 import { dagLogger, type DagLogger } from '../utils/logger.js';
 import { dagMetrics, type DagMetricsRecorder } from '../utils/metrics.js';
@@ -14,6 +19,7 @@ export interface DagTaskRunnerDependencies {
   runPrompt(prompt: string, options: DagAgentPromptOptions): Promise<unknown>;
   logger?: DagLogger;
   metrics?: DagMetricsRecorder;
+  artifactStore?: DagArtifactStore;
 }
 
 function extractTokenUsageFromPromptOutput(promptOutput: unknown): number | undefined {
@@ -47,6 +53,45 @@ function extractTokenUsageFromPromptOutput(promptOutput: unknown): number | unde
   return undefined;
 }
 
+async function attachDagResultArtifactReference(
+  result: DAGResult,
+  params: {
+    artifactStore: DagArtifactStore;
+    dagId: string;
+    nodeId: string;
+    attempt: number;
+    artifactKind: 'result' | 'failure';
+    logger: DagLogger;
+  }
+): Promise<DAGResult> {
+  try {
+    const artifactRef = await params.artifactStore.writeArtifact({
+      runId: params.dagId,
+      nodeId: params.nodeId,
+      attempt: params.attempt,
+      artifactKind: params.artifactKind,
+      payload: result.output
+    });
+
+    return {
+      ...result,
+      artifactRef
+    };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    //audit Assumption: artifact persistence improves queue compactness and recovery but should not erase the real DAG result on storage failure; failure risk: a transient filesystem issue turns successful node work into a hard failure; expected invariant: callers still receive the original DAG result; handling strategy: log the artifact write failure and return the inline result unchanged.
+    params.logger.warn('DAG node artifact persistence failed', {
+      dagId: params.dagId,
+      nodeId: params.nodeId,
+      artifactKind: params.artifactKind,
+      errorMessage
+    });
+
+    return result;
+  }
+}
+
 /**
  * Execute one queued DAG node by routing it through the registered agent handlers.
  *
@@ -66,23 +111,36 @@ export async function runDagNodeJob(
 ): Promise<DAGResult> {
   const activeLogger = dependencies.logger ?? dagLogger;
   const activeMetrics = dependencies.metrics ?? dagMetrics;
+  const artifactStore = dependencies.artifactStore ?? createDagArtifactStore();
   const startedAt = Date.now();
   const agentHandler = dagAgentManager.getAgent(jobInput.node.executionKey);
 
   //audit Assumption: every queued node must resolve to a registered execution handler; failure risk: worker burns queue capacity on non-runnable nodes; expected invariant: executionKey lookup succeeds for all scheduled nodes; handling strategy: return a structured failed result instead of throwing.
   if (!agentHandler) {
     activeMetrics.incrementCounter('node_lookup_failed');
-    return createDagFailureResult(
+    return attachDagResultArtifactReference(createDagFailureResult(
       jobInput.node.id,
       `No DAG agent handler registered for executionKey="${jobInput.node.executionKey}".`
-    );
+    ), {
+      artifactStore,
+      dagId: jobInput.dagId,
+      nodeId: jobInput.node.id,
+      attempt: jobInput.attempt + 1,
+      artifactKind: 'failure',
+      logger: activeLogger
+    });
   }
+
+  const dependencyResults = await restoreDagDependencyArtifactsForExecution({
+    artifactStore,
+    dependencyResults: jobInput.dependencyResults
+  });
 
   const executionContext: DAGNodeExecutionContext = {
     dagId: jobInput.dagId,
     node: jobInput.node,
     payload: jobInput.payload,
-    dependencyResults: jobInput.dependencyResults,
+    dependencyResults,
     sharedState: jobInput.sharedState,
     depth: jobInput.depth,
     attempt: jobInput.attempt
@@ -110,9 +168,16 @@ export async function runDagNodeJob(
       activeMetrics.recordGauge('last_node_token_usage', tokenUsage);
     }
 
-    return createDagSuccessResult(jobInput.node.id, promptOutput, {
+    return attachDagResultArtifactReference(createDagSuccessResult(jobInput.node.id, promptOutput, {
       durationMs,
       tokenUsage
+    }), {
+      artifactStore,
+      dagId: jobInput.dagId,
+      nodeId: jobInput.node.id,
+      attempt: jobInput.attempt + 1,
+      artifactKind: 'result',
+      logger: activeLogger
     });
   } catch (error: unknown) {
     const durationMs = Date.now() - startedAt;
@@ -127,9 +192,16 @@ export async function runDagNodeJob(
       errorMessage
     });
 
-    return createDagFailureResult(jobInput.node.id, errorMessage, {
+    return attachDagResultArtifactReference(createDagFailureResult(jobInput.node.id, errorMessage, {
       errorMessage,
       durationMs
+    }), {
+      artifactStore,
+      dagId: jobInput.dagId,
+      nodeId: jobInput.node.id,
+      attempt: jobInput.attempt + 1,
+      artifactKind: 'failure',
+      logger: activeLogger
     });
   }
 }

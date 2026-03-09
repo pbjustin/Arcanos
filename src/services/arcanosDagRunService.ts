@@ -10,6 +10,10 @@ import {
   type DagTemplateDefinition
 } from '../dag/templates.js';
 import { getDagWorkerPoolSettings, type DagWorkerPoolSettings } from '../workers/workerPool.js';
+import {
+  TrinityOrchestrator,
+  type TrinityRunRecord
+} from '../workers/orchestrator.js';
 import type {
   CreateDagRunRequest,
   DagEvent,
@@ -64,6 +68,7 @@ interface StoredDagRunRecord {
   limits: ExecutionLimits;
   features: FeatureFlags;
   loopDetected: boolean;
+  orchestratorState: TrinityRunRecord;
   templateDefinition: DagTemplateDefinition;
   abortController: AbortController;
   executionPromise?: Promise<void>;
@@ -88,6 +93,7 @@ interface PersistedDagRunSnapshot {
   limits: ExecutionLimits;
   features: FeatureFlags;
   loopDetected: boolean;
+  orchestratorState: TrinityRunRecord;
 }
 
 const TRINITY_PIPELINE_NAME = 'trinity' as const;
@@ -327,7 +333,73 @@ function cloneStoredNodeDetail(node: StoredNodeDetail): StoredNodeDetail {
   return cloneSerializable(node);
 }
 
+function cloneTrinityRunRecord(record: TrinityRunRecord): TrinityRunRecord {
+  return cloneSerializable(record);
+}
+
+function normalizeTrinityRunStatus(
+  status: DagRunExecutionState
+): TrinityRunRecord['status'] {
+  switch (status) {
+    case 'complete':
+      return 'completed';
+    case 'failed':
+      return 'failed';
+    case 'cancelled':
+      return 'cancelled';
+    case 'queued':
+    case 'running':
+    default:
+      return 'running';
+  }
+}
+
+function createFallbackTrinityRunRecord(
+  snapshot: {
+    runId: string;
+    status: DagRunExecutionState;
+    updatedAt: string;
+    nodes: StoredNodeDetail[];
+  }
+): TrinityRunRecord {
+  const artifactReferences = Array.from(
+    new Set(
+      snapshot.nodes
+        .map(node => node.artifactRef)
+        .filter(
+          (artifactReference): artifactReference is string =>
+            typeof artifactReference === 'string' && artifactReference.trim().length > 0
+        )
+    )
+  );
+
+  return {
+    runId: snapshot.runId,
+    status: normalizeTrinityRunStatus(snapshot.status),
+    activeNodes: snapshot.nodes
+      .filter(node => node.status === 'running')
+      .map(node => node.nodeId),
+    completedNodes: snapshot.nodes
+      .filter(node => node.status === 'complete')
+      .map(node => node.nodeId),
+    failedNodes: snapshot.nodes
+      .filter(node => node.status === 'failed')
+      .map(node => node.nodeId),
+    artifacts: artifactReferences,
+    updatedAtIso: snapshot.updatedAt
+  };
+}
+
 function createPersistedDagRunSnapshot(record: StoredDagRunRecord): PersistedDagRunSnapshot {
+  const orchestratorState =
+    record.orchestratorState ??
+    createFallbackTrinityRunRecord({
+      runId: record.runId,
+      status: record.status,
+      updatedAt: record.updatedAt,
+      nodes: Array.from(record.nodesById.values())
+    });
+
   return {
     runId: record.runId,
     sessionId: record.sessionId,
@@ -337,7 +409,7 @@ function createPersistedDagRunSnapshot(record: StoredDagRunRecord): PersistedDag
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
-    summary: cloneDagRunSummary(record.summary),
+    summary: cloneDagRunSummary(createApiSummary(record)),
     nodes: Array.from(record.nodesById.values()).map(cloneStoredNodeDetail),
     events: cloneSerializable(record.events),
     errors: cloneSerializable(record.errors),
@@ -346,7 +418,8 @@ function createPersistedDagRunSnapshot(record: StoredDagRunRecord): PersistedDag
     verification: cloneSerializable(record.verification),
     limits: cloneSerializable(record.limits),
     features: cloneSerializable(record.features),
-    loopDetected: record.loopDetected
+    loopDetected: record.loopDetected,
+    orchestratorState: cloneTrinityRunRecord(orchestratorState)
   };
 }
 
@@ -370,6 +443,7 @@ function normalizePersistedDagRunSnapshot(
   const verification = snapshot.verification as DagVerification | undefined;
   const limits = snapshot.limits as ExecutionLimits | undefined;
   const features = snapshot.features as FeatureFlags | undefined;
+  const orchestratorState = snapshot.orchestratorState as TrinityRunRecord | undefined;
 
   //audit Assumption: persisted run snapshots must include the core DAG contract fields; failure risk: malformed DB state causes route crashes or false not-found responses; expected invariant: required identifiers and snapshot arrays are present; handling strategy: reject invalid snapshots with `null`.
   if (
@@ -392,6 +466,15 @@ function normalizePersistedDagRunSnapshot(
     return null;
   }
 
+  const normalizedOrchestratorState = orchestratorState
+    ? cloneTrinityRunRecord(orchestratorState)
+    : createFallbackTrinityRunRecord({
+        runId,
+        status,
+        updatedAt,
+        nodes
+      });
+
   return {
     runId,
     sessionId,
@@ -403,7 +486,27 @@ function normalizePersistedDagRunSnapshot(
     updatedAt,
     summary: {
       ...summary,
-      template: resolvePublicDagTemplateName(summary.template)
+      template: resolvePublicDagTemplateName(summary.template),
+      activeNodes:
+        typeof summary.activeNodes === 'number'
+          ? summary.activeNodes
+          : normalizedOrchestratorState.activeNodes.length,
+      completedNodes:
+        typeof summary.completedNodes === 'number'
+          ? summary.completedNodes
+          : normalizedOrchestratorState.completedNodes.length,
+      failedNodes:
+        typeof summary.failedNodes === 'number'
+          ? summary.failedNodes
+          : normalizedOrchestratorState.failedNodes.length,
+      artifacts:
+        Array.isArray(summary.artifacts)
+          ? [...summary.artifacts]
+          : [...normalizedOrchestratorState.artifacts],
+      resumable:
+        typeof summary.resumable === 'boolean'
+          ? summary.resumable
+          : status !== 'complete'
     },
     nodes,
     events,
@@ -413,7 +516,8 @@ function normalizePersistedDagRunSnapshot(
     verification,
     limits,
     features,
-    loopDetected: snapshot.loopDetected === true
+    loopDetected: snapshot.loopDetected === true,
+    orchestratorState: normalizedOrchestratorState
   };
 }
 
@@ -451,8 +555,16 @@ function convertRunStatus(status: DagRunExecutionState): DagRunSummary['status']
 }
 
 function createApiSummary(record: StoredDagRunRecord): DagRunSummary {
-  const completedNodes = Array.from(record.nodesById.values()).filter(node => node.status === 'complete').length;
-  const failedNodes = Array.from(record.nodesById.values()).filter(node => node.status === 'failed').length;
+  const orchestratorState =
+    record.orchestratorState ??
+    createFallbackTrinityRunRecord({
+      runId: record.runId,
+      status: record.status,
+      updatedAt: record.updatedAt,
+      nodes: Array.from(record.nodesById.values())
+    });
+  const completedNodes = orchestratorState.completedNodes.length;
+  const failedNodes = orchestratorState.failedNodes.length;
 
   return {
     ...createTrinityRuntimeMetadata(),
@@ -464,12 +576,15 @@ function createApiSummary(record: StoredDagRunRecord): DagRunSummary {
     rootNodeId: record.rootNodeId,
     spawnDepthMaxObserved: record.metrics.maxSpawnDepthObserved,
     totalNodes: record.metrics.totalNodes,
+    activeNodes: orchestratorState.activeNodes.length,
     completedNodes,
     failedNodes,
     retryCount: record.metrics.totalRetries,
     durationMs: record.metrics.wallClockDurationMs,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    artifacts: [...orchestratorState.artifacts],
+    resumable: record.status !== 'complete',
     finalOutput: record.summary.finalOutput
   };
 }
@@ -708,6 +823,7 @@ function createErrorInfo(message: string, details?: unknown, type?: string): Err
 export class ArcanosDagRunService {
   private readonly runsById = new Map<string, StoredDagRunRecord>();
   private readonly persistenceByRunId = new Map<string, Promise<void>>();
+  private readonly trinityOrchestrator = new TrinityOrchestrator();
 
   /**
    * Return the feature flags exposed by the verification API.
@@ -833,6 +949,82 @@ export class ArcanosDagRunService {
   }
 
   /**
+   * Update the compact Trinity run tracker snapshot stored alongside a DAG run record.
+   *
+   * Purpose:
+   * - Keep the high-signal resumability state in sync with observer events and persisted snapshots.
+   *
+   * Inputs/outputs:
+   * - Input: in-memory DAG record plus the latest tracker snapshot.
+   * - Output: none.
+   *
+   * Edge case behavior:
+   * - Stores a defensive clone so external callers cannot mutate retained tracker state.
+   */
+  private syncOrchestratorState(
+    record: StoredDagRunRecord,
+    nextState: TrinityRunRecord
+  ): void {
+    record.orchestratorState = cloneTrinityRunRecord(nextState);
+  }
+
+  /**
+   * Ensure the in-process Trinity run tracker has a live copy of one DAG record.
+   *
+   * Purpose:
+   * - Rehydrate compact run state after snapshot reloads, test fixtures, or service restarts before applying new transitions.
+   *
+   * Inputs/outputs:
+   * - Input: one DAG record with its latest compact tracker snapshot.
+   * - Output: none.
+   *
+   * Edge case behavior:
+   * - Existing tracked runs are left unchanged to preserve the freshest in-memory state.
+   */
+  private ensureTrackedRunState(record: StoredDagRunRecord): void {
+    if (this.trinityOrchestrator.getRun(record.runId)) {
+      return;
+    }
+
+    const fallbackState =
+      record.orchestratorState ??
+      createFallbackTrinityRunRecord({
+        runId: record.runId,
+        status: record.status,
+        updatedAt: record.updatedAt,
+        nodes: Array.from(record.nodesById.values())
+      });
+
+    this.trinityOrchestrator.startRun(record.runId);
+
+    for (const nodeId of fallbackState.completedNodes) {
+      this.trinityOrchestrator.markNodeCompleted(record.runId, nodeId);
+    }
+
+    for (const nodeId of fallbackState.failedNodes) {
+      this.trinityOrchestrator.markNodeFailed(record.runId, nodeId);
+    }
+
+    for (const nodeId of fallbackState.activeNodes) {
+      this.trinityOrchestrator.markNodeActive(record.runId, nodeId);
+    }
+
+    for (const artifactReference of fallbackState.artifacts) {
+      this.trinityOrchestrator.attachArtifact(record.runId, artifactReference);
+    }
+
+    if (fallbackState.status === 'completed') {
+      this.trinityOrchestrator.markRunCompleted(record.runId);
+    } else if (fallbackState.status === 'failed') {
+      this.trinityOrchestrator.markRunFailed(record.runId);
+    } else if (fallbackState.status === 'cancelled') {
+      this.trinityOrchestrator.markRunCancelled(record.runId);
+    }
+
+    this.syncOrchestratorState(record, this.trinityOrchestrator.getRun(record.runId)!);
+  }
+
+  /**
    * Create and start a new DAG verification run.
    *
    * Purpose:
@@ -856,6 +1048,7 @@ export class ArcanosDagRunService {
     const publicTemplateName = templateDefinition.templateName;
     const createdAt = new Date().toISOString();
     const nodesById = new Map<string, StoredNodeDetail>();
+    const orchestratorState = this.trinityOrchestrator.startRun(runId);
 
     for (const [nodeId, node] of Object.entries(templateDefinition.graph.nodes)) {
       const nodeMetadata = templateDefinition.nodeMetadataById[nodeId];
@@ -915,9 +1108,12 @@ export class ArcanosDagRunService {
       limits,
       features,
       loopDetected: false,
+      orchestratorState,
       templateDefinition,
       abortController: new AbortController()
     };
+
+    record.summary = createApiSummary(record);
 
     this.runsById.set(runId, record);
     this.recordEvent(record, 'run.created', {
@@ -1257,6 +1453,8 @@ export class ArcanosDagRunService {
 
     record.abortController.abort();
     record.status = 'cancelled';
+    this.ensureTrackedRunState(record);
+    this.syncOrchestratorState(record, this.trinityOrchestrator.markRunCancelled(runId));
     record.updatedAt = new Date().toISOString();
     record.summary = createApiSummary(record);
     record.verification = calculateVerification(record);
@@ -1310,6 +1508,12 @@ export class ArcanosDagRunService {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       record.status = record.abortController.signal.aborted ? 'cancelled' : 'failed';
+      this.syncOrchestratorState(
+        record,
+        record.abortController.signal.aborted
+          ? this.trinityOrchestrator.markRunCancelled(record.runId)
+          : this.trinityOrchestrator.markRunFailed(record.runId)
+      );
       record.updatedAt = new Date().toISOString();
       record.errors.push({
         errorId: generateRequestId('dagerr'),
@@ -1407,6 +1611,11 @@ export class ArcanosDagRunService {
         node.startedAt = payload.startedAt;
         //audit Assumption: the DAG tree should expose the concrete queue worker slot when one is known; failure risk: hard-coded worker ids hide concurrency and make live node debugging misleading; expected invariant: `node.workerId` reflects the latest queue-reported worker and otherwise preserves any previous value; handling strategy: prefer the observer payload and fall back to existing node state when no worker id is available.
         node.workerId = payload.workerId ?? node.workerId;
+        this.ensureTrackedRunState(record);
+        this.syncOrchestratorState(
+          record,
+          this.trinityOrchestrator.markNodeActive(record.runId, payload.nodeId)
+        );
         this.recordEvent(record, 'node.started', payload);
         this.touchRecord(record);
       },
@@ -1422,11 +1631,23 @@ export class ArcanosDagRunService {
         node.status = 'complete';
         node.completedAt = payload.completedAt;
         node.output = output;
+        node.artifactRef = payload.result.artifactRef;
         node.metrics = {
           ...metrics,
           durationMs: payload.result.metrics?.durationMs ?? extractNodeDuration(metrics, output)
         };
         node.error = null;
+        this.ensureTrackedRunState(record);
+        this.syncOrchestratorState(
+          record,
+          this.trinityOrchestrator.markNodeCompleted(record.runId, payload.nodeId)
+        );
+        if (typeof payload.result.artifactRef === 'string' && payload.result.artifactRef.trim().length > 0) {
+          this.syncOrchestratorState(
+            record,
+            this.trinityOrchestrator.attachArtifact(record.runId, payload.result.artifactRef)
+          );
+        }
         this.recordEvent(record, 'node.completed', payload);
         this.touchRecord(record);
       },
@@ -1439,11 +1660,26 @@ export class ArcanosDagRunService {
         node.status = payload.willRetry ? 'waiting' : 'failed';
         node.completedAt = payload.willRetry ? undefined : payload.completedAt;
         node.output = normalizeNodeOutput(payload.result.output);
+        node.artifactRef = payload.result.artifactRef;
         node.error = createErrorInfo(
           payload.result.errorMessage ?? 'Node failed.',
           node.output,
           'node_failed'
         );
+
+        this.ensureTrackedRunState(record);
+        if (!payload.willRetry) {
+          this.syncOrchestratorState(
+            record,
+            this.trinityOrchestrator.markNodeFailed(record.runId, payload.nodeId)
+          );
+        }
+        if (typeof payload.result.artifactRef === 'string' && payload.result.artifactRef.trim().length > 0) {
+          this.syncOrchestratorState(
+            record,
+            this.trinityOrchestrator.attachArtifact(record.runId, payload.result.artifactRef)
+          );
+        }
 
         record.errors.push({
           errorId: generateRequestId('dagerr'),
@@ -1508,6 +1744,23 @@ export class ArcanosDagRunService {
         record.metrics.maxParallelNodesObserved = summary.maxParallelNodesObserved;
         record.metrics.totalRetries = summary.totalRetries;
         record.metrics.totalAiCalls = summary.totalAiCalls;
+        this.ensureTrackedRunState(record);
+        if (summary.status === 'success') {
+          this.syncOrchestratorState(
+            record,
+            this.trinityOrchestrator.markRunCompleted(record.runId)
+          );
+        } else if (summary.status === 'cancelled') {
+          this.syncOrchestratorState(
+            record,
+            this.trinityOrchestrator.markRunCancelled(record.runId)
+          );
+        } else {
+          this.syncOrchestratorState(
+            record,
+            this.trinityOrchestrator.markRunFailed(record.runId)
+          );
+        }
         this.touchRecord(record);
       }
     };

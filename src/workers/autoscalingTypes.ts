@@ -25,6 +25,8 @@ export interface PoolQueueMetrics {
 
 export interface PoolRuntimeMetrics {
   cpuRatio: number;
+  memoryPressureRatio: number;
+  apiLatencyMs: number;
   workers: number;
 }
 
@@ -40,5 +42,11 @@ export interface AutoscalingMetricsSnapshot {
 export interface ScalingAction {
   pool: WorkerPoolName;
   scaleTo: number;
-  reason: 'queue_backlog' | 'job_latency' | 'cpu_pressure' | 'domain_surge';
+  reason:
+    | 'queue_backlog'
+    | 'job_latency'
+    | 'cpu_pressure'
+    | 'memory_pressure'
+    | 'api_latency'
+    | 'domain_surge';
 }

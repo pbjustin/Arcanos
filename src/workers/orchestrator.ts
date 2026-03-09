@@ -1,4 +1,4 @@
-export type TrinityRunStatus = 'running' | 'completed' | 'failed';
+export type TrinityRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
 export interface TrinityRunRecord {
   runId: string;
@@ -190,6 +190,31 @@ export class TrinityOrchestrator {
         terminalSinceMs: existingRecord.terminalSinceMs ?? nowMs
       };
     });
+  }
+
+  /**
+   * Mark a run failed without introducing a new failed node.
+   */
+  markRunFailed(runId: string): TrinityRunRecord {
+    return this.updateRun(runId, (existingRecord, nowMs) => ({
+      ...existingRecord,
+      status: 'failed',
+      updatedAtIso: this.createIsoTimestamp(nowMs),
+      terminalSinceMs: existingRecord.terminalSinceMs ?? nowMs
+    }));
+  }
+
+  /**
+   * Mark a run cancelled and clear any still-active node markers.
+   */
+  markRunCancelled(runId: string): TrinityRunRecord {
+    return this.updateRun(runId, (existingRecord, nowMs) => ({
+      ...existingRecord,
+      status: 'cancelled',
+      activeNodes: new Set(),
+      updatedAtIso: this.createIsoTimestamp(nowMs),
+      terminalSinceMs: existingRecord.terminalSinceMs ?? nowMs
+    }));
   }
 
   /**

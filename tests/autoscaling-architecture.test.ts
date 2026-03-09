@@ -42,6 +42,8 @@ describe('Trinity autoscaling architecture', () => {
       },
       main: {
         cpuRatio: 0.9,
+        memoryPressureRatio: 0.4,
+        apiLatencyMs: 120,
         workers: 2
       },
       audit: {
@@ -94,6 +96,8 @@ describe('Trinity autoscaling architecture', () => {
 
     const metricsAgent = new MetricsAgent({
       readCpuRatio: () => 1.2,
+      readMemoryPressureRatio: () => 1.4,
+      readApiLatencyMs: () => 420,
       queueService,
       workerManager: manager,
       readCurrentTrafficByDomain: () => ({ main: 1, async: 2, audit: 3, creative: 4 }),
@@ -102,6 +106,8 @@ describe('Trinity autoscaling architecture', () => {
 
     const metrics = metricsAgent.collectMetrics(2_000);
     expect(metrics.main.cpuRatio).toBe(1);
+    expect(metrics.main.memoryPressureRatio).toBe(1);
+    expect(metrics.main.apiLatencyMs).toBe(420);
     expect(metrics.async.depth).toBe(1);
     expect(metrics.async.oldestJobAgeSeconds).toBe(1);
   });
@@ -154,6 +160,49 @@ describe('Trinity autoscaling architecture', () => {
     expect(record.status).toBe('completed');
   });
 
+  it('scales the main runtime pool when predictive memory pressure exceeds the threshold', () => {
+    const actions = evaluateScaling({
+      async: {
+        depth: 0,
+        oldestJobAgeSeconds: 0
+      },
+      main: {
+        cpuRatio: 0.4,
+        memoryPressureRatio: 0.82,
+        apiLatencyMs: 450,
+        workers: 1
+      },
+      audit: {
+        depth: 0,
+        oldestJobAgeSeconds: 0
+      },
+      creative: {
+        depth: 0,
+        oldestJobAgeSeconds: 0
+      },
+      baselineTrafficByDomain: {
+        main: 10,
+        async: 10,
+        audit: 10,
+        creative: 10
+      },
+      currentTrafficByDomain: {
+        main: 10,
+        async: 10,
+        audit: 10,
+        creative: 10
+      }
+    });
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        pool: 'main_runtime_pool',
+        scaleTo: 2,
+        reason: 'memory_pressure'
+      })
+    ]);
+  });
+
   it('returns defensive snapshots and rejects duplicate run ids', () => {
     const orchestrator = new TrinityOrchestrator();
 
@@ -194,6 +243,17 @@ describe('Trinity autoscaling architecture', () => {
     expect(orchestrator.getRun('run-replay')).toBeNull();
   });
 
+  it('marks cancelled runs as terminal and clears active nodes', () => {
+    const orchestrator = new TrinityOrchestrator();
+
+    orchestrator.startRun('run-cancelled');
+    orchestrator.markNodeActive('run-cancelled', 'node-a');
+    const cancelledRecord = orchestrator.markRunCancelled('run-cancelled');
+
+    expect(cancelledRecord.status).toBe('cancelled');
+    expect(cancelledRecord.activeNodes).toEqual([]);
+  });
+
   it('serializes autoscaling ticks when one tick runs longer than the interval', async () => {
     jest.useFakeTimers();
 
@@ -206,6 +266,8 @@ describe('Trinity autoscaling architecture', () => {
         },
         main: {
           cpuRatio: 0,
+          memoryPressureRatio: 0,
+          apiLatencyMs: 0,
           workers: 1
         },
         audit: {
@@ -281,6 +343,8 @@ describe('Trinity autoscaling architecture', () => {
         },
         main: {
           cpuRatio: 0.9,
+          memoryPressureRatio: 0.4,
+          apiLatencyMs: 120,
           workers: 2
         },
         audit: {

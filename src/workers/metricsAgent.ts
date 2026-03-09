@@ -7,6 +7,8 @@ import type { WorkerManager } from './manager.js';
 
 export interface MetricsDependencies {
   readCpuRatio: () => number;
+  readMemoryPressureRatio?: () => number;
+  readApiLatencyMs?: () => number;
   queueService: WorkerQueueService;
   workerManager: WorkerManager;
   readCurrentTrafficByDomain: () => Record<WorkerJobMetadata['domain'], number>;
@@ -34,9 +36,14 @@ export class MetricsAgent {
    */
   collectMetrics(nowMs: number = Date.now()): AutoscalingMetricsSnapshot {
     const rawCpuRatio = this.dependencies.readCpuRatio();
+    const rawMemoryPressureRatio = this.dependencies.readMemoryPressureRatio?.() ?? 0;
+    const rawApiLatencyMs = this.dependencies.readApiLatencyMs?.() ?? 0;
 
     //audit Assumption: CPU sensors can occasionally report out-of-range values under host jitter; failure risk: invalid ratios trigger false scaling actions; expected invariant: cpuRatio is bounded to [0,1]; handling strategy: clamp samples to safe bounds.
     const normalizedCpuRatio = Math.min(1, Math.max(0, rawCpuRatio));
+    //audit Assumption: memory pressure readers can spike above 100% or below zero during host reporting jitter; failure risk: invalid memory ratios trigger false scale-up; expected invariant: memoryPressureRatio is bounded to [0,1]; handling strategy: clamp samples to safe bounds.
+    const normalizedMemoryPressureRatio = Math.min(1, Math.max(0, rawMemoryPressureRatio));
+    const normalizedApiLatencyMs = Math.max(0, rawApiLatencyMs);
 
     return {
       async: {
@@ -45,6 +52,8 @@ export class MetricsAgent {
       },
       main: {
         cpuRatio: normalizedCpuRatio,
+        memoryPressureRatio: normalizedMemoryPressureRatio,
+        apiLatencyMs: normalizedApiLatencyMs,
         workers: this.dependencies.workerManager.count('main_runtime_pool')
       },
       audit: {

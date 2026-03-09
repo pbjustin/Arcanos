@@ -11,7 +11,8 @@ const dagResultSchema = z.object({
   status: z.enum(['success', 'failed', 'skipped']),
   output: z.unknown(),
   errorMessage: z.string().trim().min(1).optional(),
-  metrics: dagNodeMetricsSchema
+  metrics: dagNodeMetricsSchema,
+  artifactRef: z.string().trim().min(1).optional()
 });
 
 const queuedDagNodeDefinitionSchema = z.object({

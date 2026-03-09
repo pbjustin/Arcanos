@@ -13,6 +13,7 @@ export interface DAGResult {
   output: unknown;
   errorMessage?: string;
   metrics?: DAGNodeMetrics;
+  artifactRef?: string;
 }
 
 export interface QueuedDAGNodeDefinition {

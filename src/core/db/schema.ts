@@ -284,6 +284,18 @@ export const TABLE_DEFINITIONS = [
     updated_at TIMESTAMPTZ NOT NULL
   )`,
 
+  // Shared DAG artifact storage for cross-service Trinity dependency hydration
+  `CREATE TABLE IF NOT EXISTS dag_artifacts (
+    artifact_ref TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    artifact_kind VARCHAR(50) NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+  )`,
+
   // Queue worker runtime snapshots for autonomous worker recovery and health reporting
   `CREATE TABLE IF NOT EXISTS worker_runtime_snapshots (
     worker_id TEXT PRIMARY KEY,
@@ -316,6 +328,8 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_job_data_running_lease ON job_data(status, lease_expires_at ASC, last_heartbeat_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_session_updated ON dag_runs(session_id, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_status_updated ON dag_runs(status, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_dag_artifacts_run_created ON dag_artifacts(run_id, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_dag_artifacts_node_attempt ON dag_artifacts(node_id, attempt DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_worker_runtime_health_updated ON worker_runtime_snapshots(health_status, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_saves_module_timestamp ON saves(module, timestamp)`,

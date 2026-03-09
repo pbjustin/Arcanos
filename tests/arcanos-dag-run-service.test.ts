@@ -19,6 +19,11 @@ function buildStoredRunRecord(updatedAt: string) {
       sessionId: 'session-1',
       template: 'archetype-v2',
       status: 'running',
+      activeNodes: 0,
+      completedNodes: 0,
+      failedNodes: 0,
+      artifacts: [],
+      resumable: true,
       plannerNodeId: 'planner',
       rootNodeId: 'writer',
       createdAt: '2026-03-07T00:00:00.000Z',
@@ -66,6 +71,15 @@ function buildStoredRunRecord(updatedAt: string) {
       recursiveSpawning: false,
       jobTreeInspection: true,
       eventStreaming: false
+    },
+    orchestratorState: {
+      runId: 'run-1',
+      status: 'running',
+      activeNodes: [],
+      completedNodes: [],
+      failedNodes: [],
+      artifacts: [],
+      updatedAtIso: updatedAt
     },
     loopDetected: false
   } as any;
@@ -170,6 +184,33 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
         pipeline: 'trinity',
         trinity_version: '1.0',
         template: 'trinity-core'
+      })
+    );
+  });
+
+  it('surfaces compact Trinity orchestrator state in run summaries', async () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:01.000Z');
+
+    record.orchestratorState = {
+      runId: 'run-1',
+      status: 'running',
+      activeNodes: ['research', 'build'],
+      completedNodes: ['planner'],
+      failedNodes: [],
+      artifacts: ['trinity/runs/run-1/planner/attempt-1/result.json'],
+      updatedAtIso: '2026-03-07T00:00:01.000Z'
+    };
+    (service as any).runsById.set('run-1', record);
+
+    const run = await service.getRun('run-1');
+
+    expect(run).toEqual(
+      expect.objectContaining({
+        activeNodes: 2,
+        completedNodes: 1,
+        artifacts: ['trinity/runs/run-1/planner/attempt-1/result.json'],
+        resumable: true
       })
     );
   });
@@ -290,6 +331,50 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
     expect(record.nodesById.get('research')?.workerId).toBe('async-queue-slot-2');
     expect(record.nodesById.get('research')?.status).toBe('running');
     expect((service as any).queuePersistRecord).toHaveBeenCalledWith(record);
+  });
+
+  it('stores artifact references on completed node details', () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:01.000Z');
+
+    (service as any).queuePersistRecord = jest.fn();
+
+    record.nodesById.set('research', {
+      nodeId: 'research',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'research',
+      jobType: 'search',
+      status: 'running',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null
+    });
+
+    const observer = (service as any).createObserver(record);
+    observer.onNodeCompleted?.({
+      dagId: 'run-1',
+      nodeId: 'research',
+      jobId: 'job-1',
+      result: {
+        nodeId: 'research',
+        status: 'success',
+        output: { summary: 'researched' },
+        artifactRef: 'trinity/runs/run-1/research/attempt-1/result.json'
+      },
+      completedAt: '2026-03-07T00:00:02.500Z'
+    });
+
+    expect(record.nodesById.get('research')?.artifactRef).toBe(
+      'trinity/runs/run-1/research/attempt-1/result.json'
+    );
+    expect(record.orchestratorState.artifacts).toEqual([
+      'trinity/runs/run-1/research/attempt-1/result.json'
+    ]);
   });
 
   it('includes worker ids in tree responses when nodes have them', async () => {

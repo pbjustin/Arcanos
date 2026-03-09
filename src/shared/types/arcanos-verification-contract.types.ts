@@ -188,12 +188,15 @@ export interface DagRunSummary extends TrinityRuntimeMetadata {
   rootNodeId?: string | null;
   spawnDepthMaxObserved?: number;
   totalNodes?: number;
+  activeNodes?: number;
   completedNodes?: number;
   failedNodes?: number;
   retryCount?: number;
   durationMs?: number;
   createdAt: ISODateString;
   updatedAt: ISODateString;
+  artifacts?: string[];
+  resumable?: boolean;
   finalOutput?: FinalOutput;
 }
 
@@ -250,6 +253,7 @@ export interface NodeDetail extends TrinityNodeMetadata {
   workerId?: string;
   input: Record<string, unknown>;
   output?: Record<string, unknown>;
+  artifactRef?: string;
   metrics?: NodeMetrics;
   startedAt?: ISODateString;
   completedAt?: ISODateString;
