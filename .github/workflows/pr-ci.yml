@@ -19,6 +19,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Boundary checks
+        run: |
+          npm run check:boundaries
+          npm run check:cef-layer-access
+
       - name: Type check
         run: npm run type-check
 

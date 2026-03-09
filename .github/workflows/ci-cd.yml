@@ -36,6 +36,11 @@ jobs:
       - name: 🧾 Validate backend/CLI contract manifest
         run: npm run validate:backend-cli:contract
 
+      - name: 🧱 Enforce CEF boundaries
+        run: |
+          npm run check:boundaries
+          npm run check:cef-layer-access
+
       - name: 🔧 Type check
         run: npm run type-check
 

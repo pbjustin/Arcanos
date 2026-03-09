@@ -63,6 +63,7 @@ const {
   listCommandSchemaCoverage
 } = await import('../src/services/commandCenter.js');
 const { dispatchAuditSafeHandler } = await import('../src/services/cef/handlers/auditSafe.handler.js');
+const { dispatchWhitelistedCefHandler } = await import('../src/services/cef/handlers/index.js');
 
 describe('commandCenter contracts and tracing', () => {
   beforeEach(() => {
@@ -229,8 +230,12 @@ describe('commandCenter contracts and tracing', () => {
 
     const retryTraceCall = mockLogExecution.mock.calls.find(call => call[2] === 'cef.handler.retry');
     expect(retryTraceCall?.[3]).toEqual(expect.objectContaining({
+      traceId: 'trace-cef-retry',
       command: 'ai:prompt',
+      handler: 'ai:prompt',
+      timestamp: expect.any(String),
       status: 'retry',
+      durationMs: expect.any(Number),
       errorCode: 'COMMAND_HANDLER_FAILED',
       retryCount: 1,
       fallbackUsed: false
@@ -264,6 +269,19 @@ describe('commandCenter contracts and tracing', () => {
       'cef.handler.success',
       'cef.dispatch.success'
     ]));
+
+    const fallbackTraceCall = mockLogExecution.mock.calls.find(call => call[2] === 'cef.handler.fallback');
+    expect(fallbackTraceCall?.[3]).toEqual(expect.objectContaining({
+      traceId: 'trace-cef-fallback',
+      command: 'ai:prompt',
+      handler: 'ai:prompt',
+      timestamp: expect.any(String),
+      status: 'fallback',
+      durationMs: expect.any(Number),
+      errorCode: 'COMMAND_HANDLER_FAILED',
+      fallbackUsed: true,
+      retryCount: 0
+    }));
   });
 
   it('traces handler errors when fallback execution also fails', async () => {
@@ -293,6 +311,21 @@ describe('commandCenter contracts and tracing', () => {
       'cef.handler.fallback',
       'cef.dispatch.error'
     ]));
+
+    const fallbackErrorTraceCall = mockLogExecution.mock.calls.find(call =>
+      call[2] === 'cef.handler.error' && call[3]?.fallbackUsed === true
+    );
+    expect(fallbackErrorTraceCall?.[3]).toEqual(expect.objectContaining({
+      traceId: 'trace-cef-error',
+      command: 'ai:prompt',
+      handler: 'ai:prompt',
+      timestamp: expect.any(String),
+      status: 'error',
+      durationMs: expect.any(Number),
+      errorCode: 'COMMAND_HANDLER_FAILED',
+      fallbackUsed: true,
+      retryCount: 0
+    }));
   });
 
   it('blocks non-whitelisted handler actions before dispatch', async () => {
@@ -330,10 +363,37 @@ describe('commandCenter contracts and tracing', () => {
     );
   });
 
+  it('fails closed in the explicit handler dispatcher for unknown actions', async () => {
+    const result = await dispatchWhitelistedCefHandler({
+      name: 'audit-safe:set-mode',
+      handlerDomain: 'audit-safe',
+      handlerMethod: 'delete-all'
+    }, { mode: 'true' }, {
+      command: 'audit-safe:set-mode',
+      commandTraceId: 'cef-test-handler-index',
+      domain: 'audit-safe',
+      handlerMethod: 'delete-all',
+      traceId: 'trace-cef-handler-index',
+      executionId: 'exec-handler-index',
+      stepId: 'step-handler-index',
+      capabilityId: 'audit-safe-mode-control',
+      source: 'test'
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      error: expect.objectContaining({
+        code: 'HANDLER_ACTION_NOT_ALLOWED',
+        httpStatusCode: 403
+      })
+    }));
+  });
+
   it('does not leave generic execute(payload) handler entrypoints in the hardened CEF surface', () => {
     const protectedFiles = [
       'src/services/commandCenter.ts',
       'src/services/cef/handlerRuntime.ts',
+      'src/services/cef/handlers/index.ts',
       'src/services/cef/handlers/ai.handler.ts',
       'src/services/cef/handlers/auditSafe.handler.ts'
     ];

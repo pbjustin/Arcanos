@@ -6,8 +6,7 @@ import {
   assertCefSchemaRegistered,
   listRegisteredCommandSchemaCoverage
 } from './cef/schemaRegistry.js';
-import { dispatchAiHandler } from './cef/handlers/ai.handler.js';
-import { dispatchAuditSafeHandler } from './cef/handlers/auditSafe.handler.js';
+import { dispatchWhitelistedCefHandler } from './cef/handlers/index.js';
 import type {
   CefHandlerContext,
   CommandDefinition,
@@ -28,12 +27,6 @@ export type {
 interface RoutedCommandDefinition extends CommandDefinition {
   description: string;
 }
-
-type HandlerDomainDispatcher = (
-  method: string,
-  payload: Record<string, unknown>,
-  context: CefHandlerContext
-) => Promise<Awaited<ReturnType<typeof dispatchAuditSafeHandler>>>;
 
 const COMMAND_DEFINITIONS: Record<CommandName, RoutedCommandDefinition> = {
   'audit-safe:set-mode': {
@@ -69,11 +62,6 @@ const COMMAND_DEFINITIONS: Record<CommandName, RoutedCommandDefinition> = {
     handlerDomain: 'ai',
     handlerMethod: 'prompt'
   }
-};
-
-const HANDLER_DOMAIN_DISPATCHERS: Record<string, HandlerDomainDispatcher> = {
-  'audit-safe': dispatchAuditSafeHandler,
-  ai: dispatchAiHandler
 };
 
 function assertCommandDefinitionSchemasRegistered(): void {
@@ -167,24 +155,7 @@ async function routeCommandToHandler(
   payload: Record<string, unknown>,
   handlerContext: CefHandlerContext
 ) {
-  const handlerDispatcher = HANDLER_DOMAIN_DISPATCHERS[definition.handlerDomain];
-
-  //audit Assumption: every registered command must resolve to a supported handler domain dispatcher; failure risk: command metadata drifts from the real handler registry and silently bypasses dispatch; expected invariant: all `handlerDomain` values are routed explicitly; handling strategy: fail closed with a typed internal-routing error.
-  if (!handlerDispatcher) {
-    return {
-      success: false,
-      message: 'Command handler domain is not wired to the CEF router.',
-      output: null,
-      error: buildCommandError('UNSUPPORTED_HANDLER_DOMAIN', 'Command handler domain is not wired to the CEF router.', {
-        handlerDomain: definition.handlerDomain,
-        command: definition.name
-      }),
-      fallbackUsed: false,
-      fallbackReason: null
-    };
-  }
-
-  return handlerDispatcher(definition.handlerMethod, payload, handlerContext);
+  return dispatchWhitelistedCefHandler(definition, payload, handlerContext);
 }
 
 /**
