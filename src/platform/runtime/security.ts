@@ -374,6 +374,7 @@ export function createRateLimitMiddleware(
   const options = resolveRateLimitOptions(maxRequestsOrOptions, windowMs);
   const requestCounts = new Map<string, RateLimitEntry>();
   const cleanupIntervalMs = Math.max(1000, Math.min(options.windowMs ?? windowMs, 60 * 1000));
+  let lastCleanupAtMs = 0;
 
   /**
    * Purge expired rate-limit entries outside the request path.
@@ -392,11 +393,25 @@ export function createRateLimitMiddleware(
     }
   }
 
-  const cleanupTimer = setInterval(() => {
-    //audit Assumption: periodic cleanup reduces request-path CPU spikes; risk: short-lived stale entries; invariant: eventual cleanup under continuous uptime; handling: bounded interval purge.
+  /**
+   * Opportunistically purge expired entries during requests without background timers.
+   *
+   * Purpose: avoid module-import side effects that create long-lived timers in test and worker processes.
+   * Inputs/outputs: inspects the current clock and conditionally prunes stale entries.
+   * Edge cases: skips cleanup work when the cache is empty or the throttle window has not elapsed.
+   */
+  function maybePurgeExpiredEntries(now: number): void {
+    //audit Assumption: request-driven cleanup is sufficient to bound stale entries under real traffic; risk: idle processes keep expired entries in memory longer; invariant: next request after throttle window prunes stale entries; handling strategy: throttle cleanup to the same bounded interval without background timers.
+    if (requestCounts.size === 0) {
+      lastCleanupAtMs = now;
+      return;
+    }
+    if (now - lastCleanupAtMs < cleanupIntervalMs) {
+      return;
+    }
     purgeExpiredEntries();
-  }, cleanupIntervalMs);
-  cleanupTimer.unref?.();
+    lastCleanupAtMs = now;
+  }
 
   return (req: Request, res: Response, next: NextFunction): void => {
     //audit Assumption: some health or internal routes may intentionally bypass rate limiting; failure risk: internal control loops are throttled unnecessarily; expected invariant: only explicitly skipped requests bypass accounting; handling strategy: short-circuit before any counter mutation.
@@ -406,6 +421,7 @@ export function createRateLimitMiddleware(
     }
 
     const now = Date.now();
+    maybePurgeExpiredEntries(now);
     const policy = resolveRateLimitPolicy(req, options);
     const actorKey = options.keyGenerator ? options.keyGenerator(req) : getRequestActorKey(req);
     const storageKey = `${policy.bucketName}:${actorKey}`;

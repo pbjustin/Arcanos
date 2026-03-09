@@ -66,7 +66,7 @@ describe('createRateLimitMiddleware', () => {
     );
   });
 
-  it('purges expired entries via interval cleanup instead of request-path sweeps', () => {
+  it('purges expired entries opportunistically on later requests without background timers', () => {
     const middleware = createRateLimitMiddleware(1, 1000);
     const req = createMockRequest('10.0.0.1');
     const res = createMockResponse();
@@ -80,6 +80,15 @@ describe('createRateLimitMiddleware', () => {
 
     expect(next).toHaveBeenCalledTimes(2);
     expect(res.status).toHaveBeenCalledWith(429);
+  });
+
+  it('does not register background cleanup intervals when middleware is created', () => {
+    const setIntervalSpy = jest.spyOn(globalThis, 'setInterval');
+
+    createRateLimitMiddleware(1, 1000);
+
+    expect(setIntervalSpy).not.toHaveBeenCalled();
+    setIntervalSpy.mockRestore();
   });
 
   it('uses session-aware keys so separate sessions on the same IP do not collide', () => {

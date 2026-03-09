@@ -207,6 +207,7 @@ export function createInterpreterSupervisor(): InterpreterSupervisor {
     cycle.timer = setTimeout(() => {
       handleMissedHeartbeat(cycle.cycleId);
     }, heartbeatTimeoutMs);
+    cycle.timer.unref?.();
   };
 
   const beginCycle = (entityId: string, options: CycleOptions = {}): string => {

@@ -33,6 +33,7 @@ export async function traceCefBoundary(
   traceMetadata: CefBoundaryTraceMetadata
 ): Promise<void> {
   const timestamp = new Date().toISOString();
+  const handlerName = `${context.domain}:${context.handlerMethod}`;
   const durationMs = typeof traceMetadata.durationMs === 'number'
     ? traceMetadata.durationMs
     : typeof traceMetadata.startedAtMs === 'number'
@@ -42,7 +43,8 @@ export async function traceCefBoundary(
   await logExecution('cef-boundary', level, message, {
     traceId: context.traceId ?? context.commandTraceId,
     command: context.command,
-    handler: `${context.domain}:${context.handlerMethod}`,
+    handler: handlerName,
+    handlerName,
     timestamp,
     status: traceMetadata.status,
     durationMs,

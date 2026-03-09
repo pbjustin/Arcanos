@@ -11,6 +11,6 @@ test('dispatch retries failing task with exponential backoff', async () => {
     return { status: 'success' };
   });
 
-  await queue.dispatch('test', { attempts: 3, backoffMs: 10 });
+  await queue.dispatch({ input: 'test' }, { attempts: 3, backoffMs: 10 });
   expect(attempts).toBe(3);
 });

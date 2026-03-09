@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PROTECTED_FILE_PATTERNS = [
+  /^src\/(?:.*\/)?planner\/.*\.(?:ts|js)$/i,
+  /^src\/(?:.*\/)?capability\/.*\.(?:ts|js)$/i,
   /^src\/services\/.*planner.*\.ts$/i,
   /^src\/services\/.*capability.*\.ts$/i,
   /^src\/services\/agentExecutionService\.ts$/i,
@@ -25,19 +27,19 @@ const BLOCKED_IMPORT_RULES = [
     reason: 'database access must stay behind the CEF boundary'
   },
   {
-    pattern: /\bfrom ['"](?:@prisma\/client|knex|sequelize)['"]|\brequire\(['"](?:@prisma\/client|knex|sequelize)['"]\)/,
-    reason: 'ORM and query-builder access must stay behind the CEF boundary'
+    pattern: /\bfrom ['"](?:@prisma\/client|knex|sequelize|pg|postgres|redis|ioredis|mongodb|mongoose)['"]|\brequire\(['"](?:@prisma\/client|knex|sequelize|pg|postgres|redis|ioredis|mongodb|mongoose)['"]\)/,
+    reason: 'database client and ORM access must stay behind the CEF boundary'
   },
   {
     pattern: /\bfrom ['"][^'"]*(?:\/infrastructure\/|@services\/sessionStorage\.js|@services\/memory\/storage\.js|@shared\/fileStorage\.js)[^'"]*['"]|\brequire\(['"][^'"]*(?:\/infrastructure\/|@services\/sessionStorage\.js|@services\/memory\/storage\.js|@shared\/fileStorage\.js)[^'"]*['"]\)/,
     reason: 'storage and infrastructure access must stay behind the CEF boundary'
   },
   {
-    pattern: /\bfrom ['"](?:axios)['"]|\brequire\(['"](?:axios)['"]\)|\bfrom ['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]|\brequire\(['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]\)/,
-    reason: 'external API access must stay behind the CEF boundary'
+    pattern: /\bfrom ['"](?:axios|undici|node-fetch|ws|node:http|http|node:https|https)['"]|\brequire\(['"](?:axios|undici|node-fetch|ws|node:http|http|node:https|https)['"]\)|\bfrom ['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]|\brequire\(['"][^'"]*(?:@services\/openai\.js|@services\/railwayClient\.js)[^'"]*['"]\)/,
+    reason: 'infrastructure network access must stay behind the CEF boundary'
   },
   {
-    pattern: /\bfrom ['"][^'"]*(?:\/jobs\/|jobQueue|DatabaseBackedDagJobQueue)[^'"]*['"]|\brequire\(['"][^'"]*(?:\/jobs\/|jobQueue|DatabaseBackedDagJobQueue)[^'"]*['"]\)/,
+    pattern: /\bfrom ['"](?:bull|bullmq|amqplib|kafkajs)['"]|\brequire\(['"](?:bull|bullmq|amqplib|kafkajs)['"]\)|\bfrom ['"][^'"]*(?:\/jobs\/|jobQueue|DatabaseBackedDagJobQueue)[^'"]*['"]|\brequire\(['"][^'"]*(?:\/jobs\/|jobQueue|DatabaseBackedDagJobQueue)[^'"]*['"]\)/,
     reason: 'queue client access must stay behind the CEF boundary'
   }
 ];

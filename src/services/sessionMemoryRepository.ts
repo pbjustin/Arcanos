@@ -106,10 +106,9 @@ class SessionMemoryRepository {
         return cloneMessages(stored);
       }
       if (stored == null) {
+        //audit Assumption: a successful persistent lookup can still return no row even when an in-process session cache has fresher data; failure risk: recent session context disappears whenever durable memory is empty but reachable; expected invariant: process cache remains the last-resort read path after empty durable reads; handling strategy: clear stale fallback state and continue to process-cache resolution instead of returning early.
         this.fallback.delete(key);
-        return [];
-      }
-      if (isArrayLike(stored)) {
+      } else if (isArrayLike(stored)) {
         const arrayLike = Array.from(stored);
         this.fallback.delete(key);
         return cloneMessages(arrayLike);

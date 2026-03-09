@@ -191,6 +191,18 @@ describe('commandCenter contracts and tracing', () => {
       'cef.handler.success',
       'cef.dispatch.success'
     ]));
+
+    const successTraceCall = mockLogExecution.mock.calls.find(call => (
+      call[2] === 'cef.handler.success' && call[3]?.fallbackUsed === false
+    ));
+    expect(successTraceCall?.[3]).toEqual(expect.objectContaining({
+      traceId: 'trace-cef-success',
+      command: 'audit-safe:set-mode',
+      handler: 'audit-safe:set-mode',
+      handlerName: 'audit-safe:set-mode',
+      status: 'success',
+      fallbackUsed: false
+    }));
   });
 
   it('traces retry and success after a transient AI failure', async () => {
@@ -233,6 +245,7 @@ describe('commandCenter contracts and tracing', () => {
       traceId: 'trace-cef-retry',
       command: 'ai:prompt',
       handler: 'ai:prompt',
+      handlerName: 'ai:prompt',
       timestamp: expect.any(String),
       status: 'retry',
       durationMs: expect.any(Number),
@@ -275,12 +288,20 @@ describe('commandCenter contracts and tracing', () => {
       traceId: 'trace-cef-fallback',
       command: 'ai:prompt',
       handler: 'ai:prompt',
+      handlerName: 'ai:prompt',
       timestamp: expect.any(String),
       status: 'fallback',
       durationMs: expect.any(Number),
       errorCode: 'COMMAND_HANDLER_FAILED',
       fallbackUsed: true,
-      retryCount: 0
+      retryCount: 0,
+      inputSummary: {
+        fieldCount: 1,
+        fields: ['prompt'],
+        valueTypes: {
+          prompt: 'string(24)'
+        }
+      }
     }));
   });
 
@@ -319,6 +340,7 @@ describe('commandCenter contracts and tracing', () => {
       traceId: 'trace-cef-error',
       command: 'ai:prompt',
       handler: 'ai:prompt',
+      handlerName: 'ai:prompt',
       timestamp: expect.any(String),
       status: 'error',
       durationMs: expect.any(Number),

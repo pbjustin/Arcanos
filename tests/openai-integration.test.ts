@@ -2,13 +2,28 @@
  * Integration tests for OpenAI SDK compatibility and API integration
  */
 
-import { jest } from '@jest/globals';
+import { afterEach, beforeEach, jest } from '@jest/globals';
+
+async function resetOpenAITestState(): Promise<void> {
+  const [{ resetClient }, { resetCredentialCache }] = await Promise.all([
+    import('@arcanos/openai/unifiedClient'),
+    import('../src/services/openai/credentialProvider.js')
+  ]);
+
+  //audit Assumption: OpenAI integration tests must clear singleton client and credential caches between environment mutations; failure risk: later tests observe stale models or initialization state; expected invariant: each test resolves configuration from current env values; handling strategy: explicit cache resets instead of module reloads.
+  resetClient();
+  resetCredentialCache();
+}
 
 describe('OpenAI SDK Integration Tests', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset mocks
     jest.clearAllMocks();
-    jest.resetModules();
+    await resetOpenAITestState();
+  });
+
+  afterEach(async () => {
+    await resetOpenAITestState();
   });
 
   describe('OpenAI Service Integration', () => {
@@ -60,8 +75,7 @@ describe('OpenAI SDK Integration Tests', () => {
       process.env.AI_MODEL = 'gpt-3.5-turbo';
 
       try {
-        // Reset modules to get fresh import
-        jest.resetModules();
+        await resetOpenAITestState();
         const { getDefaultModel } = await import('../src/services/openai.js');
         
         const defaultModel = getDefaultModel();
@@ -88,8 +102,7 @@ describe('OpenAI SDK Integration Tests', () => {
       process.env.AI_MODEL = 'gpt-3.5-turbo-test';
 
       try {
-        // Reset modules to get fresh import
-        jest.resetModules();
+        await resetOpenAITestState();
         const { getDefaultModel } = await import('../src/services/openai.js');
         
         const defaultModel = getDefaultModel();
@@ -118,7 +131,7 @@ describe('OpenAI SDK Integration Tests', () => {
       process.env.AI_MODEL = 'gpt-3.5-turbo';
 
       try {
-        jest.resetModules();
+        await resetOpenAITestState();
         const { getDefaultModel } = await import('../src/services/openai.js');
 
         const defaultModel = getDefaultModel();
@@ -148,7 +161,7 @@ describe('OpenAI SDK Integration Tests', () => {
       delete process.env.AI_MODEL;
 
       try {
-        jest.resetModules();
+        await resetOpenAITestState();
         const { getFallbackModel } = await import('../src/services/openai.js');
 
         expect(getFallbackModel()).toBe('ft:custom-fallback-model');
@@ -231,7 +244,7 @@ describe('OpenAI SDK Integration Tests', () => {
       process.env.PORT = '3000';
 
       try {
-        jest.resetModules();
+        await resetOpenAITestState();
         const { validateEnvironment } = await import('../src/platform/runtime/environmentValidation.js');
         
         const result = validateEnvironment();
@@ -252,7 +265,7 @@ describe('OpenAI SDK Integration Tests', () => {
       try {
         // Test empty string
         process.env.PORT = '';
-        jest.resetModules();
+        await resetOpenAITestState();
         let module = await import('../src/platform/runtime/environmentValidation.js');
         let result = module.validateEnvironment();
         expect(result.isValid).toBe(true);
@@ -260,7 +273,7 @@ describe('OpenAI SDK Integration Tests', () => {
 
         // Test whitespace
         process.env.PORT = '   ';
-        jest.resetModules();
+        await resetOpenAITestState();
         module = await import('../src/platform/runtime/environmentValidation.js');
         result = module.validateEnvironment();
         expect(result.isValid).toBe(true);

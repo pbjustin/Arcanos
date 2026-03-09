@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const createJobMock = jest.fn();
+const getJobByIdMock = jest.fn();
+const claimNextPendingJobMock = jest.fn();
+const recordJobHeartbeatMock = jest.fn();
+const scheduleJobRetryMock = jest.fn();
+const recoverStaleJobsMock = jest.fn();
+const updateJobMock = jest.fn();
+const getLatestJobMock = jest.fn();
+const getJobQueueSummaryMock = jest.fn();
+const getJobExecutionStatsSinceMock = jest.fn();
 const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
 const logRequestFeedbackMock = jest.fn();
@@ -11,7 +20,16 @@ const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
-  createJob: createJobMock
+  createJob: createJobMock,
+  claimNextPendingJob: claimNextPendingJobMock,
+  recordJobHeartbeat: recordJobHeartbeatMock,
+  scheduleJobRetry: scheduleJobRetryMock,
+  recoverStaleJobs: recoverStaleJobsMock,
+  updateJob: updateJobMock,
+  getJobById: getJobByIdMock,
+  getLatestJob: getLatestJobMock,
+  getJobQueueSummary: getJobQueueSummaryMock,
+  getJobExecutionStatsSince: getJobExecutionStatsSinceMock
 }));
 
 jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({

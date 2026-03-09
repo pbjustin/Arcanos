@@ -452,11 +452,29 @@ function inferAutomaticBackstageBookerDispatchIntent(params: {
   return null;
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Module dispatch timeout after ${ms}ms`)), ms)),
-  ]);
+/**
+ * Bound a dispatcher operation by a timeout without leaking pending timers.
+ * Inputs/outputs: async work promise plus timeout milliseconds -> original result or timeout error.
+ * Edge cases: timer is always cleared once the raced operation settles, including fast success and fast failure paths.
+ */
+function withTimeout<T>(workPromise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutHandle = setTimeout(() => {
+      reject(new Error(`Module dispatch timeout after ${ms}ms`));
+    }, ms);
+
+    //audit Assumption: the timeout guard should not keep the process alive after the dispatch settles; failure risk: successful requests leave pending timers that stall Jest workers and long-lived processes; expected invariant: exactly one terminal outcome resolves and the timer is always cleared; handling strategy: wrap the work promise and clear the timeout on both resolve and reject paths.
+    workPromise.then(
+      (value) => {
+        clearTimeout(timeoutHandle);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutHandle);
+        reject(error);
+      }
+    );
+  });
 }
 
 type GptMapEntry = { module: string; route: string };

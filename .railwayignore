@@ -13,9 +13,11 @@ logs/
 npm_logs/
 tmp/
 temp/
+tmp-*
 coverage/
 *.log
 *.tmp
+vendor/
 
 # Version control and CI files
 .git/

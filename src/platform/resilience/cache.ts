@@ -21,16 +21,17 @@ interface CacheEntry<T> {
 
 export class MemoryCache<T = any> {
   private cache = new Map<string, CacheEntry<T>>();
-  private cleanupTimer: NodeJS.Timeout | null = null;
+  private lastCleanupAtMs = 0;
   private readonly cacheLogger = logger.child({ module: 'cache' });
 
   private static readonly EVICTION_RATIO = 0.1;
 
   constructor(private options: CacheOptions) {
-    this.startCleanupTimer();
+    this.lastCleanupAtMs = Date.now();
   }
 
   set(key: string, value: T, ttlMs?: number): void {
+    this.maybeCleanupExpiredEntries(Date.now());
     const expireTime = Date.now() + (ttlMs || this.options.defaultTtlMs);
 
     // Enforce max entries by removing oldest accessed items
@@ -47,6 +48,7 @@ export class MemoryCache<T = any> {
   }
 
   get(key: string): T | null {
+    this.maybeCleanupExpiredEntries(Date.now());
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -66,6 +68,7 @@ export class MemoryCache<T = any> {
   }
 
   has(key: string): boolean {
+    this.maybeCleanupExpiredEntries(Date.now());
     const entry = this.cache.get(key);
     if (!entry) return false;
 
@@ -87,6 +90,7 @@ export class MemoryCache<T = any> {
 
   getStats() {
     const now = Date.now();
+    this.maybeCleanupExpiredEntries(now);
     let expired = 0;
     let total = 0;
     let totalAccessCount = 0;
@@ -148,20 +152,27 @@ export class MemoryCache<T = any> {
     }
   }
 
-  private startCleanupTimer(): void {
-    this.cleanupTimer = setInterval(() => {
-      this.cleanup();
-    }, this.options.cleanupIntervalMs);
-    if (typeof this.cleanupTimer.unref === 'function') {
-      this.cleanupTimer.unref();
+  /**
+   * Opportunistically remove expired cache entries without background timers.
+   *
+   * Purpose: keep module-scope caches test-safe and worker-safe by avoiding import-time intervals.
+   * Inputs/outputs: accepts the current timestamp and prunes stale entries when the cleanup window elapses.
+   * Edge cases: no-op when the cache is empty or cleanup was run recently.
+   */
+  private maybeCleanupExpiredEntries(now: number): void {
+    //audit Assumption: request-driven cache cleanup is sufficient for bounded memory under active traffic; failure risk: expired entries remain longer during idle periods; expected invariant: expired entries are removed on the next eligible cache access; handling strategy: throttle cleanup work instead of scheduling background timers.
+    if (this.cache.size === 0) {
+      this.lastCleanupAtMs = now;
+      return;
     }
+    if (now - this.lastCleanupAtMs < this.options.cleanupIntervalMs) {
+      return;
+    }
+    this.cleanup();
+    this.lastCleanupAtMs = now;
   }
 
   destroy(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
     this.clear();
   }
 

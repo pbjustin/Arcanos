@@ -1,5 +1,4 @@
-import express, { type Express, type NextFunction, type Request, type Response } from 'express';
-import request from 'supertest';
+import { type NextFunction, type Request, type Response } from 'express';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 
@@ -36,21 +35,82 @@ jest.unstable_mockModule('@services/naturalLanguageMemory.js', () => ({
 
 const { default: apiAskRouter } = await import('../src/routes/api-ask.js');
 
-function createApiAskTestApp(): Express {
-  const app = express();
-  app.use(express.json({ limit: '1mb' }));
-  app.use(apiAskRouter);
+interface ApiAskTestResponse {
+  status: number;
+  body: any;
+  headers: Record<string, string>;
+}
 
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    const message = err instanceof Error ? err.message : 'Internal Server Error';
-    sendInternalErrorPayload(res, { error: message });
+async function invokeApiAsk(body: Record<string, unknown>): Promise<ApiAskTestResponse> {
+  const normalizedHeaders: Record<string, string> = {
+    'content-type': 'application/json'
+  };
+
+  const req = {
+    method: 'POST',
+    url: '/api/ask',
+    originalUrl: '/api/ask',
+    path: '/api/ask',
+    headers: normalizedHeaders,
+    body: { ...body },
+    query: {},
+    params: {},
+    ip: '127.0.0.1',
+    connection: { remoteAddress: '127.0.0.1' },
+    header: jest.fn((name: string) => normalizedHeaders[name.toLowerCase()]),
+    get: jest.fn((name: string) => normalizedHeaders[name.toLowerCase()]),
+    logger: {
+      debug: jest.fn()
+    }
+  } as unknown as Request;
+
+  return await new Promise<ApiAskTestResponse>((resolve, reject) => {
+    const responseHeaders: Record<string, string> = {};
+    const res = {
+      statusCode: 200,
+      headersSent: false,
+      set(field: string | Record<string, string>, value?: string) {
+        if (typeof field === 'string') {
+          responseHeaders[field] = String(value ?? '');
+        } else {
+          for (const [headerName, headerValue] of Object.entries(field)) {
+            responseHeaders[headerName] = String(headerValue);
+          }
+        }
+        return this;
+      },
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      json(payload: unknown) {
+        this.headersSent = true;
+        resolve({
+          status: this.statusCode,
+          body: payload,
+          headers: { ...responseHeaders }
+        });
+        return this;
+      }
+    } as unknown as Response & { statusCode: number; headersSent: boolean };
+
+    const next: NextFunction = (error?: unknown) => {
+      //audit Assumption: the direct router harness must surface async Express errors through the same JSON error payload path as the app; failure risk: tests miss real error semantics or hang without a terminal response; expected invariant: every request resolves via res.json or error middleware; handling strategy: route errors through sendInternalErrorPayload and reject only when nothing responded.
+      if (error) {
+        const message = error instanceof Error ? error.message : 'Internal Server Error';
+        sendInternalErrorPayload(res as Response, { error: message });
+        return;
+      }
+      if (!(res as { headersSent: boolean }).headersSent) {
+        reject(new Error('Route completed without sending a response'));
+      }
+    };
+
+    (apiAskRouter as any).handle(req, res, next);
   });
-
-  return app;
 }
 
 describe('/api/ask action selection', () => {
-  let app: Express;
   const structuredSessionSavePrompt = `Session ID: RAW_20260308_VAN
 Storage Label: RAW_Vancouver_Session
 
@@ -60,7 +120,6 @@ Main Event: Gunther def. AJ Styles clean`;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    app = createApiAskTestApp();
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
@@ -90,7 +149,7 @@ Main Event: Gunther def. AJ Styles clean`;
       actions: ['summarize', 'query', 'analyze']
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'hello world'
     });
@@ -111,7 +170,7 @@ Main Event: Gunther def. AJ Styles clean`;
       actions: ['summarize']
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'hello world'
     });
@@ -132,7 +191,7 @@ Main Event: Gunther def. AJ Styles clean`;
       actions: ['summarize', 'analyze']
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'hello world'
     });
@@ -152,7 +211,7 @@ Main Event: Gunther def. AJ Styles clean`;
       actions: ['saveStoryline']
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       action: 'saveStoryline',
       payload: {
@@ -180,7 +239,7 @@ Main Event: Gunther def. AJ Styles clean`;
       actions: ['query']
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       action: 'query',
       payload: {
@@ -209,7 +268,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Saved to memory successfully.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'remember this monday raw summary',
       sessionId: 'booker-thread-1'
@@ -246,7 +305,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Saved to memory successfully.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'remember this booking note',
       sessionId: 'booker-thread-4'
@@ -274,7 +333,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Found 1 matching entry.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'lookup raw summary',
       sessionId: 'booker-thread-5'
@@ -302,7 +361,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Saved to memory successfully.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'remember this as a universal memory'
     });
@@ -333,7 +392,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Saved to memory successfully.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: structuredSessionSavePrompt
     });
@@ -365,7 +424,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Loaded latest saved memory.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'Recall: raw_vancouver_2026'
     });
@@ -397,7 +456,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Loaded latest saved memory.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'Look up the stored session labeled "ARCANOS backend diagnostics session E2E"'
     });
@@ -427,7 +486,7 @@ Main Event: Gunther def. AJ Styles clean`;
       message: 'Found 1 matching entry.'
     });
 
-    const response = await request(app).post('/api/ask').send({
+    const response = await invokeApiAsk({
       gptId: 'tutor',
       message: 'lookup release notes'
     });

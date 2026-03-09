@@ -23,14 +23,14 @@ class MemoryStore {
   private sessions = new Map<string, SessionEntry>();
   private readonly capacity: number;
   private readonly retentionMs: number;
-  private persistence: SessionPersistenceAdapter | null;
+  private persistence: SessionPersistenceAdapter | null | undefined;
   private initialized = false;
 
   constructor(options: MemoryStoreOptions = {}) {
     this.capacity = options.capacity || DEFAULT_CAPACITY;
     const retentionMinutes = Number.isFinite(DEFAULT_RETENTION_MINUTES) ? DEFAULT_RETENTION_MINUTES : 1440;
     this.retentionMs = Math.max(retentionMinutes, 1) * 60 * 1000;
-    this.persistence = createSessionPersistenceAdapter();
+    this.persistence = undefined;
   }
 
   async initialize(): Promise<void> {
@@ -38,10 +38,12 @@ class MemoryStore {
       return;
     }
 
-    if (this.persistence) {
+    const persistence = this.getPersistence();
+
+    if (persistence) {
       try {
-        await this.persistence.initialize();
-        const sessions = await this.persistence.loadSessions();
+        await persistence.initialize();
+        const sessions = await persistence.loadSessions();
         sessions.forEach(session => this.sessions.set(session.sessionId, session));
         this.enforceCapacity();
         await this.enforceRetentionAsync();
@@ -80,8 +82,11 @@ class MemoryStore {
     const removedByCapacity = this.enforceCapacity();
     const removedByRetention = this.enforceRetention();
 
-    if (this.persistence) {
-      void this.persistence.persistSession(merged).catch(error => {
+    //audit Assumption: durable session persistence should start only after explicit store initialization; failure risk: import-time or test-only process cache writes create idle DB handles and hang short-lived processes; expected invariant: pre-initialize writes stay in-memory while initialized stores still mirror to persistence; handling strategy: gate persistence work on the initialized lifecycle flag and lazily resolve the adapter afterwards.
+    const persistence = this.initialized ? this.getPersistence() : null;
+
+    if (persistence) {
+      void persistence.persistSession(merged).catch(error => {
         console.warn('[memory-store] Failed to persist session', {
           sessionId,
           error: resolveErrorMessage(error, 'unknown')
@@ -89,7 +94,7 @@ class MemoryStore {
       });
 
       for (const removedId of [...removedByCapacity, ...removedByRetention]) {
-        void this.persistence.removeSession(removedId).catch(error => {
+        void persistence.removeSession(removedId).catch(error => {
           console.warn('[memory-store] Failed to remove persisted session', {
             sessionId: removedId,
             error: resolveErrorMessage(error, 'unknown')
@@ -98,7 +103,7 @@ class MemoryStore {
       }
 
       if (removedByRetention.length === 0) {
-        void this.persistence
+        void persistence
           .purgeExpired(new Date(Date.now() - this.retentionMs))
           .catch(error =>
             console.warn('[memory-store] Failed to purge expired sessions', {
@@ -161,12 +166,14 @@ class MemoryStore {
 
   private async enforceRetentionAsync(): Promise<void> {
     const removed = this.enforceRetention();
-    if (!this.persistence) {
+    const persistence = this.getPersistence();
+
+    if (!persistence) {
       return;
     }
 
     for (const sessionId of removed) {
-      await this.persistence.removeSession(sessionId).catch(error => {
+      await persistence.removeSession(sessionId).catch(error => {
         console.warn('[memory-store] Failed to remove expired session from persistence', {
           sessionId,
           error: resolveErrorMessage(error, 'unknown')
@@ -174,11 +181,26 @@ class MemoryStore {
       });
     }
 
-    await this.persistence.purgeExpired(new Date(Date.now() - this.retentionMs)).catch(error => {
+    await persistence.purgeExpired(new Date(Date.now() - this.retentionMs)).catch(error => {
       console.warn('[memory-store] Failed to purge expired sessions during initialization', {
         error: resolveErrorMessage(error, 'unknown')
       });
     });
+  }
+
+  /**
+   * Resolve the optional persistence adapter lazily.
+   * Inputs: none.
+   * Output: configured adapter instance or null when persistence is disabled.
+   * Edge cases: caches null so unsupported environments do not retry adapter construction on every save.
+   */
+  private getPersistence(): SessionPersistenceAdapter | null {
+    if (this.persistence !== undefined) {
+      return this.persistence;
+    }
+
+    this.persistence = createSessionPersistenceAdapter();
+    return this.persistence;
   }
 }
 

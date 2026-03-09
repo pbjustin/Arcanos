@@ -179,6 +179,9 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
           }
         }
       }, DEFAULTS.BATCH_WINDOW_MS);
+      if (typeof batchInterval.unref === 'function') {
+        batchInterval.unref();
+      }
     }
 
     return {
@@ -210,4 +213,3 @@ export function createIdleManager(auditLogger: Logger = console as Logger): Idle
     destroy
   };
 }
-

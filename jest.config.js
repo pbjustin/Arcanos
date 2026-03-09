@@ -12,8 +12,14 @@ const ignoredRootJestPatterns = [
 export default {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
+  roots: ['<rootDir>/tests'],
   testMatch: ['**/tests/**/*.test.[tj]s'],
-  testPathIgnorePatterns: ignoredRootJestPatterns,
+  testPathIgnorePatterns: [
+    ...ignoredRootJestPatterns,
+    '[\\\\/]node_modules[\\\\/]',
+    '[\\\\/]dist[\\\\/]',
+    '[\\\\/]coverage[\\\\/]'
+  ],
   modulePathIgnorePatterns: ignoredRootJestPatterns,
   watchPathIgnorePatterns: ignoredRootJestPatterns,
   extensionsToTreatAsEsm: ['.ts'],
@@ -63,6 +69,7 @@ export default {
     '^@prisma/client/(.*)$': '<rootDir>/tests/mocks/prisma-client.ts'
   },
   collectCoverage: true,
+  coverageProvider: 'v8',
   coverageDirectory: 'coverage',
   coverageReporters: ['lcov', 'text-summary'],
   collectCoverageFrom: [

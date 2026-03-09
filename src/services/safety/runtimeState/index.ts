@@ -357,6 +357,7 @@ function scheduleSave(reason: string): void {
     void flushStateToDisk(reason);
     pendingSaveTimeout = null;
   }, SAVE_DEBOUNCE_MS);
+  pendingSaveTimeout.unref?.();
   emitSafetyAuditEvent({
     event: 'runtime_state_persist_scheduled',
     details: { reason, updatedAt: runtimeSnapshot.updatedAt }

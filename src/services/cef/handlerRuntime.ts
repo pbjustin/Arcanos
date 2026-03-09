@@ -26,6 +26,12 @@ interface ValidatedHandlerOptions<TInput extends Record<string, unknown>, TOutpu
   retryPolicy?: CefHandlerRetryPolicy;
 }
 
+interface CefHandlerInputSummary {
+  fieldCount: number;
+  fields: string[];
+  valueTypes: Record<string, string>;
+}
+
 function buildFailureDispatchResult<TOutput extends Record<string, unknown>>(
   error: CommandExecutionError,
   fallbackUsed = false,
@@ -67,6 +73,68 @@ function resolveRetryPolicy(
 function buildHandlerFailureError(error: unknown, details?: Record<string, unknown>): CommandExecutionError {
   const errorMessage = resolveErrorMessage(error, 'Handler execution failed.');
   return buildCommandError('COMMAND_HANDLER_FAILED', errorMessage, details);
+}
+
+function summarizeTraceValue(value: unknown): string {
+  //audit Assumption: fallback traces need structural payload context without persisting sensitive raw values; failure risk: durable traces leak prompts, secrets, or user content; expected invariant: summaries expose only type and size information; handling strategy: collapse each value to a bounded descriptor before logging.
+  if (value === null) {
+    return 'null';
+  }
+
+  if (Array.isArray(value)) {
+    return `array(${value.length})`;
+  }
+
+  if (typeof value === 'object') {
+    return `object(${Object.keys(value as Record<string, unknown>).length})`;
+  }
+
+  if (typeof value === 'string') {
+    return `string(${value.length})`;
+  }
+
+  return typeof value;
+}
+
+function buildFallbackInputSummary(payload: Record<string, unknown>): CefHandlerInputSummary {
+  const payloadEntries = Object.entries(payload);
+
+  //audit Assumption: fallback observability needs enough payload context to diagnose routing failures without recording full command bodies; failure risk: traces either omit the failing input shape or capture sensitive content verbatim; expected invariant: summaries preserve field names and bounded value descriptors only; handling strategy: emit a deterministic field-count/name/type snapshot for the fallback trace payload.
+  return {
+    fieldCount: payloadEntries.length,
+    fields: payloadEntries
+      .map(([fieldName]) => fieldName)
+      .sort((left, right) => left.localeCompare(right)),
+    valueTypes: Object.fromEntries(
+      payloadEntries.map(([fieldName, fieldValue]) => [
+        fieldName,
+        summarizeTraceValue(fieldValue)
+      ])
+    )
+  };
+}
+
+async function traceFallbackExecution<TInput extends Record<string, unknown>>(
+  payload: TInput,
+  context: CefHandlerContext,
+  handlerError: CommandExecutionError,
+  fallbackStartedAtMs: number,
+  attemptNumber: number,
+  maxAttempts: number
+): Promise<void> {
+  await traceCefBoundary('warn', 'cef.handler.fallback', context, {
+    status: 'fallback',
+    startedAtMs: fallbackStartedAtMs,
+    errorCode: handlerError.code,
+    fallbackUsed: true,
+    retryCount: attemptNumber - 1,
+    metadata: {
+      attemptNumber,
+      maxAttempts,
+      reason: handlerError.message,
+      inputSummary: buildFallbackInputSummary(payload)
+    }
+  });
 }
 
 async function validateHandlerOutput<TOutput extends Record<string, unknown>>(
@@ -292,18 +360,15 @@ export async function dispatchValidatedHandler<
 
       if (options.invokeFallback) {
         const fallbackStartedAtMs = Date.now();
-        await traceCefBoundary('warn', 'cef.handler.fallback', context, {
-          status: 'fallback',
-          startedAtMs: fallbackStartedAtMs,
-          errorCode: handlerError.code,
-          fallbackUsed: true,
-          retryCount: attemptNumber - 1,
-          metadata: {
-            attemptNumber,
-            maxAttempts: retryPolicy.maxAttempts,
-            reason: handlerError.message
-          }
-        });
+        //audit Assumption: every handler fallback path must be traced through the shared runtime rather than each handler implementing its own logging; failure risk: one fallback path omits observability or drifts from the required payload shape; expected invariant: all `invokeFallback` executions emit the same `cef.handler.fallback` event contract; handling strategy: emit fallback traces centrally from the common handler wrapper before fallback execution begins.
+        await traceFallbackExecution(
+          parsedInput.data,
+          context,
+          handlerError,
+          fallbackStartedAtMs,
+          attemptNumber,
+          retryPolicy.maxAttempts
+        );
 
         try {
           const fallbackOutcome = await options.invokeFallback(parsedInput.data, context, handlerError);

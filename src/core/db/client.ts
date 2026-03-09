@@ -216,11 +216,12 @@ function registerPoolErrorHandler(activePool: PoolType, workerId: string): void 
       pool = null;
     }
 
-    setTimeout(() => {
+    const reconnectTimer = setTimeout(() => {
       initializeDatabase(workerId).catch(reconnectErr =>
         console.error('[🔌 DB] Reconnection attempt failed:', reconnectErr)
       );
     }, 5000);
+    reconnectTimer.unref?.();
   });
 }
 

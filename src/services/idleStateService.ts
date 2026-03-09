@@ -118,6 +118,7 @@ export function createIdleStateService({
         updateStatus('running', 'idle_check');
       }
     }, DEFAULTS.IDLE_CHECK_INTERVAL_MS);
+    monitoringInterval.unref?.();
   }
 
   function stopMonitoring(): void {

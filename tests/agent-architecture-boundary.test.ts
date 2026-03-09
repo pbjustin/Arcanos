@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   findLayerAccessViolations,
+  getProtectedLayerFiles,
   scanFileForLayerAccessViolations
 } from '../scripts/check-boundaries.js';
 
@@ -25,27 +26,43 @@ describe('agent boundary architecture', () => {
 
   it('flags blocked planner imports deterministically', () => {
     const violations = scanFileForLayerAccessViolations(
-      'src/services/examplePlanner.ts',
-      "import fs from 'fs';\nimport axios from 'axios';\n"
+      'src/planner/examplePlanner.ts',
+      "import fs from 'fs';\nimport { Client } from 'pg';\nimport axios from 'axios';\n"
     );
 
     expect(violations).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        filePath: 'src/services/examplePlanner.ts'
+        filePath: 'src/planner/examplePlanner.ts'
       })
     ]));
   });
 
   it('flags blocked capability imports deterministically', () => {
     const violations = scanFileForLayerAccessViolations(
-      'src/services/exampleCapability.ts',
-      "import { query } from '@core/db/query.js';\nimport { DatabaseBackedDagJobQueue } from '../src/jobs/jobQueue.js';\n"
+      'src/capability/exampleCapability.ts',
+      "import { query } from '@core/db/query.js';\nimport { DatabaseBackedDagJobQueue } from '../src/jobs/jobQueue.js';\nimport https from 'node:https';\n"
     );
 
     expect(violations).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        filePath: 'src/services/exampleCapability.ts'
+        filePath: 'src/capability/exampleCapability.ts'
       })
     ]));
+  });
+
+  it('treats planner and capability directories as protected layers', () => {
+    const protectedFiles = getProtectedLayerFiles([
+      'src/planner/buildPlan.ts',
+      'src/capability/routeCommand.ts',
+      'src/services/agentGoalPlanner.ts',
+      'src/services/ai.handler.ts'
+    ]);
+
+    //audit Assumption: new planner/ and capability/ folders must inherit the same CEF boundary enforcement as legacy planner/capability service files; failure risk: directory reorganizations silently fall outside CI enforcement; expected invariant: both directory-based and legacy protected modules are scanned; handling strategy: assert the protected-file resolver keeps all intended entrypoints in scope.
+    expect(protectedFiles).toEqual([
+      'src/planner/buildPlan.ts',
+      'src/capability/routeCommand.ts',
+      'src/services/agentGoalPlanner.ts'
+    ]);
   });
 });
