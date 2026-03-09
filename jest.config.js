@@ -1,7 +1,21 @@
+//audit assumption: the root Jest project owns only repository and worker suites while the AI runtime package runs its own node:test entrypoints.
+//audit failure risk: discovering mirrored workspaces or the nested runtime package causes duplicate execution or unsupported runner failures in CI.
+//audit expected invariant: root Jest indexes only the active root workspace tests and ignores nested runner-owned paths.
+//audit handling strategy: exclude mirrored workspaces and the AI runtime test package from discovery, module indexing, and watch mode.
+const ignoredRootJestPatterns = [
+  '<rootDir>/\\.codex-pr-.*',
+  '<rootDir>/\\.deploy-pr-.*',
+  '<rootDir>/tmp/phase7-ref/.*',
+  '<rootDir>/arcanos-ai-runtime/tests/.*'
+];
+
 export default {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
   testMatch: ['**/tests/**/*.test.[tj]s'],
+  testPathIgnorePatterns: ignoredRootJestPatterns,
+  modulePathIgnorePatterns: ignoredRootJestPatterns,
+  watchPathIgnorePatterns: ignoredRootJestPatterns,
   extensionsToTreatAsEsm: ['.ts'],
   transform: {
     '^.+\\.[tj]s$': ['ts-jest', {
