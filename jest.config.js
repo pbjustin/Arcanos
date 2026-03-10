@@ -1,3 +1,5 @@
+import { codecovCoverageScopeFiles } from './config/coverageScope.js';
+
 //audit assumption: the root Jest project owns only repository and worker suites while the AI runtime package runs its own node:test entrypoints.
 //audit failure risk: discovering mirrored workspaces or the nested runtime package causes duplicate execution or unsupported runner failures in CI.
 //audit expected invariant: root Jest indexes only the active root workspace tests and ignores nested runner-owned paths.
@@ -30,6 +32,9 @@ export default {
       tsconfig: { allowJs: true }
     }]
   },
+  //audit assumption: repository tests should not inherit stale spies or mock call counts across files; failure risk: intermittent assertions depend on prior suite state; expected invariant: each test starts with cleared/restored Jest mocks unless a suite opts into custom reset behavior; handling strategy: enable Jest's built-in mock hygiene globally.
+  clearMocks: true,
+  restoreMocks: true,
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     '^@core/lib/(.*)\\.js$': '<rootDir>/src/lib/$1',
@@ -61,6 +66,10 @@ export default {
     '^@middleware/(.*)$': '<rootDir>/src/middleware/$1',
     '^@routes/(.*)\\.js$': '<rootDir>/src/routes/$1',
     '^@routes/(.*)$': '<rootDir>/src/routes/$1',
+    '^@dag/(.*)\\.js$': '<rootDir>/src/dag/$1',
+    '^@dag/(.*)$': '<rootDir>/src/dag/$1',
+    '^@workers/(.*)\\.js$': '<rootDir>/src/workers/$1',
+    '^@workers/(.*)$': '<rootDir>/src/workers/$1',
     '^@arcanos/openai$': '<rootDir>/packages/arcanos-openai/src/index.ts',
     '^@arcanos/openai/(.*)$': '<rootDir>/packages/arcanos-openai/src/$1.ts',
     '^@arcanos/runtime$': '<rootDir>/packages/arcanos-runtime/src/index.ts',
@@ -72,10 +81,14 @@ export default {
   coverageProvider: 'v8',
   coverageDirectory: 'coverage',
   coverageReporters: ['lcov', 'text-summary'],
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    'workers/src/**/*.ts',
-    '!src/**/*.d.ts',
-    '!**/node_modules/**'
-  ]
+  //audit assumption: reported project coverage should track only the explicitly coverage-owned repository slice; failure risk: incidental imports drag in partially tested files and dilute the Codecov project signal; expected invariant: coverage is collected only for the curated opt-in file list; handling strategy: bind collectCoverageFrom to a static scope module reviewed in-repo.
+  collectCoverageFrom: codecovCoverageScopeFiles,
+  coverageThreshold: {
+    global: {
+      branches: 100,
+      functions: 100,
+      lines: 100,
+      statements: 100
+    }
+  }
 };

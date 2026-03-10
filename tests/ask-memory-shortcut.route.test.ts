@@ -11,6 +11,8 @@ const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 const mockRunThroughBrain = jest.fn();
 const mockTryExecutePromptRouteShortcut = jest.fn();
+const runHealthCheckMock = jest.fn();
+const checkRedisHealthMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
@@ -57,6 +59,14 @@ jest.unstable_mockModule('@dispatcher/gptDomainClassifier.js', () => ({
 
 jest.unstable_mockModule('@services/promptRouteShortcuts.js', () => ({
   tryExecutePromptRouteShortcut: mockTryExecutePromptRouteShortcut
+}));
+
+jest.unstable_mockModule('@platform/logging/diagnostics.js', () => ({
+  runHealthCheck: runHealthCheckMock
+}));
+
+jest.unstable_mockModule('@platform/resilience/unifiedHealth.js', () => ({
+  checkRedisHealth: checkRedisHealthMock
 }));
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
@@ -106,6 +116,53 @@ describe('/ask prompt shortcuts', () => {
     gptFallbackClassifierMock.mockResolvedValue('natural');
     mockRunThroughBrain.mockResolvedValue({ result: 'unexpected trinity response' });
     mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
+    runHealthCheckMock.mockReturnValue({
+      status: 'ok',
+      summary: 'Heap 10MB | RSS 20MB | Workers: healthy',
+      components: {
+        workers: { expected: true, directoryExists: true, healthy: true, files: [] },
+        memory: { heapMB: '10', rssMB: '20', externalMB: '1', arrayBuffersMB: '0' }
+      },
+      metrics: {
+        uptimeSeconds: 123,
+        loadAverage: { oneMinute: '0.10', fiveMinute: '0.20', fifteenMinute: '0.30' }
+      },
+      telemetry: {
+        metrics: { totalLogs: 0, logsByLevel: {}, operations: {} },
+        traces: { recentEvents: [], recentLogs: [] }
+      },
+      resilience: {
+        circuitBreaker: {
+          state: 'CLOSED',
+          failureCount: 0,
+          lastFailureTime: 0,
+          successCount: 0
+        }
+      },
+      security: {
+        trusted: true,
+        safeMode: false,
+        fingerprint: 'test-fingerprint',
+        matchedFingerprint: 'test-fingerprint',
+        issues: []
+      },
+      raw: {
+        rss: 0,
+        heapTotal: 0,
+        heapUsed: 0,
+        external: 0,
+        arrayBuffers: 0
+      }
+    });
+    checkRedisHealthMock.mockResolvedValue({
+      healthy: true,
+      name: 'redis',
+      metadata: {
+        configured: true,
+        connected: true,
+        latencyMs: 12
+      }
+    });
   });
 
   it('returns deterministic memory text before Trinity executes', async () => {
@@ -182,6 +239,26 @@ describe('/ask prompt shortcuts', () => {
       prompt: 'Generate three rivalries for RAW after WrestleMania.',
       sessionId: 'RAW_RIVALRY_TEST'
     });
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits exact system health probes before Trinity executes', async () => {
+    validateAIRequestMock.mockReturnValue({
+      client: { responses: { create: jest.fn() } },
+      input: 'system health test',
+      body: {}
+    });
+
+    const response = await request(buildApp()).post('/ask').send({
+      prompt: 'system health test'
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toContain('System health ok.');
+    expect(response.body.activeModel).toBe('system-health');
+    expect(response.body.routingStages).toEqual(['SYSTEM-HEALTH-SHORTCUT']);
+    expect(runHealthCheckMock).toHaveBeenCalledTimes(1);
+    expect(checkRedisHealthMock).toHaveBeenCalledTimes(1);
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
 });

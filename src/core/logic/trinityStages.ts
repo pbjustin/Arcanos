@@ -78,9 +78,10 @@ export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudge
     });
     return defaultModel;
   } catch (err) {
-    logger.warn('Model unavailable, falling back to GPT-4.1-mini', {
+    logger.warn('MODEL_FALLBACK_TRIGGERED', {
       module: 'trinity',
       operation: 'model-fallback',
+      stage: 'TRINITY-MODEL-VALIDATION',
       requestedModel: defaultModel,
       fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
       reason: resolveErrorMessage(err)

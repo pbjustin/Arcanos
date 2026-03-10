@@ -64,6 +64,12 @@
       "@routes/*": [
         "src/routes/*"
       ],
+      "@dag/*": [
+        "src/dag/*"
+      ],
+      "@workers/*": [
+        "src/workers/*"
+      ],
       "@platform": [
         "src/platform/index.ts"
       ],

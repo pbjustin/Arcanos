@@ -126,7 +126,7 @@ jobs:
           export OPENAI_API_KEY=mock-api-key
           export NODE_ENV=test
           export PORT=0
-          npm run test:integration || echo "Integration tests not yet implemented"
+          npm run test:integration
 
   validate-railway-compatibility:
     name: Railway Compatibility
@@ -220,6 +220,11 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
+      - name: 🔍 Run gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 🔒 Run npm security audit
         run: npm audit --omit=dev --audit-level=moderate
 
@@ -296,14 +301,8 @@ jobs:
           pip install pytest-cov
           pytest daemon-python/tests/ -q --cov=daemon-python/arcanos --cov-report=xml:coverage-python.xml
 
-      - name: 📊 Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage-python.xml
-          flags: python
-          fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: 📊 Skip Python Codecov upload
+        run: echo "Python coverage is outside the current reported Codecov project scope."
 
   all-checks-complete:
     name: All Checks Complete

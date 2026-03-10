@@ -25,6 +25,13 @@ export interface ValidationResult {
   suggestions: string[];
 }
 
+type ValidationLogContext = Record<string, unknown> & {
+  state: 'set';
+  sensitivity: 'public' | 'sensitive';
+  length: number;
+  valuePreview?: string;
+};
+
 // Environment variable definitions
 const environmentChecks: EnvironmentCheck[] = [
   {
@@ -143,6 +150,30 @@ const environmentChecks: EnvironmentCheck[] = [
   }
 ];
 
+function isSensitiveEnvironmentVariable(name: string): boolean {
+  return /(key|token|secret|password|credential|database_url|connection|dsn)/i.test(name);
+}
+
+function buildValidationLogContext(checkName: string, value: string): ValidationLogContext {
+  const isSensitive = isSensitiveEnvironmentVariable(checkName);
+
+  //audit Assumption: validation logs should prove configuration presence without revealing credential material; failure risk: secret prefixes leak into centralized logs and remain queryable after rotation; expected invariant: sensitive environment variables never emit any portion of their raw value; handling strategy: log only set-state/length metadata for sensitive checks and a bounded preview for public values.
+  if (isSensitive) {
+    return {
+      state: 'set',
+      sensitivity: 'sensitive',
+      length: value.length
+    };
+  }
+
+  return {
+    state: 'set',
+    sensitivity: 'public',
+    length: value.length,
+    valuePreview: `${value.substring(0, 20)}...`
+  };
+}
+
 /**
  * Validates all environment variables and provides helpful feedback
  */
@@ -193,7 +224,7 @@ export function validateEnvironment(): ValidationResult {
         result.suggestions.push(...check.suggestions.map(s => `  💡 ${check.name}: ${s}`));
       }
     } else {
-      logger.debug(`✅ ${check.name} validation passed`, { value: value.substring(0, 20) + '...' });
+      logger.debug(`✅ ${check.name} validation passed`, buildValidationLogContext(check.name, value));
     }
   }
 
