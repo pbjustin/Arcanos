@@ -80,22 +80,79 @@ interface RailwayProjectEdge {
   node: RailwayProjectSummary;
 }
 
+const PROJECT_SUMMARY_SELECTION = `
+  id
+  name
+  environments {
+    edges {
+      node {
+        id
+        name
+        serviceInstances {
+          edges {
+            node {
+              id
+              serviceId
+              serviceName
+              latestDeployment {
+                id
+                status
+                createdAt
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface RailwayServiceInstanceNode {
+  id: string;
+  serviceId?: string | null;
+  serviceName: string;
+  latestDeployment?: RailwayProjectSummary['environments'][number]['services'][number]['latestDeployment'];
+}
+
+interface RailwayServiceInstanceEdge {
+  node: RailwayServiceInstanceNode;
+}
+
+interface RailwayEnvironmentNode {
+  id: string;
+  name: string;
+  serviceInstances: {
+    edges: RailwayServiceInstanceEdge[];
+  };
+}
+
+interface RailwayEnvironmentEdge {
+  node: RailwayEnvironmentNode;
+}
+
+interface RailwayProjectConnectionNode {
+  id: string;
+  name: string;
+  environments: {
+    edges: RailwayEnvironmentEdge[];
+  };
+}
+
+interface RailwayProjectConnectionEdge {
+  node: RailwayProjectConnectionNode;
+}
+
 interface ViewerProjectsResponse {
   viewer: {
     projects: {
-      edges: RailwayProjectEdge[];
+      edges: RailwayProjectConnectionEdge[];
     };
   };
 }
 
 interface RootProjectsResponse {
   projects: {
-    edges: Array<{
-      node: {
-        id: string;
-        name: string;
-      };
-    }>;
+    edges: RailwayProjectConnectionEdge[];
   };
 }
 
@@ -113,6 +170,11 @@ function getToken(): string | null {
   return token ? token : null;
 }
 
+/**
+ * Purpose: report whether the Railway management API is available to this process.
+ * Inputs/outputs: accepts no inputs and returns true when `RAILWAY_API_TOKEN` is present.
+ * Edge cases: whitespace-only token values are treated as missing.
+ */
 export function isRailwayApiConfigured(): boolean {
   return Boolean(getToken());
 }
@@ -185,74 +247,94 @@ async function executeGraphQL<T>(
   return parsed.data;
 }
 
-export async function listProjects(): Promise<RailwayProjectSummary[]> {
-  const viewerQuery = `
-    query ViewerProjects {
-      viewer {
-        projects {
-          edges {
-            node {
-              id
-              name
-              environments {
-                id
-                name
-                services {
-                  id
-                  name
-                  latestDeployment {
-                    id
-                    status
-                    createdAt
-                  }
-                }
+function buildProjectsQuery(scope: 'root' | 'viewer'): string {
+  if (scope === 'viewer') {
+    return `
+      query ViewerProjects {
+        viewer {
+          projects {
+            edges {
+              node {
+                ${PROJECT_SUMMARY_SELECTION}
               }
             }
           }
         }
       }
-    }
-  `;
-
-  try {
-    const data = await executeGraphQL<ViewerProjectsResponse>(viewerQuery);
-    return data.viewer.projects.edges.map((edge) => edge.node);
-  } catch (error) {
-    const errorMessage = (error as Error).message;
-    const viewerSchemaError = 'Cannot query field "viewer" on type "Query"';
-
-    if (!errorMessage.includes(viewerSchemaError)) {
-      //audit Assumption: non-schema failures should preserve original error semantics; failure risk: masking auth/network errors; expected invariant: unexpected probe failures remain visible; handling strategy: rethrow unchanged error.
-      throw error;
-    }
-
-    //audit Assumption: Railway GraphQL schema can change from viewer-rooted to query-rooted projects; failure risk: probe permanently fails on supported tokens; expected invariant: probe works when either query shape is supported; handling strategy: retry with root-level projects query.
-    logger.warn('Railway GraphQL viewer query unsupported; retrying project probe with root query', {
-      error: errorMessage
-    });
+    `;
   }
 
-  const rootQuery = `
+  return `
     query Projects {
       projects {
         edges {
           node {
-            id
-            name
+            ${PROJECT_SUMMARY_SELECTION}
           }
         }
       }
     }
   `;
-
-  const fallbackData = await executeGraphQL<RootProjectsResponse>(rootQuery);
-  return fallbackData.projects.edges.map((edge) => ({
-    id: edge.node.id,
-    name: edge.node.name,
-    environments: []
-  }));
 }
 
+function shouldRetryProjectsQueryWithViewerScope(errorMessage: string): boolean {
+  return errorMessage.includes('Cannot query field "projects" on type "Query"');
+}
+
+function mapProjectConnectionNodeToSummary(projectNode: RailwayProjectConnectionNode): RailwayProjectSummary {
+  return {
+    id: projectNode.id,
+    name: projectNode.name,
+    environments: projectNode.environments.edges.map((environmentEdge) => ({
+      id: environmentEdge.node.id,
+      name: environmentEdge.node.name,
+      //audit Assumption: Railway service instances resolve to a stable service id or fall back to the instance id; failure risk: downstream deploy flows lose the service identifier when only one field is present; expected invariant: each summarized service retains a non-empty identifier and human-readable name; handling strategy: prefer `serviceId`, then fall back to the instance id exposed by the connection node.
+      services: environmentEdge.node.serviceInstances.edges.map((serviceEdge) => ({
+        id: serviceEdge.node.serviceId ?? serviceEdge.node.id,
+        name: serviceEdge.node.serviceName,
+        latestDeployment: serviceEdge.node.latestDeployment ?? null
+      }))
+    }))
+  };
+}
+
+/**
+ * Purpose: list Railway projects visible to the configured management token.
+ * Inputs/outputs: accepts no inputs and returns project summaries with environments and services.
+ * Edge cases: retries with the legacy `viewer.projects` schema only when the root `projects` field is unavailable.
+ */
+export async function listProjects(): Promise<RailwayProjectSummary[]> {
+  const rootQuery = buildProjectsQuery('root');
+
+  try {
+    const rootData = await executeGraphQL<RootProjectsResponse>(rootQuery);
+    //audit Assumption: the root-scoped projects query returns fully populated project summaries; failure risk: probe metrics undercount Railway topology; expected invariant: environments and services remain intact for each returned project; handling strategy: pass through the node payload without lossy reshaping.
+    return rootData.projects.edges.map((edge) => mapProjectConnectionNodeToSummary(edge.node));
+  } catch (error) {
+    const errorMessage = (error as Error).message;
+    const shouldRetryWithViewerScope = shouldRetryProjectsQueryWithViewerScope(errorMessage);
+
+    //audit Assumption: only the specific root-projects schema mismatch should fall back; failure risk: masking auth, permission, or network faults with an unrelated retry; expected invariant: unexpected Railway failures remain visible to operators; handling strategy: rethrow unchanged errors unless the missing-field mismatch is explicit.
+    if (!shouldRetryWithViewerScope) {
+      throw error;
+    }
+
+    //audit Assumption: older Railway GraphQL schemas can still expose projects through `viewer.projects`; failure risk: backwards compatibility break for older tokens or environments; expected invariant: the compatibility probe only runs after an explicit root-schema mismatch; handling strategy: retry once with the legacy viewer-scoped query.
+    logger.info('Railway GraphQL root projects query unsupported; retrying project probe with viewer query', {
+      error: errorMessage
+    });
+  }
+
+  const viewerData = await executeGraphQL<ViewerProjectsResponse>(buildProjectsQuery('viewer'));
+  //audit Assumption: the legacy viewer-scoped query returns the same project summary contract as the root query; failure risk: compatibility mode drops environments or services; expected invariant: callers receive a consistent `RailwayProjectSummary[]` shape regardless of schema version; handling strategy: return the viewer node payload directly.
+  return viewerData.viewer.projects.edges.map((edge) => mapProjectConnectionNodeToSummary(edge.node));
+}
+
+/**
+ * Purpose: trigger a Railway deployment for a specific service.
+ * Inputs/outputs: accepts a service identifier with optional branch or commit selectors and returns the new deployment id and status.
+ * Edge cases: throws a structured Railway API error when the token is missing, the request times out, or the API rejects the mutation.
+ */
 export async function deployService(options: DeployServiceOptions): Promise<{ deploymentId: string; status: string; }> {
   const mutation = `
     mutation DeployService($input: DeployServiceInput!) {
@@ -284,6 +366,11 @@ export async function deployService(options: DeployServiceOptions): Promise<{ de
   };
 }
 
+/**
+ * Purpose: redeploy the latest build target for a Railway environment.
+ * Inputs/outputs: accepts an environment id and returns the replacement deployment id and status.
+ * Edge cases: propagates structured Railway API failures instead of returning partial deployment state.
+ */
 export async function redeployEnvironment(options: RedeployEnvironmentOptions): Promise<{ deploymentId: string; status: string; }> {
   const mutation = `
     mutation RedeployEnvironment($input: RedeployEnvironmentInput!) {
@@ -313,6 +400,11 @@ export async function redeployEnvironment(options: RedeployEnvironmentOptions): 
   };
 }
 
+/**
+ * Purpose: promote an existing Railway deployment into its target environment.
+ * Inputs/outputs: accepts a deployment id and returns the promoted deployment id, status, and optional environment id.
+ * Edge cases: preserves Railway API errors so callers can distinguish failed promotions from missing data.
+ */
 export async function promoteDeployment(options: PromoteDeploymentOptions): Promise<{ deploymentId: string; status: string; environmentId?: string; }> {
   const mutation = `
     mutation PromoteDeployment($input: PromoteDeploymentInput!) {
@@ -345,6 +437,11 @@ export async function promoteDeployment(options: PromoteDeploymentOptions): Prom
   };
 }
 
+/**
+ * Purpose: validate Railway management API connectivity during startup.
+ * Inputs/outputs: accepts no inputs and returns a non-throwing probe result with project, environment, and service counts when available.
+ * Edge cases: returns `{ ok: false }` instead of throwing when the token is absent or the probe request fails.
+ */
 export async function probeRailwayApi(): Promise<RailwayApiProbeResult> {
   if (!isRailwayApiConfigured()) {
     return { ok: false };
@@ -352,6 +449,7 @@ export async function probeRailwayApi(): Promise<RailwayApiProbeResult> {
 
   try {
     const projects = await listProjects();
+    //audit Assumption: project summaries always expose array shapes for environments and services; failure risk: malformed probe payloads produce misleading counts; expected invariant: counts are derived only from normalized arrays returned by `listProjects`; handling strategy: aggregate counts from the typed project summary contract.
     const projectCount = projects.length;
     const environmentCount = projects.reduce((acc, project) => acc + project.environments.length, 0);
     const serviceCount = projects.reduce((acc, project) => (
@@ -371,6 +469,7 @@ export async function probeRailwayApi(): Promise<RailwayApiProbeResult> {
       serviceCount
     };
   } catch (error) {
+    //audit Assumption: startup connectivity probe failures should degrade gracefully; failure risk: startup aborts even though management features are optional; expected invariant: runtime can continue without Railway management access; handling strategy: log the failure and return `{ ok: false }`.
     logger.warn('Railway API probe failed', {
       error: (error as Error).message
     });
