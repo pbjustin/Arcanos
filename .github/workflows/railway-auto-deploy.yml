@@ -45,22 +45,23 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Validate deploy configuration
+        id: deploy_config
         run: |
           set -euo pipefail
+          missing_fields=()
 
+          # //audit Assumption: repo-connected Railway deploys may already handle production promotion; failure risk: this workflow fails red on every main push when optional GitHub-side Railway credentials are intentionally unset; expected invariant: workflow_run auto-deploy only executes when all Railway credentials are configured; handling strategy: record missing configuration and skip auto mode cleanly while preserving manual-dispatch failures.
           if [ -z "${RAILWAY_TOKEN:-}" ]; then
-            echo "Missing required GitHub Actions variable: RAILWAY_TOKEN"
-            exit 1
+            missing_fields+=("RAILWAY_TOKEN")
           fi
 
+          # //audit Assumption: project and service identifiers are required only for GitHub-driven Railway CLI deploys; failure risk: redundant automation path blocks branch protection even though Railway repo deploy already shipped; expected invariant: missing identifiers are surfaced explicitly; handling strategy: aggregate missing identifiers into one decision output.
           if [ -z "${RAILWAY_PROJECT_ID:-}" ]; then
-            echo "Missing required repo variable: RAILWAY_PROJECT_ID"
-            exit 1
+            missing_fields+=("RAILWAY_PROJECT_ID")
           fi
 
           if [ -z "${RAILWAY_SERVICE_ID:-}" ]; then
-            echo "Missing required repo variable: RAILWAY_SERVICE_ID"
-            exit 1
+            missing_fields+=("RAILWAY_SERVICE_ID")
           fi
 
           if [ -z "${RAILWAY_ENVIRONMENT_NAME:-}" ]; then
@@ -68,10 +69,37 @@ jobs:
             echo "RAILWAY_ENVIRONMENT_NAME=production" >> "$GITHUB_ENV"
           fi
 
+          if [ "${#missing_fields[@]}" -eq 0 ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "missing_fields=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          missing_fields_csv="$(IFS=,; printf '%s' "${missing_fields[*]}")"
+          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          echo "missing_fields=${missing_fields_csv}" >> "$GITHUB_OUTPUT"
+          echo "GitHub-side Railway deploy is not configured. Missing: ${missing_fields_csv}"
+
+      - name: Fail manual deploy when Railway credentials are missing
+        if: github.event_name == 'workflow_dispatch' && steps.deploy_config.outputs.should_deploy != 'true'
+        run: |
+          set -euo pipefail
+          echo "Manual Railway deploy requested but configuration is incomplete: ${{ steps.deploy_config.outputs.missing_fields }}"
+          exit 1
+
+      - name: Skip auto deploy when Railway credentials are missing
+        if: github.event_name == 'workflow_run' && steps.deploy_config.outputs.should_deploy != 'true'
+        run: |
+          set -euo pipefail
+          echo "Skipping GitHub-driven Railway deploy; Railway repo deploy remains the active path."
+          echo "Missing configuration: ${{ steps.deploy_config.outputs.missing_fields }}"
+
       - name: Verify Railway auth
+        if: steps.deploy_config.outputs.should_deploy == 'true'
         run: railway whoami
 
       - name: Deploy to Railway
+        if: steps.deploy_config.outputs.should_deploy == 'true'
         run: |
           set -euo pipefail
 
@@ -83,6 +111,7 @@ jobs:
             --message "GitHub auto deploy ${GITHUB_SHA}"
 
       - name: Wait for deployment success
+        if: steps.deploy_config.outputs.should_deploy == 'true'
         run: |
           set -euo pipefail
 
@@ -114,6 +143,7 @@ jobs:
           fi
 
       - name: Post-deploy watchdog/budget regression check
+        if: steps.deploy_config.outputs.should_deploy == 'true'
         run: |
           set -euo pipefail
           npm run railway:alert:timeouts -- \
