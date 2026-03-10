@@ -15,7 +15,7 @@ jobs:
       - name: 🧰 Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.11.1'
+          node-version: '20.19.0'
           cache: 'npm'
 
       - name: 📦 Install dependencies
@@ -77,4 +77,3 @@ jobs:
           kill -9 $SERVER_PID 2>/dev/null || true
           
           exit $TEST_EXIT_CODE
-
