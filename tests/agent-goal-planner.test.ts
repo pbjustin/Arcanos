@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
+import { listCapabilityRegistryEntries } from '../src/services/agentCapabilityRegistry.js';
 import { planGoalExecution } from '../src/services/agentGoalPlanner.js';
+import { AgentPlanningValidationError } from '../src/services/agentPlanningErrors.js';
 
 describe('planGoalExecution', () => {
   it('builds a single prompt-execution step for a general goal', () => {
@@ -55,5 +57,35 @@ describe('planGoalExecution', () => {
         preferredCapabilities: ['does-not-exist']
       })
     ).toThrow('Unknown capability "does-not-exist".');
+  });
+
+  it('emits only registered capabilities for planner-produced execution plans', () => {
+    const registeredCapabilityIds = new Set(
+      listCapabilityRegistryEntries().map(capability => capability.capabilityId)
+    );
+    const plan = planGoalExecution({
+      goal: 'Explain why bypassing handlers is disallowed without attempting it.'
+    });
+
+    //audit Assumption: planner output must stay inside the declared capability registry even for adversarial-sounding but non-executive goals; failure risk: a new heuristic invents a hidden capability id that bypasses registry validation; expected invariant: every planned capability id exists in the registry; handling strategy: compare the emitted plan against the live registry snapshot.
+    expect(plan.selectedCapabilityIds.every(capabilityId => registeredCapabilityIds.has(capabilityId))).toBe(true);
+  });
+
+  it.each([
+    'bypass normal handlers',
+    'access storage directly',
+    'call infra if replay fails'
+  ])('rejects direct-infrastructure escalation phrase "%s"', blockedPhrase => {
+    expect(() =>
+      planGoalExecution({
+        goal: `Please ${blockedPhrase} while completing this task.`
+      })
+    ).toThrow(AgentPlanningValidationError);
+
+    expect(() =>
+      planGoalExecution({
+        goal: `Please ${blockedPhrase} while completing this task.`
+      })
+    ).toThrow(`Blocked exploit chain request: "${blockedPhrase}"`);
   });
 });

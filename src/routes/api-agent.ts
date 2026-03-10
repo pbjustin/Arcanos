@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { asyncHandler } from '@shared/http/index.js';
 import { agentExecutionService } from '@services/agentExecutionService.js';
+import { isAgentPlanningValidationError } from '@services/agentPlanningErrors.js';
 import {
   AgentExecutionResponseSchema,
   validateAgentExecutionPayload
@@ -54,13 +55,6 @@ function sendStructuredError(
   res.status(statusCode).json(payload);
 }
 
-function isPlanningValidationError(error: unknown): boolean {
-  return error instanceof Error && (
-    error.message.startsWith('Unknown capability') ||
-    error.message.includes('requires a resolvable audit-safe mode')
-  );
-}
-
 /**
  * Execute one human goal through planner -> capability registry -> CEF.
  *
@@ -106,7 +100,7 @@ router.post('/api/agent/execute', asyncHandler(async (req: Request, res: Respons
     );
   } catch (error: unknown) {
     //audit Assumption: planner validation failures should surface as client errors while unexpected execution faults remain server errors; failure risk: callers cannot distinguish bad capability input from backend failure; expected invariant: known planning errors return 400 and all other failures return 500; handling strategy: classify by explicit planner error messages and return structured JSON in both branches.
-    if (isPlanningValidationError(error)) {
+    if (isAgentPlanningValidationError(error)) {
       sendStructuredError(res, 400, 'Agent Planning Failed', [resolveErrorMessage(error)]);
       return;
     }

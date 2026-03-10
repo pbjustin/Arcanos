@@ -9,6 +9,7 @@ import {
   isAuditInstructionGoal,
   shouldPlanGoalFulfillmentCapability
 } from './agentCapabilityRegistry.js';
+import { AgentPlanningValidationError } from './agentPlanningErrors.js';
 import type {
   AgentCapabilityPlanningContext,
   AgentExecutionPlan,
@@ -17,11 +18,72 @@ import type {
   AgentResolvedExecutionMode
 } from './agentExecutionTypes.js';
 
+const DIRECT_INFRASTRUCTURE_ESCALATION_PATTERNS = [
+  {
+    matchedPhrase: 'bypass normal handlers',
+    pattern: /\bbypass normal handlers?\b/i
+  },
+  {
+    matchedPhrase: 'access storage directly',
+    pattern: /\baccess storage directly\b/i
+  },
+  {
+    matchedPhrase: 'call infra if replay fails',
+    pattern: /\bcall infra if replay fails\b/i
+  },
+  {
+    matchedPhrase: 'bypass capability boundary',
+    pattern: /\bbypass (?:the )?(?:capability|cef|handler) (?:boundary|chain)\b/i
+  },
+  {
+    matchedPhrase: 'use direct infrastructure access',
+    pattern: /\b(?:use|perform|attempt) direct (?:database|filesystem|file system|infra(?:structure)?|network|queue|storage) access\b/i
+  }
+] as const;
+
 function createPlanningContext(request: AgentGoalExecutionRequest): AgentCapabilityPlanningContext {
   return {
     goal: request.goal,
     requestPayload: request.payload ?? {}
   };
+}
+
+function getTrimmedPayloadInstruction(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveBlockedGoalPhrase(request: AgentGoalExecutionRequest): string | null {
+  const inspectedTextCandidates = [
+    request.goal,
+    getTrimmedPayloadInstruction(request.payload?.prompt),
+    getTrimmedPayloadInstruction(request.payload?.instruction)
+  ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0);
+
+  for (const inspectedText of inspectedTextCandidates) {
+    for (const escalationPattern of DIRECT_INFRASTRUCTURE_ESCALATION_PATTERNS) {
+      //audit Assumption: direct-infrastructure exploit prompts arrive as natural-language instructions in the goal or explicit prompt/instruction payloads; failure risk: planner forwards bypass requests into the normal capability path; expected invariant: known escalation phrases are rejected before any capability resolution occurs; handling strategy: scan the planner text inputs conservatively and return the first blocked phrase match.
+      if (escalationPattern.pattern.test(inspectedText)) {
+        return escalationPattern.matchedPhrase;
+      }
+    }
+  }
+
+  return null;
+}
+
+function assertGoalRespectsCapabilityBoundary(request: AgentGoalExecutionRequest): void {
+  const blockedGoalPhrase = resolveBlockedGoalPhrase(request);
+
+  //audit Assumption: the planner boundary must fail closed when a goal explicitly asks to bypass capability -> CEF -> handler enforcement; failure risk: natural-language escalation prompts get translated into executable steps and reach infrastructure-adjacent code paths; expected invariant: direct-infrastructure or bypass phrases never produce a plan; handling strategy: throw a typed planning validation error before capability selection.
+  if (blockedGoalPhrase) {
+    throw new AgentPlanningValidationError(
+      'AGENT_BOUNDARY_VIOLATION',
+      `Blocked exploit chain request: "${blockedGoalPhrase}" attempts to bypass capability -> CEF -> handler boundaries.`,
+      {
+        matchedPhrase: blockedGoalPhrase
+      }
+    );
+  }
 }
 
 function deduplicateCapabilityIds(capabilityIds: string[]): string[] {
@@ -96,7 +158,10 @@ function buildPlannedSteps(
 
     //audit Assumption: preferred capability ids must map to a registered capability definition; failure risk: the planner emits a phantom step that cannot execute; expected invariant: every selected capability resolves to a registry entry; handling strategy: throw a precise planning error when a capability is unknown.
     if (!capability) {
-      throw new Error(`Unknown capability "${capabilityId}".`);
+      throw new AgentPlanningValidationError(
+        'AGENT_UNKNOWN_CAPABILITY',
+        `Unknown capability "${capabilityId}".`
+      );
     }
 
     const stepId = `step_${index + 1}`;
@@ -143,6 +208,7 @@ function buildPlannedSteps(
  * - Throws when a preferred capability is unknown or when a selected capability cannot build a valid command payload.
  */
 export function planGoalExecution(request: AgentGoalExecutionRequest): AgentExecutionPlan {
+  assertGoalRespectsCapabilityBoundary(request);
   const capabilityIds = resolveCapabilityIdsForGoal(request);
   const steps = buildPlannedSteps(capabilityIds, request);
 

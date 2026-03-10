@@ -25,6 +25,7 @@ import {
 } from './commandCenter.js';
 import { dispatchCapabilityViaCef, getCapabilityRegistryEntry } from './agentCapabilityRegistry.js';
 import { planGoalExecution } from './agentGoalPlanner.js';
+import { isAgentPlanningValidationError } from './agentPlanningErrors.js';
 import { AgentExecutionTraceRecorder } from './agentExecutionTraceService.js';
 import type {
   AgentCommandStepExecutionResult,
@@ -562,7 +563,35 @@ export function createAgentExecutionService(
       const traceId = request.traceId ?? generateRequestId('trace');
       const startedAt = new Date().toISOString();
       const traceRecorder = createTraceRecorder(executionId, traceId);
-      const plan = planGoalExecution(request);
+      let plan: AgentExecutionPlan;
+
+      try {
+        plan = planGoalExecution(request);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        //audit Assumption: planner-layer boundary rejections must remain observable even when planning stops before any CEF command executes; failure risk: blocked exploit chains disappear from diagnostics and look like silent validation failures; expected invariant: rejected planner goals emit one trace event with a stable error code before the error bubbles to HTTP; handling strategy: record a dedicated blocked/rejected event and rethrow the original error.
+        if (isAgentPlanningValidationError(error)) {
+          await traceRecorder.record(
+            'warn',
+            error.code === 'AGENT_BOUNDARY_VIOLATION' ? 'agent.execution.blocked' : 'agent.execution.rejected',
+            {
+              executionId,
+              goal: request.goal,
+              errorCode: error.code,
+              matchedPhrase: error.details?.matchedPhrase ?? null
+            }
+          );
+        } else {
+          await traceRecorder.record('error', 'agent.execution.planning_failed', {
+            executionId,
+            goal: request.goal,
+            error: errorMessage
+          });
+        }
+
+        throw error;
+      }
 
       await traceRecorder.record('info', 'agent.execution.started', {
         executionId,

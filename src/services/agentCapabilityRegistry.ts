@@ -3,6 +3,7 @@
  */
 
 import { listAvailableCommands } from './commandCenter.js';
+import { AgentPlanningValidationError } from './agentPlanningErrors.js';
 import type {
   AgentCapabilityPlanningContext,
   AgentPlannedCapabilityStep,
@@ -55,7 +56,10 @@ function buildAuditSafeModePayload(context: AgentCapabilityPlanningContext): Rec
 
   //audit Assumption: direct audit-safe mode control requires an explicit target mode; failure risk: the planner emits a mutating CEF command with an invalid or missing mode; expected invariant: `audit-safe:set-mode` always receives one supported mode value; handling strategy: throw early so the caller can return a structured validation error.
   if (!resolvedMode) {
-    throw new Error('Capability "audit-safe-mode-control" requires a resolvable audit-safe mode.');
+    throw new AgentPlanningValidationError(
+      'AGENT_INVALID_AUDIT_MODE',
+      'Capability "audit-safe-mode-control" requires a resolvable audit-safe mode.'
+    );
   }
 
   return {
@@ -245,7 +249,10 @@ export async function dispatchCapabilityViaCef(
 
   //audit Assumption: execution steps must resolve back to a registered capability before any CEF dispatch occurs; failure risk: agent code bypasses the registry with stale or fabricated step data; expected invariant: every planned step references a known capability; handling strategy: throw on unknown capabilities so the caller fails closed.
   if (!capability) {
-    throw new Error(`Unknown capability "${step.capabilityId}".`);
+    throw new AgentPlanningValidationError(
+      'AGENT_UNKNOWN_CAPABILITY',
+      `Unknown capability "${step.capabilityId}".`
+    );
   }
 
   return commandExecutor(capability.cefCommandName, step.capabilityPayload, context);

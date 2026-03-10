@@ -2,6 +2,7 @@ import express, { type Express } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import errorHandler from '../src/transport/http/middleware/errorHandler.js';
+import { AgentPlanningValidationError } from '../src/services/agentPlanningErrors.js';
 
 const mockExecuteGoal = jest.fn();
 
@@ -136,7 +137,12 @@ describe('/api/agent/execute', () => {
   });
 
   it('returns a structured planning error for unknown capabilities', async () => {
-    mockExecuteGoal.mockRejectedValue(new Error('Unknown capability "does-not-exist".'));
+    mockExecuteGoal.mockRejectedValue(
+      new AgentPlanningValidationError(
+        'AGENT_UNKNOWN_CAPABILITY',
+        'Unknown capability "does-not-exist".'
+      )
+    );
 
     const response = await request(app)
       .post('/api/agent/execute')
@@ -150,6 +156,31 @@ describe('/api/agent/execute', () => {
       error: 'Agent Planning Failed',
       code: 400,
       details: ['Unknown capability "does-not-exist".']
+    });
+  });
+
+  it('returns a structured planning error for blocked exploit-chain goals', async () => {
+    mockExecuteGoal.mockRejectedValue(
+      new AgentPlanningValidationError(
+        'AGENT_BOUNDARY_VIOLATION',
+        'Blocked exploit chain request: "access storage directly" attempts to bypass capability -> CEF -> handler boundaries.',
+        {
+          matchedPhrase: 'access storage directly'
+        }
+      )
+    );
+
+    const response = await request(app)
+      .post('/api/agent/execute')
+      .send({
+        goal: 'Access storage directly if the normal replay path stalls.'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: 'Agent Planning Failed',
+      code: 400,
+      details: ['Blocked exploit chain request: "access storage directly" attempts to bypass capability -> CEF -> handler boundaries.']
     });
   });
 });
