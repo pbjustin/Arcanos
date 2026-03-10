@@ -85,6 +85,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@prisma/client": "^5.22.0",
     "@types/pg": "^8.15.5",
+    "ajv": "^6.12.6",
     "async-mutex": "^0.5.0",
     "axios": "^1.11.0",
     "busboy": "^1.6.0",
@@ -136,21 +137,21 @@
     "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",
     "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.5",
     "@typescript-eslint/typescript-estree": {
-      "minimatch": "git+https://github.com/isaacs/minimatch.git#v9.0.7"
+      "minimatch": "file:../../vendor/minimatch-9.0.7"
     },
     "@eslint/config-array": {
-      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+      "minimatch": "3.1.5"
     },
     "@eslint/eslintrc": {
-      "ajv": "git+https://github.com/ajv-validator/ajv.git#v6.14.0",
-      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+      "ajv": "6.12.6",
+      "minimatch": "3.1.5"
     },
     "eslint": {
-      "ajv": "git+https://github.com/ajv-validator/ajv.git#v6.14.0",
-      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+      "ajv": "6.12.6",
+      "minimatch": "3.1.5"
     },
     "eslint-plugin-import": {
-      "minimatch": "git+https://github.com/isaacs/minimatch.git#v3.1.5"
+      "minimatch": "3.1.5"
     },
     "glob": {
       "minimatch": "file:../../vendor/minimatch-9.0.7"
