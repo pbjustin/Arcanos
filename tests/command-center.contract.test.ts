@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const workspaceRoot = 'C:/pbjustin/Arcanos';
+const workspaceRoot = process.cwd();
 let mockedAuditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'false';
 
 const mockLogExecution = jest.fn(async () => undefined);

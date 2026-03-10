@@ -11,6 +11,7 @@ const ALIAS_PREFIX_TO_DIST_SUBPATH = [
   ['@services/', 'services/'],
   ['@transport/', 'transport/'],
   ['@routes/', 'routes/'],
+  ['@workers/', 'workers/'],
 ].sort((a, b) => b[0].length - a[0].length);
 
 /**

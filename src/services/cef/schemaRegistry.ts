@@ -1,5 +1,4 @@
-import Ajv from 'ajv';
-import type { ErrorObject, ValidateFunction } from 'ajv';
+import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv';
 import {
   CEF_COMMAND_SCHEMA_COVERAGE,
   CEF_SCHEMA_DEFINITIONS
@@ -20,17 +19,17 @@ type CefJsonSchema = Record<string, unknown> & { $id: string };
 
 const ajv = new Ajv({
   allErrors: true,
-  jsonPointers: true,
-  schemaId: 'auto',
-  unknownFormats: 'ignore'
+  strict: false,
+  validateFormats: false
 });
 
 const compiledValidatorsBySchemaName = new Map<string, ValidateFunction>();
 
 function normalizeAjvErrors(errors: ErrorObject[] | null | undefined): CefSchemaValidationIssue[] {
   return (errors ?? []).map(error => ({
-    path: typeof error.dataPath === 'string' && error.dataPath.length > 0
-      ? error.dataPath.replace(/^\./, '')
+    //audit Assumption: Ajv v8 reports JSON pointer paths via `instancePath`; failure risk: schema failures lose field-level context after the security upgrade; expected invariant: callers still receive stable dotted field paths; handling strategy: normalize JSON pointer paths into the legacy dotted shape or fall back to `payload`.
+    path: typeof error.instancePath === 'string' && error.instancePath.length > 0
+      ? error.instancePath.replace(/^\//, '').replace(/\//g, '.')
       : 'payload',
     message: error.message ?? 'Schema validation failed.'
   }));
