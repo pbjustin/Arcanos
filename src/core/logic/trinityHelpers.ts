@@ -23,7 +23,7 @@ export function calculateMemoryScoreSummary(relevanceScores: number[]): { maxSco
  * Emits a standardized fallback event for stages that still support model fallback.
  */
 export function logFallbackEvent(stage: string, requestedModel: string, fallbackModel: string, reason: string): void {
-  logger.warn('Trinity fallback invoked', {
+  logger.warn('MODEL_FALLBACK_TRIGGERED', {
     module: 'trinity',
     operation: 'model-fallback',
     stage,

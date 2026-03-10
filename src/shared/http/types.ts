@@ -18,6 +18,7 @@ export interface ValidatedRequestParts {
 declare module 'express-serve-static-core' {
   interface Request {
     requestId?: string;
+    traceId?: string;
     logger?: RequestScopedLogger;
     log?: (event: string, data?: Record<string, unknown>, level?: RequestLogLevel) => void;
     validated?: ValidatedRequestParts;

@@ -29,7 +29,8 @@ import { getGPT5Model } from '@services/openai.js';
 import {
   buildCompletedQueuedAskOutput,
   buildQueuedAskJobInput,
-  buildQueuedAskPendingResponse
+  buildQueuedAskPendingResponse,
+  type CompletedQueuedAskJobOutput
 } from '@shared/ask/asyncAskJob.js';
 import {
   getActiveIntentSnapshot,
@@ -54,6 +55,13 @@ import {
   tryExecutePromptRouteShortcut,
   type PromptRouteShortcutResult
 } from '@services/promptRouteShortcuts.js';
+import { runHealthCheck } from '@platform/logging/diagnostics.js';
+import { checkRedisHealth } from '@platform/resilience/unifiedHealth.js';
+import {
+  beginAiRouteTrace,
+  completeAiRouteTrace,
+  failAiRouteTrace
+} from '@transport/http/aiRouteTelemetry.js';
 
 const router = express.Router();
 
@@ -358,19 +366,74 @@ function readRequestedAsyncAskWaitMs(body: AskRequest): number | undefined {
     : undefined;
 }
 
+function isSystemHealthProbePrompt(prompt: string): boolean {
+  return prompt.trim().toLowerCase() === 'system health test';
+}
+
+/**
+ * Build a deterministic `/ask` response for operator health probe prompts.
+ * Inputs/outputs: endpoint metadata + optional client context/audit flag -> standard ask response payload.
+ * Edge cases: Redis health is folded into the returned summary so probe callers see the same degraded signal as `/health`.
+ */
+async function buildSystemHealthProbeResponse(params: {
+  endpointName: string;
+  clientContext?: AskRequest['clientContext'];
+  auditFlag?: SchemaValidationBypassAuditFlag;
+}): Promise<AskResponse> {
+  const healthReport = runHealthCheck();
+  const redisHealth = await checkRedisHealth();
+  const overallStatus = healthReport.status === 'ok' && redisHealth.healthy ? 'ok' : 'degraded';
+  const summary = redisHealth.healthy
+    ? healthReport.summary
+    : `${healthReport.summary} | Redis: ${redisHealth.error || 'unhealthy'}`;
+  const createdAt = Math.floor(Date.now() / 1000);
+  const requestId = `health_${createdAt}`;
+
+  return {
+    result: `System health ${overallStatus}. ${summary}.`,
+    module: 'system-health',
+    meta: {
+      id: requestId,
+      created: createdAt
+    },
+    activeModel: 'system-health',
+    fallbackFlag: false,
+    routingStages: ['SYSTEM-HEALTH-SHORTCUT'],
+    gpt5Used: false,
+    auditSafe: {
+      mode: false,
+      overrideUsed: false,
+      auditFlags: ['SYSTEM_HEALTH_SHORTCUT_ACTIVE'],
+      processedSafely: true
+    },
+    memoryContext: {
+      entriesAccessed: 0,
+      contextSummary: `Operator health shortcut returned ${overallStatus} without model invocation.`,
+      memoryEnhanced: false
+    },
+    taskLineage: {
+      requestId,
+      logged: false
+    },
+    endpoint: params.endpointName,
+    ...(params.clientContext ? { clientContext: params.clientContext } : {}),
+    ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})
+  };
+}
+
 /**
  * Convert a completed async queue job payload into the standard `/ask` response contract.
  * Purpose: keep queued and synchronous ask responses shape-compatible when the worker finishes inside the wait window.
  * Inputs/outputs: accepts the raw terminal queue output and returns the route response payload or `null`.
  * Edge case behavior: non-object or null outputs are treated as invalid so callers do not receive ambiguous success payloads.
  */
-function normalizeCompletedAsyncAskResponse(output: unknown): AskResponse | null {
+function normalizeCompletedAsyncAskResponse(output: unknown): CompletedQueuedAskJobOutput | null {
   //audit Assumption: successful queued `/ask` jobs persist the same structured output shape returned by sync Trinity execution; failure risk: malformed job output gets returned as a false-success payload; expected invariant: completed async output is a non-null object; handling strategy: fail closed on invalid shapes.
   if (!output || typeof output !== 'object' || Array.isArray(output)) {
     return null;
   }
 
-  return output as AskResponse;
+  return output as CompletedQueuedAskJobOutput;
 }
 
 /**
@@ -585,12 +648,18 @@ export const handleAIRequest = async (
 
   // Log request for feedback loop
   logRequestFeedback(prompt, endpointName);
+  const routeTrace = beginAiRouteTrace(req, endpointName, prompt, getGPT5Model());
 
   try {
     const daemonToolResponse = await tryDispatchDaemonTools(openai, prompt, metadata);
     if (daemonToolResponse) {
       if ('confirmation_required' in daemonToolResponse) {
         //audit Assumption: confirmation required should block response; risk: sensitive execution; invariant: 403 returned; handling: return challenge.
+        completeAiRouteTrace(req, routeTrace, {
+          activeModel: 'daemon-tool',
+          fallbackFlag: false,
+          extra: { disposition: 'confirmation-required' }
+        });
         return res.status(403).json({
           code: 'CONFIRMATION_REQUIRED',
           confirmationChallenge: { id: daemonToolResponse.confirmation_token },
@@ -598,6 +667,11 @@ export const handleAIRequest = async (
         });
       }
       //audit Assumption: daemon tool response is terminal; risk: skipping trinity; invariant: tool actions queued; handling: return early.
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: 'daemon-tool',
+        fallbackFlag: false,
+        extra: { disposition: 'daemon-tool' }
+      });
       return res.json({
         ...daemonToolResponse,
         endpoint: endpointName,
@@ -608,6 +682,11 @@ export const handleAIRequest = async (
 
     const dagToolResponse = await tryDispatchDagTools(openai, prompt, { sessionId });
     if (dagToolResponse) {
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: 'dag-tool',
+        fallbackFlag: false,
+        extra: { disposition: 'dag-tool' }
+      });
       return res.json({
         ...dagToolResponse,
         endpoint: endpointName,
@@ -618,6 +697,11 @@ export const handleAIRequest = async (
 
     const workerToolResponse = await tryDispatchWorkerTools(openai, prompt);
     if (workerToolResponse) {
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: 'worker-tool',
+        fallbackFlag: false,
+        extra: { disposition: 'worker-tool' }
+      });
       return res.json({
         ...workerToolResponse,
         endpoint: endpointName,
@@ -632,6 +716,14 @@ export const handleAIRequest = async (
     });
     //audit Assumption: deterministic prompt shortcuts should bypass Trinity generation when they have a confident route-specific execution path; failure risk: memory and booker prompts drift back into generic chat behavior; expected invariant: registered shortcuts return stable route-specific output before Trinity; handling strategy: execute the shared shortcut registry and short-circuit on the first match.
     if (promptShortcut) {
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: promptShortcut.response.activeModel,
+        fallbackFlag: false,
+        extra: {
+          disposition: 'prompt-shortcut',
+          shortcutId: promptShortcut.shortcutId
+        }
+      });
       return res.json(
         buildAskPromptShortcutResponse({
           shortcut: promptShortcut,
@@ -640,6 +732,20 @@ export const handleAIRequest = async (
           auditFlag: bypassAuditFlag ?? undefined
         })
       );
+    }
+
+    if (isSystemHealthProbePrompt(prompt)) {
+      const systemHealthResponse = await buildSystemHealthProbeResponse({
+        endpointName,
+        clientContext: req.body.clientContext,
+        auditFlag: bypassAuditFlag ?? undefined
+      });
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: systemHealthResponse.activeModel,
+        fallbackFlag: false,
+        extra: { disposition: 'system-health-shortcut' }
+      });
+      return res.json(systemHealthResponse);
     }
 
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
@@ -670,6 +776,11 @@ export const handleAIRequest = async (
         const completedResponse = normalizeCompletedAsyncAskResponse(waitedJob.job.output);
 
         if (!completedResponse) {
+          failAiRouteTrace(req, routeTrace, new Error('Async ask job completed without a structured output payload.'), {
+            activeModel: 'queued-ask',
+            statusCode: 500,
+            extra: { disposition: 'async-completed-invalid', jobId: job.id }
+          });
           return sendInternalErrorPayload(res, {
             error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
             message: 'Async ask job completed without a structured output payload.',
@@ -678,10 +789,24 @@ export const handleAIRequest = async (
           });
         }
 
+        completeAiRouteTrace(req, routeTrace, {
+          activeModel: completedResponse.activeModel,
+          fallbackFlag: completedResponse.fallbackFlag,
+          fallbackReason: completedResponse.fallbackSummary?.fallbackReasons?.join('; ') ?? null,
+          extra: {
+            disposition: 'async-completed',
+            jobId: job.id
+          }
+        });
         return res.json(completedResponse);
       }
 
       if (waitedJob.state === 'failed') {
+        failAiRouteTrace(req, routeTrace, new Error(waitedJob.job.error_message || 'Async ask job failed.'), {
+          activeModel: 'queued-ask',
+          statusCode: 500,
+          extra: { disposition: 'async-failed', jobId: job.id }
+        });
         return sendInternalErrorPayload(
           res,
           buildAsyncAskFailurePayload(job.id, waitedJob.job.error_message)
@@ -689,6 +814,11 @@ export const handleAIRequest = async (
       }
 
       if (waitedJob.state === 'missing') {
+        failAiRouteTrace(req, routeTrace, new Error('Async ask job disappeared before completion.'), {
+          activeModel: 'queued-ask',
+          statusCode: 500,
+          extra: { disposition: 'async-missing', jobId: job.id }
+        });
         return sendInternalErrorPayload(res, {
           error: 'ASYNC_ASK_JOB_MISSING',
           message: 'Async ask job disappeared before completion.',
@@ -697,6 +827,14 @@ export const handleAIRequest = async (
         });
       }
 
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: 'queued-ask',
+        fallbackFlag: false,
+        extra: {
+          disposition: 'async-pending',
+          jobId: job.id
+        }
+      });
       return res.status(202).json(buildQueuedAskPendingResponse(job.id));
     }
 
@@ -712,8 +850,23 @@ export const handleAIRequest = async (
       },
       runtimeBudget
     );
+    completeAiRouteTrace(req, routeTrace, {
+      activeModel: output.activeModel,
+      fallbackFlag: output.fallbackFlag,
+      fallbackReason: output.fallbackSummary?.fallbackReasons?.join('; ') ?? null,
+      extra: {
+        disposition: 'trinity',
+        reasoningModel: output.gpt5Model,
+        gpt5Used: output.gpt5Used,
+        routingStages: output.routingStages
+      }
+    });
     return res.json(buildCompletedQueuedAskOutput(output, queuedAskJobInput));
   } catch (err) {
+    failAiRouteTrace(req, routeTrace, err, {
+      activeModel: getGPT5Model(),
+      statusCode: 500
+    });
     handleAIError(err, prompt, endpointName, res);
   }
 };

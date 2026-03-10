@@ -9,6 +9,7 @@ interface RequestLogPayload {
   timestamp: string;
   level: RequestLogLevel;
   event: string;
+  traceId: string;
   requestId: string;
   method: string;
   path: string;
@@ -26,6 +27,16 @@ function resolveRequestId(req: Request): string {
   return generateRequestId('req');
 }
 
+function resolveTraceId(req: Request): string {
+  const rawHeader = req.headers['x-trace-id'];
+  const candidate = typeof rawHeader === 'string' ? rawHeader : Array.isArray(rawHeader) ? rawHeader[0] : '';
+  const trimmed = candidate.trim();
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+  return generateRequestId('trace');
+}
+
 function emitRequestLog(payload: RequestLogPayload): void {
   console.log(JSON.stringify(payload));
 }
@@ -37,9 +48,10 @@ interface RequestScopedLogger {
   error: (event: string, data?: Record<string, unknown>) => void;
 }
 
-function createRequestLogger(req: Request, requestId: string): RequestScopedLogger {
+function createRequestLogger(req: Request, requestId: string, traceId: string): RequestScopedLogger {
   const sanitizedPath = resolveSafeRequestPath(req);
   const base = {
+    traceId,
     requestId,
     method: req.method,
     path: sanitizedPath
@@ -55,7 +67,8 @@ function createRequestLogger(req: Request, requestId: string): RequestScopedLogg
       timestamp: new Date().toISOString(),
       level,
       event,
-      requestId,
+      traceId: base.traceId,
+      requestId: base.requestId,
       method: base.method,
       path: base.path,
       latencyMs,
@@ -78,17 +91,22 @@ function createRequestLogger(req: Request, requestId: string): RequestScopedLogg
  */
 export function requestContext(req: Request, res: Response, next: NextFunction): void {
   const requestId = resolveRequestId(req);
+  const traceId = resolveTraceId(req);
   const startTimeMs = Date.now();
   const requestPath = resolveSafeRequestPath(req);
-  const requestLogger = createRequestLogger(req, requestId);
+  const requestLogger = createRequestLogger(req, requestId, traceId);
 
   req.requestId = requestId;
+  req.traceId = traceId;
   req.logger = requestLogger;
   req.log = (event: string, data?: Record<string, unknown>, level: RequestLogLevel = 'info') => {
     requestLogger[level](event, data);
   };
 
   res.setHeader('x-request-id', requestId);
+  res.setHeader('x-trace-id', traceId);
+  //audit Assumption: downstream handlers may persist the trace id from res.locals even when request typing is erased; failure risk: trace propagation silently drops at route boundaries; expected invariant: the same trace id is reachable from both req and res.locals; handling strategy: mirror the generated id onto locals during request bootstrap.
+  (res.locals as Record<string, unknown>).auditTraceId = traceId;
 
   requestLogger.info('request.received', {
     ip: req.ip,
@@ -114,6 +132,7 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
       timestamp: new Date().toISOString(),
       level,
       event: 'request.completed',
+      traceId,
       requestId,
       method: req.method,
       path: requestPath,

@@ -6,7 +6,7 @@ import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 import { generateRequestId } from '@shared/idGenerator.js';
 
-import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '../../dag/templates.js';
+import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '@dag/templates.js';
 import {
   appendUniqueDeterministicOperation,
   buildToolAskResponse,

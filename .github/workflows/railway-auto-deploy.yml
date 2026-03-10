@@ -1,7 +1,11 @@
 name: Railway Auto Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - CI/CD Pipeline
+    types:
+      - completed
     branches:
       - main
   workflow_dispatch:
@@ -16,8 +20,10 @@ permissions:
 jobs:
   deploy-production:
     name: Deploy Production (Railway)
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     env:
+      DEPLOY_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
@@ -27,11 +33,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.11.1'
+          node-version: '20.19.0'
 
       - name: Install Railway CLI
         run: npm install -g @railway/cli

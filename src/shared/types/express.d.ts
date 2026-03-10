@@ -46,6 +46,10 @@ declare global {
        */
       requestId?: string;
       /**
+       * Stable trace id attached by requestContext middleware and propagated in headers/logs.
+       */
+      traceId?: string;
+      /**
        * Request-scoped structured logger attached by requestContext middleware.
        */
       logger?: RequestLogger;

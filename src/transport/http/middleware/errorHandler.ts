@@ -17,6 +17,20 @@ function isAppError(err: unknown): err is AppError {
   return typeof candidate.httpCode === 'number' && typeof candidate.message === 'string';
 }
 
+function isJsonSchemaParseError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+
+  const candidate = err as Record<string, unknown>;
+  const type = typeof candidate.type === 'string' ? candidate.type : '';
+  const status = typeof candidate.status === 'number' ? candidate.status : null;
+  const body = candidate.body;
+
+  //audit Assumption: malformed JSON bodies should surface as client schema errors, not internal server failures; failure risk: operator dashboards count client mistakes as backend incidents; expected invariant: body-parser syntax failures map to HTTP 400; handling strategy: detect the parser-specific status/type/body shape before generic 500 handling.
+  return type === 'entity.parse.failed' || (status === 400 && typeof body === 'string');
+}
+
 /**
  * Purpose: Centralize HTTP error responses with request-id correlation and stack logging.
  * Inputs/Outputs: Express error middleware; writes JSON error payload and status code.
@@ -24,6 +38,7 @@ function isAppError(err: unknown): err is AppError {
  */
 const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunction) => {
   const requestId = req.requestId ?? 'unknown';
+  const traceId = req.traceId ?? requestId;
   const requestPath = resolveSafeRequestPath(req);
 
   // Normalize unknown error input into an Error-like shape for safe logging.
@@ -52,7 +67,29 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     message = String(err);
   }
 
+  let statusCode = 500;
+  let payload: Record<string, unknown> = {
+    error: 'Internal Server Error',
+    code: 500
+  };
+
+  if (isJsonSchemaParseError(err)) {
+    statusCode = 400;
+    payload = {
+      error: 'invalid request schema',
+      code: 400
+    };
+  } else if (isAppError(err)) {
+    const appError = err as AppError;
+    statusCode = appError.httpCode;
+    payload = {
+      error: appError.message,
+      code: appError.httpCode
+    };
+  }
+
   const logDetails = {
+    traceId,
     requestId,
     method: req.method,
     path: requestPath,
@@ -61,26 +98,14 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     stack
   };
 
+  const logLevel: 'warn' | 'error' = statusCode >= 500 ? 'error' : 'warn';
   if (req.logger) {
-    req.logger.error('request.failed', logDetails);
+    req.logger[logLevel]('request.failed', logDetails);
   } else {
-    logger.error('request.failed', logDetails);
+    logger[logLevel]('request.failed', logDetails);
   }
 
-  //audit Assumption: operational AppError instances carry client-safe status/message; failure risk: leaking internal error details; expected invariant: unknown errors return generic message; handling strategy: branch on AppError type.
-  if (isAppError(err)) {
-    const appError = err as AppError;
-    res.status(appError.httpCode).json({
-      error: appError.message,
-      code: appError.httpCode
-    });
-    return;
-  }
-
-  res.status(500).json({
-    error: 'Internal Server Error',
-    code: 500
-  });
+  res.status(statusCode).json(payload);
 };
 
 export default errorHandler;

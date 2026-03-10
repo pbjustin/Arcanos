@@ -2,8 +2,8 @@ coverage:
   status:
     project:
       default:
-        target: auto
-        threshold: 1%
+        target: 100%
+        threshold: 0%
     patch:
       default:
         target: 80%
@@ -13,13 +13,9 @@ ignore:
   - "scripts/"
   - "docs/"
   - "*.config.*"
-  - "daemon-python/scripts/"
+  - "daemon-python/**"
 
 flags:
   node:
     paths:
       - src/
-      - workers/src/
-  python:
-    paths:
-      - daemon-python/arcanos/

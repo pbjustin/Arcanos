@@ -55,6 +55,8 @@ describe('requestContext security logging', () => {
 
     expect(requestReceived?.path).toBe('/probe');
     expect(requestCompleted?.path).toBe('/probe');
+    expect(typeof (requestReceived as { traceId?: unknown })?.traceId).toBe('string');
+    expect((requestReceived as { traceId?: unknown })?.traceId).toBe((requestCompleted as { traceId?: unknown })?.traceId);
   });
 
   it('keeps request.completed latency as a top-level field for non-2xx responses', async () => {
@@ -90,5 +92,27 @@ describe('requestContext security logging', () => {
 
     expect(requestFailed?.path).toBe('/boom');
     expect((requestFailed?.data as { path?: unknown }).path).toBe('/boom');
+    expect(typeof (requestFailed as { traceId?: unknown })?.traceId).toBe('string');
+  });
+
+  it('returns malformed JSON bodies as invalid request schema errors', async () => {
+    const app = express();
+    app.use(requestContext);
+    app.use(express.json());
+    app.post('/parse', (_req, res) => {
+      res.status(200).json({ ok: true });
+    });
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .post('/parse')
+      .set('Content-Type', 'application/json')
+      .send('{"prompt":');
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: 'invalid request schema',
+      code: 400
+    });
   });
 });

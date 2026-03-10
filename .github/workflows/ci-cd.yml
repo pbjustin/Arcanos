@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: '20.11.1'
+  NODE_VERSION: '20.19.0'
   OPENAI_API_KEY: 'mock-api-key'
 
 jobs:
@@ -54,7 +54,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: ['18.x', '20.11.1']
+        node-version: ['20.19.0']
 
     steps:
       - name: 📥 Checkout code
@@ -73,7 +73,6 @@ jobs:
         run: npm run build
 
       - name: 📊 Upload build artifacts
-        if: matrix.node-version == '20.11.1'
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
@@ -92,6 +91,8 @@ jobs:
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 🧰 Setup Node.js
         uses: actions/setup-node@v4
@@ -126,7 +127,7 @@ jobs:
           export OPENAI_API_KEY=mock-api-key
           export NODE_ENV=test
           export PORT=0
-          npm run test:integration || echo "Integration tests not yet implemented"
+          npm run test:integration
 
   validate-railway-compatibility:
     name: Railway Compatibility
@@ -210,6 +211,8 @@ jobs:
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 🧰 Setup Node.js
         uses: actions/setup-node@v4
@@ -219,6 +222,11 @@ jobs:
 
       - name: 📦 Install dependencies
         run: npm ci
+
+      - name: 🔍 Run gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔒 Run npm security audit
         run: npm audit --omit=dev --audit-level=moderate
@@ -296,14 +304,8 @@ jobs:
           pip install pytest-cov
           pytest daemon-python/tests/ -q --cov=daemon-python/arcanos --cov-report=xml:coverage-python.xml
 
-      - name: 📊 Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage-python.xml
-          flags: python
-          fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: 📊 Skip Python Codecov upload
+        run: echo "Python coverage is outside the current reported Codecov project scope."
 
   all-checks-complete:
     name: All Checks Complete

@@ -9,7 +9,7 @@ on:
 
 env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  NODE_VERSION: '20.11.1'
+  NODE_VERSION: '20.19.0'
 
 jobs:
   update-docs:

@@ -23,6 +23,8 @@ const aliasPrefixTargetMappings = [
   { aliasPrefix: '@services/', targetPrefix: 'services/' },
   { aliasPrefix: '@transport/', targetPrefix: 'transport/' },
   { aliasPrefix: '@shared/', targetPrefix: 'shared/' },
+  { aliasPrefix: '@dag/', targetPrefix: 'dag/' },
+  { aliasPrefix: '@workers/', targetPrefix: 'workers/' },
   { aliasPrefix: '@analytics/', targetPrefix: 'analytics/' },
   { aliasPrefix: '@config/', targetPrefix: 'config/' },
   { aliasPrefix: '@stores/', targetPrefix: 'stores/' },
