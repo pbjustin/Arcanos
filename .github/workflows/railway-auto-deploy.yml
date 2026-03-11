@@ -94,9 +94,15 @@ jobs:
           echo "Skipping GitHub-driven Railway deploy; Railway repo deploy remains the active path."
           echo "Missing configuration: ${{ steps.deploy_config.outputs.missing_fields }}"
 
-      - name: Verify Railway auth
+      - name: Verify Railway deploy access
         if: steps.deploy_config.outputs.should_deploy == 'true'
-        run: railway whoami
+        run: |
+          set -euo pipefail
+          # //audit Assumption: GitHub Actions may use a project-scoped Railway token instead of a user-scoped account token; failure risk: `railway whoami` rejects valid deploy credentials and blocks automated deploys; expected invariant: the configured token can read project-scoped service state before deploy; handling strategy: probe service variables with the target service/environment pair.
+          railway variable list \
+            --environment "${RAILWAY_ENVIRONMENT_NAME}" \
+            --service "${RAILWAY_SERVICE_ID}" \
+            --json > /dev/null
 
       - name: Deploy to Railway
         if: steps.deploy_config.outputs.should_deploy == 'true'
