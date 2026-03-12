@@ -87,7 +87,7 @@ function formatTaskList(values: string[]): string | null {
   if (normalizedValues.length === 0) {
     return null;
   }
-  return normalizedValues.length === 1 ? normalizedValues[0] : normalizedValues.slice(0, 2).join(' and ');
+  return new Intl.ListFormat('en').format(normalizedValues);
 }
 
 function splitIntoReviewLines(text: string): string[] {
