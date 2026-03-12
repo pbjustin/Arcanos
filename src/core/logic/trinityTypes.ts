@@ -3,6 +3,14 @@
  * Used by trinity.ts and trinityStages.ts; consumers should import from trinity.js only.
  */
 
+import type {
+  TrinityCapabilityFlags,
+  TrinityEvidenceTag,
+  TrinityReasoningHonesty,
+  TrinityResponseMode,
+  TrinityToolBackedCapabilities
+} from './trinityHonesty.js';
+
 export interface TrinityMetaTokens {
   prompt_tokens: number;
   completion_tokens: number;
@@ -20,6 +28,11 @@ export interface ReasoningLedger {
   tradeoffs: string[];
   alternatives: string[];
   justification: string;
+  responseMode: TrinityResponseMode;
+  achievableSubtasks: string[];
+  blockedSubtasks: string[];
+  userVisibleCaveats: string[];
+  evidenceTags: TrinityEvidenceTag[];
 }
 
 export interface TrinityResult {
@@ -121,6 +134,7 @@ export interface TrinityRunOptions {
   memorySessionId?: string;
   tokenAuditSessionId?: string;
   watchdogModelTimeoutMs?: number;
+  toolBackedCapabilities?: TrinityToolBackedCapabilities;
 }
 
 export interface TrinityDryRunPreview {
@@ -129,6 +143,7 @@ export interface TrinityDryRunPreview {
   finalModelCandidate: string;
   gpt5ModelCandidate: string;
   routingPlan: string[];
+  capabilityFlags: TrinityCapabilityFlags;
   auditSafeMode: boolean;
   memoryEntryCount: number;
   auditFlags: string[];
@@ -137,6 +152,7 @@ export interface TrinityDryRunPreview {
 
 export interface TrinityIntakeOutput {
   framedRequest: string;
+  capabilityFlags: TrinityCapabilityFlags;
   activeModel: string;
   fallbackUsed: boolean;
   usage?: TrinityMetaTokens | undefined;
@@ -150,6 +166,7 @@ export interface TrinityReasoningOutput {
   fallbackUsed: boolean;
   error?: string;
   reasoningLedger?: ReasoningLedger;
+  reasoningHonesty: TrinityReasoningHonesty;
 }
 
 export interface TrinityFinalOutput {

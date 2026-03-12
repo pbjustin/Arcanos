@@ -52,6 +52,13 @@ describe('Trinity pipeline', () => {
     expect(Array.isArray(result.dryRunPreview!.routingPlan)).toBe(true);
     expect(result.routingStages).toEqual(result.dryRunPreview!.routingPlan);
     expect(typeof result.gpt5Model).toBe('string');
+    expect(result.dryRunPreview!.capabilityFlags).toEqual({
+      canBrowse: false,
+      canVerifyLiveData: false,
+      canConfirmExternalState: false,
+      canPersistData: false,
+      canCallBackend: false
+    });
   });
 
   it('short-circuits explicit exact-literal prompts before model execution', async () => {
