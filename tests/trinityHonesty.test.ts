@@ -3,9 +3,17 @@ import { describe, expect, it } from '@jest/globals';
 import {
   createDefaultTrinityReasoningHonesty,
   deriveTrinityCapabilityFlags,
+  deriveTrinityOutputControls,
   enforceFinalStageHonesty,
+  enforceFinalStageHonestyAndMinimalism,
+  shouldExposePipelineDebug,
   type TrinityReasoningHonesty
 } from '../src/core/logic/trinityHonesty.js';
+
+function countWords(text: string): number {
+  const words = text.match(/\S+/g);
+  return words ? words.length : 0;
+}
 
 describe('Trinity honesty controls', () => {
   it('defaults every capability flag to false unless explicitly tool-backed', () => {
@@ -71,6 +79,12 @@ describe('Trinity honesty controls', () => {
           sourceType: 'tool',
           confidence: 'high',
           verificationStatus: 'verified'
+        },
+        {
+          claimText: 'Current competitor pricing was confirmed through tool evidence.',
+          sourceType: 'tool',
+          confidence: 'high',
+          verificationStatus: 'verified'
         }
       ]
     };
@@ -102,5 +116,116 @@ describe('Trinity honesty controls', () => {
     expect(result.blockedCategories).toEqual(['backend_action']);
     expect(result.text).toContain('I have not executed any backend or persistence action here.');
     expect(result.text).not.toMatch(/saved this|updated the backend/i);
+  });
+
+  it('derives minimal direct output controls from hard word-limit prompts', () => {
+    const outputControls = deriveTrinityOutputControls(
+      'Answer directly under 80 words with no extra explanation.',
+      {}
+    );
+
+    expect(outputControls.requestedVerbosity).toBe('minimal');
+    expect(outputControls.maxWords).toBe(80);
+    expect(outputControls.answerMode).toBe('direct');
+    expect(outputControls.strictUserVisibleOutput).toBe(true);
+    expect(outputControls.debugPipeline).toBe(false);
+  });
+
+  it('rewrites unsupported live-verification claims and strips unrequested meta sections', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        "I checked the latest competitor moves and confirmed they're still pricing aggressively.",
+        'PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch.',
+        'Audit notes: claim sounded verified.'
+      ].join('\n\n'),
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Give the launch plan and keep it concise.', {}),
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['Give the launch plan'],
+        blockedSubtasks: ["I can't verify current competitor moves without live browsing"],
+        userVisibleCaveats: ["I can't verify current competitor moves without live browsing."],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain("I can't verify current competitor moves without live browsing.");
+    expect(enforcementResult.text).toContain('PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch.');
+    expect(enforcementResult.text).not.toContain('I checked the latest competitor moves');
+    expect(enforcementResult.text).not.toContain('Audit notes');
+    expect(enforcementResult.removedMetaSections).toHaveLength(1);
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([
+      "I checked the latest competitor moves and confirmed they're still pricing aggressively."
+    ]);
+  });
+
+  it('respects a hard word limit while keeping the main answer intact', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: 'Deploy in three phases. Start with staging, then a small production canary, then full rollout after metrics stay stable.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'minimal',
+        maxWords: 12,
+        answerMode: 'direct',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Give deployment guidance'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: []
+      }
+    });
+
+    expect(countWords(enforcementResult.text)).toBeLessThanOrEqual(12);
+    expect(enforcementResult.text).toContain('Deploy');
+  });
+
+  it('does not leak debug payloads while strict user-visible output is enabled', () => {
+    expect(
+      shouldExposePipelineDebug({
+        requestedVerbosity: 'detailed',
+        maxWords: null,
+        answerMode: 'debug',
+        debugPipeline: true,
+        strictUserVisibleOutput: true
+      })
+    ).toBe(false);
+
+    expect(
+      shouldExposePipelineDebug({
+        requestedVerbosity: 'detailed',
+        maxWords: null,
+        answerMode: 'debug',
+        debugPipeline: true,
+        strictUserVisibleOutput: false
+      })
+    ).toBe(true);
+  });
+
+  it('keeps normal answers natural when no refusal is needed', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: 'Here is a concise answer: cache the parsed config and invalidate it on file change.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'normal',
+        maxWords: null,
+        answerMode: 'explained',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Answer the config question'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toBe('cache the parsed config and invalidate it on file change.');
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([]);
   });
 });

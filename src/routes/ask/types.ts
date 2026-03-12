@@ -28,12 +28,25 @@ export type AskRequest = AIRequestDTO & {
   };
   sessionId?: string;
   overrideAuditSafe?: string;
+  requestedVerbosity?: 'minimal' | 'normal' | 'detailed';
+  requested_verbosity?: 'minimal' | 'normal' | 'detailed';
+  maxWords?: number | null;
+  max_words?: number | null;
+  answerMode?: 'direct' | 'explained' | 'audit' | 'debug';
+  answer_mode?: 'direct' | 'explained' | 'audit' | 'debug';
+  debugPipeline?: boolean;
+  debug_pipeline?: boolean;
+  strictUserVisibleOutput?: boolean;
+  strict_user_visible_output?: boolean;
   clientContext?: ClientContextDTO;
 };
 
 export interface AskResponse extends AIResponseDTO {
   routingStages?: string[];
   gpt5Used?: boolean;
+  gpt5Model?: string;
+  dryRun?: boolean;
+  pipelineDebug?: unknown;
   auditSafe?: {
     mode: boolean;
     overrideUsed: boolean;

@@ -1,7 +1,15 @@
 import { z } from 'zod';
-import type { TrinityResult } from '@core/logic/trinity.js';
+import type {
+  TrinityAnswerMode,
+  TrinityRequestedVerbosity,
+  TrinityResult
+} from '@core/logic/trinity.js';
 import { clientContextSchema, type ClientContextDTO } from '@shared/types/dto.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
+import {
+  buildTrinityUserVisibleResponse,
+  type TrinityUserVisibleResponse
+} from './trinityResponseSerializer.js';
 
 const ASYNC_ASK_ENDPOINT_FALLBACK = 'ask';
 
@@ -18,6 +26,11 @@ const queuedAskJobInputSchema = z.object({
   sessionId: z.string().trim().min(1).max(100).optional(),
   overrideAuditSafe: z.string().trim().min(1).max(50).optional(),
   cognitiveDomain: cognitiveDomainSchema.optional(),
+  requestedVerbosity: z.enum(['minimal', 'normal', 'detailed']).optional(),
+  maxWords: z.number().int().positive().max(2000).nullable().optional(),
+  answerMode: z.enum(['direct', 'explained', 'audit', 'debug']).optional(),
+  debugPipeline: z.boolean().optional(),
+  strictUserVisibleOutput: z.boolean().optional(),
   clientContext: clientContextSchema.nullable().optional(),
   endpointName: z.string().trim().max(64).optional(),
   auditFlag: asyncAskAuditFlagSchema.optional()
@@ -60,6 +73,11 @@ export interface QueuedAskJobInput {
   sessionId?: string;
   overrideAuditSafe?: string;
   cognitiveDomain?: CognitiveDomain;
+  requestedVerbosity?: TrinityRequestedVerbosity;
+  maxWords?: number | null;
+  answerMode?: TrinityAnswerMode;
+  debugPipeline?: boolean;
+  strictUserVisibleOutput?: boolean;
   clientContext?: ClientContextDTO;
   endpointName: string;
   auditFlag?: AsyncAskAuditFlag;
@@ -115,11 +133,7 @@ export type ParsedQueuedAskJobInput =
  * Edge case behavior:
  * - Optional context fields are omitted when not present in the queued job.
  */
-export type CompletedQueuedAskJobOutput = TrinityResult & {
-  endpoint: string;
-  clientContext?: ClientContextDTO;
-  auditFlag?: AsyncAskAuditFlag;
-};
+export type CompletedQueuedAskJobOutput = TrinityUserVisibleResponse;
 
 function normalizeEndpointName(endpointName?: string): string {
   const trimmedEndpointName = endpointName?.trim();
@@ -150,6 +164,11 @@ export function buildQueuedAskJobInput(input: {
   sessionId?: string;
   overrideAuditSafe?: string;
   cognitiveDomain?: CognitiveDomain;
+  requestedVerbosity?: TrinityRequestedVerbosity;
+  maxWords?: number | null;
+  answerMode?: TrinityAnswerMode;
+  debugPipeline?: boolean;
+  strictUserVisibleOutput?: boolean;
   clientContext?: ClientContextDTO | null;
   endpointName?: string;
   auditFlag?: AsyncAskAuditFlag;
@@ -168,6 +187,21 @@ export function buildQueuedAskJobInput(input: {
   }
   if (input.cognitiveDomain) {
     normalizedJobInput.cognitiveDomain = input.cognitiveDomain;
+  }
+  if (input.requestedVerbosity) {
+    normalizedJobInput.requestedVerbosity = input.requestedVerbosity;
+  }
+  if (input.maxWords !== undefined) {
+    normalizedJobInput.maxWords = input.maxWords;
+  }
+  if (input.answerMode) {
+    normalizedJobInput.answerMode = input.answerMode;
+  }
+  if (typeof input.debugPipeline === 'boolean') {
+    normalizedJobInput.debugPipeline = input.debugPipeline;
+  }
+  if (typeof input.strictUserVisibleOutput === 'boolean') {
+    normalizedJobInput.strictUserVisibleOutput = input.strictUserVisibleOutput;
   }
   if (input.clientContext) {
     normalizedJobInput.clientContext = input.clientContext;
@@ -251,18 +285,10 @@ export function buildCompletedQueuedAskOutput(
   trinityResult: TrinityResult,
   jobInput: QueuedAskJobInput
 ): CompletedQueuedAskJobOutput {
-  const completedOutput: CompletedQueuedAskJobOutput = {
-    ...trinityResult,
-    endpoint: jobInput.endpointName
-  };
-
-  //audit Assumption: async clients expect the same contextual fields available on sync `/ask`; failure risk: response shape diverges across execution modes; expected invariant: queued and sync ask responses preserve caller context metadata when present; handling strategy: re-attach optional fields after background execution.
-  if (jobInput.clientContext) {
-    completedOutput.clientContext = jobInput.clientContext;
-  }
-  if (jobInput.auditFlag) {
-    completedOutput.auditFlag = jobInput.auditFlag;
-  }
-
-  return completedOutput;
+  return buildTrinityUserVisibleResponse({
+    trinityResult,
+    endpoint: jobInput.endpointName,
+    clientContext: jobInput.clientContext,
+    auditFlag: jobInput.auditFlag
+  });
 }

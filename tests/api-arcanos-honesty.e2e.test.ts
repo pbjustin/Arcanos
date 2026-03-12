@@ -208,16 +208,11 @@ describe('/api/arcanos/ask honesty e2e', () => {
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
     expect(response.body.metadata.pipeline).toBe('trinity');
-    expect(response.body.result).toContain("I can help with give the launch plan, but I can't verify the latest competitor moves here.");
-    expect(response.body.result).toContain('I can help with general guidance, but I cannot verify live or current external information here.');
+    expect(response.body.result).toContain('Current competitor activity is unverified here.');
     expect(response.body.result).toContain('Lead with differentiated positioning.');
+    expect(response.body.result.match(/Current competitor activity is unverified here\./g)).toHaveLength(1);
     expect(response.body.result).not.toMatch(/I checked|verified they cut pricing today/i);
-    expect(response.body.auditSafe.auditFlags).toEqual(expect.arrayContaining([
-      'PARTIAL_REFUSAL_ACTIVE',
-      'FINAL_UNSUPPORTED_CLAIM_BLOCKED',
-      'FINAL_UNSUPPORTED_LIVE_VERIFICATION_BLOCKED',
-      'FINAL_UNSUPPORTED_CURRENT_EXTERNAL_STATE_BLOCKED'
-    ]));
+    expect(response.body.auditSafe).toBeUndefined();
     expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
     expect(mockRunStructuredReasoning).toHaveBeenCalledTimes(1);
   });

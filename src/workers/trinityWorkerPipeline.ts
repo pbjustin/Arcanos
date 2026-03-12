@@ -12,6 +12,11 @@ export interface WorkerTrinityRequest {
   overrideAuditSafe?: string;
   cognitiveDomain?: CognitiveDomain;
   sourceEndpoint?: string;
+  requestedVerbosity?: 'minimal' | 'normal' | 'detailed';
+  maxWords?: number | null;
+  answerMode?: 'direct' | 'explained' | 'audit' | 'debug';
+  debugPipeline?: boolean;
+  strictUserVisibleOutput?: boolean;
 }
 
 /**
@@ -46,6 +51,13 @@ export async function runWorkerTrinityPrompt(
       : {}),
     ...(typeof request.tokenAuditSessionId === 'string' && request.tokenAuditSessionId.trim().length > 0
       ? { tokenAuditSessionId: request.tokenAuditSessionId.trim() }
+      : {}),
+    ...(request.requestedVerbosity ? { requestedVerbosity: request.requestedVerbosity } : {}),
+    ...(request.maxWords !== undefined ? { maxWords: request.maxWords } : {}),
+    ...(request.answerMode ? { answerMode: request.answerMode } : {}),
+    ...(typeof request.debugPipeline === 'boolean' ? { debugPipeline: request.debugPipeline } : {}),
+    ...(typeof request.strictUserVisibleOutput === 'boolean'
+      ? { strictUserVisibleOutput: request.strictUserVisibleOutput }
       : {})
   };
 

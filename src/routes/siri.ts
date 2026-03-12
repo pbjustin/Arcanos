@@ -4,6 +4,8 @@ import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
+import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 
 const router = express.Router();
 
@@ -37,10 +39,18 @@ const handleSiriRequest = async (
       input,
       sessionId,
       overrideAuditSafe,
-      { sourceEndpoint: 'siri' },
+      {
+        sourceEndpoint: 'siri',
+        ...buildTrinityOutputControlOptions(req.body)
+      },
       runtimeBudget
     );
-    return res.json({ ...output, content: output.result } as SiriResponse);
+    const userVisibleResponse = buildTrinityUserVisibleResponse({
+      trinityResult: output,
+      endpoint: 'siri',
+      clientContext: req.body.clientContext
+    });
+    return res.json({ ...userVisibleResponse, content: userVisibleResponse.result } as SiriResponse);
   } catch (err) {
     handleAIError(err, input, 'siri', res);
   }

@@ -89,7 +89,12 @@ async function executeQueuedPrompt(
     sessionId,
     overrideAuditSafe,
     cognitiveDomain,
-    endpointName
+    endpointName,
+    requestedVerbosity,
+    maxWords,
+    answerMode,
+    debugPipeline,
+    strictUserVisibleOutput
   } = parsedJobInput.value;
 
   const trinityResult = await runWorkerTrinityPrompt(openai, {
@@ -97,7 +102,12 @@ async function executeQueuedPrompt(
     sessionId,
     overrideAuditSafe,
     cognitiveDomain,
-    sourceEndpoint: endpointName
+    sourceEndpoint: endpointName,
+    requestedVerbosity,
+    maxWords,
+    answerMode,
+    debugPipeline,
+    strictUserVisibleOutput
   });
 
   return {

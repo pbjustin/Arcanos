@@ -78,6 +78,8 @@ describe('async ask job helpers', () => {
         activeModel: 'ft:gpt-4.1',
         fallbackFlag: false,
         dryRun: false,
+        gpt5Used: true,
+        gpt5Model: 'gpt-5.1',
         fallbackSummary: {
           intakeFallbackUsed: false,
           gpt5FallbackUsed: false,
@@ -100,6 +102,13 @@ describe('async ask job helpers', () => {
         taskLineage: {
           requestId: 'trinity-123',
           logged: true
+        },
+        outputControls: {
+          requestedVerbosity: 'normal',
+          maxWords: null,
+          answerMode: 'explained',
+          debugPipeline: false,
+          strictUserVisibleOutput: true
         }
       },
       {
@@ -114,12 +123,25 @@ describe('async ask job helpers', () => {
       }
     );
 
-    expect(completedOutput.endpoint).toBe('brain');
-    expect(completedOutput.clientContext).toEqual({ routingDirectives: ['concise'] });
-    expect(completedOutput.auditFlag).toEqual({
-      auditFlag: 'SCHEMA_VALIDATION_BYPASS',
-      reason: 'lenient-path',
-      timestamp: '2026-03-06T12:00:00.000Z'
+    expect(completedOutput).toEqual({
+      result: 'Refactored version ready.',
+      module: 'arcanos-final',
+      meta: {
+        id: 'resp-123',
+        created: 1772810000
+      },
+      activeModel: 'ft:gpt-4.1',
+      fallbackFlag: false,
+      endpoint: 'brain',
+      gpt5Used: true,
+      gpt5Model: 'gpt-5.1',
+      dryRun: false,
+      clientContext: { routingDirectives: ['concise'] },
+      auditFlag: {
+        auditFlag: 'SCHEMA_VALIDATION_BYPASS',
+        reason: 'lenient-path',
+        timestamp: '2026-03-06T12:00:00.000Z'
+      }
     });
   });
 

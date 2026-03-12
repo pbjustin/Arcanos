@@ -19,6 +19,8 @@ import {
   validateAIRequest
 } from '@transport/http/requestHandler.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
+import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
 import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
 import {
@@ -50,6 +52,16 @@ interface AskBody extends Partial<AIRequestDTO> {
   query?: string;
   sessionId?: string;
   overrideAuditSafe?: string;
+  requestedVerbosity?: 'minimal' | 'normal' | 'detailed';
+  requested_verbosity?: 'minimal' | 'normal' | 'detailed';
+  maxWords?: number | null;
+  max_words?: number | null;
+  answerMode?: 'direct' | 'explained' | 'audit' | 'debug';
+  answer_mode?: 'direct' | 'explained' | 'audit' | 'debug';
+  debugPipeline?: boolean;
+  debug_pipeline?: boolean;
+  strictUserVisibleOutput?: boolean;
+  strict_user_visible_output?: boolean;
   options?: {
     temperature?: number;
     max_tokens?: number;
@@ -78,9 +90,10 @@ interface AskResponse {
   activeModel?: string;
   fallbackFlag?: boolean;
   routingStages?: string[];
-  auditSafe?: TrinityResult['auditSafe'];
-  memoryContext?: TrinityResult['memoryContext'];
-  taskLineage?: TrinityResult['taskLineage'];
+  gpt5Used?: boolean;
+  gpt5Model?: string;
+  dryRun?: boolean;
+  pipelineDebug?: TrinityResult['pipelineDebug'];
 }
 
 const arcanosSchema = {
@@ -140,6 +153,58 @@ const arcanosSchema = {
     maxLength: 50,
     sanitize: true
   },
+  requestedVerbosity: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 16,
+    sanitize: true
+  },
+  requested_verbosity: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 16,
+    sanitize: true
+  },
+  maxWords: {
+    required: false,
+    type: 'number' as const
+  },
+  max_words: {
+    required: false,
+    type: 'number' as const
+  },
+  answerMode: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 16,
+    sanitize: true
+  },
+  answer_mode: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 16,
+    sanitize: true
+  },
+  debugPipeline: {
+    required: false,
+    type: 'boolean' as const
+  },
+  debug_pipeline: {
+    required: false,
+    type: 'boolean' as const
+  },
+  strictUserVisibleOutput: {
+    required: false,
+    type: 'boolean' as const
+  },
+  strict_user_visible_output: {
+    required: false,
+    type: 'boolean' as const
+  },
   metadata: {
     required: false,
     type: 'object' as const
@@ -197,17 +262,23 @@ function buildArcanosCompatibilityMetadata(result: TrinityResult): NonNullable<A
  * - Optional observability fields remain omitted when Trinity does not provide them.
  */
 function buildArcanosCompatibilityResponse(result: TrinityResult): AskResponse {
+  const userVisibleResponse = buildTrinityUserVisibleResponse({
+    trinityResult: result,
+    endpoint: ARCANOS_API_ENDPOINT_NAME
+  });
+
   return {
     success: true,
-    result: result.result,
+    result: userVisibleResponse.result,
     metadata: buildArcanosCompatibilityMetadata(result),
-    module: result.module,
-    activeModel: result.activeModel,
-    fallbackFlag: result.fallbackFlag,
-    routingStages: result.routingStages,
-    auditSafe: result.auditSafe,
-    memoryContext: result.memoryContext,
-    taskLineage: result.taskLineage
+    module: userVisibleResponse.module,
+    activeModel: userVisibleResponse.activeModel,
+    fallbackFlag: userVisibleResponse.fallbackFlag,
+    routingStages: userVisibleResponse.routingStages,
+    gpt5Used: userVisibleResponse.gpt5Used,
+    gpt5Model: userVisibleResponse.gpt5Model,
+    dryRun: userVisibleResponse.dryRun,
+    ...(userVisibleResponse.pipelineDebug ? { pipelineDebug: userVisibleResponse.pipelineDebug } : {})
   };
 }
 
@@ -305,10 +376,7 @@ function buildArcanosPromptShortcutResponse(params: {
     module: shortcutTelemetry.module,
     activeModel: shortcutTelemetry.activeModel,
     fallbackFlag: shortcutTelemetry.fallbackFlag,
-    routingStages: shortcutTelemetry.routingStages,
-    auditSafe: shortcutTelemetry.auditSafe,
-    memoryContext: shortcutTelemetry.memoryContext,
-    taskLineage: shortcutTelemetry.taskLineage
+    routingStages: shortcutTelemetry.routingStages
   };
 }
 
@@ -387,7 +455,8 @@ const handleArcanosAsk = asyncHandler(async (
       req.body.sessionId,
       req.body.overrideAuditSafe,
       {
-        sourceEndpoint: ARCANOS_API_ENDPOINT_NAME
+        sourceEndpoint: ARCANOS_API_ENDPOINT_NAME,
+        ...buildTrinityOutputControlOptions(req.body)
       },
       runtimeBudget
     );

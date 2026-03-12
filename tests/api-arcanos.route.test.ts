@@ -94,6 +94,13 @@ function buildTrinityResult(overrides: Partial<Record<string, unknown>> = {}) {
       requestId: 'trinity-request-1',
       logged: true
     },
+    outputControls: {
+      requestedVerbosity: 'normal',
+      maxWords: null,
+      answerMode: 'explained',
+      debugPipeline: false,
+      strictUserVisibleOutput: true
+    },
     ...overrides
   };
 }
@@ -139,6 +146,9 @@ describe('api-arcanos route', () => {
     expect(response.body.metadata.endpoint).toBe('api-arcanos.ask');
     expect(response.body.metadata.requestId).toBe('trinity-request-1');
     expect(response.body.metadata.tokensUsed).toBe(30);
+    expect(response.body.auditSafe).toBeUndefined();
+    expect(response.body.memoryContext).toBeUndefined();
+    expect(response.body.taskLineage).toBeUndefined();
     expect(mockRunThroughBrain).toHaveBeenCalledWith(
       openaiClient,
       'Explain the deployment state.',
@@ -149,6 +159,83 @@ describe('api-arcanos route', () => {
       }),
       { budgetId: 'runtime-budget-1' }
     );
+  });
+
+  it('exposes pipeline debug only when strict user-visible output is explicitly disabled', async () => {
+    mockValidateAIRequest.mockReturnValue({
+      client: { clientId: 'openai-client-debug' },
+      input: 'Show the pipeline debug output.',
+      body: {
+        prompt: 'Show the pipeline debug output.',
+        debug_pipeline: true,
+        answer_mode: 'debug',
+        strict_user_visible_output: false
+      }
+    });
+    mockRunThroughBrain.mockResolvedValue(
+      buildTrinityResult({
+        outputControls: {
+          requestedVerbosity: 'detailed',
+          maxWords: null,
+          answerMode: 'debug',
+          debugPipeline: true,
+          strictUserVisibleOutput: false
+        },
+        pipelineDebug: {
+          capabilityFlags: {
+            canBrowse: false,
+            canVerifyLiveData: false,
+            canConfirmExternalState: false,
+            canPersistData: false,
+            canCallBackend: false
+          },
+          outputControls: {
+            requestedVerbosity: 'detailed',
+            maxWords: null,
+            answerMode: 'debug',
+            debugPipeline: true,
+            strictUserVisibleOutput: false
+          },
+          intakeOutput: {
+            framedRequest: 'framed',
+            activeModel: 'ft:model',
+            fallbackUsed: false
+          },
+          reasoningOutput: {
+            output: 'reasoned',
+            model: 'gpt-5.1',
+            fallbackUsed: false,
+            honesty: {
+              responseMode: 'answer',
+              achievableSubtasks: ['answer'],
+              blockedSubtasks: [],
+              userVisibleCaveats: [],
+              evidenceTags: []
+            }
+          },
+          finalOutput: {
+            rawModelOutput: 'raw',
+            translatedOutput: 'translated',
+            userVisibleResult: 'final',
+            removedMetaSections: [],
+            blockedOrRewrittenClaims: []
+          }
+        }
+      })
+    );
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Show the pipeline debug output.',
+        debug_pipeline: true,
+        answer_mode: 'debug',
+        strict_user_visible_output: false
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.pipelineDebug).toBeDefined();
+    expect(response.body.pipelineDebug.finalOutput.userVisibleResult).toBe('final');
   });
 
   it('keeps ping requests lightweight and skips Trinity execution', async () => {

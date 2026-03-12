@@ -29,7 +29,14 @@ import {
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
 import { getGPT5Model } from "@services/openai.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import type { TrinityResult, TrinityRunOptions, TrinityDryRunPreview } from './trinityTypes.js';
+import type {
+  TrinityResult,
+  TrinityRunOptions,
+  TrinityDryRunPreview,
+  TrinityCapabilityFlags,
+  TrinityOutputControls,
+  TrinityReasoningHonesty
+} from './trinityTypes.js';
 import {
   TRINITY_PREVIEW_SNIPPET_LENGTH,
   validateModel,
@@ -63,7 +70,9 @@ import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import {
   deriveTrinityCapabilityFlags,
-  enforceFinalStageHonesty
+  deriveTrinityOutputControls,
+  enforceFinalStageHonesty,
+  enforceFinalStageHonestyAndMinimalism
 } from './trinityHonesty.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
@@ -78,7 +87,17 @@ function isInternalArchitecturalMode(prompt: string): boolean {
 }
 
 // Re-export public types so callers import from trinity.js only
-export type { TrinityResult, TrinityRunOptions, TrinityDryRunPreview } from './trinityTypes.js';
+export type {
+  TrinityResult,
+  TrinityRunOptions,
+  TrinityDryRunPreview,
+  TrinityCapabilityFlags,
+  TrinityOutputControls,
+  TrinityReasoningHonesty,
+  TrinityPipelineDebug,
+  TrinityAnswerMode,
+  TrinityRequestedVerbosity
+} from './trinityTypes.js';
 
 function buildDryRunTrinityResult(
   requestId: string,
@@ -88,6 +107,8 @@ function buildDryRunTrinityResult(
   auditFlags: string[],
   memoryScoreSummary: { maxScore: number; averageScore: number },
   gpt5Used: boolean,
+  capabilityFlags: TrinityCapabilityFlags,
+  outputControls: TrinityOutputControls,
   tier?: Tier,
   reasoningConfig?: { effort: 'high' },
   budgetUsed?: number,
@@ -135,6 +156,8 @@ function buildDryRunTrinityResult(
       id: requestId,
       created: Date.now()
     },
+    capabilityFlags,
+    outputControls,
     tierInfo: tier ? {
       tier,
       reasoningEffort: reasoningConfig?.effort,
@@ -169,6 +192,9 @@ function buildTrinityResult(
   usage: TrinityResult['meta']['tokens'],
   responseId: string | undefined,
   created: number | undefined,
+  capabilityFlags: TrinityCapabilityFlags,
+  outputControls: TrinityOutputControls,
+  reasoningHonesty?: TrinityReasoningHonesty,
   reasoningLedger?: TrinityResult['reasoningLedger'],
   clearAudit?: ClearAuditResult
 ): TrinityResult {
@@ -206,6 +232,9 @@ function buildTrinityResult(
       id: responseId ?? requestId,
       created: created ?? Date.now()
     },
+    capabilityFlags,
+    outputControls,
+    reasoningHonesty,
     reasoningLedgerStored: !!reasoningLedger,
     reasoningLedger,
     clearAudit
@@ -256,6 +285,8 @@ function buildExactLiteralTrinityResult(params: {
   finalProcessedSafely: boolean;
   memoryContext: ReturnType<typeof getMemoryContext>;
   memoryScoreSummary: { maxScore: number; averageScore: number };
+  capabilityFlags: TrinityCapabilityFlags;
+  outputControls: TrinityOutputControls;
   tier: Tier;
   reasoningConfig?: { effort: 'high' };
   budgetLimit: number;
@@ -299,6 +330,8 @@ function buildExactLiteralTrinityResult(params: {
       id: params.requestId,
       created: params.created
     },
+    capabilityFlags: params.capabilityFlags,
+    outputControls: params.outputControls,
     tierInfo: {
       tier: params.tier,
       reasoningEffort: params.reasoningConfig?.effort,
@@ -339,6 +372,7 @@ export async function runThroughBrain(
   const start = Date.now();
   const effectiveMemorySessionId = options.memorySessionId ?? sessionId;
   const effectiveTokenAuditSessionId = options.tokenAuditSessionId ?? sessionId;
+  const outputControls = deriveTrinityOutputControls(prompt, options);
 
   // --- Tier detection ---
   const tier = internalContext?.originalTier ? getNextTier(internalContext.originalTier) : detectTier(prompt);
@@ -369,7 +403,23 @@ export async function runThroughBrain(
   if (options.dryRun) {
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, capabilityFlags, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason);
-    return buildDryRunTrinityResult(requestId, dryRunPreview, memoryContext, auditConfig, auditFlags, memoryScoreSummary, gpt5Used, tier, reasoningConfig, budget.used(), budget.limit(), internalMode, clarificationAllowed);
+    return buildDryRunTrinityResult(
+      requestId,
+      dryRunPreview,
+      memoryContext,
+      auditConfig,
+      auditFlags,
+      memoryScoreSummary,
+      gpt5Used,
+      capabilityFlags,
+      outputControls,
+      tier,
+      reasoningConfig,
+      budget.used(),
+      budget.limit(),
+      internalMode,
+      clarificationAllowed
+    );
   }
 
   const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(prompt);
@@ -419,6 +469,8 @@ export async function runThroughBrain(
       finalProcessedSafely,
       memoryContext,
       memoryScoreSummary,
+      capabilityFlags,
+      outputControls,
       tier,
       reasoningConfig,
       budgetLimit: budget.limit(),
@@ -463,7 +515,17 @@ export async function runThroughBrain(
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
 
-    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, capabilityFlags, cognitiveDomain, internalDirective, runtimeBudget);
+    const intakeOutput = await runIntakeStage(
+      client,
+      arcanosModel,
+      auditSafePrompt,
+      memoryContext.contextSummary,
+      capabilityFlags,
+      outputControls,
+      cognitiveDomain,
+      internalDirective,
+      runtimeBudget
+    );
     const framedRequest = intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
@@ -472,7 +534,14 @@ export async function runThroughBrain(
     checkWatchdog();
 
     routingStages.push('GPT5-REASONING');
-    const reasoningOutput = await runReasoningStage(client, framedRequest, intakeOutput.capabilityFlags, tier, runtimeBudget);
+    const reasoningOutput = await runReasoningStage(
+      client,
+      framedRequest,
+      capabilityFlags,
+      outputControls,
+      tier,
+      runtimeBudget
+    );
     let gpt5Output = reasoningOutput.output;
     const gpt5ModelUsed = reasoningOutput.model;
     const reasoningLedger = reasoningOutput.reasoningLedger;
@@ -556,15 +625,36 @@ export async function runThroughBrain(
 
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
-    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, intakeOutput.capabilityFlags, reasoningHonesty, cognitiveDomain, internalDirective, runtimeBudget);
+    const finalOutput = await runFinalStage(
+      client,
+      memoryContext.contextSummary,
+      auditSafePrompt,
+      gpt5Output,
+      capabilityFlags,
+      outputControls,
+      reasoningHonesty,
+      cognitiveDomain,
+      internalDirective,
+      runtimeBudget
+    );
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
     const translatedFinalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
-    const honestyFilteredFinal = enforceFinalStageHonesty(translatedFinalText, reasoningHonesty, intakeOutput.capabilityFlags);
-    const finalText = honestyFilteredFinal.text;
+    const honestyFilteredFinal = enforceFinalStageHonesty(
+      translatedFinalText,
+      reasoningHonesty,
+      capabilityFlags,
+    );
+    const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
+      text: honestyFilteredFinal.text,
+      capabilityFlags,
+      outputControls,
+      reasoningHonesty
+    });
+    const finalText = enforcedFinalOutput.text;
 
-    //audit Assumption: final-stage rewrites indicate an overclaim attempt that should be auditable; failure risk: unsupported certainty is removed with no trace for later diagnosis; expected invariant: any honesty rewrite leaves a durable flag trail; handling strategy: append stable audit flags for the aggregate rewrite and each blocked category.
+    //audit Assumption: final-stage honesty rewrites must remain traceable for postmortems even when user-visible output is compressed.
     if (honestyFilteredFinal.blocked) {
       auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
       for (const blockedCategory of honestyFilteredFinal.blockedCategories) {
@@ -575,6 +665,17 @@ export async function runThroughBrain(
     const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
     if (!finalProcessedSafely) {
       auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
+    }
+    if (reasoningHonesty.responseMode === 'partial_refusal') {
+      auditFlags.push('PARTIAL_REFUSAL_ACTIVE');
+    }
+    //audit Assumption: final-stage rewrites should be observable internally without leaking user-facing debug data; failure risk: unsupported-claim blockers become invisible in postmortems; expected invariant: audit flags record any deterministic final-stage intervention; handling strategy: stamp one flag per intervention type when changes occur.
+    if (enforcedFinalOutput.removedMetaSections.length > 0) {
+      auditFlags.push('FINAL_UNREQUESTED_META_REMOVED');
+    }
+    if (enforcedFinalOutput.blockedOrRewrittenClaims.length > 0) {
+      auditFlags.push('FINAL_UNSUPPORTED_CLAIM_REWRITTEN');
+      reasoningHonesty.blockedOrRewrittenClaims = enforcedFinalOutput.blockedOrRewrittenClaims;
     }
 
     if (finalProcessedSafely && !intakeOutput.fallbackUsed && !finalOutput.fallbackUsed) {
@@ -628,8 +729,27 @@ export async function runThroughBrain(
     };
 
     const result = buildTrinityResult(
-      finalText, actualModel, requestId, routingStages, gpt5Used, gpt5ModelUsed, reasoningOutput.error, fallbackSummary, auditConfig, auditFlags, finalProcessedSafely, memoryContext, memoryScoreSummary, finalOutput.usage, finalOutput.responseId, finalOutput.created,
-      reasoningLedger, clearAudit
+      finalText,
+      actualModel,
+      requestId,
+      routingStages,
+      gpt5Used,
+      gpt5ModelUsed,
+      reasoningOutput.error,
+      fallbackSummary,
+      auditConfig,
+      auditFlags,
+      finalProcessedSafely,
+      memoryContext,
+      memoryScoreSummary,
+      finalOutput.usage,
+      finalOutput.responseId,
+      finalOutput.created,
+      capabilityFlags,
+      outputControls,
+      reasoningHonesty,
+      reasoningLedger,
+      clearAudit
     );
 
     result.tierInfo = {
@@ -668,6 +788,32 @@ export async function runThroughBrain(
       internalMode,
       remainingBudgetMs: result.guardInfo.remainingBudgetMs
     });
+
+    if (outputControls.debugPipeline) {
+      result.pipelineDebug = {
+        capabilityFlags,
+        outputControls,
+        intakeOutput: {
+          framedRequest,
+          activeModel: actualModel,
+          fallbackUsed: intakeOutput.fallbackUsed
+        },
+        reasoningOutput: {
+          output: gpt5Output,
+          model: gpt5ModelUsed,
+          fallbackUsed: reasoningOutput.fallbackUsed,
+          honesty: reasoningHonesty,
+          reasoningLedger
+        },
+        finalOutput: {
+          rawModelOutput: finalOutput.output,
+          translatedOutput: translatedFinalText,
+          userVisibleResult: finalText,
+          removedMetaSections: enforcedFinalOutput.removedMetaSections,
+          blockedOrRewrittenClaims: enforcedFinalOutput.blockedOrRewrittenClaims
+        }
+      };
+    }
 
     return result;
 

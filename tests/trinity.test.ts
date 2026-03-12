@@ -47,6 +47,14 @@ describe('Trinity pipeline', () => {
     expect(result.meta).toBeDefined();
     expect(typeof result.meta.id).toBe('string');
     expect(typeof result.meta.created).toBe('number');
+    expect(result.capabilityFlags).toEqual({
+      canBrowse: false,
+      canVerifyLiveData: false,
+      canConfirmExternalState: false,
+      canPersistData: false,
+      canCallBackend: false
+    });
+    expect(result.outputControls?.strictUserVisibleOutput).toBe(true);
 
     expect(result.dryRunPreview).toBeDefined();
     expect(Array.isArray(result.dryRunPreview!.routingPlan)).toBe(true);

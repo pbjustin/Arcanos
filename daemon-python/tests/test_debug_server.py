@@ -11,7 +11,6 @@ import pytest
 from arcanos.debug_server import DebugAPIHandler
 from arcanos.debug_health import liveness, readiness
 from arcanos.debug_metrics import DebugMetrics, get_metrics
-
 def make_request(handler_class, method: str, path: str, body: bytes = None) -> tuple[int, dict]:
     """
     Helper to execute DebugAPIHandler using a socket-like in-memory request.

@@ -16,11 +16,7 @@ import {
   getTrinityMessages
 } from "@platform/runtime/prompts.js";
 import type { ChatCompletionMessageParam } from "@services/openai/types.js";
-import {
-  getAuditSafeConfig,
-  createAuditSummary,
-  type AuditLogEntry
-} from "@services/auditSafe.js";
+import { getAuditSafeConfig, createAuditSummary, type AuditLogEntry } from "@services/auditSafe.js";
 import { getMemoryContext } from "@services/memoryAware.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { calculateMemoryScoreSummary, logFallbackEvent } from './trinityHelpers.js';
@@ -29,6 +25,7 @@ import type {
   TrinityReasoningOutput,
   TrinityFinalOutput,
   TrinityDryRunPreview,
+  TrinityOutputControls,
   ReasoningLedger
 } from './trinityTypes.js';
 import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
@@ -41,8 +38,10 @@ import { assertBudgetAvailable } from '@platform/resilience/runtimeBudget.js';
 import { runStructuredReasoning } from '@services/openai.js';
 import {
   buildFinalHonestyInstruction,
+  buildFinalStageInstruction,
   buildIntakeCapabilityEnvelope,
-  buildReasoningCapabilityEnvelope,
+  buildReasoningStagePrompt,
+  buildTrinityStageContractBlock,
   createDefaultTrinityReasoningHonesty,
   type TrinityCapabilityFlags,
   type TrinityReasoningHonesty
@@ -105,9 +104,7 @@ function ensureStringContent(value: unknown): string {
 }
 
 /**
- * Build the final-stage chat messages with explicit honesty metadata from reasoning.
- * Inputs/Outputs: memory summary + request + reasoning output + honesty metadata -> ordered chat message array.
- * Edge cases: falls back to safe placeholder strings when any segment is empty.
+ * Build the final-stage chat messages with explicit honesty metadata and output-control instructions.
  */
 export function buildFinalArcanosMessages(
   memoryContextSummary: string,
@@ -115,13 +112,24 @@ export function buildFinalArcanosMessages(
   gpt5Output: string,
   capabilityFlags: TrinityCapabilityFlags,
   reasoningHonesty: TrinityReasoningHonesty,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  finalInstructionOverride?: string
 ): ChatCompletionMessageParam[] {
-  const systemContent = systemPromptOverride || ensureStringContent(ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary)) || 'Review and respond.';
-  const userRequestContent = ensureStringContent(buildFinalOriginalRequestMessage(auditSafePrompt)) || 'No request provided.';
-  const assistantContent = ensureStringContent(buildFinalGpt5AnalysisMessage(gpt5Output)) || 'No analysis provided.';
+  const systemContent =
+    systemPromptOverride ||
+    ensureStringContent(ARCANOS_SYSTEM_PROMPTS.FINAL_REVIEW(memoryContextSummary)) ||
+    'Review and respond.';
+  const userRequestContent =
+    ensureStringContent(buildFinalOriginalRequestMessage(auditSafePrompt)) ||
+    'No request provided.';
+  const assistantContent =
+    ensureStringContent(buildFinalGpt5AnalysisMessage(gpt5Output)) ||
+    'No analysis provided.';
   const honestyInstructionContent = buildFinalHonestyInstruction(capabilityFlags, reasoningHonesty);
-  const finalInstructionContent = ensureStringContent(getFinalResponseInstruction()) || 'Provide the final response.';
+  const finalInstructionContent = ensureStringContent(
+    [getFinalResponseInstruction(), finalInstructionOverride].filter(Boolean).join('\n\n')
+  ) || 'Provide the final response.';
+
   return [
     { role: 'system', content: systemContent },
     { role: 'user', content: userRequestContent },
@@ -150,9 +158,7 @@ export function buildInternalArchitecturalMessages(
 }
 
 /**
- * Execute the intake stage while attaching hard capability constraints to the framed request.
- * Inputs/Outputs: model client + request context -> framed request, normalized capability flags, and model metadata.
- * Edge cases: falls back to the raw audit-safe prompt when the intake model returns empty content.
+ * Execute the intake stage while attaching hard capability constraints and output controls to the framed request.
  */
 export async function runIntakeStage(
   client: OpenAI,
@@ -160,6 +166,7 @@ export async function runIntakeStage(
   auditSafePrompt: string,
   memoryContextSummary: string,
   capabilityFlags: TrinityCapabilityFlags,
+  outputControls: TrinityOutputControls,
   cognitiveDomain?: CognitiveDomain,
   systemPromptOverride?: string,
   runtimeBudget?: RuntimeBudget
@@ -172,7 +179,18 @@ export async function runIntakeStage(
   const intakeResponse = await createChatCompletionWithFallback(client, {
     messages: [
       { role: 'system', content: intakeSystemPrompt },
-      { role: 'user', content: buildIntakeCapabilityEnvelope(auditSafePrompt, capabilityFlags) }
+      {
+        role: 'user',
+        content: [
+          buildIntakeCapabilityEnvelope(auditSafePrompt, capabilityFlags),
+          '',
+          buildTrinityStageContractBlock({
+            stage: 'intake',
+            capabilityFlags,
+            outputControls
+          })
+        ].join('\n')
+      }
     ],
     temperature,
     ...intakeTokenParams
@@ -199,13 +217,12 @@ export async function runIntakeStage(
 
 /**
  * Executes the Trinity reasoning stage using schema-constrained decoding.
- * Input: framed request and shared runtime budget. Output: deterministic reasoning output.
- * Edge case: throws when runtime budget is missing/exhausted because no fallback path exists.
  */
 export async function runReasoningStage(
   client: OpenAI,
   framedRequest: string,
   capabilityFlags: TrinityCapabilityFlags,
+  outputControls: TrinityOutputControls,
   tier?: Tier,
   runtimeBudget?: RuntimeBudget
 ): Promise<TrinityReasoningOutput> {
@@ -218,13 +235,16 @@ export async function runReasoningStage(
   const reasoningPrompt = [
     ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING(),
     '',
-    buildReasoningCapabilityEnvelope(framedRequest, capabilityFlags)
+    buildReasoningStagePrompt({
+      framedRequest,
+      capabilityFlags,
+      outputControls
+    })
   ].join('\n');
 
   logGPT5Invocation('Primary reasoning stage', reasoningPrompt);
   const gpt5ModelUsed = getGPT5Model();
   const structuredReasoning = await runStructuredReasoning(client, gpt5ModelUsed, reasoningPrompt, runtimeBudget);
-  //audit Assumption: structured reasoning helper enforces non-null payload; risk: downstream field access crash if contract regresses; invariant: reasoning payload exists before ledger mapping; handling: explicit guard.
   if (!structuredReasoning) {
     throw new Error('Model failed to provide structured reasoning.');
   }
@@ -273,9 +293,7 @@ export async function runReasoningStage(
 }
 
 /**
- * Execute the final stage with reasoning honesty metadata attached as hard review constraints.
- * Inputs/Outputs: memory context + original request + reasoning output -> final-stage model output and metadata.
- * Edge cases: defaults to an empty conservative honesty envelope when none is provided.
+ * Execute the final stage with honesty metadata and output controls attached as hard review constraints.
  */
 export async function runFinalStage(
   client: OpenAI,
@@ -283,6 +301,7 @@ export async function runFinalStage(
   auditSafePrompt: string,
   gpt5Output: string,
   capabilityFlags: TrinityCapabilityFlags,
+  outputControls: TrinityOutputControls,
   reasoningHonesty: TrinityReasoningHonesty = createDefaultTrinityReasoningHonesty(),
   cognitiveDomain?: CognitiveDomain,
   systemPromptOverride?: string,
@@ -295,7 +314,19 @@ export async function runFinalStage(
   const finalTokenParams = getTokenParameter(complexModel, cappedLimit);
   const temperature = resolveTemperature(cognitiveDomain);
   const finalResponse = await createChatCompletionWithFallback(client, {
-    messages: buildFinalArcanosMessages(memoryContextSummary, auditSafePrompt, gpt5Output, capabilityFlags, reasoningHonesty, systemPromptOverride),
+    messages: buildFinalArcanosMessages(
+      memoryContextSummary,
+      auditSafePrompt,
+      gpt5Output,
+      capabilityFlags,
+      reasoningHonesty,
+      systemPromptOverride,
+      buildFinalStageInstruction({
+        capabilityFlags,
+        outputControls,
+        reasoningHonesty
+      })
+    ),
     temperature,
     model: complexModel,
     ...finalTokenParams
@@ -320,8 +351,6 @@ export async function runFinalStage(
 
 /**
  * Build a dry-run preview of the Trinity route including capability constraints.
- * Inputs/Outputs: request identifiers + prompt metadata -> deterministic preview object.
- * Edge cases: capability flags are surfaced even when no model invocation occurs.
  */
 export function buildDryRunPreview(
   requestId: string,
