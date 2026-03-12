@@ -14,13 +14,14 @@ import {
   completeAiRouteTrace,
   failAiRouteTrace
 } from '@transport/http/aiRouteTelemetry.js';
+import { resolveQueryFinetuneAttemptLatencyBudgetMs } from '@config/queryFinetune.js';
 
 const router = Router();
 
 const queryFinetuneRequestSchema = z.object({
   prompt: z.string().trim().min(1)
 });
-const QUERY_FINETUNE_ATTEMPT_LATENCY_BUDGET_MS = 8_000;
+const QUERY_FINETUNE_ATTEMPT_LATENCY_BUDGET_MS = resolveQueryFinetuneAttemptLatencyBudgetMs();
 
 router.use(securityHeaders);
 router.use('/query-finetune', createRateLimitMiddleware({

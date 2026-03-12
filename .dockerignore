@@ -28,6 +28,8 @@ pids
 
 # Coverage directory
 coverage/
+coverage-run/
+coverage-scoped/
 *.lcov
 
 # Optional npm cache directory
@@ -55,6 +57,21 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+/output/
+/converge-artifacts/
+/memory/
+/.mypy_cache/
+/.codex/
+/.codex-pr-*/
+/.codex-pr-*
+/.codex-runtime-deploy-*/
+/.codex-runtime-deploy-*
+/.codex-runtime-deploy-clean-*/
+/.codex-runtime-deploy-clean-*
+/.deploy-pr-*/
+/.deploy-pr-*
+/.workspace/
+/.claude/
 
 # Git
 .git/

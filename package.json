@@ -59,6 +59,8 @@
     "sync:fix": "node scripts/cross-codebase-sync.js --fix",
     "sync:auto": "node scripts/auto-sync-watcher.js",
     "sync:setup": "node scripts/setup-auto-sync.js",
+    "dataset:build:fine-tune": "npx ts-node-esm scripts/build-openai-finetune-dataset.ts",
+    "fine-tune:compare": "npx ts-node-esm scripts/compare-finetune-checkpoints.ts",
     "guard:commit": "node check-commit-guard.js",
     "test:all:stacks": "npm test && cd daemon-python && python -m pytest tests/ -q",
     "validate:all": "npm run guard:commit && npm run type-check && npm run lint && npm run build && npm test && npm run validate:railway && npm run validate:backend-cli:contract && npm run validate:backend-cli:offline",

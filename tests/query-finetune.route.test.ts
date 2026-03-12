@@ -89,7 +89,7 @@ describe('/query-finetune route', () => {
       prompt: 'health check',
       model: expect.any(String),
       structured: true,
-      latencyBudgetMs: 8_000
+      latencyBudgetMs: 12_000
     }));
     expect(typeof response.headers['x-trace-id']).toBe('string');
 

@@ -12,6 +12,7 @@ import { verifyIntegrityManifestConfiguration } from "@services/safety/configInt
 import { activateUnsafeCondition } from "@services/safety/runtimeState.js";
 import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 import { hydrateJudgedResponseFeedbackContext } from "@services/judgedResponseFeedback.js";
+import { getQueryFinetuneAttemptLatencyBudgetDiagnostics } from "@config/queryFinetune.js";
 
 /**
  * Runs startup checks including environment validation, database init,
@@ -102,7 +103,18 @@ export async function performStartup(): Promise<void> {
   validateAPIKeyAtStartup(); // Always continue, but log warnings
   await verifySchema();
 
+  const queryFinetuneAttemptLatencyBudgetDiagnostics =
+    getQueryFinetuneAttemptLatencyBudgetDiagnostics();
+
   logger.info(`🧠 ARCANOS AI - Default Model: ${getDefaultModel()}`);
   logger.info(`🔄 ARCANOS AI - Fallback Model: ${config.ai.fallbackModel}`);
+  logger.info('🕒 ARCANOS QUERY-FINETUNE - Attempt latency budget', {
+    queryFinetuneAttemptLatencyBudgetMs: queryFinetuneAttemptLatencyBudgetDiagnostics.resolvedValueMs,
+    envName: queryFinetuneAttemptLatencyBudgetDiagnostics.envName,
+    source: queryFinetuneAttemptLatencyBudgetDiagnostics.source,
+    configuredValue: queryFinetuneAttemptLatencyBudgetDiagnostics.configuredValue,
+    defaultValueMs: queryFinetuneAttemptLatencyBudgetDiagnostics.defaultValueMs,
+    usedFallbackDefault: queryFinetuneAttemptLatencyBudgetDiagnostics.usedFallbackDefault
+  });
   logger.info('✅ ARCANOS CONFIG - Configuration validation complete');
 }

@@ -8,6 +8,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import type { EnvironmentSecuritySummary } from "@platform/runtime/environmentSecurity.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { getQueryFinetuneAttemptLatencyBudgetDiagnostics } from "@config/queryFinetune.js";
 
 export interface EnvironmentCheck {
   name: string;
@@ -352,6 +353,14 @@ export function createStartupReport(securitySummary?: EnvironmentSecuritySummary
   const _railwayResult = validateRailwayEnvironment();
   const envInfo = getEnvironmentInfo();
   const config = getConfig();
+  const queryFinetuneAttemptLatencyBudgetDiagnostics =
+    getQueryFinetuneAttemptLatencyBudgetDiagnostics();
+  //audit Assumption: startup diagnostics should explain whether the live budget came from the environment or a bounded default; failure risk: operators cannot tell if a deploy ignored an invalid override; expected invariant: report text names the source mode and the raw configured value when relevant; handling strategy: derive a human-readable source string from the shared diagnostics object.
+  const queryFinetuneBudgetSource = queryFinetuneAttemptLatencyBudgetDiagnostics.source === 'default'
+    ? `default ${queryFinetuneAttemptLatencyBudgetDiagnostics.defaultValueMs}ms`
+    : queryFinetuneAttemptLatencyBudgetDiagnostics.source === 'invalid-environment-fallback'
+      ? `${queryFinetuneAttemptLatencyBudgetDiagnostics.envName} invalid (${queryFinetuneAttemptLatencyBudgetDiagnostics.configuredValue}), using default ${queryFinetuneAttemptLatencyBudgetDiagnostics.defaultValueMs}ms`
+      : `${queryFinetuneAttemptLatencyBudgetDiagnostics.envName}=${queryFinetuneAttemptLatencyBudgetDiagnostics.configuredValue}`;
 
   const securityLines = securitySummary
     ? [
@@ -384,7 +393,9 @@ export function createStartupReport(securitySummary?: EnvironmentSecuritySummary
     `├─ Valid: ${envResult.isValid ? '✅' : '❌'}`,
     `├─ Errors: ${envResult.errors.length}`,
     `├─ Warnings: ${envResult.warnings.length}`,
-    `└─ Configured Variables: ${envInfo.configuredVariables.length}`,
+    `├─ Configured Variables: ${envInfo.configuredVariables.length}`,
+    `├─ Query-finetune budget: ${queryFinetuneAttemptLatencyBudgetDiagnostics.resolvedValueMs}ms`,
+    `└─ Query-finetune source: ${queryFinetuneBudgetSource}`,
     '',
     '🚄 Railway Status:',
     config.isRailway ?
