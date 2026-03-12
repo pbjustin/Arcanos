@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
+import { countWords } from '../src/shared/text/countWords.js';
 import {
   createDefaultTrinityReasoningHonesty,
   deriveTrinityCapabilityFlags,
@@ -9,11 +10,6 @@ import {
   shouldExposePipelineDebug,
   type TrinityReasoningHonesty
 } from '../src/core/logic/trinityHonesty.js';
-
-function countWords(text: string): number {
-  const words = text.match(/\S+/g);
-  return words ? words.length : 0;
-}
 
 describe('Trinity honesty controls', () => {
   it('defaults every capability flag to false unless explicitly tool-backed', () => {

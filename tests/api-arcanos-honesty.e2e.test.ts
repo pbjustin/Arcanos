@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { countWords } from '../src/shared/text/countWords.js';
 
 const mockValidateAIRequest = jest.fn();
 const mockHandleAIError = jest.fn((error: unknown) => {
@@ -80,11 +81,6 @@ jest.unstable_mockModule('../src/routes/api-arcanos-verification.js', () => ({
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const router = (await import('../src/routes/api-arcanos.js')).default;
-
-function countWords(text: string): number {
-  const words = text.match(/\S+/g);
-  return words ? words.length : 0;
-}
 
 function buildApp() {
   const app = express();

@@ -3,6 +3,7 @@
  */
 
 import type { TrinityOutputControls, TrinityRunOptions } from './trinityTypes.js';
+import { countWords } from '../../shared/text/countWords.js';
 
 export type TrinitySourceType = 'tool' | 'user_context' | 'memory' | 'inference' | 'template';
 export type TrinityConfidence = 'high' | 'medium' | 'low';
@@ -81,6 +82,9 @@ const OPENING_PADDING_SEGMENT_PATTERNS = [
   /^here(?:'s| is) (?:the )?(?:answer|response|plan)\.?$/i,
   /^the short answer is:?$/i
 ] as const;
+const SUBSTRING_DUPLICATE_OVERLAP_THRESHOLD = 0.65;
+const SAME_CATEGORY_LIMITATION_DUPLICATE_OVERLAP_THRESHOLD = 0.72;
+const GENERAL_DUPLICATE_OVERLAP_THRESHOLD = 0.9;
 const SCOPE_DRIFT_QUALIFIER_PATTERN =
   /\s+or your(?: actual)?\s+(tooling|backend|stack|database|systems?|service|services)\b/gi;
 const SCOPE_STOP_WORDS = new Set([
@@ -172,11 +176,6 @@ function splitIntoSegments(text: string): string[] {
     .filter(Boolean);
 }
 
-function countWords(text: string): number {
-  const words = text.match(/\S+/g);
-  return words ? words.length : 0;
-}
-
 function hasExplicitLimitationLanguage(text: string): boolean {
   return LIMITATION_LANGUAGE_PATTERN.test(text);
 }
@@ -261,7 +260,7 @@ function classifyLimitationCategory(segment: string): LimitationCategory | null 
   if (/\b(live|browse|current|latest|competitor|external|market|news|verify|confirm)\b/i.test(segment)) {
     return 'live_verification';
   }
-  if (/\b(backend|api|endpoint|service|services|call|run)\b/i.test(segment)) {
+  if (/\b(backend|api|endpoint|services?|call|run)\b/i.test(segment)) {
     return 'backend_action';
   }
   if (/\b(save|saved|persist|persisted|store|stored|write|wrote|update|updated|insert|inserted|database|db)\b/i.test(segment)) {
@@ -576,16 +575,16 @@ function areNearDuplicateSegments(leftSegment: string, rightSegment: string): bo
   const tokenOverlap = calculateTokenOverlap(leftTokens, rightTokens);
   if (
     (normalizedLeftSegment.includes(normalizedRightSegment) || normalizedRightSegment.includes(normalizedLeftSegment)) &&
-    tokenOverlap >= 0.65
+    tokenOverlap >= SUBSTRING_DUPLICATE_OVERLAP_THRESHOLD
   ) {
     return true;
   }
   const leftCategory = classifyLimitationCategory(leftSegment);
   const rightCategory = classifyLimitationCategory(rightSegment);
   if (leftCategory && rightCategory && leftCategory === rightCategory) {
-    return tokenOverlap >= 0.72;
+    return tokenOverlap >= SAME_CATEGORY_LIMITATION_DUPLICATE_OVERLAP_THRESHOLD;
   }
-  return tokenOverlap >= 0.9;
+  return tokenOverlap >= GENERAL_DUPLICATE_OVERLAP_THRESHOLD;
 }
 
 function dedupeNearDuplicateSegments(text: string): string {
