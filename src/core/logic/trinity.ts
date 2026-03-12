@@ -648,6 +648,7 @@ export async function runThroughBrain(
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,
+      userPrompt: prompt,
       capabilityFlags,
       outputControls,
       reasoningHonesty

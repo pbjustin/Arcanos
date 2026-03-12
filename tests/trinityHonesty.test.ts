@@ -138,6 +138,7 @@ describe('Trinity honesty controls', () => {
         'PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch.',
         'Audit notes: claim sounded verified.'
       ].join('\n\n'),
+      userPrompt: 'Give me the launch plan, but keep it concise and do not verify current competitor moves.',
       capabilityFlags: deriveTrinityCapabilityFlags(),
       outputControls: deriveTrinityOutputControls('Give the launch plan and keep it concise.', {}),
       reasoningHonesty: {
@@ -162,6 +163,7 @@ describe('Trinity honesty controls', () => {
   it('respects a hard word limit while keeping the main answer intact', () => {
     const enforcementResult = enforceFinalStageHonestyAndMinimalism({
       text: 'Deploy in three phases. Start with staging, then a small production canary, then full rollout after metrics stay stable.',
+      userPrompt: 'Answer directly under 12 words.',
       capabilityFlags: deriveTrinityCapabilityFlags(),
       outputControls: {
         requestedVerbosity: 'minimal',
@@ -208,6 +210,7 @@ describe('Trinity honesty controls', () => {
   it('keeps normal answers natural when no refusal is needed', () => {
     const enforcementResult = enforceFinalStageHonestyAndMinimalism({
       text: 'Here is a concise answer: cache the parsed config and invalidate it on file change.',
+      userPrompt: 'How should I handle config caching?',
       capabilityFlags: deriveTrinityCapabilityFlags(),
       outputControls: {
         requestedVerbosity: 'normal',
@@ -227,5 +230,107 @@ describe('Trinity honesty controls', () => {
 
     expect(enforcementResult.text).toBe('cache the parsed config and invalidate it on file change.');
     expect(enforcementResult.blockedOrRewrittenClaims).toEqual([]);
+  });
+
+  it('removes duplicated limitation sentences and keeps a single clean caveat', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        "I can't verify current competitor moves without live browsing.",
+        "I can't verify current competitor moves without live browsing.",
+        'PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch.'
+      ].join(' '),
+      userPrompt: 'Give me the launch plan and say what you can about competitor moves.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Keep it concise.', {}),
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['Give the launch plan'],
+        blockedSubtasks: ['verify current competitor moves'],
+        userVisibleCaveats: ["I can't verify current competitor moves without live browsing."],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain("I can't verify current competitor moves without live browsing.");
+    expect(enforcementResult.text.match(/I can't verify current competitor moves without live browsing\./g)).toHaveLength(1);
+    expect(enforcementResult.text).toContain('PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch.');
+  });
+
+  it('removes unrequested qualifier insertions that drift beyond the prompt scope', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: "I can't verify current competitor moves or your actual tooling without live browsing. Lead with differentiated positioning.",
+      userPrompt: 'Give me the launch plan and note any limitation around competitor moves.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Keep it direct.', {}),
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['Give the launch plan'],
+        blockedSubtasks: ['verify current competitor moves'],
+        userVisibleCaveats: ["I can't verify current competitor moves without live browsing."],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain("I can't verify current competitor moves without live browsing.");
+    expect(enforcementResult.text).not.toContain('actual tooling');
+    expect(enforcementResult.text).not.toContain('or your');
+  });
+
+  it('keeps mixed doable and impossible requests tight without stacked disclaimers', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        'I can help with that.',
+        "I can't verify current competitor moves without live browsing.",
+        "I can't verify current competitor moves without live browsing.",
+        'PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch. Risks: drift, latency. Fallback: rollback via flag.'
+      ].join(' '),
+      userPrompt: 'Give me the launch plan and note that you cannot verify current competitor moves.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Be concise.', {}),
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['Give the launch plan'],
+        blockedSubtasks: ['verify current competitor moves'],
+        userVisibleCaveats: ["I can't verify current competitor moves without live browsing."],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text.startsWith('I can help with that.')).toBe(false);
+    expect(enforcementResult.text.match(/I can't verify current competitor moves without live browsing\./g)).toHaveLength(1);
+    expect(enforcementResult.text).toContain('PM: Mon spec; Tue-Wed build/test; Thu QA; Fri staged launch.');
+    expect(enforcementResult.text).toContain('Fallback: rollback via flag.');
+  });
+
+  it('keeps a concise mixed answer within a hard word limit without duplicating the limitation', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        "I can't verify current competitor moves without live browsing.",
+        "I can't verify current competitor moves without live browsing.",
+        'I can help with that.',
+        'Roll out behind a feature flag.'
+      ].join(' '),
+      userPrompt: 'Direct answer only under 16 words: give the launch recommendation and any limitation.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'minimal',
+        maxWords: 16,
+        answerMode: 'direct',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['Give the launch recommendation'],
+        blockedSubtasks: ['verify current competitor moves'],
+        userVisibleCaveats: ["I can't verify current competitor moves without live browsing."],
+        evidenceTags: []
+      }
+    });
+
+    expect(countWords(enforcementResult.text)).toBeLessThanOrEqual(16);
+    expect(enforcementResult.text.match(/I can't verify current competitor moves without live browsing\./g)).toHaveLength(1);
+    expect(enforcementResult.text).not.toContain('I can help with that.');
+    expect(enforcementResult.text).toContain('Roll out behind a feature flag.');
   });
 });

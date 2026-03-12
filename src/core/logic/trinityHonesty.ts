@@ -74,6 +74,22 @@ const STYLE_INFLATION_PREFIX_PATTERNS = [
   /^\s*below\s+(?:is|are)\s+[^:]*:\s*/i,
   /^\s*this\s+(?:is|answer is)\s+(?:structured|verifiable|auditable)[^:]*:\s*/i
 ] as const;
+const OPENING_PADDING_SEGMENT_PATTERNS = [
+  /^i can help with (?:that|this)\.?$/i,
+  /^to answer directly[:,]?$/i,
+  /^direct answer(?: only)?[:,]?$/i,
+  /^here(?:'s| is) (?:the )?(?:answer|response|plan)\.?$/i,
+  /^the short answer is:?$/i
+] as const;
+const SCOPE_DRIFT_QUALIFIER_PATTERN =
+  /\s+or your(?: actual)?\s+(tooling|backend|stack|database|systems?|service|services)\b/gi;
+const SCOPE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'answer', 'as', 'at', 'be', 'but', 'by', 'can', 'could', 'do', 'does', 'for', 'from', 'give', 'help',
+  'here', 'how', 'i', 'if', 'in', 'is', 'it', 'latest', 'me', 'my', 'no', 'of', 'on', 'only', 'or', 'our', 'the', 'this',
+  'to', 'under', 'verify', 'we', 'with', 'without', 'you', 'your'
+]);
+
+type LimitationCategory = 'live_verification' | 'backend_action' | 'persistence_action' | 'general';
 
 function escapePromptAngleBrackets(value: string): string {
   return value.replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -163,6 +179,95 @@ function countWords(text: string): number {
 
 function hasExplicitLimitationLanguage(text: string): boolean {
   return LIMITATION_LANGUAGE_PATTERN.test(text);
+}
+
+function normalizeScopeToken(value: string): string {
+  let normalizedValue = value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (normalizedValue.endsWith('ies') && normalizedValue.length > 4) {
+    normalizedValue = `${normalizedValue.slice(0, -3)}y`;
+  } else if (
+    normalizedValue.endsWith('s') &&
+    normalizedValue.length > 4 &&
+    !normalizedValue.endsWith('ss') &&
+    normalizedValue !== 'news'
+  ) {
+    normalizedValue = normalizedValue.slice(0, -1);
+  }
+  return normalizedValue;
+}
+
+function extractMeaningfulScopeTokens(text: string): string[] {
+  return text
+    .split(/[^a-z0-9]+/i)
+    .map(value => normalizeScopeToken(value))
+    .filter(value => value.length > 2 && !SCOPE_STOP_WORDS.has(value));
+}
+
+function buildAllowedScopeTerms(userPrompt: string, reasoningHonesty: TrinityReasoningHonesty): Set<string> {
+  return new Set(
+    [
+      ...extractMeaningfulScopeTokens(userPrompt),
+      ...reasoningHonesty.achievableSubtasks.flatMap(extractMeaningfulScopeTokens),
+      ...reasoningHonesty.blockedSubtasks.flatMap(extractMeaningfulScopeTokens),
+      ...reasoningHonesty.userVisibleCaveats.flatMap(extractMeaningfulScopeTokens)
+    ]
+  );
+}
+
+function normalizeSegmentForComparison(segment: string): string {
+  return segment
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\bcan'?t\b/g, 'cannot')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildComparisonTokenSet(segment: string): Set<string> {
+  return new Set(
+    normalizeSegmentForComparison(segment)
+      .split(/\s+/)
+      .map(value => normalizeScopeToken(value))
+      .filter(value => value.length > 2 && !SCOPE_STOP_WORDS.has(value))
+  );
+}
+
+function calculateTokenOverlap(leftTokens: Set<string>, rightTokens: Set<string>): number {
+  if (leftTokens.size === 0 || rightTokens.size === 0) {
+    return 0;
+  }
+  let intersectionSize = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      intersectionSize += 1;
+    }
+  }
+  return intersectionSize / Math.max(leftTokens.size, rightTokens.size);
+}
+
+function formatBlockedSubtaskAsLimitation(blockedSubtask: string): string {
+  const normalizedSubtask = normalizeWhitespace(blockedSubtask).replace(/\.+$/, '');
+  if (!normalizedSubtask) return '';
+  if (LIMITATION_LANGUAGE_PATTERN.test(normalizedSubtask)) {
+    return `${normalizedSubtask}.`;
+  }
+  return `I can't ${normalizedSubtask}.`;
+}
+
+function classifyLimitationCategory(segment: string): LimitationCategory | null {
+  if (!LIMITATION_LANGUAGE_PATTERN.test(segment)) {
+    return null;
+  }
+  if (/\b(live|browse|current|latest|competitor|external|market|news|verify|confirm)\b/i.test(segment)) {
+    return 'live_verification';
+  }
+  if (/\b(backend|api|endpoint|service|services|call|run)\b/i.test(segment)) {
+    return 'backend_action';
+  }
+  if (/\b(save|saved|persist|persisted|store|stored|write|wrote|update|updated|insert|inserted|database|db)\b/i.test(segment)) {
+    return 'persistence_action';
+  }
+  return 'general';
 }
 
 function evidenceMatchesCategory(
@@ -283,7 +388,7 @@ function buildLimitationSentence(params: {
   const matchingCaveat = params.existingCaveats.find(caveat => params.matcher.test(caveat));
   if (matchingCaveat) return matchingCaveat.trim();
   const matchingBlockedSubtask = params.blockedSubtasks.find(blockedSubtask => params.matcher.test(blockedSubtask));
-  if (matchingBlockedSubtask) return matchingBlockedSubtask.trim().replace(/[.]*$/, '.');
+  if (matchingBlockedSubtask) return formatBlockedSubtaskAsLimitation(matchingBlockedSubtask);
   return params.fallbackText;
 }
 
@@ -370,6 +475,129 @@ function ensureRequiredLimitation(text: string, reasoningHonesty: TrinityReasoni
     return normalizeWhitespace(`${ensureSingleSentence(reasoningHonesty.userVisibleCaveats[0] ?? '')} ${text}`);
   }
   return text;
+}
+
+function isOpeningPaddingSegment(segment: string): boolean {
+  return OPENING_PADDING_SEGMENT_PATTERNS.some(pattern => pattern.test(segment)) && !LIMITATION_LANGUAGE_PATTERN.test(segment);
+}
+
+function removeOpeningPadding(text: string): string {
+  const segments = splitIntoSegments(text);
+  if (segments.length <= 1) {
+    return normalizeWhitespace(text);
+  }
+  const hasSubstantiveContent = segments.some(segment => !isOpeningPaddingSegment(segment));
+  if (!hasSubstantiveContent) {
+    return normalizeWhitespace(text);
+  }
+  //audit Assumption: disposable opening fillers can appear after an injected limitation sentence, not just as the first segment; failure risk: hard word-limit compression keeps filler instead of the actual answer; expected invariant: standalone padding lines are removed whenever substantive content remains elsewhere; handling strategy: drop only narrow filler segments that match the padding patterns and preserve all other content.
+  return normalizeWhitespace(
+    segments
+      .filter(segment => !isOpeningPaddingSegment(segment))
+      .join(' ')
+  );
+}
+
+function trimUnrequestedScopeDrift(text: string, userPrompt: string, reasoningHonesty: TrinityReasoningHonesty): string {
+  const allowedScopeTerms = buildAllowedScopeTerms(userPrompt, reasoningHonesty);
+  return normalizeWhitespace(
+    text.replace(SCOPE_DRIFT_QUALIFIER_PATTERN, (fullMatch, qualifierTarget: string) => {
+      const normalizedQualifierTarget = normalizeScopeToken(qualifierTarget);
+      //audit Assumption: narrow trailing qualifiers like "or your tooling" are scope drift unless the original request or reasoning contract explicitly mentions them; failure risk: leaving unrelated caveats in the answer makes the final output sound broader than requested; expected invariant: qualifier targets absent from the user/request scope are removed while requested ones remain; handling strategy: compare only against terms sourced from the prompt and reasoning metadata.
+      return allowedScopeTerms.has(normalizedQualifierTarget) ? fullMatch : '';
+    })
+  );
+}
+
+function buildPreferredLimitationSegment(
+  category: LimitationCategory,
+  reasoningHonesty: TrinityReasoningHonesty
+): string | null {
+  switch (category) {
+    case 'live_verification':
+      return ensureSingleSentence(buildLimitationSentence({
+        fallbackText: "I can't verify current external state here without live access",
+        existingCaveats: reasoningHonesty.userVisibleCaveats,
+        blockedSubtasks: reasoningHonesty.blockedSubtasks,
+        matcher: /\b(live|browse|current|latest|verify|external|competitor|market|news)\b/i
+      }));
+    case 'backend_action':
+      return ensureSingleSentence(buildLimitationSentence({
+        fallbackText: "I can't confirm backend state or run backend actions here",
+        existingCaveats: reasoningHonesty.userVisibleCaveats,
+        blockedSubtasks: reasoningHonesty.blockedSubtasks,
+        matcher: /\b(backend|api|endpoint|service|services|call|run)\b/i
+      }));
+    case 'persistence_action':
+      return ensureSingleSentence(buildLimitationSentence({
+        fallbackText: "I haven't saved or persisted anything here",
+        existingCaveats: reasoningHonesty.userVisibleCaveats,
+        blockedSubtasks: reasoningHonesty.blockedSubtasks,
+        matcher: /\b(save|persist|store|write|database|db|update|insert)\b/i
+      }));
+    case 'general':
+      return reasoningHonesty.userVisibleCaveats[0]
+        ? ensureSingleSentence(reasoningHonesty.userVisibleCaveats[0] ?? '')
+        : null;
+  }
+}
+
+function compressLimitationSegments(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
+  const segments = splitIntoSegments(text);
+  const seenCategories = new Set<LimitationCategory>();
+  const keptSegments: string[] = [];
+  for (const segment of segments) {
+    const limitationCategory = classifyLimitationCategory(segment);
+    if (!limitationCategory) {
+      keptSegments.push(segment);
+      continue;
+    }
+    //audit Assumption: the final answer should keep at most one concise limitation per limitation category; failure risk: stacked caveats crowd out the achievable answer; expected invariant: duplicate live/backend/persistence limitations collapse to one preferred sentence; handling strategy: keep the first category instance and replace it with the most specific caveat available from reasoning metadata.
+    if (seenCategories.has(limitationCategory)) {
+      continue;
+    }
+    seenCategories.add(limitationCategory);
+    keptSegments.push(buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment));
+  }
+  return normalizeWhitespace(keptSegments.join(' '));
+}
+
+function areNearDuplicateSegments(leftSegment: string, rightSegment: string): boolean {
+  const normalizedLeftSegment = normalizeSegmentForComparison(leftSegment);
+  const normalizedRightSegment = normalizeSegmentForComparison(rightSegment);
+  if (!normalizedLeftSegment || !normalizedRightSegment) {
+    return false;
+  }
+  if (normalizedLeftSegment === normalizedRightSegment) {
+    return true;
+  }
+  const leftTokens = buildComparisonTokenSet(leftSegment);
+  const rightTokens = buildComparisonTokenSet(rightSegment);
+  const tokenOverlap = calculateTokenOverlap(leftTokens, rightTokens);
+  if (
+    (normalizedLeftSegment.includes(normalizedRightSegment) || normalizedRightSegment.includes(normalizedLeftSegment)) &&
+    tokenOverlap >= 0.65
+  ) {
+    return true;
+  }
+  const leftCategory = classifyLimitationCategory(leftSegment);
+  const rightCategory = classifyLimitationCategory(rightSegment);
+  if (leftCategory && rightCategory && leftCategory === rightCategory) {
+    return tokenOverlap >= 0.72;
+  }
+  return tokenOverlap >= 0.9;
+}
+
+function dedupeNearDuplicateSegments(text: string): string {
+  const keptSegments: string[] = [];
+  for (const segment of splitIntoSegments(text)) {
+    //audit Assumption: near-duplicate segments are accidental padding, not distinct user value; failure risk: repeated caveats or answer lines make the final output sound verbose and unnatural; expected invariant: only the first materially distinct sentence survives; handling strategy: compare normalized token overlap and drop later repeats.
+    if (keptSegments.some(existingSegment => areNearDuplicateSegments(existingSegment, segment))) {
+      continue;
+    }
+    keptSegments.push(segment);
+  }
+  return normalizeWhitespace(keptSegments.join(' '));
 }
 
 function removeUnrequestedMetaSections(text: string, outputControls: TrinityOutputControls): { text: string; removedMetaSections: string[] } {
@@ -713,9 +941,13 @@ export function buildFinalStageInstruction(params: {
 
 /**
  * Enforce final-stage honesty and minimalism after ARCANOS-FINAL generation.
+ * Inputs: raw final text, original user prompt, capability flags, output controls, and reasoning honesty metadata.
+ * Output: normalized user-visible text plus any removed meta sections and rewritten unsupported claims.
+ * Edge cases: collapses duplicate limitation sentences, strips narrow scope-drift qualifiers, and keeps the shortest truthful phrasing under direct/minimal word limits.
  */
 export function enforceFinalStageHonestyAndMinimalism(params: {
   text: string;
+  userPrompt: string;
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
   reasoningHonesty: TrinityReasoningHonesty;
@@ -727,8 +959,13 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
     capabilityFlags: params.capabilityFlags,
     reasoningHonesty: params.reasoningHonesty
   });
+  const textWithRequiredLimitation = ensureRequiredLimitation(rewrittenClaims.text, params.reasoningHonesty);
+  const openingMinimizedText = removeOpeningPadding(textWithRequiredLimitation);
+  const scopeTightenedText = trimUnrequestedScopeDrift(openingMinimizedText, params.userPrompt, params.reasoningHonesty);
+  const limitationCompressedText = compressLimitationSegments(scopeTightenedText, params.reasoningHonesty);
+  const dedupedText = dedupeNearDuplicateSegments(limitationCompressedText);
   return {
-    text: normalizeWhitespace(compressToWordLimit(ensureRequiredLimitation(rewrittenClaims.text, params.reasoningHonesty), params.outputControls)),
+    text: normalizeWhitespace(compressToWordLimit(dedupedText, params.outputControls)),
     removedMetaSections: withoutMetaSections.removedMetaSections,
     blockedOrRewrittenClaims: rewrittenClaims.blockedOrRewrittenClaims
   };
