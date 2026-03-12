@@ -3,22 +3,14 @@ import json
 import threading
 import time
 from collections import deque
-from http.server import HTTPServer
 from io import BytesIO
-from socketserver import ThreadingMixIn
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from arcanos.debug_server import DebugAPIHandler, ThreadingHTTPServer, start_debug_server
+from arcanos.debug_server import DebugAPIHandler
 from arcanos.debug_health import liveness, readiness
 from arcanos.debug_metrics import DebugMetrics, get_metrics
-
-
-class TestServer(ThreadingMixIn, HTTPServer):
-    """Test server that allows handler injection."""
-    pass
-
 
 def make_request(handler_class, method: str, path: str, body: bytes = None) -> tuple[int, dict]:
     """
@@ -273,8 +265,6 @@ class TestDependencyInjection:
     
     def test_bound_handler_has_cli_instance(self, mock_cli_instance):
         """BoundDebugAPIHandler should have cli_instance set."""
-        from arcanos.debug_server import start_debug_server
-        
         # This test verifies the pattern works; actual server start is tested elsewhere
         # We can't easily test the actual server without binding to a port
         # But we can verify the class structure

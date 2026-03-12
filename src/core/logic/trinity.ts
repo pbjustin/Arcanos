@@ -61,6 +61,10 @@ import { recordTrinityJudgedFeedback } from './trinityJudgedFeedback.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
+import {
+  deriveTrinityCapabilityFlags,
+  enforceFinalStageHonesty
+} from './trinityHonesty.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
 const EXACT_LITERAL_DISPATCH_MODULE = 'exact-literal-dispatcher';
@@ -209,7 +213,6 @@ function buildTrinityResult(
 
   if (clearAudit) {
     const latencyFactor = 1.0; // Placeholder
-    const escalationBonus = 1.1; // Placeholder
     result.confidence = (clearAudit.overall / 5) * latencyFactor;
   }
 
@@ -342,6 +345,7 @@ export async function runThroughBrain(
   const reasoningConfig = buildReasoningConfig(tier);
   const maxBudget = getInvocationBudget(tier);
   const budget = new InvocationBudget(maxBudget);
+  const capabilityFlags = deriveTrinityCapabilityFlags(options.toolBackedCapabilities);
 
   const internalMode = options.internalMode ?? isInternalArchitecturalMode(prompt);
   const internalDirective = internalMode ? getInternalArchitecturalEvaluationPrompt() : undefined;
@@ -364,7 +368,7 @@ export async function runThroughBrain(
 
   if (options.dryRun) {
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
-    const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason);
+    const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, capabilityFlags, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason);
     return buildDryRunTrinityResult(requestId, dryRunPreview, memoryContext, auditConfig, auditFlags, memoryScoreSummary, gpt5Used, tier, reasoningConfig, budget.used(), budget.limit(), internalMode, clarificationAllowed);
   }
 
@@ -459,7 +463,7 @@ export async function runThroughBrain(
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
 
-    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, cognitiveDomain, internalDirective, runtimeBudget);
+    const intakeOutput = await runIntakeStage(client, arcanosModel, auditSafePrompt, memoryContext.contextSummary, capabilityFlags, cognitiveDomain, internalDirective, runtimeBudget);
     const framedRequest = intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
@@ -468,10 +472,16 @@ export async function runThroughBrain(
     checkWatchdog();
 
     routingStages.push('GPT5-REASONING');
-    const reasoningOutput = await runReasoningStage(client, framedRequest, tier, runtimeBudget);
+    const reasoningOutput = await runReasoningStage(client, framedRequest, intakeOutput.capabilityFlags, tier, runtimeBudget);
     let gpt5Output = reasoningOutput.output;
     const gpt5ModelUsed = reasoningOutput.model;
     const reasoningLedger = reasoningOutput.reasoningLedger;
+    const reasoningHonesty = reasoningOutput.reasoningHonesty;
+
+    //audit Assumption: blocked subtasks should remain visible to later stages and observability; failure risk: a partially impossible request is treated as fully answerable downstream; expected invariant: mixed-feasibility requests set an explicit audit flag; handling strategy: record a stable flag when reasoning identifies blocked work.
+    if (reasoningHonesty.blockedSubtasks.length > 0) {
+      auditFlags.push('PARTIAL_REFUSAL_ACTIVE');
+    }
 
     // --- CLEAR Audit & Escalation Logic ---
     let clearAudit: ClearAuditResult | undefined = undefined;
@@ -546,11 +556,21 @@ export async function runThroughBrain(
 
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
-    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, cognitiveDomain, internalDirective, runtimeBudget);
+    const finalOutput = await runFinalStage(client, memoryContext.contextSummary, auditSafePrompt, gpt5Output, intakeOutput.capabilityFlags, reasoningHonesty, cognitiveDomain, internalDirective, runtimeBudget);
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
-    const finalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+    const translatedFinalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+    const honestyFilteredFinal = enforceFinalStageHonesty(translatedFinalText, reasoningHonesty, intakeOutput.capabilityFlags);
+    const finalText = honestyFilteredFinal.text;
+
+    //audit Assumption: final-stage rewrites indicate an overclaim attempt that should be auditable; failure risk: unsupported certainty is removed with no trace for later diagnosis; expected invariant: any honesty rewrite leaves a durable flag trail; handling strategy: append stable audit flags for the aggregate rewrite and each blocked category.
+    if (honestyFilteredFinal.blocked) {
+      auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
+      for (const blockedCategory of honestyFilteredFinal.blockedCategories) {
+        auditFlags.push(`FINAL_UNSUPPORTED_${blockedCategory.toUpperCase()}_BLOCKED`);
+      }
+    }
 
     const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
     if (!finalProcessedSafely) {

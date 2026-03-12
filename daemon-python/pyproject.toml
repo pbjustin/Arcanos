@@ -66,3 +66,8 @@ include = ["arcanos*"]
 [tool.setuptools.package-data]
 arcanos = ["memory/*.json", "assets/*"]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+  "ignore:'aifc' is deprecated and slated for removal in Python 3.13:DeprecationWarning:speech_recognition.*",
+  "ignore:'audioop' is deprecated and slated for removal in Python 3.13:DeprecationWarning:speech_recognition.*"
+]
