@@ -11,10 +11,53 @@ import type {
   TrinityToolBackedCapabilities
 } from './trinityHonesty.js';
 
+export type {
+  TrinityCapabilityFlags,
+  TrinityEvidenceTag,
+  TrinityReasoningHonesty,
+  TrinityResponseMode,
+  TrinityToolBackedCapabilities
+} from './trinityHonesty.js';
+
 export interface TrinityMetaTokens {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+}
+
+export type TrinityRequestedVerbosity = 'minimal' | 'normal' | 'detailed';
+export type TrinityAnswerMode = 'direct' | 'explained' | 'audit' | 'debug';
+
+export interface TrinityOutputControls {
+  requestedVerbosity: TrinityRequestedVerbosity;
+  maxWords: number | null;
+  answerMode: TrinityAnswerMode;
+  debugPipeline: boolean;
+  strictUserVisibleOutput: boolean;
+}
+
+export interface TrinityPipelineDebug {
+  capabilityFlags: TrinityCapabilityFlags;
+  outputControls: TrinityOutputControls;
+  intakeOutput: {
+    framedRequest: string;
+    activeModel: string;
+    fallbackUsed: boolean;
+  };
+  reasoningOutput: {
+    output: string;
+    model: string;
+    fallbackUsed: boolean;
+    honesty: TrinityReasoningHonesty;
+    reasoningLedger?: ReasoningLedger;
+  };
+  finalOutput: {
+    rawModelOutput: string;
+    translatedOutput: string;
+    userVisibleResult: string;
+    removedMetaSections: string[];
+    blockedOrRewrittenClaims: string[];
+  };
 }
 
 /**
@@ -123,6 +166,10 @@ export interface TrinityResult {
     persisted?: boolean;
   };
   confidence?: number;
+  capabilityFlags?: TrinityCapabilityFlags;
+  outputControls?: TrinityOutputControls;
+  reasoningHonesty?: TrinityReasoningHonesty;
+  pipelineDebug?: TrinityPipelineDebug;
 }
 
 export interface TrinityRunOptions {
@@ -135,6 +182,11 @@ export interface TrinityRunOptions {
   tokenAuditSessionId?: string;
   watchdogModelTimeoutMs?: number;
   toolBackedCapabilities?: TrinityToolBackedCapabilities;
+  requestedVerbosity?: TrinityRequestedVerbosity;
+  maxWords?: number | null;
+  answerMode?: TrinityAnswerMode;
+  debugPipeline?: boolean;
+  strictUserVisibleOutput?: boolean;
 }
 
 export interface TrinityDryRunPreview {

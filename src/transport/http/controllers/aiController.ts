@@ -9,6 +9,8 @@ import { validateAIRequest, handleAIError } from "@transport/http/requestHandler
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { harvestDatasetsFromAudit } from "@services/datasetHarvester.js";
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
+import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 
 type AIRequest = AIRequestDTO & {
   prompt?: string;
@@ -51,12 +53,19 @@ export class AIController {
         input,
         body.sessionId,
         body.overrideAuditSafe,
-        { sourceEndpoint: endpointName },
+        {
+          sourceEndpoint: endpointName,
+          ...buildTrinityOutputControlOptions(body)
+        },
         runtimeBudget
       );
 
       const responsePayload: AIResponse = {
-        ...(output as AIResponse),
+        ...buildTrinityUserVisibleResponse({
+          trinityResult: output,
+          endpoint: endpointName,
+          clientContext: body.clientContext
+        }),
         endpoint: endpointName
       };
 

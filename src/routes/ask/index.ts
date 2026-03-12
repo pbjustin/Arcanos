@@ -32,6 +32,7 @@ import {
   buildQueuedAskPendingResponse,
   type CompletedQueuedAskJobOutput
 } from '@shared/ask/asyncAskJob.js';
+import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import {
   getActiveIntentSnapshot,
   getLastRoutingUsed,
@@ -351,9 +352,6 @@ function buildAskPromptShortcutResponse(params: {
     fallbackFlag: shortcutTelemetry.fallbackFlag,
     routingStages: shortcutTelemetry.routingStages,
     gpt5Used: false,
-    auditSafe: shortcutTelemetry.auditSafe,
-    memoryContext: shortcutTelemetry.memoryContext,
-    taskLineage: shortcutTelemetry.taskLineage,
     endpoint: params.endpointName,
     ...(params.clientContext ? { clientContext: params.clientContext } : {}),
     ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})
@@ -400,21 +398,6 @@ async function buildSystemHealthProbeResponse(params: {
     fallbackFlag: false,
     routingStages: ['SYSTEM-HEALTH-SHORTCUT'],
     gpt5Used: false,
-    auditSafe: {
-      mode: false,
-      overrideUsed: false,
-      auditFlags: ['SYSTEM_HEALTH_SHORTCUT_ACTIVE'],
-      processedSafely: true
-    },
-    memoryContext: {
-      entriesAccessed: 0,
-      contextSummary: `Operator health shortcut returned ${overallStatus} without model invocation.`,
-      memoryEnhanced: false
-    },
-    taskLineage: {
-      requestId,
-      logged: false
-    },
     endpoint: params.endpointName,
     ...(params.clientContext ? { clientContext: params.clientContext } : {}),
     ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})
@@ -641,6 +624,7 @@ export const handleAIRequest = async (
     sessionId,
     overrideAuditSafe,
     cognitiveDomain: finalDomain,
+    ...buildTrinityOutputControlOptions(req.body),
     clientContext: req.body.clientContext ?? null,
     endpointName,
     auditFlag: bypassAuditFlag
@@ -792,7 +776,7 @@ export const handleAIRequest = async (
         completeAiRouteTrace(req, routeTrace, {
           activeModel: completedResponse.activeModel,
           fallbackFlag: completedResponse.fallbackFlag,
-          fallbackReason: completedResponse.fallbackSummary?.fallbackReasons?.join('; ') ?? null,
+          fallbackReason: null,
           extra: {
             disposition: 'async-completed',
             jobId: job.id
@@ -839,6 +823,7 @@ export const handleAIRequest = async (
     }
 
     const runtimeBudget = createRuntimeBudget();
+    const outputControlOptions = buildTrinityOutputControlOptions(req.body);
     const output = await runThroughBrain(
       openai,
       prompt,
@@ -846,7 +831,8 @@ export const handleAIRequest = async (
       overrideAuditSafe,
       {
         cognitiveDomain: finalDomain,
-        sourceEndpoint: endpointName
+        sourceEndpoint: endpointName,
+        ...outputControlOptions
       },
       runtimeBudget
     );

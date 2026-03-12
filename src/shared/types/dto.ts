@@ -51,6 +51,9 @@ const stringField = z
   .min(1, 'Input text must include at least one character')
   .max(6000, 'Input text exceeds maximum length of 6000 characters');
 
+const requestedVerbositySchema = z.enum(['minimal', 'normal', 'detailed']);
+const answerModeSchema = z.enum(['direct', 'explained', 'audit', 'debug']);
+
 /**
  * Schema for AI request payloads.
  * Accepts multiple field names (prompt, userInput, content, text, query) to accommodate
@@ -73,6 +76,16 @@ export const aiRequestSchema = z
       .trim()
       .max(50, 'Override token cannot exceed 50 characters')
       .optional(),
+    requestedVerbosity: requestedVerbositySchema.optional(),
+    requested_verbosity: requestedVerbositySchema.optional(),
+    maxWords: z.number().int().positive().max(2000).nullable().optional(),
+    max_words: z.number().int().positive().max(2000).nullable().optional(),
+    answerMode: answerModeSchema.optional(),
+    answer_mode: answerModeSchema.optional(),
+    debugPipeline: z.boolean().optional(),
+    debug_pipeline: z.boolean().optional(),
+    strictUserVisibleOutput: z.boolean().optional(),
+    strict_user_visible_output: z.boolean().optional(),
     clientContext: clientContextSchema.optional(),
     metadata: z.record(z.unknown()).optional()
   })
