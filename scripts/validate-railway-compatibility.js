@@ -16,6 +16,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const PROJECT_ROOT = process.cwd();
 const RAILWAY_CONFIG_PATH = path.join(PROJECT_ROOT, 'railway.json');
@@ -26,12 +27,15 @@ const REQUIRED_PRODUCTION_VARIABLES = [
   'PORT',
   'DATABASE_URL',
   'OPENAI_API_KEY',
+  'RAILWAY_ENVIRONMENT',
+  'RUN_WORKERS',
+];
+const DOCUMENTED_PRODUCTION_VARIABLES = [
+  ...REQUIRED_PRODUCTION_VARIABLES,
   'OPENAI_BASE_URL',
   'AI_MODEL',
   'GPT51_MODEL',
   'GPT5_MODEL',
-  'RAILWAY_ENVIRONMENT',
-  'RUN_WORKERS',
   'WORKER_API_TIMEOUT_MS',
   'ARC_LOG_PATH',
   'ENABLE_ACTION_PLANS',
@@ -68,12 +72,29 @@ async function readEnvTemplate() {
 }
 
 /**
+ * Validate a string-backed boolean environment value.
+ *
+ * @param {unknown} value - Raw environment value candidate.
+ * @returns {boolean} `true` when the value is one of the accepted boolean literals.
+ */
+export function isBooleanEnvironmentValue(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+
+  //audit Assumption: Railway env values are string-backed even for boolean-like flags; risk: malformed literals bypass deploy intent and silently flip worker topology; invariant: boolean feature flags use an accepted string literal; handling: reject any non-boolean-like value.
+  return normalizedValue === 'true' || normalizedValue === 'false' || normalizedValue === '1' || normalizedValue === '0';
+}
+
+/**
  * Validate core Railway deployment settings.
  *
  * @param {Record<string, unknown>} config - Parsed railway config.
  * @returns {string[]} Validation failures.
  */
-function validateConfig(config) {
+export function validateConfig(config) {
   const errors = [];
   const build = (config.build ?? {});
   const deploy = (config.deploy ?? {});
@@ -111,9 +132,11 @@ function validateConfig(config) {
     errors.push(`Expected deploy.restartPolicyType to be "ON_FAILURE" but found "${String(deploy.restartPolicyType ?? '')}"`);
   }
 
-  //audit Assumption: the shared deploy command should default API services to web mode; risk: accidental worker startup on the web service; invariant: deploy.env.RUN_WORKERS remains false; handling: fail validation on mismatch.
-  if (deploy.env?.RUN_WORKERS !== 'false') {
-    errors.push(`Expected deploy.env.RUN_WORKERS to be "false" but found "${String(deploy.env?.RUN_WORKERS ?? '')}"`);
+  //audit Assumption: Railway deploy env should declare worker topology explicitly instead of inheriting a runtime default; risk: unreviewed config drift changes whether the web service starts in-process workers; invariant: deploy.env.RUN_WORKERS is present and boolean-like; handling: fail validation on missing or malformed values.
+  if (!isBooleanEnvironmentValue(deploy.env?.RUN_WORKERS)) {
+    errors.push(
+      `Expected deploy.env.RUN_WORKERS to be one of "true", "false", "1", or "0" but found "${String(deploy.env?.RUN_WORKERS ?? '')}"`,
+    );
   }
 
   //audit Assumption: production Railway variables must declare the runtime contract consumed by the app; risk: live environment drift leaves features implicitly disabled or model selection ambiguous; invariant: required keys are present under environments.production.variables; handling: fail validation when keys are absent.
@@ -125,9 +148,10 @@ function validateConfig(config) {
       errors.push(`environments.production.variables missing required keys: ${missingVariables.join(', ')}`);
     }
 
-    if (productionVariables.RUN_WORKERS !== 'false') {
+    //audit Assumption: environment-level worker topology should also remain explicit for operators inspecting Railway variables; risk: silent fallback to runtime defaults obscures service behavior; invariant: RUN_WORKERS is a boolean-like string when present in production variables; handling: fail validation on malformed values.
+    if (!isBooleanEnvironmentValue(productionVariables.RUN_WORKERS)) {
       errors.push(
-        `Expected environments.production.variables.RUN_WORKERS to be "false" but found "${String(productionVariables.RUN_WORKERS ?? '')}"`,
+        `Expected environments.production.variables.RUN_WORKERS to be one of "true", "false", "1", or "0" but found "${String(productionVariables.RUN_WORKERS ?? '')}"`,
       );
     }
   }
@@ -141,7 +165,7 @@ function validateConfig(config) {
  * @param {string} templateRaw - Raw `.env.example` contents.
  * @returns {Set<string>} Declared environment keys.
  */
-function extractEnvTemplateKeys(templateRaw) {
+export function extractEnvTemplateKeys(templateRaw) {
   const environmentKeys = new Set();
 
   for (const rawLine of templateRaw.split(/\r?\n/u)) {
@@ -166,9 +190,9 @@ function extractEnvTemplateKeys(templateRaw) {
  * @param {Set<string>} documentedKeys - Keys found in `.env.example`.
  * @returns {string[]} Validation failures.
  */
-function validateEnvTemplate(documentedKeys) {
+export function validateEnvTemplate(documentedKeys) {
   const errors = [];
-  const missingTemplateKeys = REQUIRED_PRODUCTION_VARIABLES.filter((key) => !documentedKeys.has(key));
+  const missingTemplateKeys = DOCUMENTED_PRODUCTION_VARIABLES.filter((key) => !documentedKeys.has(key));
 
   //audit Assumption: local operators use `.env.example` as the canonical runtime surface; risk: undocumented keys cause hard-to-reproduce prod/local drift; invariant: all high-impact Railway variables are documented; handling: fail validation when template keys are missing.
   if (missingTemplateKeys.length > 0) {
@@ -207,4 +231,6 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

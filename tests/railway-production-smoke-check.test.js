@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import {
   RESULT_STATUS,
   evaluateDatabaseLogEntries,
@@ -6,7 +6,8 @@ import {
   evaluateRuntimeWiring,
   extractEnvironmentSnapshot,
   findRoleServices,
-  parseJsonLines
+  parseJsonLines,
+  requestHealthCheck
 } from '../scripts/railway-production-smoke-check.js';
 
 describe('railway-production-smoke-check', () => {
@@ -139,6 +140,72 @@ describe('railway-production-smoke-check', () => {
 
     expect(results.every((result) => result.status !== RESULT_STATUS.FAIL)).toBe(true);
     expect(results.find((result) => result.name === 'Shared backend wiring')?.status).toBe(RESULT_STATUS.PASS);
+  });
+
+  it('accepts production NODE_ENV when checking a Railway preview environment', () => {
+    const results = evaluateRuntimeWiring(
+      {
+        NODE_ENV: 'production',
+        PGHOST: 'postgres-btrn.railway.internal',
+        PGPORT: '5432',
+        PGDATABASE: 'railway',
+        PGUSER: 'postgres',
+        REDISHOST: 'redis-lqbv.railway.internal',
+        REDISPORT: '6379',
+        DATABASE_URL: 'postgres://masked',
+        REDIS_URL: 'redis://masked'
+      },
+      {
+        NODE_ENV: 'production',
+        PGHOST: 'postgres-btrn.railway.internal',
+        PGPORT: '5432',
+        PGDATABASE: 'railway',
+        PGUSER: 'postgres',
+        REDISHOST: 'redis-lqbv.railway.internal',
+        REDISPORT: '6379',
+        DATABASE_URL: 'postgres://masked',
+        REDIS_URL: 'redis://masked'
+      },
+      'Arcanos-pr-1227'
+    );
+
+    expect(results.find((result) => result.name === 'Runtime environment identity')?.status).toBe(RESULT_STATUS.PASS);
+    expect(results.every((result) => result.status !== RESULT_STATUS.FAIL)).toBe(true);
+  });
+
+  it('accepts a health payload whose env matches the app NODE_ENV during preview checks', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, env: 'production' })
+    }));
+
+    try {
+      const result = await requestHealthCheck(
+        'https://arcanos-v2-arcanos-pr-1227.up.railway.app/healthz',
+        {
+          environment: 'Arcanos-pr-1227',
+          appService: 'ARCANOS V2',
+          workerService: 'ARCANOS Worker',
+          databaseService: '',
+          redisService: '',
+          appUrl: '',
+          healthPath: '/healthz',
+          appLogLines: 300,
+          workerLogLines: 300,
+          databaseLogLines: 500,
+          redisLogLines: 200,
+          requestTimeoutMs: 15000
+        },
+        'production'
+      );
+
+      expect(result.status).toBe(RESULT_STATUS.PASS);
+      expect(result.detail).toMatch(/env=production/);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it('fails database log evaluation when the missing User table error appears', () => {
