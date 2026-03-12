@@ -180,7 +180,7 @@ This index is copy-path friendly for IDE navigation and shell usage.
 | `daemon-python/scripts/test_backend_connection.py` |
 | `daemon-python/scripts/test_cli_backend.py` |
 | `daemon-python/scripts/test_local_and_backend_natural_language.py` |
-| `daemon-python/scripts/validate_backend_cli_offline.py` |
+| `daemon-python/scripts/offline_backend_cli_validator.py` |
 | `daemon-python/scripts/validate_backend_cli.py` |
 | `daemon-python/tests/__init__.py` |
 | `daemon-python/tests/conftest.py` |

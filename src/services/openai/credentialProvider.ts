@@ -1,5 +1,5 @@
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
-import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import { getConfig, getEnvVar } from "@platform/runtime/unifiedConfig.js";
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -22,6 +22,27 @@ function isPlaceholderOpenAIKey(apiKey: string): boolean {
 function computeDefaultModelFromConfig(): string {
   const appConfig = getConfig();
   return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
+}
+
+/**
+ * Purpose: Resolve the reasoning-model preference from unified runtime config.
+ * Inputs/outputs: Reads the current config snapshot and returns one GPT-5 family model name.
+ * Edge case behavior: Falls back to `GPT51_MODEL` and then the hard-coded default when `GPT5_MODEL` is unset.
+ */
+function computeGPT5ModelFromConfig(): string {
+  const appConfig = getConfig();
+  const configuredGPT5Model = getEnvVar('GPT5_MODEL');
+
+  //audit Assumption: operators may intentionally steer reasoning traffic with GPT5_MODEL while keeping GPT51_MODEL as a compatibility fallback; failure risk: production continues using the legacy GPT-5.1 path even after Railway config is updated or loses legacy behavior because the normalized config always materializes a default GPT5 model; expected invariant: an explicitly configured GPT5_MODEL takes precedence, otherwise the legacy GPT51_MODEL path remains intact; handling strategy: branch on raw env presence before falling back to unified-config defaults.
+  if (configuredGPT5Model) {
+    return configuredGPT5Model;
+  }
+
+  if (appConfig.gpt51Model) {
+    return appConfig.gpt51Model;
+  }
+
+  return APPLICATION_CONSTANTS.MODEL_GPT_5_1;
 }
 
 export function resolveOpenAIBaseURL(): string | undefined {
@@ -98,7 +119,11 @@ export function getComplexModel(): string {
   return APPLICATION_CONSTANTS.MODEL_GPT_4_1;
 }
 
+/**
+ * Purpose: Return the configured reasoning model used by GPT-5 execution paths.
+ * Inputs/outputs: Reads the current unified runtime config and returns one model identifier string.
+ * Edge case behavior: Preserves backward compatibility by falling back to `GPT51_MODEL` and then the built-in GPT-5.1 default.
+ */
 export function getGPT5Model(): string {
-  const appConfig = getConfig();
-  return appConfig.gpt51Model || APPLICATION_CONSTANTS.MODEL_GPT_5_1;
+  return computeGPT5ModelFromConfig();
 }

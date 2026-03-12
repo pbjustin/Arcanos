@@ -4,6 +4,7 @@ Offline backend/CLI contract validator for CI-safe execution.
 Purpose:
 - Validate daemon configuration and CLI/OpenAI adapter contracts without network calls.
 - Enforce mock-only behavior for required CI checks.
+- Provide a stable canonical module path distinct from the public wrapper entrypoint.
 """
 
 from __future__ import annotations

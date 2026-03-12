@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import { normalizeResponsesCreateParams } from '@core/adapters/openai.adapter.js';
+import { aiLogger } from '@platform/logging/structuredLogging.js';
 
 const VALID_DOMAINS: ReadonlySet<string> = new Set([
   'diagnostic', 'code', 'creative', 'natural', 'execution'
@@ -9,6 +10,7 @@ const VALID_DOMAINS: ReadonlySet<string> = new Set([
 const MAX_CLASSIFIER_INPUT_LENGTH = 500;
 
 function truncateAtSemanticBoundary(text: string, maxLength: number): string {
+  //audit Assumption: short prompts should bypass truncation; failure risk: unnecessary prompt mutation changes classifier behavior; expected invariant: inputs within the ceiling are preserved exactly; handling strategy: return early before boundary search.
   if (text.length <= maxLength) {
     return text;
   }
@@ -37,6 +39,12 @@ function truncateAtSemanticBoundary(text: string, maxLength: number): string {
   return candidate;
 }
 
+/**
+ * Classify a prompt into a cognitive domain using the GPT fallback classifier.
+ * Inputs: OpenAI client plus the raw user prompt text.
+ * Outputs: One supported cognitive domain label, with invalid classifier output coerced to `natural`.
+ * Edge cases: empty prompts are normalized to a single space and invalid/empty model output logs a warning before the fallback is applied.
+ */
 export async function gptFallbackClassifier(
   openai: OpenAI,
   prompt: string
@@ -66,14 +74,17 @@ export async function gptFallbackClassifier(
     : response?.choices?.[0]?.message?.content ?? '';
   const label = rawText.trim().toLowerCase();
 
+  //audit Assumption: classifier output must match the allowed domain set exactly; failure risk: unexpected labels route requests incorrectly; expected invariant: only validated labels escape this function; handling strategy: warn and coerce invalid output to the conservative `natural` fallback.
   if (VALID_DOMAINS.has(label)) {
     return label as CognitiveDomain;
   }
 
-  console.warn(
-    '[gptFallbackClassifier] Received invalid domain label from GPT classifier, falling back to "natural":',
-    label || '<empty>'
+  aiLogger.warn(
+    '[gptFallbackClassifier] Invalid domain label received; using natural fallback',
+    {
+      module: 'gptDomainClassifier',
+      invalidDomainLabel: label || '<empty>'
+    }
   );
   return 'natural';
 }
-

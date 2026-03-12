@@ -310,6 +310,7 @@ export function findRoleServices(serviceInstances, config) {
 export function evaluateRuntimeWiring(appVariables, workerVariables, environmentName) {
   const results = [];
   const requiredSharedKeys = ['PGHOST', 'PGPORT', 'PGDATABASE', 'PGUSER', 'REDISHOST', 'REDISPORT', 'DATABASE_URL', 'REDIS_URL', 'NODE_ENV'];
+  const recognizedNodeEnvironments = new Set(['development', 'production', 'test']);
 
   const missingAppKeys = requiredSharedKeys.filter((key) => !isNonEmptyString(appVariables[key]));
   const missingWorkerKeys = requiredSharedKeys.filter((key) => !isNonEmptyString(workerVariables[key]));
@@ -333,13 +334,27 @@ export function evaluateRuntimeWiring(appVariables, workerVariables, environment
     );
   }
 
-  //audit assumption: production services should self-identify as production to avoid cross-environment confusion; failure risk: accidental staging config in production; expected invariant: both NODE_ENV values match the requested environment; handling strategy: fail on mismatch.
-  if (appVariables.NODE_ENV !== environmentName || workerVariables.NODE_ENV !== environmentName) {
+  const appNodeEnvironment = normalizeString(appVariables.NODE_ENV);
+  const workerNodeEnvironment = normalizeString(workerVariables.NODE_ENV);
+
+  //audit assumption: Railway preview environments may intentionally run the same production runtime settings as the primary deployment; failure risk: smoke checks report false failures whenever the Railway environment label differs from NODE_ENV; expected invariant: app and worker agree on one recognized NODE_ENV value; handling strategy: validate shared runtime identity independently from the Railway environment name.
+  if (
+    !recognizedNodeEnvironments.has(appNodeEnvironment)
+    || !recognizedNodeEnvironments.has(workerNodeEnvironment)
+  ) {
     results.push(
       createResult(
         'Runtime environment identity',
         RESULT_STATUS.FAIL,
-        `Expected NODE_ENV=${environmentName} for app and worker but saw app=${String(appVariables.NODE_ENV ?? '')}, worker=${String(workerVariables.NODE_ENV ?? '')}.`
+        `Expected app and worker NODE_ENV to be one of development, production, or test but saw app=${String(appVariables.NODE_ENV ?? '')}, worker=${String(workerVariables.NODE_ENV ?? '')}.`
+      )
+    );
+  } else if (appNodeEnvironment !== workerNodeEnvironment) {
+    results.push(
+      createResult(
+        'Runtime environment identity',
+        RESULT_STATUS.FAIL,
+        `Expected app and worker NODE_ENV to match but saw app=${appNodeEnvironment}, worker=${workerNodeEnvironment}.`
       )
     );
   } else {
@@ -347,7 +362,7 @@ export function evaluateRuntimeWiring(appVariables, workerVariables, environment
       createResult(
         'Runtime environment identity',
         RESULT_STATUS.PASS,
-        `App and worker both report NODE_ENV=${environmentName}.`
+        `App and worker both report NODE_ENV=${appNodeEnvironment} while targeting Railway environment ${environmentName}.`
       )
     );
   }
@@ -726,7 +741,11 @@ export async function runSmokeCheck(config) {
 
   try {
     const healthUrl = resolveHealthUrl(appVariables, roleServices.app, config);
-    const healthResult = await requestHealthCheck(healthUrl, config);
+    const healthResult = await requestHealthCheck(
+      healthUrl,
+      config,
+      normalizeString(appVariables.NODE_ENV)
+    );
     results.push(healthResult);
   } catch (error) {
     results.push(createResult('App public health endpoint', RESULT_STATUS.FAIL, formatCommandError(error)));
@@ -824,9 +843,10 @@ function resolveHealthUrl(appVariables, appService, config) {
  *
  * @param {string} healthUrl - Absolute health endpoint URL.
  * @param {typeof DEFAULTS} config - Smoke-check configuration.
+ * @param {string} expectedNodeEnvironment - Expected `NODE_ENV` reported by the app service.
  * @returns {Promise<{ name: string; status: 'PASS'|'WARN'|'FAIL'; detail: string }>}
  */
-async function requestHealthCheck(healthUrl, config) {
+export async function requestHealthCheck(healthUrl, config, expectedNodeEnvironment) {
   const abortController = new AbortController();
   const timeoutHandle = setTimeout(() => abortController.abort(), config.requestTimeoutMs);
 
@@ -847,8 +867,8 @@ async function requestHealthCheck(healthUrl, config) {
       //audit assumption: ARCANOS health endpoint should return JSON, but parse failures should still report the HTTP status; failure risk: endpoint regressions are hidden behind generic request failures; expected invariant: JSON body when healthy; handling strategy: continue with null parsedBody and fail with body preview if needed.
     }
 
-    //audit assumption: the public health endpoint must return HTTP 200 plus `{ ok: true }` in the target environment; failure risk: ingress returns a generic page while the service is unhealthy; expected invariant: status 200, JSON body, body.ok===true, body.env matches target; handling strategy: fail on any contract violation.
-    if (!response.ok || !parsedBody || parsedBody.ok !== true || parsedBody.env !== config.environment) {
+    //audit assumption: the public health endpoint must return HTTP 200 plus `{ ok: true }`, and its reported runtime env should match the app's configured NODE_ENV rather than the Railway environment label; failure risk: ingress returns a generic page or preview environments fail despite healthy production-mode app settings; expected invariant: status 200, JSON body, body.ok===true, body.env matches the app runtime env; handling strategy: fail on any contract violation.
+    if (!response.ok || !parsedBody || parsedBody.ok !== true || parsedBody.env !== expectedNodeEnvironment) {
       return createResult(
         'App public health endpoint',
         RESULT_STATUS.FAIL,

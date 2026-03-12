@@ -119,6 +119,56 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
+    it('should prioritize GPT5_MODEL over GPT51_MODEL for reasoning model selection', async () => {
+      const originalModels = {
+        GPT5_MODEL: process.env.GPT5_MODEL,
+        GPT51_MODEL: process.env.GPT51_MODEL
+      };
+
+      process.env.GPT5_MODEL = 'gpt-5-custom';
+      process.env.GPT51_MODEL = 'gpt-5.1-legacy';
+
+      try {
+        await resetOpenAITestState();
+        const { getGPT5Model } = await import('../src/services/openai.js');
+
+        expect(getGPT5Model()).toBe('gpt-5-custom');
+      } finally {
+        Object.entries(originalModels).forEach(([key, value]) => {
+          if (value) {
+            process.env[key] = value;
+          } else {
+            delete process.env[key];
+          }
+        });
+      }
+    });
+
+    it('should fallback to GPT51_MODEL when GPT5_MODEL is not set', async () => {
+      const originalModels = {
+        GPT5_MODEL: process.env.GPT5_MODEL,
+        GPT51_MODEL: process.env.GPT51_MODEL
+      };
+
+      delete process.env.GPT5_MODEL;
+      process.env.GPT51_MODEL = 'gpt-5.1-configured';
+
+      try {
+        await resetOpenAITestState();
+        const { getGPT5Model } = await import('../src/services/openai.js');
+
+        expect(getGPT5Model()).toBe('gpt-5.1-configured');
+      } finally {
+        Object.entries(originalModels).forEach(([key, value]) => {
+          if (value) {
+            process.env[key] = value;
+          } else {
+            delete process.env[key];
+          }
+        });
+      }
+    });
+
     it('should support FINE_TUNED_MODEL_ID alias for model selection', async () => {
       const originalModels = {
         FINETUNED_MODEL_ID: process.env.FINETUNED_MODEL_ID,
