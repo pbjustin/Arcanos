@@ -485,7 +485,7 @@
           "relativePath": "daemon-python/scripts/test_local_and_backend_natural_language.py"
         },
         {
-          "relativePath": "daemon-python/scripts/validate_backend_cli_offline.py"
+          "relativePath": "daemon-python/scripts/offline_backend_cli_validator.py"
         },
         {
           "relativePath": "daemon-python/scripts/validate_backend_cli.py"

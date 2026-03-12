@@ -11,7 +11,7 @@ import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 import { interpreterSupervisor } from "@services/safety/interpreterSupervisor.js";
 import { activateUnsafeCondition, incrementWorkerFailure } from "@services/safety/runtimeState.js";
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
-import { runWorkerTrinityPrompt } from '@workers/trinityWorkerPipeline.js';
+import { runWorkerTrinityPrompt } from '../../workers/trinityWorkerPipeline.js';
 
 // ✅ Environment setup
 // Use config layer for env access (adapter boundary pattern)
