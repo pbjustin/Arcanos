@@ -1,4 +1,5 @@
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
+import { parsePositiveEnvInteger } from "@platform/runtime/envParsers.js";
 
 export interface ScholarlyApiConfig {
   endpoint: string;
@@ -11,16 +12,8 @@ const DEFAULT_SCHOLARLY_TIMEOUT_MS = 15_000;
 const DEFAULT_SCHOLARLY_ROWS = 3;
 
 function parseTimeout(rawTimeout: string | undefined): number {
-  //audit Assumption: missing timeout should fall back to a safe default; risk: unintended slow requests; invariant: timeoutMs is positive; handling: default to DEFAULT_SCHOLARLY_TIMEOUT_MS.
-  if (!rawTimeout) return DEFAULT_SCHOLARLY_TIMEOUT_MS;
-
-  const parsed = Number.parseInt(rawTimeout.trim(), 10);
-  //audit Assumption: invalid timeout values should not crash config; risk: NaN causing axios failures; invariant: timeoutMs is finite and > 0; handling: fall back to DEFAULT_SCHOLARLY_TIMEOUT_MS.
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_SCHOLARLY_TIMEOUT_MS;
-  }
-
-  return parsed;
+  //audit Assumption: missing timeout should fall back to a safe default; risk: unintended slow requests; invariant: timeoutMs is positive; handling: route through shared positive integer parser with fallback.
+  return parsePositiveEnvInteger(rawTimeout?.trim(), DEFAULT_SCHOLARLY_TIMEOUT_MS);
 }
 
 function parseDefaultRows(rawRows: number): number {

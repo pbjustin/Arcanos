@@ -1,4 +1,10 @@
-import { parseEnvBoolean, parseEnvFloat, parseEnvInt, parseEnvInteger } from '@platform/runtime/envParsers.js';
+import {
+  parseEnvBoolean,
+  parseEnvFloat,
+  parseEnvInt,
+  parseEnvInteger,
+  parsePositiveEnvInteger,
+} from '@platform/runtime/envParsers.js';
 
 describe('envParsers', () => {
   describe('parseEnvInteger', () => {
@@ -25,6 +31,26 @@ describe('envParsers', () => {
     it('supports configurable rounding mode', () => {
       expect(parseEnvInteger('-1.2', 5, { roundingMode: 'trunc' })).toBe(-1);
       expect(parseEnvInteger('-1.2', 5, { roundingMode: 'floor' })).toBe(-2);
+    });
+  });
+
+
+  describe('parsePositiveEnvInteger', () => {
+    it('returns fallback for undefined, zero, and negative values', () => {
+      expect(parsePositiveEnvInteger(undefined, 25)).toBe(25);
+      expect(parsePositiveEnvInteger('0', 25)).toBe(25);
+      expect(parsePositiveEnvInteger('-2', 25)).toBe(25);
+    });
+
+    it('returns parsed positive integer and truncates decimals', () => {
+      expect(parsePositiveEnvInteger('42', 10)).toBe(42);
+      expect(parsePositiveEnvInteger('9.7', 10)).toBe(9);
+    });
+
+    it('enforces optional minimum and maximum bounds', () => {
+      expect(parsePositiveEnvInteger('4', 10, { minimum: 5 })).toBe(10);
+      expect(parsePositiveEnvInteger('101', 10, { maximum: 100 })).toBe(10);
+      expect(parsePositiveEnvInteger('100', 10, { maximum: 100 })).toBe(100);
     });
   });
 
