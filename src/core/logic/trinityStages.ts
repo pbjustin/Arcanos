@@ -46,6 +46,10 @@ import {
   type TrinityCapabilityFlags,
   type TrinityReasoningHonesty
 } from './trinityHonesty.js';
+import {
+  buildTrinityDirectAnswerSystemInstruction,
+  resolveTrinityDirectAnswerTokenLimit
+} from './trinityDirectAnswerMode.js';
 
 function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
   switch (cognitiveDomain) {
@@ -155,6 +159,26 @@ export function buildInternalArchitecturalMessages(
   }
 
   return messages;
+}
+
+/**
+ * Build the single-pass direct-answer messages used by Trinity core when simulation must be suppressed.
+ * Inputs/outputs: memory context summary + sanitized user prompt -> strict chat message array.
+ * Edge cases: blank prompt content falls back to a deterministic placeholder so OpenAI always receives string content.
+ */
+export function buildTrinityDirectAnswerMessages(
+  memoryContextSummary: string,
+  auditSafePrompt: string
+): ChatCompletionMessageParam[] {
+  const systemContent = ensureStringContent(
+    buildTrinityDirectAnswerSystemInstruction(memoryContextSummary, auditSafePrompt)
+  ) || 'Answer the request directly.';
+  const userRequestContent = ensureStringContent(auditSafePrompt) || 'No request provided.';
+
+  return [
+    { role: 'system', content: systemContent },
+    { role: 'user', content: userRequestContent }
+  ];
 }
 
 /**
@@ -346,6 +370,53 @@ export async function runFinalStage(
     usage: finalResponse.usage || undefined,
     responseId: finalResponse.id,
     created: finalResponse.created
+  };
+}
+
+/**
+ * Execute Trinity's strict direct-answer mode as a single model call.
+ * Inputs: shared OpenAI client, memory context summary, sanitized user prompt, optional cognitive domain, and runtime budget.
+ * Outputs: normalized final-stage style payload with model, usage, and fallback metadata.
+ * Edge cases: enforces a smaller token budget for explicit list-shaped direct answers to reduce verbosity and timeout pressure.
+ */
+export async function runDirectAnswerStage(
+  client: OpenAI,
+  memoryContextSummary: string,
+  auditSafePrompt: string,
+  cognitiveDomain?: CognitiveDomain,
+  runtimeBudget?: RuntimeBudget
+): Promise<TrinityFinalOutput> {
+  if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
+
+  const complexModel = getComplexModel();
+  const directAnswerTokenLimit = resolveTrinityDirectAnswerTokenLimit(
+    auditSafePrompt,
+    APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
+  );
+  const cappedTokenLimit = enforceTokenCap(directAnswerTokenLimit);
+  const directAnswerTokenParams = getTokenParameter(complexModel, cappedTokenLimit);
+  const temperature = Math.min(resolveTemperature(cognitiveDomain), 0.2);
+  const directAnswerResponse = await createChatCompletionWithFallback(client, {
+    messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
+    temperature,
+    model: complexModel,
+    ...directAnswerTokenParams
+  });
+  const directAnswerText = directAnswerResponse.choices[0]?.message?.content || '';
+  const actualModel = directAnswerResponse.activeModel || complexModel;
+  const fallbackUsed = directAnswerResponse.fallbackFlag || false;
+
+  if (fallbackUsed) {
+    logFallbackEvent('ARCANOS-DIRECT-ANSWER', complexModel, actualModel, 'Fallback flag set by direct-answer completion');
+  }
+
+  return {
+    output: directAnswerText,
+    activeModel: actualModel,
+    fallbackUsed,
+    usage: directAnswerResponse.usage || undefined,
+    responseId: directAnswerResponse.id,
+    created: directAnswerResponse.created
   };
 }
 

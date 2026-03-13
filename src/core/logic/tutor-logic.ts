@@ -16,6 +16,7 @@ import {
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 
 const DEFAULT_TOKEN_LIMIT = getEnvNumber('TUTOR_DEFAULT_TOKEN_LIMIT', 200);
 
@@ -24,6 +25,12 @@ export interface TutorQuery {
   domain?: string;
   module?: string;
   payload?: TutorPayload;
+  prompt?: string;
+  message?: string;
+  userInput?: string;
+  content?: string;
+  text?: string;
+  query?: string;
 }
 
 export interface TutorPipelineTrace {
@@ -50,8 +57,65 @@ export interface TutorPayload {
   topic?: string;
   entry?: string;
   flow?: string;
+  prompt?: string;
   tokenLimit?: number;
   [key: string]: unknown;
+}
+
+function readTutorQueryPrompt(query: TutorQuery): string | undefined {
+  for (const candidate of [
+    query.prompt,
+    query.message,
+    query.userInput,
+    query.content,
+    query.text,
+    query.query
+  ]) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function readTutorPayloadValue(
+  payload: TutorPayload,
+  key: keyof TutorPayload
+): string | undefined {
+  const value = payload[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function buildResolvedTutorPayload(query: TutorQuery): TutorPayload {
+  const resolvedPayload = query.payload ? { ...query.payload } : {};
+  const directPrompt = readTutorQueryPrompt(query);
+
+  //audit Assumption: `/api/ask` callers often send top-level prompt aliases instead of nesting `payload.prompt`; failure risk: tutor routing silently drops the user's actual request and generates generic filler; expected invariant: generic tutor flows always receive the operator's original text when present; handling strategy: copy the first prompt alias into `payload.prompt` unless an explicit nested prompt already exists.
+  if (directPrompt && !readTutorPayloadValue(resolvedPayload, 'prompt')) {
+    resolvedPayload.prompt = directPrompt;
+  }
+
+  return resolvedPayload;
+}
+
+function buildExactLiteralTutorResult(literal: string): TutorModuleResult {
+  return {
+    tutor_response: literal,
+    pipeline_trace: {
+      intake: '[SHORTCUT] Exact literal tutor shortcut matched.',
+      reasoning: '[SHORTCUT] Model reasoning bypassed.',
+      finalized: literal
+    },
+    model: {
+      intake: 'exact-literal-shortcut',
+      reasoning: 'exact-literal-shortcut',
+      audit: 'exact-literal-shortcut'
+    },
+    metadata: {
+      shortcut: 'exact_literal'
+    }
+  };
 }
 
 async function runTutorPipeline(
@@ -171,11 +235,13 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: T
     id: 'pattern_1756454042132',
     modules: {
       explain: async (payload) => {
-        const pipeline = await runTutorPipeline(`Explain memory logic for: ${payload.topic ?? ''}`);
+        const topic = readTutorPayloadValue(payload, 'topic') ?? readTutorPayloadValue(payload, 'prompt') ?? '';
+        const pipeline = await runTutorPipeline(`Explain memory logic for: ${topic}`);
         return { ...pipeline };
       },
       audit: async (payload) => {
-        const pipeline = await runTutorPipeline(`Audit memory entry: ${payload.entry ?? ''}`);
+        const entry = readTutorPayloadValue(payload, 'entry') ?? readTutorPayloadValue(payload, 'prompt') ?? '';
+        const pipeline = await runTutorPipeline(`Audit memory entry: ${entry}`);
         return { ...pipeline };
       }
     }
@@ -184,7 +250,7 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: T
     id: 'pattern_1756454042135',
     modules: {
       findSources: async (payload) => {
-        const topic = payload.topic ?? '';
+        const topic = readTutorPayloadValue(payload, 'topic') ?? readTutorPayloadValue(payload, 'prompt') ?? '';
         const sources = await searchScholarly(topic);
 
         const pipeline = await runTutorPipeline(
@@ -212,7 +278,8 @@ const patterns: Record<string, { id: string; modules: Record<string, (payload: T
     id: 'pattern_1756453493854',
     modules: {
       clarify: async (payload) => {
-        const pipeline = await runTutorPipeline(`Clarify logic flow: ${payload.flow ?? ''}`);
+        const flow = readTutorPayloadValue(payload, 'flow') ?? readTutorPayloadValue(payload, 'prompt') ?? '';
+        const pipeline = await runTutorPipeline(`Clarify logic flow: ${flow}`);
         return { ...pipeline };
       }
     }
@@ -250,12 +317,36 @@ export async function handleTutorQuery(query: TutorQuery) {
   audit.instruction_module = query.module || 'generic';
 
   audit.pattern_ref = patterns[domain]?.id || 'untracked';
+  const resolvedPayload = buildResolvedTutorPayload(query);
+  const resolvedPrompt = readTutorPayloadValue(resolvedPayload, 'prompt');
+
+  //audit Assumption: exact-literal tutor prompts should not rely on multi-stage model compliance; failure risk: tutor pipeline adds simulated scaffolding or extra explanation around operator-required literals; expected invariant: recognized exact-literal prompts return the literal verbatim; handling strategy: short-circuit before module execution and stamp audit metadata with the shortcut path.
+  const exactLiteralShortcut =
+    typeof resolvedPrompt === 'string'
+      ? tryExtractExactLiteralPromptShortcut(resolvedPrompt)
+      : null;
+  if (exactLiteralShortcut) {
+    const shortcutResult = buildExactLiteralTutorResult(exactLiteralShortcut.literal);
+    audit.pattern_ref = 'exact_literal_shortcut';
+    audit.instruction_module = 'exact_literal_shortcut';
+    return {
+      arcanos_tutor: shortcutResult.tutor_response,
+      audit_trace: {
+        ...audit,
+        pipeline: shortcutResult.pipeline_trace,
+        model: shortcutResult.model
+      },
+      metadata: {
+        shortcut: exactLiteralShortcut.matchedPattern
+      }
+    };
+  }
 
   let result: TutorModuleResult;
 
   try {
     //audit Assumption: payload is optional; Handling: default to empty
-    result = await moduleFn(query.payload || {});
+    result = await moduleFn(resolvedPayload);
   } catch (error: unknown) {
     //audit Assumption: module failure triggers fallback
     console.error('Tutor module error:', resolveErrorMessage(error));

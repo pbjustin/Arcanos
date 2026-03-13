@@ -1,13 +1,17 @@
 import express, { Request, Response } from 'express';
-import { createCentralizedCompletion } from "@services/openai.js";
-import { generateRequestId } from "@shared/idGenerator.js";
 import { createValidationMiddleware, createRateLimitMiddleware } from "@platform/runtime/security.js";
 import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
 import { buildTimestampedPayload } from "@transport/http/responseHelpers.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import type OpenAI from 'openai';
+import { routeGptRequest } from './_core/gptDispatch.js';
+import type {
+  CompletedSimulationResult,
+  SimulationExecutionResult,
+  StreamingSimulationResult
+} from '@services/arcanos-sim.js';
 
 const router = express.Router();
+const SIMULATION_DISPATCH_GPT_ID = 'sim';
 
 // Apply rate limiting globally
 router.use(createRateLimitMiddleware(50, 15 * 60 * 1000)); // 50 requests per 15 minutes
@@ -79,71 +83,142 @@ const simulationSchema = {
   }
 };
 
+interface SimulationRouteParameters {
+  temperature?: number;
+  maxTokens?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
+interface SimulationRouteBody {
+  scenario: string;
+  context?: string;
+  parameters?: SimulationRouteParameters;
+}
+
+function buildSimulationDispatcherBody(
+  body: SimulationRouteBody
+): {
+  action: 'run';
+  payload: SimulationRouteBody;
+} {
+  return {
+    action: 'run',
+    payload: {
+      scenario: body.scenario,
+      context: body.context,
+      parameters: body.parameters
+    }
+  };
+}
+
+function isCompletedSimulationResult(
+  value: unknown
+): value is CompletedSimulationResult {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    (value as SimulationExecutionResult).mode === 'complete' &&
+    typeof (value as CompletedSimulationResult).result === 'string'
+  );
+}
+
+function isStreamingSimulationResult(
+  value: unknown
+): value is StreamingSimulationResult {
+  const streamCandidate =
+    value && typeof value === 'object'
+      ? (value as Partial<StreamingSimulationResult>).stream
+      : undefined;
+
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    (value as SimulationExecutionResult).mode === 'stream' &&
+    !!streamCandidate &&
+    typeof streamCandidate === 'object' &&
+    Symbol.asyncIterator in streamCandidate
+  );
+}
+
+async function sendSimulationStream(
+  res: Response,
+  result: StreamingSimulationResult
+): Promise<void> {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  });
+
+  for await (const chunk of result.stream) {
+    const content = chunk.choices[0]?.delta?.content || '';
+    if (content) {
+      res.write(`data: ${JSON.stringify({ content, type: 'chunk' })}\n\n`);
+    }
+  }
+
+  res.write(`data: ${JSON.stringify({ type: 'done', metadata: result.metadata })}\n\n`);
+  res.end();
+}
+
 /**
  * POST /api/sim - Run AI simulation scenarios
  * Provides RESTful JSON simulation capabilities using centralized ARCANOS model routing
  */
-router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(async (req: Request, res: Response) => {
+router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(async (
+  req: Request<{}, unknown, SimulationRouteBody>,
+  res: Response
+) => {
   const { scenario, context, parameters = {} } = req.body;
 
   try {
-    // Construct simulation prompt
-    const messages = [
-      {
-        role: 'user' as const,
-        content: `Simulate the following scenario: ${scenario}${context ? `\n\nContext: ${context}` : ''}`
-      }
-    ];
-
-    // Use centralized completion with ARCANOS routing
-    const response = await createCentralizedCompletion(messages, {
-      temperature: parameters.temperature || 0.8,
-      max_tokens: parameters.maxTokens || 2048,
-      stream: parameters.stream || false
+    const dispatchEnvelope = await routeGptRequest({
+      gptId: SIMULATION_DISPATCH_GPT_ID,
+      body: buildSimulationDispatcherBody({
+        scenario,
+        context,
+        parameters
+      }),
+      requestId: req.requestId,
+      logger: req.logger,
+      request: req
     });
 
-    // Handle streaming response
-    if (parameters.stream && Symbol.asyncIterator in response) {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*'
+    //audit Assumption: `/api/sim` should surface dispatcher validation failures as client errors while preserving the legacy simulation envelope; failure risk: clients lose actionable error semantics after the dispatcher rewire; expected invariant: bad payloads return 400 and module/runtime faults remain 500-class errors; handling strategy: map dispatcher codes to the existing timestamped route contract.
+    if (!dispatchEnvelope.ok) {
+      const errorPayload = buildTimestampedPayload({
+        status: 'error',
+        message: 'Simulation failed',
+        error: dispatchEnvelope.error.message
       });
 
-      // Stream simulation results
-      if (response && typeof response === 'object' && Symbol.asyncIterator in response) {
-        for await (const chunk of response as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>) {
-          const content = chunk.choices[0]?.delta?.content || '';
-          if (content) {
-            res.write(`data: ${JSON.stringify({ content, type: 'chunk' })}\n\n`);
-          }
-        }
-        
-        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-        res.end();
-        return;
+      if (dispatchEnvelope.error.code === 'BAD_REQUEST') {
+        return res.status(400).json(errorPayload);
       }
+
+      sendInternalErrorPayload(res, errorPayload);
+      return;
     }
 
-    // Handle regular response
-    if (!isChatCompletion(response)) {
-      throw new Error('Unexpected streaming response');
+    if (isStreamingSimulationResult(dispatchEnvelope.result)) {
+      await sendSimulationStream(res, dispatchEnvelope.result);
+      return;
     }
-    const simulationResult = response.choices[0]?.message?.content || '';
+
+    //audit Assumption: dispatcher-backed simulation success should resolve to the standardized simulation result union; failure risk: route serializes an unrelated module payload and breaks clients; expected invariant: non-stream success contains `mode: complete`; handling strategy: validate the module result before formatting the HTTP response.
+    if (!isCompletedSimulationResult(dispatchEnvelope.result)) {
+      throw new Error('Simulation dispatcher returned an unexpected payload.');
+    }
 
     res.json(buildTimestampedPayload({
       status: 'success',
       message: 'Simulation completed successfully',
       data: {
-        scenario,
-        result: simulationResult,
-        metadata: {
-          model: response.model,
-          tokensUsed: response.usage?.total_tokens || 0,
-          timestamp: new Date().toISOString(),
-          simulationId: generateRequestId('sim')
-        }
+        scenario: dispatchEnvelope.result.scenario,
+        result: dispatchEnvelope.result.result,
+        metadata: dispatchEnvelope.result.metadata
       }
     }));
 
@@ -160,9 +235,3 @@ router.post('/', createValidationMiddleware(simulationSchema), asyncHandler(asyn
 }));
 
 export default router;
-
-function isChatCompletion(
-  response: Awaited<ReturnType<typeof createCentralizedCompletion>>
-): response is OpenAI.Chat.Completions.ChatCompletion {
-  return !!response && typeof response === 'object' && 'choices' in response;
-}

@@ -93,6 +93,7 @@ export function getModuleMetadata(moduleName: string): {
   description: string | null;
   route: string | null;
   actions: string[];
+  defaultAction?: string;
 } | null {
   const mod = registryByName.get(moduleName);
   if (!mod) return null;
@@ -101,6 +102,7 @@ export function getModuleMetadata(moduleName: string): {
     description: mod.description ?? null,
     route: moduleRoutes.get(mod.name) ?? null,
     actions: Object.keys(mod.actions),
+    defaultAction: mod.defaultAction,
   };
 }
 
@@ -163,7 +165,8 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
       description: mod.description ?? null,
       route,
       actions: Object.keys(mod.actions),
-      gptIds: mod.gptIds ?? []
+      gptIds: mod.gptIds ?? [],
+      defaultAction: mod.defaultAction
     }
   });
 });

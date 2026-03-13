@@ -8,6 +8,7 @@ export interface ModuleDef {
   description?: string;
   actions: Record<string, (payload: unknown) => Promise<unknown>>;
   gptIds?: string[];
+  defaultAction?: string;
 }
 
 export interface LoadedModule {

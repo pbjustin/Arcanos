@@ -63,7 +63,8 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         return {
           name: 'BACKSTAGE:BOOKER',
           actions: ['bookEvent', 'updateRoster', 'trackStoryline', 'simulateMatch', 'generateBooking', 'generateBookingWithHRC', 'saveStoryline'],
-          route: 'backstage'
+          route: 'backstage',
+          defaultAction: 'generateBooking'
         };
       }
 
@@ -125,6 +126,32 @@ describe('routeGptRequest backstage booker auto-routing', () => {
 
     expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', {
       prompt: 'Book a WWE Raw title-picture rivalry map for the next month.'
+    });
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+          route: 'backstage'
+        })
+      })
+    );
+  });
+
+  it('uses the module default action for backstage traffic even when intent detection does not match', async () => {
+    mockDetectBackstageBookerIntent.mockReturnValue(null);
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: backstage-check.'
+      },
+      requestId: 'req-booker-3'
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', {
+      prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: backstage-check.'
     });
     expect(envelope).toEqual(
       expect.objectContaining({

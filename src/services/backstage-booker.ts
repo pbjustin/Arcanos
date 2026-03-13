@@ -9,6 +9,8 @@ import {
 import { query, saveMemory } from "@core/db/index.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC, withHRC } from './hrcWrapper.js';
+import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
+import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 
 export interface Wrestler {
   name: string;
@@ -37,6 +39,11 @@ export interface RealResult extends MatchResultBase {
   winner: string;
   loser: string;
   probability: Record<string, string>;
+}
+
+interface BackstageDirectAnswerOutputContract {
+  requestedBulletCount?: number;
+  requiresShortBullets: boolean;
 }
 
 interface EventData {
@@ -149,7 +156,211 @@ function toISODate(value: unknown): string {
   }
 }
 
+function buildBackstageDirectAnswerModeInstruction(): string {
+  return buildDirectAnswerModeSystemInstruction({
+    moduleLabel: 'BACKSTAGE:BOOKER',
+    domainGuidance: 'Produce wrestling booking plans, rivalry maps, and storyline logic grounded in the supplied roster and recent continuity.',
+    prohibitedBehaviors: [
+      'role-play a backstage conversation',
+      'narrate fictional locker-room scenes',
+      'simulate a hypothetical booking meeting'
+    ],
+    missingInfoBehavior: 'If the request depends on roster, brand, timeline, or title context that is missing, say what is missing briefly instead of fabricating continuity.'
+  });
+}
+
+function buildBackstageResponseStyleSuffix(directAnswerMode: boolean): string {
+  return directAnswerMode
+    ? '\nKeep the response direct, non-theatrical, and free of role-play framing.'
+    : '';
+}
+
+function resolveBackstageDirectAnswerBulletCount(contract: BackstageDirectAnswerOutputContract): number {
+  return contract.requestedBulletCount ?? 5;
+}
+
+const NUMBER_WORDS = new Map<string, number>([
+  ['one', 1],
+  ['two', 2],
+  ['three', 3],
+  ['four', 4],
+  ['five', 5],
+  ['six', 6],
+  ['seven', 7],
+  ['eight', 8],
+  ['nine', 9],
+  ['ten', 10],
+  ['eleven', 11],
+  ['twelve', 12]
+]);
+
+function parseBackstageDirectAnswerOutputContract(prompt: string): BackstageDirectAnswerOutputContract {
+  const normalizedPrompt = prompt.trim();
+  const bulletMatch = normalizedPrompt.match(
+    /\b(?:(?<digitCount>\d{1,2})|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?<shortness>short\s+)?bullets?\b/i
+  );
+
+  if (!bulletMatch?.groups) {
+    return {
+      requiresShortBullets: /\bshort\s+bullets?\b/i.test(normalizedPrompt)
+    };
+  }
+
+  const digitCount = bulletMatch.groups.digitCount ? Number.parseInt(bulletMatch.groups.digitCount, 10) : undefined;
+  const wordCount = bulletMatch.groups.wordCount
+    ? NUMBER_WORDS.get(bulletMatch.groups.wordCount.toLowerCase())
+    : undefined;
+
+  return {
+    requestedBulletCount: digitCount ?? wordCount,
+    requiresShortBullets: Boolean(bulletMatch.groups.shortness) || /\bshort\s+bullets?\b/i.test(normalizedPrompt)
+  };
+}
+
+function stripMarkdownFormatting(value: string): string {
+  return value
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[(.+?)\]\([^)]+\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripBackstageDirectAnswerPreamblePrefix(value: string): string {
+  return value.replace(
+    /^(?:quick\s+gut\s+check|gut\s+read|quick\s+take|direct\s+answer|bottom\s+line)\s*:\s*/i,
+    ''
+  ).trim();
+}
+
+function collectTopLevelListItems(text: string): string[] {
+  const items: string[] = [];
+  let currentItem = '';
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+    const indentation = line.match(/^\s*/)?.[0].length ?? 0;
+
+    if (!trimmedLine || /^---+$/.test(trimmedLine) || /^#{1,6}\s+/.test(trimmedLine)) {
+      continue;
+    }
+
+    const isTopLevelItem = indentation <= 1 && /^(?:[-*]|\d+\.)\s+/.test(trimmedLine);
+    const isNestedItem = indentation > 1 && /^(?:[-*]|\d+\.)\s+/.test(trimmedLine);
+
+    if (isTopLevelItem) {
+      if (currentItem) {
+        items.push(currentItem.trim());
+      }
+      currentItem = trimmedLine.replace(/^(?:[-*]|\d+\.)\s+/, '');
+      continue;
+    }
+
+    if (currentItem) {
+      const appendedLine = isNestedItem
+        ? trimmedLine.replace(/^(?:[-*]|\d+\.)\s+/, '')
+        : trimmedLine;
+      currentItem = `${currentItem} ${appendedLine}`.trim();
+    }
+  }
+
+  if (currentItem) {
+    items.push(currentItem.trim());
+  }
+
+  return items;
+}
+
+function compactBackstageBulletItem(item: string, requiresShortBullets: boolean): string {
+  const normalizedItem = stripBackstageDirectAnswerPreamblePrefix(stripMarkdownFormatting(item));
+
+  if (!requiresShortBullets) {
+    return normalizedItem;
+  }
+
+  const emphasizedHeadingMatch = item.match(/\*\*(.+?)\*\*/);
+  if (emphasizedHeadingMatch?.[1]) {
+    return stripMarkdownFormatting(emphasizedHeadingMatch[1]);
+  }
+
+  if (normalizedItem.length <= 160) {
+    return normalizedItem;
+  }
+
+  const firstClause = normalizedItem.split(/\s[–-]\s/)[0]?.trim();
+  if (firstClause && firstClause.length >= 24) {
+    return firstClause;
+  }
+
+  return normalizedItem.length > 160
+    ? `${normalizedItem.slice(0, 157).trimEnd()}...`
+    : normalizedItem;
+}
+
+function applyBackstageDirectAnswerOutputContract(
+  output: string,
+  prompt: string
+): string {
+  const contract = parseBackstageDirectAnswerOutputContract(prompt);
+  const requestedBulletCount = resolveBackstageDirectAnswerBulletCount(contract);
+  const listItems = collectTopLevelListItems(output);
+
+  //audit Assumption: prompts that request a fixed bullet count want the final answer body, not model preambles/headings; failure risk: direct-answer mode still returns “Gut read” intros and oversized list items; expected invariant: bullet-shaped requests return only top-level bullets, capped to the requested count; handling strategy: extract top-level list items, trim extras, and compact each item when the prompt asks for short bullets.
+  if (listItems.length > 0) {
+    return listItems
+      .slice(0, requestedBulletCount)
+      .map((item, index) => `${index + 1}. ${compactBackstageBulletItem(item, contract.requiresShortBullets)}`)
+      .join('\n');
+  }
+
+  return stripBackstageDirectAnswerPreamblePrefix(stripMarkdownFormatting(output));
+}
+
+function buildBackstageResponseStyleInstruction(
+  directAnswerMode: boolean,
+  directAnswerContract: BackstageDirectAnswerOutputContract | null
+): string {
+  if (!directAnswerMode) {
+    return `${BOOKING_RESPONSE_GUIDELINES().trim()}${buildBackstageResponseStyleSuffix(false)}`;
+  }
+
+  const contract = directAnswerContract ?? {
+    requiresShortBullets: false
+  };
+  const requestedBulletCount = resolveBackstageDirectAnswerBulletCount(contract);
+
+  return [
+    `Return only ${requestedBulletCount} top-level numbered bullets.`,
+    'No preamble, headings, divider lines, or conclusion.',
+    'No sub-bullets, no production notes, no consequences section, and no meta commentary.',
+    contract.requiresShortBullets
+      ? 'Each bullet must be one compact sentence.'
+      : 'Each bullet must be one compact paragraph.',
+    'Each bullet should contain only the core booking beat for that week or phase.'
+  ].join('\n');
+}
+
+function resolveBackstageBookerTokenLimit(prompt: string, defaultTokenLimit: number): number {
+  if (!shouldPreferDirectAnswerMode(prompt)) {
+    return defaultTokenLimit;
+  }
+
+  const contract = parseBackstageDirectAnswerOutputContract(prompt);
+  const requestedBulletCount = resolveBackstageDirectAnswerBulletCount(contract);
+  const tokenBudgetPerBullet = contract.requiresShortBullets ? 48 : 80;
+  const directAnswerTokenLimit = Math.max(96, requestedBulletCount * tokenBudgetPerBullet);
+
+  //audit Assumption: direct-answer backstage prompts do not need the full long-form booking token budget; failure risk: oversized generations ignore the bullet-only contract and increase timeout pressure; expected invariant: direct-answer mode uses a smaller bounded token budget proportional to requested bullet count; handling strategy: clamp direct-answer requests to a conservative per-bullet allowance.
+  return Math.min(defaultTokenLimit, directAnswerTokenLimit);
+}
+
 async function buildStructuredBookingPrompt(basePrompt: string): Promise<string> {
+  const directAnswerMode = shouldPreferDirectAnswerMode(basePrompt);
+  const directAnswerContract = directAnswerMode
+    ? parseBackstageDirectAnswerOutputContract(basePrompt)
+    : null;
+
   try {
     const [rosterResult, eventsResult, beatsResult, savedStoriesResult] = await Promise.all([
       query(
@@ -209,14 +420,17 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
           .join('\n')
       : 'No saved storylines yet.';
 
+    //audit Assumption: explicit anti-simulation booking prompts should suspend the theatrical persona while preserving roster continuity; failure risk: direct-answer requests still receive in-character backstage narration; expected invariant: direct-answer mode swaps persona framing for neutral execution guidance only; handling strategy: emit an execution-mode section when the prompt contains explicit non-simulation cues.
     const sections = [
-      `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
+      directAnswerMode
+        ? `<<EXECUTION_MODE>>\n${buildBackstageDirectAnswerModeInstruction()}`
+        : `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
       `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
       `<<CURRENT_ROSTER>>\n${rosterBlock}`,
       `<<RECENT_EVENTS>>\n${eventsBlock}`,
       `<<RECENT_STORY_BEATS>>\n${beatsBlock}`,
       `<<SAVED_STORYLINES>>\n${savedStoriesBlock}`,
-      `<<RESPONSE_STYLE>>\n${BOOKING_RESPONSE_GUIDELINES().trim()}`
+      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
     ];
 
     return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
@@ -229,12 +443,15 @@ async function buildStructuredBookingPrompt(basePrompt: string): Promise<string>
       ? storylines.map((entry, idx) => `- #${idx + 1}: ${formatJsonSnippet(entry)}`).join('\n')
       : 'No story beats recorded yet.';
 
+    //audit Assumption: fallback continuity mode must preserve the same direct-answer vs persona split as the primary database-backed prompt builder; failure risk: DB outages reintroduce simulation-heavy framing that the primary path suppresses; expected invariant: execution mode remains stable regardless of data source; handling strategy: reuse the same direct-answer prompt sections in the fallback branch.
     const sections = [
-      `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
+      directAnswerMode
+        ? `<<EXECUTION_MODE>>\n${buildBackstageDirectAnswerModeInstruction()}`
+        : `<<PERSONA>>\n${BACKSTAGE_BOOKER_PERSONA()}`,
       `<<BOOKING_DIRECTIVE>>\n${basePrompt.trim()}`,
       `<<CURRENT_ROSTER>>\n${fallbackRoster}`,
       `<<RECENT_STORY_BEATS>>\n${fallbackStories}`,
-      `<<RESPONSE_STYLE>>\n${BOOKING_RESPONSE_GUIDELINES().trim()}`
+      `<<RESPONSE_STYLE>>\n${buildBackstageResponseStyleInstruction(directAnswerMode, directAnswerContract)}`
     ];
 
     return `${sections.join('\n\n')}${BOOKING_INSTRUCTIONS_SUFFIX()}`;
@@ -335,13 +552,31 @@ export async function trackStoryline(data: Storyline): Promise<Storyline[]> {
   }
 }
 
+/**
+ * Generate a backstage booking response from the current roster and continuity context.
+ * Inputs/outputs: natural-language booking prompt -> finalized storyline or booking plan string.
+ * Edge cases: exact-literal anti-simulation prompts short-circuit before persona/context expansion, and database failures fall back to in-memory continuity snapshots.
+ */
 export async function generateBooking(prompt: string): Promise<string> {
+  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(prompt);
+  //audit Assumption: literal-only backstage prompts should bypass persona/context expansion; failure risk: the booker persona or context scaffolding wraps the required literal in storytelling language; expected invariant: recognized exact-literal directives return verbatim output; handling strategy: short-circuit before prompt construction and provider invocation.
+  if (exactLiteralShortcut) {
+    return exactLiteralShortcut.literal;
+  }
+
   const model = resolveBackstageBookerModel();
-  const tokenLimit = getEnvNumber('BOOKER_TOKEN_LIMIT', 512);
+  const tokenLimit = resolveBackstageBookerTokenLimit(
+    prompt,
+    getEnvNumber('BOOKER_TOKEN_LIMIT', 512)
+  );
   const instructions = await buildStructuredBookingPrompt(prompt);
   try {
     const { output } = await callOpenAI(model, instructions, tokenLimit, false);
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
+    //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
+    if (shouldPreferDirectAnswerMode(prompt)) {
+      return applyBackstageDirectAnswerOutputContract(clean, prompt);
+    }
     return clean;
   } catch (error) {
     console.error('Failed to generate booking storyline:', error);
@@ -472,6 +707,7 @@ export const BackstageBookerModule = {
   name: 'BACKSTAGE:BOOKER',
   description: 'Behind-the-scenes pro wrestling booker for WWE/AEW with strict canon and logic.',
   gptIds: ['backstage-booker', 'backstage'],
+  defaultAction: 'generateBooking',
   actions: {
     async bookEvent(payload: unknown) {
       const record = normalizePayloadRecord(payload);

@@ -385,8 +385,10 @@ function resolveMemorySessionId(
   return UNIVERSAL_MEMORY_SESSION_ID;
 }
 
-function pickAction(available: string[], requested?: string): string | null {
+function pickAction(available: string[], requested?: string, defaultAction?: string | null): string | null {
   if (requested) return available.includes(requested) ? requested : null;
+  //audit Assumption: explicit module defaults should outrank generic `query`/`run` heuristics; failure risk: specialized modules like Backstage Booker remain ambiguous even after declaring their canonical default behavior; expected invariant: configured defaultAction wins when valid; handling strategy: honor metadata defaultAction before implicit fallbacks.
+  if (defaultAction && available.includes(defaultAction)) return defaultAction;
   if (available.includes("query")) return "query";
   if (available.includes("run")) return "run";
   if (available.length === 1) return available[0];
@@ -590,7 +592,7 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   const { entry, matchMethod, matchedId } = resolved;
   const meta = getModuleMetadata(entry.module);
   const availableActions = meta?.actions ?? [];
-  const action = pickAction(availableActions);
+  const action = pickAction(availableActions, undefined, meta?.defaultAction ?? null);
 
   return {
     ok: true,
@@ -668,7 +670,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   const parsedMemoryCommand =
     typeof prompt === "string" ? parseNaturalLanguageMemoryCommand(prompt) : { intent: "unknown" };
-  const initialActionCandidate = pickAction(availableActions, requestedAction);
+  const initialActionCandidate = pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
   const hasNoRoutableAction = !initialActionCandidate;
   const sessionId = resolveSessionId(body, payload);
 
@@ -778,7 +780,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     });
   }
 
-  const actionCandidate = automaticBackstageBookerDispatch?.action ?? pickAction(availableActions, requestedAction);
+  const actionCandidate =
+    automaticBackstageBookerDispatch?.action ??
+    pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
   const automaticMcpDispatchIntent = mcpDispatch.intent
     ? null
     : inferAutomaticMcpDispatchIntent({

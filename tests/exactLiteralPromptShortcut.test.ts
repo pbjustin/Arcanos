@@ -22,9 +22,28 @@ describe('exactLiteralPromptShortcut', () => {
     });
   });
 
+  it('accepts directive-only anti-simulation prefixes before a say-exactly clause', () => {
+    expect(
+      tryExtractExactLiteralPromptShortcut(
+        'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: live-response-check.'
+      )
+    ).toEqual({
+      literal: 'live-response-check',
+      matchedPattern: 'exact_literal_directive_suffix'
+    });
+  });
+
   it('ignores normal generative prompts', () => {
     expect(
       tryExtractExactLiteralPromptShortcut('Return the exact server timestamp and process uptime.')
+    ).toBeNull();
+  });
+
+  it('ignores say-exactly suffixes when earlier text contains normal semantic content', () => {
+    expect(
+      tryExtractExactLiteralPromptShortcut(
+        'Explain why this response should say exactly: hello'
+      )
     ).toBeNull();
   });
 });

@@ -4,6 +4,8 @@ import { fetchAndClean } from "@shared/webFetcher.js";
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from "@services/directAnswerMode.js";
+import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 
 // Use config layer for env access (adapter boundary pattern)
 const FINETUNE_MODEL = getEnv('FINETUNE_MODEL') || getDefaultModel();
@@ -13,6 +15,18 @@ type WebSource = {
   snippet?: string;
   error?: string;
 };
+
+interface GamingAuditTrace {
+  intake: string;
+  reasoning: string;
+  finalized: string;
+}
+
+interface GamingResult {
+  gaming_response: string;
+  audit_trace: GamingAuditTrace;
+  sources: WebSource[];
+}
 
 async function buildWebContext(urls: string[]): Promise<{ context: string; sources: WebSource[] }> {
   if (urls.length === 0) {
@@ -48,7 +62,43 @@ const gamingPrompts = {
   auditSystem: getPrompt('gaming', 'audit_system')
 };
 
+function buildGamingDirectAnswerSystemPrompt(): string {
+  return buildDirectAnswerModeSystemInstruction({
+    moduleLabel: 'ARCANOS:GAMING',
+    domainGuidance: 'Provide concrete strategies, hints, walkthrough help, and factual uncertainty notes when needed.',
+    prohibitedBehaviors: [
+      'simulate hotline dialogue',
+      'role-play gameplay',
+      'narrate a hypothetical run'
+    ],
+    missingInfoBehavior: 'If game, platform, version, or progression details are missing, ask briefly or state the missing context instead of guessing.'
+  });
+}
+
+function buildExactLiteralGamingResult(literal: string): GamingResult {
+  return {
+    gaming_response: literal,
+    audit_trace: {
+      intake: '[SHORTCUT] Exact literal gaming shortcut matched.',
+      reasoning: '[SHORTCUT] Model reasoning bypassed.',
+      finalized: literal
+    },
+    sources: []
+  };
+}
+
+/**
+ * Execute the ARCANOS gaming advisor flow for strategy and guide requests.
+ * Inputs/outputs: user prompt plus optional guide URLs -> normalized gaming response, audit trace, and fetched sources.
+ * Edge cases: exact-literal anti-simulation prompts short-circuit before provider calls, and missing adapters fall back to mock guidance.
+ */
 export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
+  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(userPrompt);
+  //audit Assumption: explicit literal-only gaming prompts should bypass the multi-stage hotline pipeline; failure risk: intake/audit layers add simulated framing around an operator-required literal; expected invariant: recognized literal directives return verbatim output; handling strategy: short-circuit before adapter lookup and provider calls.
+  if (exactLiteralShortcut) {
+    return buildExactLiteralGamingResult(exactLiteralShortcut.literal);
+  }
+
   const { adapter } = getOpenAIClientOrAdapter();
   if (!adapter) {
     const mock = generateMockResponse(userPrompt, 'guide');
@@ -73,6 +123,7 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
     }
 
     const { context: webContext, sources } = await buildWebContext(allUrls);
+    const prefersDirectAnswerMode = shouldPreferDirectAnswerMode(userPrompt);
 
     const noWebContextNote = allUrls.length > 0
       ? 'Guides were requested but no usable snippets were retrieved.'
@@ -82,6 +133,29 @@ export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls
 
     if (webContext) {
       enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${webContext}\n\n${gamingPrompts.webContextInstruction}`;
+    }
+
+    //audit Assumption: explicit anti-simulation prompts should avoid persona-heavy intake/audit passes; failure risk: the hotline pipeline reintroduces theatrical framing even after the operator asked for direct output; expected invariant: direct-answer mode makes at most one model call with strict non-simulation instructions; handling strategy: branch to a dedicated one-pass response path when direct-answer cues are present.
+    if (prefersDirectAnswerMode) {
+      const directResponse = await adapter.responses.create({
+        model: getGPT5Model(),
+        messages: [
+          { role: 'system', content: buildGamingDirectAnswerSystemPrompt() },
+          { role: 'user', content: enrichedPrompt }
+        ],
+        temperature: 0.2
+      });
+      const finalized = directResponse.choices[0].message?.content || '';
+
+      return {
+        gaming_response: finalized,
+        audit_trace: {
+          intake: '[DIRECT_ANSWER] Persona pipeline bypassed.',
+          reasoning: finalized,
+          finalized
+        },
+        sources
+      };
     }
 
     // Step 1: Fine-tuned ARCANOS Intake

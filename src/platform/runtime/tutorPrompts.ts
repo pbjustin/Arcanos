@@ -19,6 +19,29 @@ const RESEARCH_FALLBACK_PROMPT_TEMPLATE =
 
 const GENERIC_TUTOR_PROMPT_TEMPLATE =
   'Process this request as a professional tutor. Respond with clear steps and checks for understanding. Input: {payload}';
+const DIRECT_ANSWER_TUTOR_PROMPT_TEMPLATE =
+  'Answer this request directly. Do not simulate, role-play, narrate hypothetical workflows, or invent missing context. If required information is missing, say so briefly. Request: {payload}';
+const ANTI_SIMULATION_CUE_PATTERN =
+  /\b(?:do\s+not|don't)\s+(?:simulate|role-?play|pretend)\b|\bhypothetical\s+run\b|\banswer\s+directly\b/i;
+
+function readPromptLikePayloadValue(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') {
+    return undefined;
+  }
+
+  for (const key of ['prompt', 'message', 'query', 'text', 'content', 'topic', 'entry', 'flow']) {
+    const candidate = (payload as Record<string, unknown>)[key];
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function hasAntiSimulationCue(prompt: string | undefined): boolean {
+  return typeof prompt === 'string' && ANTI_SIMULATION_CUE_PATTERN.test(prompt);
+}
 
 export function formatScholarlySourcesList(sources: ScholarlySource[]): string {
   return sources
@@ -36,5 +59,11 @@ export function buildResearchFallbackPrompt(topic: string): string {
 }
 
 export function buildGenericTutorPrompt(payload: unknown): string {
-  return GENERIC_TUTOR_PROMPT_TEMPLATE.replace('{payload}', JSON.stringify(payload));
+  const promptLikeValue = readPromptLikePayloadValue(payload);
+  //audit Assumption: generic tutor prompts should privilege direct operator text over opaque object dumps; failure risk: model receives `{}` or raw transport wrappers instead of the user request; expected invariant: the prompt body contains the clearest available natural-language request; handling strategy: prefer prompt-like fields and fall back to JSON serialization only when no text alias exists.
+  const renderedPayload = promptLikeValue ?? JSON.stringify(payload);
+  const promptTemplate = hasAntiSimulationCue(promptLikeValue)
+    ? DIRECT_ANSWER_TUTOR_PROMPT_TEMPLATE
+    : GENERIC_TUTOR_PROMPT_TEMPLATE;
+  return promptTemplate.replace('{payload}', renderedPayload);
 }
