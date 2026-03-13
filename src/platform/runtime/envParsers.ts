@@ -33,6 +33,11 @@ export interface ParseEnvIntegerOptions {
   roundingMode?: 'floor' | 'trunc';
 }
 
+export interface ParsePositiveIntegerOptions {
+  minimum?: number;
+  maximum?: number;
+}
+
 /**
  * Parse an integer with optional boundary constraints.
  * Inputs: raw string value, fallback number, and optional parsing constraints.
@@ -74,6 +79,27 @@ export const parseEnvInteger = (
   }
 
   return rounded;
+};
+
+/**
+ * Parse a positive integer from an environment variable string.
+ * Inputs: raw string value, fallback number, and optional min/max constraints.
+ * Outputs: positive integer or fallback when invalid.
+ * Edge cases: undefined, zero, negatives, decimals, and out-of-range values fall back.
+ */
+export const parsePositiveEnvInteger = (
+  value: string | undefined,
+  fallback: number,
+  options: ParsePositiveIntegerOptions = {}
+): number => {
+  const { minimum = 1, maximum } = options;
+  //audit Assumption: consumers expect strictly positive integers; risk: zero/negative values destabilize timeout or pagination behavior; invariant: returned number is >= minimum; handling: parse with guardrails and fallback.
+  return parseEnvInteger(value, fallback, {
+    allowZero: false,
+    minimum,
+    maximum,
+    roundingMode: 'trunc',
+  });
 };
 
 /**
