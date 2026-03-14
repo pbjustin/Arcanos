@@ -5,6 +5,8 @@ const mockQuery = jest.fn();
 const mockSaveMemory = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
+const mockPersistNaturalLanguageConversationSession = jest.fn();
+const mockSearchNaturalLanguageConversationSessions = jest.fn();
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
@@ -17,11 +19,17 @@ jest.unstable_mockModule('@services/webRag.js', () => ({
   recordPersistentMemorySnippet: mockRecordPersistentMemorySnippet,
 }));
 
+jest.unstable_mockModule('@services/naturalLanguageConversationSessionStore.js', () => ({
+  persistNaturalLanguageConversationSession: mockPersistNaturalLanguageConversationSession,
+  searchNaturalLanguageConversationSessions: mockSearchNaturalLanguageConversationSessions
+}));
+
 const {
   extractNaturalLanguageExactMemorySelector,
   extractNaturalLanguageStorageLabel,
   extractNaturalLanguageSessionId,
   executeNaturalLanguageMemoryCommand,
+  queryExactNaturalLanguageMemoryEntries,
   parseNaturalLanguageMemoryCommand
 } = await import('../src/services/naturalLanguageMemory.js');
 
@@ -53,6 +61,8 @@ Main Event: Gunther def. AJ Styles clean`;
       }
     });
     mockRecordPersistentMemorySnippet.mockResolvedValue(false);
+    mockPersistNaturalLanguageConversationSession.mockResolvedValue(null);
+    mockSearchNaturalLanguageConversationSessions.mockResolvedValue([]);
   });
 
   it('extracts explicit session ids from memory prompts', () => {
@@ -145,6 +155,37 @@ This recap mentions lookup text but should still save.`;
         tag: 'session_diagnostic_e2e_210700'
       }
     });
+  });
+
+  it('scopes exact selector queries to canonical nl-memory rows only', async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: 209,
+        key: 'nl-memory:global:this-diagnostic-payload-tag-session-diagnostic-e2e-210700-20260308210554',
+        value: {
+          text: 'this diagnostic payload\nTag: session_diagnostic_e2e_210700',
+          sessionId: 'global'
+        },
+        created_at: '2026-03-08T21:05:54.434Z',
+        updated_at: '2026-03-08T21:05:54.434Z'
+      }],
+      rowCount: 1
+    });
+
+    const result = await queryExactNaturalLanguageMemoryEntries({
+      tag: 'session_diagnostic_e2e_210700'
+    }, 10);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        recordId: 209,
+        key: 'nl-memory:global:this-diagnostic-payload-tag-session-diagnostic-e2e-210700-20260308210554'
+      })
+    ]);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining("WHERE key ILIKE 'nl-memory:%'"),
+      [null, '%session\\_diagnostic\\_e2e\\_210700%', 10]
+    );
   });
 
   it('uses the inline session id when loading the latest saved memory', async () => {
@@ -309,6 +350,56 @@ This recap mentions lookup text but should still save.`;
       expect.objectContaining({
         sessionId: 'raw_20260308_van',
         storageLabel: 'RAW_Vancouver_Session'
+      })
+    );
+    expect(mockPersistNaturalLanguageConversationSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'raw_20260308_van',
+        content: structuredSessionSavePrompt
+      })
+    );
+  });
+
+  it('merges durable conversation-session matches into lookup results before semantic fallback', async () => {
+    mockSearchNaturalLanguageConversationSessions.mockResolvedValueOnce([
+      {
+        id: 'session-123',
+        label: 'ARCANOS pipeline tuning session',
+        tag: 'pipeline',
+        memoryType: 'conversation',
+        payload: {
+          text: 'Conversation log covering Trinity debugging and honesty fixes.',
+          memoryKey: 'nl-memory:global:this-current-conversation-in-the-backend-database-as-20260314083403'
+        },
+        transcriptSummary: 'Conversation log covering Trinity debugging and honesty fixes.',
+        auditTraceId: null,
+        createdAt: '2026-03-14T08:34:03.351Z',
+        updatedAt: '2026-03-14T08:34:03.351Z'
+      }
+    ]);
+
+    const result = await executeNaturalLanguageMemoryCommand({
+      input: 'find ARCANOS pipeline tuning session'
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        intent: 'lookup',
+        operation: 'searched',
+        entries: [
+          expect.objectContaining({
+            key: 'session-record:session-123',
+            value: expect.objectContaining({
+              text: 'Conversation log covering Trinity debugging and honesty fixes.'
+            })
+          })
+        ]
+      })
+    );
+    expect(mockQueryRagDocuments).toHaveBeenCalledWith(
+      'ARCANOS pipeline tuning session',
+      expect.objectContaining({
+        sessionId: 'global'
       })
     );
   });

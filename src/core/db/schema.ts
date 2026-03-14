@@ -383,6 +383,7 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_tag_updated_at ON sessions(tag, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_memory_type_updated_at ON sessions(memory_type, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_sessions_payload_memory_key ON sessions ((payload->>'memoryKey'))`,
   `CREATE INDEX IF NOT EXISTS idx_session_versions_session_version ON session_versions(session_id, version_number DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_saves_module_timestamp ON saves(module, timestamp)`,

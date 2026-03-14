@@ -13,6 +13,11 @@ import {
   parseMemoryInspectionRequest,
   type MemoryInspectionArtifact
 } from "@services/memoryInspectionGuard.js";
+import {
+  persistNaturalLanguageConversationSession,
+  searchNaturalLanguageConversationSessions,
+  type StoredNaturalLanguageConversationSession
+} from "@services/naturalLanguageConversationSessionStore.js";
 
 const DEFAULT_SESSION_ID = 'global';
 const SESSION_KEY_PREFIX = 'nl-memory';
@@ -445,6 +450,23 @@ export async function executeNaturalLanguageMemoryCommand(
       storageLabel: extractNaturalLanguageStorageLabel(content) ?? extractNaturalLanguageStorageLabel(request.input)
     });
 
+    try {
+      await persistNaturalLanguageConversationSession({
+        sessionId,
+        memoryKey: key,
+        content,
+        savedAt: typeof savedPayload.savedAt === 'string' ? savedPayload.savedAt : undefined
+      });
+    } catch (error: unknown) {
+      //audit Assumption: durable conversation-session indexing should improve cross-codebase recall without blocking the primary nl-memory save; failure risk: a transient session-store outage causes the entire memory save to fail; expected invariant: canonical nl-memory persistence remains authoritative even if session mirroring fails; handling strategy: log the durable-session failure and continue returning a successful save response.
+      memoryLogger.warn('Durable conversation session mirroring failed for natural-language memory save', {
+        operation: 'executeNaturalLanguageMemoryCommand',
+        sessionId,
+        key,
+        error: String((error as Error)?.message ?? error)
+      });
+    }
+
     const ragIngested = reusableSave
       ? false
       : await recordPersistentMemorySnippet({
@@ -685,8 +707,9 @@ export async function executeNaturalLanguageMemoryCommand(
     };
   }
 
-  const [searchRows, ragFallback] = await Promise.all([
+  const [searchRows, durableConversationRows, ragFallback] = await Promise.all([
     searchSessionEntries(sessionId, queryText, lookupLimit),
+    resolveDurableConversationEntries(queryText, lookupLimit),
     resolveRagFallbackEntries({
       queryText,
       sessionId,
@@ -694,8 +717,9 @@ export async function executeNaturalLanguageMemoryCommand(
       allowSessionFallback: !requestIncludesExplicitSessionTarget
     })
   ]);
-  const mergedRows = mergeMemoryEntries(searchRows, ragFallback.entries, lookupLimit);
-  const usedSemanticFallback = searchRows.length === 0 && ragFallback.entries.length > 0;
+  const exactRows = mergeMemoryEntries(searchRows, durableConversationRows, lookupLimit);
+  const mergedRows = mergeMemoryEntries(exactRows, ragFallback.entries, lookupLimit);
+  const usedSemanticFallback = exactRows.length === 0 && ragFallback.entries.length > 0;
 
   return {
     intent: 'lookup',
@@ -999,10 +1023,12 @@ export async function queryExactNaturalLanguageMemoryEntries(
     ? `%${escapeSqlLikePattern(selector.tag)}%`
     : null;
 
+  //audit Assumption: exact selector retrieval is intended to target canonical persisted NL memory rows, not transcript/history rows that may quote the same tag text; failure risk: newer module-summary or session transcript blobs overshadow the actual saved payload; expected invariant: exact selector hits come from `nl-memory:` entries only; handling strategy: scope the SQL query to canonical NL memory keys before applying id/tag filters.
   const result = await query(
     `SELECT id, key, value, created_at, updated_at
      FROM memory
-     WHERE ($1::integer IS NULL OR id = $1)
+     WHERE key ILIKE 'nl-memory:%'
+       AND ($1::integer IS NULL OR id = $1)
        AND ($2::text IS NULL OR key ILIKE $2 ESCAPE '\\' OR value::text ILIKE $2 ESCAPE '\\')
      ORDER BY updated_at DESC
      LIMIT $3`,
@@ -1078,6 +1104,24 @@ function normalizeMemoryTableRows(rows: MemoryTableRow[]): NaturalLanguageMemory
   });
 }
 
+function normalizeStoredConversationSessionsToEntries(
+  sessions: StoredNaturalLanguageConversationSession[]
+): NaturalLanguageMemoryEntry[] {
+  return sessions.map((session) => ({
+    key: `session-record:${session.id}`,
+    value: session.payload,
+    metadata: {
+      sessionRecordId: session.id,
+      sessionLabel: session.label,
+      sessionTag: session.tag,
+      memoryType: session.memoryType,
+      source: 'stored-session'
+    },
+    created_at: session.createdAt,
+    updated_at: session.updatedAt
+  }));
+}
+
 function normalizeExactMemoryRecordId(rawRecordId: unknown): number | null {
   const numericRecordId =
     typeof rawRecordId === 'number'
@@ -1087,6 +1131,28 @@ function normalizeExactMemoryRecordId(rawRecordId: unknown): number | null {
         : Number.NaN;
 
   return Number.isInteger(numericRecordId) && numericRecordId > 0 ? numericRecordId : null;
+}
+
+/**
+ * Resolve durable conversation-session search results for natural-language lookup flows.
+ * Inputs/outputs: normalized lookup text + limit -> stored-session entries in the shared memory response shape.
+ * Edge cases: storage failures degrade to an empty list so exact nl-memory retrieval remains available.
+ */
+async function resolveDurableConversationEntries(
+  queryText: string,
+  limit: number
+): Promise<NaturalLanguageMemoryEntry[]> {
+  try {
+    const storedSessions = await searchNaturalLanguageConversationSessions(queryText, limit);
+    return normalizeStoredConversationSessionsToEntries(storedSessions);
+  } catch (error: unknown) {
+    //audit Assumption: durable session search is supplemental to exact nl-memory reads and should not break lookup flows during repository outages; failure risk: session-store failures turn basic memory lookup into a 500; expected invariant: lookups still return db and rag-backed results when available; handling strategy: log the durable-session search failure and return no durable-session entries.
+    memoryLogger.warn('Durable conversation session search failed for natural-language memory lookup', {
+      operation: 'resolveDurableConversationEntries',
+      error: String((error as Error)?.message ?? error)
+    });
+    return [];
+  }
 }
 
 /**
