@@ -34,6 +34,7 @@ import type {
   TrinityRunOptions,
   TrinityDryRunPreview,
   TrinityCapabilityFlags,
+  TrinityToolBackedCapabilities,
   TrinityOutputControls,
   TrinityReasoningHonesty
 } from './trinityTypes.js';
@@ -99,6 +100,7 @@ export type {
   TrinityRunOptions,
   TrinityDryRunPreview,
   TrinityCapabilityFlags,
+  TrinityToolBackedCapabilities,
   TrinityOutputControls,
   TrinityReasoningHonesty,
   TrinityPipelineDebug,
@@ -180,6 +182,14 @@ function buildDryRunTrinityResult(
 function getNextTier(tier: Tier): Tier {
   if (tier === 'simple') return 'complex';
   return 'critical';
+}
+
+function truncateStructuredLogValue(value: string, maxLength = 320): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 16))}...[truncated]`;
 }
 
 function buildTrinityResult(
@@ -793,6 +803,22 @@ export async function runThroughBrain(
       reasoningHonesty
     });
     const finalText = enforcedFinalOutput.text;
+
+    //audit Assumption: verification-stage regressions are easiest to diagnose when the raw final model output and post-honesty result are logged together; failure risk: worker logs show only a generic DAG failure while hiding the exact guard rewrite; expected invariant: DAG audit nodes emit one bounded structured trace around final-stage enforcement; handling strategy: log only for the audit source endpoint and truncate large text fields.
+    if (options.sourceEndpoint === 'dag.agent.audit') {
+      logger.info('Trinity DAG verification enforcement', {
+        module: 'trinity',
+        operation: 'dag-verification-enforcement',
+        requestId,
+        sourceEndpoint: options.sourceEndpoint,
+        responseMode: reasoningHonesty.responseMode,
+        rawModelOutputPreview: truncateStructuredLogValue(finalOutput.output),
+        translatedOutputPreview: truncateStructuredLogValue(translatedFinalText),
+        finalUserVisiblePreview: truncateStructuredLogValue(finalText),
+        blockedCategories: honestyFilteredFinal.blockedCategories,
+        blockedOrRewrittenClaims: enforcedFinalOutput.blockedOrRewrittenClaims
+      });
+    }
 
     //audit Assumption: final-stage honesty rewrites must remain traceable for postmortems even when user-visible output is compressed.
     if (honestyFilteredFinal.blocked) {

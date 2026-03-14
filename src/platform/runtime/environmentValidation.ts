@@ -33,6 +33,27 @@ type ValidationLogContext = Record<string, unknown> & {
   valuePreview?: string;
 };
 
+/**
+ * Validate Railway environment names without rejecting custom operator labels.
+ *
+ * Purpose:
+ * - Accept built-in Railway environment names and user-defined labels such as
+ *   `DEBUG`, `staging-blue`, or preview names.
+ *
+ * Inputs/outputs:
+ * - Input: raw Railway environment string from process env.
+ * - Output: `true` when the value is a non-empty label Railway can plausibly use.
+ *
+ * Edge case behavior:
+ * - Blank or whitespace-only values are rejected.
+ */
+function isValidRailwayEnvironmentName(value: string): boolean {
+  const normalizedValue = value.trim();
+
+  //audit Assumption: Railway operators can create arbitrary non-empty environment labels; failure risk: strict allowlists reject valid environments like `DEBUG` and block startup before the listener binds; expected invariant: only blank names are rejected while custom labels remain valid; handling strategy: validate presence instead of enumerating a closed set.
+  return normalizedValue.length > 0;
+}
+
 // Environment variable definitions
 const environmentChecks: EnvironmentCheck[] = [
   {
@@ -96,13 +117,7 @@ const environmentChecks: EnvironmentCheck[] = [
     required: false,
     description: 'Railway deployment environment identifier',
     defaultValue: 'production',
-    validator: (value) => {
-      const lower = value.toLowerCase();
-      return (
-        ['development', 'staging', 'production', 'preview'].includes(lower) ||
-        lower.includes('pr-')
-      );
-    }
+    validator: isValidRailwayEnvironmentName
   },
   {
     name: 'RAILWAY_API_TOKEN',

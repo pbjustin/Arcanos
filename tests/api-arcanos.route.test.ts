@@ -184,6 +184,7 @@ describe('api-arcanos route', () => {
         pipelineDebug: {
           capabilityFlags: {
             canBrowse: false,
+            canVerifyProvidedData: false,
             canVerifyLiveData: false,
             canConfirmExternalState: false,
             canPersistData: false,

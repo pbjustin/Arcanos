@@ -1,5 +1,9 @@
 import type OpenAI from 'openai';
-import { runThroughBrain, type TrinityResult } from '@core/logic/trinity.js';
+import {
+  runThroughBrain,
+  type TrinityResult,
+  type TrinityToolBackedCapabilities
+} from '@core/logic/trinity.js';
 import { createRuntimeBudgetWithLimit } from '@platform/resilience/runtimeBudget.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import { getWorkerExecutionLimits } from './workerExecutionLimits.js';
@@ -12,6 +16,7 @@ export interface WorkerTrinityRequest {
   overrideAuditSafe?: string;
   cognitiveDomain?: CognitiveDomain;
   sourceEndpoint?: string;
+  toolBackedCapabilities?: TrinityToolBackedCapabilities;
   requestedVerbosity?: 'minimal' | 'normal' | 'detailed';
   maxWords?: number | null;
   answerMode?: 'direct' | 'explained' | 'audit' | 'debug';
@@ -46,6 +51,7 @@ export async function runWorkerTrinityPrompt(
     cognitiveDomain: request.cognitiveDomain,
     sourceEndpoint: normalizedSourceEndpoint,
     watchdogModelTimeoutMs: workerExecutionLimits.workerTrinityStageTimeoutMs,
+    ...(request.toolBackedCapabilities ? { toolBackedCapabilities: request.toolBackedCapabilities } : {}),
     ...(typeof request.memorySessionId === 'string' && request.memorySessionId.trim().length > 0
       ? { memorySessionId: request.memorySessionId.trim() }
       : {}),

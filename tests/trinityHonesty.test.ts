@@ -15,6 +15,7 @@ describe('Trinity honesty controls', () => {
   it('defaults every capability flag to false unless explicitly tool-backed', () => {
     expect(deriveTrinityCapabilityFlags()).toEqual({
       canBrowse: false,
+      canVerifyProvidedData: false,
       canVerifyLiveData: false,
       canConfirmExternalState: false,
       canPersistData: false,
@@ -23,12 +24,14 @@ describe('Trinity honesty controls', () => {
 
     expect(deriveTrinityCapabilityFlags({
       browse: true,
+      verifyProvidedData: true,
       verifyLiveData: true,
       confirmExternalState: true,
       persistData: true,
       callBackend: true
     })).toEqual({
       canBrowse: true,
+      canVerifyProvidedData: true,
       canVerifyLiveData: true,
       canConfirmExternalState: true,
       canPersistData: true,
@@ -98,6 +101,54 @@ describe('Trinity honesty controls', () => {
     expect(result.text).toBe('I checked the latest competitor moves and verified they launched a pricing change today.');
   });
 
+  it('allows structural verification wording for provided dependency outputs without permitting live runtime claims', () => {
+    const result = enforceFinalStageHonesty(
+      'I validated the provided dependency outputs and confirmed the DAG is structurally consistent.',
+      createDefaultTrinityReasoningHonesty(),
+      deriveTrinityCapabilityFlags({
+        verifyProvidedData: true
+      })
+    );
+
+    expect(result.blocked).toBe(false);
+    expect(result.text).toBe('I validated the provided dependency outputs and confirmed the DAG is structurally consistent.');
+  });
+
+  it('still blocks runtime-state verification claims when only provided-data verification is enabled', () => {
+    const result = enforceFinalStageHonesty(
+      'I verified the runtime behavior and confirmed the current deployment status is healthy.',
+      createDefaultTrinityReasoningHonesty(),
+      deriveTrinityCapabilityFlags({
+        verifyProvidedData: true
+      })
+    );
+
+    expect(result.blocked).toBe(true);
+    expect(result.blockedCategories).toEqual(expect.arrayContaining(['live_verification', 'current_external_state']));
+    expect(result.text).toContain('I can help with general guidance, but I cannot verify live or current external information here.');
+    expect(result.text).not.toContain('current deployment status is healthy');
+  });
+
+  it('preserves explicit live-runtime limitation caveats instead of rewriting them into a generic refusal', () => {
+    const result = enforceFinalStageHonesty(
+      'Live system behavior, runtime enforcement, and regression checks remain unverified. This audit can only check the structure and consistency of what you provide, not live behavior.',
+      {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['Check internal consistency of the described output contract'],
+        blockedSubtasks: ['Verify behaviour of a live or deployed DAG implementation'],
+        userVisibleCaveats: ['This audit can only check the structure and consistency of what you provide, not live behavior.'],
+        evidenceTags: []
+      },
+      deriveTrinityCapabilityFlags({
+        verifyProvidedData: true
+      })
+    );
+
+    expect(result.blocked).toBe(false);
+    expect(result.text).toContain('Live system behavior, runtime enforcement, and regression checks remain unverified.');
+    expect(result.text).toContain('This audit can only check the structure and consistency of what you provide, not live behavior.');
+  });
+
   it('blocks backend success claims without executed evidence even when the capability exists', () => {
     const result = enforceFinalStageHonesty(
       'I saved this to your database and updated the backend record.',
@@ -154,6 +205,128 @@ describe('Trinity honesty controls', () => {
     expect(enforcementResult.blockedOrRewrittenClaims).toEqual([
       "I checked the latest competitor moves and confirmed they're still pricing aggressively."
     ]);
+  });
+
+  it('keeps qualified live-runtime caveats during final minimalism enforcement for DAG audits', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        'The output contract is internally consistent with clear logic for response_mode, subtasks, and verification rules.',
+        'Live system behavior, runtime enforcement, and regression checks remain unverified.',
+        'This audit can only check the structure and consistency of what you provide, not live behavior.'
+      ].join(' '),
+      userPrompt: 'Validate the planned work using only the provided dependency outputs.',
+      capabilityFlags: deriveTrinityCapabilityFlags({
+        verifyProvidedData: true
+      }),
+      outputControls: {
+        requestedVerbosity: 'normal',
+        maxWords: null,
+        answerMode: 'audit',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['Check internal consistency of the described output contract'],
+        blockedSubtasks: ['Verify behaviour of a live or deployed DAG implementation'],
+        userVisibleCaveats: ['This audit can only check the structure and consistency of what you provide, not live behavior.'],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain('The output contract is internally consistent with clear logic for response_mode, subtasks, and verification rules.');
+    expect(enforcementResult.text).toContain('This audit can only check the structure and consistency of what you provide, not live behavior.');
+    expect(enforcementResult.text).not.toContain('I can help with general guidance, but I cannot verify live or current external information here.');
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([]);
+  });
+
+  it('preserves GPT-5.1 version tokens inside partial-refusal leads without orphaning numeric fragments', () => {
+    const auditReasoningHonesty: TrinityReasoningHonesty = {
+      responseMode: 'partial_refusal',
+      achievableSubtasks: [
+        'Define structural audit checks for planner output vs evidence',
+        'Specify how to flag unverifiable or overreaching claims',
+        'Align audit behavior with capability constraints',
+        'Map audit results into the required schema fields'
+      ],
+      blockedSubtasks: [
+        'Perform real runtime validation of planner correctness',
+        'Confirm deployment or execution in an actual GPT-5.1 system'
+      ],
+      userVisibleCaveats: [
+        'This logic only checks structure and internal consistency, not real-world truth',
+        'Live systems, external state, and deployment cannot be verified here'
+      ],
+      evidenceTags: []
+    };
+    const writerReasoningHonesty: TrinityReasoningHonesty = {
+      responseMode: 'partial_refusal',
+      achievableSubtasks: [
+        'Describe how to structurally merge audit, build, and research outputs into a single DAG contract',
+        'Provide a concise example of a generic merged DAG output schema',
+        'Explain how to isolate unverifiable or inferred sections in the contract',
+        'Clarify how to respect capability flags and verification constraints in the merged structure'
+      ],
+      blockedSubtasks: [
+        'Perform an actual merge on real audit, build, and research outputs',
+        'Verify that any specific concrete contract matches a hidden or external schema',
+        'Confirm runtime executability of the contract in a real GPT-5.1 pipeline'
+      ],
+      userVisibleCaveats: [
+        'No real node outputs were provided, so the merged contract is a generic template, not project-specific truth',
+        'Nothing in the example is verified against a live schema or runtime',
+        'You must replace all illustrative fields with your actual audit, build, and research outputs'
+      ],
+      evidenceTags: []
+    };
+
+    const auditHonestyResult = enforceFinalStageHonesty(
+      'The audit logic validates planner output against provided evidence, flags unverifiable or overreaching claims, and enforces capability constraints within a structured schema. Real-world verification and deployment confirmation remain out of scope. This logic only checks structure and internal consistency, not real-world truth.',
+      auditReasoningHonesty,
+      deriveTrinityCapabilityFlags({
+        verifyProvidedData: true
+      })
+    );
+    const auditEnforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: auditHonestyResult.text,
+      userPrompt: 'Validate the planned work using only the provided dependency outputs. Check correctness, risks, regressions, and output-contract compliance for: Verify the DAG output contract and report any formatting or verification-stage issues.',
+      capabilityFlags: deriveTrinityCapabilityFlags({
+        verifyProvidedData: true
+      }),
+      outputControls: {
+        requestedVerbosity: 'normal',
+        maxWords: null,
+        answerMode: 'audit',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: auditReasoningHonesty
+    });
+    const writerHonestyResult = enforceFinalStageHonesty(
+      'The merged DAG contract structurally links audit, build, and research outputs into a single JSON schema with clear nodes, a consolidated merged_view, and meta capabilities reflecting all verification limits. Unverifiable sections are explicitly labeled, and all fields remain illustrative until replaced by your actual pipeline data. No real node outputs were provided, so the merged contract is a generic template, not project-specific truth.',
+      writerReasoningHonesty,
+      deriveTrinityCapabilityFlags()
+    );
+    const writerEnforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: writerHonestyResult.text,
+      userPrompt: 'Merge the dependency outputs from audit, build, and research into a single DAG output contract.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'normal',
+        maxWords: null,
+        answerMode: 'audit',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: writerReasoningHonesty
+    });
+
+    expect(auditEnforcementResult.text).toContain('Live systems, external state, and deployment cannot be verified here.');
+    expect(auditEnforcementResult.text).not.toContain('1 system here.');
+    expect(auditEnforcementResult.text).toContain('The audit logic validates planner output against provided evidence');
+    expect(writerEnforcementResult.text).toContain('Nothing in the example is verified against a live schema or runtime.');
+    expect(writerEnforcementResult.text).not.toContain('1 pipeline here.');
+    expect(writerEnforcementResult.text).toContain('The merged DAG contract structurally links audit, build, and research outputs');
   });
 
   it('respects a hard word limit while keeping the main answer intact', () => {

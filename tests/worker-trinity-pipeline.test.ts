@@ -41,7 +41,10 @@ describe('runWorkerTrinityPrompt', () => {
       tokenAuditSessionId: 'session-123:dag:run-1:audit:a0',
       overrideAuditSafe: 'allow',
       cognitiveDomain: 'diagnostic',
-      sourceEndpoint: 'dag.agent.audit'
+      sourceEndpoint: 'dag.agent.audit',
+      toolBackedCapabilities: {
+        verifyProvidedData: true
+      }
     });
 
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenCalledTimes(1);
@@ -53,6 +56,9 @@ describe('runWorkerTrinityPrompt', () => {
       {
         cognitiveDomain: 'diagnostic',
         sourceEndpoint: 'dag.agent.audit',
+        toolBackedCapabilities: {
+          verifyProvidedData: true
+        },
         tokenAuditSessionId: 'session-123:dag:run-1:audit:a0',
         watchdogModelTimeoutMs: 180_000
       },

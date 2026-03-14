@@ -49,6 +49,7 @@ describe('Trinity pipeline', () => {
     expect(typeof result.meta.created).toBe('number');
     expect(result.capabilityFlags).toEqual({
       canBrowse: false,
+      canVerifyProvidedData: false,
       canVerifyLiveData: false,
       canConfirmExternalState: false,
       canPersistData: false,
@@ -62,6 +63,7 @@ describe('Trinity pipeline', () => {
     expect(typeof result.gpt5Model).toBe('string');
     expect(result.dryRunPreview!.capabilityFlags).toEqual({
       canBrowse: false,
+      canVerifyProvidedData: false,
       canVerifyLiveData: false,
       canConfirmExternalState: false,
       canPersistData: false,
