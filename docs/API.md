@@ -92,6 +92,8 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - `POST /api/openai/prompt`
 
 ### Memory, codebase, and reusable code
+- `POST /api/save-conversation`
+- `GET /api/save-conversation/:recordId`
 - `GET /api/memory/health`
 - `POST /api/memory/save` (confirmation required)
 - `GET /api/memory/load`

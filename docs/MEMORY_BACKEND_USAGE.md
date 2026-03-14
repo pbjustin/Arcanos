@@ -116,6 +116,57 @@ Arcanos uses three retrieval modes in responses:
 
 ## Endpoint Reference
 
+### `POST /api/save-conversation`
+Structured persistence endpoint for deterministic log/conversation saves.
+
+Use this instead of `/ask` when the caller needs a machine-verifiable persistence receipt.
+
+Request body:
+```json
+{
+  "title": "Backend diagnostics",
+  "tags": ["session_diagnostic_2026-03-08", "backend"],
+  "contentMode": "transcript",
+  "content": [
+    { "role": "user", "content": "save this conversation" },
+    { "role": "assistant", "content": "confirmed" }
+  ],
+  "sessionId": "raw_20260308_van",
+  "metadata": {
+    "source": "manual-test"
+  }
+}
+```
+
+Success response:
+```json
+{
+  "success": true,
+  "record_id": 18342,
+  "storage_type": "conversation",
+  "title": "Backend diagnostics",
+  "tags": ["session_diagnostic_2026-03-08", "backend"],
+  "content_mode": "transcript",
+  "length_stored": 123,
+  "bytes_stored": 123,
+  "created_at": "2026-03-09T12:00:00.000Z",
+  "error": null
+}
+```
+
+Behavior:
+- requires structured JSON input
+- writes once, then immediately re-reads by returned `record_id`
+- fails closed if the read-after-write verification does not match
+
+### `GET /api/save-conversation/:recordId`
+Fetches the exact stored conversation payload by returned record id.
+
+Use this to verify:
+- the row exists
+- the stored `content_mode`
+- the exact `content` that was persisted
+
 ### `POST /api/memory/nl`
 Natural-language command endpoint.
 
@@ -240,12 +291,15 @@ After deploy:
 
 1. Save memory:
 - `POST /api/memory/nl` with a `remember ...` input
-2. Exact load:
+2. Deterministic structured save:
+- `POST /api/save-conversation` with explicit `contentMode`
+3. Read-after-write verification:
+- `GET /api/save-conversation/:recordId`
+4. Exact load:
 - `GET /api/memory/load?key=...`
-3. Unified search:
+5. Unified search:
 - `GET /api/memory/search?q=...&sessionId=...`
-4. Check merged counts:
+6. Check merged counts:
 - confirm `exact`, `semantic`, and `merged`
-5. Check diagnostics:
+7. Check diagnostics:
 - confirm `diagnostics.rag.reason` is `ok` (or expected fallback reason)
-

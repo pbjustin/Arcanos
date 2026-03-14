@@ -48,7 +48,9 @@ export {
 export {
   saveMemory,
   loadMemory,
-  deleteMemory
+  deleteMemory,
+  loadMemoryRecordById,
+  type StoredMemoryRecord
 } from './repositories/memoryRepository.js';
 
 export {
