@@ -9,6 +9,8 @@ const mockGetStatus = jest.fn();
 const mockQuery = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
+const mockPersistNaturalLanguageConversationSession = jest.fn();
+const mockSearchNaturalLanguageConversationSessions = jest.fn();
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
   saveMemory: mockSaveMemory,
@@ -21,6 +23,11 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 jest.unstable_mockModule('@services/webRag.js', () => ({
   queryRagDocuments: mockQueryRagDocuments,
   recordPersistentMemorySnippet: mockRecordPersistentMemorySnippet
+}));
+
+jest.unstable_mockModule('@services/naturalLanguageConversationSessionStore.js', () => ({
+  persistNaturalLanguageConversationSession: mockPersistNaturalLanguageConversationSession,
+  searchNaturalLanguageConversationSessions: mockSearchNaturalLanguageConversationSessions
 }));
 
 const { default: apiMemoryRouter } = await import('../src/routes/api-memory.js');
@@ -49,6 +56,8 @@ describe('/api/memory/nl', () => {
     mockDeleteMemory.mockResolvedValue(true);
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
     mockRecordPersistentMemorySnippet.mockResolvedValue(true);
+    mockPersistNaturalLanguageConversationSession.mockResolvedValue(null);
+    mockSearchNaturalLanguageConversationSessions.mockResolvedValue([]);
     mockQueryRagDocuments.mockResolvedValue({
       matches: [],
       diagnostics: {

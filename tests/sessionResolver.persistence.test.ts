@@ -18,6 +18,7 @@ const mockExtractNaturalLanguageSessionId = jest.fn();
 const mockNormalizeNaturalLanguageSessionId = jest.fn();
 const mockQueryExactNaturalLanguageMemoryEntries = jest.fn();
 const mockResolveNaturalLanguageSessionAlias = jest.fn();
+const mockSearchNaturalLanguageConversationSessions = jest.fn();
 
 jest.unstable_mockModule('../src/services/sessionMemoryService.js', () => ({
   getCachedSessions: mockGetCachedSessions,
@@ -55,6 +56,10 @@ jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   resolveNaturalLanguageSessionAlias: mockResolveNaturalLanguageSessionAlias,
 }));
 
+jest.unstable_mockModule('../src/services/naturalLanguageConversationSessionStore.js', () => ({
+  searchNaturalLanguageConversationSessions: mockSearchNaturalLanguageConversationSessions,
+}));
+
 const { resolveSession } = await import('../src/services/sessionResolver.js');
 
 describe('sessionResolver persisted recall', () => {
@@ -89,6 +94,7 @@ describe('sessionResolver persisted recall', () => {
       input.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
     );
     mockQueryExactNaturalLanguageMemoryEntries.mockResolvedValue([]);
+    mockSearchNaturalLanguageConversationSessions.mockResolvedValue([]);
     mockExtractNaturalLanguageSessionId.mockImplementation((input: string) => {
       if (/raw_vancouver_2026/i.test(input)) {
         return 'raw_vancouver_2026';
@@ -97,6 +103,37 @@ describe('sessionResolver persisted recall', () => {
         return 'raw_vancouver_session';
       }
       return null;
+    });
+  });
+
+  it('resolves durable stored conversation sessions before cache-only semantic matching', async () => {
+    mockSearchNaturalLanguageConversationSessions.mockResolvedValueOnce([
+      {
+        id: 'session-123',
+        label: 'ARCANOS pipeline tuning session',
+        tag: 'pipeline',
+        memoryType: 'conversation',
+        payload: {
+          text: 'Conversation log covering Trinity debugging and backend connectivity checks.',
+          memoryKey: 'nl-memory:global:this-current-conversation-in-the-backend-database-as-20260314083403'
+        },
+        transcriptSummary: 'Conversation log covering Trinity debugging and backend connectivity checks.',
+        auditTraceId: null,
+        createdAt: '2026-03-14T08:34:03.351Z',
+        updatedAt: '2026-03-14T08:34:03.351Z'
+      }
+    ]);
+
+    const result = await resolveSession('find ARCANOS pipeline tuning session');
+
+    expect(result).toEqual({
+      sessionId: 'session-123',
+      conversations_core: [{
+        role: 'assistant',
+        content: 'Conversation log covering Trinity debugging and backend connectivity checks.',
+        memoryKey: 'session-record:session-123',
+        savedAt: undefined
+      }]
     });
   });
 

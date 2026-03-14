@@ -14,6 +14,7 @@ import {
   queryExactNaturalLanguageMemoryEntries,
   resolveNaturalLanguageSessionAlias
 } from './naturalLanguageMemory.js';
+import { searchNaturalLanguageConversationSessions } from './naturalLanguageConversationSessionStore.js';
 
 interface ConversationMessage {
   content?: string;
@@ -90,6 +91,12 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
       sessionId: explicitSessionId,
       conversations_core: null,
     };
+  }
+
+  const storedConversationSession = await resolveStoredConversationSessionByQuery(nlQuery);
+  //audit Assumption: durable conversation sessions should be reusable across code paths even when no in-process cache session exists yet; failure risk: saved conversation logs are invisible outside the nl-memory route; expected invariant: a natural-language session query can resolve to the canonical stored conversation payload before semantic cache matching; handling strategy: consult the durable conversation session search before cache-empty failure and semantic fallback.
+  if (storedConversationSession) {
+    return storedConversationSession;
   }
 
   //audit Assumption: sessions must exist to resolve; Handling: throw when empty
@@ -249,6 +256,31 @@ async function resolvePersistedSession(sessionId: string): Promise<ResolveResult
   }
 
   return null;
+}
+
+async function resolveStoredConversationSessionByQuery(
+  nlQuery: string
+): Promise<ResolveResult | null> {
+  try {
+    const storedConversationSessions = await searchNaturalLanguageConversationSessions(nlQuery, 1);
+    const firstSession = storedConversationSessions[0];
+    if (!firstSession) {
+      return null;
+    }
+
+    const conversationCore = toPersistedConversationCore(firstSession.payload, `session-record:${firstSession.id}`);
+    if (!conversationCore) {
+      return null;
+    }
+
+    return {
+      sessionId: firstSession.id,
+      conversations_core: conversationCore,
+    };
+  } catch {
+    //audit Assumption: durable conversation-session lookup is a reusable enhancement, not the only session-resolution path; failure risk: storage search outages prevent cache-backed or explicit-session resolution; expected invariant: resolver can continue through legacy paths when durable conversation search fails; handling strategy: fail open with a null result.
+    return null;
+  }
 }
 
 async function safeLoadMemory(key: string): Promise<unknown | null> {

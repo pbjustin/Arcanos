@@ -5,6 +5,8 @@ const mockQuery = jest.fn();
 const mockSaveMemory = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
+const mockPersistNaturalLanguageConversationSession = jest.fn();
+const mockSearchNaturalLanguageConversationSessions = jest.fn();
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
@@ -15,6 +17,11 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 jest.unstable_mockModule('@services/webRag.js', () => ({
   queryRagDocuments: mockQueryRagDocuments,
   recordPersistentMemorySnippet: mockRecordPersistentMemorySnippet,
+}));
+
+jest.unstable_mockModule('@services/naturalLanguageConversationSessionStore.js', () => ({
+  persistNaturalLanguageConversationSession: mockPersistNaturalLanguageConversationSession,
+  searchNaturalLanguageConversationSessions: mockSearchNaturalLanguageConversationSessions
 }));
 
 const {
@@ -43,6 +50,8 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
       }
     });
     mockRecordPersistentMemorySnippet.mockResolvedValue(false);
+    mockPersistNaturalLanguageConversationSession.mockResolvedValue(null);
+    mockSearchNaturalLanguageConversationSessions.mockResolvedValue([]);
   });
 
   it('does not hijack generic tutoring prompts that only start with show/get verbs', async () => {

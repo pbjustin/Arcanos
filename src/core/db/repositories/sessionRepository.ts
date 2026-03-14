@@ -381,7 +381,7 @@ export async function getStoredSessionById(sessionId: string): Promise<StoredSes
  * - Output: paged list result with total count.
  *
  * Edge case behavior:
- * - Search matches `id`, `label`, `tag`, and `memory_type` using case-insensitive LIKE filters.
+ * - Search matches `id`, `label`, `tag`, `memory_type`, `transcript_summary`, and serialized `payload` using case-insensitive LIKE filters.
  */
 export async function listStoredSessions(
   options: StoredSessionListOptions = {}
@@ -417,6 +417,8 @@ export async function listStoredSessions(
          OR sessions.label ILIKE $1
          OR COALESCE(sessions.tag, '') ILIKE $1
          OR sessions.memory_type ILIKE $1
+         OR COALESCE(sessions.transcript_summary, '') ILIKE $1
+         OR sessions.payload::text ILIKE $1
        GROUP BY sessions.id
        ORDER BY sessions.updated_at DESC
        LIMIT $2`,
@@ -430,7 +432,9 @@ export async function listStoredSessions(
          OR id::text ILIKE $1
          OR label ILIKE $1
          OR COALESCE(tag, '') ILIKE $1
-         OR memory_type ILIKE $1`,
+         OR memory_type ILIKE $1
+         OR COALESCE(transcript_summary, '') ILIKE $1
+         OR payload::text ILIKE $1`,
       [searchPattern]
     )
   ]);
