@@ -7,6 +7,7 @@
 
 import {
   createStoredSession,
+  getStoredSessionByPayloadMemoryKey,
   getStoredSessionById,
   getStoredSessionVersion,
   listStoredSessions,
@@ -40,6 +41,12 @@ export interface WriteSessionInput {
 export interface ListSessionsOptions {
   limit?: number;
   search?: string | null;
+}
+
+export interface FindSessionsOptions {
+  limit?: number;
+  search?: string | null;
+  memoryType?: string | null;
 }
 
 export interface ListSessionsResult {
@@ -181,6 +188,52 @@ export async function listSessions(
       search: options.search
     })
   );
+}
+
+/**
+ * Find durable sessions with full payload data.
+ *
+ * Purpose:
+ * - Support internal reuse flows that need canonical session payloads without follow-up reads.
+ *
+ * Inputs/outputs:
+ * - Input: optional bounded search criteria and exact memory-type filter.
+ * - Output: normalized stored sessions including payload bodies.
+ *
+ * Edge case behavior:
+ * - Returns an empty list when no durable sessions satisfy the requested filters.
+ */
+export async function findSessions(
+  options: FindSessionsOptions = {}
+): Promise<StoredSession[]> {
+  const result = await listStoredSessions({
+    limit: options.limit,
+    search: options.search,
+    memoryType: options.memoryType
+  });
+
+  return result.items.map(normalizeStoredSession);
+}
+
+/**
+ * Load one durable session by the originating payload memory key.
+ *
+ * Purpose:
+ * - Provide exact idempotency lookup for cross-store mirroring workflows.
+ *
+ * Inputs/outputs:
+ * - Input: payload `memoryKey` plus optional exact `memoryType`.
+ * - Output: stored session or `null`.
+ *
+ * Edge case behavior:
+ * - Returns `null` when no stored session references the requested payload memory key.
+ */
+export async function findSessionByMemoryKey(
+  memoryKey: string,
+  memoryType?: string | null
+): Promise<StoredSession | null> {
+  const storedSession = await getStoredSessionByPayloadMemoryKey(memoryKey, memoryType);
+  return storedSession ? normalizeStoredSession(storedSession) : null;
 }
 
 /**

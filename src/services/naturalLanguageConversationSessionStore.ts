@@ -1,6 +1,6 @@
 import {
-  listSessions,
-  readSession,
+  findSessionByMemoryKey,
+  findSessions,
   writeSession,
   type StoredSession
 } from './sessionStorage.js';
@@ -9,8 +9,6 @@ const TITLE_LINE_PATTERN = /(?:^|\n)\s*title\s*:\s*["'`]?([^\r\n"'`]+)["'`]?/i;
 const TAGS_LINE_PATTERN = /(?:^|\n)\s*tags?\s*:\s*(.+)$/im;
 const CONVERSATION_CAPTURE_CUE_PATTERN =
   /\b(?:current\s+conversation|conversation\s+log|full\s+transcript|natural\s+language\s+conversation|save\s+.*conversation)\b/i;
-const DEFAULT_SEARCH_MULTIPLIER = 3;
-const MAX_SESSION_SEARCH_LIMIT = 100;
 const MAX_TRANSCRIPT_SUMMARY_LENGTH = 10_000;
 const MAX_FALLBACK_LABEL_LENGTH = 120;
 
@@ -131,30 +129,17 @@ export async function searchNaturalLanguageConversationSessions(
     return [];
   }
 
-  const searchResult = await listSessions({
+  const detailedSessions = await findSessions({
     search: normalizedSearchText,
-    limit: Math.min(normalizedLimit * DEFAULT_SEARCH_MULTIPLIER, MAX_SESSION_SEARCH_LIMIT)
+    limit: normalizedLimit,
+    memoryType: 'conversation'
   });
-  const storedSessions: StoredNaturalLanguageConversationSession[] = [];
 
-  for (const item of searchResult.items) {
-    //audit Assumption: reusable natural-language conversation search should surface only durable conversation sessions, not diagnostics or unrelated canonical session rows; failure risk: callers receive structurally valid but semantically irrelevant sessions; expected invariant: search results are restricted to `memoryType=conversation`; handling strategy: skip non-conversation rows before loading full payloads.
-    if (item.memoryType !== 'conversation') {
-      continue;
-    }
-
-    const detailedSession = await readSession(item.id);
-    if (!detailedSession || detailedSession.memoryType !== 'conversation') {
-      continue;
-    }
-
-    storedSessions.push(normalizeStoredConversationSession(detailedSession));
-    if (storedSessions.length >= normalizedLimit) {
-      break;
-    }
-  }
-
-  return storedSessions;
+  //audit Assumption: reusable natural-language conversation search should surface only durable conversation sessions, not diagnostics or unrelated canonical session rows; failure risk: callers receive structurally valid but semantically irrelevant sessions; expected invariant: repository filtering already limits rows to `memoryType=conversation`; handling strategy: normalize only rows that preserve the exact conversation memory type.
+  return detailedSessions
+    .filter((session) => session.memoryType === 'conversation')
+    .map(normalizeStoredConversationSession)
+    .slice(0, normalizedLimit);
 }
 
 function normalizeStoredConversationSession(
@@ -176,17 +161,18 @@ function normalizeStoredConversationSession(
 async function findStoredConversationSessionByMemoryKey(
   memoryKey: string
 ): Promise<StoredNaturalLanguageConversationSession | null> {
-  const existingSessions = await searchNaturalLanguageConversationSessions(memoryKey, 5);
-
-  for (const session of existingSessions) {
-    const payloadRecord = asConversationSessionPayloadRecord(session.payload);
-    //audit Assumption: durable conversation payloads preserve their originating nl-memory key for cross-store lookup; failure risk: idempotent retries miss the existing session and duplicate it; expected invariant: matching payload memory keys identify the same conversation save; handling strategy: compare the normalized memory key inside the stored payload before creating a new row.
-    if (typeof payloadRecord?.memoryKey === 'string' && payloadRecord.memoryKey.trim() === memoryKey) {
-      return session;
-    }
+  const existingSession = await findSessionByMemoryKey(memoryKey, 'conversation');
+  if (!existingSession) {
+    return null;
   }
 
-  return null;
+  const payloadRecord = asConversationSessionPayloadRecord(existingSession.payload);
+  //audit Assumption: durable conversation payloads preserve their originating nl-memory key for cross-store lookup; failure risk: legacy rows with malformed payloads are treated as valid idempotent matches; expected invariant: an exact payload memory-key lookup still points at a conversation payload that exposes the same memory key; handling strategy: verify the payload field before accepting the stored row as a dedupe hit.
+  if (typeof payloadRecord?.memoryKey !== 'string' || payloadRecord.memoryKey.trim() !== memoryKey) {
+    return null;
+  }
+
+  return normalizeStoredConversationSession(existingSession);
 }
 
 function resolveConversationSearchLimit(limit: number): number {

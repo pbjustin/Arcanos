@@ -86,6 +86,7 @@ export interface StoredSessionVersionRecord {
 export interface StoredSessionListOptions {
   limit?: number;
   search?: string | null;
+  memoryType?: string | null;
 }
 
 export interface StoredSessionListResult {
@@ -203,6 +204,15 @@ function normalizeSearch(search?: string | null): string | null {
   }
 
   const normalized = search.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeMemoryTypeFilter(memoryType?: string | null): string | null {
+  if (typeof memoryType !== 'string') {
+    return null;
+  }
+
+  const normalized = memoryType.trim();
   return normalized.length > 0 ? normalized : null;
 }
 
@@ -381,7 +391,8 @@ export async function getStoredSessionById(sessionId: string): Promise<StoredSes
  * - Output: paged list result with total count.
  *
  * Edge case behavior:
- * - Search matches `id`, `label`, `tag`, `memory_type`, `transcript_summary`, and serialized `payload` using case-insensitive LIKE filters.
+ * - Search matches `id`, `label`, `tag`, `memory_type`, and `transcript_summary` using case-insensitive LIKE filters.
+ * - Optional `memoryType` filters the result set before text search is applied.
  */
 export async function listStoredSessions(
   options: StoredSessionListOptions = {}
@@ -393,6 +404,7 @@ export async function listStoredSessions(
 
   const limit = normalizeBoundedLimit(options.limit);
   const search = normalizeSearch(options.search);
+  const memoryType = normalizeMemoryTypeFilter(options.memoryType);
   const searchPattern = search ? `%${search}%` : null;
 
   const [itemsResult, countResult] = await Promise.all([
@@ -412,30 +424,34 @@ export async function listStoredSessions(
        LEFT JOIN session_versions
          ON session_versions.session_id = sessions.id
        WHERE
-         $1::text IS NULL
-         OR sessions.id::text ILIKE $1
-         OR sessions.label ILIKE $1
-         OR COALESCE(sessions.tag, '') ILIKE $1
-         OR sessions.memory_type ILIKE $1
-         OR COALESCE(sessions.transcript_summary, '') ILIKE $1
-         OR sessions.payload::text ILIKE $1
+         ($1::text IS NULL OR sessions.memory_type = $1)
+         AND (
+           $2::text IS NULL
+           OR sessions.id::text ILIKE $2
+           OR sessions.label ILIKE $2
+           OR COALESCE(sessions.tag, '') ILIKE $2
+           OR sessions.memory_type ILIKE $2
+           OR COALESCE(sessions.transcript_summary, '') ILIKE $2
+         )
        GROUP BY sessions.id
        ORDER BY sessions.updated_at DESC
-       LIMIT $2`,
-      [searchPattern, limit]
+       LIMIT $3`,
+      [memoryType, searchPattern, limit]
     ),
     query(
       `SELECT COUNT(*)::text AS total
        FROM sessions
        WHERE
-         $1::text IS NULL
-         OR id::text ILIKE $1
-         OR label ILIKE $1
-         OR COALESCE(tag, '') ILIKE $1
-         OR memory_type ILIKE $1
-         OR COALESCE(transcript_summary, '') ILIKE $1
-         OR payload::text ILIKE $1`,
-      [searchPattern]
+         ($1::text IS NULL OR memory_type = $1)
+         AND (
+           $2::text IS NULL
+           OR id::text ILIKE $2
+           OR label ILIKE $2
+           OR COALESCE(tag, '') ILIKE $2
+           OR memory_type ILIKE $2
+           OR COALESCE(transcript_summary, '') ILIKE $2
+         )`,
+      [memoryType, searchPattern]
     )
   ]);
 
@@ -443,6 +459,59 @@ export async function listStoredSessions(
     items: itemsResult.rows.map(row => normalizeStoredSessionRecord(row as SessionListRow)),
     total: Number(countResult.rows[0]?.total ?? 0)
   };
+}
+
+/**
+ * Load one stored session by the originating payload memory key.
+ *
+ * Purpose:
+ * - Support idempotent cross-store session mirroring without broad JSON text scans.
+ *
+ * Inputs/outputs:
+ * - Input: exact payload `memoryKey` plus optional exact `memoryType`.
+ * - Output: matching stored session record or `null`.
+ *
+ * Edge case behavior:
+ * - Returns `null` when storage is unavailable or no exact payload memory key exists.
+ */
+export async function getStoredSessionByPayloadMemoryKey(
+  memoryKey: string,
+  memoryType?: string | null
+): Promise<StoredSessionRecord | null> {
+  const persistenceReady = await ensureSessionPersistenceReady();
+  if (!persistenceReady) {
+    return null;
+  }
+
+  const normalizedMemoryKey = memoryKey.trim();
+  const normalizedMemoryType = normalizeMemoryTypeFilter(memoryType);
+
+  //audit Assumption: durable conversation mirroring should deduplicate using the exact originating payload memory key instead of fuzzy JSON text search; failure risk: retry paths degrade into full-table scans or match unrelated payload blobs; expected invariant: one exact payload memory key maps to at most one canonical session row; handling strategy: query the indexed JSON expression with an optional exact memory-type guard.
+  const result = await query(
+    `SELECT
+       sessions.id,
+       sessions.label,
+       sessions.tag,
+       sessions.memory_type,
+       sessions.payload,
+       sessions.transcript_summary,
+       sessions.audit_trace_id,
+       sessions.created_at::text,
+       sessions.updated_at::text,
+       COALESCE(MAX(session_versions.version_number), 0)::integer AS latest_version_number
+     FROM sessions
+     LEFT JOIN session_versions
+       ON session_versions.session_id = sessions.id
+     WHERE sessions.payload->>'memoryKey' = $1
+       AND ($2::text IS NULL OR sessions.memory_type = $2)
+     GROUP BY sessions.id
+     ORDER BY sessions.updated_at DESC
+     LIMIT 1`,
+    [normalizedMemoryKey, normalizedMemoryType]
+  );
+
+  const row = result.rows[0] as SessionListRow | undefined;
+  return row ? normalizeStoredSessionRecord(row) : null;
 }
 
 /**

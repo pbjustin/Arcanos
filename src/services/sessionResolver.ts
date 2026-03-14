@@ -1,5 +1,6 @@
 import { getCachedSessions } from './sessionMemoryService.js';
 import { loadMemory, query } from "@core/db/index.js";
+import { logger } from "@platform/logging/structuredLogging.js";
 import { cosineSimilarity } from "@shared/vectorUtils.js";
 import { createEmbedding } from './openai/embeddings.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
@@ -15,6 +16,8 @@ import {
   resolveNaturalLanguageSessionAlias
 } from './naturalLanguageMemory.js';
 import { searchNaturalLanguageConversationSessions } from './naturalLanguageConversationSessionStore.js';
+
+const sessionResolverLogger = logger.child({ module: 'sessionResolver' });
 
 interface ConversationMessage {
   content?: string;
@@ -277,8 +280,12 @@ async function resolveStoredConversationSessionByQuery(
       sessionId: firstSession.id,
       conversations_core: conversationCore,
     };
-  } catch {
-    //audit Assumption: durable conversation-session lookup is a reusable enhancement, not the only session-resolution path; failure risk: storage search outages prevent cache-backed or explicit-session resolution; expected invariant: resolver can continue through legacy paths when durable conversation search fails; handling strategy: fail open with a null result.
+  } catch (error: unknown) {
+    //audit Assumption: durable conversation-session lookup is a reusable enhancement, not the only session-resolution path; failure risk: storage search outages prevent cache-backed or explicit-session resolution; expected invariant: resolver can continue through legacy paths when durable conversation search fails; handling strategy: warn with structured context and fail open with a null result.
+    sessionResolverLogger.warn('Durable conversation session search failed during session resolution', {
+      operation: 'resolveStoredConversationSessionByQuery',
+      error: String((error as Error)?.message ?? error)
+    });
     return null;
   }
 }
