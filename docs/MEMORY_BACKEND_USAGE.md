@@ -291,15 +291,15 @@ After deploy:
 
 1. Save memory:
 - `POST /api/memory/nl` with a `remember ...` input
-1. Deterministic structured save:
+2. Deterministic structured save:
 - `POST /api/save-conversation` with explicit `contentMode`
-1. Read-after-write verification:
+3. Read-after-write verification:
 - `GET /api/save-conversation/:recordId`
-2. Exact load:
+4. Exact load:
 - `GET /api/memory/load?key=...`
-3. Unified search:
+5. Unified search:
 - `GET /api/memory/search?q=...&sessionId=...`
-4. Check merged counts:
+6. Check merged counts:
 - confirm `exact`, `semantic`, and `merged`
-5. Check diagnostics:
+7. Check diagnostics:
 - confirm `diagnostics.rag.reason` is `ok` (or expected fallback reason)

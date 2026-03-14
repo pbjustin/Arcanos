@@ -87,18 +87,16 @@ export async function persistConversationRecord(
     throw new Error(`Conversation record ${savedRecordId} did not match the requested payload after save.`);
   }
 
-  return {
-    success: true,
-    record_id: verifiedRecord.record_id,
-    storage_type: verifiedRecord.storage_type,
-    title: verifiedRecord.title,
-    tags: verifiedRecord.tags,
-    content_mode: verifiedRecord.content_mode,
-    length_stored: verifiedRecord.length_stored,
-    bytes_stored: verifiedRecord.bytes_stored,
-    created_at: verifiedRecord.created_at,
-    error: null
-  };
+  const {
+    key: _verifiedKey,
+    session_id: _verifiedSessionId,
+    updated_at: _verifiedUpdatedAt,
+    content: _verifiedContent,
+    metadata: _verifiedMetadata,
+    ...receipt
+  } = verifiedRecord;
+
+  return receipt;
 }
 
 /**
