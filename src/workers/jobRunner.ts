@@ -33,6 +33,7 @@ import {
   type JobRunnerRuntimeSettings,
   type JobRunnerSlotDefinition
 } from './jobRunnerRuntime.js';
+import { createDagNodeRunPromptBridge } from './dagNodePromptBridge.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
 import { sleep } from '@shared/sleep.js';
 
@@ -139,16 +140,9 @@ async function executeQueuedDagNode(
   }
 
   const dagResult = await runDagNodeJob(parsedDagJobInput.value, {
-    runPrompt: async (prompt, options) => {
-      return runWorkerTrinityPrompt(openai, {
-        prompt,
-        sessionId: options.sessionId,
-        tokenAuditSessionId: options.tokenAuditSessionId,
-        overrideAuditSafe: options.overrideAuditSafe,
-        cognitiveDomain: options.cognitiveDomain,
-        sourceEndpoint: options.sourceEndpoint
-      });
-    }
+    runPrompt: createDagNodeRunPromptBridge(openai, {
+      runWorkerPrompt: runWorkerTrinityPrompt
+    })
   });
 
   //audit Assumption: failed DAG node results may be transient or terminal depending on the message; failure risk: blanket non-retry classification wastes available retry budget; expected invariant: central retry logic receives a normalized hint; handling strategy: classify the node error before returning the failed outcome.

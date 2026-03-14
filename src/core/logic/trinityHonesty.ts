@@ -12,6 +12,7 @@ export type TrinityResponseMode = 'answer' | 'partial_refusal' | 'refusal';
 
 export interface TrinityCapabilityFlags {
   canBrowse: boolean;
+  canVerifyProvidedData: boolean;
   canVerifyLiveData: boolean;
   canConfirmExternalState: boolean;
   canPersistData: boolean;
@@ -20,6 +21,7 @@ export interface TrinityCapabilityFlags {
 
 export interface TrinityToolBackedCapabilities {
   browse?: boolean;
+  verifyProvidedData?: boolean;
   verifyLiveData?: boolean;
   confirmExternalState?: boolean;
   persistData?: boolean;
@@ -62,12 +64,18 @@ const CURRENT_EXTERNAL_STATE_PATTERN =
   /\b(latest|current|currently|today|this week|recent|recently|up-to-date|as of now)\b/i;
 const EXTERNAL_STATE_CONTEXT_PATTERN =
   /\b(competitor|competitors|market|news|pricing|release|launch|moves?|external|trend|trends|company|companies|regulation|stock|stocks|state|status|events?)\b/i;
+const LIVE_RUNTIME_STATE_PATTERN =
+  /\b(live|runtime|runtime behavior|runtime state|execution state|orchestration state|deployment status|service health|service status|worker state|queue state|run state|environment state)\b/i;
 const BACKEND_ACTION_PATTERN =
   /\b(saved|save|persisted|persist|wrote|write|stored|store|pinged|ping|called|call|updated|update|inserted|insert|deleted|delete|committed|commit|queried|query|inspected|inspect)\b/i;
 const BACKEND_ACTION_CONTEXT_PATTERN =
   /\b(backend|database|db|table|record|row|service|services|api|endpoint|cache)\b/i;
 const LIMITATION_LANGUAGE_PATTERN =
-  /\b(can(?:not|'t)|unable to|do not have|don't have|haven't|have not|cannot confirm|can't confirm|cannot verify|can't verify|without live|without browsing|unverified|inferred|unavailable)\b/i;
+  /\b(can(?:not|'t)|unable to|do not have|don't have|haven't|have not|cannot confirm|can't confirm|cannot verify|can't verify|without live|without browsing|unverified|unconfirmed|inferred|unavailable)\b/i;
+const STATIC_SCOPE_LIMITATION_PATTERN =
+  /\b(can only|only\s+(?:check|checks|inspect|inspects|analyze|analyzes|analyse|analyses|validate|validates)|limited to)\b/i;
+const NEGATED_LIVE_SCOPE_PATTERN =
+  /\bnot\s+(?:any\s+)?(?:live|runtime|current|external)\b/i;
 const META_SECTION_HEADER_PATTERN =
   /(?:^|\n)\s*(audit notes?|reasoning notes?|developer notes?|observability|verification notes?)\s*:?[^\n]*[\s\S]*$/i;
 const STYLE_INFLATION_PREFIX_PATTERNS = [
@@ -166,12 +174,60 @@ function normalizeOutputSpacing(lines: string[]): string {
   return normalizedLines.join('\n').trim();
 }
 
+function isNumericSentencePeriod(line: string, index: number): boolean {
+  const previousCharacter = line[index - 1] ?? '';
+  const nextCharacter = line[index + 1] ?? '';
+
+  return /\d/.test(previousCharacter) && /\d/.test(nextCharacter);
+}
+
+function splitLineIntoSegments(line: string): string[] {
+  const segments: string[] = [];
+  let currentSegment = '';
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index] ?? '';
+    currentSegment += character;
+
+    if (!/[.!?]/.test(character)) {
+      continue;
+    }
+
+    //audit Assumption: decimal or version-style periods like "GPT-5.1" belong inside a single sentence; failure risk: sentence splitting turns one truthful limitation into a caveat plus an orphaned fragment like "1 system here."; expected invariant: punctuation between digits never creates a new sentence boundary; handling strategy: keep the segment open when a period is flanked by digits.
+    if (character === '.' && isNumericSentencePeriod(line, index)) {
+      continue;
+    }
+
+    const nextCharacter = line[index + 1] ?? '';
+    if (nextCharacter && !/\s/.test(nextCharacter)) {
+      continue;
+    }
+
+    const normalizedSegment = currentSegment.trim();
+    if (normalizedSegment) {
+      segments.push(normalizedSegment);
+    }
+    currentSegment = '';
+
+    while (index + 1 < line.length && /\s/.test(line[index + 1] ?? '')) {
+      index += 1;
+    }
+  }
+
+  const trailingSegment = currentSegment.trim();
+  if (trailingSegment) {
+    segments.push(trailingSegment);
+  }
+
+  return segments;
+}
+
 function splitIntoSegments(text: string): string[] {
   const normalizedText = normalizeWhitespace(text);
   if (!normalizedText) return [];
   return normalizedText
     .split(/\n+/)
-    .flatMap(line => line.match(/[^.!?\n]+[.!?]?/g) ?? [line])
+    .flatMap(line => splitLineIntoSegments(line))
     .map(segment => segment.trim())
     .filter(Boolean);
 }
@@ -293,6 +349,83 @@ function hasVerifiedToolEvidence(
     evidenceTag.verificationStatus === 'verified' &&
     evidenceMatchesCategory(evidenceTag, category)
   ));
+}
+
+function impliesCurrentExternalStateClaim(text: string): boolean {
+  return (
+    (CURRENT_EXTERNAL_STATE_PATTERN.test(text) && EXTERNAL_STATE_CONTEXT_PATTERN.test(text)) ||
+    LIVE_RUNTIME_STATE_PATTERN.test(text)
+  );
+}
+
+function containsAffirmativeVerificationVerb(text: string): boolean {
+  const normalizedText = text.toLowerCase();
+  const negativeVerificationPhrases = [
+    "can't verify",
+    'cannot verify',
+    "can't confirm",
+    'cannot confirm',
+    'unable to verify',
+    'unable to confirm',
+    'not verified',
+    'not confirmed',
+    'unverified'
+  ];
+
+  //audit Assumption: limitation lines often repeat verification verbs in negated form; failure risk: the honesty guard mistakes "can't verify" for a positive claim and strips valid caveats; expected invariant: explicit negative verification phrases suppress the affirmative-claim detector; handling strategy: short-circuit before checking the broader verification-verb pattern.
+  if (negativeVerificationPhrases.some(phrase => normalizedText.includes(phrase))) {
+    return false;
+  }
+
+  return /\b(i|we)\s+(checked|verified|confirmed|reviewed|validated|looked up)\b/i.test(text);
+}
+
+function containsAffirmativeCurrentStateAssertion(text: string): boolean {
+  const normalizedText = text.toLowerCase();
+  const negativeStatePhrases = [
+    'unverified',
+    'unconfirmed',
+    'unavailable',
+    'unknown',
+    'uncertain',
+    'not confirmed',
+    'not verified',
+    'not available',
+    'not observable',
+    'not visible',
+    'not current',
+    'not live'
+  ];
+
+  if (negativeStatePhrases.some(phrase => normalizedText.includes(phrase))) {
+    return false;
+  }
+
+  return /\b(is|are|was|were|appears?|looks?|remains?)\s+(healthy|stable|consistent|available|current|latest|live|running|active|complete)\b/i.test(text);
+}
+
+function isQualifiedCurrentStateLimitation(text: string): boolean {
+  const hasExplicitLimitationSignal =
+    LIMITATION_LANGUAGE_PATTERN.test(text) ||
+    (STATIC_SCOPE_LIMITATION_PATTERN.test(text) && NEGATED_LIVE_SCOPE_PATTERN.test(text));
+
+  return (
+    impliesCurrentExternalStateClaim(text) &&
+    hasExplicitLimitationSignal &&
+    !containsAffirmativeVerificationVerb(text) &&
+    !containsAffirmativeCurrentStateAssertion(text)
+  );
+}
+
+function allowsProvidedDataVerificationClaim(
+  text: string,
+  capabilityFlags: TrinityCapabilityFlags
+): boolean {
+  return (
+    capabilityFlags.canVerifyProvidedData &&
+    LIVE_VERIFICATION_PATTERN.test(text) &&
+    !impliesCurrentExternalStateClaim(text)
+  );
 }
 
 function buildPartialRefusalLead(reasoningHonesty: TrinityReasoningHonesty): string | null {
@@ -418,12 +551,17 @@ function rewriteUnsupportedClaims(params: {
 
   for (const segment of segments) {
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(segment);
-    const impliesCurrentExternalState = CURRENT_EXTERNAL_STATE_PATTERN.test(segment) && EXTERNAL_STATE_CONTEXT_PATTERN.test(segment);
+    const impliesCurrentExternalState = impliesCurrentExternalStateClaim(segment);
+    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment);
+    const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(segment, params.capabilityFlags);
     const impliesBackendAction = BACKEND_ACTION_PATTERN.test(segment) && BACKEND_ACTION_CONTEXT_PATTERN.test(segment);
     const impliesPersistenceAction = /\b(saved|save|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert)\b/i.test(segment);
 
-    //audit Assumption: unverifiable current-state claims must be rewritten before the final answer reaches the caller.
-    if ((impliesLiveVerification || impliesCurrentExternalState) && !supportsLiveVerification) {
+    //audit Assumption: unverifiable current-state claims must be rewritten before the final answer reaches the caller, but explicit limitation caveats like "runtime enforcement remains unverified" must survive intact; failure risk: the guard replaces truthful caveats with a generic refusal and hides the useful static audit; expected invariant: only affirmative unsupported claims are rewritten; handling strategy: exempt qualified current-state limitations before applying the rewrite.
+    if (
+      !qualifiedCurrentStateLimitation &&
+      (((impliesLiveVerification && !allowsProvidedDataVerification) || impliesCurrentExternalState) && !supportsLiveVerification)
+    ) {
       blockedOrRewrittenClaims.push(segment);
       if (!liveLimitationAdded) {
         rewrittenSegments.push(ensureSingleSentence(buildLimitationSentence({
@@ -666,6 +804,7 @@ function compressToWordLimit(text: string, outputControls: TrinityOutputControls
 export function deriveTrinityCapabilityFlags(toolBackedCapabilities: TrinityToolBackedCapabilities = {}): TrinityCapabilityFlags {
   return {
     canBrowse: toolBackedCapabilities.browse === true,
+    canVerifyProvidedData: toolBackedCapabilities.verifyProvidedData === true,
     canVerifyLiveData: toolBackedCapabilities.verifyLiveData === true,
     canConfirmExternalState: toolBackedCapabilities.confirmExternalState === true,
     canPersistData: toolBackedCapabilities.persistData === true,
@@ -692,6 +831,7 @@ export function createDefaultTrinityReasoningHonesty(): TrinityReasoningHonesty 
 export function buildCapabilityFlagsPromptBlock(capabilityFlags: TrinityCapabilityFlags): string {
   return `<capability_flags>\n${serializePromptJson({
     can_browse: capabilityFlags.canBrowse,
+    can_verify_provided_data: capabilityFlags.canVerifyProvidedData,
     can_verify_live_data: capabilityFlags.canVerifyLiveData,
     can_confirm_external_state: capabilityFlags.canConfirmExternalState,
     can_persist_data: capabilityFlags.canPersistData,
@@ -713,6 +853,7 @@ export function buildIntakeCapabilityEnvelope(userRequest: string, capabilityFla
     'Hard constraints:',
     '- Preserve these capability flags exactly as written.',
     '- If the request mixes achievable and impossible work, keep the limitation explicit and still answer the achievable portion.',
+    '- Verification of provided inputs or dependency outputs is allowed only when `can_verify_provided_data=true`; this never permits live or runtime-state verification.',
     '- Do not imply browsing, live verification, backend execution, or persistence unless the capability flags allow it.',
     '- If current-state verification is impossible, keep that limitation visible instead of smoothing it away.'
   ].join('\n');
@@ -733,6 +874,7 @@ export function buildReasoningCapabilityEnvelope(framedRequest: string, capabili
     '- `response_mode` must be `partial_refusal` when any blocked subtask exists, and `refusal` only when nothing achievable remains.',
     '- Populate `achievable_subtasks`, `blocked_subtasks`, and `user_visible_caveats` with concrete short phrases.',
     '- Populate `claim_tags` using only: `tool`, `user_context`, `memory`, `inference`, or `template`.',
+    '- Verification based only on provided inputs or dependency outputs may use verified wording only when `can_verify_provided_data=true`; live or runtime-state claims still require live evidence.',
     '- `verification_status` may be `verified` only when the claim is backed by actual tool evidence allowed by the capability flags.',
     '- If a fact is not verifiable here, mark it `unverified`, `inferred`, or `unavailable` instead of upgrading certainty.'
   ].join('\n');
@@ -797,11 +939,16 @@ export function enforceFinalStageHonesty(
     }
 
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line);
-    const impliesCurrentExternalState = CURRENT_EXTERNAL_STATE_PATTERN.test(line) && EXTERNAL_STATE_CONTEXT_PATTERN.test(line);
+    const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line);
+    const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
+    const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
     const impliesBackendAction = BACKEND_ACTION_PATTERN.test(line) && BACKEND_ACTION_CONTEXT_PATTERN.test(line);
 
-    //audit Assumption: unsupported verification language must be removed even when the prose sounds polished.
-    if ((impliesLiveVerification || impliesCurrentExternalState) && !supportsLiveVerification) {
+    //audit Assumption: unsupported verification language must be removed even when the prose sounds polished, but explicit limitation caveats about unverified live/runtime state are already the safe form and should remain visible; failure risk: stripping those caveats erases the precise boundary between static validation and live verification; expected invariant: affirmative unsupported claims are removed while qualified limitations stay in the answer; handling strategy: skip the block path for qualified current-state limitation lines.
+    if (
+      !qualifiedCurrentStateLimitation &&
+      (((impliesLiveVerification && !allowsProvidedDataVerification) || impliesCurrentExternalState) && !supportsLiveVerification)
+    ) {
       if (impliesLiveVerification) blockedCategories.add('live_verification');
       if (impliesCurrentExternalState) blockedCategories.add('current_external_state');
       continue;
@@ -874,12 +1021,14 @@ export function buildTrinityStageContractBlock(params: {
     `debug_pipeline=${params.outputControls.debugPipeline}`,
     `strict_user_visible_output=${params.outputControls.strictUserVisibleOutput}`,
     `can_browse=${params.capabilityFlags.canBrowse}`,
+    `can_verify_provided_data=${params.capabilityFlags.canVerifyProvidedData}`,
     `can_verify_live_data=${params.capabilityFlags.canVerifyLiveData}`,
     `can_confirm_external_state=${params.capabilityFlags.canConfirmExternalState}`,
     `can_persist_data=${params.capabilityFlags.canPersistData}`,
     `can_call_backend=${params.capabilityFlags.canCallBackend}`,
     'Rules:',
-    '- Do not claim live verification, current external state, backend actions, or saved writes without tool-backed evidence.',
+    '- Do not claim live verification, current external state, backend actions, or saved writes without the matching capability and evidence.',
+    '- `can_verify_provided_data=true` allows validation of the provided inputs only; it never permits live/runtime/deployment verification.',
     '- If only part of the request is impossible, qualify only that part and continue with the doable portion.',
     '- Do not add audit notes, reasoning notes, or ceremonial framing unless answer_mode is audit or debug.',
     '- Prefer the shortest truthful answer that still completes the request.'

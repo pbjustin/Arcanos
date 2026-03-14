@@ -22,6 +22,65 @@ export interface DagTaskRunnerDependencies {
   artifactStore?: DagArtifactStore;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function truncateLogValue(value: string, maxLength = 240): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 16))}...[truncated]`;
+}
+
+function extractPromptOutputSummary(promptOutput: unknown): string | undefined {
+  if (typeof promptOutput === 'string' && promptOutput.trim().length > 0) {
+    return promptOutput.trim();
+  }
+
+  if (!isRecord(promptOutput)) {
+    return undefined;
+  }
+
+  const candidateKeys = ['summary', 'result', 'value'] as const;
+  for (const candidateKey of candidateKeys) {
+    const candidateValue = promptOutput[candidateKey];
+    if (typeof candidateValue === 'string' && candidateValue.trim().length > 0) {
+      return candidateValue.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeDagPromptOutput(promptOutput: unknown): unknown {
+  if (!isRecord(promptOutput)) {
+    return promptOutput;
+  }
+
+  const normalizedOutput: Record<string, unknown> = { ...promptOutput };
+  const summaryText = extractPromptOutputSummary(promptOutput);
+
+  //audit Assumption: downstream DAG consumers should not need to know whether Trinity emitted its user-facing text under `result` or `summary`; failure risk: verification and synthesis stages miss valid outputs because they inspect only one field; expected invariant: structured prompt outputs expose a stable top-level `summary` when user-visible text exists; handling strategy: copy the first available summary-like field into `summary` without mutating other payload fields.
+  if (
+    typeof summaryText === 'string' &&
+    (typeof normalizedOutput.summary !== 'string' || normalizedOutput.summary.trim().length === 0)
+  ) {
+    normalizedOutput.summary = summaryText;
+  }
+
+  return normalizedOutput;
+}
+
+function isVerificationNodeJob(jobInput: DagNodeJobInput): boolean {
+  const declaredJobType = typeof jobInput.node.metadata?.jobType === 'string'
+    ? jobInput.node.metadata.jobType
+    : null;
+
+  return jobInput.node.executionKey === 'audit' || declaredJobType === 'verify';
+}
+
 function extractTokenUsageFromPromptOutput(promptOutput: unknown): number | undefined {
   if (!promptOutput || typeof promptOutput !== 'object') {
     return undefined;
@@ -154,11 +213,23 @@ export async function runDagNodeJob(
       attempt: jobInput.attempt
     });
 
+    //audit Assumption: verification-stage failures need both the queued prompt and dependency fan-in visible in logs for postmortems; failure risk: operators can see only a final refusal without knowing which dependency payload triggered it; expected invariant: verify nodes emit one structured input log before execution; handling strategy: log a bounded prompt preview and dependency ids for audit/verify nodes only.
+    if (isVerificationNodeJob(jobInput)) {
+      activeLogger.info('DAG verification node input', {
+        dagId: jobInput.dagId,
+        nodeId: jobInput.node.id,
+        executionKey: jobInput.node.executionKey,
+        promptPreview: truncateLogValue(String(jobInput.payload.prompt ?? '')),
+        dependencyNodeIds: Object.keys(dependencyResults)
+      });
+    }
+
     const promptOutput = await agentHandler(executionContext, {
       runPrompt: dependencies.runPrompt
     });
+    const normalizedPromptOutput = normalizeDagPromptOutput(promptOutput);
     const durationMs = Date.now() - startedAt;
-    const tokenUsage = extractTokenUsageFromPromptOutput(promptOutput);
+    const tokenUsage = extractTokenUsageFromPromptOutput(normalizedPromptOutput);
 
     activeMetrics.incrementCounter('node_success');
     activeMetrics.recordDuration('node_execution', durationMs);
@@ -168,7 +239,30 @@ export async function runDagNodeJob(
       activeMetrics.recordGauge('last_node_token_usage', tokenUsage);
     }
 
-    return attachDagResultArtifactReference(createDagSuccessResult(jobInput.node.id, promptOutput, {
+    //audit Assumption: verification rejections depend on the final emitted payload shape, not just execution success; failure risk: worker logs show success while hiding the exact summary, response mode, and guard flags seen by downstream validators; expected invariant: verify nodes emit one structured output log with bounded user-visible fields; handling strategy: log the normalized summary plus core guard metadata immediately after execution.
+    if (isVerificationNodeJob(jobInput) && isRecord(normalizedPromptOutput)) {
+      const reasoningHonesty = isRecord(normalizedPromptOutput.reasoningHonesty)
+        ? normalizedPromptOutput.reasoningHonesty
+        : undefined;
+      const auditSafe = isRecord(normalizedPromptOutput.auditSafe)
+        ? normalizedPromptOutput.auditSafe
+        : undefined;
+
+      activeLogger.info('DAG verification node output', {
+        dagId: jobInput.dagId,
+        nodeId: jobInput.node.id,
+        executionKey: jobInput.node.executionKey,
+        summaryPreview: truncateLogValue(extractPromptOutputSummary(normalizedPromptOutput) ?? ''),
+        responseMode: typeof reasoningHonesty?.responseMode === 'string'
+          ? reasoningHonesty.responseMode
+          : null,
+        auditFlags: Array.isArray(auditSafe?.auditFlags)
+          ? auditSafe.auditFlags
+          : []
+      });
+    }
+
+    return attachDagResultArtifactReference(createDagSuccessResult(jobInput.node.id, normalizedPromptOutput, {
       durationMs,
       tokenUsage
     }), {

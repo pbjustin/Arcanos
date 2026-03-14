@@ -34,11 +34,14 @@ describe('DAG agent registry', () => {
     });
 
     expect(runPromptMock).toHaveBeenCalledWith(
-      expect.any(String),
+      expect.stringContaining('Treat the provided dependency outputs as the only available evidence.'),
       expect.objectContaining({
         sessionId: 'user-session-123',
         tokenAuditSessionId: 'user-session-123:dag:dagrun_live_test:audit:a2',
         cognitiveDomain: 'diagnostic',
+        toolBackedCapabilities: {
+          verifyProvidedData: true
+        },
         sourceEndpoint: 'dag.agent.audit'
       })
     );

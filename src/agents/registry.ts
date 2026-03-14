@@ -1,4 +1,5 @@
 import type { CognitiveDomain } from '../shared/types/cognitiveDomain.js';
+import type { TrinityToolBackedCapabilities } from '../core/logic/trinity.js';
 import type { DAGNodeExecutionContext, DAGResult } from '../dag/dagNode.js';
 
 export interface DagAgentPromptOptions {
@@ -6,6 +7,7 @@ export interface DagAgentPromptOptions {
   tokenAuditSessionId?: string;
   overrideAuditSafe?: string;
   cognitiveDomain?: CognitiveDomain;
+  toolBackedCapabilities?: TrinityToolBackedCapabilities;
   sourceEndpoint: string;
 }
 
@@ -176,6 +178,18 @@ function buildAgentPrompt(
     `Task:\n${explicitPrompt}`
   ];
 
+  //audit Assumption: DAG audit nodes should validate only the provided dependency evidence rather than inventing runtime checks; failure risk: Trinity honesty logic rewrites audit output into a live-verification refusal that breaks downstream verification; expected invariant: audit prompts stay scoped to dependency-output validation and guard compliance; handling strategy: inject an explicit audit-only constraint block.
+  if (agentKey === 'audit') {
+    promptSections.push(
+      [
+        'Audit Constraints:',
+        '- Treat the provided dependency outputs as the only available evidence.',
+        '- Validate structural correctness, risks, regressions, guard compliance, stop-token handling, and output-format compliance using only that evidence.',
+        '- Do not claim live runtime, deployment, or external-state verification.'
+      ].join('\n')
+    );
+  }
+
   if (dependencySummary) {
     promptSections.push(`Dependency Outputs:\n${dependencySummary}`);
   }
@@ -197,6 +211,9 @@ function createPromptAgent(agentKey: string): DagAgentHandler {
       tokenAuditSessionId,
       overrideAuditSafe,
       cognitiveDomain: inferAgentDomain(agentKey),
+      toolBackedCapabilities: agentKey === 'audit'
+        ? { verifyProvidedData: true }
+        : undefined,
       sourceEndpoint: `dag.agent.${agentKey}`
     });
   };

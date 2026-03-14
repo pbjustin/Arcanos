@@ -126,7 +126,7 @@ export function buildDagTemplate(request: CreateDagRunRequest): DagTemplateDefin
     `Produce the implementation or build-oriented output for: ${goalText}`;
   const auditPrompt =
     getStringInput(request.input, 'auditPrompt') ||
-    `Audit the planned work for correctness, risks, and regressions for: ${goalText}`;
+    `Validate the planned work using only the provided dependency outputs. Check correctness, risks, regressions, and output-contract compliance for: ${goalText}`;
   const writerPrompt =
     getStringInput(request.input, 'writerPrompt') ||
     `Merge the dependency outputs into a final answer for: ${goalText}`;
