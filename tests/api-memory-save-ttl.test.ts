@@ -7,6 +7,9 @@ const mockLoadMemory = jest.fn();
 const mockDeleteMemory = jest.fn();
 const mockGetStatus = jest.fn();
 const mockQuery = jest.fn();
+const mockGetMemoryRecordByKey = jest.fn();
+const mockGetMemoryRecordByRecordId = jest.fn();
+const mockGetMemoryRecordByLegacyRowId = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
 
@@ -15,7 +18,10 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
   deleteMemory: mockDeleteMemory,
   getStatus: mockGetStatus,
-  query: mockQuery
+  query: mockQuery,
+  getMemoryRecordByKey: mockGetMemoryRecordByKey,
+  getMemoryRecordByRecordId: mockGetMemoryRecordByRecordId,
+  getMemoryRecordByLegacyRowId: mockGetMemoryRecordByLegacyRowId
 }));
 
 jest.unstable_mockModule('@services/webRag.js', () => ({
@@ -51,6 +57,9 @@ describe('/api/memory/save TTL handling', () => {
     mockLoadMemory.mockResolvedValue(null);
     mockDeleteMemory.mockResolvedValue(true);
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockGetMemoryRecordByKey.mockResolvedValue(null);
+    mockGetMemoryRecordByRecordId.mockResolvedValue(null);
+    mockGetMemoryRecordByLegacyRowId.mockResolvedValue(null);
     mockQueryRagDocuments.mockResolvedValue({
       matches: [],
       diagnostics: {
@@ -80,12 +89,16 @@ describe('/api/memory/save TTL handling', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual(
       expect.objectContaining({
-        status: 'success',
-        data: expect.objectContaining({
-          key: 'memory:ttl-route',
-          timestamp: '2026-03-08T01:20:00.000Z',
-          expiresAt: '2026-03-08T01:21:00.000Z'
-        })
+        success: true,
+        memory_key: 'memory:ttl-route',
+        updated_at: '2026-03-08T01:20:00.000Z',
+        expires_at: '2026-03-08T01:21:00.000Z',
+        response_id: expect.stringMatching(/^memory_/),
+        id_type: {
+          record_id: 'durable',
+          memory_key: 'durable',
+          response_id: 'transient'
+        }
       })
     );
     expect(mockSaveMemory).toHaveBeenCalledWith(

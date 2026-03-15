@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockLoadMemory = jest.fn();
 const mockQuery = jest.fn();
 const mockSaveMemory = jest.fn();
+const mockGetMemoryRecordByKey = jest.fn();
+const mockGetMemoryRecordByRecordId = jest.fn();
+const mockGetMemoryRecordByLegacyRowId = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
 const mockPersistNaturalLanguageConversationSession = jest.fn();
@@ -12,6 +15,9 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
   query: mockQuery,
   saveMemory: mockSaveMemory,
+  getMemoryRecordByKey: mockGetMemoryRecordByKey,
+  getMemoryRecordByRecordId: mockGetMemoryRecordByRecordId,
+  getMemoryRecordByLegacyRowId: mockGetMemoryRecordByLegacyRowId,
 }));
 
 jest.unstable_mockModule('@services/webRag.js', () => ({
@@ -35,6 +41,9 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
     mockLoadMemory.mockResolvedValue(null);
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
     mockSaveMemory.mockResolvedValue(undefined);
+    mockGetMemoryRecordByKey.mockResolvedValue(null);
+    mockGetMemoryRecordByRecordId.mockResolvedValue(null);
+    mockGetMemoryRecordByLegacyRowId.mockResolvedValue(null);
     mockQueryRagDocuments.mockResolvedValue({
       matches: [],
       diagnostics: {
@@ -65,11 +74,20 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
   it('renders retrieved text directly for exact recall prompts', async () => {
     mockLoadMemory
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308070000' })
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308070000' });
+    mockGetMemoryRecordByKey.mockResolvedValueOnce({
+      dbRowId: 201,
+      recordId: 'db-memory-1773542618010-11-shortcutlatest',
+      memoryKey: 'nl-memory:raw_vancouver_2026:entry-20260308070000',
+      value: {
         sessionId: 'raw_vancouver_2026',
         text: 'Persisted summary for Vancouver Raw'
-      });
+      },
+      metadata: null,
+      createdAt: '2026-03-08T07:00:00.000Z',
+      updatedAt: '2026-03-08T07:00:00.000Z',
+      expiresAt: null
+    });
 
     const shortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
       prompt: 'Recall: raw_vancouver_2026'
@@ -79,6 +97,7 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
       expect.objectContaining({
         resultText: 'Persisted summary for Vancouver Raw',
         memory: expect.objectContaining({
+          success: true,
           operation: 'retrieved',
           sessionId: 'raw_vancouver_2026'
         })
@@ -92,11 +111,20 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
         sessionId: 'raw_20260308_van',
         storageLabel: 'ARCANOS backend diagnostics session'
       })
-      .mockResolvedValueOnce({ key: 'nl-memory:raw_20260308_van:entry-20260308184502' })
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_20260308_van:entry-20260308184502' });
+    mockGetMemoryRecordByKey.mockResolvedValueOnce({
+      dbRowId: 202,
+      recordId: 'db-memory-1773542618011-12-shortcutalias',
+      memoryKey: 'nl-memory:raw_20260308_van:entry-20260308184502',
+      value: {
         sessionId: 'raw_20260308_van',
         text: 'Persisted diagnostic session recap'
-      });
+      },
+      metadata: null,
+      createdAt: '2026-03-08T18:45:02.000Z',
+      updatedAt: '2026-03-08T18:45:02.000Z',
+      expiresAt: null
+    });
 
     const shortcut = await tryExecuteNaturalLanguageMemoryRouteShortcut({
       prompt: 'Look up the stored session labeled "ARCANOS backend diagnostics session"'
@@ -106,6 +134,7 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
       expect.objectContaining({
         resultText: 'Persisted diagnostic session recap',
         memory: expect.objectContaining({
+          success: true,
           operation: 'retrieved',
           sessionId: 'raw_20260308_van'
         })
@@ -153,6 +182,7 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
 
   it('formats search results deterministically when multiple entries are returned', () => {
     const rendered = renderNaturalLanguageMemoryRouteResult({
+      success: true,
       intent: 'lookup',
       operation: 'searched',
       sessionId: 'raw_vancouver_2026',
@@ -180,6 +210,7 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
 
   it('renders inspection responses as structured exact rows instead of prose summaries', () => {
     const rendered = renderNaturalLanguageMemoryRouteResult({
+      success: true,
       intent: 'inspect',
       operation: 'inspected',
       sessionId: 'raw_20260308_van',

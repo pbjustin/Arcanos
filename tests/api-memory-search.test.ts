@@ -7,6 +7,9 @@ const mockLoadMemory = jest.fn();
 const mockDeleteMemory = jest.fn();
 const mockGetStatus = jest.fn();
 const mockQuery = jest.fn();
+const mockGetMemoryRecordByKey = jest.fn();
+const mockGetMemoryRecordByRecordId = jest.fn();
+const mockGetMemoryRecordByLegacyRowId = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
 
@@ -15,7 +18,10 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
   deleteMemory: mockDeleteMemory,
   getStatus: mockGetStatus,
-  query: mockQuery
+  query: mockQuery,
+  getMemoryRecordByKey: mockGetMemoryRecordByKey,
+  getMemoryRecordByRecordId: mockGetMemoryRecordByRecordId,
+  getMemoryRecordByLegacyRowId: mockGetMemoryRecordByLegacyRowId
 }));
 
 jest.unstable_mockModule('@services/webRag.js', () => ({
@@ -49,6 +55,9 @@ describe('/api/memory/search', () => {
     mockDeleteMemory.mockResolvedValue(true);
     mockRecordPersistentMemorySnippet.mockResolvedValue(false);
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockGetMemoryRecordByKey.mockResolvedValue(null);
+    mockGetMemoryRecordByRecordId.mockResolvedValue(null);
+    mockGetMemoryRecordByLegacyRowId.mockResolvedValue(null);
     mockQueryRagDocuments.mockResolvedValue({
       matches: [],
       diagnostics: {

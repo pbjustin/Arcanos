@@ -1,12 +1,26 @@
 import express, { Request, Response } from 'express';
-import { saveMemory, loadMemory, deleteMemory, getStatus, query } from "@core/db/index.js";
+import {
+  deleteMemory,
+  getMemoryRecordByKey,
+  getMemoryRecordByLegacyRowId,
+  getMemoryRecordByRecordId,
+  getStatus,
+  query,
+  saveMemory
+} from "@core/db/index.js";
 import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
 import { requireField } from "@shared/validation.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import { createRateLimitMiddleware } from "@platform/runtime/security.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { logger } from '@platform/logging/structuredLogging.js';
 import { renderMemoryTablePage } from "@services/memoryTablePage.js";
 import { executeNaturalLanguageMemoryCommand } from "@services/naturalLanguageMemory.js";
+import {
+  classifyMemoryIdentifier,
+  createMemoryLookupFailure,
+  createTransientMemoryResponseId
+} from "@services/memoryIdentifierSemantics.js";
 import { queryRagDocuments, type RagQueryMatch } from "@services/webRag.js";
 import {
   buildActiveMemorySelect,
@@ -20,11 +34,85 @@ const DEFAULT_SEARCH_LIMIT = 15;
 const MAX_SEARCH_LIMIT = 50;
 const DEFAULT_SEARCH_MIN_SCORE = 0.1;
 const SEARCH_SOURCE_TYPES = ['memory', 'conversation'];
+const memoryRouteLogger = logger.child({ module: 'apiMemoryRoute' });
 
 interface MemorySearchHit extends MemoryApiEntry {
   match_type: 'exact' | 'semantic';
   score: number | null;
   source: string;
+}
+
+function buildMemoryIdTypeContract(): {
+  record_id: 'durable';
+  memory_key: 'durable';
+  response_id: 'transient';
+} {
+  return {
+    record_id: 'durable',
+    memory_key: 'durable',
+    response_id: 'transient'
+  };
+}
+
+function normalizeSavedRecordId(value: unknown): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const metadata = (value as { metadata?: unknown }).metadata;
+  if (!metadata || typeof metadata !== 'object') {
+    return null;
+  }
+
+  const versionId = (metadata as { versionId?: unknown }).versionId;
+  return typeof versionId === 'string' && versionId.length > 0 ? versionId : null;
+}
+
+async function resolveExactMemoryLookup(identifier: string) {
+  const classifiedIdentifier = classifyMemoryIdentifier(identifier);
+
+  if (classifiedIdentifier.kind === 'durable_record_id' && classifiedIdentifier.normalized) {
+    return {
+      classifiedIdentifier,
+      record: await getMemoryRecordByRecordId(classifiedIdentifier.normalized)
+    };
+  }
+
+  if (classifiedIdentifier.kind === 'canonical_memory_key' && classifiedIdentifier.normalized) {
+    return {
+      classifiedIdentifier,
+      record: await getMemoryRecordByKey(classifiedIdentifier.normalized)
+    };
+  }
+
+  if (classifiedIdentifier.kind === 'legacy_row_id' && classifiedIdentifier.normalized) {
+    memoryRouteLogger.info('Converted legacy row-id memory lookup at the API boundary', {
+      operation: 'resolveExactMemoryLookup',
+      rawIdentifier: classifiedIdentifier.raw,
+      normalizedRowId: classifiedIdentifier.normalized
+    });
+    return {
+      classifiedIdentifier,
+      record: await getMemoryRecordByLegacyRowId(Number.parseInt(classifiedIdentifier.normalized, 10))
+    };
+  }
+
+  if (classifiedIdentifier.kind === 'legacy_memory_key' && classifiedIdentifier.normalized) {
+    memoryRouteLogger.info('Converted legacy memory key to canonical lookup key at the API boundary', {
+      operation: 'resolveExactMemoryLookup',
+      rawIdentifier: classifiedIdentifier.raw,
+      canonicalMemoryKey: classifiedIdentifier.normalized
+    });
+    return {
+      classifiedIdentifier,
+      record: await getMemoryRecordByKey(classifiedIdentifier.normalized)
+    };
+  }
+
+  return {
+    classifiedIdentifier,
+    record: null
+  };
 }
 
 /**
@@ -304,71 +392,97 @@ router.post("/save", confirmGate, asyncHandler(async (req: Request, res: Respons
   }
   
   const result = await saveMemory(key, value, { ttlSeconds });
+  const responseId = createTransientMemoryResponseId();
+  const recordId = normalizeSavedRecordId(result.value) ?? null;
+
   res.json({
-    status: 'success',
-    message: 'Memory saved successfully',
-    data: {
-      key,
-      timestamp: result.updated_at,
-      expiresAt: result.expires_at ?? null
-    }
+    success: true,
+    record_id: recordId,
+    memory_key: key,
+    response_id: responseId,
+    id_type: buildMemoryIdTypeContract(),
+    updated_at: result.updated_at,
+    expires_at: result.expires_at ?? null
   });
 }));
 
 // Load memory endpoint
 router.get("/load", asyncHandler(async (req: Request, res: Response) => {
-  const { key } = req.query;
-  if (!requireField(res, key, 'key') || typeof key !== 'string') {
+  const rawIdentifier = typeof req.query.key === 'string'
+    ? req.query.key
+    : typeof req.query.record_id === 'string'
+      ? req.query.record_id
+      : typeof req.query.id === 'string'
+        ? req.query.id
+        : null;
+
+  if (!requireField(res, rawIdentifier, 'key') || typeof rawIdentifier !== 'string') {
     return;
   }
-  const value = await loadMemory(key);
 
-  if (value === null) {
-    const semanticFallback = await executeNaturalLanguageMemoryCommand({
-      input: `load memory key ${key}`,
-      sessionId: typeof req.query.sessionId === 'string' ? req.query.sessionId : null,
-      limit: resolveQueryLimit(req.query.limit, 5, 25)
+  const fallbackRequested = String(req.query.fallback).toLowerCase() === 'true'
+    && String(req.query.mode).toLowerCase() === 'search';
+  const { classifiedIdentifier, record } = await resolveExactMemoryLookup(rawIdentifier);
+
+  if (classifiedIdentifier.error && classifiedIdentifier.message) {
+    memoryRouteLogger.warn('Rejected invalid exact memory lookup at API boundary', {
+      operation: 'load',
+      rawIdentifier,
+      identifierKind: classifiedIdentifier.kind
     });
+    return res.status(400).json(
+      createMemoryLookupFailure(classifiedIdentifier.error, classifiedIdentifier.message)
+    );
+  }
 
-    //audit Assumption: exact key misses may still have semantically relevant memory rows; failure risk: false "not found" responses for natural-language usage; expected invariant: exact load remains first, semantic fallback remains explicit; handling strategy: return fallback payload when semantic retrieval succeeds.
-    if (
-      semanticFallback.intent === 'retrieve' &&
-      semanticFallback.operation === 'retrieved' &&
-      semanticFallback.value !== undefined &&
-      semanticFallback.value !== null
-    ) {
-      return res.json({
-        status: 'success',
-        message: 'Exact key not found. Returned closest semantic memory match.',
-        data: {
-          requestedKey: key,
-          key: semanticFallback.key,
-          value: semanticFallback.value,
-          entries: semanticFallback.entries,
-          rag: semanticFallback.rag
-        }
-      });
-    }
-
-    return res.status(404).json({
-      status: 'error',
-      message: 'Memory not found',
-      data: {
-        key,
-        rag: semanticFallback.rag
-      },
-      timestamp: new Date().toISOString()
+  if (record) {
+    return res.json({
+      success: true,
+      record_id: record.recordId,
+      memory_key: record.memoryKey,
+      value: record.value
     });
   }
 
-  res.json({
-    status: 'success',
-    message: 'Memory loaded successfully',
-    data: {
-      key,
-      value
+  if (fallbackRequested) {
+    const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : null;
+    const limit = resolveQueryLimit(req.query.limit, 5, 25);
+    memoryRouteLogger.info('Exact memory lookup escalated into explicit fallback search', {
+      operation: 'load',
+      rawIdentifier,
+      searchScope: sessionId ?? 'global',
+      limit
+    });
+
+    const fallbackResponse = await executeNaturalLanguageMemoryCommand({
+      input: `lookup ${rawIdentifier}`,
+      sessionId,
+      limit,
+      fallback: true,
+      mode: 'search'
+    });
+
+    if (fallbackResponse.success && Array.isArray(fallbackResponse.entries) && fallbackResponse.entries.length > 0) {
+      const firstEntry = fallbackResponse.entries[0];
+      return res.json({
+        success: true,
+        record_id: firstEntry.record_id ?? null,
+        memory_key: firstEntry.memory_key ?? firstEntry.key,
+        value: firstEntry.value,
+        fallback_used: true,
+        entries: fallbackResponse.entries
+      });
     }
+  }
+
+  memoryRouteLogger.warn('Exact memory lookup missed without fallback', {
+    operation: 'load',
+    rawIdentifier,
+    identifierKind: classifiedIdentifier.kind
   });
+  return res.status(404).json(
+    createMemoryLookupFailure('RecordNotFound', 'No durable memory record matched the requested identifier.')
+  );
 }));
 
 // Delete memory endpoint
@@ -552,6 +666,8 @@ router.post("/nl", asyncHandler(async (req: Request, res: Response) => {
   const rawInput = (req.body as { input?: unknown })?.input;
   const sessionId = (req.body as { sessionId?: unknown })?.sessionId;
   const limit = (req.body as { limit?: unknown })?.limit;
+  const fallback = (req.body as { fallback?: unknown })?.fallback;
+  const mode = (req.body as { mode?: unknown })?.mode;
 
   //audit Assumption: natural-language command requires explicit input text; failure risk: ambiguous no-op requests; expected invariant: non-empty input string; handling strategy: return 400 with guidance.
   if (typeof rawInput !== 'string' || rawInput.trim().length === 0) {
@@ -565,14 +681,12 @@ router.post("/nl", asyncHandler(async (req: Request, res: Response) => {
   const result = await executeNaturalLanguageMemoryCommand({
     input: rawInput,
     sessionId: typeof sessionId === 'string' ? sessionId : null,
-    limit: typeof limit === 'number' ? limit : undefined
+    limit: typeof limit === 'number' ? limit : undefined,
+    fallback: fallback === true,
+    mode: mode === 'search' ? 'search' : 'exact'
   });
 
-  res.json({
-    status: 'success',
-    message: 'Natural-language memory command processed',
-    data: result
-  });
+  res.status(result.success ? 200 : result.error === 'RecordNotFound' ? 404 : 400).json(result);
 }));
 
 // Bulk operations endpoint

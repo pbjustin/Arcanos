@@ -7,6 +7,9 @@ const mockGetStatus = jest.fn();
 const mockInitializeDatabaseWithSchema = jest.fn();
 const mockSaveRagDoc = jest.fn();
 const mockLoadAllRagDocs = jest.fn();
+const mockGetMemoryRecordByKey = jest.fn();
+const mockGetMemoryRecordByRecordId = jest.fn();
+const mockGetMemoryRecordByLegacyRowId = jest.fn();
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
   saveMemory: jest.fn(),
@@ -14,6 +17,9 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   deleteMemory: jest.fn(),
   getStatus: mockGetStatus,
   query: mockQuery,
+  getMemoryRecordByKey: mockGetMemoryRecordByKey,
+  getMemoryRecordByRecordId: mockGetMemoryRecordByRecordId,
+  getMemoryRecordByLegacyRowId: mockGetMemoryRecordByLegacyRowId,
   initializeDatabaseWithSchema: mockInitializeDatabaseWithSchema,
   saveRagDoc: mockSaveRagDoc,
   loadAllRagDocs: mockLoadAllRagDocs
@@ -42,6 +48,9 @@ describe('/api/memory/table', () => {
     mockInitializeDatabaseWithSchema.mockResolvedValue(true);
     mockSaveRagDoc.mockResolvedValue(undefined);
     mockLoadAllRagDocs.mockResolvedValue([]);
+    mockGetMemoryRecordByKey.mockResolvedValue(null);
+    mockGetMemoryRecordByRecordId.mockResolvedValue(null);
+    mockGetMemoryRecordByLegacyRowId.mockResolvedValue(null);
   });
 
   it('renders a clean HTML table with escaped memory values', async () => {
