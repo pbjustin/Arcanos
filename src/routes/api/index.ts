@@ -3,6 +3,7 @@ import apiAskRouter from "@routes/api-ask.js";
 import apiArcanosRouter from "@routes/api-arcanos.js";
 import apiSimRouter from "@routes/api-sim.js";
 import apiMemoryRouter from "@routes/api-memory.js";
+import apiSaveConversationRouter from "@routes/api-save-conversation.js";
 import apiCodebaseRouter from "@routes/api-codebase.js";
 import apiCommandsRouter from "@routes/api-commands.js";
 import apiAssistantsRouter from "@routes/api-assistants.js";
@@ -23,6 +24,7 @@ const router = Router();
 router.use(memoryConsistencyGate);
 
 router.use('/', apiAskRouter);
+router.use('/', apiSaveConversationRouter);
 router.use('/api/arcanos', apiArcanosRouter);
 router.use('/api/sim', apiSimRouter);
 router.use('/api/memory', apiMemoryRouter);

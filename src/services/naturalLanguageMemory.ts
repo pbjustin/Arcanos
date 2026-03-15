@@ -1321,21 +1321,21 @@ function normalizeStoredConversationSessionsToEntries(
       ? session.payload as Record<string, unknown>
       : null;
 
-    return ({
+    return {
       record_id: null,
       memory_key: typeof payloadRecord?.memoryKey === 'string' ? payloadRecord.memoryKey : undefined,
-    key: `session-record:${session.id}`,
-    value: session.payload,
-    metadata: {
-      sessionRecordId: session.id,
-      sessionLabel: session.label,
-      sessionTag: session.tag,
-      memoryType: session.memoryType,
-      source: 'stored-session'
-    },
-    created_at: session.createdAt,
-    updated_at: session.updatedAt
-    });
+      key: `session-record:${session.id}`,
+      value: session.payload,
+      metadata: {
+        sessionRecordId: session.id,
+        sessionLabel: session.label,
+        sessionTag: session.tag,
+        memoryType: session.memoryType,
+        source: 'stored-session'
+      },
+      created_at: session.createdAt,
+      updated_at: session.updatedAt
+    };
   });
 }
 

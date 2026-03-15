@@ -234,4 +234,20 @@ describe('naturalLanguageMemoryRouteShortcut', () => {
     expect(rendered).toContain('"requestedArtifacts": [');
     expect(rendered).toContain('"nl-memory:raw_20260308_van:entry-20260308152210"');
   });
+
+  it('renders save operations as explicit confirmation text instead of echoing stored content', () => {
+    const rendered = renderNaturalLanguageMemoryRouteResult({
+      intent: 'save',
+      operation: 'saved',
+      sessionId: 'raw_20260308_van',
+      key: 'nl-memory:raw_20260308_van:entry-20260308152210',
+      value: { text: 'Persisted Summary (Stored)' },
+      message: 'Saved to memory successfully.'
+    });
+
+    expect(rendered).toContain('Memory save confirmed for session raw_20260308_van.');
+    expect(rendered).toContain('Key: nl-memory:raw_20260308_van:entry-20260308152210.');
+    expect(rendered).toContain('Use POST /api/save-conversation for strict persistence receipts.');
+    expect(rendered).not.toContain('Persisted Summary (Stored)');
+  });
 });

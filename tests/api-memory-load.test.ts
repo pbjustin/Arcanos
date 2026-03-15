@@ -124,6 +124,33 @@ describe('/api/memory/load identifier semantics', () => {
     expect(mockGetMemoryRecordByRecordId).not.toHaveBeenCalled();
   });
 
+  it('normalizes legacy slash-prefixed keys before canonical exact lookup', async () => {
+    mockGetMemoryRecordByKey.mockResolvedValueOnce({
+      dbRowId: 302,
+      recordId: 'db-memory-1773542618001-11-legacykey',
+      memoryKey: 'nl-memory:global:legacy-entry',
+      value: { text: 'Legacy key payload' },
+      metadata: null,
+      createdAt: '2026-03-08T01:22:00.000Z',
+      updatedAt: '2026-03-08T01:22:00.000Z',
+      expiresAt: null
+    });
+
+    const response = await request(app)
+      .get('/api/memory/load')
+      .query({ key: 'nl-memory/global:legacy-entry' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      success: true,
+      record_id: 'db-memory-1773542618001-11-legacykey',
+      memory_key: 'nl-memory:global:legacy-entry',
+      value: { text: 'Legacy key payload' }
+    });
+    expect(mockGetMemoryRecordByKey).toHaveBeenCalledWith('nl-memory:global:legacy-entry');
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
+  });
+
   it('returns a clean structured miss for nonexistent durable identifiers', async () => {
     const response = await request(app)
       .get('/api/memory/load')

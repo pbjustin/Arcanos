@@ -34,6 +34,15 @@ interface MemoryRepositoryRow {
   expires_at: string | null;
 }
 
+export interface StoredMemoryRecord {
+  id: number;
+  key: string;
+  value: unknown;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
  * Normalize TTL input into a bounded integer or null when expiry is disabled.
  */
@@ -102,6 +111,76 @@ export async function saveMemory(key: string, value: unknown, options: SaveMemor
   );
   
   return result.rows[0];
+}
+
+/**
+ * Load one persisted memory row by numeric record id.
+ * Inputs/outputs: positive memory table id -> normalized persisted row or null.
+ * Edge cases: expired or missing rows return null instead of stale payloads.
+ */
+export async function loadMemoryRecordById(recordId: number): Promise<StoredMemoryRecord | null> {
+  //audit Assumption: record-id reads require a live database connection; failure risk: callers infer persistence success from stale process memory; expected invariant: reads come from PostgreSQL only; handling strategy: fail closed when DB is unavailable.
+  if (!isDatabaseConnected()) {
+    throw new Error('Database not configured');
+  }
+
+  //audit Assumption: record ids must be positive integers before reaching SQL; failure risk: ambiguous casts or malformed lookup attempts; expected invariant: exact integer row selector; handling strategy: reject invalid ids before query execution.
+  if (!Number.isInteger(recordId) || recordId < 1) {
+    throw new Error(`Invalid memory record id: ${recordId}`);
+  }
+
+  const result = await query(
+    `SELECT id, key, value, expires_at::text, created_at::text, updated_at::text
+     FROM memory
+     WHERE id = $1
+       AND (expires_at IS NULL OR expires_at > NOW())
+     LIMIT 1`,
+    [recordId],
+    1,
+    false
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const row = result.rows[0] as {
+    id: number | string;
+    key: string;
+    value: unknown;
+    expires_at: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  const unwrapped = unwrapVersionedMemoryEnvelope(row.value);
+
+  return {
+    id: typeof row.id === 'number' ? row.id : Number.parseInt(String(row.id), 10),
+    key: row.key,
+    value: unwrapped.payload,
+    expires_at: normalizeDatabaseTimestamp(row.expires_at),
+    created_at: normalizeRequiredDatabaseTimestamp(row.created_at),
+    updated_at: normalizeRequiredDatabaseTimestamp(row.updated_at)
+  };
+}
+
+function normalizeDatabaseTimestamp(rawTimestamp: string | null): string | null {
+  if (typeof rawTimestamp !== 'string' || rawTimestamp.trim().length === 0) {
+    return null;
+  }
+
+  const parsedTimestamp = new Date(rawTimestamp);
+  //audit Assumption: repository responses must expose machine-verifiable ISO timestamps instead of database-local text formatting; failure risk: public API schema validation rejects otherwise successful reads; expected invariant: persisted timestamps round-trip as ISO-8601 strings; handling strategy: normalize parseable values and preserve the raw text only when parsing fails.
+  if (Number.isNaN(parsedTimestamp.getTime())) {
+    return rawTimestamp;
+  }
+
+  return parsedTimestamp.toISOString();
+}
+
+function normalizeRequiredDatabaseTimestamp(rawTimestamp: string): string {
+  const normalizedTimestamp = normalizeDatabaseTimestamp(rawTimestamp);
+  return normalizedTimestamp ?? rawTimestamp;
 }
 
 /**

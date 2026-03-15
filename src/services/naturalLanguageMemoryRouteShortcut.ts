@@ -49,6 +49,11 @@ export function renderNaturalLanguageMemoryRouteResult(memory: NaturalLanguageMe
     return inspectionText;
   }
 
+  const savedConfirmationText = renderSavedMemoryConfirmation(memory);
+  if (savedConfirmationText) {
+    return savedConfirmationText;
+  }
+
   const primaryText = extractPrimaryMemoryText(memory);
   if (primaryText) {
     return primaryText;
@@ -59,6 +64,19 @@ export function renderNaturalLanguageMemoryRouteResult(memory: NaturalLanguageMe
   }
 
   return memory.message;
+}
+
+function renderSavedMemoryConfirmation(memory: NaturalLanguageMemoryResponse): string | null {
+  if (memory.operation !== 'saved') {
+    return null;
+  }
+
+  const persistedKeyText = typeof memory.key === 'string' && memory.key.trim().length > 0
+    ? ` Key: ${memory.key}.`
+    : '';
+
+  //audit Assumption: `/ask` save shortcuts should confirm the write path rather than echoing the stored content; failure risk: callers misread the response as model paraphrase with no DB confirmation; expected invariant: save operations return stable confirmation text; handling strategy: synthesize a route-level receipt using the saved session and key.
+  return `Memory save confirmed for session ${memory.sessionId}.${persistedKeyText} ${memory.message} Use POST /api/save-conversation for strict persistence receipts.`;
 }
 
 function renderMemoryInspectionResult(memory: NaturalLanguageMemoryResponse): string | null {

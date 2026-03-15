@@ -117,16 +117,6 @@ export function classifyMemoryIdentifier(rawIdentifier: unknown): ClassifiedMemo
     };
   }
 
-  if (CANONICAL_MEMORY_KEY_PATTERN.test(trimmedIdentifier) && trimmedIdentifier.includes(':')) {
-    return {
-      kind: 'canonical_memory_key',
-      raw: trimmedIdentifier,
-      normalized: trimmedIdentifier,
-      error: null,
-      message: null
-    };
-  }
-
   for (const legacyPattern of LEGACY_MEMORY_KEY_PREFIX_PATTERNS) {
     //audit Assumption: older clients may serialize canonical keys with `/` separators; failure risk: legacy persisted identifiers become unreadable after canonicalization changes; expected invariant: legacy forms normalize into the current canonical `:`-separated key; handling strategy: detect known legacy prefixes and convert deterministically.
     if (legacyPattern.test(trimmedIdentifier)) {
@@ -138,6 +128,16 @@ export function classifyMemoryIdentifier(rawIdentifier: unknown): ClassifiedMemo
         message: null
       };
     }
+  }
+
+  if (CANONICAL_MEMORY_KEY_PATTERN.test(trimmedIdentifier) && trimmedIdentifier.includes(':')) {
+    return {
+      kind: 'canonical_memory_key',
+      raw: trimmedIdentifier,
+      normalized: trimmedIdentifier,
+      error: null,
+      message: null
+    };
   }
 
   return {
