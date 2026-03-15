@@ -31,7 +31,11 @@ export const ARCANOS_PROTOCOL_COMMAND_IDS = [
  * Edge cases: callers should treat commands outside this list as unsupported until a matching schema exists.
  */
 export const ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS = [
+  "artifact.store",
   "context.inspect",
+  "daemon.capabilities",
   "tool.registry",
-  "exec.start"
+  "exec.start",
+  "exec.status",
+  "state.snapshot"
 ] as const;

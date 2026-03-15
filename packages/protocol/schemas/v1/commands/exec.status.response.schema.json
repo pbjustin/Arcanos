@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/exec.status.response.schema.json",
+  "title": "exec.status response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "state"
+  ],
+  "properties": {
+    "state": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/execution-state.schema.json"
+    }
+  }
+}

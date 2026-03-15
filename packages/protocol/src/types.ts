@@ -171,6 +171,41 @@ export interface ExecStartResponseData {
   state: ExecutionStateDescriptor;
 }
 
+export interface ExecStatusRequestPayload {
+  executionId: string;
+}
+
+export interface ExecStatusResponseData {
+  state: ExecutionStateDescriptor;
+}
+
+export interface DaemonCapabilitiesResponseData {
+  protocolVersion: string;
+  runtimeVersion: string;
+  supportedCommands: ProtocolCommandId[];
+  supportedEnvironmentTypes: EnvironmentType[];
+  schemaRoot: string;
+  toolCount?: number;
+}
+
+export interface StateSnapshotRequestPayload {
+  executionId: string;
+}
+
+export interface StateSnapshotResponseData {
+  snapshotId: string;
+  state: ExecutionStateDescriptor;
+}
+
+export interface ArtifactStoreRequestPayload {
+  artifact: ArtifactDescriptor;
+}
+
+export interface ArtifactStoreResponseData {
+  artifact: ArtifactDescriptor;
+  stored: boolean;
+}
+
 export interface ValidationIssue {
   instancePath: string;
   message: string;

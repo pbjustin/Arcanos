@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/artifact.store.request.schema.json",
+  "title": "artifact.store request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact"
+  ],
+  "properties": {
+    "artifact": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/artifact.schema.json"
+    }
+  }
+}

@@ -5,12 +5,16 @@ import { ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS } from "./commands.js";
 import { ARCANOS_PROTOCOL_VERSION } from "./constants.js";
 import { getProtocolSchemaCatalog } from "./schemaCatalog.js";
 import type {
+  ArtifactStoreResponseData,
   ContextInspectResponseData,
+  DaemonCapabilitiesResponseData,
   ExecStartResponseData,
+  ExecStatusResponseData,
   ImplementedProtocolCommandId,
   ProtocolCommandId,
   ProtocolRequest,
   ProtocolResponse,
+  StateSnapshotResponseData,
   ToolRegistryResponseData,
   ValidationIssue,
   ValidationResult
@@ -22,23 +26,39 @@ const AjvConstructor = require("ajv/dist/2020").default as typeof import("ajv").
 const sharedSchemas: AnySchema[] = [
   schemaCatalog.envelope,
   ...Object.values(schemaCatalog.nouns),
+  schemaCatalog.commands.artifactStore.request,
+  schemaCatalog.commands.artifactStore.response,
   schemaCatalog.commands.contextInspect.request,
   schemaCatalog.commands.contextInspect.response,
+  schemaCatalog.commands.daemonCapabilities.request,
+  schemaCatalog.commands.daemonCapabilities.response,
   schemaCatalog.commands.execStart.request,
   schemaCatalog.commands.execStart.response,
+  schemaCatalog.commands.execStatus.request,
+  schemaCatalog.commands.execStatus.response,
+  schemaCatalog.commands.stateSnapshot.request,
+  schemaCatalog.commands.stateSnapshot.response,
   schemaCatalog.commands.toolRegistry.request,
   schemaCatalog.commands.toolRegistry.response
 ];
 
 const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
+  "artifact.store": schemaCatalog.commands.artifactStore.request,
   "context.inspect": schemaCatalog.commands.contextInspect.request,
+  "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.request,
   "exec.start": schemaCatalog.commands.execStart.request,
+  "exec.status": schemaCatalog.commands.execStatus.request,
+  "state.snapshot": schemaCatalog.commands.stateSnapshot.request,
   "tool.registry": schemaCatalog.commands.toolRegistry.request
 };
 
 const commandResponseSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
+  "artifact.store": schemaCatalog.commands.artifactStore.response,
   "context.inspect": schemaCatalog.commands.contextInspect.response,
+  "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.response,
   "exec.start": schemaCatalog.commands.execStart.response,
+  "exec.status": schemaCatalog.commands.execStatus.response,
+  "state.snapshot": schemaCatalog.commands.stateSnapshot.response,
   "tool.registry": schemaCatalog.commands.toolRegistry.response
 };
 
@@ -227,16 +247,34 @@ export function isImplementedProtocolCommandId(command: ProtocolCommandId): comm
 export function assertTypedImplementedResponse(
   command: ImplementedProtocolCommandId,
   response: ProtocolResponse<unknown>
-): ProtocolResponse<ContextInspectResponseData | ExecStartResponseData | ToolRegistryResponseData> {
+): ProtocolResponse<
+  | ArtifactStoreResponseData
+  | ContextInspectResponseData
+  | DaemonCapabilitiesResponseData
+  | ExecStartResponseData
+  | ExecStatusResponseData
+  | StateSnapshotResponseData
+  | ToolRegistryResponseData
+> {
   return assertValidProtocolResponse(command, response) as ProtocolResponse<
-    ContextInspectResponseData | ExecStartResponseData | ToolRegistryResponseData
+    | ArtifactStoreResponseData
+    | ContextInspectResponseData
+    | DaemonCapabilitiesResponseData
+    | ExecStartResponseData
+    | ExecStatusResponseData
+    | StateSnapshotResponseData
+    | ToolRegistryResponseData
   >;
 }
 
 function compileCommandValidators(commandSchemas: Record<ImplementedProtocolCommandId, AnySchema>): Record<ImplementedProtocolCommandId, ValidateFunction> {
   return {
+    "artifact.store": protocolAjv.compile(commandSchemas["artifact.store"]),
     "context.inspect": protocolAjv.compile(commandSchemas["context.inspect"]),
+    "daemon.capabilities": protocolAjv.compile(commandSchemas["daemon.capabilities"]),
     "exec.start": protocolAjv.compile(commandSchemas["exec.start"]),
+    "exec.status": protocolAjv.compile(commandSchemas["exec.status"]),
+    "state.snapshot": protocolAjv.compile(commandSchemas["state.snapshot"]),
     "tool.registry": protocolAjv.compile(commandSchemas["tool.registry"])
   };
 }
