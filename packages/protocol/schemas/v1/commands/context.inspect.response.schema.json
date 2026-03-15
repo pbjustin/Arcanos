@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/context.inspect.response.schema.json",
+  "title": "context.inspect response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "context",
+    "environment"
+  ],
+  "properties": {
+    "context": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/context.schema.json"
+    },
+    "project": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/project.schema.json"
+    },
+    "environment": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/environment.schema.json"
+    },
+    "availableEnvironments": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/environment.schema.json"
+      }
+    }
+  }
+}

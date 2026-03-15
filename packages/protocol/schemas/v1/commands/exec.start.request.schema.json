@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/exec.start.request.schema.json",
+  "title": "exec.start request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task"
+  ],
+  "properties": {
+    "task": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/task.schema.json"
+    },
+    "approval": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/approval.schema.json"
+    }
+  }
+}

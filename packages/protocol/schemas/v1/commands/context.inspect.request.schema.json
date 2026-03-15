@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/context.inspect.request.schema.json",
+  "title": "context.inspect request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "includeProject": {
+      "type": "boolean"
+    },
+    "includeAvailableEnvironments": {
+      "type": "boolean"
+    }
+  }
+}

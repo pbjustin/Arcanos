@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/nouns/execution-state.schema.json",
+  "title": "ExecutionState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "executionId",
+    "command",
+    "status",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "executionId": {
+      "type": "string"
+    },
+    "command": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed"
+      ]
+    },
+    "environment": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/environment.schema.json"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/artifact.schema.json"
+      }
+    },
+    "runResult": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/run-result.schema.json"
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "updatedAt": {
+      "type": "string"
+    }
+  }
+}
