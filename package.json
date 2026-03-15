@@ -68,7 +68,7 @@
     "boundary-check": "node scripts/check-boundaries.js",
     "check:boundaries": "node scripts/check-boundaries.js",
     "check:cef-layer-access": "node scripts/check-cef-layer-access.js",
-    "build:packages": "npm run build -w @arcanos/protocol && npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
+    "build:packages": "npm run build -w @arcanos/protocol && npm run build -w @arcanos/cli && npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
     "build:workers:only": "cd workers && npm run build:workers && cd ..",
     "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration",
     "mcp:stdio": "node dist/mcp/mcp-stdio.js",
