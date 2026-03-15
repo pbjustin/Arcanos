@@ -10,7 +10,7 @@ import {
   type ProtocolResponse
 } from "../../protocol/dist/src/index.js";
 
-import { createLocalProtocolDispatcher } from "./dispatcher.js";
+import { dispatchProtocolRequest, type ProtocolTransportName } from "./transport.js";
 
 interface ParsedCliArguments {
   command?: string;
@@ -23,6 +23,8 @@ interface ParsedCliArguments {
   shell?: string;
   authStrategy?: string;
   authToken?: string;
+  transport?: ProtocolTransportName;
+  pythonBinary?: string;
 }
 
 /**
@@ -35,12 +37,11 @@ export async function runCli(argv: string[], stdout: NodeJS.WritableStream, stde
   try {
     const parsedArguments = parseCliArguments(argv);
     const request = buildProtocolRequestFromCliArguments(parsedArguments);
-    const dispatcher = createLocalProtocolDispatcher({
-      now: () => new Date(),
-      cwd: () => process.cwd(),
-      platform: process.platform
-    });
-    const response = await dispatcher.dispatch(request);
+    const response = await dispatchProtocolRequest(
+      request,
+      parsedArguments.transport ?? "python",
+      { pythonBinary: parsedArguments.pythonBinary }
+    );
 
     stdout.write(`${serializeDeterministicJson(response)}\n`);
     return response.ok ? 0 : 1;
@@ -121,6 +122,15 @@ export function parseCliArguments(argv: string[]): ParsedCliArguments {
         break;
       case "--auth-token":
         parsedArguments.authToken = value;
+        break;
+      case "--transport":
+        if (value !== "local" && value !== "python") {
+          throw new Error('Flag "--transport" must be "local" or "python".');
+        }
+        parsedArguments.transport = value;
+        break;
+      case "--python-bin":
+        parsedArguments.pythonBinary = value;
         break;
       default:
         throw new Error(`Unknown flag "${currentArgument}".`);
