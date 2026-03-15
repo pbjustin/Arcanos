@@ -8,9 +8,30 @@ import { isDatabaseConnected } from "@core/db/client.js";
 import type { MemoryEntry } from "@core/db/schema.js";
 import { query } from "@core/db/query.js";
 import { createVersionedMemoryEnvelope, unwrapVersionedMemoryEnvelope } from "@services/safety/memoryEnvelope.js";
+import { buildLegacyMemoryRowRecordId } from "@services/memoryIdentifierSemantics.js";
 
 export interface SaveMemoryOptions {
   ttlSeconds?: number;
+}
+
+export interface DurableMemoryRecord {
+  dbRowId: number | null;
+  recordId: string | null;
+  memoryKey: string;
+  value: unknown;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string | null;
+}
+
+interface MemoryRepositoryRow {
+  id?: number | null;
+  key: string;
+  value: unknown;
+  created_at: string;
+  updated_at: string;
+  expires_at: string | null;
 }
 
 /**
@@ -30,7 +51,36 @@ function resolveTtlSeconds(ttlSeconds: number | undefined): number | null {
 }
 
 /**
- * Save or update memory entry
+ * Normalize a raw memory row into a stable durable-record shape.
+ * Inputs/outputs: database memory row -> unwrapped durable memory record.
+ * Edge cases: legacy rows without `db-memory-*` metadata fall back to a `legacy-memory-row:*` durable locator.
+ */
+function normalizeDurableMemoryRecord(row: MemoryRepositoryRow): DurableMemoryRecord {
+  const { payload, metadata } = unwrapVersionedMemoryEnvelope<unknown>(row.value);
+  const normalizedRowId = Number.isInteger(row.id) ? Number(row.id) : null;
+  const normalizedMetadata = metadata ? (metadata as unknown as Record<string, unknown>) : null;
+  const recordId = typeof normalizedMetadata?.versionId === 'string' && normalizedMetadata.versionId.length > 0
+    ? normalizedMetadata.versionId
+    : normalizedRowId !== null
+      ? buildLegacyMemoryRowRecordId(normalizedRowId)
+      : null;
+
+  return {
+    dbRowId: normalizedRowId,
+    recordId,
+    memoryKey: row.key,
+    value: payload,
+    metadata: normalizedMetadata,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    expiresAt: row.expires_at ?? null
+  };
+}
+
+/**
+ * Save or update a durable memory entry.
+ * Inputs/outputs: canonical key, arbitrary value, optional TTL -> persisted memory row.
+ * Edge cases: undefined TTL stores a non-expiring row; invalid TTL values throw before any query executes.
  */
 export async function saveMemory(key: string, value: unknown, options: SaveMemoryOptions = {}): Promise<MemoryEntry> {
   if (!isDatabaseConnected()) {
@@ -55,7 +105,9 @@ export async function saveMemory(key: string, value: unknown, options: SaveMemor
 }
 
 /**
- * Load memory entry by key
+ * Load a memory payload by canonical key.
+ * Inputs/outputs: canonical memory key -> unwrapped payload or null.
+ * Edge cases: expired or missing rows return null; legacy non-envelope rows are returned as-is.
  */
 export async function loadMemory(key: string): Promise<unknown | null> {
   if (!isDatabaseConnected()) {
@@ -79,7 +131,93 @@ export async function loadMemory(key: string): Promise<unknown | null> {
 }
 
 /**
- * Delete memory entry by key
+ * Load one durable memory record by canonical key.
+ * Inputs/outputs: canonical memory key -> normalized durable record or null.
+ * Edge cases: expired rows are treated as missing to keep exact retrieval deterministic.
+ */
+export async function getMemoryRecordByKey(key: string): Promise<DurableMemoryRecord | null> {
+  if (!isDatabaseConnected()) {
+    throw new Error('Database not configured');
+  }
+
+  const result = await query(
+    `SELECT id, key, value, created_at, updated_at, expires_at
+     FROM memory
+     WHERE key = $1
+       AND (expires_at IS NULL OR expires_at > NOW())`,
+    [key],
+    1,
+    false
+  );
+
+  //audit Assumption: exact key retrieval must not invent fallbacks when the row is absent; failure risk: callers silently read unrelated memory; expected invariant: missing exact key returns null; handling strategy: short-circuit on zero rows.
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return normalizeDurableMemoryRecord(result.rows[0] as MemoryRepositoryRow);
+}
+
+/**
+ * Load one durable memory record by persisted `db-memory-*` version identifier.
+ * Inputs/outputs: durable record id -> normalized durable record or null.
+ * Edge cases: legacy rows without envelope metadata are not matched by this lookup and should use legacy row-id resolution instead.
+ */
+export async function getMemoryRecordByRecordId(recordId: string): Promise<DurableMemoryRecord | null> {
+  if (!isDatabaseConnected()) {
+    throw new Error('Database not configured');
+  }
+
+  const result = await query(
+    `SELECT id, key, value, created_at, updated_at, expires_at
+     FROM memory
+     WHERE value->'metadata'->>'versionId' = $1
+       AND (expires_at IS NULL OR expires_at > NOW())`,
+    [recordId],
+    1,
+    false
+  );
+
+  //audit Assumption: durable record-id retrieval should remain exact even when the version id is stale or missing; failure risk: implicit fallback masks missing records; expected invariant: unmatched durable ids return null; handling strategy: short-circuit on zero rows.
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return normalizeDurableMemoryRecord(result.rows[0] as MemoryRepositoryRow);
+}
+
+/**
+ * Load one durable memory record by legacy numeric row id.
+ * Inputs/outputs: positive row id -> normalized durable record or null.
+ * Edge cases: used only for backward compatibility with pre-versioned record locators.
+ */
+export async function getMemoryRecordByLegacyRowId(rowId: number): Promise<DurableMemoryRecord | null> {
+  if (!isDatabaseConnected()) {
+    throw new Error('Database not configured');
+  }
+
+  const result = await query(
+    `SELECT id, key, value, created_at, updated_at, expires_at
+     FROM memory
+     WHERE id = $1
+       AND (expires_at IS NULL OR expires_at > NOW())`,
+    [rowId],
+    1,
+    false
+  );
+
+  //audit Assumption: legacy numeric ids are compatibility-only exact locators; failure risk: absent numeric rows degrade into unrelated matches; expected invariant: missing legacy ids return null; handling strategy: return null without fallback.
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return normalizeDurableMemoryRecord(result.rows[0] as MemoryRepositoryRow);
+}
+
+/**
+ * Delete a memory entry by canonical key.
+ * Inputs/outputs: canonical memory key -> true when a row was deleted.
+ * Edge cases: missing rows return false without throwing.
  */
 export async function deleteMemory(key: string): Promise<boolean> {
   if (!isDatabaseConnected()) {

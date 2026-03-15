@@ -48,7 +48,11 @@ export {
 export {
   saveMemory,
   loadMemory,
-  deleteMemory
+  deleteMemory,
+  getMemoryRecordByKey,
+  getMemoryRecordByRecordId,
+  getMemoryRecordByLegacyRowId,
+  type DurableMemoryRecord
 } from './repositories/memoryRepository.js';
 
 export {

@@ -1,6 +1,20 @@
-import { loadMemory, query, saveMemory } from "@core/db/index.js";
+import {
+  getMemoryRecordByKey,
+  getMemoryRecordByLegacyRowId,
+  getMemoryRecordByRecordId,
+  loadMemory,
+  query,
+  saveMemory,
+  type DurableMemoryRecord
+} from "@core/db/index.js";
 import { unwrapVersionedMemoryEnvelope } from "@services/safety/memoryEnvelope.js";
 import { logger } from "@platform/logging/structuredLogging.js";
+import {
+  classifyMemoryIdentifier,
+  createMemoryLookupFailure,
+  createTransientMemoryResponseId,
+  type MemoryIdentifierErrorCode
+} from "@services/memoryIdentifierSemantics.js";
 import {
   queryRagDocuments,
   recordPersistentMemorySnippet,
@@ -39,10 +53,14 @@ export interface NaturalLanguageMemoryRequest {
   input: string;
   sessionId?: string | null;
   limit?: number;
+  fallback?: boolean;
+  mode?: 'exact' | 'search';
 }
 
 export interface NaturalLanguageMemoryEntry {
   recordId?: number | null;
+  record_id?: string | null;
+  memory_key?: string;
   key: string;
   value: unknown;
   metadata: Record<string, unknown> | null;
@@ -51,10 +69,21 @@ export interface NaturalLanguageMemoryEntry {
 }
 
 export interface NaturalLanguageMemoryResponse {
+  success: boolean;
   intent: NaturalLanguageMemoryIntent;
   operation: 'saved' | 'retrieved' | 'searched' | 'listed' | 'inspected' | 'ignored';
   sessionId: string;
   message: string;
+  error?: MemoryIdentifierErrorCode;
+  record_id?: string | null;
+  memory_key?: string;
+  response_id?: string;
+  id_type?: {
+    record_id: 'durable';
+    memory_key: 'durable';
+    response_id: 'transient';
+  };
+  fallback_used?: boolean;
   key?: string;
   value?: unknown;
   entries?: NaturalLanguageMemoryEntry[];
@@ -404,6 +433,105 @@ export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
 }
 
 /**
+ * Convert a durable memory record into the normalized response entry shape used by lookup/list APIs.
+ * Inputs/outputs: durable memory record -> natural-language memory entry.
+ * Edge cases: legacy rows without a durable `db-memory-*` id expose `legacy-memory-row:*` record ids.
+ */
+function toNaturalLanguageMemoryEntry(record: DurableMemoryRecord): NaturalLanguageMemoryEntry {
+  return {
+    recordId: record.dbRowId,
+    record_id: record.recordId,
+    memory_key: record.memoryKey,
+    key: record.memoryKey,
+    value: record.value,
+    metadata: record.metadata,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt
+  };
+}
+
+/**
+ * Build the stable identifier-type contract returned by save responses.
+ * Inputs/outputs: no inputs -> static identifier contract object.
+ * Edge cases: identifier semantics are fixed and do not vary per record.
+ */
+function buildMemoryIdTypeContract(): {
+  record_id: 'durable';
+  memory_key: 'durable';
+  response_id: 'transient';
+} {
+  return {
+    record_id: 'durable',
+    memory_key: 'durable',
+    response_id: 'transient'
+  };
+}
+
+/**
+ * Build a structured exact-retrieval failure response.
+ * Inputs/outputs: intent/session/error/message -> normalized failure payload.
+ * Edge cases: keeps exact retrieval failures observable without throwing into route-level 500 handlers.
+ */
+function buildExactRetrievalFailure(params: {
+  sessionId: string;
+  message: string;
+  error: MemoryIdentifierErrorCode;
+  memoryKey?: string;
+  recordId?: string | null;
+}): NaturalLanguageMemoryResponse {
+  const failure = createMemoryLookupFailure(params.error, params.message);
+  return {
+    ...failure,
+    intent: 'retrieve',
+    operation: 'retrieved',
+    sessionId: params.sessionId,
+    message: failure.message,
+    error: failure.error,
+    record_id: params.recordId ?? null,
+    memory_key: params.memoryKey,
+    key: params.memoryKey,
+    rag: disabledRagResult(params.error)
+  };
+}
+
+/**
+ * Resolve a classified exact identifier into a durable memory record.
+ * Inputs/outputs: identifier classification -> durable record or null.
+ * Edge cases: legacy row ids are supported for backward compatibility and log as conversions.
+ */
+async function resolveExactMemoryRecord(
+  classifiedIdentifier: ReturnType<typeof classifyMemoryIdentifier>
+): Promise<DurableMemoryRecord | null> {
+  if (classifiedIdentifier.kind === 'durable_record_id' && classifiedIdentifier.normalized) {
+    return getMemoryRecordByRecordId(classifiedIdentifier.normalized);
+  }
+
+  if (classifiedIdentifier.kind === 'canonical_memory_key' && classifiedIdentifier.normalized) {
+    return getMemoryRecordByKey(classifiedIdentifier.normalized);
+  }
+
+  if (classifiedIdentifier.kind === 'legacy_row_id' && classifiedIdentifier.normalized) {
+    memoryLogger.info('Converted legacy numeric memory lookup to compatibility row-id retrieval', {
+      operation: 'resolveExactMemoryRecord',
+      rawIdentifier: classifiedIdentifier.raw,
+      normalizedRowId: classifiedIdentifier.normalized
+    });
+    return getMemoryRecordByLegacyRowId(Number.parseInt(classifiedIdentifier.normalized, 10));
+  }
+
+  if (classifiedIdentifier.kind === 'legacy_memory_key' && classifiedIdentifier.normalized) {
+    memoryLogger.info('Converted legacy memory key into canonical memory key', {
+      operation: 'resolveExactMemoryRecord',
+      rawIdentifier: classifiedIdentifier.raw,
+      canonicalMemoryKey: classifiedIdentifier.normalized
+    });
+    return getMemoryRecordByKey(classifiedIdentifier.normalized);
+  }
+
+  return null;
+}
+
+/**
  * Execute a natural-language memory command against persisted DB memory.
  * Inputs/outputs: command request -> structured operation response.
  * Edge cases: unknown commands are ignored safely without side effects.
@@ -412,6 +540,7 @@ export async function executeNaturalLanguageMemoryCommand(
   request: NaturalLanguageMemoryRequest
 ): Promise<NaturalLanguageMemoryResponse> {
   const requestIncludesExplicitSessionTarget = hasExplicitSessionTarget(request);
+  const fallbackRequested = request.fallback === true && request.mode === 'search';
   const sessionId = await resolveRequestedSessionId(request);
   const parsedCommand = parseNaturalLanguageMemoryCommand(request.input);
   const lookupLimit = resolveLookupLimit(request.limit);
@@ -419,6 +548,7 @@ export async function executeNaturalLanguageMemoryCommand(
   //audit Assumption: unknown commands should return guidance instead of failing; failure risk: poor UX and retries; expected invariant: deterministic no-op response; handling strategy: explicit ignored operation payload.
   if (parsedCommand.intent === 'unknown') {
     return {
+      success: false,
       intent: 'unknown',
       operation: 'ignored',
       sessionId,
@@ -438,10 +568,21 @@ export async function executeNaturalLanguageMemoryCommand(
       text: content,
       savedAt: new Date().toISOString()
     };
+    const responseId = createTransientMemoryResponseId();
+    let savedRecord = reusableSave ? await getMemoryRecordByKey(key) : null;
 
     //audit Assumption: retrying the exact same session save should not create duplicate nl-memory rows; failure risk: repeated writes bloat the table and distort recall inspection output; expected invariant: latest identical session payload reuses the existing key; handling strategy: reuse the latest matching row when the normalized content is unchanged.
     if (!reusableSave) {
       await saveMemory(key, savedPayload);
+      savedRecord = await getMemoryRecordByKey(key);
+    }
+
+    if (!savedRecord) {
+      memoryLogger.warn('Natural-language memory save completed without a retrievable durable record', {
+        operation: 'executeNaturalLanguageMemoryCommand',
+        sessionId,
+        key
+      });
     }
 
     await updateSessionIndexes(sessionId, key);
@@ -504,9 +645,14 @@ export async function executeNaturalLanguageMemoryCommand(
     };
 
     return {
+      success: true,
       intent: 'save',
       operation: 'saved',
       sessionId,
+      record_id: savedRecord?.recordId ?? null,
+      memory_key: key,
+      response_id: responseId,
+      id_type: buildMemoryIdTypeContract(),
       key,
       value: savedPayload,
       message: ragIngested
@@ -523,118 +669,167 @@ export async function executeNaturalLanguageMemoryCommand(
 
       //audit Assumption: latest pointer may not exist for new sessions; failure risk: null dereference; expected invariant: safe empty response for first-use sessions; handling strategy: early return with guidance.
       if (!latestKey) {
-        //audit Assumption: explicit session-targeted recall must not drift into semantically similar sessions; failure risk: exact recall for `raw_x` returns `raw_x_probe` or unrelated scaffold content; expected invariant: explicit session misses return a deterministic empty result; handling strategy: skip RAG fallback when the caller named the session explicitly.
-        if (requestIncludesExplicitSessionTarget) {
-          return {
-            intent: 'retrieve',
-            operation: 'retrieved',
+        if (fallbackRequested) {
+          memoryLogger.info('Natural-language latest retrieval used explicit fallback search', {
+            operation: 'executeNaturalLanguageMemoryCommand',
             sessionId,
-            message: 'No saved memory found yet for this session.',
-            rag: disabledRagResult('exact_session_not_found')
-          };
+            searchScope: requestIncludesExplicitSessionTarget ? 'explicit-session' : 'implicit-session',
+            queryText: request.input
+          });
+          const ragFallback = await resolveRagFallbackEntries({
+            queryText: request.input,
+            sessionId,
+            limit: lookupLimit,
+            allowSessionFallback: !requestIncludesExplicitSessionTarget
+          });
+
+          if (ragFallback.entries.length > 0) {
+            const firstEntry = ragFallback.entries[0];
+            return {
+              success: true,
+              intent: 'retrieve',
+              operation: 'retrieved',
+              sessionId,
+              record_id: firstEntry.record_id ?? null,
+              memory_key: firstEntry.memory_key ?? firstEntry.key,
+              key: firstEntry.key,
+              value: firstEntry.value,
+              entries: ragFallback.entries,
+              message: 'No latest pointer found. Returned the closest semantic memory match because fallback=true.',
+              rag: ragFallback.rag,
+              fallback_used: true
+            };
+          }
+
+          return buildExactRetrievalFailure({
+            sessionId,
+            error: 'RecordNotFound',
+            message: 'No saved memory found yet for this session.'
+          });
         }
 
-        const ragFallback = await resolveRagFallbackEntries({
-          queryText: request.input,
+        memoryLogger.warn('Natural-language latest retrieval missed without fallback', {
+          operation: 'executeNaturalLanguageMemoryCommand',
           sessionId,
-          limit: lookupLimit
+          explicitSessionTarget: requestIncludesExplicitSessionTarget
         });
-
-        //audit Assumption: semantic fallback should assist when pointer metadata is missing; failure risk: false "no memory" for recoverable sessions; expected invariant: exact retrieval remains primary with semantic best-effort fallback; handling strategy: attach first semantic hit when available.
-        if (ragFallback.entries.length > 0) {
-          const firstEntry = ragFallback.entries[0];
-          return {
-            intent: 'retrieve',
-            operation: 'retrieved',
-            sessionId,
-            key: firstEntry.key,
-            value: firstEntry.value,
-            entries: ragFallback.entries,
-            message: 'No latest pointer found. Returning the closest semantic memory match.',
-            rag: ragFallback.rag
-          };
-        }
-
-        return {
-          intent: 'retrieve',
-          operation: 'retrieved',
+        return buildExactRetrievalFailure({
           sessionId,
-          message: 'No saved memory found yet for this session.',
-          rag: ragFallback.rag
-        };
+          error: 'RecordNotFound',
+          message: 'No saved memory found yet for this session.'
+        });
       }
 
-      const latestValue = await loadMemory(latestKey);
-      if (latestValue === null) {
-        //audit Assumption: explicit session-targeted recall must surface broken pointers instead of rerouting across sessions; failure risk: missing pointer rows resolve to unrelated semantic neighbors; expected invariant: pointer corruption remains visible to operators; handling strategy: return the exact-pointer-missing message without semantic fallback.
-        if (requestIncludesExplicitSessionTarget) {
-          return {
-            intent: 'retrieve',
-            operation: 'retrieved',
+      const latestRecord = await getMemoryRecordByKey(latestKey);
+      if (!latestRecord) {
+        if (fallbackRequested) {
+          memoryLogger.info('Natural-language exact retrieval used explicit fallback after missing latest row', {
+            operation: 'executeNaturalLanguageMemoryCommand',
             sessionId,
-            key: latestKey,
-            value: null,
-            message: 'Latest pointer exists, but the referenced memory row is missing.',
-            rag: disabledRagResult('exact_pointer_missing')
-          };
+            memoryKey: latestKey,
+            searchScope: requestIncludesExplicitSessionTarget ? 'explicit-session' : 'implicit-session'
+          });
+          const ragFallback = await resolveRagFallbackEntries({
+            queryText: request.input,
+            sessionId,
+            limit: lookupLimit,
+            allowSessionFallback: !requestIncludesExplicitSessionTarget
+          });
+
+          if (ragFallback.entries.length > 0) {
+            const firstEntry = ragFallback.entries[0];
+            return {
+              success: true,
+              intent: 'retrieve',
+              operation: 'retrieved',
+              sessionId,
+              record_id: firstEntry.record_id ?? null,
+              memory_key: firstEntry.memory_key ?? firstEntry.key,
+              key: firstEntry.key,
+              value: firstEntry.value,
+              entries: ragFallback.entries,
+              message: 'Latest pointer row is missing. Returned closest semantic memory match because fallback=true.',
+              rag: ragFallback.rag,
+              fallback_used: true
+            };
+          }
         }
 
-        const ragFallback = await resolveRagFallbackEntries({
-          queryText: request.input,
+        memoryLogger.warn('Natural-language latest pointer referenced a missing durable row', {
+          operation: 'executeNaturalLanguageMemoryCommand',
           sessionId,
-          limit: lookupLimit
+          memoryKey: latestKey
         });
-
-        if (ragFallback.entries.length > 0) {
-          const firstEntry = ragFallback.entries[0];
-          return {
-            intent: 'retrieve',
-            operation: 'retrieved',
-            sessionId,
-            key: firstEntry.key,
-            value: firstEntry.value,
-            entries: ragFallback.entries,
-            message: 'Latest pointer row is missing. Returning closest semantic memory match.',
-            rag: ragFallback.rag
-          };
-        }
+        return buildExactRetrievalFailure({
+          sessionId,
+          error: 'RecordNotFound',
+          message: 'Latest pointer exists, but the referenced memory row is missing.',
+          memoryKey: latestKey
+        });
       }
 
       return {
+        success: true,
         intent: 'retrieve',
         operation: 'retrieved',
         sessionId,
-        key: latestKey,
-        value: latestValue,
-        message: latestValue === null
-          ? 'Latest pointer exists, but the referenced memory row is missing.'
-          : 'Loaded latest saved memory.',
+        record_id: latestRecord.recordId,
+        memory_key: latestRecord.memoryKey,
+        key: latestRecord.memoryKey,
+        value: latestRecord.value,
+        message: 'Loaded latest saved memory.',
         rag: disabledRagResult('exact_hit')
       };
     }
 
-    const key = parsedCommand.key as string;
-    const value = await loadMemory(key);
-    if (value === null) {
-      //audit Assumption: exact key retrieval should remain exact even on misses; failure risk: callers inspecting a missing key receive semantically similar but incorrect payloads; expected invariant: key misses are reported directly; handling strategy: skip semantic fallback for exact-key retrieval commands.
-      return {
-        intent: 'retrieve',
-        operation: 'retrieved',
+    const rawIdentifier = parsedCommand.key as string;
+    const classifiedIdentifier = classifyMemoryIdentifier(rawIdentifier);
+
+    if (classifiedIdentifier.error && classifiedIdentifier.message) {
+      memoryLogger.warn('Natural-language exact retrieval rejected invalid identifier', {
+        operation: 'executeNaturalLanguageMemoryCommand',
         sessionId,
-        key,
-        value: null,
-        message: 'No memory found for that key.',
-        rag: disabledRagResult('exact_key_not_found')
-      };
+        rawIdentifier,
+        identifierKind: classifiedIdentifier.kind
+      });
+      return buildExactRetrievalFailure({
+        sessionId,
+        error: classifiedIdentifier.error,
+        message: classifiedIdentifier.message
+      });
+    }
+
+    const resolvedRecord = await resolveExactMemoryRecord(classifiedIdentifier);
+    if (!resolvedRecord) {
+      memoryLogger.warn('Natural-language exact retrieval missed durable record', {
+        operation: 'executeNaturalLanguageMemoryCommand',
+        sessionId,
+        rawIdentifier,
+        identifierKind: classifiedIdentifier.kind
+      });
+      return buildExactRetrievalFailure({
+        sessionId,
+        error: 'RecordNotFound',
+        message: 'No memory found for that identifier.',
+        memoryKey: classifiedIdentifier.kind === 'canonical_memory_key' || classifiedIdentifier.kind === 'legacy_memory_key'
+          ? classifiedIdentifier.normalized ?? undefined
+          : undefined,
+        recordId: classifiedIdentifier.kind === 'durable_record_id' || classifiedIdentifier.kind === 'legacy_row_id'
+          ? classifiedIdentifier.raw
+          : undefined
+      });
     }
 
     return {
+      success: true,
       intent: 'retrieve',
       operation: 'retrieved',
       sessionId,
-      key,
-      value,
-      message: 'Loaded memory by key.',
+      record_id: resolvedRecord.recordId,
+      memory_key: resolvedRecord.memoryKey,
+      key: resolvedRecord.memoryKey,
+      value: resolvedRecord.value,
+      message: 'Loaded memory by identifier.',
       rag: disabledRagResult('exact_hit')
     };
   }
@@ -642,6 +837,7 @@ export async function executeNaturalLanguageMemoryCommand(
   if (parsedCommand.intent === 'list') {
     const rows = await querySessionEntries(sessionId, lookupLimit);
     return {
+      success: true,
       intent: 'list',
       operation: 'listed',
       sessionId,
@@ -663,6 +859,7 @@ export async function executeNaturalLanguageMemoryCommand(
       : `No exact memory rows were found for session ${sessionId}.`;
 
     return {
+      success: true,
       intent: 'inspect',
       operation: 'inspected',
       sessionId,
@@ -684,6 +881,7 @@ export async function executeNaturalLanguageMemoryCommand(
     const selectorDescription = describeExactNaturalLanguageMemorySelector(parsedCommand.exactSelectors);
 
     return {
+      success: true,
       intent: 'lookup',
       operation: 'searched',
       sessionId,
@@ -698,6 +896,7 @@ export async function executeNaturalLanguageMemoryCommand(
   const queryText = normalizeLookupQueryText(parsedCommand.queryText as string);
   if (!queryText) {
     return {
+      success: false,
       intent: 'lookup',
       operation: 'searched',
       sessionId,
@@ -722,6 +921,7 @@ export async function executeNaturalLanguageMemoryCommand(
   const usedSemanticFallback = exactRows.length === 0 && ragFallback.entries.length > 0;
 
   return {
+    success: true,
     intent: 'lookup',
     operation: 'searched',
     sessionId,
@@ -729,7 +929,8 @@ export async function executeNaturalLanguageMemoryCommand(
     message: usedSemanticFallback
       ? `No exact DB matches. Returned ${ragFallback.entries.length} semantic entr${ragFallback.entries.length === 1 ? 'y' : 'ies'} for "${queryText}".`
       : `Found ${mergedRows.length} matching entr${mergedRows.length === 1 ? 'y' : 'ies'} for "${queryText}".`,
-    rag: ragFallback.rag
+    rag: ragFallback.rag,
+    fallback_used: usedSemanticFallback
   };
 }
 
@@ -998,7 +1199,7 @@ export function extractNaturalLanguageMemoryPointerKey(pointerPayload: unknown):
 async function querySessionEntries(sessionId: string, limit: number): Promise<NaturalLanguageMemoryEntry[]> {
   const sessionPrefixPattern = `${buildSessionKeyPrefix(sessionId)}%`;
   const result = await query(
-    `SELECT key, value, created_at, updated_at
+    `SELECT id, key, value, created_at, updated_at
      FROM memory
      WHERE key ILIKE $1
      ORDER BY updated_at DESC
@@ -1051,7 +1252,7 @@ async function searchSessionEntries(
   const sessionPrefixPattern = `${buildSessionKeyPrefix(sessionId)}%`;
   const wildcardQuery = `%${escapeSqlLikePattern(queryText)}%`;
   const result = await query(
-    `SELECT key, value, created_at, updated_at
+    `SELECT id, key, value, created_at, updated_at
      FROM memory
      WHERE key ILIKE $1
        AND (key ILIKE $2 ESCAPE '\\' OR value::text ILIKE $2 ESCAPE '\\')
@@ -1093,8 +1294,16 @@ function normalizeLookupQueryText(rawQuery: string): string {
 function normalizeMemoryTableRows(rows: MemoryTableRow[]): NaturalLanguageMemoryEntry[] {
   return rows.map((row) => {
     const { payload, metadata } = unwrapVersionedMemoryEnvelope<unknown>(row.value);
+    const recordId = normalizeExactMemoryRecordId(row.id);
+    const durableRecordId = typeof metadata?.versionId === 'string' && metadata.versionId.length > 0
+      ? metadata.versionId
+      : recordId !== null
+        ? `legacy-memory-row:${recordId}`
+        : null;
     return {
-      recordId: normalizeExactMemoryRecordId(row.id),
+      recordId,
+      record_id: durableRecordId,
+      memory_key: row.key,
       key: row.key,
       value: payload,
       metadata: metadata ? (metadata as unknown as Record<string, unknown>) : null,
@@ -1107,7 +1316,14 @@ function normalizeMemoryTableRows(rows: MemoryTableRow[]): NaturalLanguageMemory
 function normalizeStoredConversationSessionsToEntries(
   sessions: StoredNaturalLanguageConversationSession[]
 ): NaturalLanguageMemoryEntry[] {
-  return sessions.map((session) => ({
+  return sessions.map((session) => {
+    const payloadRecord = session.payload && typeof session.payload === 'object'
+      ? session.payload as Record<string, unknown>
+      : null;
+
+    return ({
+      record_id: null,
+      memory_key: typeof payloadRecord?.memoryKey === 'string' ? payloadRecord.memoryKey : undefined,
     key: `session-record:${session.id}`,
     value: session.payload,
     metadata: {
@@ -1119,7 +1335,8 @@ function normalizeStoredConversationSessionsToEntries(
     },
     created_at: session.createdAt,
     updated_at: session.updatedAt
-  }));
+    });
+  });
 }
 
 function normalizeExactMemoryRecordId(rawRecordId: unknown): number | null {
@@ -1165,10 +1382,13 @@ function normalizeRagMatchesToEntries(matches: RagQueryMatch[]): NaturalLanguage
     const metadata = match.metadata ?? {};
     const metadataRecord = metadata as Record<string, unknown>;
     const explicitKey = typeof metadataRecord.memoryKey === 'string' ? metadataRecord.memoryKey.trim() : '';
+    const explicitRecordId = typeof metadataRecord.versionId === 'string' ? metadataRecord.versionId.trim() : '';
     const key = explicitKey || `rag:${match.id}`;
     const timestamp = extractTimestampFromMetadata(metadataRecord);
 
     return {
+      record_id: explicitRecordId || null,
+      memory_key: key,
       key,
       value: {
         text: match.content,

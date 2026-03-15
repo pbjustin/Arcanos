@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockLoadMemory = jest.fn();
 const mockQuery = jest.fn();
 const mockSaveMemory = jest.fn();
+const mockGetMemoryRecordByKey = jest.fn();
+const mockGetMemoryRecordByRecordId = jest.fn();
+const mockGetMemoryRecordByLegacyRowId = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
 const mockPersistNaturalLanguageConversationSession = jest.fn();
@@ -12,6 +15,9 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
   query: mockQuery,
   saveMemory: mockSaveMemory,
+  getMemoryRecordByKey: mockGetMemoryRecordByKey,
+  getMemoryRecordByRecordId: mockGetMemoryRecordByRecordId,
+  getMemoryRecordByLegacyRowId: mockGetMemoryRecordByLegacyRowId,
 }));
 
 jest.unstable_mockModule('@services/webRag.js', () => ({
@@ -46,6 +52,9 @@ Main Event: Gunther def. AJ Styles clean`;
     mockLoadMemory.mockResolvedValue(null);
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
     mockSaveMemory.mockResolvedValue(undefined);
+    mockGetMemoryRecordByKey.mockResolvedValue(null);
+    mockGetMemoryRecordByRecordId.mockResolvedValue(null);
+    mockGetMemoryRecordByLegacyRowId.mockResolvedValue(null);
     mockQueryRagDocuments.mockResolvedValue({
       matches: [],
       diagnostics: {
@@ -191,11 +200,20 @@ This recap mentions lookup text but should still save.`;
   it('uses the inline session id when loading the latest saved memory', async () => {
     mockLoadMemory
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308070000' })
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_2026:entry-20260308070000' });
+    mockGetMemoryRecordByKey.mockResolvedValueOnce({
+      dbRowId: 101,
+      recordId: 'db-memory-1773542617003-4-vancouverlatest',
+      memoryKey: 'nl-memory:raw_vancouver_2026:entry-20260308070000',
+      value: {
         sessionId: 'raw_vancouver_2026',
         text: 'Persisted summary for Vancouver Raw'
-      });
+      },
+      metadata: null,
+      createdAt: '2026-03-08T07:00:00.000Z',
+      updatedAt: '2026-03-08T07:00:00.000Z',
+      expiresAt: null
+    });
 
     const result = await executeNaturalLanguageMemoryCommand({
       input: 'Recall: raw_vancouver_2026'
@@ -205,8 +223,10 @@ This recap mentions lookup text but should still save.`;
       expect.objectContaining({
         intent: 'retrieve',
         operation: 'retrieved',
+        success: true,
         sessionId: 'raw_vancouver_2026',
         key: 'nl-memory:raw_vancouver_2026:entry-20260308070000',
+        record_id: 'db-memory-1773542617003-4-vancouverlatest',
         value: expect.objectContaining({
           text: 'Persisted summary for Vancouver Raw'
         })
@@ -214,7 +234,7 @@ This recap mentions lookup text but should still save.`;
     );
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:raw_vancouver_2026');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_vancouver_2026');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_vancouver_2026:entry-20260308070000');
+    expect(mockGetMemoryRecordByKey).toHaveBeenCalledWith('nl-memory:raw_vancouver_2026:entry-20260308070000');
   });
 
   it('resolves storage label aliases back to the canonical session id for recall', async () => {
@@ -223,11 +243,20 @@ This recap mentions lookup text but should still save.`;
         sessionId: 'raw_20260308_van',
         storageLabel: 'RAW_Vancouver_Session'
       })
-      .mockResolvedValueOnce({ key: 'nl-memory:raw_20260308_van:entry-20260308120000' })
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce({ key: 'nl-memory:raw_20260308_van:entry-20260308120000' });
+    mockGetMemoryRecordByKey.mockResolvedValueOnce({
+      dbRowId: 102,
+      recordId: 'db-memory-1773542617004-5-vancouveralias',
+      memoryKey: 'nl-memory:raw_20260308_van:entry-20260308120000',
+      value: {
         sessionId: 'raw_20260308_van',
         text: 'Canonical Vancouver session recap'
-      });
+      },
+      metadata: null,
+      createdAt: '2026-03-08T12:00:00.000Z',
+      updatedAt: '2026-03-08T12:00:00.000Z',
+      expiresAt: null
+    });
 
     const result = await executeNaturalLanguageMemoryCommand({
       input: 'Recall: RAW_Vancouver_Session'
@@ -238,7 +267,9 @@ This recap mentions lookup text but should still save.`;
         intent: 'retrieve',
         operation: 'retrieved',
         sessionId: 'raw_20260308_van',
+        success: true,
         key: 'nl-memory:raw_20260308_van:entry-20260308120000',
+        record_id: 'db-memory-1773542617004-5-vancouveralias',
         value: expect.objectContaining({
           text: 'Canonical Vancouver session recap'
         })
@@ -246,7 +277,7 @@ This recap mentions lookup text but should still save.`;
     );
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:raw_vancouver_session');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:raw_20260308_van');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:raw_20260308_van:entry-20260308120000');
+    expect(mockGetMemoryRecordByKey).toHaveBeenCalledWith('nl-memory:raw_20260308_van:entry-20260308120000');
   });
 
   it('treats explicit session-label misses as exact misses without semantic fallback', async () => {
@@ -262,12 +293,10 @@ This recap mentions lookup text but should still save.`;
       expect.objectContaining({
         intent: 'retrieve',
         operation: 'retrieved',
+        success: false,
+        error: 'RecordNotFound',
         sessionId: 'arcanos-backend-diagnostics-session',
-        message: 'No saved memory found yet for this session.',
-        rag: expect.objectContaining({
-          active: false,
-          reason: 'exact_session_not_found'
-        })
+        message: 'No saved memory found yet for this session.'
       })
     );
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:arcanos-backend-diagnostics-session');
@@ -311,18 +340,30 @@ This recap mentions lookup text but should still save.`;
       expect.objectContaining({
         intent: 'retrieve',
         operation: 'retrieved',
+        success: false,
+        error: 'RecordNotFound',
         sessionId: 'raw_vancouver_2026',
-        message: 'No saved memory found yet for this session.',
-        rag: expect.objectContaining({
-          active: false,
-          reason: 'exact_session_not_found'
-        })
+        message: 'No saved memory found yet for this session.'
       })
     );
     expect(mockQueryRagDocuments).not.toHaveBeenCalled();
   });
 
   it('saves structured session payloads under the inline session id', async () => {
+    mockGetMemoryRecordByKey.mockImplementationOnce(async (memoryKey: string) => ({
+      dbRowId: 103,
+      recordId: 'db-memory-1773542617005-6-structuredsave',
+      memoryKey,
+      value: {
+        sessionId: 'raw_20260308_van',
+        text: structuredSessionSavePrompt
+      },
+      metadata: null,
+      createdAt: '2026-03-08T15:00:00.000Z',
+      updatedAt: '2026-03-08T15:00:00.000Z',
+      expiresAt: null
+    }));
+
     const result = await executeNaturalLanguageMemoryCommand({
       input: structuredSessionSavePrompt
     });
@@ -331,6 +372,7 @@ This recap mentions lookup text but should still save.`;
       expect.objectContaining({
         intent: 'save',
         operation: 'saved',
+        success: true,
         sessionId: 'raw_20260308_van',
         value: expect.objectContaining({
           sessionId: 'raw_20260308_van',
@@ -410,17 +452,45 @@ Session ID: RAW_VANCOUVER_RETRY_2026
 
 Main Event: Gunther def. AJ Styles clean`;
 
-    mockLoadMemory
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ key: 'nl-memory:raw_vancouver_retry_2026:entry-20260308193000' })
-      .mockResolvedValueOnce({
+    mockLoadMemory.mockImplementation(async (key: string) => {
+      if (key === 'nl-session-label:raw_vancouver_retry_2026') {
+        return null;
+      }
+
+      if (key === 'nl-latest:raw_vancouver_retry_2026') {
+        return { key: 'nl-memory:raw_vancouver_retry_2026:entry-20260308193000' };
+      }
+
+      if (key === 'nl-memory:raw_vancouver_retry_2026:entry-20260308193000') {
+        return {
         sessionId: 'raw_vancouver_retry_2026',
         text: `this recap
 Session ID: RAW_VANCOUVER_RETRY_2026
 
 Main Event: Gunther def. AJ Styles clean`,
         savedAt: '2026-03-08T19:30:00.000Z'
-      });
+        };
+      }
+
+      return null;
+    });
+    mockGetMemoryRecordByKey.mockResolvedValueOnce({
+      dbRowId: 104,
+      recordId: 'db-memory-1773542617006-7-retrysave',
+      memoryKey: 'nl-memory:raw_vancouver_retry_2026:entry-20260308193000',
+      value: {
+        sessionId: 'raw_vancouver_retry_2026',
+        text: `this recap
+Session ID: RAW_VANCOUVER_RETRY_2026
+
+Main Event: Gunther def. AJ Styles clean`,
+        savedAt: '2026-03-08T19:30:00.000Z'
+      },
+      metadata: null,
+      createdAt: '2026-03-08T19:30:00.000Z',
+      updatedAt: '2026-03-08T19:30:00.000Z',
+      expiresAt: null
+    });
 
     const result = await executeNaturalLanguageMemoryCommand({
       input: retrySavePrompt
@@ -430,6 +500,7 @@ Main Event: Gunther def. AJ Styles clean`,
       expect.objectContaining({
         intent: 'save',
         operation: 'saved',
+        success: true,
         sessionId: 'raw_vancouver_retry_2026',
         key: 'nl-memory:raw_vancouver_retry_2026:entry-20260308193000',
         value: expect.objectContaining({

@@ -7,6 +7,9 @@ const mockLoadMemory = jest.fn();
 const mockDeleteMemory = jest.fn();
 const mockGetStatus = jest.fn();
 const mockQuery = jest.fn();
+const mockGetMemoryRecordByKey = jest.fn();
+const mockGetMemoryRecordByRecordId = jest.fn();
+const mockGetMemoryRecordByLegacyRowId = jest.fn();
 const mockQueryRagDocuments = jest.fn();
 const mockRecordPersistentMemorySnippet = jest.fn();
 const mockPersistNaturalLanguageConversationSession = jest.fn();
@@ -17,7 +20,10 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   loadMemory: mockLoadMemory,
   deleteMemory: mockDeleteMemory,
   getStatus: mockGetStatus,
-  query: mockQuery
+  query: mockQuery,
+  getMemoryRecordByKey: mockGetMemoryRecordByKey,
+  getMemoryRecordByRecordId: mockGetMemoryRecordByRecordId,
+  getMemoryRecordByLegacyRowId: mockGetMemoryRecordByLegacyRowId
 }));
 
 jest.unstable_mockModule('@services/webRag.js', () => ({
@@ -55,6 +61,9 @@ describe('/api/memory/nl', () => {
     mockLoadMemory.mockResolvedValue(null);
     mockDeleteMemory.mockResolvedValue(true);
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+    mockGetMemoryRecordByKey.mockResolvedValue(null);
+    mockGetMemoryRecordByRecordId.mockResolvedValue(null);
+    mockGetMemoryRecordByLegacyRowId.mockResolvedValue(null);
     mockRecordPersistentMemorySnippet.mockResolvedValue(true);
     mockPersistNaturalLanguageConversationSession.mockResolvedValue(null);
     mockSearchNaturalLanguageConversationSessions.mockResolvedValue([]);
@@ -75,16 +84,34 @@ describe('/api/memory/nl', () => {
   });
 
   it('saves natural-language text into a session-scoped key', async () => {
+    mockGetMemoryRecordByKey.mockImplementationOnce(async (memoryKey: string) => ({
+      dbRowId: 11,
+      recordId: 'db-memory-1773542617000-1-savebooker',
+      memoryKey,
+      value: {
+        sessionId: 'booker-thread-1',
+        text: 'my summary of Monday night raw for backstage Booker'
+      },
+      metadata: null,
+      createdAt: '2026-03-06T00:00:00.000Z',
+      updatedAt: '2026-03-06T00:00:00.000Z',
+      expiresAt: null
+    }));
+
     const response = await request(app).post('/api/memory/nl').send({
       input: 'save my summary of Monday night raw for backstage Booker',
       sessionId: 'Booker-Thread-1'
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.intent).toBe('save');
-    expect(response.body.data.operation).toBe('saved');
-    expect(response.body.data.sessionId).toBe('booker-thread-1');
-    expect(response.body.data.key).toMatch(/^nl-memory:booker-thread-1:/);
+    expect(response.body.intent).toBe('save');
+    expect(response.body.operation).toBe('saved');
+    expect(response.body.success).toBe(true);
+    expect(response.body.sessionId).toBe('booker-thread-1');
+    expect(response.body.key).toMatch(/^nl-memory:booker-thread-1:/);
+    expect(response.body.memory_key).toBe(response.body.key);
+    expect(response.body.record_id).toBe('db-memory-1773542617000-1-savebooker');
+    expect(response.body.response_id).toMatch(/^memory_/);
     expect(mockSaveMemory).toHaveBeenCalledWith(
       expect.stringMatching(/^nl-memory:booker-thread-1:/),
       expect.objectContaining({
@@ -138,10 +165,11 @@ describe('/api/memory/nl', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.intent).toBe('lookup');
-    expect(response.body.data.operation).toBe('searched');
-    expect(response.body.data.entries).toHaveLength(1);
-    expect(response.body.data.entries[0].value).toEqual(
+    expect(response.body.intent).toBe('lookup');
+    expect(response.body.operation).toBe('searched');
+    expect(response.body.success).toBe(true);
+    expect(response.body.entries).toHaveLength(1);
+    expect(response.body.entries[0].value).toEqual(
       expect.objectContaining({
         text: 'Raw recap summary for backstage booking'
       })
@@ -155,11 +183,20 @@ describe('/api/memory/nl', () => {
   it('retrieves the latest saved session memory when asked in natural language', async () => {
     mockLoadMemory
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ key: 'nl-memory:booker-thread-1:entry-20260306020202' })
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce({ key: 'nl-memory:booker-thread-1:entry-20260306020202' });
+    mockGetMemoryRecordByKey.mockResolvedValueOnce({
+      dbRowId: 22,
+      recordId: 'db-memory-1773542617001-2-latestbooker',
+      memoryKey: 'nl-memory:booker-thread-1:entry-20260306020202',
+      value: {
         sessionId: 'booker-thread-1',
         text: 'Latest stored recap'
-      });
+      },
+      metadata: null,
+      createdAt: '2026-03-06T02:02:02.000Z',
+      updatedAt: '2026-03-06T02:02:02.000Z',
+      expiresAt: null
+    });
 
     const response = await request(app).post('/api/memory/nl').send({
       input: 'show latest memory',
@@ -167,27 +204,44 @@ describe('/api/memory/nl', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.intent).toBe('retrieve');
-    expect(response.body.data.operation).toBe('retrieved');
-    expect(response.body.data.key).toBe('nl-memory:booker-thread-1:entry-20260306020202');
-    expect(response.body.data.value).toEqual(
+    expect(response.body.intent).toBe('retrieve');
+    expect(response.body.operation).toBe('retrieved');
+    expect(response.body.success).toBe(true);
+    expect(response.body.key).toBe('nl-memory:booker-thread-1:entry-20260306020202');
+    expect(response.body.record_id).toBe('db-memory-1773542617001-2-latestbooker');
+    expect(response.body.value).toEqual(
       expect.objectContaining({ text: 'Latest stored recap' })
     );
     expect(mockLoadMemory).toHaveBeenNthCalledWith(1, 'nl-session-label:booker-thread-1');
     expect(mockLoadMemory).toHaveBeenNthCalledWith(2, 'nl-latest:booker-thread-1');
-    expect(mockLoadMemory).toHaveBeenNthCalledWith(3, 'nl-memory:booker-thread-1:entry-20260306020202');
+    expect(mockGetMemoryRecordByKey).toHaveBeenCalledWith('nl-memory:booker-thread-1:entry-20260306020202');
   });
 
   it('supports conversational save phrasing with optional helper words', async () => {
+    mockGetMemoryRecordByKey.mockImplementationOnce(async (memoryKey: string) => ({
+      dbRowId: 12,
+      recordId: 'db-memory-1773542617002-3-savehelper',
+      memoryKey,
+      value: {
+        sessionId: 'booker-thread-2',
+        text: 'this as my raw summary'
+      },
+      metadata: null,
+      createdAt: '2026-03-06T00:00:00.000Z',
+      updatedAt: '2026-03-06T00:00:00.000Z',
+      expiresAt: null
+    }));
+
     const response = await request(app).post('/api/memory/nl').send({
       input: 'can you please save this as my raw summary',
       sessionId: 'booker-thread-2'
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.intent).toBe('save');
-    expect(response.body.data.operation).toBe('saved');
-    expect(response.body.data.sessionId).toBe('booker-thread-2');
+    expect(response.body.intent).toBe('save');
+    expect(response.body.operation).toBe('saved');
+    expect(response.body.success).toBe(true);
+    expect(response.body.sessionId).toBe('booker-thread-2');
     expect(mockSaveMemory).toHaveBeenCalledWith(
       expect.stringMatching(/^nl-memory:booker-thread-2:/),
       expect.objectContaining({
@@ -233,10 +287,11 @@ describe('/api/memory/nl', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.intent).toBe('lookup');
-    expect(response.body.data.operation).toBe('searched');
-    expect(response.body.data.entries).toHaveLength(1);
-    expect(response.body.data.entries[0]).toEqual(
+    expect(response.body.intent).toBe('lookup');
+    expect(response.body.operation).toBe('searched');
+    expect(response.body.success).toBe(true);
+    expect(response.body.entries).toHaveLength(1);
+    expect(response.body.entries[0]).toEqual(
       expect.objectContaining({
         key: 'nl-memory:booker-thread-1:raw-recap-20260306030000',
         value: expect.objectContaining({
@@ -244,7 +299,7 @@ describe('/api/memory/nl', () => {
         })
       })
     );
-    expect(response.body.data.rag).toEqual(
+    expect(response.body.rag).toEqual(
       expect.objectContaining({
         active: true,
         reason: 'ok'
@@ -260,20 +315,19 @@ describe('/api/memory/nl', () => {
     );
   });
 
-  it('returns an exact miss when key retrieval cannot find the requested row', async () => {
-    mockLoadMemory.mockResolvedValueOnce(null);
-
+  it('returns a structured exact miss when a canonical key is not found', async () => {
     const response = await request(app).post('/api/memory/nl').send({
-      input: 'load memory key missing-booker-key',
+      input: 'load memory key nl-memory:booker-thread-1:missing-entry',
       sessionId: 'booker-thread-1'
     });
 
-    expect(response.status).toBe(200);
-    expect(response.body.data.intent).toBe('retrieve');
-    expect(response.body.data.operation).toBe('retrieved');
-    expect(response.body.data.message).toBe('No memory found for that key.');
-    expect(response.body.data.key).toBe('missing-booker-key');
-    expect(response.body.data.value).toBeNull();
+    expect(response.status).toBe(404);
+    expect(response.body.intent).toBe('retrieve');
+    expect(response.body.operation).toBe('retrieved');
+    expect(response.body.success).toBe(false);
+    expect(response.body.error).toBe('RecordNotFound');
+    expect(response.body.message).toBe('No memory found for that identifier.');
+    expect(response.body.memory_key).toBe('nl-memory:booker-thread-1:missing-entry');
     expect(mockQueryRagDocuments).not.toHaveBeenCalled();
   });
 
@@ -285,13 +339,14 @@ describe('/api/memory/nl', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.intent).toBe('lookup');
-    expect(response.body.data.operation).toBe('searched');
-    expect(response.body.data.entries).toEqual([]);
-    expect(response.body.data.message).toBe(
+    expect(response.body.intent).toBe('lookup');
+    expect(response.body.operation).toBe('searched');
+    expect(response.body.success).toBe(true);
+    expect(response.body.entries).toEqual([]);
+    expect(response.body.message).toBe(
       'No exact persisted memory rows matched record id 18342 and tag session_diagnostic_2026-03-08.'
     );
-    expect(response.body.data.rag).toEqual(
+    expect(response.body.rag).toEqual(
       expect.objectContaining({
         active: false,
         reason: 'exact_selector_not_found'
