@@ -8,7 +8,7 @@ import { generateMockResponse } from "@services/openai.js";
 import type { QueryResult } from 'pg';
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { runWorkerTrinityPrompt } from '../../workers/trinityWorkerPipeline.js';
+import { runWorkerTrinityPrompt } from '@workers/trinityWorkerPipeline.js';
 import {
   invokeArcanosMcpTool,
   listArcanosMcpTools,
