@@ -9,8 +9,14 @@ from typing import Any, Callable
 
 from .schema_loader import ProtocolContract
 from .state_store import InMemoryProtocolStateStore
-from .tool_registry import build_tool_registry
-from .validator import validate_protocol_request
+from .tool_registry import build_tool_registry, resolve_tool_schemas
+from .tools.repository_tools import (
+    build_remote_source_descriptor,
+    list_repository_entries,
+    read_repository_file,
+    resolve_workspace_root,
+)
+from .validator import validate_protocol_request, validate_tool_input
 
 
 class ProtocolRuntimeHandler:
@@ -28,6 +34,10 @@ class ProtocolRuntimeHandler:
         self._state_store = state_store
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._tool_registry = build_tool_registry(contract)
+        self._tool_registry_by_id = {
+            tool_definition["id"]: deepcopy(tool_definition)
+            for tool_definition in self._tool_registry
+        }
 
     def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Validate and execute a single protocol request."""
@@ -53,6 +63,14 @@ class ProtocolRuntimeHandler:
         try:
             response_data = self._dispatch_command(command_name, request_id, payload, context)
             return self._success_response(request_id, response_data, self._timing_ms(started_at))
+        except ValueError as error:
+            return self._error_response(
+                request_id=request_id,
+                code="invalid_request",
+                message=str(error),
+                retryable=False,
+                timing_ms=self._timing_ms(started_at),
+            )
         except KeyError as error:
             return self._error_response(
                 request_id=request_id,
@@ -82,6 +100,10 @@ class ProtocolRuntimeHandler:
             return self._handle_context_inspect(payload, context)
         if command_name == "tool.registry":
             return self._handle_tool_registry(payload)
+        if command_name == "tool.describe":
+            return self._handle_tool_describe(payload)
+        if command_name == "tool.invoke":
+            return self._handle_tool_invoke(request_id, payload)
         if command_name == "daemon.capabilities":
             return self._handle_daemon_capabilities()
         if command_name == "exec.start":
@@ -96,19 +118,19 @@ class ProtocolRuntimeHandler:
 
     def _handle_context_inspect(self, payload: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         environment_type = self._resolve_environment_type(context.get("environment"))
-        current_environment = {
-            "type": environment_type,
-            "label": f"{environment_type} environment",
-            "cwd": context.get("cwd"),
-            "shell": context.get("shell"),
-            "capabilities": ["protocol-validation", "in-memory-execution"],
-        }
+        workspace_root = resolve_workspace_root()
+        current_environment = self._build_environment_descriptor(
+            environment_type=environment_type,
+            cwd=context.get("cwd") or str(workspace_root),
+            shell=context.get("shell"),
+            include_execution=environment_type != "remote",
+        )
         response_data: dict[str, Any] = {
             "context": {
                 "sessionId": context.get("sessionId"),
                 "projectId": context.get("projectId"),
                 "environment": environment_type,
-                "cwd": context.get("cwd"),
+                "cwd": context.get("cwd") or str(workspace_root),
                 "shell": context.get("shell"),
             },
             "environment": current_environment,
@@ -119,39 +141,16 @@ class ProtocolRuntimeHandler:
             response_data["project"] = {
                 "id": context.get("projectId", "workspace-project"),
                 "name": "Arcanos Workspace",
-                "rootPath": context.get("cwd"),
+                "rootPath": str(workspace_root),
+                "remoteSource": build_remote_source_descriptor(workspace_root),
             }
 
         # //audit assumption: environment enumeration is static at scaffold time. failure risk: callers could infer unimplemented orchestration behavior. invariant: returned environments are explicit and finite. handling: expose the fixed set only when requested.
         if bool(payload.get("includeAvailableEnvironments")):
-            response_data["availableEnvironments"] = [
-                {
-                    "type": "workspace",
-                    "label": "Workspace",
-                    "cwd": context.get("cwd"),
-                    "shell": context.get("shell"),
-                    "capabilities": ["protocol-validation", "in-memory-execution"],
-                },
-                {
-                    "type": "sandbox",
-                    "label": "Sandbox",
-                    "cwd": context.get("cwd"),
-                    "shell": context.get("shell"),
-                    "capabilities": ["protocol-validation"],
-                },
-                {
-                    "type": "host",
-                    "label": "Host",
-                    "cwd": context.get("cwd"),
-                    "shell": context.get("shell"),
-                    "capabilities": ["protocol-validation"],
-                },
-                {
-                    "type": "remote",
-                    "label": "Remote",
-                    "capabilities": ["protocol-validation"],
-                },
-            ]
+            response_data["availableEnvironments"] = self._build_available_environments(
+                cwd=context.get("cwd") or str(workspace_root),
+                shell=context.get("shell"),
+            )
 
         return response_data
 
@@ -170,6 +169,42 @@ class ProtocolRuntimeHandler:
             filtered_tools.append(deepcopy(tool_definition))
 
         return {"tools": filtered_tools}
+
+    def _handle_tool_describe(self, payload: dict[str, Any]) -> dict[str, Any]:
+        tool_id = str(payload["toolId"])
+        if tool_id not in self._tool_registry_by_id:
+            raise KeyError(f'Tool "{tool_id}" was not found.')
+
+        input_schema, output_schema = resolve_tool_schemas(self._contract, tool_id)
+        return {
+            "tool": deepcopy(self._tool_registry_by_id[tool_id]),
+            "inputSchema": deepcopy(input_schema),
+            "outputSchema": deepcopy(output_schema),
+        }
+
+    def _handle_tool_invoke(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        tool_id = str(payload["toolId"])
+        tool_input = payload.get("input") or {}
+        if tool_id not in self._tool_registry_by_id:
+            raise KeyError(f'Tool "{tool_id}" was not found.')
+
+        input_issues = validate_tool_input(self._contract, tool_id, tool_input)
+        if input_issues:
+            raise ValueError("; ".join(input_issues))
+
+        # //audit assumption: only explicitly whitelisted repo tools are invokable through the scaffold. failure risk: exposing command handlers through tool.invoke would blur planning and execution boundaries. invariant: tool.invoke dispatches only to read-only repository tools. handling: reject unknown or non-invokable tool ids.
+        if tool_id == "repo.list":
+            result = list_repository_entries(tool_input)
+        elif tool_id == "repo.read_file":
+            result = read_repository_file(tool_input)
+        else:
+            raise KeyError(f'Tool "{tool_id}" is not invokable through tool.invoke.')
+
+        return {
+            "toolId": tool_id,
+            "invocationId": f"invoke-{request_id}",
+            "result": result,
+        }
 
     def _handle_daemon_capabilities(self) -> dict[str, Any]:
         return {
@@ -192,13 +227,12 @@ class ProtocolRuntimeHandler:
             "executionId": f"exec-{request_id}",
             "command": task_payload["command"],
             "status": "queued",
-            "environment": {
-                "type": environment_type,
-                "label": f"{environment_type} environment",
-                "cwd": context.get("cwd") or environment_context.get("cwd"),
-                "shell": context.get("shell") or environment_context.get("shell"),
-                "capabilities": ["protocol-validation", "in-memory-execution"],
-            },
+            "environment": self._build_environment_descriptor(
+                environment_type=environment_type,
+                cwd=context.get("cwd") or environment_context.get("cwd") or str(resolve_workspace_root()),
+                shell=context.get("shell") or environment_context.get("shell"),
+                include_execution=environment_type != "remote",
+            ),
             "artifacts": [],
             "runResult": {
                 "status": "queued",
@@ -231,6 +265,43 @@ class ProtocolRuntimeHandler:
     def _handle_artifact_store(self, payload: dict[str, Any]) -> dict[str, Any]:
         stored_artifact = self._state_store.store_artifact(payload["artifact"])
         return {"artifact": stored_artifact, "stored": True}
+
+    def _build_available_environments(self, cwd: str | None, shell: str | None) -> list[dict[str, Any]]:
+        workspace_root = resolve_workspace_root()
+        return [
+            self._build_environment_descriptor("workspace", cwd, shell, include_execution=True),
+            self._build_environment_descriptor("sandbox", cwd, shell, include_execution=False),
+            self._build_environment_descriptor("host", cwd, shell, include_execution=False),
+            self._build_environment_descriptor("remote", cwd or str(workspace_root), shell, include_execution=False),
+        ]
+
+    def _build_environment_descriptor(
+        self,
+        environment_type: str,
+        cwd: str | None,
+        shell: str | None,
+        include_execution: bool,
+    ) -> dict[str, Any]:
+        workspace_root = resolve_workspace_root()
+        capabilities = ["protocol-validation"]
+        if include_execution:
+            capabilities.append("in-memory-execution")
+        if environment_type == "remote":
+            capabilities.extend(["workspace-binding", "repository-read"])
+
+        descriptor: dict[str, Any] = {
+            "type": environment_type,
+            "label": f"{environment_type} environment",
+            "cwd": cwd,
+            "shell": shell,
+            "capabilities": capabilities,
+        }
+
+        remote_source = build_remote_source_descriptor(workspace_root)
+        if environment_type == "remote" and remote_source is not None:
+            descriptor["remoteSource"] = remote_source
+
+        return descriptor
 
     def _success_response(self, request_id: str, data: dict[str, Any], timing_ms: int) -> dict[str, Any]:
         return {

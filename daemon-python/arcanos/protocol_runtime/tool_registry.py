@@ -40,6 +40,24 @@ def build_tool_registry(contract: ProtocolContract) -> list[dict[str, Any]]:
             "host",
         ),
         _tool_definition(
+            "tool.describe",
+            "Describe a registered tool contract and its shared schemas.",
+            command_schemas,
+            False,
+            ["tools:read"],
+            ["protocol-validation"],
+            "workspace",
+        ),
+        _tool_definition(
+            "tool.invoke",
+            "Invoke a daemon tool inside an explicit remote workspace binding.",
+            command_schemas,
+            False,
+            ["tools:invoke"],
+            ["protocol-validation", "workspace-binding", "repository-read"],
+            "remote",
+        ),
+        _tool_definition(
             "exec.start",
             "Create a queued execution state for an explicit task and environment.",
             command_schemas,
@@ -75,7 +93,39 @@ def build_tool_registry(contract: ProtocolContract) -> list[dict[str, Any]]:
             ["protocol-validation", "in-memory-execution"],
             "workspace",
         ),
+        _tool_definition_from_schema_ids(
+            "repo.list",
+            "List files and directories from the bound remote workspace root.",
+            contract.tools["repo.list"].input["$id"],
+            contract.tools["repo.list"].output["$id"],
+            False,
+            ["repo:read"],
+            ["protocol-validation", "workspace-binding", "repository-read"],
+            "remote",
+        ),
+        _tool_definition_from_schema_ids(
+            "repo.read_file",
+            "Read UTF-8 file content from the bound remote workspace root.",
+            contract.tools["repo.read_file"].input["$id"],
+            contract.tools["repo.read_file"].output["$id"],
+            False,
+            ["repo:read"],
+            ["protocol-validation", "workspace-binding", "repository-read"],
+            "remote",
+        ),
     ]
+
+
+def resolve_tool_schemas(contract: ProtocolContract, tool_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolve shared input and output schemas for a protocol-visible tool id."""
+
+    if tool_id in contract.commands:
+        schema_pair = contract.commands[tool_id]
+        return schema_pair.request, schema_pair.response
+    if tool_id in contract.tools:
+        schema_pair = contract.tools[tool_id]
+        return schema_pair.input, schema_pair.output
+    raise KeyError(f'Tool "{tool_id}" is not registered.')
 
 
 def _tool_definition(
@@ -88,11 +138,33 @@ def _tool_definition(
     preferred_environment_type: str,
 ) -> dict[str, Any]:
     schema_pair = command_schemas[command_id]
+    return _tool_definition_from_schema_ids(
+        command_id,
+        description,
+        schema_pair.request["$id"],
+        schema_pair.response["$id"],
+        approval_required,
+        scopes,
+        required_capabilities,
+        preferred_environment_type,
+    )
+
+
+def _tool_definition_from_schema_ids(
+    tool_id: str,
+    description: str,
+    input_schema_id: str,
+    output_schema_id: str,
+    approval_required: bool,
+    scopes: list[str],
+    required_capabilities: list[str],
+    preferred_environment_type: str,
+) -> dict[str, Any]:
     return {
-        "id": command_id,
+        "id": tool_id,
         "description": description,
-        "inputSchemaId": schema_pair.request["$id"],
-        "outputSchemaId": schema_pair.response["$id"],
+        "inputSchemaId": input_schema_id,
+        "outputSchemaId": output_schema_id,
         "approvalRequired": approval_required,
         "allowedClients": ["cli", "ide", "automation"],
         "scopes": scopes,
