@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/nouns/artifact.schema.json",
+  "title": "Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "kind",
+    "createdAt"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "contentType": {
+      "type": "string"
+    },
+    "checksum": {
+      "type": "string"
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "createdAt": {
+      "type": "string"
+    }
+  }
+}

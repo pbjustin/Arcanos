@@ -3,7 +3,7 @@
  */
 
 import type { TrinityOutputControls, TrinityRunOptions } from './trinityTypes.js';
-import { countWords } from '../../shared/text/countWords.js';
+import { countWords } from '@shared/text/countWords.js';
 
 export type TrinitySourceType = 'tool' | 'user_context' | 'memory' | 'inference' | 'template';
 export type TrinityConfidence = 'high' | 'medium' | 'low';

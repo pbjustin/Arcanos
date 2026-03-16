@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/daemon.capabilities.response.schema.json",
+  "title": "daemon.capabilities response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "runtimeVersion",
+    "supportedCommands",
+    "supportedEnvironmentTypes",
+    "schemaRoot"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "type": "string"
+    },
+    "runtimeVersion": {
+      "type": "string"
+    },
+    "supportedCommands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "supportedEnvironmentTypes": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/environment.schema.json#/properties/type"
+      },
+      "uniqueItems": true
+    },
+    "schemaRoot": {
+      "type": "string"
+    },
+    "toolCount": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

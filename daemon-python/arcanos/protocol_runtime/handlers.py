@@ -1,0 +1,288 @@
+"""Command handlers for the scaffolded Arcanos Protocol runtime."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import datetime, timezone
+import time
+from typing import Any, Callable
+
+from .schema_loader import ProtocolContract
+from .state_store import InMemoryProtocolStateStore
+from .tool_registry import build_tool_registry
+from .validator import validate_protocol_request
+
+
+class ProtocolRuntimeHandler:
+    """Handle protocol requests using shared schemas and an explicit in-memory store."""
+
+    def __init__(
+        self,
+        contract: ProtocolContract,
+        state_store: InMemoryProtocolStateStore,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        """Initialize the handler with a shared contract and in-memory persistence."""
+
+        self._contract = contract
+        self._state_store = state_store
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._tool_registry = build_tool_registry(contract)
+
+    def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Validate and execute a single protocol request."""
+
+        started_at = time.perf_counter()
+        issues = validate_protocol_request(self._contract, request)
+        request_id = str(request.get("requestId", "unknown-request"))
+
+        # //audit assumption: shared-schema validation must happen before dispatch. failure risk: malformed requests could mutate runtime state. invariant: only validated requests reach command handlers. handling: return a structured protocol error without side effects.
+        if issues:
+            return self._error_response(
+                request_id=request_id,
+                code="invalid_request",
+                message="; ".join(issues),
+                retryable=False,
+                timing_ms=self._timing_ms(started_at),
+            )
+
+        command_name = str(request["command"])
+        payload = request.get("payload") or {}
+        context = request.get("context") or {}
+
+        try:
+            response_data = self._dispatch_command(command_name, request_id, payload, context)
+            return self._success_response(request_id, response_data, self._timing_ms(started_at))
+        except KeyError as error:
+            return self._error_response(
+                request_id=request_id,
+                code="not_found",
+                message=str(error),
+                retryable=False,
+                timing_ms=self._timing_ms(started_at),
+            )
+        except Exception as error:  # pragma: no cover - defensive scaffold fallback
+            return self._error_response(
+                request_id=request_id,
+                code="runtime_error",
+                message=f"Unhandled runtime error: {error}",
+                retryable=False,
+                timing_ms=self._timing_ms(started_at),
+            )
+
+    def _dispatch_command(
+        self,
+        command_name: str,
+        request_id: str,
+        payload: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        # //audit assumption: dispatch remains explicit to keep planning, execution, and mutation separate. failure risk: implicit routing would hide unsupported behavior. invariant: every handled command is listed in one branch. handling: raise structured unsupported-command errors for unknown routes.
+        if command_name == "context.inspect":
+            return self._handle_context_inspect(payload, context)
+        if command_name == "tool.registry":
+            return self._handle_tool_registry(payload)
+        if command_name == "daemon.capabilities":
+            return self._handle_daemon_capabilities()
+        if command_name == "exec.start":
+            return self._handle_exec_start(request_id, payload, context)
+        if command_name == "exec.status":
+            return self._handle_exec_status(payload)
+        if command_name == "state.snapshot":
+            return self._handle_state_snapshot(payload)
+        if command_name == "artifact.store":
+            return self._handle_artifact_store(payload)
+        raise KeyError(f'Command "{command_name}" is not implemented in the Python runtime.')
+
+    def _handle_context_inspect(self, payload: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        environment_type = self._resolve_environment_type(context.get("environment"))
+        current_environment = {
+            "type": environment_type,
+            "label": f"{environment_type} environment",
+            "cwd": context.get("cwd"),
+            "shell": context.get("shell"),
+            "capabilities": ["protocol-validation", "in-memory-execution"],
+        }
+        response_data: dict[str, Any] = {
+            "context": {
+                "sessionId": context.get("sessionId"),
+                "projectId": context.get("projectId"),
+                "environment": environment_type,
+                "cwd": context.get("cwd"),
+                "shell": context.get("shell"),
+            },
+            "environment": current_environment,
+        }
+
+        # //audit assumption: project details are optional scaffolding metadata. failure risk: clients may treat placeholders as authoritative repository config. invariant: placeholder project data only appears when requested. handling: gate project output behind the payload flag.
+        if bool(payload.get("includeProject")):
+            response_data["project"] = {
+                "id": context.get("projectId", "workspace-project"),
+                "name": "Arcanos Workspace",
+                "rootPath": context.get("cwd"),
+            }
+
+        # //audit assumption: environment enumeration is static at scaffold time. failure risk: callers could infer unimplemented orchestration behavior. invariant: returned environments are explicit and finite. handling: expose the fixed set only when requested.
+        if bool(payload.get("includeAvailableEnvironments")):
+            response_data["availableEnvironments"] = [
+                {
+                    "type": "workspace",
+                    "label": "Workspace",
+                    "cwd": context.get("cwd"),
+                    "shell": context.get("shell"),
+                    "capabilities": ["protocol-validation", "in-memory-execution"],
+                },
+                {
+                    "type": "sandbox",
+                    "label": "Sandbox",
+                    "cwd": context.get("cwd"),
+                    "shell": context.get("shell"),
+                    "capabilities": ["protocol-validation"],
+                },
+                {
+                    "type": "host",
+                    "label": "Host",
+                    "cwd": context.get("cwd"),
+                    "shell": context.get("shell"),
+                    "capabilities": ["protocol-validation"],
+                },
+                {
+                    "type": "remote",
+                    "label": "Remote",
+                    "capabilities": ["protocol-validation"],
+                },
+            ]
+
+        return response_data
+
+    def _handle_tool_registry(self, payload: dict[str, Any]) -> dict[str, Any]:
+        preferred_environment = payload.get("preferredEnvironmentType")
+        scopes = payload.get("scopes") or []
+        filtered_tools: list[dict[str, Any]] = []
+
+        for tool_definition in self._tool_registry:
+            # //audit assumption: environment filters are restrictive hints. failure risk: callers may see tools that cannot execute in their chosen environment. invariant: filtered output only includes matching preferred environments. handling: skip non-matching tools.
+            if preferred_environment and tool_definition["preferredEnvironmentType"] != preferred_environment:
+                continue
+            # //audit assumption: requested scopes must all be present on the tool. failure risk: partial matches would overstate permissions. invariant: scope filtering is conjunctive. handling: skip tools missing any requested scope.
+            if scopes and not all(scope in tool_definition["scopes"] for scope in scopes):
+                continue
+            filtered_tools.append(deepcopy(tool_definition))
+
+        return {"tools": filtered_tools}
+
+    def _handle_daemon_capabilities(self) -> dict[str, Any]:
+        return {
+            "protocolVersion": self._contract.protocol,
+            "runtimeVersion": "0.1.0",
+            "supportedCommands": sorted(self._contract.commands.keys()),
+            "supportedEnvironmentTypes": sorted(self._contract.nouns["environment"]["properties"]["type"]["enum"]),
+            "schemaRoot": str(self._contract.schema_root),
+            "toolCount": len(self._tool_registry),
+        }
+
+    def _handle_exec_start(self, request_id: str, payload: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        task_payload = payload["task"]
+        started_at = self._clock().isoformat()
+        environment_context = task_payload.get("context") or {}
+        environment_type = self._resolve_environment_type(
+            context.get("environment") or environment_context.get("environment")
+        )
+        execution_state = {
+            "executionId": f"exec-{request_id}",
+            "command": task_payload["command"],
+            "status": "queued",
+            "environment": {
+                "type": environment_type,
+                "label": f"{environment_type} environment",
+                "cwd": context.get("cwd") or environment_context.get("cwd"),
+                "shell": context.get("shell") or environment_context.get("shell"),
+                "capabilities": ["protocol-validation", "in-memory-execution"],
+            },
+            "artifacts": [],
+            "runResult": {
+                "status": "queued",
+                "exitCode": None,
+                "stdout": "",
+                "stderr": "",
+                "startedAt": started_at,
+            },
+            "createdAt": started_at,
+            "updatedAt": started_at,
+        }
+        stored_state = self._state_store.store_execution(execution_state)
+        return {"state": stored_state}
+
+    def _handle_exec_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        execution_id = str(payload["executionId"])
+        execution_state = self._state_store.get_execution(execution_id)
+        if execution_state is None:
+            raise KeyError(f'Execution "{execution_id}" was not found.')
+        return {"state": execution_state}
+
+    def _handle_state_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        execution_id = str(payload["executionId"])
+        execution_state = self._state_store.get_execution(execution_id)
+        if execution_state is None:
+            raise KeyError(f'Execution "{execution_id}" was not found.')
+        snapshot_id = f"snapshot-{execution_id}"
+        return self._state_store.store_snapshot(snapshot_id, execution_state)
+
+    def _handle_artifact_store(self, payload: dict[str, Any]) -> dict[str, Any]:
+        stored_artifact = self._state_store.store_artifact(payload["artifact"])
+        return {"artifact": stored_artifact, "stored": True}
+
+    def _success_response(self, request_id: str, data: dict[str, Any], timing_ms: int) -> dict[str, Any]:
+        return {
+            "protocol": self._contract.protocol,
+            "requestId": request_id,
+            "ok": True,
+            "data": self._prune_none_values(data),
+            "meta": {
+                "version": "0.1.0",
+                "executedBy": "python-daemon",
+                "timingMs": timing_ms,
+            },
+        }
+
+    def _error_response(
+        self,
+        request_id: str,
+        code: str,
+        message: str,
+        retryable: bool,
+        timing_ms: int,
+    ) -> dict[str, Any]:
+        return {
+            "protocol": self._contract.protocol,
+            "requestId": request_id,
+            "ok": False,
+            "error": {
+                "code": code,
+                "message": message,
+                "retryable": retryable,
+            },
+            "meta": {
+                "version": "0.1.0",
+                "executedBy": "python-daemon",
+                "timingMs": timing_ms,
+            },
+        }
+
+    def _resolve_environment_type(self, environment_name: Any) -> str:
+        valid_environment_types = set(self._contract.nouns["environment"]["properties"]["type"]["enum"])
+        return str(environment_name) if environment_name in valid_environment_types else "workspace"
+
+    def _timing_ms(self, started_at: float) -> int:
+        return int((time.perf_counter() - started_at) * 1000)
+
+    def _prune_none_values(self, value: Any) -> Any:
+        if isinstance(value, list):
+            return [self._prune_none_values(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: self._prune_none_values(item)
+                for key, item in value.items()
+                if item is not None
+            }
+        return value
