@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -110,5 +111,25 @@ async function dispatchViaPythonRuntime(
 }
 
 function resolveRepositoryRoot(): string {
-  return fileURLToPath(new URL("../../../", import.meta.url));
+  let currentPath = path.dirname(fileURLToPath(import.meta.url));
+
+  while (true) {
+    //audit assumption: repository discovery must follow stable project markers instead of fixed directory jumps. failure risk: moving the CLI entrypoint would silently break python transport resolution. invariant: the first ancestor with a repository marker becomes the root. handling: walk upward until a marker is found or throw deterministically.
+    if (
+      existsSync(path.join(currentPath, ".git"))
+      || (
+        existsSync(path.join(currentPath, "package.json"))
+        && existsSync(path.join(currentPath, "packages"))
+        && existsSync(path.join(currentPath, "daemon-python"))
+      )
+    ) {
+      return currentPath;
+    }
+
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      throw new Error("Unable to resolve the repository root for the python transport.");
+    }
+    currentPath = parentPath;
+  }
 }

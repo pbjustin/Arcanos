@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/tool.invoke.request.schema.json",
+  "title": "tool.invoke request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "toolId"
+  ],
+  "properties": {
+    "toolId": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object"
+    }
+  }
+}

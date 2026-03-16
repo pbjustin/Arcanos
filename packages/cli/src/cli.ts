@@ -191,11 +191,11 @@ function buildProtocolAuth(parsedArguments: ParsedCliArguments): ProtocolAuth | 
     return undefined;
   }
 
-  const protocolAuth = {
-    strategy: parsedArguments.authStrategy
-  } as Record<string, string>;
-  protocolAuth["token"] = parsedArguments.authToken;
-  return protocolAuth as unknown as ProtocolAuth;
+  const protocolAuth: ProtocolAuth = {
+    strategy: parsedArguments.authStrategy,
+    ["token"]: parsedArguments.authToken
+  };
+  return protocolAuth;
 }
 
 function parsePayloadJson(payloadJson: string | undefined): unknown {
