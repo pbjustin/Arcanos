@@ -33,6 +33,8 @@ class ProtocolRuntimeHandler:
         self._contract = contract
         self._state_store = state_store
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._workspace_root = resolve_workspace_root()
+        self._remote_source = build_remote_source_descriptor(self._workspace_root)
         self._tool_registry = build_tool_registry(contract)
         self._tool_registry_by_id = {
             tool_definition["id"]: deepcopy(tool_definition)
@@ -118,10 +120,9 @@ class ProtocolRuntimeHandler:
 
     def _handle_context_inspect(self, payload: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         environment_type = self._resolve_environment_type(context.get("environment"))
-        workspace_root = resolve_workspace_root()
         current_environment = self._build_environment_descriptor(
             environment_type=environment_type,
-            cwd=context.get("cwd") or str(workspace_root),
+            cwd=context.get("cwd") or str(self._workspace_root),
             shell=context.get("shell"),
             include_execution=environment_type != "remote",
         )
@@ -130,7 +131,7 @@ class ProtocolRuntimeHandler:
                 "sessionId": context.get("sessionId"),
                 "projectId": context.get("projectId"),
                 "environment": environment_type,
-                "cwd": context.get("cwd") or str(workspace_root),
+                "cwd": context.get("cwd") or str(self._workspace_root),
                 "shell": context.get("shell"),
             },
             "environment": current_environment,
@@ -141,14 +142,14 @@ class ProtocolRuntimeHandler:
             response_data["project"] = {
                 "id": context.get("projectId", "workspace-project"),
                 "name": "Arcanos Workspace",
-                "rootPath": str(workspace_root),
-                "remoteSource": build_remote_source_descriptor(workspace_root),
+                "rootPath": str(self._workspace_root),
+                "remoteSource": self._remote_source,
             }
 
         # //audit assumption: environment enumeration is static at scaffold time. failure risk: callers could infer unimplemented orchestration behavior. invariant: returned environments are explicit and finite. handling: expose the fixed set only when requested.
         if bool(payload.get("includeAvailableEnvironments")):
             response_data["availableEnvironments"] = self._build_available_environments(
-                cwd=context.get("cwd") or str(workspace_root),
+                cwd=context.get("cwd") or str(self._workspace_root),
                 shell=context.get("shell"),
             )
 
@@ -229,7 +230,7 @@ class ProtocolRuntimeHandler:
             "status": "queued",
             "environment": self._build_environment_descriptor(
                 environment_type=environment_type,
-                cwd=context.get("cwd") or environment_context.get("cwd") or str(resolve_workspace_root()),
+                cwd=context.get("cwd") or environment_context.get("cwd") or str(self._workspace_root),
                 shell=context.get("shell") or environment_context.get("shell"),
                 include_execution=environment_type != "remote",
             ),
@@ -267,12 +268,11 @@ class ProtocolRuntimeHandler:
         return {"artifact": stored_artifact, "stored": True}
 
     def _build_available_environments(self, cwd: str | None, shell: str | None) -> list[dict[str, Any]]:
-        workspace_root = resolve_workspace_root()
         return [
             self._build_environment_descriptor("workspace", cwd, shell, include_execution=True),
             self._build_environment_descriptor("sandbox", cwd, shell, include_execution=False),
             self._build_environment_descriptor("host", cwd, shell, include_execution=False),
-            self._build_environment_descriptor("remote", cwd or str(workspace_root), shell, include_execution=False),
+            self._build_environment_descriptor("remote", cwd or str(self._workspace_root), shell, include_execution=False),
         ]
 
     def _build_environment_descriptor(
@@ -282,7 +282,6 @@ class ProtocolRuntimeHandler:
         shell: str | None,
         include_execution: bool,
     ) -> dict[str, Any]:
-        workspace_root = resolve_workspace_root()
         capabilities = ["protocol-validation"]
         if include_execution:
             capabilities.append("in-memory-execution")
@@ -297,9 +296,8 @@ class ProtocolRuntimeHandler:
             "capabilities": capabilities,
         }
 
-        remote_source = build_remote_source_descriptor(workspace_root)
-        if environment_type == "remote" and remote_source is not None:
-            descriptor["remoteSource"] = remote_source
+        if environment_type == "remote" and self._remote_source is not None:
+            descriptor["remoteSource"] = self._remote_source
 
         return descriptor
 

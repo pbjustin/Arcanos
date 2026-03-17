@@ -115,14 +115,7 @@ function resolveRepositoryRoot(): string {
 
   while (true) {
     //audit assumption: repository discovery must follow stable project markers instead of fixed directory jumps. failure risk: moving the CLI entrypoint would silently break python transport resolution. invariant: the first ancestor with a repository marker becomes the root. handling: walk upward until a marker is found or throw deterministically.
-    if (
-      existsSync(path.join(currentPath, ".git"))
-      || (
-        existsSync(path.join(currentPath, "package.json"))
-        && existsSync(path.join(currentPath, "packages"))
-        && existsSync(path.join(currentPath, "daemon-python"))
-      )
-    ) {
+    if (isRepositoryRoot(currentPath)) {
       return currentPath;
     }
 
@@ -132,4 +125,11 @@ function resolveRepositoryRoot(): string {
     }
     currentPath = parentPath;
   }
+}
+
+function isRepositoryRoot(candidatePath: string): boolean {
+  return (
+    existsSync(path.join(candidatePath, ".git"))
+    || existsSync(path.join(candidatePath, "daemon-python"))
+  );
 }
