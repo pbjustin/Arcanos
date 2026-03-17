@@ -7,6 +7,7 @@ export type {
   ArtifactStoreRequestPayload,
   ArtifactStoreResponseData,
   ArcanosProtocolVersion,
+  ProtocolCaller,
   ContextInspectRequestPayload,
   ContextInspectResponseData,
   DaemonCapabilitiesResponseData,

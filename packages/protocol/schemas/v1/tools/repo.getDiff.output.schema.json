@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/repo.getDiff.output.schema.json",
+  "title": "repo.getDiff output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rootPath",
+    "base",
+    "head",
+    "diff",
+    "bytes",
+    "truncated"
+  ],
+  "properties": {
+    "rootPath": {
+      "type": "string"
+    },
+    "base": {
+      "type": "string"
+    },
+    "head": {
+      "type": "string"
+    },
+    "diff": {
+      "type": "string"
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  }
+}

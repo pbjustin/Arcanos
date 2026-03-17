@@ -17,6 +17,14 @@ export interface ProtocolContext {
   environment?: string;
   cwd?: string;
   shell?: string;
+  caller?: ProtocolCaller;
+}
+
+export interface ProtocolCaller {
+  id: string;
+  type: string;
+  scopes?: string[];
+  metadata?: Record<string, string | number | boolean | null>;
 }
 
 export interface ProtocolError {

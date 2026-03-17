@@ -48,8 +48,20 @@ const sharedSchemas: AnySchema[] = [
   schemaCatalog.commands.toolRegistry.response,
   schemaCatalog.tools.repoList.input,
   schemaCatalog.tools.repoList.output,
+  schemaCatalog.tools["repo.listTree"].input,
+  schemaCatalog.tools["repo.listTree"].output,
+  schemaCatalog.tools["repo.getDiff"].input,
+  schemaCatalog.tools["repo.getDiff"].output,
+  schemaCatalog.tools["repo.getLog"].input,
+  schemaCatalog.tools["repo.getLog"].output,
+  schemaCatalog.tools["repo.getStatus"].input,
+  schemaCatalog.tools["repo.getStatus"].output,
   schemaCatalog.tools.repoReadFile.input,
-  schemaCatalog.tools.repoReadFile.output
+  schemaCatalog.tools.repoReadFile.output,
+  schemaCatalog.tools["repo.readFile"].input,
+  schemaCatalog.tools["repo.readFile"].output,
+  schemaCatalog.tools["repo.search"].input,
+  schemaCatalog.tools["repo.search"].output
 ];
 
 const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
