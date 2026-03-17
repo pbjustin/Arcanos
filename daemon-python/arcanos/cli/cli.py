@@ -977,15 +977,14 @@ def _build_protocol_payload(args: argparse.Namespace) -> dict[str, Any]:
 def _resolve_protocol_caller_scopes(args: argparse.Namespace) -> list[str]:
     if args.caller_scopes:
         return [scope.strip() for scope in args.caller_scopes.split(",") if scope.strip()]
-    if args.command == "tool.invoke":
-        return ["repo:read", "tools:invoke"]
-    if args.command in {"tool.describe", "tool.registry"}:
-        return ["tools:read"]
-    if args.command == "context.inspect":
-        return ["context:read"]
-    if args.command == "daemon.capabilities":
-        return ["runtime:read"]
-    return []
+    scope_map = {
+        "tool.invoke": ["repo:read", "tools:invoke"],
+        "tool.describe": ["tools:read"],
+        "tool.registry": ["tools:read"],
+        "context.inspect": ["context:read"],
+        "daemon.capabilities": ["runtime:read"],
+    }
+    return scope_map.get(args.command, [])
 
 
 def _parse_json_argument(raw_value: str, flag_name: str) -> dict[str, Any]:

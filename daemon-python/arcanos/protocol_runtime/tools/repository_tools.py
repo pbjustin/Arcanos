@@ -373,15 +373,17 @@ def get_repository_log(tool_input: dict[str, Any]) -> dict[str, Any]:
         )
 
     next_offset = offset + limit if len(commits) > limit else None
-    return {
+    result = {
         "rootPath": str(workspace_root),
         "head": _run_git_readonly(workspace_root, ["rev-parse", "HEAD"]).strip(),
         "offset": offset,
         "limit": limit,
         "commits": commits[:limit],
         "truncated": next_offset is not None,
-        **({"nextOffset": next_offset} if next_offset is not None else {}),
     }
+    if next_offset is not None:
+        result["nextOffset"] = next_offset
+    return result
 
 
 def get_repository_diff(tool_input: dict[str, Any]) -> dict[str, Any]:
