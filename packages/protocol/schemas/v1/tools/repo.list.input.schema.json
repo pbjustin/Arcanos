@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/repo.list.input.schema.json",
+  "title": "repo.list input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string"
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+    },
+    "includeHidden": {
+      "type": "boolean"
+    },
+    "maxEntries": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    }
+  }
+}

@@ -15,6 +15,8 @@ import type {
   ProtocolRequest,
   ProtocolResponse,
   StateSnapshotResponseData,
+  ToolDescribeResponseData,
+  ToolInvokeResponseData,
   ToolRegistryResponseData,
   ValidationIssue,
   ValidationResult
@@ -38,8 +40,16 @@ const sharedSchemas: AnySchema[] = [
   schemaCatalog.commands.execStatus.response,
   schemaCatalog.commands.stateSnapshot.request,
   schemaCatalog.commands.stateSnapshot.response,
+  schemaCatalog.commands.toolDescribe.request,
+  schemaCatalog.commands.toolDescribe.response,
+  schemaCatalog.commands.toolInvoke.request,
+  schemaCatalog.commands.toolInvoke.response,
   schemaCatalog.commands.toolRegistry.request,
-  schemaCatalog.commands.toolRegistry.response
+  schemaCatalog.commands.toolRegistry.response,
+  schemaCatalog.tools.repoList.input,
+  schemaCatalog.tools.repoList.output,
+  schemaCatalog.tools.repoReadFile.input,
+  schemaCatalog.tools.repoReadFile.output
 ];
 
 const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
@@ -49,6 +59,8 @@ const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
   "exec.start": schemaCatalog.commands.execStart.request,
   "exec.status": schemaCatalog.commands.execStatus.request,
   "state.snapshot": schemaCatalog.commands.stateSnapshot.request,
+  "tool.describe": schemaCatalog.commands.toolDescribe.request,
+  "tool.invoke": schemaCatalog.commands.toolInvoke.request,
   "tool.registry": schemaCatalog.commands.toolRegistry.request
 };
 
@@ -59,6 +71,8 @@ const commandResponseSchemas: Record<ImplementedProtocolCommandId, AnySchema> = 
   "exec.start": schemaCatalog.commands.execStart.response,
   "exec.status": schemaCatalog.commands.execStatus.response,
   "state.snapshot": schemaCatalog.commands.stateSnapshot.response,
+  "tool.describe": schemaCatalog.commands.toolDescribe.response,
+  "tool.invoke": schemaCatalog.commands.toolInvoke.response,
   "tool.registry": schemaCatalog.commands.toolRegistry.response
 };
 
@@ -254,6 +268,8 @@ export function assertTypedImplementedResponse(
   | ExecStartResponseData
   | ExecStatusResponseData
   | StateSnapshotResponseData
+  | ToolDescribeResponseData
+  | ToolInvokeResponseData
   | ToolRegistryResponseData
 > {
   return assertValidProtocolResponse(command, response) as ProtocolResponse<
@@ -263,6 +279,8 @@ export function assertTypedImplementedResponse(
     | ExecStartResponseData
     | ExecStatusResponseData
     | StateSnapshotResponseData
+    | ToolDescribeResponseData
+    | ToolInvokeResponseData
     | ToolRegistryResponseData
   >;
 }
@@ -275,6 +293,8 @@ function compileCommandValidators(commandSchemas: Record<ImplementedProtocolComm
     "exec.start": protocolAjv.compile(commandSchemas["exec.start"]),
     "exec.status": protocolAjv.compile(commandSchemas["exec.status"]),
     "state.snapshot": protocolAjv.compile(commandSchemas["state.snapshot"]),
+    "tool.describe": protocolAjv.compile(commandSchemas["tool.describe"]),
+    "tool.invoke": protocolAjv.compile(commandSchemas["tool.invoke"]),
     "tool.registry": protocolAjv.compile(commandSchemas["tool.registry"])
   };
 }

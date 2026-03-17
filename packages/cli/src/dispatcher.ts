@@ -25,6 +25,7 @@ export interface ProtocolCommandDispatcher {
 
 const DEFAULT_ALLOWED_CLIENTS = ["cli", "ide", "automation"] as const;
 const DEFAULT_RUNTIME_CAPABILITIES = ["protocol-validation", "in-memory-execution"] as const;
+const VALID_ENVIRONMENT_TYPES = ["workspace", "sandbox", "host", "remote"] as const;
 
 /**
  * Creates a local dispatcher for scaffolded protocol-visible commands.
@@ -77,9 +78,7 @@ function handleContextInspect(
   const payload = (request.payload ?? {}) as ContextInspectRequestPayload;
   const environmentType = request.context?.environment ?? "workspace";
   const currentEnvironment: EnvironmentDescriptor = {
-    type: environmentType === "workspace" || environmentType === "sandbox" || environmentType === "host" || environmentType === "remote"
-      ? environmentType
-      : "workspace",
+    type: normalizeEnvironmentType(environmentType),
     label: `${environmentType} environment`,
     cwd: request.context?.cwd ?? dependencies.cwd(),
     shell: request.context?.shell ?? process.env.ComSpec ?? "unknown",
@@ -151,9 +150,7 @@ function handleExecStart(
       command: payload.task.command,
       status: "queued",
       environment: {
-        type: environmentType === "workspace" || environmentType === "sandbox" || environmentType === "host" || environmentType === "remote"
-          ? environmentType
-          : "workspace",
+        type: normalizeEnvironmentType(environmentType),
         label: `${environmentType} environment`,
         cwd: request.context?.cwd ?? payload.task.context?.cwd ?? dependencies.cwd(),
         shell: request.context?.shell ?? payload.task.context?.shell ?? process.env.ComSpec ?? "unknown",
@@ -248,6 +245,28 @@ function buildToolDefinitions(): ToolDefinition[] {
       preferredEnvironmentType: "workspace"
     },
     {
+      id: "tool.describe",
+      description: "Describe a registered protocol-visible tool and its shared schemas.",
+      inputSchemaId: "https://schemas.arcanos.dev/protocol/v1/commands/tool.describe.request.schema.json",
+      outputSchemaId: "https://schemas.arcanos.dev/protocol/v1/commands/tool.describe.response.schema.json",
+      approvalRequired: false,
+      allowedClients: [...DEFAULT_ALLOWED_CLIENTS],
+      scopes: ["tools:read"],
+      requiredCapabilities: ["protocol-validation"],
+      preferredEnvironmentType: "workspace"
+    },
+    {
+      id: "tool.invoke",
+      description: "Invoke a daemon tool using shared input and output schemas.",
+      inputSchemaId: "https://schemas.arcanos.dev/protocol/v1/commands/tool.invoke.request.schema.json",
+      outputSchemaId: "https://schemas.arcanos.dev/protocol/v1/commands/tool.invoke.response.schema.json",
+      approvalRequired: false,
+      allowedClients: [...DEFAULT_ALLOWED_CLIENTS],
+      scopes: ["tools:invoke"],
+      requiredCapabilities: ["protocol-validation"],
+      preferredEnvironmentType: "remote"
+    },
+    {
       id: "exec.start",
       description: "Queue an execution state scaffold for a task inside an explicit environment.",
       inputSchemaId: "https://schemas.arcanos.dev/protocol/v1/commands/exec.start.request.schema.json",
@@ -259,4 +278,10 @@ function buildToolDefinitions(): ToolDefinition[] {
       preferredEnvironmentType: "workspace"
     }
   ];
+}
+
+function normalizeEnvironmentType(environmentType: string): EnvironmentDescriptor["type"] {
+  return VALID_ENVIRONMENT_TYPES.includes(environmentType as EnvironmentDescriptor["type"])
+    ? (environmentType as EnvironmentDescriptor["type"])
+    : "workspace";
 }

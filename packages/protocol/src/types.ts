@@ -32,6 +32,19 @@ export interface ProtocolMeta {
   timingMs?: number;
 }
 
+export interface RemoteSourceDescriptor {
+  type: "git" | "railway";
+  provider?: string;
+  repository?: string;
+  ref?: string;
+  url?: string;
+  workspaceRoot?: string;
+  railwayProjectId?: string;
+  railwayEnvironmentId?: string;
+  railwayServiceId?: string;
+  railwayServiceName?: string;
+}
+
 export interface ProtocolRequest<TPayload = unknown> {
   protocol: ArcanosProtocolVersion;
   requestId: string;
@@ -57,12 +70,14 @@ export interface EnvironmentDescriptor {
   cwd?: string;
   shell?: string;
   capabilities?: string[];
+  remoteSource?: RemoteSourceDescriptor;
 }
 
 export interface ProjectDescriptor {
   id: string;
   name: string;
   rootPath?: string;
+  remoteSource?: RemoteSourceDescriptor;
 }
 
 export interface TaskDescriptor {
@@ -160,6 +175,27 @@ export interface ToolRegistryRequestPayload {
 
 export interface ToolRegistryResponseData {
   tools: ToolDefinition[];
+}
+
+export interface ToolDescribeRequestPayload {
+  toolId: string;
+}
+
+export interface ToolDescribeResponseData {
+  tool: ToolDefinition;
+  inputSchema: Record<string, unknown> | boolean;
+  outputSchema: Record<string, unknown> | boolean;
+}
+
+export interface ToolInvokeRequestPayload {
+  toolId: string;
+  input?: Record<string, unknown>;
+}
+
+export interface ToolInvokeResponseData {
+  toolId: string;
+  invocationId: string;
+  result: unknown;
 }
 
 export interface ExecStartRequestPayload {

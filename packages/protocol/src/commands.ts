@@ -35,6 +35,8 @@ export const ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS = [
   "context.inspect",
   "daemon.capabilities",
   "tool.registry",
+  "tool.describe",
+  "tool.invoke",
   "exec.start",
   "exec.status",
   "state.snapshot"

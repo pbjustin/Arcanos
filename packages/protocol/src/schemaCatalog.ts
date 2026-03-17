@@ -11,6 +11,10 @@ import execStatusRequestSchema from "../schemas/v1/commands/exec.status.request.
 import execStatusResponseSchema from "../schemas/v1/commands/exec.status.response.schema.json" with { type: "json" };
 import stateSnapshotRequestSchema from "../schemas/v1/commands/state.snapshot.request.schema.json" with { type: "json" };
 import stateSnapshotResponseSchema from "../schemas/v1/commands/state.snapshot.response.schema.json" with { type: "json" };
+import toolDescribeRequestSchema from "../schemas/v1/commands/tool.describe.request.schema.json" with { type: "json" };
+import toolDescribeResponseSchema from "../schemas/v1/commands/tool.describe.response.schema.json" with { type: "json" };
+import toolInvokeRequestSchema from "../schemas/v1/commands/tool.invoke.request.schema.json" with { type: "json" };
+import toolInvokeResponseSchema from "../schemas/v1/commands/tool.invoke.response.schema.json" with { type: "json" };
 import toolRegistryRequestSchema from "../schemas/v1/commands/tool.registry.request.schema.json" with { type: "json" };
 import toolRegistryResponseSchema from "../schemas/v1/commands/tool.registry.response.schema.json" with { type: "json" };
 import approvalSchema from "../schemas/v1/nouns/approval.schema.json" with { type: "json" };
@@ -21,9 +25,14 @@ import executionStateSchema from "../schemas/v1/nouns/execution-state.schema.jso
 import patchSchema from "../schemas/v1/nouns/patch.schema.json" with { type: "json" };
 import planSchema from "../schemas/v1/nouns/plan.schema.json" with { type: "json" };
 import projectSchema from "../schemas/v1/nouns/project.schema.json" with { type: "json" };
+import remoteSourceSchema from "../schemas/v1/nouns/remote-source.schema.json" with { type: "json" };
 import runResultSchema from "../schemas/v1/nouns/run-result.schema.json" with { type: "json" };
 import taskSchema from "../schemas/v1/nouns/task.schema.json" with { type: "json" };
 import toolSchema from "../schemas/v1/nouns/tool.schema.json" with { type: "json" };
+import repoListInputSchema from "../schemas/v1/tools/repo.list.input.schema.json" with { type: "json" };
+import repoListOutputSchema from "../schemas/v1/tools/repo.list.output.schema.json" with { type: "json" };
+import repoReadFileInputSchema from "../schemas/v1/tools/repo.read_file.input.schema.json" with { type: "json" };
+import repoReadFileOutputSchema from "../schemas/v1/tools/repo.read_file.output.schema.json" with { type: "json" };
 
 /**
  * Returns the schema bundle shared across TypeScript and Python boundaries.
@@ -43,6 +52,7 @@ export function getProtocolSchemaCatalog() {
       patch: patchSchema,
       plan: planSchema,
       project: projectSchema,
+      remoteSource: remoteSourceSchema,
       runResult: runResultSchema,
       task: taskSchema,
       tool: toolSchema
@@ -72,9 +82,27 @@ export function getProtocolSchemaCatalog() {
         request: stateSnapshotRequestSchema,
         response: stateSnapshotResponseSchema
       },
+      toolDescribe: {
+        request: toolDescribeRequestSchema,
+        response: toolDescribeResponseSchema
+      },
+      toolInvoke: {
+        request: toolInvokeRequestSchema,
+        response: toolInvokeResponseSchema
+      },
       toolRegistry: {
         request: toolRegistryRequestSchema,
         response: toolRegistryResponseSchema
+      }
+    },
+    tools: {
+      repoList: {
+        input: repoListInputSchema,
+        output: repoListOutputSchema
+      },
+      repoReadFile: {
+        input: repoReadFileInputSchema,
+        output: repoReadFileOutputSchema
       }
     }
   } as const;

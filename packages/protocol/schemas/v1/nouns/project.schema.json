@@ -17,6 +17,9 @@
     },
     "rootPath": {
       "type": "string"
+    },
+    "remoteSource": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/remote-source.schema.json"
     }
   }
 }
