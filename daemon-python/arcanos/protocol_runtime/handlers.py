@@ -17,9 +17,9 @@ from .tools.repository_tools import (
     get_repository_log,
     get_repository_status,
     list_repository_tree,
-    search_repository,
     read_repository_file,
     resolve_workspace_root,
+    search_repository,
 )
 from .validator import validate_protocol_request, validate_tool_input
 
@@ -54,7 +54,6 @@ class ProtocolRuntimeHandler:
         issues = validate_protocol_request(self._contract, request)
         request_id = str(request.get("requestId", "unknown-request"))
 
-        # //audit assumption: shared-schema validation must happen before dispatch. failure risk: malformed requests could mutate runtime state. invariant: only validated requests reach command handlers. handling: return a structured protocol error without side effects.
         if issues:
             return self._error_response(
                 request_id=request_id,
@@ -127,7 +126,6 @@ class ProtocolRuntimeHandler:
         payload: dict[str, Any],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        # //audit assumption: dispatch remains explicit to keep planning, execution, and mutation separate. failure risk: implicit routing would hide unsupported behavior. invariant: every handled command is listed in one branch. handling: raise structured unsupported-command errors for unknown routes.
         if command_name == "context.inspect":
             return self._handle_context_inspect(payload, context)
         if command_name == "tool.registry":
@@ -163,11 +161,11 @@ class ProtocolRuntimeHandler:
                 "environment": environment_type,
                 "cwd": context.get("cwd") or str(self._workspace_root),
                 "shell": context.get("shell"),
+                "caller": deepcopy(context.get("caller")) if isinstance(context.get("caller"), dict) else None,
             },
             "environment": current_environment,
         }
 
-        # //audit assumption: project details are optional scaffolding metadata. failure risk: clients may treat placeholders as authoritative repository config. invariant: placeholder project data only appears when requested. handling: gate project output behind the payload flag.
         if bool(payload.get("includeProject")):
             response_data["project"] = {
                 "id": context.get("projectId", "workspace-project"),
@@ -176,7 +174,6 @@ class ProtocolRuntimeHandler:
                 "remoteSource": self._remote_source,
             }
 
-        # //audit assumption: environment enumeration is static at scaffold time. failure risk: callers could infer unimplemented orchestration behavior. invariant: returned environments are explicit and finite. handling: expose the fixed set only when requested.
         if bool(payload.get("includeAvailableEnvironments")):
             response_data["availableEnvironments"] = self._build_available_environments(
                 cwd=context.get("cwd") or str(self._workspace_root),
@@ -191,10 +188,8 @@ class ProtocolRuntimeHandler:
         filtered_tools: list[dict[str, Any]] = []
 
         for tool_definition in self._tool_registry:
-            # //audit assumption: environment filters are restrictive hints. failure risk: callers may see tools that cannot execute in their chosen environment. invariant: filtered output only includes matching preferred environments. handling: skip non-matching tools.
             if preferred_environment and tool_definition["preferredEnvironmentType"] != preferred_environment:
                 continue
-            # //audit assumption: requested scopes must all be present on the tool. failure risk: partial matches would overstate permissions. invariant: scope filtering is conjunctive. handling: skip tools missing any requested scope.
             if scopes and not all(scope in tool_definition["scopes"] for scope in scopes):
                 continue
             filtered_tools.append(deepcopy(tool_definition))
@@ -398,9 +393,13 @@ class ProtocolRuntimeHandler:
         return str(environment_name) if environment_name in valid_environment_types else "workspace"
 
     def _invoke_repo_tool(self, tool_id: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        if tool_id in {"repo.listTree", "repo.list"}:
+        if tool_id == "repo.list":
+            return self._to_legacy_list_result(list_repository_tree(tool_input))
+        if tool_id == "repo.read_file":
+            return self._to_legacy_read_result(read_repository_file(tool_input))
+        if tool_id == "repo.listTree":
             return list_repository_tree(tool_input)
-        if tool_id in {"repo.readFile", "repo.read_file"}:
+        if tool_id == "repo.readFile":
             return read_repository_file(tool_input)
         if tool_id == "repo.search":
             return search_repository(tool_input)
@@ -411,6 +410,34 @@ class ProtocolRuntimeHandler:
         if tool_id == "repo.getDiff":
             return get_repository_diff(tool_input)
         raise KeyError(f'Tool "{tool_id}" is not invokable through tool.invoke.')
+
+    def _to_legacy_list_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "rootPath": result["rootPath"],
+            "path": result["path"],
+            "entries": [
+                {
+                    key: value
+                    for key, value in entry.items()
+                    if key in {"name", "path", "entryType", "bytes"}
+                }
+                for entry in result["entries"]
+            ],
+            "truncated": result["truncated"],
+        }
+
+    def _to_legacy_read_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "rootPath": result["rootPath"],
+            "path": result["path"],
+            "content": result["content"],
+            "encoding": result["encoding"],
+            "truncated": result["truncated"],
+            "startLine": result["range"][0],
+            "endLine": result["range"][1],
+            "totalLines": result["totalLines"],
+            "bytes": result["bytes"],
+        }
 
     def _require_caller_metadata(self, context: dict[str, Any]) -> dict[str, Any]:
         caller = context.get("caller")
@@ -458,9 +485,7 @@ class ProtocolRuntimeHandler:
         caller_scopes = set(caller.get("scopes") or [])
         missing_scopes = [scope for scope in tool_definition["scopes"] if scope not in caller_scopes]
         if missing_scopes:
-            raise PermissionError(
-                f'Tool "{tool_id}" requires scopes: {", ".join(missing_scopes)}.'
-            )
+            raise PermissionError(f'Tool "{tool_id}" requires scopes: {", ".join(missing_scopes)}.')
 
         environment_descriptor = self._build_environment_descriptor(
             environment_type=environment_type,

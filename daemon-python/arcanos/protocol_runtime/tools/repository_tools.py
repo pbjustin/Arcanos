@@ -151,6 +151,21 @@ def list_repository_tree(tool_input: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def list_repository_entries(tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Compatibility wrapper for the legacy repo.list tool contract."""
+
+    result = list_repository_tree(tool_input)
+    return {
+        "rootPath": result["rootPath"],
+        "path": result["path"],
+        "entries": [
+            {key: value for key, value in entry.items() if key in {"name", "path", "entryType", "bytes"}}
+            for entry in result["entries"]
+        ],
+        "truncated": result["truncated"],
+    }
+
+
 def read_repository_file(tool_input: dict[str, Any]) -> dict[str, Any]:
     """Read UTF-8 content from a file within the bound workspace root."""
 
@@ -164,9 +179,13 @@ def read_repository_file(tool_input: dict[str, Any]) -> dict[str, Any]:
     content = target_path.read_text(encoding="utf-8", errors="replace")
     lines = content.splitlines(keepends=True)
     total_lines = len(lines)
-    requested_range = tool_input.get("range") or [1, total_lines or 1]
-    start_line = int(requested_range[0])
-    requested_end_line = int(requested_range[1])
+    requested_range = tool_input.get("range")
+    if isinstance(requested_range, list) and len(requested_range) == 2:
+        start_line = int(requested_range[0])
+        requested_end_line = int(requested_range[1])
+    else:
+        start_line = int(tool_input.get("startLine", 1))
+        requested_end_line = int(tool_input.get("endLine", total_lines or 1))
     max_bytes = int(tool_input.get("maxBytes", DEFAULT_FILE_READ_MAX_BYTES))
 
     if requested_end_line < start_line:
@@ -302,7 +321,6 @@ def get_repository_status(_tool_input: dict[str, Any]) -> dict[str, Any]:
     )
 
     branch = None
-    head = None
     changes: list[dict[str, Any]] = []
     for line in output.splitlines():
         if line.startswith("## "):
@@ -330,11 +348,10 @@ def get_repository_status(_tool_input: dict[str, Any]) -> dict[str, Any]:
             change_entry["originalPath"] = original_path.replace("\\", "/")
         changes.append(change_entry)
 
-    head = _run_git_readonly(workspace_root, ["rev-parse", "HEAD"]).strip()
     return {
         "rootPath": str(workspace_root),
         "branch": branch,
-        "head": head,
+        "head": _run_git_readonly(workspace_root, ["rev-parse", "HEAD"]).strip(),
         "clean": len(changes) == 0,
         "changes": changes,
     }
@@ -500,17 +517,15 @@ def _detect_symbol_kind(line: str) -> str | None:
 
 
 def _is_binary_bytes(file_bytes: bytes) -> bool:
-    sample = file_bytes[:4096]
-    return b"\x00" in sample
+    return b"\x00" in file_bytes[:4096]
 
 
 def _run_git_readonly(workspace_root: Path, args: list[str]) -> str:
     if not ((workspace_root / ".git").exists() or (workspace_root / ".git").is_file()):
         raise ValueError(f'Workspace root "{workspace_root}" is not a git repository.')
 
-    command = ["git", "-C", str(workspace_root), *args]
     completed_process = subprocess.run(
-        command,
+        ["git", "-C", str(workspace_root), *args],
         capture_output=True,
         check=False,
         encoding="utf-8",

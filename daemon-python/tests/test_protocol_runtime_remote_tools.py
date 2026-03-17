@@ -134,6 +134,55 @@ def test_tool_invoke_lists_and_reads_from_bound_workspace(monkeypatch, tmp_path:
     assert read_response["data"]["result"]["range"] == [1, 2]
 
 
+def test_tool_invoke_supports_legacy_repo_aliases(monkeypatch, tmp_path: Path) -> None:
+    """tool.invoke preserves repo.list and repo.read_file compatibility payloads."""
+
+    docs_directory = tmp_path / "docs"
+    docs_directory.mkdir()
+    (docs_directory / "README.md").write_text("# Arcanos\n", encoding="utf-8")
+    monkeypatch.setenv("ARCANOS_WORKSPACE_ROOT", str(tmp_path))
+    handler = ProtocolRuntimeHandler(load_protocol_contract(), InMemoryProtocolStateStore())
+
+    list_response = handler.handle_request(
+        {
+            "protocol": "arcanos-v1",
+            "requestId": "req-tool-legacy-list",
+            "command": "tool.invoke",
+            "context": _caller_context(tmp_path),
+            "payload": {
+                "toolId": "repo.list",
+                "input": {
+                    "path": ".",
+                    "depth": 2,
+                },
+            },
+        }
+    )
+    read_response = handler.handle_request(
+        {
+            "protocol": "arcanos-v1",
+            "requestId": "req-tool-legacy-read",
+            "command": "tool.invoke",
+            "context": _caller_context(tmp_path),
+            "payload": {
+                "toolId": "repo.read_file",
+                "input": {
+                    "path": "docs/README.md",
+                },
+            },
+        }
+    )
+
+    assert list_response["ok"] is True
+    assert "offset" not in list_response["data"]["result"]
+    assert "depth" not in list_response["data"]["result"]["entries"][0]
+
+    assert read_response["ok"] is True
+    assert read_response["data"]["result"]["startLine"] == 1
+    assert read_response["data"]["result"]["endLine"] == 1
+    assert "range" not in read_response["data"]["result"]
+
+
 def test_tool_invoke_rejects_workspace_escape(monkeypatch, tmp_path: Path) -> None:
     """tool.invoke rejects relative path traversal outside the bound workspace root."""
 
