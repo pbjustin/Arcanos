@@ -921,9 +921,22 @@ def _is_protocol_cli_command(command: str | None) -> bool:
         "tool.registry",
     }
 
-
 def _is_doctor_cli_command(args: argparse.Namespace) -> bool:
     return args.command == "doctor" and args.protocol_target == "implementation"
+
+
+def _build_cli_context(args: argparse.Namespace, scopes: list[str] | None = None) -> dict[str, Any]:
+    resolved_scopes = scopes if scopes is not None else _resolve_protocol_caller_scopes(args)
+    return {
+        "environment": args.protocol_environment or "workspace",
+        "cwd": args.protocol_cwd or os.getcwd(),
+        "shell": os.environ.get("ComSpec") or os.environ.get("SHELL") or "unknown",
+        "caller": {
+            "id": args.caller_id,
+            "type": args.caller_type,
+            "scopes": resolved_scopes,
+        },
+    }
 
 
 def _run_protocol_cli_command(args: argparse.Namespace) -> int:
@@ -936,16 +949,7 @@ def _run_protocol_cli_command(args: argparse.Namespace) -> int:
                 "protocol": "arcanos-v1",
                 "requestId": request_id,
                 "command": args.command,
-                "context": {
-                    "environment": args.protocol_environment or "workspace",
-                    "cwd": args.protocol_cwd or os.getcwd(),
-                    "shell": os.environ.get("ComSpec") or os.environ.get("SHELL") or "unknown",
-                    "caller": {
-                        "id": args.caller_id,
-                        "type": args.caller_type,
-                        "scopes": _resolve_protocol_caller_scopes(args),
-                    },
-                },
+                "context": _build_cli_context(args),
                 "payload": payload,
             }
         )
@@ -978,16 +982,7 @@ def _run_doctor_cli_command(args: argparse.Namespace) -> int:
             "protocol": "arcanos-v1",
             "requestId": request_id,
             "command": "tool.invoke",
-            "context": {
-                "environment": args.protocol_environment or "workspace",
-                "cwd": args.protocol_cwd or os.getcwd(),
-                "shell": os.environ.get("ComSpec") or os.environ.get("SHELL") or "unknown",
-                "caller": {
-                    "id": args.caller_id,
-                    "type": args.caller_type,
-                    "scopes": ["repo:read", "tools:invoke"],
-                },
-            },
+            "context": _build_cli_context(args, scopes=["repo:read", "tools:invoke"]),
             "payload": {
                 "toolId": "doctor.implementation",
                 "input": {},
