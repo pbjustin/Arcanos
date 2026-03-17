@@ -31,8 +31,20 @@ import taskSchema from "../schemas/v1/nouns/task.schema.json" with { type: "json
 import toolSchema from "../schemas/v1/nouns/tool.schema.json" with { type: "json" };
 import repoListInputSchema from "../schemas/v1/tools/repo.list.input.schema.json" with { type: "json" };
 import repoListOutputSchema from "../schemas/v1/tools/repo.list.output.schema.json" with { type: "json" };
+import repoListTreeInputSchema from "../schemas/v1/tools/repo.listTree.input.schema.json" with { type: "json" };
+import repoListTreeOutputSchema from "../schemas/v1/tools/repo.listTree.output.schema.json" with { type: "json" };
+import repoGetDiffInputSchema from "../schemas/v1/tools/repo.getDiff.input.schema.json" with { type: "json" };
+import repoGetDiffOutputSchema from "../schemas/v1/tools/repo.getDiff.output.schema.json" with { type: "json" };
+import repoGetLogInputSchema from "../schemas/v1/tools/repo.getLog.input.schema.json" with { type: "json" };
+import repoGetLogOutputSchema from "../schemas/v1/tools/repo.getLog.output.schema.json" with { type: "json" };
+import repoGetStatusInputSchema from "../schemas/v1/tools/repo.getStatus.input.schema.json" with { type: "json" };
+import repoGetStatusOutputSchema from "../schemas/v1/tools/repo.getStatus.output.schema.json" with { type: "json" };
 import repoReadFileInputSchema from "../schemas/v1/tools/repo.read_file.input.schema.json" with { type: "json" };
 import repoReadFileOutputSchema from "../schemas/v1/tools/repo.read_file.output.schema.json" with { type: "json" };
+import repoReadFileV2InputSchema from "../schemas/v1/tools/repo.readFile.input.schema.json" with { type: "json" };
+import repoReadFileV2OutputSchema from "../schemas/v1/tools/repo.readFile.output.schema.json" with { type: "json" };
+import repoSearchInputSchema from "../schemas/v1/tools/repo.search.input.schema.json" with { type: "json" };
+import repoSearchOutputSchema from "../schemas/v1/tools/repo.search.output.schema.json" with { type: "json" };
 
 /**
  * Returns the schema bundle shared across TypeScript and Python boundaries.
@@ -100,9 +112,33 @@ export function getProtocolSchemaCatalog() {
         input: repoListInputSchema,
         output: repoListOutputSchema
       },
+      "repo.listTree": {
+        input: repoListTreeInputSchema,
+        output: repoListTreeOutputSchema
+      },
+      "repo.getDiff": {
+        input: repoGetDiffInputSchema,
+        output: repoGetDiffOutputSchema
+      },
+      "repo.getLog": {
+        input: repoGetLogInputSchema,
+        output: repoGetLogOutputSchema
+      },
+      "repo.getStatus": {
+        input: repoGetStatusInputSchema,
+        output: repoGetStatusOutputSchema
+      },
       repoReadFile: {
         input: repoReadFileInputSchema,
         output: repoReadFileOutputSchema
+      },
+      "repo.readFile": {
+        input: repoReadFileV2InputSchema,
+        output: repoReadFileV2OutputSchema
+      },
+      "repo.search": {
+        input: repoSearchInputSchema,
+        output: repoSearchOutputSchema
       }
     }
   } as const;

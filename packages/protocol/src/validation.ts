@@ -48,8 +48,20 @@ const sharedSchemas: AnySchema[] = [
   schemaCatalog.commands.toolRegistry.response,
   schemaCatalog.tools.repoList.input,
   schemaCatalog.tools.repoList.output,
+  schemaCatalog.tools["repo.listTree"].input,
+  schemaCatalog.tools["repo.listTree"].output,
+  schemaCatalog.tools["repo.getDiff"].input,
+  schemaCatalog.tools["repo.getDiff"].output,
+  schemaCatalog.tools["repo.getLog"].input,
+  schemaCatalog.tools["repo.getLog"].output,
+  schemaCatalog.tools["repo.getStatus"].input,
+  schemaCatalog.tools["repo.getStatus"].output,
   schemaCatalog.tools.repoReadFile.input,
-  schemaCatalog.tools.repoReadFile.output
+  schemaCatalog.tools.repoReadFile.output,
+  schemaCatalog.tools["repo.readFile"].input,
+  schemaCatalog.tools["repo.readFile"].output,
+  schemaCatalog.tools["repo.search"].input,
+  schemaCatalog.tools["repo.search"].output
 ];
 
 const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
@@ -185,14 +197,12 @@ export function validateProtocolCommandData(command: ProtocolCommandId, data: un
 export function assertValidProtocolRequest<TPayload>(candidate: ProtocolRequest<TPayload>): ProtocolRequest<TPayload> {
   const envelopeResult = validateProtocolRequestEnvelope(candidate);
 
-  //audit assumption: request envelopes are validated before command payloads. failure risk: malformed requests could bypass command-level validation. invariant: only valid envelopes reach payload validation. handling: fail fast with a structured error message.
   if (!envelopeResult.ok) {
     throw new Error(formatValidationFailure("request envelope", envelopeResult.issues));
   }
 
   const payloadResult = validateProtocolCommandPayload(candidate.command, candidate.payload);
 
-  //audit assumption: scaffolded commands must have explicit payload schemas. failure risk: silent schema drift between clients and runtimes. invariant: implemented commands validate payloads deterministically. handling: reject unsupported or invalid payloads.
   if (!payloadResult.ok) {
     throw new Error(formatValidationFailure(`request payload for ${candidate.command}`, payloadResult.issues));
   }
@@ -209,19 +219,16 @@ export function assertValidProtocolRequest<TPayload>(candidate: ProtocolRequest<
 export function assertValidProtocolResponse<TData>(command: ImplementedProtocolCommandId, candidate: ProtocolResponse<TData>): ProtocolResponse<TData> {
   const envelopeResult = validateProtocolResponseEnvelope(candidate);
 
-  //audit assumption: response envelopes stay stable across transports. failure risk: downstream clients cannot parse daemon failures safely. invariant: every response is envelope-valid before command data checks. handling: reject malformed responses immediately.
   if (!envelopeResult.ok) {
     throw new Error(formatValidationFailure("response envelope", envelopeResult.issues));
   }
 
-  //audit assumption: failed responses carry protocol error objects instead of command data. failure risk: validators would misclassify intentional error payloads. invariant: command data validation only runs on ok responses. handling: short-circuit on failures.
   if (!candidate.ok) {
     return candidate;
   }
 
   const dataResult = validateProtocolCommandData(command, candidate.data);
 
-  //audit assumption: successful responses must conform to their command schemas. failure risk: TS/Python drift would surface only in clients. invariant: data matches the registered schema for implemented commands. handling: throw deterministic validation errors.
   if (!dataResult.ok) {
     throw new Error(formatValidationFailure(`response data for ${command}`, dataResult.issues));
   }

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/repo.listTree.output.schema.json",
+  "title": "repo.listTree output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rootPath",
+    "path",
+    "depth",
+    "offset",
+    "limit",
+    "entries",
+    "truncated"
+  ],
+  "properties": {
+    "rootPath": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "depth": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nextOffset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path",
+          "entryType",
+          "depth"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "entryType": {
+            "type": "string",
+            "enum": [
+              "file",
+              "directory"
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  }
+}

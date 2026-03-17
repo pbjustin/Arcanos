@@ -5,6 +5,8 @@ ARCANOS CLI orchestration shell.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import threading
 import time
@@ -50,6 +52,9 @@ from ..gpt_client import GPTClient
 from ..rate_limiter import RateLimiter
 from ..schema import Memory
 from ..terminal import TerminalController
+from ..protocol_runtime.handlers import ProtocolRuntimeHandler
+from ..protocol_runtime.schema_loader import load_protocol_contract
+from ..protocol_runtime.state_store import InMemoryProtocolStateStore
 from ..vision import VisionSystem
 from ..audio import AudioSystem
 from ..voice_boundary import Persona, apply_voice_boundary
@@ -824,13 +829,50 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["status"],
-        help="Run a one-shot command such as `status` and exit.",
+        help="Run a one-shot command such as `status` or a protocol command and exit.",
+    )
+    parser.add_argument(
+        "protocol_target",
+        nargs="?",
+        help="Protocol tool id for tool.describe/tool.invoke.",
     )
     parser.add_argument(
         "--debug-mode",
         action="store_true",
         help="Run in non-interactive debug mode with file-based command input.",
+    )
+    parser.add_argument(
+        "--input-json",
+        default="{}",
+        help="JSON input object for `tool.invoke`.",
+    )
+    parser.add_argument(
+        "--payload-json",
+        default="{}",
+        help="JSON payload object for protocol commands that accept a payload.",
+    )
+    parser.add_argument(
+        "--protocol-environment",
+        default="workspace",
+        help="Protocol environment name for one-shot protocol commands.",
+    )
+    parser.add_argument(
+        "--protocol-cwd",
+        help="Protocol cwd for one-shot protocol commands.",
+    )
+    parser.add_argument(
+        "--caller-id",
+        default="arcanos-cli",
+        help="Caller id attached to one-shot protocol commands.",
+    )
+    parser.add_argument(
+        "--caller-type",
+        default="cli",
+        help="Caller type attached to one-shot protocol commands.",
+    )
+    parser.add_argument(
+        "--caller-scopes",
+        help="Comma-separated caller scopes for one-shot protocol commands.",
     )
 
     try:
@@ -841,6 +883,9 @@ def main() -> None:
         pass
 
     args = parser.parse_args()
+
+    if _is_protocol_cli_command(args.command):
+        raise SystemExit(_run_protocol_cli_command(args))
 
     try:
         bootstrap_credentials()
@@ -858,6 +903,98 @@ def main() -> None:
         sys.exit(0 if succeeded else 1)
 
     cli.run(debug_mode=args.debug_mode)
+
+
+def _is_protocol_cli_command(command: str | None) -> bool:
+    return command in {
+        "context.inspect",
+        "daemon.capabilities",
+        "tool.describe",
+        "tool.invoke",
+        "tool.registry",
+    }
+
+
+def _run_protocol_cli_command(args: argparse.Namespace) -> int:
+    try:
+        handler = ProtocolRuntimeHandler(load_protocol_contract(), InMemoryProtocolStateStore())
+        request_id = f"cli-{uuid.uuid4().hex[:12]}"
+        payload = _build_protocol_payload(args)
+        response = handler.handle_request(
+            {
+                "protocol": "arcanos-v1",
+                "requestId": request_id,
+                "command": args.command,
+                "context": {
+                    "environment": args.protocol_environment or "workspace",
+                    "cwd": args.protocol_cwd or os.getcwd(),
+                    "shell": os.environ.get("ComSpec") or os.environ.get("SHELL") or "unknown",
+                    "caller": {
+                        "id": args.caller_id,
+                        "type": args.caller_type,
+                        "scopes": _resolve_protocol_caller_scopes(args),
+                    },
+                },
+                "payload": payload,
+            }
+        )
+    except ValueError as error:
+        response = {
+            "protocol": "arcanos-v1",
+            "requestId": "cli-validation-error",
+            "ok": False,
+            "error": {
+                "code": "invalid_request",
+                "message": str(error),
+                "retryable": False,
+            },
+            "meta": {
+                "version": "0.1.0",
+                "executedBy": "python-cli",
+                "timingMs": 0,
+            },
+        }
+    sys.stdout.write(json.dumps(response, sort_keys=True))
+    sys.stdout.write("\n")
+    return 0 if response.get("ok") else 1
+
+
+def _build_protocol_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if args.command == "tool.invoke":
+        if not args.protocol_target:
+            raise ValueError("tool.invoke requires a tool id, for example `arcanos tool.invoke repo.listTree`.")
+        return {
+            "toolId": args.protocol_target,
+            "input": _parse_json_argument(args.input_json, "--input-json"),
+        }
+    if args.command == "tool.describe":
+        if not args.protocol_target:
+            raise ValueError("tool.describe requires a tool id.")
+        return {"toolId": args.protocol_target}
+    return _parse_json_argument(args.payload_json, "--payload-json")
+
+
+def _resolve_protocol_caller_scopes(args: argparse.Namespace) -> list[str]:
+    if args.caller_scopes:
+        return [scope.strip() for scope in args.caller_scopes.split(",") if scope.strip()]
+    scope_map = {
+        "tool.invoke": ["repo:read", "tools:invoke"],
+        "tool.describe": ["tools:read"],
+        "tool.registry": ["tools:read"],
+        "context.inspect": ["context:read"],
+        "daemon.capabilities": ["runtime:read"],
+    }
+    return scope_map.get(args.command, [])
+
+
+def _parse_json_argument(raw_value: str, flag_name: str) -> dict[str, Any]:
+    try:
+        parsed_value = json.loads(raw_value)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{flag_name} must be valid JSON: {error.msg}.") from error
+    if not isinstance(parsed_value, dict):
+        raise ValueError(f"{flag_name} must decode to a JSON object.")
+    return parsed_value
 
 
 if __name__ == "__main__":
