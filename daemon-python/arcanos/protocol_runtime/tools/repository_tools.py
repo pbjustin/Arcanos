@@ -266,9 +266,16 @@ def search_repository(tool_input: dict[str, Any]) -> dict[str, Any]:
     for candidate_path in candidate_files:
         if len(matches) >= max_results:
             break
-        if candidate_path.stat().st_size > max_file_bytes:
+        try:
+            candidate_size = candidate_path.stat().st_size
+        except OSError:
             continue
-        file_bytes = candidate_path.read_bytes()
+        if candidate_size > max_file_bytes:
+            continue
+        try:
+            file_bytes = candidate_path.read_bytes()
+        except OSError:
+            continue
         if _is_binary_bytes(file_bytes):
             continue
 
@@ -490,12 +497,20 @@ def _iter_search_files(search_root: Path, include_hidden: bool) -> Iterable[Path
         yield search_root
         return
 
-    for candidate_path in sorted(search_root.rglob("*"), key=lambda candidate: str(candidate).lower()):
-        if not candidate_path.is_file():
-            continue
-        if _should_skip_path(candidate_path, include_hidden):
-            continue
-        yield candidate_path
+    for root, directories, files in os.walk(search_root):
+        root_path = Path(root)
+        directories[:] = [
+            directory_name
+            for directory_name in sorted(directories, key=lambda candidate: candidate.lower())
+            if not _should_skip_path(root_path / directory_name, include_hidden)
+        ]
+        for file_name in sorted(files, key=lambda candidate: candidate.lower()):
+            candidate_path = root_path / file_name
+            if _should_skip_path(candidate_path, include_hidden):
+                continue
+            if not candidate_path.is_file():
+                continue
+            yield candidate_path
 
 
 def _should_skip_path(candidate_path: Path, include_hidden: bool) -> bool:

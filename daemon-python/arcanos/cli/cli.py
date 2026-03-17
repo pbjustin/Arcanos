@@ -874,6 +874,11 @@ def main() -> None:
         "--caller-scopes",
         help="Comma-separated caller scopes for one-shot protocol commands.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit deterministic JSON for one-shot diagnostic commands.",
+    )
 
     try:
         import argcomplete
@@ -886,6 +891,8 @@ def main() -> None:
 
     if _is_protocol_cli_command(args.command):
         raise SystemExit(_run_protocol_cli_command(args))
+    if _is_doctor_cli_command(args):
+        raise SystemExit(_run_doctor_cli_command(args))
 
     try:
         bootstrap_credentials()
@@ -914,6 +921,23 @@ def _is_protocol_cli_command(command: str | None) -> bool:
         "tool.registry",
     }
 
+def _is_doctor_cli_command(args: argparse.Namespace) -> bool:
+    return args.command == "doctor" and args.protocol_target == "implementation"
+
+
+def _build_cli_context(args: argparse.Namespace, scopes: list[str] | None = None) -> dict[str, Any]:
+    resolved_scopes = scopes if scopes is not None else _resolve_protocol_caller_scopes(args)
+    return {
+        "environment": args.protocol_environment or "workspace",
+        "cwd": args.protocol_cwd or os.getcwd(),
+        "shell": os.environ.get("ComSpec") or os.environ.get("SHELL") or "unknown",
+        "caller": {
+            "id": args.caller_id,
+            "type": args.caller_type,
+            "scopes": resolved_scopes,
+        },
+    }
+
 
 def _run_protocol_cli_command(args: argparse.Namespace) -> int:
     try:
@@ -925,16 +949,7 @@ def _run_protocol_cli_command(args: argparse.Namespace) -> int:
                 "protocol": "arcanos-v1",
                 "requestId": request_id,
                 "command": args.command,
-                "context": {
-                    "environment": args.protocol_environment or "workspace",
-                    "cwd": args.protocol_cwd or os.getcwd(),
-                    "shell": os.environ.get("ComSpec") or os.environ.get("SHELL") or "unknown",
-                    "caller": {
-                        "id": args.caller_id,
-                        "type": args.caller_type,
-                        "scopes": _resolve_protocol_caller_scopes(args),
-                    },
-                },
+                "context": _build_cli_context(args),
                 "payload": payload,
             }
         )
@@ -955,6 +970,38 @@ def _run_protocol_cli_command(args: argparse.Namespace) -> int:
             },
         }
     sys.stdout.write(json.dumps(response, sort_keys=True))
+    sys.stdout.write("\n")
+    return 0 if response.get("ok") else 1
+
+
+def _run_doctor_cli_command(args: argparse.Namespace) -> int:
+    handler = ProtocolRuntimeHandler(load_protocol_contract(), InMemoryProtocolStateStore())
+    request_id = f"cli-{uuid.uuid4().hex[:12]}"
+    response = handler.handle_request(
+        {
+            "protocol": "arcanos-v1",
+            "requestId": request_id,
+            "command": "tool.invoke",
+            "context": _build_cli_context(args, scopes=["repo:read", "tools:invoke"]),
+            "payload": {
+                "toolId": "doctor.implementation",
+                "input": {},
+            },
+        }
+    )
+
+    if response.get("ok"):
+        output = {
+            "ok": True,
+            "data": response["data"]["result"],
+        }
+    else:
+        output = {
+            "ok": False,
+            "error": response.get("error"),
+        }
+
+    sys.stdout.write(json.dumps(output, sort_keys=True))
     sys.stdout.write("\n")
     return 0 if response.get("ok") else 1
 

@@ -20,6 +20,8 @@ import toolRegistryResponseSchema from "../schemas/v1/commands/tool.registry.res
 import approvalSchema from "../schemas/v1/nouns/approval.schema.json" with { type: "json" };
 import artifactSchema from "../schemas/v1/nouns/artifact.schema.json" with { type: "json" };
 import contextSchema from "../schemas/v1/nouns/context.schema.json" with { type: "json" };
+import doctorImplementationInputSchema from "../schemas/v1/tools/doctor.implementation.input.schema.json" with { type: "json" };
+import doctorImplementationOutputSchema from "../schemas/v1/tools/doctor.implementation.output.schema.json" with { type: "json" };
 import environmentSchema from "../schemas/v1/nouns/environment.schema.json" with { type: "json" };
 import executionStateSchema from "../schemas/v1/nouns/execution-state.schema.json" with { type: "json" };
 import patchSchema from "../schemas/v1/nouns/patch.schema.json" with { type: "json" };
@@ -108,6 +110,10 @@ export function getProtocolSchemaCatalog() {
       }
     },
     tools: {
+      "doctor.implementation": {
+        input: doctorImplementationInputSchema,
+        output: doctorImplementationOutputSchema
+      },
       repoList: {
         input: repoListInputSchema,
         output: repoListOutputSchema

@@ -46,6 +46,8 @@ const sharedSchemas: AnySchema[] = [
   schemaCatalog.commands.toolInvoke.response,
   schemaCatalog.commands.toolRegistry.request,
   schemaCatalog.commands.toolRegistry.response,
+  schemaCatalog.tools["doctor.implementation"].input,
+  schemaCatalog.tools["doctor.implementation"].output,
   schemaCatalog.tools.repoList.input,
   schemaCatalog.tools.repoList.output,
   schemaCatalog.tools["repo.listTree"].input,

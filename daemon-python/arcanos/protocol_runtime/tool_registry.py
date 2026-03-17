@@ -94,6 +94,16 @@ def build_tool_registry(contract: ProtocolContract) -> list[dict[str, Any]]:
             "workspace",
         ),
         _tool_definition_from_schema_ids(
+            "doctor.implementation",
+            "Diagnose implementation coverage from direct repository inspection evidence.",
+            contract.tools["doctor.implementation"].input["$id"],
+            contract.tools["doctor.implementation"].output["$id"],
+            False,
+            ["repo:read"],
+            ["protocol-validation", "fs-read"],
+            "workspace",
+        ),
+        _tool_definition_from_schema_ids(
             "repo.list",
             "List files and directories from the active workspace root.",
             contract.tools["repo.list"].input["$id"],
