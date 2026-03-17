@@ -398,3 +398,45 @@ def test_tool_invoke_gets_status_log_and_diff(monkeypatch, tmp_path: Path) -> No
     assert diff_response["ok"] is True
     assert "tracked.txt" in diff_response["data"]["result"]["diff"]
     assert "@@" in diff_response["data"]["result"]["diff"]
+
+
+def test_tool_invoke_doctor_implementation(monkeypatch, tmp_path: Path) -> None:
+    """tool.invoke doctor.implementation reports bounded implementation evidence from the workspace."""
+
+    (tmp_path / "packages" / "cli" / "src").mkdir(parents=True)
+    (tmp_path / "packages" / "protocol" / "schemas" / "v1").mkdir(parents=True)
+    (tmp_path / "daemon-python").mkdir()
+    (tmp_path / "packages" / "protocol" / "schemas" / "v1" / "envelope.schema.json").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "implementation.ts").write_text(
+        "\n".join(
+            [
+                "export const commands = ['task.create', 'plan.generate', 'tool.invoke', 'exec.resume'];",
+                "export const repoTools = ['repo.listTree', 'repo.readFile'];",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARCANOS_WORKSPACE_ROOT", str(tmp_path))
+    handler = ProtocolRuntimeHandler(load_protocol_contract(), InMemoryProtocolStateStore())
+
+    response = handler.handle_request(
+        {
+            "protocol": "arcanos-v1",
+            "requestId": "req-tool-doctor-implementation",
+            "command": "tool.invoke",
+            "context": _caller_context(tmp_path),
+            "payload": {
+                "toolId": "doctor.implementation",
+                "input": {},
+            },
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["data"]["result"]["status"] == "implemented"
+    assert any(check["name"] == "repo_tools" and check["status"] == "pass" for check in response["data"]["result"]["checks"])
+    assert "exec.resume" in response["data"]["result"]["evidence"]["commandsDetected"]

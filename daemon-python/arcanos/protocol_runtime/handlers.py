@@ -11,6 +11,7 @@ from .audit import RepoToolAuditLogger
 from .schema_loader import ProtocolContract
 from .state_store import InMemoryProtocolStateStore
 from .tool_registry import build_tool_registry, resolve_tool_schemas
+from .tools.doctor_tools import doctor_implementation
 from .tools.repository_tools import (
     build_remote_source_descriptor,
     get_repository_diff,
@@ -393,6 +394,8 @@ class ProtocolRuntimeHandler:
         return str(environment_name) if environment_name in valid_environment_types else "workspace"
 
     def _invoke_repo_tool(self, tool_id: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        if tool_id == "doctor.implementation":
+            return doctor_implementation(tool_input)
         if tool_id == "repo.list":
             return self._to_legacy_list_result(list_repository_tree(tool_input))
         if tool_id == "repo.read_file":

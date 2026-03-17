@@ -9,6 +9,9 @@ const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
 const mockExtractNaturalLanguageStorageLabel = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
+const mockBuildRepoInspectionPrompt = jest.fn();
+const mockCollectRepoImplementationEvidence = jest.fn();
+const mockShouldInspectRepoPrompt = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
@@ -38,6 +41,12 @@ jest.unstable_mockModule('../src/services/arcanosMcp.js', () => ({
   },
 }));
 
+jest.unstable_mockModule('../src/services/repoImplementationEvidence.js', () => ({
+  buildRepoInspectionPrompt: mockBuildRepoInspectionPrompt,
+  collectRepoImplementationEvidence: mockCollectRepoImplementationEvidence,
+  shouldInspectRepoPrompt: mockShouldInspectRepoPrompt,
+}));
+
 jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
   isRecord(value: unknown) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,6 +72,18 @@ describe('routeGptRequest MCP dispatch branch', () => {
     mockExtractNaturalLanguageStorageLabel.mockReturnValue(null);
     mockHasNaturalLanguageMemoryCue.mockReturnValue(false);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
+    mockShouldInspectRepoPrompt.mockReturnValue(false);
+    mockCollectRepoImplementationEvidence.mockResolvedValue({
+      status: 'implemented',
+      checks: [{ name: 'repo_tools', status: 'pass' }],
+      evidence: {
+        rootPath: '/workspace',
+        filesFound: ['packages/cli/src'],
+        commandsDetected: ['tool.invoke'],
+        repoToolsDetected: ['repo.listTree'],
+      },
+    });
+    mockBuildRepoInspectionPrompt.mockImplementation((prompt: string) => `repo-evidence:${prompt}`);
   });
 
   it('uses the request-scoped ARCANOS MCP service for explicit mcp.invoke actions', async () => {
@@ -356,6 +377,65 @@ describe('routeGptRequest MCP dispatch branch', () => {
         }),
         _route: expect.objectContaining({
           action: 'mcp.auto.invoke',
+        }),
+      })
+    );
+  });
+
+  it('automatically injects repository evidence for implementation-status prompts', async () => {
+    const invokeTool = jest.fn().mockResolvedValue({
+      structuredContent: { ok: true, result: 'repo-grounded answer' },
+    });
+    const request = {
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool,
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    mockShouldInspectRepoPrompt.mockReturnValue(true);
+
+    const envelope = await routeGptRequest({
+      gptId: 'tutor',
+      body: {
+        message: 'Is my CLI implemented?',
+        sessionId: 'sess-repo-1',
+      },
+      requestId: 'req-repo-1',
+      request,
+    });
+
+    expect(mockCollectRepoImplementationEvidence).toHaveBeenCalledTimes(1);
+    expect(mockBuildRepoInspectionPrompt).toHaveBeenCalledWith(
+      'Is my CLI implemented?',
+      expect.objectContaining({
+        status: 'implemented',
+      })
+    );
+    expect(invokeTool).toHaveBeenCalledWith({
+      toolName: 'trinity.ask',
+      toolArguments: {
+        prompt: 'repo-evidence:Is my CLI implemented?',
+        sessionId: 'sess-repo-1',
+      },
+      request,
+      sessionId: 'sess-repo-1',
+    });
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          handledBy: 'mcp-dispatcher',
+          mcp: expect.objectContaining({
+            action: 'invoke',
+            toolName: 'trinity.ask',
+            dispatchMode: 'automatic',
+            reason: 'prompt_requests_repo_inspection',
+          }),
         }),
       })
     );

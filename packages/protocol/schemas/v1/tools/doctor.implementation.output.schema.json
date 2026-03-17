@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/doctor.implementation.output.schema.json",
+  "title": "doctor.implementation output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "checks",
+    "evidence"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "implemented",
+        "partially_implemented"
+      ]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "missing"
+            ]
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandsDetected",
+        "filesFound",
+        "repoToolsDetected",
+        "rootPath"
+      ],
+      "properties": {
+        "rootPath": {
+          "type": "string"
+        },
+        "filesFound": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "commandsDetected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repoToolsDetected": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

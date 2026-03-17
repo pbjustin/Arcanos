@@ -88,4 +88,6 @@ def _summarize_tool_input(tool_id: str, tool_input: dict[str, Any]) -> dict[str,
             "contextLines": tool_input.get("contextLines"),
             "maxBytes": tool_input.get("maxBytes"),
         }
+    if tool_id == "doctor.implementation":
+        return {}
     return dict(tool_input)
