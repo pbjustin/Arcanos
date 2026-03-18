@@ -51,7 +51,8 @@ async function dispatchViaPythonRuntime(
   request: ProtocolRequest<unknown>,
   options: ProtocolTransportOptions
 ): Promise<ProtocolResponse<unknown>> {
-  const daemonWorkingDirectory = path.join(resolveRepositoryRoot(), "daemon-python");
+  const repositoryRoot = resolveRepositoryRoot();
+  const daemonWorkingDirectory = resolvePythonRuntimeDirectory(repositoryRoot);
   const pythonBinary = options.pythonBinary ?? process.env.PYTHON ?? "python";
 
   return new Promise<ProtocolResponse<unknown>>((resolve, reject) => {
@@ -60,7 +61,12 @@ async function dispatchViaPythonRuntime(
       ["-m", "arcanos.protocol_runtime"],
       {
         cwd: daemonWorkingDirectory,
-        stdio: ["pipe", "pipe", "pipe"]
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ARCANOS_REPOSITORY_ROOT: repositoryRoot,
+          ARCANOS_WORKSPACE_ROOT: process.env.ARCANOS_WORKSPACE_ROOT ?? repositoryRoot,
+        }
       }
     );
 
@@ -111,6 +117,13 @@ async function dispatchViaPythonRuntime(
 }
 
 function resolveRepositoryRoot(): string {
+  const configuredRoot = resolveConfiguredDirectory(
+    process.env.ARCANOS_REPOSITORY_ROOT ?? process.env.ARCANOS_WORKSPACE_ROOT
+  );
+  if (configuredRoot && isRepositoryRoot(configuredRoot)) {
+    return configuredRoot;
+  }
+
   let currentPath = path.dirname(fileURLToPath(import.meta.url));
 
   while (true) {
@@ -127,9 +140,38 @@ function resolveRepositoryRoot(): string {
   }
 }
 
+function resolvePythonRuntimeDirectory(repositoryRoot: string): string {
+  const configuredRuntimeDirectory = resolveConfiguredDirectory(process.env.ARCANOS_PYTHON_RUNTIME_DIR);
+  if (configuredRuntimeDirectory) {
+    return configuredRuntimeDirectory;
+  }
+
+  const defaultRuntimeDirectory = path.join(repositoryRoot, "daemon-python");
+  if (existsSync(defaultRuntimeDirectory)) {
+    return defaultRuntimeDirectory;
+  }
+
+  throw new Error(
+    `Unable to locate the python transport runtime directory. Expected "${defaultRuntimeDirectory}" or set ARCANOS_PYTHON_RUNTIME_DIR.`
+  );
+}
+
+function resolveConfiguredDirectory(rawPath: string | undefined): string | null {
+  if (!rawPath || rawPath.trim().length === 0) {
+    return null;
+  }
+
+  const resolvedPath = path.resolve(rawPath);
+  return existsSync(resolvedPath) ? resolvedPath : null;
+}
+
 function isRepositoryRoot(candidatePath: string): boolean {
   return (
     existsSync(path.join(candidatePath, ".git"))
     || existsSync(path.join(candidatePath, "daemon-python"))
+    || (
+      existsSync(path.join(candidatePath, "package.json"))
+      && existsSync(path.join(candidatePath, "packages", "protocol"))
+    )
   );
 }

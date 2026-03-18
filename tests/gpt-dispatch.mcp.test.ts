@@ -10,6 +10,7 @@ const mockExtractNaturalLanguageSessionId = jest.fn();
 const mockExtractNaturalLanguageStorageLabel = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockBuildRepoInspectionPrompt = jest.fn();
+const mockBuildRepoInspectionAnswer = jest.fn();
 const mockCollectRepoImplementationEvidence = jest.fn();
 const mockShouldInspectRepoPrompt = jest.fn();
 
@@ -42,6 +43,7 @@ jest.unstable_mockModule('../src/services/arcanosMcp.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/services/repoImplementationEvidence.js', () => ({
+  buildRepoInspectionAnswer: mockBuildRepoInspectionAnswer,
   buildRepoInspectionPrompt: mockBuildRepoInspectionPrompt,
   collectRepoImplementationEvidence: mockCollectRepoImplementationEvidence,
   shouldInspectRepoPrompt: mockShouldInspectRepoPrompt,
@@ -84,6 +86,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
       },
     });
     mockBuildRepoInspectionPrompt.mockImplementation((prompt: string) => `repo-evidence:${prompt}`);
+    mockBuildRepoInspectionAnswer.mockImplementation((prompt: string) => `repo-answer:${prompt}`);
   });
 
   it('uses the request-scoped ARCANOS MCP service for explicit mcp.invoke actions', async () => {
@@ -382,10 +385,8 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
-  it('automatically injects repository evidence for implementation-status prompts', async () => {
-    const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: { ok: true, result: 'repo-grounded answer' },
-    });
+  it('automatically returns repository evidence for implementation-status prompts', async () => {
+    const invokeTool = jest.fn();
     const request = {
       app: {
         locals: {
@@ -410,32 +411,25 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
 
     expect(mockCollectRepoImplementationEvidence).toHaveBeenCalledTimes(1);
-    expect(mockBuildRepoInspectionPrompt).toHaveBeenCalledWith(
+    expect(mockBuildRepoInspectionAnswer).toHaveBeenCalledWith(
       'Is my CLI implemented?',
       expect.objectContaining({
         status: 'implemented',
       })
     );
-    expect(invokeTool).toHaveBeenCalledWith({
-      toolName: 'trinity.ask',
-      toolArguments: {
-        prompt: 'repo-evidence:Is my CLI implemented?',
-        sessionId: 'sess-repo-1',
-      },
-      request,
-      sessionId: 'sess-repo-1',
-    });
+    expect(invokeTool).not.toHaveBeenCalled();
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,
         result: expect.objectContaining({
-          handledBy: 'mcp-dispatcher',
-          mcp: expect.objectContaining({
-            action: 'invoke',
-            toolName: 'trinity.ask',
-            dispatchMode: 'automatic',
+          handledBy: 'repo-inspection',
+          repoInspection: expect.objectContaining({
             reason: 'prompt_requests_repo_inspection',
+            answer: 'repo-answer:Is my CLI implemented?',
           }),
+        }),
+        _route: expect.objectContaining({
+          action: 'repo.inspect',
         }),
       })
     );

@@ -24,6 +24,7 @@ import type {
 } from './types.js';
 import { tryDispatchDaemonTools } from './daemonTools.js';
 import { tryDispatchDagTools } from './dagTools.js';
+import { tryDispatchRepoTools } from './repoTools.js';
 import { tryDispatchWorkerTools } from './workerTools.js';
 import { getGPT5Model } from '@services/openai.js';
 import {
@@ -682,6 +683,21 @@ export const handleAIRequest = async (
       });
       return res.json({
         ...workerToolResponse,
+        endpoint: endpointName,
+        clientContext: req.body.clientContext,
+        ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
+      });
+    }
+
+    const repoToolResponse = await tryDispatchRepoTools(openai, prompt);
+    if (repoToolResponse) {
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: 'repo-tool',
+        fallbackFlag: false,
+        extra: { disposition: 'repo-tool' }
+      });
+      return res.json({
+        ...repoToolResponse,
         endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})

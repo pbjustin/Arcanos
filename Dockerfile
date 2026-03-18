@@ -3,9 +3,13 @@ FROM node:20.18.1-alpine
 
 # Set production environment
 ENV NODE_ENV=production
+ENV PYTHON=python3
+ENV ARCANOS_WORKSPACE_ROOT=/app
+ENV ARCANOS_PYTHON_RUNTIME_DIR=/app/daemon-python
 
-# Install build-time VCS dependency required by git-based npm overrides.
-RUN apk add --no-cache git
+# Install build-time VCS dependency required by git-based npm overrides and
+# the minimal Python runtime needed for protocol repo tools.
+RUN apk add --no-cache git python3 py3-jsonschema
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -27,6 +31,7 @@ COPY src/ ./src/
 COPY workers/ ./workers/
 COPY packages/ ./packages/
 COPY arcanos-ai-runtime/ ./arcanos-ai-runtime/
+COPY daemon-python/ ./daemon-python/
 COPY config/ ./config/
 COPY tsconfig.json ./
 

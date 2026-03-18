@@ -80,3 +80,50 @@ export function buildRepoInspectionPrompt(
     `Repository evidence JSON:\n${JSON.stringify(evidence, null, 2)}`,
   ].join("\n\n");
 }
+
+/**
+ * Build a deterministic user-facing summary from collected repository evidence.
+ * Inputs: original user prompt plus structured implementation evidence.
+ * Outputs: concise answer grounded only in the inspected repository facts.
+ * Edge cases: missing evidence arrays degrade to explicit "none detected" text instead of guessing.
+ */
+export function buildRepoInspectionAnswer(
+  userPrompt: string,
+  evidence: ImplementationDoctorResult
+): string {
+  const filesFound = evidence.evidence.filesFound ?? [];
+  const repoToolsDetected = evidence.evidence.repoToolsDetected ?? [];
+  const commandsDetected = evidence.evidence.commandsDetected ?? [];
+  const protocolFile =
+    filesFound.find((filePath) => filePath.includes("protocol/schemas"))
+    ?? filesFound.find((filePath) => filePath.endsWith("envelope.schema.json"))
+    ?? "none detected";
+
+  const lines = [
+    evidence.status === "implemented"
+      ? "Yes, I can see your codebase structure and implementation signals."
+      : "I can inspect the codebase, and the implementation appears only partially complete.",
+  ];
+
+  if (userPrompt.toLowerCase().includes("cli")) {
+    lines.push(
+      filesFound.includes("packages/cli/src")
+        ? "- CLI implementation: The CLI is implemented — I see `packages/cli/src`."
+        : "- CLI implementation: I do not see `packages/cli/src` in the inspected evidence."
+    );
+  }
+
+  lines.push(
+    repoToolsDetected.length > 0
+      ? `- Repo tools available: ${repoToolsDetected.map((toolId) => `\`${toolId}\``).join(", ")}.`
+      : "- Repo tools available: none detected."
+  );
+
+  if (commandsDetected.length > 0) {
+    lines.push(`- Commands detected: ${commandsDetected.map((command) => `\`${command}\``).join(", ")}.`);
+  }
+
+  lines.push(`- One concrete protocol file: \`${protocolFile}\`.`);
+
+  return lines.join("\n");
+}

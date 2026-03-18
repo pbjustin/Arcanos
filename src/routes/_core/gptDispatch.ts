@@ -12,7 +12,7 @@ import {
 } from "@services/naturalLanguageMemory.js";
 import { detectBackstageBookerIntent } from "@services/backstageBookerRouteShortcut.js";
 import {
-  buildRepoInspectionPrompt,
+  buildRepoInspectionAnswer,
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
@@ -789,7 +789,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const actionCandidate =
     automaticBackstageBookerDispatch?.action ??
     pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
-  let automaticRepoInspectionDispatchIntent: McpDispatchIntent | null = null;
+  let automaticRepoInspectionResult:
+    | {
+        handledBy: "repo-inspection";
+        repoInspection: {
+          reason: "prompt_requests_repo_inspection";
+          answer: string;
+          evidence: Awaited<ReturnType<typeof collectRepoImplementationEvidence>>;
+        };
+      }
+    | null = null;
   if (
     !mcpDispatch.intent &&
     activeEntry.module === "ARCANOS:TUTOR" &&
@@ -799,16 +808,21 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   ) {
     try {
       const repoEvidence = await collectRepoImplementationEvidence();
-      automaticRepoInspectionDispatchIntent = {
-        action: "mcp.invoke",
-        toolName: "trinity.ask",
-        toolArguments: {
-          prompt: buildRepoInspectionPrompt(prompt!, repoEvidence),
-          sessionId,
+      automaticRepoInspectionResult = {
+        handledBy: "repo-inspection",
+        repoInspection: {
+          reason: "prompt_requests_repo_inspection",
+          answer: buildRepoInspectionAnswer(prompt!, repoEvidence),
+          evidence: repoEvidence,
         },
-        dispatchMode: "automatic",
-        reason: "prompt_requests_repo_inspection",
       };
+
+      logger?.info?.("gpt.dispatch.repo_inspection.ok", {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        reason: "prompt_requests_repo_inspection",
+      });
     } catch (error) {
       return {
         ok: false,
@@ -828,6 +842,40 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       };
     }
   }
+  if (automaticRepoInspectionResult) {
+    await persistModuleConversation({
+      moduleName: activeEntry.module,
+      route: activeEntry.route,
+      action: "repo.inspect",
+      gptId: trimmedGptId,
+      sessionId,
+      requestId,
+      requestPayload: payload,
+      responsePayload: automaticRepoInspectionResult,
+    }).catch((error: unknown) => {
+      logger?.warn?.("gpt.dispatch.repo_inspection.persistence_failed", {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        action: "repo.inspect",
+        error: String((error as Error)?.message ?? error),
+      });
+    });
+
+    return {
+      ok: true,
+      result: automaticRepoInspectionResult,
+      _route: {
+        ...baseRoute,
+        module: activeEntry.module,
+        action: "repo.inspect",
+        matchMethod,
+        route: activeEntry.route,
+        availableActions,
+        moduleVersion: (moduleMetadata as any)?.version ?? null,
+      },
+    };
+  }
   const automaticMcpDispatchIntent = mcpDispatch.intent
     ? null
     : inferAutomaticMcpDispatchIntent({
@@ -838,7 +886,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         sessionId,
       });
   const resolvedMcpDispatchIntent =
-    mcpDispatch.intent ?? automaticRepoInspectionDispatchIntent ?? automaticMcpDispatchIntent;
+    mcpDispatch.intent ?? automaticMcpDispatchIntent;
 
   if (resolvedMcpDispatchIntent) {
     const dispatcherMcpService = getDispatcherMcpService(request);
