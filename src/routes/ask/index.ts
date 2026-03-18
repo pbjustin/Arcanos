@@ -63,6 +63,11 @@ import {
   completeAiRouteTrace,
   failAiRouteTrace
 } from '@transport/http/aiRouteTelemetry.js';
+import {
+  buildRepoInspectionPrompt,
+  collectRepoImplementationEvidence,
+  shouldInspectRepoPrompt
+} from '@services/repoImplementationEvidence.js';
 
 const router = express.Router();
 
@@ -619,17 +624,6 @@ export const handleAIRequest = async (
   }
 
   console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}, domain: ${finalDomain} (${finalConfidence})`);
-  const queuedAskJobInput = buildQueuedAskJobInput({
-    prompt,
-    sessionId,
-    overrideAuditSafe,
-    cognitiveDomain: finalDomain,
-    ...buildTrinityOutputControlOptions(req.body),
-    clientContext: req.body.clientContext ?? null,
-    endpointName,
-    auditFlag: bypassAuditFlag
-  });
-
   // Log request for feedback loop
   logRequestFeedback(prompt, endpointName);
   const routeTrace = beginAiRouteTrace(req, endpointName, prompt, getGPT5Model());
@@ -732,6 +726,23 @@ export const handleAIRequest = async (
       return res.json(systemHealthResponse);
     }
 
+    let trinityPrompt = prompt;
+    if (shouldInspectRepoPrompt(prompt)) {
+      const repoEvidence = await collectRepoImplementationEvidence();
+      trinityPrompt = buildRepoInspectionPrompt(prompt, repoEvidence);
+    }
+
+    const queuedAskJobInput = buildQueuedAskJobInput({
+      prompt: trinityPrompt,
+      sessionId,
+      overrideAuditSafe,
+      cognitiveDomain: finalDomain,
+      ...buildTrinityOutputControlOptions(req.body),
+      clientContext: req.body.clientContext ?? null,
+      endpointName,
+      auditFlag: bypassAuditFlag
+    });
+
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
     //
     // NOTE: This /ask route (and its /brain alias) is currently the only entrypoint that performs
@@ -826,7 +837,7 @@ export const handleAIRequest = async (
     const outputControlOptions = buildTrinityOutputControlOptions(req.body);
     const output = await runThroughBrain(
       openai,
-      prompt,
+      trinityPrompt,
       sessionId,
       overrideAuditSafe,
       {
