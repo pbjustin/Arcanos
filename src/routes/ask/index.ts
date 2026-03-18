@@ -24,7 +24,6 @@ import type {
 } from './types.js';
 import { tryDispatchDaemonTools } from './daemonTools.js';
 import { tryDispatchDagTools } from './dagTools.js';
-import { tryDispatchRepoTools } from './repoTools.js';
 import { tryDispatchWorkerTools } from './workerTools.js';
 import { getGPT5Model } from '@services/openai.js';
 import {
@@ -65,8 +64,9 @@ import {
   failAiRouteTrace
 } from '@transport/http/aiRouteTelemetry.js';
 import {
-  buildRepoInspectionPrompt,
-  collectRepoImplementationEvidence,
+  collectRepoInspectionEvidence,
+  buildRepoInspectionAnswer,
+  isVerificationQuestion,
   shouldInspectRepoPrompt
 } from '@services/repoImplementationEvidence.js';
 
@@ -598,6 +598,28 @@ export const handleAIRequest = async (
   if (!validation) return; // Response already sent
 
   const { client: openai, input: prompt } = validation;
+  const repoInspectionRequested = shouldInspectRepoPrompt(prompt);
+  const verificationQuestion = isVerificationQuestion(prompt);
+  let repoEvidence: Awaited<ReturnType<typeof collectRepoInspectionEvidence>> | null = null;
+
+  if (repoInspectionRequested) {
+    repoEvidence = await collectRepoInspectionEvidence(prompt);
+
+    const hasSuccessfulRepoEvidence =
+      repoEvidence.tree.ok
+      || repoEvidence.status.ok
+      || repoEvidence.log.ok
+      || repoEvidence.searches.some((search) => search.ok);
+
+    if (verificationQuestion && !hasSuccessfulRepoEvidence) {
+      return res.status(503).json({
+        error: {
+          code: 'REPO_EVIDENCE_REQUIRED',
+          message: 'Cannot verify implementation without repo inspection.'
+        }
+      });
+    }
+  }
 
   // Hybrid fallback: use GPT classifier when heuristic confidence is low
   if (finalConfidence < 0.85) {
@@ -689,21 +711,6 @@ export const handleAIRequest = async (
       });
     }
 
-    const repoToolResponse = await tryDispatchRepoTools(openai, prompt);
-    if (repoToolResponse) {
-      completeAiRouteTrace(req, routeTrace, {
-        activeModel: 'repo-tool',
-        fallbackFlag: false,
-        extra: { disposition: 'repo-tool' }
-      });
-      return res.json({
-        ...repoToolResponse,
-        endpoint: endpointName,
-        clientContext: req.body.clientContext,
-        ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
-      });
-    }
-
     const promptShortcut = await tryExecutePromptRouteShortcut({
       prompt,
       sessionId
@@ -742,11 +749,31 @@ export const handleAIRequest = async (
       return res.json(systemHealthResponse);
     }
 
-    let trinityPrompt = prompt;
-    if (shouldInspectRepoPrompt(prompt)) {
-      const repoEvidence = await collectRepoImplementationEvidence();
-      trinityPrompt = buildRepoInspectionPrompt(prompt, repoEvidence);
+    if (repoEvidence) {
+      const repoInspectionResult = buildRepoInspectionAnswer(prompt, repoEvidence);
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: 'repo-inspection',
+        fallbackFlag: false,
+        extra: { disposition: 'repo-inspection' }
+      });
+      return res.json({
+        result: repoInspectionResult,
+        module: 'repo-inspection',
+        meta: {
+          id: `repo_inspection_${Date.now()}`,
+          created: Math.floor(Date.now() / 1000)
+        },
+        activeModel: 'repo-inspection',
+        fallbackFlag: false,
+        routingStages: ['REPO-INSPECTION'],
+        gpt5Used: false,
+        endpoint: endpointName,
+        clientContext: req.body.clientContext,
+        ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
+      });
     }
+
+    let trinityPrompt = prompt;
 
     const queuedAskJobInput = buildQueuedAskJobInput({
       prompt: trinityPrompt,

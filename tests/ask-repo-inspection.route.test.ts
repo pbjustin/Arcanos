@@ -5,15 +5,15 @@ const handleAIErrorMock = jest.fn();
 const logRequestFeedbackMock = jest.fn();
 const tryDispatchDaemonToolsMock = jest.fn();
 const tryDispatchDagToolsMock = jest.fn();
-const tryDispatchRepoToolsMock = jest.fn();
 const tryDispatchWorkerToolsMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 const mockRunThroughBrain = jest.fn();
 const mockTryExecutePromptRouteShortcut = jest.fn();
 const shouldInspectRepoPromptMock = jest.fn();
-const collectRepoImplementationEvidenceMock = jest.fn();
-const buildRepoInspectionPromptMock = jest.fn();
+const isVerificationQuestionMock = jest.fn();
+const collectRepoInspectionEvidenceMock = jest.fn();
+const buildRepoInspectionAnswerMock = jest.fn();
 
 jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
   validateAIRequest: validateAIRequestMock,
@@ -31,10 +31,6 @@ jest.unstable_mockModule('../src/routes/ask/daemonTools.js', () => ({
 
 jest.unstable_mockModule('../src/routes/ask/dagTools.js', () => ({
   tryDispatchDagTools: tryDispatchDagToolsMock
-}));
-
-jest.unstable_mockModule('../src/routes/ask/repoTools.js', () => ({
-  tryDispatchRepoTools: tryDispatchRepoToolsMock
 }));
 
 jest.unstable_mockModule('../src/routes/ask/workerTools.js', () => ({
@@ -55,8 +51,9 @@ jest.unstable_mockModule('@services/promptRouteShortcuts.js', () => ({
 
 jest.unstable_mockModule('@services/repoImplementationEvidence.js', () => ({
   shouldInspectRepoPrompt: shouldInspectRepoPromptMock,
-  collectRepoImplementationEvidence: collectRepoImplementationEvidenceMock,
-  buildRepoInspectionPrompt: buildRepoInspectionPromptMock
+  isVerificationQuestion: isVerificationQuestionMock,
+  collectRepoInspectionEvidence: collectRepoInspectionEvidenceMock,
+  buildRepoInspectionAnswer: buildRepoInspectionAnswerMock
 }));
 
 const express = (await import('express')).default;
@@ -80,11 +77,12 @@ describe('/ask repo inspection routing', () => {
     });
     tryDispatchDaemonToolsMock.mockResolvedValue(null);
     tryDispatchDagToolsMock.mockResolvedValue(null);
-    tryDispatchRepoToolsMock.mockResolvedValue(null);
     tryDispatchWorkerToolsMock.mockResolvedValue(null);
     detectCognitiveDomainMock.mockReturnValue({ domain: 'code', confidence: 0.95 });
     gptFallbackClassifierMock.mockResolvedValue('code');
     mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
+    shouldInspectRepoPromptMock.mockReturnValue(false);
+    isVerificationQuestionMock.mockReturnValue(false);
     mockRunThroughBrain.mockResolvedValue({
       result: 'implemented',
       module: 'trinity',
@@ -98,43 +96,35 @@ describe('/ask repo inspection routing', () => {
     });
   });
 
-  it('returns repo tool output before Trinity when the repo tool branch handles the prompt', async () => {
-    tryDispatchRepoToolsMock.mockResolvedValue({
-      result: 'repo tools answered this',
-      module: 'repo-tools',
-      meta: { id: 'repo-tool-1', created: Date.now() },
-      activeModel: 'repo-tool',
-      fallbackFlag: false
-    });
-
-    const response = await request(buildApp()).post('/ask').send({
-      prompt: 'Is my CLI implemented?',
-      sessionId: 'repo-inspection-session'
-    });
-
-    expect(response.status).toBe(200);
-    expect(tryDispatchRepoToolsMock).toHaveBeenCalledWith(expect.anything(), 'Is my CLI implemented?');
-    expect(response.body.result).toBe('repo tools answered this');
-    expect(response.body.module).toBe('repo-tools');
-    expect(mockRunThroughBrain).not.toHaveBeenCalled();
-  });
-
-  it('falls back to evidence-enriched Trinity prompt when the repo tool branch declines the prompt', async () => {
+  it('returns a deterministic repo inspection answer before Trinity when evidence is available', async () => {
     const repoEvidence = {
-      status: 'implemented',
-      checks: [{ name: 'repo_tools', status: 'pass' }],
-      evidence: {
-        rootPath: 'C:\\pbjustin\\Arcanos',
-        filesFound: ['packages/cli/src'],
-        commandsDetected: ['tool.invoke'],
-        repoToolsDetected: ['repo.listTree']
-      }
+      tree: {
+        toolId: 'repo.listTree',
+        ok: true,
+        data: { items: ['packages/cli/src', 'packages/protocol/schemas/v1'], truncated: false }
+      },
+      status: {
+        toolId: 'repo.getStatus',
+        ok: true,
+        data: { status: ' M src/routes/ask/index.ts' }
+      },
+      log: {
+        toolId: 'repo.getLog',
+        ok: true,
+        data: { log: 'abc123 feat: wire repo evidence' }
+      },
+      searches: [
+        {
+          toolId: 'repo.search',
+          ok: true,
+          data: { query: 'tool.invoke', matches: 'src tool.invoke', truncated: false }
+        }
+      ]
     };
 
     shouldInspectRepoPromptMock.mockReturnValue(true);
-    tryDispatchRepoToolsMock.mockResolvedValue(null);
-    collectRepoImplementationEvidenceMock.mockResolvedValue(repoEvidence);
-    buildRepoInspectionPromptMock.mockReturnValue('repo-evidence:Is my CLI implemented?');
+    collectRepoInspectionEvidenceMock.mockResolvedValue(repoEvidence);
+    buildRepoInspectionAnswerMock.mockReturnValue('CLI implementation is present.');
 
     const response = await request(buildApp()).post('/ask').send({
       prompt: 'Is my CLI implemented?',
@@ -143,18 +133,37 @@ describe('/ask repo inspection routing', () => {
 
     expect(response.status).toBe(200);
     expect(shouldInspectRepoPromptMock).toHaveBeenCalledWith('Is my CLI implemented?');
-    expect(collectRepoImplementationEvidenceMock).toHaveBeenCalledTimes(1);
-    expect(buildRepoInspectionPromptMock).toHaveBeenCalledWith('Is my CLI implemented?', repoEvidence);
-    expect(mockRunThroughBrain).toHaveBeenCalledWith(
-      expect.anything(),
-      'repo-evidence:Is my CLI implemented?',
-      'repo-inspection-session',
-      undefined,
-      expect.objectContaining({
-        cognitiveDomain: 'code',
-        sourceEndpoint: 'ask'
-      }),
-      expect.anything()
-    );
+    expect(collectRepoInspectionEvidenceMock).toHaveBeenCalledWith('Is my CLI implemented?');
+    expect(buildRepoInspectionAnswerMock).toHaveBeenCalledWith('Is my CLI implemented?', repoEvidence);
+    expect(response.body.result).toBe('CLI implementation is present.');
+    expect(response.body.module).toBe('repo-inspection');
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for verification prompts when repo inspection produces no usable evidence', async () => {
+    shouldInspectRepoPromptMock.mockReturnValue(true);
+    isVerificationQuestionMock.mockReturnValue(true);
+    collectRepoInspectionEvidenceMock.mockResolvedValue({
+      tree: { toolId: 'repo.listTree', ok: false, error: 'transport offline' },
+      status: { toolId: 'repo.getStatus', ok: false, error: 'transport offline' },
+      log: { toolId: 'repo.getLog', ok: false, error: 'transport offline' },
+      searches: [
+        { toolId: 'repo.search', ok: false, error: 'transport offline' }
+      ]
+    });
+
+    const response = await request(buildApp()).post('/ask').send({
+      prompt: 'Is my CLI implemented?',
+      sessionId: 'repo-inspection-session'
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: {
+        code: 'REPO_EVIDENCE_REQUIRED',
+        message: 'Cannot verify implementation without repo inspection.'
+      }
+    });
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
 });
