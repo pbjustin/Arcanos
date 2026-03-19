@@ -11,10 +11,9 @@ from arcanos.backend_client.chat import (
 )
 from arcanos.backend_client import BackendApiClient
 from arcanos.backend_client_models import BackendResponse
-from arcanos.config import Config
 
 
-def test_request_chat_completion_includes_gpt_id_and_chat_fields() -> None:
+def test_request_chat_completion_keeps_generic_ask_payload_free_of_gpt_id() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
     client._request_json = MagicMock(
@@ -41,7 +40,7 @@ def test_request_chat_completion_includes_gpt_id_and_chat_fields() -> None:
     client._request_json.assert_called_once()
     _, path, payload = client._request_json.call_args.args
     assert path == "/ask"
-    assert payload["gptId"] == Config.BACKEND_GPT_ID
+    assert "gptId" not in payload
     assert payload["prompt"] == "ping backend"
     assert payload["messages"] == messages
     assert payload["stream"] is True
@@ -70,7 +69,7 @@ def test_request_ask_with_domain_honors_explicit_gpt_id_override() -> None:
     assert response is parsed_response
     _, path, payload = client._request_json.call_args.args
     assert path == "/gpt/arcanos-gaming"
-    assert payload["gptId"] == "arcanos-gaming"
+    assert "gptId" not in payload
     assert payload["prompt"] == "gaming ping"
     assert payload["domain"] == "gaming"
 
@@ -91,11 +90,11 @@ def test_request_chat_completion_routes_explicit_gpt_ids_to_gpt_endpoint() -> No
 
     _, path, payload = client._request_json.call_args.args
     assert path == "/gpt/arcanos-gaming"
-    assert payload["gptId"] == "arcanos-gaming"
+    assert "gptId" not in payload
     assert payload["prompt"] == "ping gaming"
 
 
-def test_request_system_state_includes_gpt_id_and_update_fields() -> None:
+def test_request_system_state_uses_ask_mode_without_gpt_id_and_with_update_fields() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
     client._request_json = MagicMock(
@@ -114,7 +113,7 @@ def test_request_system_state_includes_gpt_id_and_update_fields() -> None:
     client._request_json.assert_called_once()
     _, path, payload = client._request_json.call_args.args
     assert path == "/ask"
-    assert payload["gptId"] == Config.BACKEND_GPT_ID
+    assert "gptId" not in payload
     assert payload["mode"] == "system_state"
     assert payload["metadata"] == {"instanceId": "cli-123"}
     assert payload["sessionId"] == "cli-123"
@@ -122,7 +121,7 @@ def test_request_system_state_includes_gpt_id_and_update_fields() -> None:
     assert payload["patch"] == {"status": "ready"}
 
 
-def test_request_system_state_honors_explicit_gpt_id_override() -> None:
+def test_request_system_state_ignores_explicit_gpt_id_for_ask_mode_payload() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value=None)
     client._request_json = MagicMock(
@@ -134,7 +133,7 @@ def test_request_system_state_honors_explicit_gpt_id_override() -> None:
     assert response.ok is True
     _, path, payload = client._request_json.call_args.args
     assert path == "/ask"
-    assert payload["gptId"] == "arcanos-gaming"
+    assert "gptId" not in payload
     assert payload["mode"] == "system_state"
 
 
