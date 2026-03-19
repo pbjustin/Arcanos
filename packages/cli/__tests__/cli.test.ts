@@ -1,10 +1,11 @@
+import path from "node:path";
 import { Writable } from "node:stream";
 
 import { jest } from "@jest/globals";
 
 import { runCli } from "../src/cli.js";
-import { parseCliInvocation } from "../src/commands/parse.js";
 import { buildTaskCreateRequest } from "../src/client/protocol.js";
+import { parseCliInvocation } from "../src/commands/parse.js";
 
 function createWritableCapture() {
   let buffer = "";
@@ -19,6 +20,16 @@ function createWritableCapture() {
     stream,
     read: () => buffer
   };
+}
+
+function createJsonResponse(payload: Record<string, unknown>, init?: ResponseInit): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: {
+      "content-type": "application/json"
+    },
+    ...init
+  });
 }
 
 describe("Arcanos CLI", () => {
@@ -45,7 +56,7 @@ describe("Arcanos CLI", () => {
     const request = buildTaskCreateRequest("add auth", {
       json: false,
       baseUrl: "http://127.0.0.1:3000",
-      cwd: "C:\\pbjustin\\Arcanos",
+      cwd: path.resolve("tmp", "arcanos-test"),
       shell: "powershell",
       transport: "python",
       sessionId: "session-1",
@@ -61,11 +72,9 @@ describe("Arcanos CLI", () => {
   });
 
   it("emits deterministic JSON output for ask", async () => {
-    const fetchMock = jest.spyOn(globalThis, "fetch" as never).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ result: "planned answer" })
-    } as Response);
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ result: "planned answer" })
+    );
     const stdout = createWritableCapture();
     const stderr = createWritableCapture();
 
@@ -95,11 +104,9 @@ describe("Arcanos CLI", () => {
   });
 
   it("sends ask requests to the backend /ask endpoint", async () => {
-    const fetchMock = jest.spyOn(globalThis, "fetch" as never).mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ result: "backend ok" })
-    } as Response);
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ result: "backend ok" })
+    );
     const stdout = createWritableCapture();
     const stderr = createWritableCapture();
 

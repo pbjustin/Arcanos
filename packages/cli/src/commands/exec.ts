@@ -11,13 +11,19 @@ export async function runExecCommand(
   const response = validateExecStartResponse(
     await executeRuntimeRequest<ExecStartResponseData>(request, invocation.options)
   );
-  const executionId = response.data?.state.executionId ?? "unknown";
-  const status = response.data?.state.status ?? "unknown";
+  const executionState = response.data?.state;
+  if (!executionState?.executionId) {
+    throw new Error("Invalid response for exec.start: executionId is missing.");
+  }
+
+  if (!executionState.status) {
+    throw new Error("Invalid response for exec.start: status is missing.");
+  }
 
   return {
     command: request.command,
     request,
     response,
-    humanOutput: `Execution queued: ${executionId} (${status})`
+    humanOutput: `Execution queued: ${executionState.executionId} (${executionState.status})`
   };
 }

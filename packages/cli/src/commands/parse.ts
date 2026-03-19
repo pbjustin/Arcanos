@@ -2,9 +2,7 @@ import path from "node:path";
 
 import type { CliGlobalOptions, CliInvocation } from "./types.js";
 
-const DEFAULT_BASE_URL = process.env.ARCANOS_BACKEND_URL
-  ?? process.env.SERVER_URL
-  ?? "http://127.0.0.1:3000";
+const DEFAULT_BASE_URL = process.env.ARCANOS_BACKEND_URL ?? "http://127.0.0.1:3000";
 
 export function parseCliInvocation(argv: string[]): CliInvocation {
   if (argv.length === 0) {

@@ -31,7 +31,7 @@ export async function executeTaskCreate(
 ): Promise<ProtocolResponse<TaskCreateResponseData>> {
   const prompt = request.payload?.prompt;
   if (!prompt) {
-    throw new Error("task.create requires a prompt payload.");
+    throw new Error("Invalid payload for task.create: prompt is missing or empty.");
   }
 
   const backendResponse = await postJson(options.baseUrl, "/ask", {
@@ -69,7 +69,7 @@ export async function executePlanGenerate(
 ): Promise<ProtocolResponse<PlanGenerateResponseData>> {
   const prompt = request.payload?.prompt;
   if (!prompt) {
-    throw new Error("plan.generate requires a prompt payload.");
+    throw new Error("Invalid payload for plan.generate: prompt is missing or empty.");
   }
 
   const backendResponse = await postJson(options.baseUrl, "/ask", {
