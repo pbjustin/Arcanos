@@ -487,8 +487,29 @@ function withTimeout<T>(workPromise: Promise<T>, ms: number): Promise<T> {
 
 type GptMapEntry = { module: string; route: string };
 
+const FORCED_DIRECT_GPT_BINDINGS: Record<string, GptMapEntry> = {
+  "arcanos-gaming": { module: "ARCANOS:GAMING", route: "gaming" },
+};
+
 function normalize(s: string): string {
   return (s || "").toLowerCase().trim();
+}
+
+function resolveForcedDirectGptEntry(incomingGptId: string): {
+  entry: GptMapEntry;
+  matchMethod: GptMatchMethod | "normalized";
+  matchedId: string;
+} | null {
+  const exactEntry = FORCED_DIRECT_GPT_BINDINGS[incomingGptId];
+  if (exactEntry) {
+    return {
+      entry: exactEntry,
+      matchMethod: "exact",
+      matchedId: incomingGptId,
+    };
+  }
+
+  return null;
 }
 
 function stripNonAlnum(s: string): string {
@@ -588,8 +609,9 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
     return { ok: false, error: { code: "BAD_REQUEST", message: "Missing gptId" }, _route: baseRoute };
   }
 
-  const gptModuleMap = await getGptModuleMap();
-  const resolved = resolveGptEntry(trimmedGptId, gptModuleMap);
+  const directResolved = resolveForcedDirectGptEntry(trimmedGptId);
+  const gptModuleMap = directResolved ? null : await getGptModuleMap();
+  const resolved = directResolved ?? resolveGptEntry(trimmedGptId, gptModuleMap ?? {});
 
   if (!resolved) {
     return { ok: false, error: { code: "UNKNOWN_GPT", message: `gptId '${trimmedGptId}' is not registered` }, _route: baseRoute };
@@ -640,8 +662,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     return { ok: false, error: { code: "BAD_REQUEST", message: "gptId too long" }, _route: baseRoute };
   }
 
-  const gptModuleMap = await getGptModuleMap();
-  const resolved = resolveGptEntry(trimmedGptId, gptModuleMap as any);
+  const forcedDirectResolved = resolveForcedDirectGptEntry(trimmedGptId);
+  const forceDirectModuleRouting = Boolean(forcedDirectResolved);
+  const gptModuleMap = forcedDirectResolved ? null : await getGptModuleMap();
+  const resolved = forcedDirectResolved ?? resolveGptEntry(trimmedGptId, (gptModuleMap ?? {}) as any);
   if (!resolved) {
     return {
       ok: false,
@@ -657,7 +681,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
-  const mcpDispatch = parseMcpDispatchIntent(requestedAction, payload);
+  const mcpDispatch = forceDirectModuleRouting
+    ? { intent: null as McpDispatchIntent | null, error: undefined }
+    : parseMcpDispatchIntent(requestedAction, payload);
   if (mcpDispatch.error) {
     return {
       ok: false,
@@ -687,7 +713,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     (!requestedAction || requestedAction === "query");
 
   //audit Assumption: memory commands should bypass module action ambiguity (e.g., multi-action modules without default query); failure risk: user cannot use memory reliably via dispatcher; expected invariant: explicit memory intents always have a deterministic execution path; handling strategy: early memory execution branch before action resolution.
-  if (shouldInterceptMemoryInDispatcher) {
+  if (!forceDirectModuleRouting && shouldInterceptMemoryInDispatcher) {
     try {
       const memorySessionId = resolveMemorySessionId(body, payload, activeEntry.module, trimmedGptId, prompt);
       const memoryResult = await executeNaturalLanguageMemoryCommand({
@@ -759,13 +785,15 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     }
   }
 
-  const automaticBackstageBookerDispatch = inferAutomaticBackstageBookerDispatchIntent({
-    currentModuleName: activeEntry.module,
-    currentRoute: activeEntry.route,
-    prompt,
-    requestedAction,
-    gptModuleMap: gptModuleMap as Record<string, GptMapEntry>
-  });
+  const automaticBackstageBookerDispatch = forceDirectModuleRouting
+    ? null
+    : inferAutomaticBackstageBookerDispatchIntent({
+        currentModuleName: activeEntry.module,
+        currentRoute: activeEntry.route,
+        prompt,
+        requestedAction,
+        gptModuleMap: (gptModuleMap ?? {}) as Record<string, GptMapEntry>
+      });
 
   if (automaticBackstageBookerDispatch) {
     activeEntry = {
@@ -800,6 +828,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       }
     | null = null;
   if (
+    !forceDirectModuleRouting &&
     !mcpDispatch.intent &&
     activeEntry.module === "ARCANOS:TUTOR" &&
     (!requestedAction || requestedAction === "query") &&
@@ -876,7 +905,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
     };
   }
-  const automaticMcpDispatchIntent = mcpDispatch.intent
+  const automaticMcpDispatchIntent = forceDirectModuleRouting || mcpDispatch.intent
     ? null
     : inferAutomaticMcpDispatchIntent({
         moduleName: activeEntry.module,
