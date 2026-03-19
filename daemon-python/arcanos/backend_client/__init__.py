@@ -156,9 +156,10 @@ class BackendApiClient:
         self,
         message: str,
         domain: Optional[str] = None,
-        metadata: Optional[Mapping[str, Any]] = None
+        metadata: Optional[Mapping[str, Any]] = None,
+        gpt_id: Optional[str] = None,
     ) -> BackendResponse[BackendChatResult]:
-        return _request_ask_with_domain(self, message, domain, metadata)
+        return _request_ask_with_domain(self, message, domain, metadata, gpt_id)
 
     def request_chat_completion(
         self,
@@ -166,22 +167,24 @@ class BackendApiClient:
         temperature: Optional[float] = None,
         model: Optional[str] = None,
         stream: bool = False,
-        metadata: Optional[Mapping[str, Any]] = None
+        metadata: Optional[Mapping[str, Any]] = None,
+        gpt_id: Optional[str] = None,
     ) -> BackendResponse[BackendChatResult]:
-        return _request_chat_completion(self, messages, temperature, model, stream, metadata)
+        return _request_chat_completion(self, messages, temperature, model, stream, metadata, gpt_id)
 
     def request_system_state(
         self,
         metadata: Optional[Mapping[str, Any]] = None,
         expected_version: Optional[int] = None,
         patch: Optional[Mapping[str, Any]] = None,
+        gpt_id: Optional[str] = None,
     ) -> BackendResponse[dict[str, Any]]:
         """
         Purpose: Request backend system state through /ask mode=system_state.
         Inputs/Outputs: optional metadata and optimistic-lock patch fields; returns raw state payload.
         Edge cases: returns structured validation errors for partial update payloads.
         """
-        return _request_system_state(self, metadata, expected_version, patch)
+        return _request_system_state(self, metadata, expected_version, patch, gpt_id)
 
     def request_vision_analysis(
         self,
