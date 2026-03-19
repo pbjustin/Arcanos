@@ -70,6 +70,16 @@ interface DatabaseConnectionCandidate {
   shouldUseSsl: boolean;
 }
 
+function buildConnectionStringFromPgEnv(credentials: Record<'PGUSER' | 'PGPASSWORD' | 'PGHOST' | 'PGPORT' | 'PGDATABASE', string>): string {
+  const connectionUrl = new URL('postgresql://localhost');
+  connectionUrl.username = credentials.PGUSER;
+  Reflect.set(connectionUrl, 'password', credentials.PGPASSWORD);
+  connectionUrl.hostname = credentials.PGHOST;
+  connectionUrl.port = credentials.PGPORT;
+  connectionUrl.pathname = `/${credentials.PGDATABASE}`;
+  return connectionUrl.toString();
+}
+
 function isLoopbackHost(host: string): boolean {
   return host === 'localhost' || host === '127.0.0.1';
 }
@@ -134,7 +144,7 @@ export function resolveDatabaseConnectionCandidates(
     const credentials = Object.fromEntries(
       resolved.map(entry => [entry.key, entry.value])
     ) as Record<typeof required[number], string>;
-    synthesizedDatabaseUrl = `postgresql://${credentials.PGUSER}:${credentials.PGPASSWORD}@${credentials.PGHOST}:${credentials.PGPORT}/${credentials.PGDATABASE}`;
+    synthesizedDatabaseUrl = buildConnectionStringFromPgEnv(credentials);
   }
 
   const candidates: DatabaseConnectionCandidate[] = [];
