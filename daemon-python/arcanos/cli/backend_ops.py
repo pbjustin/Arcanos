@@ -236,6 +236,11 @@ def confirm_pending_actions(cli: "ArcanosCLI", confirmation_token: str) -> Optio
 
 _ERROR_CODE_RE = re.compile(r'"code"\s*:\s*"([^"]+)"', re.IGNORECASE)
 
+_DOMAIN_TO_GPT_ID: dict[str, str] = {
+    "gaming": "arcanos-gaming",
+    "arcanos:gaming": "arcanos-gaming",
+}
+
 
 def _extract_backend_error_code(error: Optional[BackendRequestError]) -> Optional[str]:
     """
@@ -291,6 +296,18 @@ def _build_payload_mode_label(*, route: str, domain: Optional[str], includes_met
     domain_label = "domain" if bool(domain) else "no_domain"
     metadata_label = "metadata" if includes_metadata else "minimal"
     return f"{route}:{domain_label}:{metadata_label}"
+
+
+def _resolve_backend_gpt_id(domain: Optional[str]) -> Optional[str]:
+    """
+    Purpose: Resolve a module-specific backend GPT identity from a detected domain.
+    Inputs/Outputs: optional domain label; returns explicit gpt id or None for daemon default routing.
+    Edge cases: unknown/blank domains fall back to None so existing behavior is preserved.
+    """
+    normalized_domain = (domain or "").strip().lower()
+    if not normalized_domain:
+        return None
+    return _DOMAIN_TO_GPT_ID.get(normalized_domain)
 
 
 def _emit_backend_failure_telemetry(
@@ -364,6 +381,7 @@ def perform_backend_conversation(
     )
 
     metadata = build_backend_metadata(cli)
+    backend_gpt_id = _resolve_backend_gpt_id(domain)
     telemetry_attempt_id = str(uuid.uuid4())
     primary_error: Optional[BackendRequestError] = None
     retry_payload_mode: Optional[str] = None
@@ -381,6 +399,7 @@ def perform_backend_conversation(
                 message=message,
                 domain=domain,
                 metadata=metadata,
+                gpt_id=backend_gpt_id,
             ),
             "chat",
             report_errors=False,
@@ -398,6 +417,7 @@ def perform_backend_conversation(
                 temperature=Config.TEMPERATURE,
                 model=Config.BACKEND_CHAT_MODEL or None,
                 metadata=metadata,
+                gpt_id=backend_gpt_id,
             ),
             "chat",
             report_errors=False,
@@ -428,6 +448,7 @@ def perform_backend_conversation(
                     message=message,
                     domain=domain,
                     metadata=None,
+                    gpt_id=backend_gpt_id,
                 ),
                 "chat (minimal payload fallback)",
                 report_errors=False,
