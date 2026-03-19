@@ -4,13 +4,22 @@
 [![codecov](https://codecov.io/gh/pbjustin/Arcanos/branch/main/graph/badge.svg)](https://codecov.io/gh/pbjustin/Arcanos)
 
 ## Overview
-Arcanos is a TypeScript/Express backend with optional workers and an optional Python CLI daemon (`daemon-python/`).
+Arcanos is a TypeScript/Express backend with optional workers, a TypeScript protocol CLI in `packages/cli/`, and an optional Python CLI daemon (`daemon-python/`).
 
 Key characteristics:
 - **Responses-first OpenAI integration** (tool calling + continuation via `previous_response_id`)
 - **Adapter-boundary construction** (centralized client creation, headers, resilience)
 - **Shared HTTP toolkit** (`src/shared/http/`) for request context, validation, and errors
+- **TypeScript protocol CLI** (`arcanos`) for `ask`, `plan`, `exec`, `status`, and `doctor`
 - **Railway-ready** start/health configuration
+
+
+### TypeScript CLI
+The repo includes a TypeScript CLI package in `packages/cli/` exposed as `arcanos`.
+
+It is the protocol-bound command surface for the backend and runtime, not a separate backend implementation.
+
+See: `docs/ARCANOS_CLI.md`
 
 
 ### Optional local daemon (Python)
@@ -57,6 +66,7 @@ Use the runbook docs for exact commands:
 
 ## References
 - API catalog: `docs/API.md`
+- TypeScript CLI: `docs/ARCANOS_CLI.md`
 - Memory backend guide: `docs/MEMORY_BACKEND_USAGE.md`
 - OpenAI tooling: `docs/OPENAI_RESPONSES_TOOLS.md`
 - Solo operator runtime guide: `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
