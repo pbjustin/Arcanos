@@ -18,6 +18,18 @@ def _build_backend_ask_payload(gpt_id: Optional[str] = None, **fields: Any) -> d
     return {"gptId": resolved_gpt_id, **fields}
 
 
+def _resolve_backend_chat_path(gpt_id: Optional[str] = None) -> str:
+    """
+    Purpose: Choose the canonical backend endpoint for chat-style requests.
+    Inputs/Outputs: optional explicit GPT id; returns `/gpt/<id>` for module-bound traffic or `/ask` for generic daemon chat.
+    Edge cases: blank overrides keep legacy `/ask` behavior so daemon/system traffic does not depend on GPT registry entries.
+    """
+    explicit_gpt_id = (gpt_id or "").strip()
+    if explicit_gpt_id:
+        return f"/gpt/{explicit_gpt_id}"
+    return "/ask"
+
+
 def request_ask_with_domain(
     client: "BackendApiClient",
     message: str,
@@ -47,7 +59,7 @@ def request_ask_with_domain(
             payload["context"] = {"repoIndex": normalized_metadata.get("repoIndex")}
 
 
-    response = client._request_json("post", "/ask", payload)
+    response = client._request_json("post", _resolve_backend_chat_path(gpt_id), payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
         return BackendResponse(ok=False, error=response.error)
@@ -102,7 +114,7 @@ def request_chat_completion(
             payload["context"] = {"repoIndex": normalized_metadata.get("repoIndex")}
 
 
-    response = client._request_json("post", "/ask", payload)
+    response = client._request_json("post", _resolve_backend_chat_path(gpt_id), payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
         return BackendResponse(ok=False, error=response.error)

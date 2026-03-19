@@ -4,6 +4,7 @@ Backend API client for ARCANOS daemon.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import requests
@@ -458,11 +459,19 @@ class BackendApiClient:
         return _block_plan(self, plan_id)
 
     def _parse_chat_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendChatResult]:
-        # Support both "result" (production backend) and "response" (legacy) field names
-        response_text = response_json.get("result") or response_json.get("response")
+        if response_json.get("ok") is True and "result" in response_json:
+            response_text = self._extract_chat_text(response_json.get("result"))
+            route_meta = response_json.get("_route")
+            route_module = route_meta.get("module") if isinstance(route_meta, dict) else None
+            model_hint = response_json.get("model") or response_json.get("activeModel") or route_module
+        else:
+            # Support both "result" (production backend) and "response" (legacy) field names
+            response_text = self._extract_chat_text(response_json.get("result") or response_json.get("response"))
+            model_hint = response_json.get("model") or response_json.get("activeModel")
+
         tokens = self._extract_tokens_used(response_json)
         cost = response_json.get("cost")
-        model = response_json.get("model") or response_json.get("activeModel")
+        model = model_hint
 
         if not isinstance(response_text, str):
             return BackendResponse(
@@ -483,6 +492,37 @@ class BackendApiClient:
                 model=model
             )
         )
+
+    @staticmethod
+    def _extract_chat_text(response_payload: Any) -> Optional[str]:
+        """
+        Purpose: Normalize chat text from both legacy `/ask` responses and `/gpt/:gptId` envelopes.
+        Inputs/Outputs: arbitrary response payload; returns best-effort text string or None.
+        Edge cases: structured module responses without a canonical text field are serialized to deterministic JSON.
+        """
+        if isinstance(response_payload, str):
+            return response_payload
+
+        if isinstance(response_payload, Mapping):
+            for key in (
+                "response",
+                "result",
+                "arcanos_tutor",
+                "gaming_response",
+                "storyline",
+                "match",
+                "text",
+            ):
+                value = response_payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+
+            try:
+                return json.dumps(dict(response_payload), ensure_ascii=True, sort_keys=True)
+            except (TypeError, ValueError):
+                return None
+
+        return None
 
     def _parse_vision_response(self, response_json: Mapping[str, Any]) -> BackendResponse[BackendVisionResult]:
         response_text = response_json.get("response")

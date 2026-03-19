@@ -12,6 +12,17 @@ beforeAll(() => {
 });
 
 describe('ask route validation', () => {
+  it('rejects GPT-routed payloads before entering the generic /ask pipeline', async () => {
+    const res = await request(app).post('/ask').send({
+      gptId: 'arcanos-gaming',
+      prompt: 'Ping the gaming backend'
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('GPT-routed requests must target /gpt/:gptId');
+    expect(res.body.details).toContain("Received gptId 'arcanos-gaming' on /ask; use /gpt/arcanos-gaming instead.");
+  });
+
   it('rejects payloads without any recognized text fields', async () => {
     const res = await request(app).post('/ask').send({ sessionId: 'demo-session' });
 
