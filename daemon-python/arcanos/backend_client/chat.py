@@ -8,6 +8,15 @@ if TYPE_CHECKING:
     from ..backend_client import BackendApiClient
 
 
+def _build_backend_ask_payload(**fields: Any) -> dict[str, Any]:
+    """
+    Purpose: Seed `/ask` payloads with daemon identity and caller-provided fields.
+    Inputs/Outputs: arbitrary payload fields; returns payload dict with canonical gptId.
+    Edge cases: caller-supplied fields override only non-identity keys.
+    """
+    return {"gptId": Config.BACKEND_GPT_ID, **fields}
+
+
 def request_ask_with_domain(
     client: "BackendApiClient",
     message: str,
@@ -19,7 +28,7 @@ def request_ask_with_domain(
     Inputs/Outputs: message, optional domain, optional metadata; returns BackendChatResult.
     Edge cases: Returns structured error on auth, network, or parsing failures.
     """
-    payload: dict[str, Any] = {"prompt": message, "gptId": Config.BACKEND_GPT_ID}
+    payload = _build_backend_ask_payload(prompt=message)
     if domain:
         # //audit assumption: domain optional; risk: missing routing context; invariant: include when provided; strategy: conditional field.
         payload["domain"] = domain
@@ -65,7 +74,7 @@ def request_chat_completion(
         if msg.get("role") == "user":
             last_user_msg = msg.get("content", "")
             break
-    payload: dict[str, Any] = {"prompt": last_user_msg, "messages": msgs_list, "stream": stream}
+    payload = _build_backend_ask_payload(prompt=last_user_msg, messages=msgs_list, stream=stream)
     if temperature is not None:
         # //audit assumption: temperature optional; risk: missing value; invariant: include when provided; strategy: conditional field.
         payload["temperature"] = temperature
@@ -104,7 +113,7 @@ def request_system_state(
     Inputs/Outputs: optional metadata and optimistic-lock update payload; returns raw state JSON.
     Edge cases: update writes require both expected_version and patch fields together.
     """
-    payload: dict[str, Any] = {"mode": "system_state"}
+    payload = _build_backend_ask_payload(mode="system_state")
 
     normalized_metadata = client._normalize_metadata(metadata)
     if normalized_metadata is not None:
