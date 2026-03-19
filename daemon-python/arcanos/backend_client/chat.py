@@ -1,21 +1,18 @@
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
 
-from ..config import Config
-
 from ..backend_client_models import BackendChatResult, BackendRequestError, BackendResponse
 
 if TYPE_CHECKING:
     from ..backend_client import BackendApiClient
 
 
-def _build_backend_ask_payload(gpt_id: Optional[str] = None, **fields: Any) -> dict[str, Any]:
+def _build_backend_payload(**fields: Any) -> dict[str, Any]:
     """
-    Purpose: Seed `/ask` payloads with request-scoped or daemon GPT identity and caller-provided fields.
-    Inputs/Outputs: optional gpt id plus arbitrary payload fields; returns payload dict with canonical gptId.
-    Edge cases: blank overrides fall back to Config.BACKEND_GPT_ID.
+    Purpose: Build a backend payload without transport-level routing fields.
+    Inputs/Outputs: arbitrary payload fields; returns compact request payload dict.
+    Edge cases: preserves falsey values like `stream=False` while dropping explicit `None` fields.
     """
-    resolved_gpt_id = (gpt_id or "").strip() or Config.BACKEND_GPT_ID
-    return {"gptId": resolved_gpt_id, **fields}
+    return {key: value for key, value in fields.items() if value is not None}
 
 
 def _resolve_backend_chat_path(gpt_id: Optional[str] = None) -> str:
@@ -38,11 +35,11 @@ def request_ask_with_domain(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[BackendChatResult]:
     """
-    Purpose: Call backend /ask with domain hint for natural language routing.
+    Purpose: Call backend chat routing with a domain hint, using `/gpt/:gptId` for explicit GPT requests and `/ask` otherwise.
     Inputs/Outputs: message, optional domain, optional metadata; returns BackendChatResult.
     Edge cases: Returns structured error on auth, network, or parsing failures.
     """
-    payload = _build_backend_ask_payload(gpt_id=gpt_id, prompt=message)
+    payload = _build_backend_payload(prompt=message)
     if domain:
         # //audit assumption: domain optional; risk: missing routing context; invariant: include when provided; strategy: conditional field.
         payload["domain"] = domain
@@ -77,7 +74,7 @@ def request_chat_completion(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[BackendChatResult]:
     """
-    Purpose: Call backend /ask with conversation messages.
+    Purpose: Call backend chat routing with conversation messages, using `/gpt/:gptId` for explicit GPT requests and `/ask` otherwise.
     Inputs/Outputs: messages, optional temperature/model, stream flag; returns BackendChatResult.
     Edge cases: Returns structured error on auth, network, or parsing failures.
     """
@@ -89,8 +86,7 @@ def request_chat_completion(
         if msg.get("role") == "user":
             last_user_msg = msg.get("content", "")
             break
-    payload = _build_backend_ask_payload(
-        gpt_id=gpt_id,
+    payload = _build_backend_payload(
         prompt=last_user_msg,
         messages=msgs_list,
         stream=stream,
@@ -132,9 +128,10 @@ def request_system_state(
     """
     Purpose: Request governed backend system state from /ask mode=system_state.
     Inputs/Outputs: optional metadata and optimistic-lock update payload; returns raw state JSON.
-    Edge cases: update writes require both expected_version and patch fields together.
+    Edge cases: update writes require both expected_version and patch fields together; gpt_id is ignored because system_state is not a GPT-routed module request.
     """
-    payload = _build_backend_ask_payload(gpt_id=gpt_id, mode="system_state")
+    del gpt_id
+    payload = _build_backend_payload(mode="system_state")
 
     normalized_metadata = client._normalize_metadata(metadata)
     if normalized_metadata is not None:
