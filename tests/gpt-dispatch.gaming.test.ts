@@ -135,6 +135,39 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
+  it('forces arcanos-gaming to the gaming module even if the generic GPT map is misconfigured', async () => {
+    mockGetGptModuleMap.mockResolvedValue({
+      'arcanos-gaming': { route: 'tutor', module: 'ARCANOS:TUTOR' },
+      tutor: { route: 'tutor', module: 'ARCANOS:TUTOR' },
+    });
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        payload: {
+          prompt: 'Inspect the repo tools before answering my SWTOR guide question.',
+        },
+      },
+      requestId: 'req-gaming-override-1',
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
+      prompt: 'Inspect the repo tools before answering my SWTOR guide question.',
+    });
+    expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+        }),
+      })
+    );
+  });
+
   it('fails validation when arcanos-gaming query payload has no prompt', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
