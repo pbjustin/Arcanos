@@ -6,7 +6,7 @@
 
 import crypto from 'crypto';
 import type { PoolClient } from 'pg';
-import { initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
+import { close as closeDatabase, initializeDatabase, isDatabaseConnected } from '@core/db/client.js';
 import { query, transaction } from '@core/db/query.js';
 import { initializeTables } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
@@ -18,6 +18,57 @@ const SESSION_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
 let pendingBootstrap: Promise<boolean> | null = null;
 let sessionSchemaReady = false;
 let lastBootstrapFailureAtMs = 0;
+
+function shouldRetrySessionBootstrap(error: unknown): boolean {
+  const code =
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : '';
+  const message = resolveErrorMessage(error).toLowerCase();
+
+  return (
+    code === 'ECONNRESET' ||
+    code === '57P01' ||
+    message.includes('econnreset') ||
+    message.includes('connection terminated unexpectedly') ||
+    message.includes('terminating connection') ||
+    message.includes('server closed the connection unexpectedly')
+  );
+}
+
+async function bootstrapSessionPersistence(): Promise<boolean> {
+  const maxBootstrapAttempts = 2;
+
+  for (let attempt = 1; attempt <= maxBootstrapAttempts; attempt += 1) {
+    if (!isDatabaseConnected()) {
+      const connected = await initializeDatabase(SESSION_REPOSITORY_WORKER_ID);
+      if (!connected || !isDatabaseConnected()) {
+        return false;
+      }
+    }
+
+    try {
+      await initializeTables();
+      sessionSchemaReady = true;
+      lastBootstrapFailureAtMs = 0;
+      return true;
+    } catch (error: unknown) {
+      sessionSchemaReady = false;
+
+      if (attempt < maxBootstrapAttempts && shouldRetrySessionBootstrap(error)) {
+        await closeDatabase();
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return false;
+}
 
 interface SessionRow {
   id: string;
@@ -139,22 +190,12 @@ async function ensureSessionPersistenceReady(): Promise<boolean> {
 
   pendingBootstrap = (async () => {
     try {
-      if (!isDatabaseConnected()) {
-        const connected = await initializeDatabase(SESSION_REPOSITORY_WORKER_ID);
-        if (!connected || !isDatabaseConnected()) {
-          lastBootstrapFailureAtMs = Date.now();
-          return false;
-        }
-      }
-
-      await initializeTables();
-      sessionSchemaReady = true;
-      lastBootstrapFailureAtMs = 0;
-      return true;
+      return await bootstrapSessionPersistence();
     } catch (error: unknown) {
       //audit Assumption: bootstrap failures must remain explicit and should not silently downgrade to memory-only state; failure risk: callers believe data is durable when it is not; expected invariant: readiness returns false on failure; handling strategy: warn and fail closed.
       sessionSchemaReady = false;
       lastBootstrapFailureAtMs = Date.now();
+      await closeDatabase();
       console.warn('[Sessions] Failed to initialize persistent session storage:', resolveErrorMessage(error));
       return false;
     } finally {
