@@ -198,4 +198,52 @@ describe('routeGptRequest gaming routing', () => {
       })
     );
   });
+
+  it('rejects missing gptId before dispatch resolution', async () => {
+    const envelope = await routeGptRequest({
+      gptId: '',
+      body: {
+        action: 'query',
+        payload: {
+          prompt: 'Ping the gaming backend',
+        },
+      },
+      requestId: 'req-gaming-missing-gpt',
+    });
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'BAD_REQUEST',
+          message: 'Missing gptId',
+        }),
+      })
+    );
+  });
+
+  it('rejects unknown GPT ids instead of silently falling back', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'unknown-gpt',
+      body: {
+        action: 'query',
+        payload: {
+          prompt: 'Ping the gaming backend',
+        },
+      },
+      requestId: 'req-gaming-unknown-gpt',
+    });
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'UNKNOWN_GPT',
+          message: "gptId 'unknown-gpt' is not registered",
+        }),
+      })
+    );
+  });
 });
