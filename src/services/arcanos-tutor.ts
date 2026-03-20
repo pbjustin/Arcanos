@@ -6,6 +6,7 @@ export const ArcanosTutor = {
   description:
     'Professional tutoring kernel with dynamic schema binding, modular instruction, audit traceability, and feedback loops.',
   gptIds: ['arcanos-tutor', 'tutor'],
+  defaultTimeoutMs: 60000,
   actions: {
     async query(payload: TutorQuery) {
       const result = await tutorLogic.dispatch(payload);

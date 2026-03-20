@@ -708,6 +708,7 @@ export const BackstageBookerModule = {
   description: 'Behind-the-scenes pro wrestling booker for WWE/AEW with strict canon and logic.',
   gptIds: ['backstage-booker', 'backstage'],
   defaultAction: 'generateBooking',
+  defaultTimeoutMs: 60000,
   actions: {
     async bookEvent(payload: unknown) {
       const record = normalizePayloadRecord(payload);

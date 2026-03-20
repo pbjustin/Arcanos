@@ -62,6 +62,7 @@ const HRCModule: ModuleDef = {
   name: 'HRC',
   description: 'Hallucination-Resistant Core – scores text for fidelity and resilience.',
   gptIds: ['hrc'],
+  defaultTimeoutMs: 60000,
   actions: {
     async evaluate(payload: unknown) {
       const input = typeof payload === 'string'
