@@ -11,10 +11,12 @@ import type {
   ExecStartResponseData,
   ExecStatusResponseData,
   ImplementedProtocolCommandId,
+  PlanGenerateResponseData,
   ProtocolCommandId,
   ProtocolRequest,
   ProtocolResponse,
   StateSnapshotResponseData,
+  TaskCreateResponseData,
   ToolDescribeResponseData,
   ToolInvokeResponseData,
   ToolRegistryResponseData,
@@ -34,12 +36,16 @@ const sharedSchemas: AnySchema[] = [
   schemaCatalog.commands.contextInspect.response,
   schemaCatalog.commands.daemonCapabilities.request,
   schemaCatalog.commands.daemonCapabilities.response,
+  schemaCatalog.commands.planGenerate.request,
+  schemaCatalog.commands.planGenerate.response,
   schemaCatalog.commands.execStart.request,
   schemaCatalog.commands.execStart.response,
   schemaCatalog.commands.execStatus.request,
   schemaCatalog.commands.execStatus.response,
   schemaCatalog.commands.stateSnapshot.request,
   schemaCatalog.commands.stateSnapshot.response,
+  schemaCatalog.commands.taskCreate.request,
+  schemaCatalog.commands.taskCreate.response,
   schemaCatalog.commands.toolDescribe.request,
   schemaCatalog.commands.toolDescribe.response,
   schemaCatalog.commands.toolInvoke.request,
@@ -70,9 +76,11 @@ const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
   "artifact.store": schemaCatalog.commands.artifactStore.request,
   "context.inspect": schemaCatalog.commands.contextInspect.request,
   "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.request,
+  "plan.generate": schemaCatalog.commands.planGenerate.request,
   "exec.start": schemaCatalog.commands.execStart.request,
   "exec.status": schemaCatalog.commands.execStatus.request,
   "state.snapshot": schemaCatalog.commands.stateSnapshot.request,
+  "task.create": schemaCatalog.commands.taskCreate.request,
   "tool.describe": schemaCatalog.commands.toolDescribe.request,
   "tool.invoke": schemaCatalog.commands.toolInvoke.request,
   "tool.registry": schemaCatalog.commands.toolRegistry.request
@@ -82,9 +90,11 @@ const commandResponseSchemas: Record<ImplementedProtocolCommandId, AnySchema> = 
   "artifact.store": schemaCatalog.commands.artifactStore.response,
   "context.inspect": schemaCatalog.commands.contextInspect.response,
   "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.response,
+  "plan.generate": schemaCatalog.commands.planGenerate.response,
   "exec.start": schemaCatalog.commands.execStart.response,
   "exec.status": schemaCatalog.commands.execStatus.response,
   "state.snapshot": schemaCatalog.commands.stateSnapshot.response,
+  "task.create": schemaCatalog.commands.taskCreate.response,
   "tool.describe": schemaCatalog.commands.toolDescribe.response,
   "tool.invoke": schemaCatalog.commands.toolInvoke.response,
   "tool.registry": schemaCatalog.commands.toolRegistry.response
@@ -276,7 +286,9 @@ export function assertTypedImplementedResponse(
   | DaemonCapabilitiesResponseData
   | ExecStartResponseData
   | ExecStatusResponseData
+  | PlanGenerateResponseData
   | StateSnapshotResponseData
+  | TaskCreateResponseData
   | ToolDescribeResponseData
   | ToolInvokeResponseData
   | ToolRegistryResponseData
@@ -287,7 +299,9 @@ export function assertTypedImplementedResponse(
     | DaemonCapabilitiesResponseData
     | ExecStartResponseData
     | ExecStatusResponseData
+    | PlanGenerateResponseData
     | StateSnapshotResponseData
+    | TaskCreateResponseData
     | ToolDescribeResponseData
     | ToolInvokeResponseData
     | ToolRegistryResponseData
@@ -299,9 +313,11 @@ function compileCommandValidators(commandSchemas: Record<ImplementedProtocolComm
     "artifact.store": protocolAjv.compile(commandSchemas["artifact.store"]),
     "context.inspect": protocolAjv.compile(commandSchemas["context.inspect"]),
     "daemon.capabilities": protocolAjv.compile(commandSchemas["daemon.capabilities"]),
+    "plan.generate": protocolAjv.compile(commandSchemas["plan.generate"]),
     "exec.start": protocolAjv.compile(commandSchemas["exec.start"]),
     "exec.status": protocolAjv.compile(commandSchemas["exec.status"]),
     "state.snapshot": protocolAjv.compile(commandSchemas["state.snapshot"]),
+    "task.create": protocolAjv.compile(commandSchemas["task.create"]),
     "tool.describe": protocolAjv.compile(commandSchemas["tool.describe"]),
     "tool.invoke": protocolAjv.compile(commandSchemas["tool.invoke"]),
     "tool.registry": protocolAjv.compile(commandSchemas["tool.registry"])

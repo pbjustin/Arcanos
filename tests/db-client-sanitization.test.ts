@@ -61,6 +61,21 @@ describe('initializeDatabase env handling', () => {
     expect(process.env.DATABASE_URL).toBe('postgresql://demo:secret@localhost:5432/arc');
   });
 
+  it('encodes special characters when building a connection string from discrete PG vars', async () => {
+    process.env.PGUSER = 'demo-user';
+    process.env.PGPASSWORD = 's3cr:et/p@ss?word#frag';
+    process.env.PGHOST = 'localhost';
+    process.env.PGPORT = '5432';
+    process.env.PGDATABASE = 'arc';
+
+    const { initializeDatabase } = await import('../src/db/client.js');
+    const result = await initializeDatabase();
+
+    expect(result).toBe(true);
+    expect(poolSpy).toHaveBeenCalledTimes(1);
+    expect(process.env.DATABASE_URL).toBe('postgresql://demo-user:s3cr%3Aet%2Fp%40ss%3Fword%23frag@localhost:5432/arc');
+  });
+
   it('falls back to DATABASE_PUBLIC_URL when the Railway private hostname is not resolvable', async () => {
     process.env.DATABASE_URL = 'postgresql://demo:secret@postgres-btrn.railway.internal:5432/arc?sslmode=no-verify';
     process.env.DATABASE_PUBLIC_URL = 'postgresql://demo:secret@public-proxy.rlwy.net:12345/arc?sslmode=no-verify';

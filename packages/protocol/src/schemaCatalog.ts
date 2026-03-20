@@ -7,10 +7,14 @@ import daemonCapabilitiesRequestSchema from "../schemas/v1/commands/daemon.capab
 import daemonCapabilitiesResponseSchema from "../schemas/v1/commands/daemon.capabilities.response.schema.json" with { type: "json" };
 import execStartRequestSchema from "../schemas/v1/commands/exec.start.request.schema.json" with { type: "json" };
 import execStartResponseSchema from "../schemas/v1/commands/exec.start.response.schema.json" with { type: "json" };
+import planGenerateRequestSchema from "../schemas/v1/commands/plan.generate.request.schema.json" with { type: "json" };
+import planGenerateResponseSchema from "../schemas/v1/commands/plan.generate.response.schema.json" with { type: "json" };
 import execStatusRequestSchema from "../schemas/v1/commands/exec.status.request.schema.json" with { type: "json" };
 import execStatusResponseSchema from "../schemas/v1/commands/exec.status.response.schema.json" with { type: "json" };
 import stateSnapshotRequestSchema from "../schemas/v1/commands/state.snapshot.request.schema.json" with { type: "json" };
 import stateSnapshotResponseSchema from "../schemas/v1/commands/state.snapshot.response.schema.json" with { type: "json" };
+import taskCreateRequestSchema from "../schemas/v1/commands/task.create.request.schema.json" with { type: "json" };
+import taskCreateResponseSchema from "../schemas/v1/commands/task.create.response.schema.json" with { type: "json" };
 import toolDescribeRequestSchema from "../schemas/v1/commands/tool.describe.request.schema.json" with { type: "json" };
 import toolDescribeResponseSchema from "../schemas/v1/commands/tool.describe.response.schema.json" with { type: "json" };
 import toolInvokeRequestSchema from "../schemas/v1/commands/tool.invoke.request.schema.json" with { type: "json" };
@@ -84,6 +88,10 @@ export function getProtocolSchemaCatalog() {
         request: daemonCapabilitiesRequestSchema,
         response: daemonCapabilitiesResponseSchema
       },
+      planGenerate: {
+        request: planGenerateRequestSchema,
+        response: planGenerateResponseSchema
+      },
       execStart: {
         request: execStartRequestSchema,
         response: execStartResponseSchema
@@ -95,6 +103,10 @@ export function getProtocolSchemaCatalog() {
       stateSnapshot: {
         request: stateSnapshotRequestSchema,
         response: stateSnapshotResponseSchema
+      },
+      taskCreate: {
+        request: taskCreateRequestSchema,
+        response: taskCreateResponseSchema
       },
       toolDescribe: {
         request: toolDescribeRequestSchema,

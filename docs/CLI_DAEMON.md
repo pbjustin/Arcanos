@@ -11,8 +11,14 @@ It is designed to behave like a coding assistant:
 
 ## Contracts (what the daemon sends to the backend)
 
-The daemon calls the backend `/ask` (or `/api/ask`) with:
-- `gptId`: `arcanos-daemon`
+The daemon calls the backend with this routing split:
+- generic daemon chat/state → `/ask`
+- module-bound GPT traffic → `/gpt/:gptId`
+- legacy compatibility callers may still use `/api/ask` when intentionally targeting that compatibility layer
+
+Do **not** send Custom GPT payloads with `gptId` to `/ask`; the backend rejects that contract on purpose.
+
+For generic daemon chat, the daemon sends:
 - `sessionId`: stable local instance id (machine/user)
 - `prompt`: the user’s message
 - `context.repoIndex`: lightweight repository index (when enabled)
@@ -20,7 +26,6 @@ The daemon calls the backend `/ask` (or `/api/ask`) with:
 Example payload:
 ```json
 {
-  "gptId": "arcanos-daemon",
   "sessionId": "host:user",
   "prompt": "Fix failing tests",
   "context": {
