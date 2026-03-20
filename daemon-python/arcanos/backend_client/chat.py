@@ -16,7 +16,6 @@ def _build_backend_payload(**fields: Any) -> dict[str, Any]:
     return {key: value for key, value in fields.items() if value is not None}
 
 
-
 @dataclass(frozen=True)
 class BackendChatRoute:
     """
@@ -32,8 +31,8 @@ class BackendChatRoute:
 def resolve_backend_chat_route(gpt_id: Optional[str] = None) -> BackendChatRoute:
     """
     Purpose: Choose the canonical backend endpoint for chat-style requests.
-    Inputs/Outputs: optional explicit GPT id; returns `/gpt/<id>` for module-bound traffic or `/ask` for generic chat.
-    Edge cases: blank overrides keep `/ask` behavior so generic daemon/system traffic does not depend on GPT registry entries.
+    Inputs/Outputs: optional explicit GPT id; returns `/gpt/<id>` for module-bound traffic or `/ask` for generic daemon chat.
+    Edge cases: blank overrides keep legacy `/ask` behavior so daemon/system traffic does not depend on GPT registry entries.
     """
     explicit_gpt_id = (gpt_id or "").strip()
     if explicit_gpt_id:
