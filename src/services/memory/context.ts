@@ -26,11 +26,23 @@ export function getMemoryContext(
 ): MemoryContext {
   initializeMemory();
 
+  const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!normalizedSessionId) {
+    const memoryPrompt = createMemoryPrompt([], userInput);
+    console.log('🧠 [MEMORY] Context retrieval skipped: no explicit session scope');
+    return {
+      relevantEntries: [],
+      contextSummary: 'No memory context loaded without an explicit session scope',
+      memoryPrompt,
+      accessLog: []
+    };
+  }
+
   const inputLower = userInput.toLowerCase();
   const accessLog: string[] = [];
 
-  // Calculate relevance scores for all memory entries
-  const scoredEntries = memoryState.index.map(entry => {
+  // Calculate relevance scores for session-matching memory entries only.
+  const scoredEntries = memoryState.index.filter(entry => entry.metadata.sessionId === normalizedSessionId).map(entry => {
     let score = 0;
 
     // Keyword matching
@@ -42,7 +54,7 @@ export function getMemoryContext(
     }
 
     // Session matching bonus
-    if (sessionId && entry.metadata.sessionId === sessionId) {
+    if (entry.metadata.sessionId === normalizedSessionId) {
       score += 5;
     }
 

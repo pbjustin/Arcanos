@@ -40,8 +40,17 @@ export interface IntentConflict {
 // Use a session-scoped in-memory store to avoid global singletons in multi-user deployments.
 const intentStore: Map<string, { intent: StoredIntent | null; lastRouting: 'local' | 'backend' }> = new Map();
 
+function normalizeIntentSessionId(sessionId?: string): string | null {
+  const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
+  return normalized.length > 0 ? normalized : null;
+}
+
 function getStoreForSession(sessionId?: string) {
-  const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__';
+  const key = normalizeIntentSessionId(sessionId);
+  if (!key) {
+    return null;
+  }
+
   if (!intentStore.has(key)) {
     intentStore.set(key, { intent: null, lastRouting: 'backend' });
   }
@@ -106,6 +115,9 @@ function createIntentFromPrompt(prompt: string): StoredIntent {
 export function getActiveIntentSnapshot(sessionId?: string): StoredIntent | null {
   //audit Assumption: store must stay immutable to callers; failure risk: external mutation; expected invariant: internal state only changes through helpers; handling strategy: return clone.
   const s = getStoreForSession(sessionId);
+  if (!s) {
+    return null;
+  }
   return s.intent ? { ...s.intent } : null;
 }
 
@@ -117,6 +129,9 @@ export function getActiveIntentSnapshot(sessionId?: string): StoredIntent | null
 export function recordChatIntent(prompt: string, sessionId?: string): StoredIntent {
   //audit Assumption: first chat turn establishes intent; failure risk: null state; expected invariant: active intent always exists after chat record; handling strategy: lazy initialize per-session.
   const s = getStoreForSession(sessionId);
+  if (!s) {
+    return createIntentFromPrompt(prompt);
+  }
   if (!s.intent) {
     s.intent = createIntentFromPrompt(prompt);
     return { ...s.intent };
@@ -145,7 +160,7 @@ export function updateIntentWithOptimisticLock(
 ): { ok: true; intent: StoredIntent } | { ok: false; conflict: IntentConflict } {
   //audit Assumption: updates require an existing record; failure risk: patching null state; expected invariant: conflict returned when missing; handling strategy: reject with currentVersion=0.
   const s = getStoreForSession(sessionId);
-  if (!s.intent) {
+  if (!s || !s.intent) {
     return {
       ok: false,
       conflict: { error: 'INTENT_VERSION_CONFLICT', currentVersion: 0 }
@@ -193,6 +208,9 @@ export function updateIntentWithOptimisticLock(
  */
 export function setLastRoutingUsed(route: 'local' | 'backend', sessionId?: string): void {
   const s = getStoreForSession(sessionId);
+  if (!s) {
+    return;
+  }
   s.lastRouting = route;
 }
 
@@ -203,6 +221,5 @@ export function setLastRoutingUsed(route: 'local' | 'backend', sessionId?: strin
  */
 export function getLastRoutingUsed(sessionId?: string): 'local' | 'backend' {
   const s = getStoreForSession(sessionId);
-  return s.lastRouting;
+  return s?.lastRouting ?? 'backend';
 }
-

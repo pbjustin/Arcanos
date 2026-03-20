@@ -359,15 +359,13 @@ function extractMcpToolError(result: ArcanosMcpToolCallResult | ArcanosMcpToolLi
   };
 }
 
-const UNIVERSAL_MEMORY_SESSION_ID = "global";
-
 function resolveMemorySessionId(
   body: unknown,
   payload: unknown,
   moduleName: string,
   gptId: string,
   prompt: string | null
-): string {
+): string | undefined {
   const explicitSessionId = resolveSessionId(body, payload);
   if (explicitSessionId) {
     return explicitSessionId;
@@ -385,10 +383,10 @@ function resolveMemorySessionId(
     return promptScopedStorageLabel;
   }
 
-  //audit Assumption: ChatGPT-style memory should be universally addressable across modules when callers omit sessionId; failure risk: mixed tenants on shared infra; expected invariant: deterministic global fallback memory namespace; handling strategy: use explicit global session key and recommend per-user sessionId for multi-tenant contexts.
+  //audit Assumption: anonymous memory commands must remain stateless by default; failure risk: unrelated callers share one implicit memory namespace; expected invariant: memory interception only persists when a caller provides an explicit session scope or session-like label; handling strategy: return undefined and let the memory service fail closed.
   void moduleName;
   void gptId;
-  return UNIVERSAL_MEMORY_SESSION_ID;
+  return undefined;
 }
 
 function pickAction(available: string[], requested?: string, defaultAction?: string | null): string | null {
