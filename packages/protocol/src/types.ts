@@ -95,6 +95,24 @@ export interface TaskDescriptor {
   context?: ProtocolContext;
 }
 
+export interface TaskCreateRequestPayload {
+  prompt: string;
+}
+
+export interface TaskCreateResponseData {
+  task: TaskDescriptor;
+  backendResponse: Record<string, unknown>;
+}
+
+export interface PlanGenerateRequestPayload {
+  prompt: string;
+}
+
+export interface PlanGenerateResponseData {
+  task: TaskDescriptor;
+  backendResponse: Record<string, unknown>;
+}
+
 export interface PlanStep {
   id: string;
   description: string;

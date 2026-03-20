@@ -14,8 +14,8 @@ const ignoredRootJestPatterns = [
 export default {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
-  roots: ['<rootDir>/tests'],
-  testMatch: ['**/tests/**/*.test.[tj]s'],
+  roots: ['<rootDir>/tests', '<rootDir>/packages/cli/__tests__'],
+  testMatch: ['**/tests/**/*.test.[tj]s', '**/__tests__/**/*.test.[tj]s'],
   testPathIgnorePatterns: [
     ...ignoredRootJestPatterns,
     '[\\\\/]node_modules[\\\\/]',
@@ -72,6 +72,8 @@ export default {
     '^@workers/(.*)$': '<rootDir>/src/workers/$1',
     '^@arcanos/openai$': '<rootDir>/packages/arcanos-openai/src/index.ts',
     '^@arcanos/openai/(.*)$': '<rootDir>/packages/arcanos-openai/src/$1.ts',
+    '^@arcanos/protocol$': '<rootDir>/packages/protocol/src/index.ts',
+    '^@arcanos/protocol/(.*)$': '<rootDir>/packages/protocol/src/$1.ts',
     '^@arcanos/runtime$': '<rootDir>/packages/arcanos-runtime/src/index.ts',
     '^@arcanos/runtime/(.*)$': '<rootDir>/packages/arcanos-runtime/src/$1.ts',
     '^@prisma/client$': '<rootDir>/tests/mocks/prisma-client.ts',

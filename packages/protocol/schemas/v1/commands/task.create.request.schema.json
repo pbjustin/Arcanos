@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/task.create.request.schema.json",
+  "title": "task.create request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "prompt"
+  ],
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
