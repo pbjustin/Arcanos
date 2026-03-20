@@ -227,6 +227,7 @@ def bootstrap_credentials(
                     _write_bootstrap_trace(trace_path, "Backend token expiration check passed (signature verification not configured)")
             else:
                 _write_bootstrap_trace(trace_path, "Backend token expired")
+                backend_token = None
         _write_bootstrap_trace(trace_path, f"Backend token valid: {token_is_valid}")
 
     _write_bootstrap_trace(trace_path, "Bootstrap complete")

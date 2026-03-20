@@ -4,16 +4,17 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import arcanos.backend_client as backend_client_module
 from arcanos.backend_client.chat import (
     request_ask_with_domain,
     request_chat_completion,
     request_system_state,
 )
+from arcanos.backend_client import BackendApiClient
 from arcanos.backend_client_models import BackendResponse
-from arcanos.config import Config
 
 
-def test_request_chat_completion_includes_gpt_id_and_chat_fields() -> None:
+def test_request_chat_completion_keeps_generic_ask_payload_free_of_gpt_id() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
     client._request_json = MagicMock(
@@ -38,8 +39,9 @@ def test_request_chat_completion_includes_gpt_id_and_chat_fields() -> None:
 
     assert response is parsed_response
     client._request_json.assert_called_once()
-    _, _, payload = client._request_json.call_args.args
-    assert payload["gptId"] == Config.BACKEND_GPT_ID
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/ask"
+    assert "gptId" not in payload
     assert payload["prompt"] == "ping backend"
     assert payload["messages"] == messages
     assert payload["stream"] is True
@@ -66,13 +68,34 @@ def test_request_ask_with_domain_honors_explicit_gpt_id_override() -> None:
     )
 
     assert response is parsed_response
-    _, _, payload = client._request_json.call_args.args
-    assert payload["gptId"] == "arcanos-gaming"
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/gpt/arcanos-gaming"
+    assert "gptId" not in payload
     assert payload["prompt"] == "gaming ping"
     assert payload["domain"] == "gaming"
 
 
-def test_request_system_state_includes_gpt_id_and_update_fields() -> None:
+def test_request_chat_completion_routes_explicit_gpt_ids_to_gpt_endpoint() -> None:
+    client = SimpleNamespace()
+    client._normalize_metadata = MagicMock(return_value=None)
+    client._request_json = MagicMock(
+        return_value=BackendResponse(ok=True, value={"ok": True, "result": {"gaming_response": "ok"}})
+    )
+    client._parse_chat_response = MagicMock(return_value=BackendResponse(ok=True, value=SimpleNamespace(response_text="ok")))
+
+    request_chat_completion(
+        client,
+        messages=[{"role": "user", "content": "ping gaming"}],
+        gpt_id="arcanos-gaming",
+    )
+
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/gpt/arcanos-gaming"
+    assert "gptId" not in payload
+    assert payload["prompt"] == "ping gaming"
+
+
+def test_request_system_state_uses_ask_mode_without_gpt_id_and_with_update_fields() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
     client._request_json = MagicMock(
@@ -89,8 +112,9 @@ def test_request_system_state_includes_gpt_id_and_update_fields() -> None:
     assert response.ok is True
     assert response.value == {"state": {"ok": True}}
     client._request_json.assert_called_once()
-    _, _, payload = client._request_json.call_args.args
-    assert payload["gptId"] == Config.BACKEND_GPT_ID
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/ask"
+    assert "gptId" not in payload
     assert payload["mode"] == "system_state"
     assert payload["metadata"] == {"instanceId": "cli-123"}
     assert payload["sessionId"] == "cli-123"
@@ -98,7 +122,7 @@ def test_request_system_state_includes_gpt_id_and_update_fields() -> None:
     assert payload["patch"] == {"status": "ready"}
 
 
-def test_request_system_state_honors_explicit_gpt_id_override() -> None:
+def test_request_system_state_ignores_explicit_gpt_id_for_ask_mode_payload() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value=None)
     client._request_json = MagicMock(
@@ -108,6 +132,233 @@ def test_request_system_state_honors_explicit_gpt_id_override() -> None:
     response = request_system_state(client, gpt_id="arcanos-gaming")
 
     assert response.ok is True
-    _, _, payload = client._request_json.call_args.args
-    assert payload["gptId"] == "arcanos-gaming"
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/ask"
+    assert "gptId" not in payload
     assert payload["mode"] == "system_state"
+
+
+def test_backend_api_client_parses_gpt_envelope_chat_response() -> None:
+    client = BackendApiClient("https://backend.example.com", lambda: "token")
+
+    response = client._parse_chat_response(
+        {
+            "ok": True,
+            "result": {"gaming_response": "Gaming pipeline ready", "hrc": {"verdict": "ok"}},
+            "_route": {"module": "ARCANOS:GAMING", "route": "gaming"},
+        }
+    )
+
+    assert response.ok is True
+    assert response.value is not None
+    assert response.value.response_text == "Gaming pipeline ready"
+    assert response.value.model == "ARCANOS:GAMING"
+
+
+def test_backend_api_client_request_json_reroutes_gpt_payloads_away_from_ask(monkeypatch) -> None:
+    captured_request: dict[str, Any] = {}
+
+    def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
+        captured_request["method"] = method
+        captured_request["url"] = url
+        captured_request["kwargs"] = kwargs
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"ok": True, "result": {"gaming_response": "Routed correctly"}},
+            text='{"ok": true}',
+            headers={},
+        )
+
+    captured_logs: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(
+        backend_client_module,
+        "log_audit_event",
+        lambda *args, **kwargs: captured_logs.append((args, kwargs)),
+    )
+
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: "token",
+        request_sender=_request_sender,
+    )
+
+    response = client._request_json(
+        "post",
+        "/ask",
+        {"gptId": "arcanos-gaming", "prompt": "Ping the gaming backend"},
+    )
+
+    assert response.ok is True
+    assert captured_request["url"] == "https://backend.example.com/gpt/arcanos-gaming"
+    assert captured_request["kwargs"]["headers"]["Authorization"] == "Bearer token"
+    assert captured_request["kwargs"]["json"] == {"prompt": "Ping the gaming backend"}
+    assert any(
+        args and args[0] == "backend_request_outbound"
+        and kwargs.get("resolved_path") == "/gpt/arcanos-gaming"
+        and kwargs.get("url") == "https://backend.example.com/gpt/arcanos-gaming"
+        and kwargs.get("authenticated") is True
+        and kwargs.get("has_authorization") is True
+        for args, kwargs in captured_logs
+    )
+    assert any(
+        args and args[0] == "backend_request_response"
+        and kwargs.get("resolved_path") == "/gpt/arcanos-gaming"
+        and kwargs.get("status_code") == 200
+        and kwargs.get("error_kind") is None
+        for args, kwargs in captured_logs
+    )
+
+
+def test_backend_api_client_request_json_keeps_generic_ask_without_gpt_id(monkeypatch) -> None:
+    captured_request: dict[str, Any] = {}
+
+    def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
+        captured_request["method"] = method
+        captured_request["url"] = url
+        captured_request["kwargs"] = kwargs
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"response": "ok"},
+            text='{"response": "ok"}',
+            headers={},
+        )
+
+    monkeypatch.setattr(backend_client_module, "log_audit_event", lambda *args, **kwargs: None)
+
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: "token",
+        request_sender=_request_sender,
+    )
+
+    response = client._request_json(
+        "post",
+        "/ask",
+        {"prompt": "Explain the routing flow"},
+    )
+
+    assert response.ok is True
+    assert captured_request["url"] == "https://backend.example.com/ask"
+    assert captured_request["kwargs"]["json"] == {"prompt": "Explain the routing flow"}
+
+
+def test_backend_api_client_end_user_login_flow_preserves_auth_on_gpt_request(monkeypatch) -> None:
+    captured_requests: list[dict[str, Any]] = []
+    captured_logs: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    auth_state = {"token": None}
+
+    def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
+        captured_requests.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": dict(kwargs.get("headers", {})),
+                "json": kwargs.get("json"),
+            }
+        )
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"ok": True, "result": {"gaming_response": "Authenticated route ok"}},
+            text='{"ok": true}',
+            headers={},
+        )
+
+    monkeypatch.setattr(
+        backend_client_module,
+        "log_audit_event",
+        lambda *args, **kwargs: captured_logs.append((args, kwargs)),
+    )
+
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: auth_state["token"],
+        request_sender=_request_sender,
+    )
+
+    anonymous_response = client._request_json(
+        "post",
+        "/ask",
+        {"gptId": "arcanos-gaming", "prompt": "Ping before login"},
+    )
+    assert anonymous_response.ok is False
+    assert anonymous_response.error is not None
+    assert anonymous_response.error.kind == "auth"
+    assert captured_requests == []
+
+    auth_state["token"] = "tok"
+
+    authenticated_response = client._request_json(
+        "post",
+        "/ask",
+        {"gptId": "arcanos-gaming", "prompt": "Ping after login"},
+    )
+
+    assert authenticated_response.ok is True
+    assert captured_requests == [
+        {
+            "method": "post",
+            "url": "https://backend.example.com/gpt/arcanos-gaming",
+            "headers": {
+                "Authorization": "Bearer tok",
+                "Content-Type": "application/json",
+            },
+            "json": {"prompt": "Ping after login"},
+        }
+    ]
+    assert any(
+        args and args[0] == "backend_request_outbound"
+        and kwargs.get("resolved_path") == "/gpt/arcanos-gaming"
+        and kwargs.get("authenticated") is True
+        and kwargs.get("auth_mode") == "bearer"
+        for args, kwargs in captured_logs
+    )
+
+
+def test_backend_api_client_request_json_supports_gpt_id_auth_without_bearer_token(monkeypatch) -> None:
+    captured_request: dict[str, Any] = {}
+    captured_logs: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
+        captured_request["method"] = method
+        captured_request["url"] = url
+        captured_request["kwargs"] = kwargs
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"ok": True, "result": {"gaming_response": "gpt-id auth ok"}},
+            text='{"ok": true}',
+            headers={},
+        )
+
+    monkeypatch.setattr(
+        backend_client_module,
+        "log_audit_event",
+        lambda *args, **kwargs: captured_logs.append((args, kwargs)),
+    )
+    monkeypatch.setattr(backend_client_module.Config, "BACKEND_ALLOW_GPT_ID_AUTH", True)
+    monkeypatch.setattr(backend_client_module.Config, "BACKEND_GPT_ID", "arcanos-daemon")
+
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: None,
+        request_sender=_request_sender,
+    )
+
+    response = client._request_json(
+        "post",
+        "/ask",
+        {"gptId": "arcanos-gaming", "prompt": "Ping with GPT auth"},
+    )
+
+    assert response.ok is True
+    assert captured_request["url"] == "https://backend.example.com/gpt/arcanos-gaming"
+    assert captured_request["kwargs"]["headers"] == {
+        "Content-Type": "application/json",
+        "x-gpt-id": "arcanos-gaming",
+    }
+    assert any(
+        args and args[0] == "backend_request_outbound"
+        and kwargs.get("auth_mode") == "gpt-id"
+        and kwargs.get("has_x_gpt_id") is True
+        and kwargs.get("effective_gpt_id") == "arcanos-gaming"
+        for args, kwargs in captured_logs
+    )

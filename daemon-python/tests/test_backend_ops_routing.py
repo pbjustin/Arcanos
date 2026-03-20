@@ -111,3 +111,46 @@ def test_perform_backend_conversation_keeps_default_gpt_id_for_non_gaming_chat(m
     assert result is not None
     assert result.source == "backend"
     assert captured_kwargs["gpt_id"] is None
+
+
+def test_perform_backend_conversation_uses_backstage_gpt_id_for_backstage_domain(monkeypatch) -> None:
+    cli_stub = _make_cli_stub()
+    captured_kwargs: dict[str, object] = {}
+
+    def _request_ask_with_domain(**kwargs):
+        captured_kwargs.update(kwargs)
+        return BackendResponse(
+            ok=True,
+            value=BackendChatResult(
+                response_text="Backstage response",
+                tokens_used=5,
+                cost_usd=0.0,
+                model="backend-model",
+            ),
+        )
+
+    cli_stub.backend_client.request_ask_with_domain = _request_ask_with_domain
+
+    monkeypatch.setattr(backend_ops, "refresh_registry_cache_if_stale", lambda cli: None)
+    monkeypatch.setattr(
+        backend_ops,
+        "build_backend_metadata",
+        lambda cli: {"source": "daemon", "client": "test", "instanceId": cli.instance_id},
+    )
+    monkeypatch.setattr(
+        backend_ops,
+        "request_with_auth_retry",
+        lambda cli, request_func, action_label, report_errors=True: request_func(),
+    )
+    monkeypatch.setattr(backend_ops, "log_audit_event", lambda *args, **kwargs: None)
+
+    result = backend_ops.perform_backend_conversation(
+        cli_stub,
+        "Generate a booking plan for WrestleMania season.",
+        domain="backstage",
+    )
+
+    assert result is not None
+    assert result.source == "backend"
+    assert captured_kwargs["gpt_id"] == "backstage-booker"
+    assert captured_kwargs["domain"] == "backstage"

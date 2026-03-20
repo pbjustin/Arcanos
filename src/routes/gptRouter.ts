@@ -9,19 +9,69 @@ import {
 
 const router = express.Router();
 
+function buildGptRequestAuthState(req: express.Request): Record<string, unknown> {
+  const authorizationHeader = req.header("authorization");
+  const cookieHeader = req.header("cookie");
+  const csrfHeader = req.header("x-csrf-token") ?? req.header("csrf-token");
+  const confirmedHeader = req.header("x-confirmed");
+  const xGptIdHeader = req.header("x-gpt-id");
+  const authUser = req.authUser;
+
+  let authSource = "anonymous";
+  if (authUser?.source) {
+    authSource = `auth-user:${authUser.source}`;
+  } else if (authorizationHeader) {
+    authSource = "authorization-header";
+  } else if (req.daemonToken) {
+    authSource = "daemon-token";
+  } else if (cookieHeader) {
+    authSource = "cookie";
+  }
+
+  return {
+    authenticated:
+      Boolean(authUser) ||
+      Boolean(req.daemonToken) ||
+      Boolean(authorizationHeader) ||
+      Boolean(cookieHeader),
+    authSource,
+    authUserSource: authUser?.source ?? null,
+    bearerPresent: Boolean(authorizationHeader),
+    webStatePresent: Boolean(cookieHeader),
+    csrfPresent: Boolean(csrfHeader),
+    confirmedYes: confirmedHeader === "yes",
+    gptPathHeaderPresent: Boolean(xGptIdHeader),
+  };
+}
+
 router.post("/:gptId", async (req, res, next) => {
   try {
     const incomingGptId = req.params.gptId;
+    const requestLogger = (req as any).logger;
+
+    requestLogger?.info?.("gpt.request.auth_state", {
+      endpoint: req.originalUrl,
+      gptId: incomingGptId,
+      ...buildGptRequestAuthState(req),
+    });
 
     const envelope = await routeGptRequest({
       gptId: incomingGptId,
       body: req.body,
       requestId: (req as any).requestId,
-      logger: (req as any).logger,
+      logger: requestLogger,
       request: req,
     });
 
     if (!envelope.ok) {
+      const statusCode = envelope.error.code === "UNKNOWN_GPT" ? 404 : 400;
+      requestLogger?.warn?.("gpt.request.route_result", {
+        endpoint: req.originalUrl,
+        gptId: incomingGptId,
+        statusCode,
+        ok: false,
+        errorCode: envelope.error.code,
+      });
       if (envelope.error.code === "UNKNOWN_GPT") {
         logGptConnectionFailed(incomingGptId);
         return res.status(404).json(envelope);
@@ -38,6 +88,14 @@ router.post("/:gptId", async (req, res, next) => {
 
     logGptConnection(routingInfo);
     logGptAckSent(routingInfo, (envelope._route.availableActions ?? []).length);
+    requestLogger?.info?.("gpt.request.route_result", {
+      endpoint: req.originalUrl,
+      gptId: incomingGptId,
+      statusCode: 200,
+      ok: true,
+      module: envelope._route.module ?? "unknown",
+      route: envelope._route.route ?? "unknown",
+    });
 
     return res.json(envelope);
   } catch (err) {
