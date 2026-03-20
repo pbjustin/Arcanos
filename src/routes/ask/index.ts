@@ -911,15 +911,33 @@ export const handleAIRequest = async (
   }
 };
 
+function rejectGptRoutedAskRequests(req: Request, res: Response, next: () => void): void {
+  const source = req.method === 'GET' ? req.query : req.body;
+  const rawGptId = typeof source?.gptId === 'string' ? source.gptId.trim() : '';
+  if (!rawGptId) {
+    next();
+    return;
+  }
+
+  req.logger?.warn?.('ask.gpt_misroute', {
+    endpoint: req.originalUrl,
+    gptId: rawGptId
+  });
+  res.status(400).json({
+    error: 'GPT-routed requests must target /gpt/:gptId',
+    details: [`Received gptId '${rawGptId}' on ${req.originalUrl}; use /gpt/${rawGptId} instead.`]
+  });
+}
+
 // Primary ask endpoint routed through the Trinity brain.
 //audit Assumption: the canonical session API now owns replay/restore endpoints; failure risk: duplicate public replay aliases create contract ambiguity; expected invariant: `/ask` remains the only publicly mounted ask route here; handling strategy: remove legacy replay aliases from this router.
-router.post('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
-router.get('/ask', askRateLimit, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
+router.post('/ask', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
+router.get('/ask', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 
 // Brain endpoint (alias for ask) still requires explicit confirmation.
 //audit Assumption: explicit confirmation gate is sufficient for sensitive brain actions in unsigned mode; failure risk: anonymous challenge attempts; expected invariant: confirmGate enforces confirmation token flow; handling strategy: keep confirmGate in front of handler.
-router.post('/brain', askRateLimit, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
-router.get('/brain', askRateLimit, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.post('/brain', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.get('/brain', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
 
 export default router;
 

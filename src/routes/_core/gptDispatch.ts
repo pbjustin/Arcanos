@@ -648,12 +648,19 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
 export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskEnvelope> {
   const { gptId, body, requestId, logger, request } = input;
   const trimmedGptId = (gptId ?? "").trim();
+  const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
 
   const baseRoute: RouteMeta = {
     requestId,
     gptId: trimmedGptId,
     timestamp: new Date().toISOString(),
   };
+
+  logger?.info?.("gpt.dispatch.received", {
+    requestId,
+    gptId: trimmedGptId,
+    endpoint: requestEndpoint,
+  });
 
   if (!trimmedGptId) {
     return { ok: false, error: { code: "BAD_REQUEST", message: "Missing gptId" }, _route: baseRoute };
@@ -667,6 +674,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const gptModuleMap = forcedDirectResolved ? null : await getGptModuleMap();
   const resolved = forcedDirectResolved ?? resolveGptEntry(trimmedGptId, (gptModuleMap ?? {}) as any);
   if (!resolved) {
+    logger?.warn?.("gpt.dispatch.lookup.unknown", {
+      requestId,
+      gptId: trimmedGptId,
+      endpoint: requestEndpoint,
+    });
     return {
       ok: false,
       error: { code: "UNKNOWN_GPT", message: `gptId '${trimmedGptId}' is not registered` },
@@ -675,6 +687,15 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   }
 
   const { entry, matchMethod } = resolved;
+  logger?.info?.("gpt.dispatch.lookup.resolved", {
+    requestId,
+    gptId: trimmedGptId,
+    endpoint: requestEndpoint,
+    module: entry.module,
+    route: entry.route,
+    matchMethod,
+    forcedDirectRoute: forceDirectModuleRouting,
+  });
   const requestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
   const payload = buildDispatchPayload(body);
   const prompt = extractPrompt(payload);

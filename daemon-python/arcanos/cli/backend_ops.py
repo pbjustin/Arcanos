@@ -239,6 +239,14 @@ _ERROR_CODE_RE = re.compile(r'"code"\s*:\s*"([^"]+)"', re.IGNORECASE)
 _DOMAIN_TO_GPT_ID: dict[str, str] = {
     "gaming": "arcanos-gaming",
     "arcanos:gaming": "arcanos-gaming",
+    "tutor": "arcanos-tutor",
+    "arcanos:tutor": "arcanos-tutor",
+    "sim": "arcanos-sim",
+    "arcanos:sim": "arcanos-sim",
+    "backstage": "backstage-booker",
+    "backstage-booker": "backstage-booker",
+    "backstage:booker": "backstage-booker",
+    "hrc": "hrc",
 }
 
 
