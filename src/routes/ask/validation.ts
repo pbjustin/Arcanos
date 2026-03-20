@@ -9,6 +9,7 @@ type SystemMode = (typeof SYSTEM_MODES)[number];
 // Enhanced validation schema for ask requests that accepts multiple text field aliases
 const askValidationSchema = {
   mode: { type: 'string' as const, maxLength: 64, sanitize: true },
+  action: { type: 'string' as const, maxLength: 64, sanitize: true },
   async: { type: 'boolean' as const },
   waitForResultMs: { type: 'number' as const },
   prompt: { type: 'string' as const, minLength: 1, maxLength: 10000, sanitize: true },
@@ -55,6 +56,9 @@ export const askValidationMiddleware = (req: Request, res: Response, next: () =>
 
   const modeValue = validation.sanitized.mode;
   const normalizedMode = typeof modeValue === 'string' && modeValue.trim().length > 0 ? modeValue.trim() : 'chat';
+  const actionValue = validation.sanitized.action;
+  const normalizedAction =
+    typeof actionValue === 'string' && actionValue.trim().length > 0 ? actionValue.trim().toLowerCase() : null;
 
   //audit Assumption: system mode names are fixed and explicit; risk: accidental fallback to chat; invariant: unknown system mode rejected; handling: strict mode allowlist.
   if (normalizedMode.startsWith('system_') && !SYSTEM_MODES.includes(normalizedMode as SystemMode)) {
@@ -83,6 +87,13 @@ export const askValidationMiddleware = (req: Request, res: Response, next: () =>
       );
     }
 
+    req.body = validation.sanitized;
+    next();
+    return;
+  }
+
+  //audit Assumption: diagnostic probes may intentionally omit normal text fields; risk: middleware blocks lightweight health checks before the route can short-circuit; invariant: only explicit diagnostic/ping shapes bypass text-field enforcement; handling: allow the route-local diagnostic gate to decide the response.
+  if (normalizedMode === 'diagnostic' || normalizedAction === 'ping') {
     req.body = validation.sanitized;
     next();
     return;

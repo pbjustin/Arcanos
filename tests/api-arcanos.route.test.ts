@@ -264,6 +264,23 @@ describe('api-arcanos route', () => {
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
 
+  it('accepts explicit diagnostic probes without a prompt and still bypasses Trinity', async () => {
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        mode: 'diagnostic',
+        action: 'ping'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.result).toBe('backend operational');
+    expect(response.body.module).toBe('diagnostic');
+    expect(response.body.routingStages).toEqual(['DIAGNOSTIC-SHORTCUT']);
+    expect(mockValidateAIRequest).not.toHaveBeenCalled();
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+  });
+
   it('preserves the stream option with terminal SSE frames from Trinity output', async () => {
     mockValidateAIRequest.mockReturnValue({
       client: { clientId: 'openai-client-2' },

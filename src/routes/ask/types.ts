@@ -16,6 +16,7 @@ export type AskRequest = AIRequestDTO & {
   prompt?: string;
   message?: string;
   mode?: AskMode | string;
+  action?: string;
   async?: boolean;
   waitForResultMs?: number;
   subject?: string;

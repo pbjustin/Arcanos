@@ -7,6 +7,7 @@ import {
   getRequestActorKey
 } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
+import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
 import type {
   AIRequestDTO,
   AIResponseDTO,
@@ -44,6 +45,8 @@ const arcanosAskRateLimit = createRateLimitMiddleware({
 router.use('/', apiArcanosVerificationRouter);
 
 interface AskBody extends Partial<AIRequestDTO> {
+  mode?: string;
+  action?: string;
   prompt?: string;
   message?: string;
   userInput?: string;
@@ -97,6 +100,20 @@ interface AskResponse {
 }
 
 const arcanosSchema = {
+  mode: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 64,
+    sanitize: true
+  },
+  action: {
+    required: false,
+    type: 'string' as const,
+    minLength: 1,
+    maxLength: 64,
+    sanitize: true
+  },
   prompt: {
     required: false,
     type: 'string' as const,
@@ -398,14 +415,15 @@ const handleArcanosAsk = asyncHandler(async (
   res: Response<AskResponse | ErrorResponseDTO>
 ) => {
   const pingCandidate = extractInput((req.body ?? {}) as AIRequestDTO)?.trim().toLowerCase();
+  const diagnosticProbe = isDiagnosticRequest(req.body, pingCandidate);
 
-  //audit Assumption: `ping` remains a lightweight liveness check on this compatibility route; failure risk: needless Trinity traffic for health probes; expected invariant: ping requests bypass AI execution; handling strategy: short-circuit with a deterministic JSON response.
-  if (pingCandidate === 'ping') {
+  //audit Assumption: explicit diagnostic probes on the compatibility route must bypass Trinity and shortcuts just like the primary `/ask` route; failure risk: compatibility clients accidentally trigger stateful AI paths for health checks; expected invariant: diagnostic traffic returns a deterministic route-local payload; handling strategy: reuse the shared diagnostic classifier and short-circuit before model execution.
+  if (diagnosticProbe) {
     const idleStateService = req.app.locals.idleStateService as IdleStateService | undefined;
     idleStateService?.noteUserPing({ route: '/api/arcanos/ask', source: ARCANOS_API_ENDPOINT_NAME });
     return res.json({
       success: true,
-      result: 'pong',
+      result: pingCandidate === 'ping' ? 'pong' : 'backend operational',
       metadata: {
         service: 'ARCANOS API',
         version: '1.0.0',
@@ -414,7 +432,12 @@ const handleArcanosAsk = asyncHandler(async (
         pipeline: TRINITY_PIPELINE_NAME,
         trinityVersion: TRINITY_PIPELINE_VERSION,
         endpoint: ARCANOS_API_ENDPOINT_NAME
-      }
+      },
+      module: 'diagnostic',
+      activeModel: 'diagnostic',
+      fallbackFlag: false,
+      routingStages: ['DIAGNOSTIC-SHORTCUT'],
+      gpt5Used: false
     });
   }
 

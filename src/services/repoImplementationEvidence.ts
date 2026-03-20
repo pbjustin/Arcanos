@@ -32,29 +32,41 @@ export interface RepoInspectionEvidence {
   searches: RepoInspectionToolResult[];
 }
 
-const repoInspectionPhrases = [
-  "repo",
-  "repository",
-  "codebase",
-  "code",
-  "files",
-  "file",
-  "implemented",
-  "implementation",
-  "cli",
-  "protocol",
-  "command",
-  "schema",
-  "daemon",
-  "tool",
-  "tools",
-  "backend",
-  "status",
-  "exists",
-  "missing",
-  "present",
-  "where",
-  "inspect",
+const repoTargetPatterns = [
+  /\brepo\b/,
+  /\brepository\b/,
+  /\bcodebase\b/,
+  /\bcode\b/,
+  /\bsource\b/,
+  /\bfiles?\b/,
+  /\bimplementation\b/,
+  /\bcli\b/,
+  /\bprotocol\b/,
+  /\bschemas?\b/,
+  /\bdaemon\b/,
+  /\btools?\b/,
+  /\bcommands?\b/,
+  /\bgit\b/
+];
+
+const repoInspectionIntentPatterns = [
+  /\binspect\b/,
+  /\bshow\b/,
+  /\blist\b/,
+  /\bfind\b/,
+  /\blocate\b/,
+  /\bwhere\b/,
+  /\bwhich\b/,
+  /\bwhat\b/,
+  /\bread\b/,
+  /\bopen\b/,
+  /\bverify\b/,
+  /\bcheck\b/,
+  /\bdo i have\b/,
+  /\bcan you see\b/,
+  /\b(?:is|are)\b.*\b(?:implemented|present|missing|available|configured)\b/,
+  /\b(?:what|which)\b.*\b(?:files?|commands?|tools?|schemas?|implementations?)\b/,
+  /\bstatus\b/
 ];
 
 const verificationPhrases = [
@@ -80,7 +92,16 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
   }
 
   const normalizedPrompt = prompt.toLowerCase();
-  return repoInspectionPhrases.some((phrase) => normalizedPrompt.includes(phrase));
+  if (verificationPhrases.some((phrase) => normalizedPrompt.includes(phrase))) {
+    return true;
+  }
+
+  const hasRepoTarget = repoTargetPatterns.some((pattern) => pattern.test(normalizedPrompt));
+  if (!hasRepoTarget) {
+    return false;
+  }
+
+  return repoInspectionIntentPatterns.some((pattern) => pattern.test(normalizedPrompt));
 }
 
 /**
