@@ -200,6 +200,7 @@ const ArcanosSimModule: ModuleDef = {
   name: 'ARCANOS:SIM',
   description: 'Scenario modeling and simulation dispatch module backed by centralized ARCANOS routing.',
   gptIds: ['arcanos-sim', 'sim'],
+  defaultTimeoutMs: 60000,
   actions: {
     async run(payload: unknown) {
       return executeSimulationRequest(payload);

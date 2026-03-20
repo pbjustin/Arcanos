@@ -64,7 +64,8 @@ describe('routeGptRequest backstage booker auto-routing', () => {
           name: 'BACKSTAGE:BOOKER',
           actions: ['bookEvent', 'updateRoster', 'trackStoryline', 'simulateMatch', 'generateBooking', 'generateBookingWithHRC', 'saveStoryline'],
           route: 'backstage',
-          defaultAction: 'generateBooking'
+          defaultAction: 'generateBooking',
+          defaultTimeoutMs: 60000,
         };
       }
 
@@ -163,5 +164,63 @@ describe('routeGptRequest backstage booker auto-routing', () => {
         })
       })
     );
+  });
+
+  it('uses the backstage module timeout budget instead of the generic 15s dispatcher timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      const logger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+      };
+
+      mockDispatchModuleAction.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve('Long-running booking result'), 20_000);
+          })
+      );
+
+      const envelopePromise = routeGptRequest({
+        gptId: 'backstage',
+        body: {
+          prompt: 'Book a long-form month of TV with title programs and faction tension.',
+        },
+        requestId: 'req-booker-timeout-budget-1',
+        logger,
+      });
+
+      await jest.advanceTimersByTimeAsync(20_000);
+      const envelope = await envelopePromise;
+
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          ok: true,
+          result: 'Long-running booking result',
+          _route: expect.objectContaining({
+            module: 'BACKSTAGE:BOOKER',
+            action: 'generateBooking',
+            route: 'backstage',
+          }),
+        })
+      );
+      expect(logger.info).toHaveBeenCalledWith(
+        'gpt.dispatch.plan',
+        expect.objectContaining({
+          requestId: 'req-booker-timeout-budget-1',
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+          timeoutMs: 60000,
+          timeoutSource: 'module-default',
+        })
+      );
+      expect(logger.error).not.toHaveBeenCalledWith(
+        'gpt.dispatch.timeout',
+        expect.anything()
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

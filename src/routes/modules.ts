@@ -94,6 +94,7 @@ export function getModuleMetadata(moduleName: string): {
   route: string | null;
   actions: string[];
   defaultAction?: string;
+  defaultTimeoutMs?: number;
 } | null {
   const mod = registryByName.get(moduleName);
   if (!mod) return null;
@@ -103,6 +104,7 @@ export function getModuleMetadata(moduleName: string): {
     route: moduleRoutes.get(mod.name) ?? null,
     actions: Object.keys(mod.actions),
     defaultAction: mod.defaultAction,
+    defaultTimeoutMs: mod.defaultTimeoutMs,
   };
 }
 

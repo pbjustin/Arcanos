@@ -6,6 +6,7 @@ export const ArcanosGaming = {
   name: 'ARCANOS:GAMING',
   description: 'Nintendo-style hotline advisor for game strategies, hints, and walkthroughs.',
   gptIds: ['arcanos-gaming', 'gaming'],
+  defaultTimeoutMs: 60000,
   actions: {
     async query(payload: unknown) {
       const prompt = extractTextPrompt(payload);
