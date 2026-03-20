@@ -15,6 +15,7 @@ import type {
 } from "@shared/types/dto.js";
 import { aiRequestSchema } from "@shared/types/dto.js";
 import { asyncHandler, sendBadRequest, sendInternalErrorPayload } from '@shared/http/index.js';
+import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
 import { askValidationMiddleware } from "./validation.js";
 import type {
   AskRequest,
@@ -195,6 +196,28 @@ function getMode(body: AskRequest): 'chat' | 'system_review' | 'system_state' {
     return 'system_state';
   }
   return 'chat';
+}
+
+function buildDiagnosticAskResponse(params: {
+  endpointName: string;
+  clientContext?: AskRequest['clientContext'];
+  auditFlag?: SchemaValidationBypassAuditFlag;
+}): AskResponse {
+  return {
+    result: 'backend operational',
+    module: 'diagnostic',
+    meta: {
+      id: `diagnostic-${params.endpointName}-v1`,
+      created: 0
+    },
+    activeModel: 'diagnostic',
+    fallbackFlag: false,
+    routingStages: ['DIAGNOSTIC-SHORTCUT'],
+    gpt5Used: false,
+    endpoint: params.endpointName,
+    ...(params.clientContext ? { clientContext: params.clientContext } : {}),
+    ...(params.auditFlag ? { auditFlag: params.auditFlag } : {})
+  };
 }
 
 function wantsAsync(body: AskRequest): boolean {
@@ -572,6 +595,16 @@ export const handleAIRequest = async (
   //audit Assumption: async intent must be captured from the raw payload before schema normalization; failure risk: `mode:"async"` / `async:true` gets stripped and request runs synchronously; expected invariant: asyncRequested reflects caller intent; handling strategy: read once from original body.
   const asyncRequested = wantsAsync(req.body);
   const requestedAsyncAskWaitMs = readRequestedAsyncAskWaitMs(req.body);
+
+  //audit Assumption: diagnostic probes must bypass prompt shortcuts, memory, audit-safe, and Trinity to stay deterministic and stateless; failure risk: health checks inherit prior context or gameplay routing; expected invariant: explicit diagnostic traffic returns a stable route-local payload; handling strategy: short-circuit before validation normalization and before any stateful or generative layer executes.
+  if (isDiagnosticRequest(req.body, extractTextInput(req.body))) {
+    return res.json(
+      buildDiagnosticAskResponse({
+        endpointName,
+        clientContext: req.body.clientContext
+      })
+    );
+  }
 
   const lenientChatValidation = validateLenientChatRequest(req.body);
   if (!lenientChatValidation.ok) {

@@ -10,6 +10,7 @@ import { getDefaultModel } from "@services/openai/credentialProvider.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getAutomationAuth, getEnv } from "@platform/runtime/env.js";
 import { resolveHeader } from "@transport/http/requestHeaders.js";
+import { extractDiagnosticTextInput, isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
 
 export interface ConfirmationContext {
   confirmationStatus: string;
@@ -115,6 +116,30 @@ function maskConfirmationHeader(value: string | undefined): string {
 }
 
 export function confirmGate(req: Request, res: Response, next: NextFunction): void {
+  const diagnosticEligibleRoute = req.path === '/ask' || req.path === '/brain';
+  const diagnosticProbe =
+    diagnosticEligibleRoute
+    && isDiagnosticRequest(
+      req.body as Record<string, unknown> | undefined,
+      extractDiagnosticTextInput(req.body as Record<string, unknown> | undefined)
+    );
+
+  //audit Assumption: explicit diagnostic probes on ask-style routes are non-mutating health checks; failure risk: confirmation challenges blocking safe liveness traffic; expected invariant: `/ask` and `/brain` diagnostics bypass confirmation while other protected routes remain gated; handling strategy: only short-circuit explicit diagnostic payloads on these route paths.
+  if (diagnosticProbe) {
+    res.setHeader('x-confirmation-status', 'diagnostic-bypass');
+    req.confirmationContext = {
+      confirmationStatus: 'diagnostic-bypass',
+      manualConfirmation: false,
+      usedChallengeToken: false,
+      usedOneTimeToken: false,
+      isTrustedGpt: false,
+      automationSecretApproved: false,
+      allowAllOverride: false
+    };
+    next();
+    return;
+  }
+
   const confirmationHeader = resolveHeader(req.headers, 'x-confirmed');
   const oneTimeTokenHeader = resolveHeader(req.headers, 'x-arcanos-confirm-token');
   const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId.trim() : '';
