@@ -9,6 +9,7 @@ export interface ModuleDef {
   actions: Record<string, (payload: unknown) => Promise<unknown>>;
   gptIds?: string[];
   defaultAction?: string;
+  defaultTimeoutMs?: number;
 }
 
 export interface LoadedModule {

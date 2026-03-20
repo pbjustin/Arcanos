@@ -72,6 +72,7 @@ describe('routeGptRequest gaming routing', () => {
           name: 'ARCANOS:GAMING',
           actions: ['query'],
           route: 'gaming',
+          defaultTimeoutMs: 60000,
         };
       }
       return {
@@ -197,6 +198,69 @@ describe('routeGptRequest gaming routing', () => {
         }),
       })
     );
+  });
+
+  it('uses the gaming module timeout budget instead of the generic 15s dispatcher timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      const logger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+      };
+
+      mockDispatchModuleAction.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            setTimeout(() => resolve({ gaming_response: 'Slow but valid gaming response' }), 20_000);
+          })
+      );
+
+      const envelopePromise = routeGptRequest({
+        gptId: 'arcanos-gaming',
+        body: {
+          action: 'query',
+          payload: {
+            prompt: 'Give me SWTOR gearing help.',
+          },
+        },
+        requestId: 'req-gaming-timeout-budget-1',
+        logger,
+      });
+
+      await jest.advanceTimersByTimeAsync(20_000);
+      const envelope = await envelopePromise;
+
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          ok: true,
+          result: expect.objectContaining({
+            gaming_response: 'Slow but valid gaming response',
+          }),
+          _route: expect.objectContaining({
+            module: 'ARCANOS:GAMING',
+            action: 'query',
+            route: 'gaming',
+          }),
+        })
+      );
+      expect(logger.info).toHaveBeenCalledWith(
+        'gpt.dispatch.plan',
+        expect.objectContaining({
+          requestId: 'req-gaming-timeout-budget-1',
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          timeoutMs: 60000,
+          timeoutSource: 'module-default',
+        })
+      );
+      expect(logger.error).not.toHaveBeenCalledWith(
+        'gpt.dispatch.timeout',
+        expect.anything()
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('rejects missing gptId before dispatch resolution', async () => {

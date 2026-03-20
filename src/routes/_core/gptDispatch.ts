@@ -485,6 +485,32 @@ function withTimeout<T>(workPromise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+const DEFAULT_MODULE_DISPATCH_TIMEOUT_MS = 15000;
+
+function resolvePositiveTimeoutMs(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function resolveDispatchTimeout(
+  body: unknown,
+  moduleMetadata: { defaultTimeoutMs?: number } | null
+): { timeoutMs: number; timeoutSource: "request" | "module-default" | "dispatcher-default" } {
+  const requestTimeoutMs = resolvePositiveTimeoutMs((body as any)?.timeoutMs);
+  if (requestTimeoutMs !== null) {
+    return { timeoutMs: requestTimeoutMs, timeoutSource: "request" };
+  }
+
+  const moduleTimeoutMs = resolvePositiveTimeoutMs(moduleMetadata?.defaultTimeoutMs);
+  if (moduleTimeoutMs !== null) {
+    return { timeoutMs: moduleTimeoutMs, timeoutSource: "module-default" };
+  }
+
+  return {
+    timeoutMs: DEFAULT_MODULE_DISPATCH_TIMEOUT_MS,
+    timeoutSource: "dispatcher-default",
+  };
+}
+
 type GptMapEntry = { module: string; route: string };
 
 const FORCED_DIRECT_GPT_BINDINGS: Record<string, GptMapEntry> = {
@@ -1117,7 +1143,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
-  const timeoutMs = typeof body?.timeoutMs === "number" ? body.timeoutMs : 15000;
+  const { timeoutMs, timeoutSource } = resolveDispatchTimeout(body, moduleMetadata);
 
   //audit Assumption: query actions depend on natural-language prompt content; failure risk: modules receiving empty prompt and failing deep in stack; expected invariant: query dispatch has message/prompt text; handling strategy: validate prompt at router boundary.
   if (actionRequiresPrompt(action) && !prompt) {
@@ -1136,7 +1162,17 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
-  logger?.info?.("gpt.dispatch.plan", { requestId, gptId: trimmedGptId, module: activeEntry.module, action, matchMethod });
+  logger?.info?.("gpt.dispatch.plan", {
+    requestId,
+    gptId: trimmedGptId,
+    module: activeEntry.module,
+    action,
+    matchMethod,
+    timeoutMs,
+    timeoutSource,
+  });
+
+  const dispatchStartedAt = Date.now();
 
   try {
     const result = await withTimeout(dispatchModuleAction(activeEntry.module, action, payload), timeoutMs);
@@ -1162,7 +1198,15 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       });
     });
 
-    logger?.info?.("gpt.dispatch.ok", { requestId, gptId: trimmedGptId, module: activeEntry.module, action });
+    logger?.info?.("gpt.dispatch.ok", {
+      requestId,
+      gptId: trimmedGptId,
+      module: activeEntry.module,
+      action,
+      timeoutMs,
+      timeoutSource,
+      durationMs: Date.now() - dispatchStartedAt,
+    });
 
     return {
       ok: true,
@@ -1178,14 +1222,34 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
     };
   } catch (err: any) {
+    const errorMessage = String(err?.message ?? err);
+    const isDispatchTimeout = errorMessage === `Module dispatch timeout after ${timeoutMs}ms`;
+    const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
+
     logger?.error?.("gpt.dispatch.error", {
       requestId,
       gptId: trimmedGptId,
       module: activeEntry.module,
       action,
       matchMethod,
-      error: String(err?.message ?? err),
+      error: errorMessage,
+      timeoutMs,
+      timeoutSource,
+      durationMs: Date.now() - dispatchStartedAt,
     });
+    if (isDispatchTimeout) {
+      logger?.error?.(dispatchLogEvent, {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        action,
+        matchMethod,
+        error: errorMessage,
+        timeoutMs,
+        timeoutSource,
+        durationMs: Date.now() - dispatchStartedAt,
+      });
+    }
 
     return {
       ok: false,
