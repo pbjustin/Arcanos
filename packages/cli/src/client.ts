@@ -67,6 +67,13 @@ export async function invokeTool(options: InvokeToolOptions): Promise<unknown> {
   return (response.data as ToolInvokeResponseData).result;
 }
 
+export {
+  buildGptRouteRequestBody,
+  invokeGptRoute,
+  type GptRouteRequestBody,
+  type InvokeGptRouteOptions
+} from "./client/backend.js";
+
 function createInvokeRequestId(toolId: string, inputs: Record<string, unknown>): string {
   const digest = createHash("sha1")
     .update(JSON.stringify({ toolId, inputs, command: "tool.invoke" }))

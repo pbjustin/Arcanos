@@ -25,6 +25,25 @@ export interface BackendStatusSnapshot {
   health: Record<string, unknown>;
 }
 
+export interface GptRouteRequestBody {
+  prompt: string;
+  gptVersion?: string;
+  action?: string;
+  payload?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+}
+
+export interface InvokeGptRouteOptions {
+  baseUrl: string;
+  gptId: string;
+  prompt: string;
+  gptVersion?: string;
+  action?: string;
+  payload?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
 export async function executeTaskCreate(
   request: ProtocolRequest<{ prompt: string }>,
   options: CliGlobalOptions
@@ -148,15 +167,74 @@ export function validateToolInvokeResponse(
   return assertToolInvokeResponse(response);
 }
 
+/**
+ * Builds the prompt-first GPT route request body for `/gpt/{gptId}`.
+ * Inputs/Outputs: caller-provided prompt/action/payload/context fields; returns the JSON body with no duplicated `gptId`.
+ * Edge cases: blank `action` values are omitted so clients do not silently inject unsupported defaults such as `"ask"`.
+ */
+export function buildGptRouteRequestBody(options: Omit<InvokeGptRouteOptions, "baseUrl" | "gptId" | "headers">): GptRouteRequestBody {
+  const prompt = options.prompt.trim();
+  if (!prompt) {
+    throw new Error("GPT route prompt is required.");
+  }
+
+  const body: GptRouteRequestBody = {
+    prompt
+  };
+
+  const gptVersion = options.gptVersion?.trim();
+  if (gptVersion) {
+    body.gptVersion = gptVersion;
+  }
+
+  const action = options.action?.trim();
+  // Keep the route generic: only include action when the caller explicitly requested one.
+  if (action) {
+    body.action = action;
+  }
+
+  if (options.payload) {
+    body.payload = options.payload;
+  }
+
+  if (options.context) {
+    body.context = options.context;
+  }
+
+  return body;
+}
+
+/**
+ * Invokes the canonical GPT route contract at `/gpt/{gptId}`.
+ * Inputs/Outputs: base URL, path-bound gptId, and a prompt-first request body; returns the backend JSON payload.
+ * Edge cases: rejects blank gpt ids locally and never duplicates gptId in the JSON body.
+ */
+export async function invokeGptRoute(options: InvokeGptRouteOptions): Promise<Record<string, unknown>> {
+  const gptId = options.gptId.trim();
+  if (!gptId) {
+    throw new Error("GPT route gptId is required.");
+  }
+
+  const body = buildGptRouteRequestBody(options);
+  return postJson(
+    options.baseUrl,
+    `/gpt/${encodeURIComponent(gptId)}`,
+    body,
+    options.headers
+  );
+}
+
 async function postJson(
   baseUrl: string,
   pathname: string,
-  body: Record<string, unknown>
+  body: object,
+  extraHeaders: Record<string, string> = {}
 ): Promise<Record<string, unknown>> {
   const response = await fetch(new URL(pathname, withTrailingSlash(baseUrl)), {
     method: "POST",
     headers: {
-      "content-type": "application/json"
+      "content-type": "application/json",
+      ...extraHeaders
     },
     body: JSON.stringify(body)
   });

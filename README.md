@@ -15,7 +15,7 @@ Key characteristics:
 
 ### Optional local daemon (Python)
 The repository includes an **optional local daemon CLI** in `daemon-python/` that turns Arcanos into a personal coding assistant on your machine:
-- routes chat to the backend using `gptId=arcanos-daemon`
+- routes module-bound daemon chat through `/gpt/arcanos-daemon`
 - detects inline unified diffs in AI responses and prompts **Apply patch? [y/N]**
 - detects command proposals and prompts **Run? [y/N]** (allowlisted)
 - injects lightweight **repo indexing context** into backend requests
