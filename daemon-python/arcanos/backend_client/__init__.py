@@ -90,8 +90,108 @@ class BackendApiClient:
 
         return tokens
 
-    
+    @staticmethod
+    def _extract_request_gpt_id(
+        path: str,
+        payload: Optional[Mapping[str, Any]],
+    ) -> Optional[str]:
+        """
+        Purpose: Resolve the GPT identity implied by a backend request path or payload.
+        Inputs/Outputs: HTTP path plus optional JSON payload; returns normalized GPT id or None.
+        Edge cases: ignores blank ids and prefers `/gpt/:gptId` path binding over payload metadata to avoid route/header drift.
+        """
+        gpt_path_prefix = "/gpt/"
+        if path.startswith(gpt_path_prefix):
+            # //audit assumption: GPT gateway path is the canonical routing source; risk: mismatched payload/body identity; invariant: path-bound gptId wins; handling: extract from route first.
+            route_gpt_id = path[len(gpt_path_prefix):].strip().strip("/")
+            if route_gpt_id:
+                return route_gpt_id
 
+        payload_gpt_id = payload.get("gptId") if isinstance(payload, Mapping) else None
+        if isinstance(payload_gpt_id, str):
+            normalized_gpt_id = payload_gpt_id.strip()
+            if normalized_gpt_id:
+                return normalized_gpt_id
+
+        return None
+
+    @staticmethod
+    def _extract_response_module(response_json: Any) -> Optional[str]:
+        """
+        Purpose: Extract the backend module identifier from a response envelope for routing diagnostics.
+        Inputs/Outputs: parsed backend response payload; returns module/model name when available.
+        Edge cases: falls back across `_route.module`, `model`, and nested result metadata to support both `/ask` and `/gpt/:gptId` contracts.
+        """
+        if not isinstance(response_json, Mapping):
+            return None
+
+        route_meta = response_json.get("_route")
+        if isinstance(route_meta, Mapping):
+            route_module = route_meta.get("module")
+            if isinstance(route_module, str) and route_module.strip():
+                return route_module.strip()
+
+        for field_name in ("model", "activeModel", "module"):
+            value = response_json.get(field_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        result_payload = response_json.get("result")
+        if isinstance(result_payload, Mapping):
+            result_module = result_payload.get("module")
+            if isinstance(result_module, str) and result_module.strip():
+                return result_module.strip()
+
+        return None
+
+    def _log_backend_route_request(
+        self,
+        *,
+        method: str,
+        url: str,
+        resolved_endpoint: str,
+        gpt_id: Optional[str],
+    ) -> None:
+        """
+        Purpose: Emit deterministic routing telemetry before a backend request is sent.
+        Inputs/Outputs: request method, full URL, resolved endpoint, and normalized GPT id; writes audit logs only.
+        Edge cases: `gpt_id` may be None for generic `/ask` traffic and is logged explicitly as null-equivalent metadata.
+        """
+        log_audit_event(
+            "backend_route_request",
+            method=method,
+            full_request_url=url,
+            resolved_endpoint=resolved_endpoint,
+            gpt_id=gpt_id,
+        )
+
+    def _log_backend_route_response(
+        self,
+        *,
+        method: str,
+        url: str,
+        resolved_endpoint: str,
+        gpt_id: Optional[str],
+        status_code: int,
+        response_json: Optional[Mapping[str, Any]] = None,
+        error_kind: Optional[str] = None,
+    ) -> None:
+        """
+        Purpose: Emit deterministic routing telemetry after a backend response is received or classified.
+        Inputs/Outputs: request metadata plus status/result details; writes audit logs only.
+        Edge cases: non-JSON responses log a null response module so callers can still correlate failures with the request path.
+        """
+        response_module = self._extract_response_module(response_json)
+        log_audit_event(
+            "backend_route_response",
+            method=method,
+            full_request_url=url,
+            resolved_endpoint=resolved_endpoint,
+            gpt_id=gpt_id,
+            status_code=status_code,
+            response_module=response_module,
+            error_kind=error_kind,
+        )
 
     def _make_request(
             self,
@@ -107,11 +207,13 @@ class BackendApiClient:
             if not self._base_url:
                 raise BackendRequestError(kind="configuration", message="Backend URL is not configured")
 
+            request_gpt_id = self._extract_request_gpt_id(path, json)
             auth_value = self._token_provider()
-            backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", "") or "").strip()
+            backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", "") or "").strip() or None
             allow_gpt_id_auth = bool(getattr(Config, "BACKEND_ALLOW_GPT_ID_AUTH", False))
+            effective_gpt_id = request_gpt_id or backend_gpt_id
 
-            if not auth_value and not (allow_gpt_id_auth and backend_gpt_id):
+            if not auth_value and not (allow_gpt_id_auth and effective_gpt_id):
                 log_audit_event(
                     "auth_failure",
                     source="backend_client",
@@ -119,7 +221,8 @@ class BackendApiClient:
                     path=path,
                     method=method,
                     gpt_id_auth_enabled=allow_gpt_id_auth,
-                    has_backend_gpt_id=bool(backend_gpt_id),
+                    gpt_id=request_gpt_id,
+                    has_backend_gpt_id=bool(effective_gpt_id),
                 )
                 raise BackendRequestError(kind="auth", message="Backend token is missing")
 
@@ -129,20 +232,52 @@ class BackendApiClient:
             if auth_value:
                 headers["Authorization"] = f"Bearer {auth_value}"
 
-            if allow_gpt_id_auth and backend_gpt_id:
-                headers["x-gpt-id"] = backend_gpt_id
+            if allow_gpt_id_auth and effective_gpt_id:
+                # //audit assumption: raw requests should preserve the same GPT identity/header alignment as JSON helpers; risk: direct/raw callers bypass the fixed routing contract; invariant: x-gpt-id matches the resolved GPT request when present; handling: prefer route-bound gptId then configured default.
+                headers["x-gpt-id"] = effective_gpt_id
+
+            self._log_backend_route_request(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+            )
 
             try:
-                return self._request_sender(
+                response = self._request_sender(
                     method,
                     url,
                     headers=headers,
                     json=json,
                     timeout=self._timeout_seconds
                 )
+                self._log_backend_route_response(
+                    method=method,
+                    url=url,
+                    resolved_endpoint=path,
+                    gpt_id=request_gpt_id,
+                    status_code=response.status_code,
+                )
+                return response
             except requests.Timeout as exc:
+                self._log_backend_route_response(
+                    method=method,
+                    url=url,
+                    resolved_endpoint=path,
+                    gpt_id=request_gpt_id,
+                    status_code=0,
+                    error_kind="timeout",
+                )
                 raise BackendRequestError(kind="timeout", message="Backend request timed out", details=str(exc))
             except requests.RequestException as exc:
+                self._log_backend_route_response(
+                    method=method,
+                    url=url,
+                    resolved_endpoint=path,
+                    gpt_id=request_gpt_id,
+                    status_code=0,
+                    error_kind="network",
+                )
                 raise BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
 
     def make_raw_request(self, method: str, path: str, json: Optional[Mapping[str, Any]] = None) -> requests.Response:
@@ -264,14 +399,20 @@ class BackendApiClient:
                 error=BackendRequestError(kind="configuration", message="Backend URL is not configured")
             )
 
+        request_gpt_id = self._extract_request_gpt_id(path, payload)
         auth_value = self._token_provider()
-        if not auth_value:
+        backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", "") or "").strip() or None
+        allow_gpt_id_auth = bool(getattr(Config, "BACKEND_ALLOW_GPT_ID_AUTH", False))
+        effective_gpt_id = request_gpt_id or backend_gpt_id
+
+        if not auth_value and not (allow_gpt_id_auth and effective_gpt_id):
             log_audit_event(
                 "auth_failure",
                 source="backend_client",
                 reason="token_missing",
                 path=path,
-                method=method
+                method=method,
+                gpt_id=request_gpt_id,
             )
             return BackendResponse(
                 ok=False,
@@ -280,9 +421,20 @@ class BackendApiClient:
 
         url = f"{self._base_url}{path}"
         headers = {
-            "Authorization": f"Bearer {auth_value}",
             "Content-Type": "application/json"
         }
+        if auth_value:
+            headers["Authorization"] = f"Bearer {auth_value}"
+        if allow_gpt_id_auth and effective_gpt_id:
+            # //audit assumption: trusted-GPT auth/bypass must align with the resolved GPT route when present; risk: `/gpt/:gptId` path and `x-gpt-id` header diverge; invariant: route-bound gptId wins over daemon default metadata; handling: prefer request gptId then fallback to configured daemon id.
+            headers["x-gpt-id"] = effective_gpt_id
+
+        self._log_backend_route_request(
+            method=method,
+            url=url,
+            resolved_endpoint=path,
+            gpt_id=request_gpt_id,
+        )
 
         try:
             response = self._request_sender(
@@ -293,17 +445,41 @@ class BackendApiClient:
                 timeout=self._timeout_seconds
             )
         except requests.Timeout as exc:
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=0,
+                error_kind="timeout",
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(kind="timeout", message="Backend request timed out", details=str(exc))
             )
         except requests.RequestException as exc:
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=0,
+                error_kind="network",
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(kind="network", message="Backend request failed", details=str(exc))
             )
 
         if response.status_code == 401:
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=response.status_code,
+                error_kind="auth",
+            )
             log_audit_event(
                 "auth_failure",
                 source="backend_client",
@@ -339,6 +515,15 @@ class BackendApiClient:
                     and isinstance(challenge.get("id"), str)
                     and isinstance(pending, list)
                 ):
+                    self._log_backend_route_response(
+                        method=method,
+                        url=url,
+                        resolved_endpoint=path,
+                        gpt_id=request_gpt_id,
+                        status_code=response.status_code,
+                        response_json=parsed,
+                        error_kind="confirmation",
+                    )
                     return BackendResponse(
                         ok=False,
                         error=BackendRequestError(
@@ -350,6 +535,15 @@ class BackendApiClient:
                         )
                     )
 
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=response.status_code,
+                response_json=parsed if isinstance(parsed, dict) else None,
+                error_kind="auth",
+            )
             log_audit_event(
                 "auth_failure",
                 source="backend_client",
@@ -369,6 +563,7 @@ class BackendApiClient:
             )
 
         if response.status_code == 429:
+            parsed_429: Any = None
             retry_after_sec: Optional[int] = None
             try:
                 parsed_429 = response.json()
@@ -388,6 +583,15 @@ class BackendApiClient:
                 msg = f"Rate limit exceeded. Try again in {mins} {'minute' if mins == 1 else 'minutes'}."
             else:
                 msg = "Rate limit exceeded. Try again later."
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=response.status_code,
+                response_json=parsed_429 if isinstance(parsed_429, dict) else None,
+                error_kind="rate_limit",
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
@@ -399,6 +603,20 @@ class BackendApiClient:
             )
 
         if response.status_code >= 400:
+            parsed_error: Any = None
+            try:
+                parsed_error = response.json()
+            except ValueError:
+                parsed_error = None
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=response.status_code,
+                response_json=parsed_error if isinstance(parsed_error, dict) else None,
+                error_kind="http",
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
@@ -412,6 +630,14 @@ class BackendApiClient:
         try:
             parsed = response.json()
         except ValueError as exc:
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=response.status_code,
+                error_kind="parse",
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
@@ -423,6 +649,14 @@ class BackendApiClient:
             )
 
         if not isinstance(parsed, dict):
+            self._log_backend_route_response(
+                method=method,
+                url=url,
+                resolved_endpoint=path,
+                gpt_id=request_gpt_id,
+                status_code=response.status_code,
+                error_kind="parse",
+            )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
@@ -432,6 +666,14 @@ class BackendApiClient:
                 )
             )
 
+        self._log_backend_route_response(
+            method=method,
+            url=url,
+            resolved_endpoint=path,
+            gpt_id=request_gpt_id,
+            status_code=response.status_code,
+            response_json=parsed,
+        )
         return BackendResponse(ok=True, value=parsed)
 
     def request_confirm_daemon_actions(
