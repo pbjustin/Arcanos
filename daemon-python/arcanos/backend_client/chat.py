@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
 
 from ..backend_client_models import BackendChatResult, BackendRequestError, BackendResponse
@@ -15,7 +16,19 @@ def _build_backend_payload(**fields: Any) -> dict[str, Any]:
     return {key: value for key, value in fields.items() if value is not None}
 
 
-def _resolve_backend_chat_path(gpt_id: Optional[str] = None) -> str:
+@dataclass(frozen=True)
+class BackendChatRoute:
+    """
+    Purpose: Carry the resolved backend endpoint for one chat-style request.
+    Inputs/Outputs: normalized gpt_id input; returns canonical endpoint plus normalized GPT identifier.
+    Edge cases: blank GPT ids collapse to generic `/ask` to preserve non-module chat behavior.
+    """
+
+    endpoint: str
+    gpt_id: Optional[str]
+
+
+def resolve_backend_chat_route(gpt_id: Optional[str] = None) -> BackendChatRoute:
     """
     Purpose: Choose the canonical backend endpoint for chat-style requests.
     Inputs/Outputs: optional explicit GPT id; returns `/gpt/<id>` for module-bound traffic or `/ask` for generic daemon chat.
@@ -23,8 +36,8 @@ def _resolve_backend_chat_path(gpt_id: Optional[str] = None) -> str:
     """
     explicit_gpt_id = (gpt_id or "").strip()
     if explicit_gpt_id:
-        return f"/gpt/{explicit_gpt_id}"
-    return "/ask"
+        return BackendChatRoute(endpoint=f"/gpt/{explicit_gpt_id}", gpt_id=explicit_gpt_id)
+    return BackendChatRoute(endpoint="/ask", gpt_id=None)
 
 
 def request_ask_with_domain(
@@ -56,7 +69,8 @@ def request_ask_with_domain(
             payload["context"] = {"repoIndex": normalized_metadata.get("repoIndex")}
 
 
-    response = client._request_json("post", _resolve_backend_chat_path(gpt_id), payload)
+    route = resolve_backend_chat_route(gpt_id)
+    response = client._request_json("post", route.endpoint, payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
         return BackendResponse(ok=False, error=response.error)
@@ -110,7 +124,8 @@ def request_chat_completion(
             payload["context"] = {"repoIndex": normalized_metadata.get("repoIndex")}
 
 
-    response = client._request_json("post", _resolve_backend_chat_path(gpt_id), payload)
+    route = resolve_backend_chat_route(gpt_id)
+    response = client._request_json("post", route.endpoint, payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return error.
         return BackendResponse(ok=False, error=response.error)

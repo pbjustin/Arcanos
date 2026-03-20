@@ -140,20 +140,31 @@ class BackendApiClient:
         """
         return cls._normalize_request_path(path) in {"/ask", "/api/ask"}
 
-    @staticmethod
-    def _extract_payload_gpt_id(payload: Optional[Mapping[str, Any]]) -> Optional[str]:
+    @classmethod
+    def _extract_request_gpt_id(
+        cls,
+        path: str,
+        payload: Optional[Mapping[str, Any]],
+    ) -> Optional[str]:
         """
-        Purpose: Read a GPT identifier from a request payload when present.
-        Inputs/Outputs: optional JSON payload; returns stripped gpt id or None.
-        Edge cases: empty, non-string, or blank values are ignored.
+        Purpose: Resolve the GPT identity implied by a backend request path or payload.
+        Inputs/Outputs: HTTP path plus optional JSON payload; returns normalized GPT id or None.
+        Edge cases: ignores blank ids and prefers `/gpt/:gptId` path binding over payload metadata to avoid route/header drift.
         """
-        if not isinstance(payload, Mapping):
-            return None
-        raw_gpt_id = payload.get("gptId")
-        if not isinstance(raw_gpt_id, str):
-            return None
-        normalized_gpt_id = raw_gpt_id.strip()
-        return normalized_gpt_id or None
+        normalized_path = cls._normalize_request_path(path)
+        gpt_path_prefix = "/gpt/"
+        if normalized_path.startswith(gpt_path_prefix):
+            route_gpt_id = normalized_path[len(gpt_path_prefix):].strip().strip("/")
+            if route_gpt_id:
+                return route_gpt_id
+
+        payload_gpt_id = payload.get("gptId") if isinstance(payload, Mapping) else None
+        if isinstance(payload_gpt_id, str):
+            normalized_gpt_id = payload_gpt_id.strip()
+            if normalized_gpt_id:
+                return normalized_gpt_id
+
+        return None
 
     @classmethod
     def _resolve_outbound_path(
@@ -170,9 +181,9 @@ class BackendApiClient:
         if not cls._is_ask_route(normalized_path):
             return normalized_path
 
-        payload_gpt_id = cls._extract_payload_gpt_id(payload)
-        if payload_gpt_id:
-            return f"/gpt/{payload_gpt_id}"
+        request_gpt_id = cls._extract_request_gpt_id(normalized_path, payload)
+        if request_gpt_id:
+            return f"/gpt/{request_gpt_id}"
         return "/ask"
 
     @classmethod
@@ -197,6 +208,35 @@ class BackendApiClient:
             return sanitized_payload
         return payload
 
+    @staticmethod
+    def _extract_response_module(response_json: Any) -> Optional[str]:
+        """
+        Purpose: Extract the backend module identifier from a response envelope for routing diagnostics.
+        Inputs/Outputs: parsed backend response payload; returns module/model name when available.
+        Edge cases: falls back across `_route.module`, `model`, and nested result metadata to support both `/ask` and `/gpt/:gptId` contracts.
+        """
+        if not isinstance(response_json, Mapping):
+            return None
+
+        route_meta = response_json.get("_route")
+        if isinstance(route_meta, Mapping):
+            route_module = route_meta.get("module")
+            if isinstance(route_module, str) and route_module.strip():
+                return route_module.strip()
+
+        for field_name in ("model", "activeModel", "module"):
+            value = response_json.get(field_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        result_payload = response_json.get("result")
+        if isinstance(result_payload, Mapping):
+            result_module = result_payload.get("module")
+            if isinstance(result_module, str) and result_module.strip():
+                return result_module.strip()
+
+        return None
+
     def _build_request_context(
         self,
         method: str,
@@ -211,7 +251,8 @@ class BackendApiClient:
         if not self._base_url:
             raise BackendRequestError(kind="configuration", message="Backend URL is not configured")
 
-        request_gpt_id = self._extract_payload_gpt_id(payload)
+        normalized_path = self._normalize_request_path(path)
+        request_gpt_id = self._extract_request_gpt_id(normalized_path, payload)
         auth_value = self._token_provider()
         backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", "") or "").strip() or None
         allow_gpt_id_auth = bool(getattr(Config, "BACKEND_ALLOW_GPT_ID_AUTH", False))
@@ -222,15 +263,16 @@ class BackendApiClient:
                 "auth_failure",
                 source="backend_client",
                 reason="token_missing",
-                path=path,
+                path=normalized_path,
                 method=method,
                 gpt_id=request_gpt_id,
                 effective_gpt_id=effective_gpt_id,
                 gpt_id_auth_enabled=allow_gpt_id_auth,
+                has_backend_gpt_id=bool(backend_gpt_id),
             )
             raise BackendRequestError(kind="auth", message="Backend token is missing")
 
-        resolved_path = self._resolve_outbound_path(path, payload)
+        resolved_path = self._resolve_outbound_path(normalized_path, payload)
         outbound_payload = self._prepare_outbound_payload(resolved_path, payload)
         headers = {"Content-Type": "application/json"}
 
@@ -240,7 +282,7 @@ class BackendApiClient:
             headers["x-gpt-id"] = effective_gpt_id
 
         return BackendRequestContext(
-            original_path=path,
+            original_path=normalized_path,
             resolved_path=resolved_path,
             url=f"{self._base_url}{resolved_path}",
             headers=headers,
@@ -249,6 +291,54 @@ class BackendApiClient:
             effective_gpt_id=effective_gpt_id,
             has_authorization=bool(auth_value),
             has_x_gpt_id="x-gpt-id" in headers,
+        )
+
+    def _log_backend_route_request(
+        self,
+        *,
+        method: str,
+        url: str,
+        resolved_endpoint: str,
+        gpt_id: Optional[str],
+    ) -> None:
+        """
+        Purpose: Emit deterministic routing telemetry before a backend request is sent.
+        Inputs/Outputs: request method, full URL, resolved endpoint, and normalized GPT id; writes audit logs only.
+        Edge cases: `gpt_id` may be None for generic `/ask` traffic and is logged explicitly as null-equivalent metadata.
+        """
+        log_audit_event(
+            "backend_route_request",
+            method=method,
+            full_request_url=url,
+            resolved_endpoint=resolved_endpoint,
+            gpt_id=gpt_id,
+        )
+
+    def _log_backend_route_response(
+        self,
+        *,
+        method: str,
+        url: str,
+        resolved_endpoint: str,
+        gpt_id: Optional[str],
+        status_code: int,
+        response_json: Optional[Mapping[str, Any]] = None,
+        error_kind: Optional[str] = None,
+    ) -> None:
+        """
+        Purpose: Emit deterministic routing telemetry after a backend response is received or classified.
+        Inputs/Outputs: request metadata plus status/result details; writes audit logs only.
+        Edge cases: non-JSON responses log a null response module so callers can still correlate failures with the request path.
+        """
+        log_audit_event(
+            "backend_route_response",
+            method=method,
+            full_request_url=url,
+            resolved_endpoint=resolved_endpoint,
+            gpt_id=gpt_id,
+            status_code=status_code,
+            response_module=self._extract_response_module(response_json),
+            error_kind=error_kind,
         )
 
     def _log_outbound_request(self, method: str, context: BackendRequestContext) -> None:
@@ -272,6 +362,12 @@ class BackendApiClient:
             has_cookie=context.has_cookie,
             has_x_gpt_id=context.has_x_gpt_id,
         )
+        self._log_backend_route_request(
+            method=method,
+            url=context.url,
+            resolved_endpoint=context.resolved_path,
+            gpt_id=context.request_gpt_id,
+        )
 
     def _log_request_response(
         self,
@@ -279,6 +375,7 @@ class BackendApiClient:
         context: BackendRequestContext,
         status_code: int,
         error_kind: Optional[str] = None,
+        response_json: Optional[Mapping[str, Any]] = None,
     ) -> None:
         """
         Purpose: Emit a response audit event for success and failure paths.
@@ -302,6 +399,15 @@ class BackendApiClient:
             has_cookie=context.has_cookie,
             has_x_gpt_id=context.has_x_gpt_id,
         )
+        self._log_backend_route_response(
+            method=method,
+            url=context.url,
+            resolved_endpoint=context.resolved_path,
+            gpt_id=context.request_gpt_id,
+            status_code=status_code,
+            response_json=response_json,
+            error_kind=error_kind,
+        )
 
     def _build_logged_error_response(
         self,
@@ -310,13 +416,20 @@ class BackendApiClient:
         error: BackendRequestError,
         status_code: int = 0,
         error_kind: Optional[str] = None,
+        response_json: Optional[Mapping[str, Any]] = None,
     ) -> BackendResponse[dict[str, Any]]:
         """
         Purpose: Centralize JSON error response creation for backend request failures.
         Inputs/Outputs: request context plus BackendRequestError -> BackendResponse error payload.
         Edge cases: defaults to status 0 for transport failures that never produced an HTTP response.
         """
-        self._log_request_response(method, context, status_code=status_code, error_kind=error_kind or error.kind)
+        self._log_request_response(
+            method,
+            context,
+            status_code=status_code,
+            error_kind=error_kind or error.kind,
+            response_json=response_json,
+        )
         return BackendResponse(ok=False, error=error)
 
 
@@ -500,7 +613,7 @@ class BackendApiClient:
                 "auth_failure",
                 source="backend_client",
                 reason="401_unauthorized",
-                path=path,
+                path=context.original_path,
                 method=method,
                 status_code=response.status_code
             )
@@ -543,14 +656,21 @@ class BackendApiClient:
                         ),
                         status_code=response.status_code,
                         error_kind="confirmation",
+                        response_json=parsed,
                     )
 
-            self._log_request_response(method, context, status_code=response.status_code, error_kind="auth")
+            self._log_request_response(
+                method,
+                context,
+                status_code=response.status_code,
+                error_kind="auth",
+                response_json=parsed if isinstance(parsed, dict) else None,
+            )
             log_audit_event(
                 "auth_failure",
                 source="backend_client",
                 reason="403_forbidden_not_confirmation",
-                path=path,
+                path=context.original_path,
                 method=method,
                 status_code=response.status_code
             )
@@ -565,7 +685,7 @@ class BackendApiClient:
             )
 
         if response.status_code == 429:
-            self._log_request_response(method, context, status_code=response.status_code, error_kind="rate_limit")
+            parsed_429: Any = None
             retry_after_sec: Optional[int] = None
             try:
                 parsed_429 = response.json()
@@ -585,17 +705,26 @@ class BackendApiClient:
                 msg = f"Rate limit exceeded. Try again in {mins} {'minute' if mins == 1 else 'minutes'}."
             else:
                 msg = "Rate limit exceeded. Try again later."
-            return BackendResponse(
-                ok=False,
-                error=BackendRequestError(
+            return self._build_logged_error_response(
+                method,
+                context,
+                BackendRequestError(
                     kind="rate_limit",
                     message=msg,
                     status_code=429,
                     details=response.text
-                )
+                ),
+                status_code=response.status_code,
+                error_kind="rate_limit",
+                response_json=parsed_429 if isinstance(parsed_429, dict) else None,
             )
 
         if response.status_code >= 400:
+            parsed_error: Any = None
+            try:
+                parsed_error = response.json()
+            except ValueError:
+                parsed_error = None
             return self._build_logged_error_response(
                 method,
                 context,
@@ -607,6 +736,7 @@ class BackendApiClient:
                 ),
                 status_code=response.status_code,
                 error_kind="http",
+                response_json=parsed_error if isinstance(parsed_error, dict) else None,
             )
 
         try:
@@ -638,7 +768,12 @@ class BackendApiClient:
                 error_kind="parse",
             )
 
-        self._log_request_response(method, context, status_code=response.status_code)
+        self._log_request_response(
+            method,
+            context,
+            status_code=response.status_code,
+            response_json=parsed,
+        )
         return BackendResponse(ok=True, value=parsed)
 
     def request_confirm_daemon_actions(
