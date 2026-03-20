@@ -402,7 +402,7 @@ This recap mentions lookup text but should still save.`;
     );
   });
 
-  it('merges durable conversation-session matches into lookup results before semantic fallback', async () => {
+  it('rejects anonymous lookup commands so they do not reuse shared memory state', async () => {
     mockSearchNaturalLanguageConversationSessions.mockResolvedValueOnce([
       {
         id: 'session-123',
@@ -427,23 +427,14 @@ This recap mentions lookup text but should still save.`;
     expect(result).toEqual(
       expect.objectContaining({
         intent: 'lookup',
-        operation: 'searched',
-        entries: [
-          expect.objectContaining({
-            key: 'session-record:session-123',
-            value: expect.objectContaining({
-              text: 'Conversation log covering Trinity debugging and honesty fixes.'
-            })
-          })
-        ]
+        operation: 'ignored',
+        success: false,
+        sessionId: 'stateless',
+        message: 'Memory commands require an explicit sessionId or session label. Anonymous requests stay stateless.'
       })
     );
-    expect(mockQueryRagDocuments).toHaveBeenCalledWith(
-      'ARCANOS pipeline tuning session',
-      expect.objectContaining({
-        sessionId: 'global'
-      })
-    );
+    expect(mockSearchNaturalLanguageConversationSessions).not.toHaveBeenCalled();
+    expect(mockQueryRagDocuments).not.toHaveBeenCalled();
   });
 
   it('reuses the latest identical session save instead of writing a duplicate memory row', async () => {
@@ -599,7 +590,7 @@ Main Event: Gunther def. AJ Styles clean`,
       expect.objectContaining({
         intent: 'lookup',
         operation: 'searched',
-        sessionId: 'global',
+        sessionId: 'stateless',
         message: 'Found 1 exact persisted memory entry for record id 18342 and tag session_diagnostic_2026-03-08.',
         entries: [
           expect.objectContaining({

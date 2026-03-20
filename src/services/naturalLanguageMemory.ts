@@ -34,6 +34,7 @@ import {
 } from "@services/naturalLanguageConversationSessionStore.js";
 
 const DEFAULT_SESSION_ID = 'global';
+const STATELESS_SESSION_ID = 'stateless';
 const SESSION_KEY_PREFIX = 'nl-memory';
 const SESSION_INDEX_KEY_PREFIX = 'nl-session-index';
 const SESSION_LATEST_KEY_PREFIX = 'nl-latest';
@@ -541,8 +542,9 @@ export async function executeNaturalLanguageMemoryCommand(
 ): Promise<NaturalLanguageMemoryResponse> {
   const requestIncludesExplicitSessionTarget = hasExplicitSessionTarget(request);
   const fallbackRequested = request.fallback === true && request.mode === 'search';
-  const sessionId = await resolveRequestedSessionId(request);
   const parsedCommand = parseNaturalLanguageMemoryCommand(request.input);
+  const scopedSessionId = await resolveRequestedSessionId(request);
+  const sessionId = scopedSessionId ?? STATELESS_SESSION_ID;
   const lookupLimit = resolveLookupLimit(request.limit);
 
   //audit Assumption: unknown commands should return guidance instead of failing; failure risk: poor UX and retries; expected invariant: deterministic no-op response; handling strategy: explicit ignored operation payload.
@@ -556,15 +558,19 @@ export async function executeNaturalLanguageMemoryCommand(
     };
   }
 
+  if (!scopedSessionId && requiresExplicitSessionScope(parsedCommand)) {
+    return buildMissingSessionScopeResponse(parsedCommand.intent);
+  }
+
   if (parsedCommand.intent === 'save') {
     const content = normalizeSaveContent(parsedCommand.content as string);
     const explicitKey = typeof parsedCommand.key === 'string' ? parsedCommand.key : null;
     const reusableSave = explicitKey
       ? null
-      : await findReusableLatestSessionSave(sessionId, content);
-    const key = reusableSave?.key ?? explicitKey ?? buildAutoMemoryKey(sessionId, content);
+      : await findReusableLatestSessionSave(scopedSessionId!, content);
+    const key = reusableSave?.key ?? explicitKey ?? buildAutoMemoryKey(scopedSessionId!, content);
     const savedPayload = reusableSave?.payload ?? {
-      sessionId,
+      sessionId: scopedSessionId!,
       text: content,
       savedAt: new Date().toISOString()
     };
@@ -585,15 +591,15 @@ export async function executeNaturalLanguageMemoryCommand(
       });
     }
 
-    await updateSessionIndexes(sessionId, key);
+    await updateSessionIndexes(scopedSessionId!, key);
     await updateSessionLabelPointer({
-      sessionId,
+      sessionId: scopedSessionId!,
       storageLabel: extractNaturalLanguageStorageLabel(content) ?? extractNaturalLanguageStorageLabel(request.input)
     });
 
     try {
       await persistNaturalLanguageConversationSession({
-        sessionId,
+        sessionId: scopedSessionId!,
         memoryKey: key,
         content,
         savedAt: typeof savedPayload.savedAt === 'string' ? savedPayload.savedAt : undefined
@@ -612,7 +618,7 @@ export async function executeNaturalLanguageMemoryCommand(
       ? false
       : await recordPersistentMemorySnippet({
         key,
-        sessionId,
+        sessionId: scopedSessionId!,
         content,
         metadata: {
           sourceType: 'memory',
@@ -664,7 +670,7 @@ export async function executeNaturalLanguageMemoryCommand(
 
   if (parsedCommand.intent === 'retrieve') {
     if (parsedCommand.latest) {
-      const latestPointer = await loadMemory(buildLatestPointerKey(sessionId));
+      const latestPointer = await loadMemory(buildLatestPointerKey(scopedSessionId!));
       const latestKey = extractNaturalLanguageMemoryPointerKey(latestPointer);
 
       //audit Assumption: latest pointer may not exist for new sessions; failure risk: null dereference; expected invariant: safe empty response for first-use sessions; handling strategy: early return with guidance.
@@ -678,7 +684,7 @@ export async function executeNaturalLanguageMemoryCommand(
           });
           const ragFallback = await resolveRagFallbackEntries({
             queryText: request.input,
-            sessionId,
+            sessionId: scopedSessionId!,
             limit: lookupLimit,
             allowSessionFallback: !requestIncludesExplicitSessionTarget
           });
@@ -731,7 +737,7 @@ export async function executeNaturalLanguageMemoryCommand(
           });
           const ragFallback = await resolveRagFallbackEntries({
             queryText: request.input,
-            sessionId,
+            sessionId: scopedSessionId!,
             limit: lookupLimit,
             allowSessionFallback: !requestIncludesExplicitSessionTarget
           });
@@ -835,7 +841,7 @@ export async function executeNaturalLanguageMemoryCommand(
   }
 
   if (parsedCommand.intent === 'list') {
-    const rows = await querySessionEntries(sessionId, lookupLimit);
+    const rows = await querySessionEntries(scopedSessionId!, lookupLimit);
     return {
       success: true,
       intent: 'list',
@@ -848,7 +854,7 @@ export async function executeNaturalLanguageMemoryCommand(
   }
 
   if (parsedCommand.intent === 'inspect') {
-    const rows = await querySessionEntries(sessionId, lookupLimit);
+    const rows = await querySessionEntries(scopedSessionId!, lookupLimit);
     const inspectionRequest = parseMemoryInspectionRequest(request.input) ?? {
       requestedArtifacts: ['raw_memory_rows'] as MemoryInspectionArtifact[],
       unsupportedArtifacts: [] as MemoryInspectionArtifact[]
@@ -907,11 +913,11 @@ export async function executeNaturalLanguageMemoryCommand(
   }
 
   const [searchRows, durableConversationRows, ragFallback] = await Promise.all([
-    searchSessionEntries(sessionId, queryText, lookupLimit),
+    searchSessionEntries(scopedSessionId!, queryText, lookupLimit),
     resolveDurableConversationEntries(queryText, lookupLimit),
     resolveRagFallbackEntries({
       queryText,
-      sessionId,
+      sessionId: scopedSessionId!,
       limit: lookupLimit,
       allowSessionFallback: !requestIncludesExplicitSessionTarget
     })
@@ -937,7 +943,7 @@ export async function executeNaturalLanguageMemoryCommand(
 /**
  * Determine whether a command explicitly targets a session rather than relying on general memory lookup.
  * Inputs/outputs: natural-language request -> true when a session id is provided out of band or inline.
- * Edge cases: blank/undefined transport session ids are ignored so generic global lookups can still use semantic fallback.
+ * Edge cases: blank/undefined transport session ids are ignored so anonymous requests remain stateless by default.
  */
 function hasExplicitSessionTarget(request: NaturalLanguageMemoryRequest): boolean {
   if (typeof request.sessionId === 'string' && request.sessionId.trim().length > 0) {
@@ -946,6 +952,33 @@ function hasExplicitSessionTarget(request: NaturalLanguageMemoryRequest): boolea
 
   return extractNaturalLanguageSessionId(request.input) !== null
     || extractNaturalLanguageStorageLabel(request.input) !== null;
+}
+
+function requiresExplicitSessionScope(parsedCommand: ParsedMemoryCommand): boolean {
+  if (parsedCommand.intent === 'save' || parsedCommand.intent === 'list' || parsedCommand.intent === 'inspect') {
+    return true;
+  }
+
+  if (parsedCommand.intent === 'retrieve') {
+    return parsedCommand.latest === true;
+  }
+
+  if (parsedCommand.intent === 'lookup') {
+    return !parsedCommand.exactSelectors;
+  }
+
+  return false;
+}
+
+function buildMissingSessionScopeResponse(intent: NaturalLanguageMemoryIntent): NaturalLanguageMemoryResponse {
+  return {
+    success: false,
+    intent,
+    operation: 'ignored',
+    sessionId: STATELESS_SESSION_ID,
+    message: 'Memory commands require an explicit sessionId or session label. Anonymous requests stay stateless.',
+    rag: disabledRagResult('session_scope_required')
+  };
 }
 
 /**
@@ -1610,9 +1643,9 @@ export async function resolveNaturalLanguageSessionAlias(rawAlias: unknown): Pro
 /**
  * Resolve the effective session id for a natural-language command, including storage-label aliases.
  * Inputs/outputs: natural-language request -> canonical normalized session id.
- * Edge cases: unknown aliases fall back to direct session-id normalization.
+ * Edge cases: unknown aliases fall back to direct session-id normalization; missing scope stays null so anonymous requests remain stateless.
  */
-async function resolveRequestedSessionId(request: NaturalLanguageMemoryRequest): Promise<string> {
+async function resolveRequestedSessionId(request: NaturalLanguageMemoryRequest): Promise<string | null> {
   const inlineSessionId = extractNaturalLanguageSessionId(request.input);
   const rawTransportSessionId =
     typeof request.sessionId === 'string' && request.sessionId.trim().length > 0
@@ -1633,7 +1666,8 @@ async function resolveRequestedSessionId(request: NaturalLanguageMemoryRequest):
   }
 
   //audit Assumption: explicit storage-label lookups should remain exact even when no alias pointer has been registered yet; failure risk: label-targeted prompts silently collapse into the global namespace and drift through semantic fallback; expected invariant: any explicit label or session target maps to its own deterministic normalized session token; handling strategy: include the raw storage label in fallback normalization order.
-  return normalizeNaturalLanguageSessionId(rawTransportSessionId ?? inlineSessionId ?? rawStorageLabel);
+  const fallbackCandidate = rawTransportSessionId ?? inlineSessionId ?? rawStorageLabel;
+  return fallbackCandidate ? normalizeNaturalLanguageSessionId(fallbackCandidate) : null;
 }
 
 /**

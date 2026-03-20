@@ -49,12 +49,16 @@ describe('/ask governed system modes', () => {
 
   it('records chat intent and exposes it through system_state', async () => {
     const chatRes = await request(app).post('/ask').send({
-      prompt: 'Implement governed backend mode dispatch in /ask'
+      prompt: 'Implement governed backend mode dispatch in /ask',
+      sessionId: 'governed-test-session'
     });
 
     expect(chatRes.status).toBe(200);
 
-    const stateRes = await request(app).post('/ask').send({ mode: 'system_state' });
+    const stateRes = await request(app).post('/ask').send({
+      mode: 'system_state',
+      sessionId: 'governed-test-session'
+    });
     expect(stateRes.status).toBe(200);
     expect(stateRes.body.intent.intentId).toBeTruthy();
     //audit Assumption: intent labels are normalized for safe persistence; failure risk: brittle exact-text assertions; expected invariant: label preserves semantic prefix with optional hash suffix; handling strategy: assert normalized pattern.
@@ -62,6 +66,19 @@ describe('/ask governed system modes', () => {
       /^implement-governed-backend-mode-dispatch(?:-[a-f0-9]{8})?$/
     );
     expect(stateRes.body.intent.status).toBe('active');
+  });
+
+  it('keeps anonymous /ask system_state requests stateless', async () => {
+    const chatRes = await request(app).post('/ask').send({
+      prompt: 'Anonymous requests should not persist shared backend intent'
+    });
+
+    expect(chatRes.status).toBe(200);
+
+    const stateRes = await request(app).post('/ask').send({ mode: 'system_state' });
+    expect(stateRes.status).toBe(200);
+    expect(stateRes.body.intent.intentId).toBeNull();
+    expect(stateRes.body.intent.label).toBeNull();
   });
 
   it('returns 409 on intent optimistic lock mismatch', async () => {

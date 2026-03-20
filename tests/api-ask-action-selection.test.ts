@@ -345,7 +345,7 @@ Main Event: Gunther def. AJ Styles clean`;
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
-  it('uses universal global memory session when no sessionId is provided', async () => {
+  it('passes an unscoped memory command through without inventing a global session id', async () => {
     mockGetModuleMetadata.mockReturnValue({
       name: 'test-module',
       description: null,
@@ -370,7 +370,7 @@ Main Event: Gunther def. AJ Styles clean`;
     expect(response.body.result.handledBy).toBe('memory-dispatcher');
     expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
       input: 'remember this as a universal memory',
-      sessionId: 'global'
+      sessionId: undefined
     });
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });

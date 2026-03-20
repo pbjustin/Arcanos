@@ -64,6 +64,23 @@ export async function persistModuleConversation(
   const now = new Date().toISOString();
   const normalizedRoute = normalizeModuleKeyPart(input.route || input.moduleName);
   const sessionId = resolveSessionId(input);
+
+  //audit Assumption: anonymous module dispatches must not create hidden cross-request transcript state; failure risk: unrelated callers share module-history/session caches via implicit fallback ids; expected invariant: conversation persistence only happens for explicit session scopes; handling strategy: skip transcript/history persistence when sessionId is absent.
+  if (!sessionId) {
+    modulePersistenceLogger.info("Skipping module conversation persistence without explicit session scope", {
+      operation: "persistModuleConversation",
+      moduleName: input.moduleName,
+      route: input.route || null,
+      action: input.action,
+      gptId: input.gptId
+    });
+
+    if (input.moduleName === "BACKSTAGE:BOOKER") {
+      await persistBackstageBookerConvenienceKeys(input.action, input.requestPayload, input.responsePayload, now);
+    }
+    return;
+  }
+
   const promptPreview = buildPromptPreview(input.requestPayload);
   const responsePreview = buildResponsePreview(input.responsePayload);
   const snapshot: ModuleInteractionSnapshot = {
@@ -306,15 +323,13 @@ async function persistBackstageBookerConvenienceKeys(
   }
 }
 
-function resolveSessionId(input: ModuleConversationPersistenceInput): string {
+function resolveSessionId(input: ModuleConversationPersistenceInput): string | null {
   const providedSessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
   if (providedSessionId) {
     return providedSessionId;
   }
 
-  const normalizedRoute = normalizeModuleKeyPart(input.route || input.moduleName);
-  //audit Assumption: module-global fallback session ids provide cross-chat continuity when callers omit sessionId; failure risk: mixed transcript between users sharing gptId; expected invariant: deterministic fallback key; handling strategy: namespace by module and gpt id.
-  return `module:${normalizedRoute}:gpt:${normalizeModuleKeyPart(input.gptId)}`;
+  return null;
 }
 
 function normalizeModuleKeyPart(value: string): string {

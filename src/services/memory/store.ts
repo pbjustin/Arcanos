@@ -5,6 +5,11 @@ import { memoryState } from './state.js';
 import { logMemoryAccess, logSuppressionEvent } from './logging.js';
 import { isValidMemoryEntry } from "./validation.js";
 
+function normalizeMemorySessionId(sessionId?: string): string | null {
+  const normalized = typeof sessionId === 'string' ? sessionId.trim() : '';
+  return normalized.length > 0 ? normalized : null;
+}
+
 /**
  * Store a memory entry
  */
@@ -62,13 +67,19 @@ export function storeDecision(
   context: string,
   sessionId?: string
 ): MemoryEntry | null {
+  const normalizedSessionId = normalizeMemorySessionId(sessionId);
+  if (!normalizedSessionId) {
+    logSuppressionEvent('decision', 'SESSION_SCOPE_REQUIRED');
+    return null;
+  }
+
   const key = `decision_${Date.now()}`;
   const value = `Decision: ${decision}\nReasoning: ${reasoning}\nContext: ${context}`;
   
   return storeMemory(key, value, 'decision', {
     source: 'arcanos_decision',
     tags: ['decision', 'reasoning'],
-    sessionId,
+    sessionId: normalizedSessionId,
     moduleId: 'decision'
   });
 }
@@ -81,13 +92,19 @@ export function storePattern(
   examples: string[],
   sessionId?: string
 ): MemoryEntry | null {
+  const normalizedSessionId = normalizeMemorySessionId(sessionId);
+  if (!normalizedSessionId) {
+    logSuppressionEvent('pattern', 'SESSION_SCOPE_REQUIRED');
+    return null;
+  }
+
   const key = `pattern_${Date.now()}`;
   const value = `Pattern: ${pattern}\nExamples: ${examples.join('; ')}`;
   
   return storeMemory(key, value, 'pattern', {
     source: 'arcanos_pattern',
     tags: ['pattern', 'learning'],
-    sessionId,
+    sessionId: normalizedSessionId,
     moduleId: 'pattern'
   });
 }

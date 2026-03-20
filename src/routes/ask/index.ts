@@ -583,10 +583,14 @@ export const handleAIRequest = async (
 
   const { sessionId, overrideAuditSafe, metadata } = req.body;
   const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
+  const trackedSessionId =
+    typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : undefined;
 
-  //audit Assumption: intent tracking should happen for valid chat requests even when mock responses are used; risk: stale system_state intent; invariant: intent recorded for leniently validated chat inputs; handling: record before API key checks.
-  const activeIntent = recordChatIntent(normalizedPrompt, sessionId);
-  setLastRoutingUsed('backend', sessionId);
+  //audit Assumption: anonymous /ask traffic must stay stateless by default; risk: unrelated callers sharing an in-memory intent bucket; invariant: intent tracking only persists for explicit session scopes; handling: skip stateful intent storage unless sessionId is present.
+  const activeIntent = trackedSessionId ? recordChatIntent(normalizedPrompt, trackedSessionId) : null;
+  if (trackedSessionId) {
+    setLastRoutingUsed('backend', trackedSessionId);
+  }
 
   // Domain Detection
   const detection = detectCognitiveDomain(normalizedPrompt);
@@ -634,16 +638,18 @@ export const handleAIRequest = async (
   }
 
   // Update intent state with cognitive domain
-  const domainUpdate = updateIntentWithOptimisticLock(
-    activeIntent.version,
-    {
-      cognitiveDomain: finalDomain,
-      domainConfidence: finalConfidence
-    },
-    sessionId
-  );
-  if (!domainUpdate.ok) {
-    console.warn(`[⚠️ DOMAIN] Intent version conflict during domain update (expected=${activeIntent.version}, current=${domainUpdate.conflict.currentVersion})`);
+  if (trackedSessionId && activeIntent) {
+    const domainUpdate = updateIntentWithOptimisticLock(
+      activeIntent.version,
+      {
+        cognitiveDomain: finalDomain,
+        domainConfidence: finalConfidence
+      },
+      trackedSessionId
+    );
+    if (!domainUpdate.ok) {
+      console.warn(`[⚠️ DOMAIN] Intent version conflict during domain update (expected=${activeIntent.version}, current=${domainUpdate.conflict.currentVersion})`);
+    }
   }
 
   console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}, domain: ${finalDomain} (${finalConfidence})`);
