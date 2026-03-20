@@ -286,6 +286,47 @@ function toSemanticSearchHits(matches: RagQueryMatch[]): MemorySearchHit[] {
 }
 
 /**
+ * Derive an explicit search session scope from a canonical memory identifier.
+ * Inputs: classified exact-lookup identifier.
+ * Output: normalized session scope or null when the identifier is not session-scoped.
+ * Edge cases: malformed or unscoped identifiers return null so fallback search stays disabled.
+ */
+function resolveIdentifierSearchScope(
+  classifiedIdentifier: { normalized: string | null }
+): string | null {
+  const normalizedIdentifier = classifiedIdentifier.normalized;
+  if (typeof normalizedIdentifier !== 'string') {
+    return null;
+  }
+
+  const scopeMatch = normalizedIdentifier.match(/^(?:nl-memory|session):([^:]+):/i);
+  return scopeMatch?.[1] ? resolveSearchSessionId(scopeMatch[1]) : null;
+}
+
+/**
+ * Convert semantic fallback matches into `/api/memory/load` response entries.
+ * Inputs: raw RAG matches.
+ * Output: normalized response entry list with durable ids when available.
+ * Edge cases: matches without `versionId` expose `record_id: null` but stay deterministic.
+ */
+function toFallbackLoadEntries(matches: RagQueryMatch[]) {
+  const semanticHits = toSemanticSearchHits(matches);
+  return semanticHits.map((entry, index) => {
+    const metadataRecord = (matches[index]?.metadata ?? {}) as Record<string, unknown>;
+    const recordId =
+      typeof metadataRecord.versionId === 'string' && metadataRecord.versionId.trim()
+        ? metadataRecord.versionId.trim()
+        : null;
+
+    return {
+      record_id: recordId,
+      memory_key: entry.key,
+      ...entry
+    };
+  });
+}
+
+/**
  * Merge exact and semantic hits into one normalized list.
  * Inputs: exact hit list, semantic hit list, final limit.
  * Output: deduplicated merged hit list.
@@ -445,32 +486,50 @@ router.get("/load", asyncHandler(async (req: Request, res: Response) => {
   }
 
   if (fallbackRequested) {
-    const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : null;
+    const sessionId =
+      resolveSearchSessionId(req.query.sessionId)
+      ?? resolveIdentifierSearchScope(classifiedIdentifier);
     const limit = resolveQueryLimit(req.query.limit, 5, 25);
-    memoryRouteLogger.info('Exact memory lookup escalated into explicit fallback search', {
-      operation: 'load',
-      rawIdentifier,
-      searchScope: sessionId ?? 'global',
-      limit
-    });
+    if (sessionId) {
+      memoryRouteLogger.info('Exact memory lookup escalated into explicit fallback search', {
+        operation: 'load',
+        rawIdentifier,
+        searchScope: sessionId,
+        limit
+      });
 
-    const fallbackResponse = await executeNaturalLanguageMemoryCommand({
-      input: `lookup ${rawIdentifier}`,
-      sessionId,
-      limit,
-      fallback: true,
-      mode: 'search'
-    });
+      try {
+        const ragResult = await queryRagDocuments(rawIdentifier, {
+          limit,
+          minScore: DEFAULT_SEARCH_MIN_SCORE,
+          sessionId,
+          sourceTypes: SEARCH_SOURCE_TYPES,
+          allowSessionFallback: false
+        });
+        const fallbackEntries = toFallbackLoadEntries(ragResult.matches);
 
-    if (fallbackResponse.success && Array.isArray(fallbackResponse.entries) && fallbackResponse.entries.length > 0) {
-      const firstEntry = fallbackResponse.entries[0];
-      return res.json({
-        success: true,
-        record_id: firstEntry.record_id ?? null,
-        memory_key: firstEntry.memory_key ?? firstEntry.key,
-        value: firstEntry.value,
-        fallback_used: true,
-        entries: fallbackResponse.entries
+        if (fallbackEntries.length > 0) {
+          const firstEntry = fallbackEntries[0];
+          return res.json({
+            success: true,
+            record_id: firstEntry.record_id ?? null,
+            memory_key: firstEntry.memory_key ?? firstEntry.key,
+            value: firstEntry.value,
+            fallback_used: true,
+            entries: fallbackEntries
+          });
+        }
+      } catch {
+        memoryRouteLogger.warn('Explicit fallback search failed for exact memory lookup', {
+          operation: 'load',
+          rawIdentifier,
+          searchScope: sessionId
+        });
+      }
+    } else {
+      memoryRouteLogger.info('Skipped fallback search without an explicit session scope', {
+        operation: 'load',
+        rawIdentifier
       });
     }
   }

@@ -53,11 +53,6 @@ export function getMemoryContext(
       if (entry.metadata.tags.some(tag => tag.toLowerCase().includes(word))) score += 1;
     }
 
-    // Session matching bonus
-    if (entry.metadata.sessionId === normalizedSessionId) {
-      score += 5;
-    }
-
     // Recent access bonus
     const daysSinceAccess = (Date.now() - new Date(entry.lastAccessed).getTime()) / (1000 * 60 * 60 * 24);
     if (daysSinceAccess < 1) score += 2;
