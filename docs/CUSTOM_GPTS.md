@@ -1,7 +1,7 @@
 # Custom GPTs and Backend Integration
 
 ## Overview
-Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway resolves a GPT ID to a backend module, forwards the request to the module route, and returns an acknowledgement payload describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. This means your Custom GPT only needs to call `/gpt/<gpt-id>` with an action and payload, and the backend handles the module wiring automatically.【F:src/routes/gptRouter.ts†L16-L159】【F:src/config/gptRouterConfig.ts†L1-L92】【F:src/modules/moduleLoader.ts†L1-L64】
+Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway resolves a GPT ID to a backend module, forwards the request to the module route, and returns an acknowledgement payload describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is now path-based: call `/gpt/<gpt-id>` with a prompt-first request body, and let the backend infer the action unless you explicitly set a supported one.【F:src/routes/gptRouter.ts†L16-L159】【F:src/config/gptRouterConfig.ts†L1-L92】【F:src/modules/moduleLoader.ts†L1-L64】
 
 ## Why We Use Custom GPTs
 Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos Gaming, Tutor) that:
@@ -10,7 +10,7 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 - **Support secure automation** by allowing trusted GPT IDs to bypass manual confirmations when required, while still honoring confirmation gates for sensitive endpoints.【F:src/middleware/confirmGate.ts†L1-L200】
 
 ## How Custom GPT Routing Works
-1. The GPT calls `POST /gpt/:gptId` with a request body that contains `action` and `payload`.
+1. The GPT calls `POST /gpt/:gptId` with a request body that contains `prompt` and optional `gptVersion`, `action`, `payload`, and `context`.
 2. The GPT router resolves the incoming GPT ID to a module route using the module map and fuzzy matching strategy if needed.
 3. The request is forwarded to `/modules/:route`, and the response is wrapped with a `_gptAck` metadata block.
 4. The module handler calls the action implementation and returns the result as JSON.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
@@ -37,18 +37,29 @@ The confirmation gate reads GPT IDs from `x-gpt-id` headers or request bodies, a
 ### 4) Configure the Custom GPT action
 Use a single HTTP action in your Custom GPT definition:
 - **Method:** `POST`
-- **URL:** `https://<your-backend>/gpt/<gpt-id>`
+- **URL:** `https://<your-backend>/gpt/{gptId}`
 - **Headers:**
   - `Content-Type: application/json`
-  - `x-gpt-id: <gpt-id>` (required if you rely on trusted-gpt bypass)
+  - `x-gpt-id: <gpt-id>` (optional; only needed if you rely on trusted-gpt bypass)
 - **Body schema:**
 ```json
 {
-  "action": "<module-action>",
-  "payload": { "...": "..." }
+  "prompt": "Describe the request for this GPT/module route.",
+  "gptVersion": "optional-version",
+  "action": "optional-supported-action",
+  "payload": { "...": "optional-structured-input..." },
+  "context": { "...": "optional-caller-context..." }
 }
 ```
+Rules:
+- `gptId` belongs in the path, not the JSON body.
+- Omit `action` by default so the backend can infer intent from the GPT/module binding.
+- Do **not** inject a default action like `"ask"`; only send `action` when the caller explicitly selects a supported backend action.
+
 The router injects the module name server-side, so your Custom GPT does not need to specify `module` in the payload.【F:src/routes/gptRouter.ts†L16-L159】
+
+### Canonical OpenAPI Contract
+The machine-readable contract lives at [contracts/custom_gpt_route.openapi.v1.json](../contracts/custom_gpt_route.openapi.v1.json).
 
 ## Spec Sheet Template (for Custom GPT Actions)
 Use this format when defining or documenting a Custom GPT:
@@ -57,17 +68,24 @@ Use this format when defining or documenting a Custom GPT:
 name: <Custom GPT name>
 gpt_id: <gpt-id>
 base_url: https://<your-backend>
-endpoint: /gpt/<gpt-id>
+endpoint: /gpt/{gptId}
 method: POST
 headers:
   Content-Type: application/json
-  x-gpt-id: <gpt-id>
 body:
-  action: <module-action>
-  payload: <action-specific JSON>
+  prompt: <required natural-language request>
+  gptVersion: <optional version string>
+  action: <optional supported backend action>
+  payload: <optional structured JSON>
+  context: <optional caller context JSON>
 success_response:
   description: JSON payload from the module, plus _gptAck metadata.
 ```
+
+## Migration Note
+- What was broken: older integrations still modeled GPT requests as `/ask` plus body-level `gptId`, and some wrappers injected an implicit `"action": "ask"` even though GPT routes are module-specific.
+- What changed: the canonical contract is now `POST /gpt/{gptId}` with `gptId` as a required path parameter and `action` omitted unless the caller explicitly sets a backend-supported value.
+- How to call it now: send `prompt` in the JSON body, optionally add `gptVersion`, `action`, `payload`, or `context`, and never duplicate `gptId` in the body.
 
 ## Custom GPT Catalog
 
@@ -94,16 +112,8 @@ endpoint: /gpt/backstage-booker
 method: POST
 headers:
   Content-Type: application/json
-  x-gpt-id: backstage-booker
 body:
-  action: bookEvent
-  payload:
-    brand: "AEW"
-    venue: "Daily's Place"
-    date: "2024-09-20"
-    card:
-      - match: "Omega vs. Danielson"
-        stipulation: "20-minute time limit"
+  prompt: "Book an AEW card at Daily's Place for 2024-09-20 with Omega vs. Danielson in the main event."
 success_response:
   description: Booking ID plus _gptAck metadata.
 ```
@@ -126,13 +136,8 @@ endpoint: /gpt/arcanos-gaming
 method: POST
 headers:
   Content-Type: application/json
-  x-gpt-id: arcanos-gaming
 body:
-  action: query
-  payload:
-    prompt: "How do I beat the Thunderblight boss?"
-    urls:
-      - "https://example.com/guide/thunderblight"
+  prompt: "How do I beat the Thunderblight boss?"
 success_response:
   description: Strategy guidance plus _gptAck metadata.
 ```
@@ -155,16 +160,8 @@ endpoint: /gpt/arcanos-tutor
 method: POST
 headers:
   Content-Type: application/json
-  x-gpt-id: arcanos-tutor
 body:
-  action: query
-  payload:
-    intent: "explain"
-    domain: "memory"
-    module: "explain"
-    payload:
-      topic: "session memory round-trips"
-      tokenLimit: 250
+  prompt: "Explain session memory round-trips in under 250 tokens."
 success_response:
   description: Tutor response with audit_trace and _gptAck metadata.
 ```

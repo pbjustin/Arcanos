@@ -1,0 +1,205 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Arcanos GPT Route API",
+    "version": "1.0.0",
+    "description": "Canonical public contract for GPT-routed module requests. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body or default unsupported actions such as \"ask\"."
+  },
+  "paths": {
+    "/gpt/{gptId}": {
+      "post": {
+        "operationId": "invokeGptRoute",
+        "summary": "Invoke a GPT-routed module request",
+        "description": "Send a prompt to any GPT/module binding using the path-bound GPT identifier. `action` is optional and should only be sent when the caller explicitly selects a backend-supported action.",
+        "parameters": [
+          {
+            "name": "gptId",
+            "in": "path",
+            "required": true,
+            "description": "GPT or module route identifier bound by the backend router.",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GptRouteRequest"
+              },
+              "examples": {
+                "genericPrompt": {
+                  "summary": "Prompt-first generic GPT route call",
+                  "value": {
+                    "prompt": "Help me with this module request."
+                  }
+                },
+                "explicitAction": {
+                  "summary": "Explicit supported action with structured payload",
+                  "value": {
+                    "prompt": "Generate a booking plan for tonight's show.",
+                    "action": "generateBooking",
+                    "payload": {
+                      "brand": "AEW",
+                      "venue": "Daily's Place"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Routed module response envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptRouteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptRouteErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown GPT route",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptRouteErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "GptRouteRequest": {
+        "type": "object",
+        "description": "Prompt-first request contract for GPT-routed module calls. The backend resolves the route from the path parameter, not from body metadata.",
+        "additionalProperties": false,
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Prompt or user-visible request text."
+          },
+          "gptVersion": {
+            "type": "string",
+            "description": "Optional GPT version marker from the caller."
+          },
+          "action": {
+            "type": "string",
+            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Do not inject unsupported defaults such as \"ask\"."
+          },
+          "payload": {
+            "type": "object",
+            "description": "Optional structured payload forwarded to the module when the caller intentionally uses structured inputs.",
+            "additionalProperties": true
+          },
+          "context": {
+            "type": "object",
+            "description": "Optional caller context object.",
+            "additionalProperties": true
+          }
+        },
+        "not": {
+          "required": [
+            "gptId"
+          ]
+        }
+      },
+      "GptRouteResponse": {
+        "type": "object",
+        "description": "Generic GPT route response envelope.",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "result": {},
+          "_route": {
+            "type": "object",
+            "properties": {
+              "gptId": {
+                "type": "string"
+              },
+              "module": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string"
+              },
+              "route": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          },
+          "error": {
+            "$ref": "#/components/schemas/GptRouteError"
+          }
+        },
+        "additionalProperties": true
+      },
+      "GptRouteErrorResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "$ref": "#/components/schemas/GptRouteError"
+          },
+          "_route": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ],
+        "additionalProperties": true
+      },
+      "GptRouteError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {}
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": true
+      }
+    }
+  }
+}

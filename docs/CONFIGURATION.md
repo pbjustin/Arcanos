@@ -114,7 +114,7 @@ The OpenAI client resolves keys in this order, skipping placeholders:
 | `OPENAI_API_KEY` | none | Required only when using local OpenAI routing. |
 | `BACKEND_URL` | none | Backend routing target (recommended for `arcanos-daemon`). |
 | `BACKEND_TOKEN` | none | Optional bearer token for backend auth. |
-| `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend (sent as `gptId` and/or `x-gpt-id`). |
+| `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend for `/gpt/:gptId` routing and optional `x-gpt-id` auth metadata. |
 | `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | If true, daemon may authenticate via `x-gpt-id` without a bearer token (backend must allow). |
 | `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
 | `AGENTIC_ENABLED` | `true` | Enables multi-step reasoning loop (ask → propose → approve → apply/run → continue). |
