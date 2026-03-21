@@ -1,44 +1,63 @@
-import { runGaming } from "@services/gaming.js";
-import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
-import { withHRC } from './hrcWrapper.js';
+import { runBuildPipeline, runGuidePipeline, runMetaPipeline } from "@services/gaming.js";
+import { evaluateWithHRC } from "./hrcWrapper.js";
+import {
+  formatGamingError,
+  type GamingErrorEnvelope,
+  type GamingSuccessEnvelope,
+  validateGamingRequest
+} from "@services/gamingModes.js";
+
+type GamingEnvelope = GamingSuccessEnvelope | GamingErrorEnvelope;
+
+async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
+  const validation = validateGamingRequest(payload);
+  if (!validation.ok) {
+    return validation.error;
+  }
+
+  const { mode, prompt, game, guideUrl, guideUrls, auditEnabled, hrcEnabled } = validation.value;
+
+  let response =
+    mode === "guide"
+      ? await runGuidePipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
+      : mode === "build"
+      ? await runBuildPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
+      : await runMetaPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled });
+
+  if (!hrcEnabled) {
+    return response;
+  }
+
+  try {
+    const hrc = await evaluateWithHRC(response.data.response);
+    return {
+      ...response,
+      data: {
+        ...response.data,
+        hrc
+      }
+    };
+  } catch {
+    return formatGamingError({
+      mode,
+      error: {
+        code: "MODULE_ERROR",
+        message: "HRC evaluation failed."
+      }
+    });
+  }
+}
 
 export const ArcanosGaming = {
-  name: 'ARCANOS:GAMING',
-  description: 'Nintendo-style hotline advisor for game strategies, hints, and walkthroughs.',
-  gptIds: ['arcanos-gaming', 'gaming'],
+  name: "ARCANOS:GAMING",
+  description: "Deterministic gameplay guide, build, and meta advisor.",
+  gptIds: ["arcanos-gaming", "gaming"],
   defaultTimeoutMs: 60000,
   actions: {
     async query(payload: unknown) {
-      const prompt = extractTextPrompt(payload);
-
-      //audit Assumption: query requires prompt text
-      if (!prompt) {
-        throw new Error('ARCANOS:GAMING query requires a text prompt.');
-      }
-
-      const guideUrl = getPayloadString(payload, 'url');
-
-      const normalizedGuides = normalizeStringList(
-        getPayloadValue(payload, 'urls'),
-        getPayloadValue(payload, 'guideUrls')
-      );
-
-      const result = await runGaming(prompt, guideUrl, normalizedGuides);
-      return withHRC(result, r => r.gaming_response ?? '');
+      return handleGamingRequest(payload);
     },
   },
 };
 
 export default ArcanosGaming;
-
-function getPayloadValue(payload: unknown, key: string): unknown {
-  if (!payload || typeof payload !== 'object') {
-    return undefined;
-  }
-  return (payload as Record<string, unknown>)[key];
-}
-
-function getPayloadString(payload: unknown, key: string): string | undefined {
-  const value = getPayloadValue(payload, key);
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}

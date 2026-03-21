@@ -16,6 +16,7 @@ import {
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
+import { validateGamingRequest } from "@services/gamingModes.js";
 import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -80,6 +81,18 @@ function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message:
     route: "diagnostic",
     message: "backend operational"
   };
+}
+
+function buildGamingDispatchPayload(payload: unknown, requestedMode: string | null): unknown {
+  if (!requestedMode) {
+    return payload;
+  }
+
+  if (isRecord(payload)) {
+    return payload.mode === undefined ? { ...payload, mode: requestedMode } : payload;
+  }
+
+  return { mode: requestedMode };
 }
 
 /**
@@ -765,24 +778,136 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
 
-  //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
-  if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
-    return {
-      ok: false,
-      error: {
-        code: "GAMEPLAY_MODE_REQUIRED",
-        message: "Gameplay requests require explicit mode 'gameplay'."
-      },
-      _route: {
-        ...baseRoute,
-        module: activeEntry.module,
-        action: requestedAction ?? null,
-        matchMethod,
+  const gamingPayload = activeEntry.module === "ARCANOS:GAMING"
+    ? buildGamingDispatchPayload(payload, requestedMode)
+    : payload;
+
+  //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"guide"`, `mode:"build"`, or `mode:"meta"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
+  if (activeEntry.module === "ARCANOS:GAMING") {
+    const gamingValidation = validateGamingRequest(gamingPayload);
+    if (!gamingValidation.ok) {
+      return {
+        ok: false,
+        error: gamingValidation.error.error,
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: requestedAction ?? null,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        }
+      };
+    }
+
+    const action = pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
+    if (!action) {
+      return {
+        ok: false,
+        error: {
+          code: "NO_DEFAULT_ACTION",
+          message: requestedAction
+            ? `Requested action '${requestedAction}' is not available for module ${activeEntry.module}`
+            : `No actions available for module ${activeEntry.module}`,
+          details: { availableActions, requestedAction },
+        },
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    }
+
+    const { timeoutMs, timeoutSource } = resolveDispatchTimeout(body, moduleMetadata);
+    logger?.info?.("gpt.dispatch.plan", {
+      requestId,
+      gptId: trimmedGptId,
+      module: activeEntry.module,
+      action,
+      matchMethod,
+      timeoutMs,
+      timeoutSource,
+    });
+
+    const dispatchStartedAt = Date.now();
+    try {
+      const result = await withTimeout(dispatchModuleAction(activeEntry.module, action, gamingPayload), timeoutMs);
+      const resolvedSessionId = resolveSessionId(body, gamingPayload);
+      await persistModuleConversation({
+        moduleName: activeEntry.module,
         route: activeEntry.route,
-        availableActions,
-        moduleVersion: (moduleMetadata as any)?.version ?? null,
-      }
-    };
+        action,
+        gptId: trimmedGptId,
+        sessionId: resolvedSessionId,
+        requestId,
+        requestPayload: gamingPayload,
+        responsePayload: result
+      }).catch((error: unknown) => {
+        logger?.warn?.("gpt.dispatch.persistence_failed", {
+          requestId,
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          action,
+          error: String((error as Error)?.message ?? error),
+        });
+      });
+
+      logger?.info?.("gpt.dispatch.ok", {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        action,
+        timeoutMs,
+        timeoutSource,
+        durationMs: Date.now() - dispatchStartedAt,
+      });
+
+      return {
+        ok: true,
+        result,
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    } catch (err: any) {
+      const errorMessage = String(err?.message ?? err);
+      logger?.error?.("gpt.dispatch.error", {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        action,
+        matchMethod,
+        error: errorMessage,
+        timeoutMs,
+        timeoutSource,
+        durationMs: Date.now() - dispatchStartedAt,
+      });
+
+      return {
+        ok: false,
+        error: { code: "MODULE_ERROR", message: err?.message ?? "Module dispatch failed" },
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    }
   }
 
   const mcpDispatch = forceDirectModuleRouting

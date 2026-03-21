@@ -1,36 +1,37 @@
 import { getPrompt } from "@platform/runtime/prompts.js";
-import { getDefaultModel, getGPT5Model, generateMockResponse } from './openai.js';
+import { getDefaultModel, getGPT5Model, generateMockResponse } from "./openai.js";
 import { fetchAndClean } from "@shared/webFetcher.js";
-import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
+import { getOpenAIClientOrAdapter } from "./openai/clientBridge.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from "@services/directAnswerMode.js";
+import { buildDirectAnswerModeSystemInstruction } from "@services/directAnswerMode.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
+import { formatGamingSuccess, type GamingMode, type GamingSuccessEnvelope, type ValidatedGamingRequest } from "@services/gamingModes.js";
 
-// Use config layer for env access (adapter boundary pattern)
-const FINETUNE_MODEL = getEnv('FINETUNE_MODEL') || getDefaultModel();
+const FINETUNE_MODEL = getEnv("FINETUNE_MODEL") || getDefaultModel();
 
-type WebSource = {
-  url: string;
-  snippet?: string;
-  error?: string;
+type WebSource = GamingSuccessEnvelope["data"]["sources"][number];
+
+type GameplayPipelineInput = Pick<
+  ValidatedGamingRequest,
+  "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "auditEnabled"
+>;
+
+const gamingPrompts = {
+  webUncertaintyGuidance: getPrompt("gaming", "web_uncertainty_guidance"),
+  webContextInstruction: getPrompt("gaming", "web_context_instruction"),
+  auditSystem: getPrompt("gaming", "audit_system")
 };
 
-interface GamingAuditTrace {
-  intake: string;
-  reasoning: string;
-  finalized: string;
-}
-
-interface GamingResult {
-  gaming_response: string;
-  audit_trace: GamingAuditTrace;
-  sources: WebSource[];
-}
+const modeInstructions: Record<GamingMode, string> = {
+  guide: "Return a practical guide with concrete steps, checkpoints, and missing-info notes instead of simulation.",
+  build: "Return a build recommendation with priorities, tradeoffs, and setup guidance. Do not invent patch details.",
+  meta: "Return a meta overview with current assumptions, tradeoffs, counters, and explicit uncertainty when patch/version context is missing."
+};
 
 async function buildWebContext(urls: string[]): Promise<{ context: string; sources: WebSource[] }> {
   if (urls.length === 0) {
-    return { context: '', sources: [] };
+    return { context: "", sources: [] };
   }
 
   const uniqueUrls = Array.from(new Set(urls));
@@ -41,169 +42,125 @@ async function buildWebContext(urls: string[]): Promise<{ context: string; sourc
       const snippet = await fetchAndClean(url, 5000);
       sources.push({ url, snippet });
     } catch (error) {
-      const message = resolveErrorMessage(error, 'Unknown fetch error');
-      sources.push({ url, error: message });
+      sources.push({ url, error: resolveErrorMessage(error, "Unknown fetch error") });
     }
   }
 
   const context = sources
     .filter((source) => Boolean(source.snippet))
     .map((source, index) => `[Source ${index + 1}] ${source.url}\n${source.snippet}`)
-    .join('\n\n');
+    .join("\n\n");
 
   return { context, sources };
 }
 
-const gamingPrompts = {
-  hotlineSystem: getPrompt('gaming', 'hotline_system'),
-  webUncertaintyGuidance: getPrompt('gaming', 'web_uncertainty_guidance'),
-  webContextInstruction: getPrompt('gaming', 'web_context_instruction'),
-  intakeSystem: getPrompt('gaming', 'intake_system'),
-  auditSystem: getPrompt('gaming', 'audit_system')
-};
-
-function buildGamingDirectAnswerSystemPrompt(): string {
+function buildGameplaySystemPrompt(mode: GamingMode): string {
   return buildDirectAnswerModeSystemInstruction({
-    moduleLabel: 'ARCANOS:GAMING',
-    domainGuidance: 'Provide concrete strategies, hints, walkthrough help, and factual uncertainty notes when needed.',
+    moduleLabel: `ARCANOS:GAMING:${mode.toUpperCase()}`,
+    domainGuidance: modeInstructions[mode],
     prohibitedBehaviors: [
-      'simulate hotline dialogue',
-      'role-play gameplay',
-      'narrate a hypothetical run'
+      "simulate gameplay",
+      "role-play a match or run",
+      "invent live patch notes",
+      "add hotline banter or theatrical framing"
     ],
-    missingInfoBehavior: 'If game, platform, version, or progression details are missing, ask briefly or state the missing context instead of guessing.'
+    missingInfoBehavior: "State missing game, platform, class, or version details plainly instead of guessing."
   });
 }
 
-function buildExactLiteralGamingResult(literal: string): GamingResult {
-  return {
-    gaming_response: literal,
-    audit_trace: {
-      intake: '[SHORTCUT] Exact literal gaming shortcut matched.',
-      reasoning: '[SHORTCUT] Model reasoning bypassed.',
-      finalized: literal
-    },
-    sources: []
-  };
+function buildGameplayPrompt(params: GameplayPipelineInput, webContext: string, hadSources: boolean): string {
+  const modeLabel = `[MODE]\n${params.mode}`;
+  const gameLabel = params.game ? `\n\n[GAME]\n${params.game}` : "";
+  const webLabel = webContext
+    ? `\n\n[WEB CONTEXT]\n${webContext}\n\n${gamingPrompts.webContextInstruction}`
+    : hadSources
+    ? `\n\n[WEB CONTEXT]\nGuides were provided but no usable snippets were retrieved.\n\n${gamingPrompts.webUncertaintyGuidance}`
+    : "";
+
+  return `${modeLabel}${gameLabel}\n\n[REQUEST]\n${params.prompt}${webLabel}`;
 }
 
-/**
- * Execute the ARCANOS gaming advisor flow for strategy and guide requests.
- * Inputs/outputs: user prompt plus optional guide URLs -> normalized gaming response, audit trace, and fetched sources.
- * Edge cases: exact-literal anti-simulation prompts short-circuit before provider calls, and missing adapters fall back to mock guidance.
- */
-export async function runGaming(userPrompt: string, guideUrl?: string, guideUrls: string[] = []) {
-  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(userPrompt);
-  //audit Assumption: explicit literal-only gaming prompts should bypass the multi-stage hotline pipeline; failure risk: intake/audit layers add simulated framing around an operator-required literal; expected invariant: recognized literal directives return verbatim output; handling strategy: short-circuit before adapter lookup and provider calls.
+async function runGameplayPipeline(params: GameplayPipelineInput): Promise<GamingSuccessEnvelope> {
+  const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(params.prompt);
   if (exactLiteralShortcut) {
-    return buildExactLiteralGamingResult(exactLiteralShortcut.literal);
+    return formatGamingSuccess({
+      mode: params.mode,
+      data: {
+        response: exactLiteralShortcut.literal,
+        sources: []
+      }
+    });
   }
 
+  const allUrls = [
+    ...(params.guideUrl ? [params.guideUrl] : []),
+    ...params.guideUrls
+  ];
+  const { context: webContext, sources } = await buildWebContext(allUrls);
+  const enrichedPrompt = buildGameplayPrompt(params, webContext, allUrls.length > 0);
   const { adapter } = getOpenAIClientOrAdapter();
+
   if (!adapter) {
-    const mock = generateMockResponse(userPrompt, 'guide');
-    return {
-      gaming_response: mock.result,
-      audit_trace: {
-        intake: '[MOCK] Intake step not executed',
-        reasoning: '[MOCK] Reasoning step not executed',
-        finalized: mock.result
-      },
-      sources: []
-    };
-  }
-  try {
-    // Optionally enrich the prompt with a fetched guide
-    const allUrls = [];
-    if (guideUrl) {
-      allUrls.push(guideUrl);
-    }
-    if (Array.isArray(guideUrls) && guideUrls.length > 0) {
-      allUrls.push(...guideUrls);
-    }
-
-    const { context: webContext, sources } = await buildWebContext(allUrls);
-    const prefersDirectAnswerMode = shouldPreferDirectAnswerMode(userPrompt);
-
-    const noWebContextNote = allUrls.length > 0
-      ? 'Guides were requested but no usable snippets were retrieved.'
-      : 'No live sources were provided.';
-
-    let enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${noWebContextNote}\n\n${gamingPrompts.webUncertaintyGuidance}`;
-
-    if (webContext) {
-      enrichedPrompt = `${userPrompt}\n\n[WEB CONTEXT]\n${webContext}\n\n${gamingPrompts.webContextInstruction}`;
-    }
-
-    //audit Assumption: explicit anti-simulation prompts should avoid persona-heavy intake/audit passes; failure risk: the hotline pipeline reintroduces theatrical framing even after the operator asked for direct output; expected invariant: direct-answer mode makes at most one model call with strict non-simulation instructions; handling strategy: branch to a dedicated one-pass response path when direct-answer cues are present.
-    if (prefersDirectAnswerMode) {
-      const directResponse = await adapter.responses.create({
-        model: getGPT5Model(),
-        messages: [
-          { role: 'system', content: buildGamingDirectAnswerSystemPrompt() },
-          { role: 'user', content: enrichedPrompt }
-        ],
-        temperature: 0.2
-      });
-      const finalized = directResponse.choices[0].message?.content || '';
-
-      return {
-        gaming_response: finalized,
-        audit_trace: {
-          intake: '[DIRECT_ANSWER] Persona pipeline bypassed.',
-          reasoning: finalized,
-          finalized
-        },
+    const mock = generateMockResponse(params.prompt, params.mode);
+    return formatGamingSuccess({
+      mode: params.mode,
+      data: {
+        response: typeof mock.result === "string" ? mock.result : "",
         sources
-      };
-    }
-
-    // Step 1: Fine-tuned ARCANOS Intake
-    const intake = await adapter.responses.create({
-      model: FINETUNE_MODEL,
-      messages: [
-        { role: 'system', content: gamingPrompts.intakeSystem },
-        { role: 'user', content: enrichedPrompt }
-      ]
+      }
     });
-    const refinedPrompt = intake.choices[0].message?.content || '';
-
-    // Step 2: GPT-5.1 Reasoning (Hotline Advisor Mode)
-    const gpt5 = await adapter.responses.create({
-      model: getGPT5Model(),
-      messages: [
-        {
-          role: 'system',
-          content: gamingPrompts.hotlineSystem
-        },
-        { role: 'user', content: refinedPrompt }
-      ],
-      temperature: 0.6
-    });
-    const reasoningOutput = gpt5.choices[0].message?.content || '';
-
-    // Step 3: Fine-tuned ARCANOS Audit
-    const audit = await adapter.responses.create({
-      model: FINETUNE_MODEL,
-      messages: [
-        { role: 'system', content: gamingPrompts.auditSystem },
-        { role: 'user', content: reasoningOutput }
-      ]
-    });
-
-    const finalized = audit.choices[0].message?.content || '';
-
-    return {
-      gaming_response: finalized,
-      audit_trace: {
-        intake: refinedPrompt,
-        reasoning: reasoningOutput,
-        finalized
-      },
-      sources
-    };
-  } catch (err) {
-    console.error('❌ ARCANOS:GAMING Error:', err);
-    throw err;
   }
+
+  const draftResponse = await adapter.responses.create({
+    model: getGPT5Model(),
+    messages: [
+      { role: "system", content: buildGameplaySystemPrompt(params.mode) },
+      { role: "user", content: enrichedPrompt }
+    ],
+    temperature: 0.2
+  });
+  const draft = draftResponse.choices[0].message?.content || "";
+
+  if (!params.auditEnabled) {
+    return formatGamingSuccess({
+      mode: params.mode,
+      data: {
+        response: draft,
+        sources
+      }
+    });
+  }
+
+  const auditResponse = await adapter.responses.create({
+    model: FINETUNE_MODEL,
+    messages: [
+      { role: "system", content: gamingPrompts.auditSystem },
+      { role: "user", content: draft }
+    ]
+  });
+  const finalized = auditResponse.choices[0].message?.content || draft;
+
+  return formatGamingSuccess({
+    mode: params.mode,
+    data: {
+      response: finalized,
+      sources,
+      auditTrace: {
+        draft,
+        finalized
+      }
+    }
+  });
+}
+
+export async function runGuidePipeline(params: Omit<GameplayPipelineInput, "mode">): Promise<GamingSuccessEnvelope> {
+  return runGameplayPipeline({ ...params, mode: "guide" });
+}
+
+export async function runBuildPipeline(params: Omit<GameplayPipelineInput, "mode">): Promise<GamingSuccessEnvelope> {
+  return runGameplayPipeline({ ...params, mode: "build" });
+}
+
+export async function runMetaPipeline(params: Omit<GameplayPipelineInput, "mode">): Promise<GamingSuccessEnvelope> {
+  return runGameplayPipeline({ ...params, mode: "meta" });
 }

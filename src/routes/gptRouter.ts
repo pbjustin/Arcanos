@@ -6,8 +6,24 @@ import {
   logGptAckSent,
   type GptRoutingInfo,
 } from "@platform/logging/gptLogger.js";
+import { resolveGamingMode } from "@services/gamingModes.js";
+import { isRecord } from "@shared/typeGuards.js";
 
 const router = express.Router();
+
+function buildGamingModePayload(body: unknown): unknown {
+  if (!isRecord(body)) {
+    return body;
+  }
+
+  if (isRecord(body.payload)) {
+    return body.payload.mode === undefined && typeof body.mode === "string"
+      ? { ...body.payload, mode: body.mode }
+      : body.payload;
+  }
+
+  return body;
+}
 
 function buildGptRequestAuthState(req: express.Request): Record<string, unknown> {
   const authorizationHeader = req.header("authorization");
@@ -76,6 +92,14 @@ router.post("/:gptId", async (req, res, next) => {
         logGptConnectionFailed(incomingGptId);
         return res.status(404).json(envelope);
       }
+      if (envelope._route.module === "ARCANOS:GAMING" || envelope._route.route === "gaming") {
+        return res.status(400).json({
+          ok: false,
+          route: "gaming",
+          mode: resolveGamingMode(buildGamingModePayload(req.body)),
+          error: envelope.error,
+        });
+      }
       return res.status(400).json(envelope);
     }
 
@@ -102,6 +126,15 @@ router.post("/:gptId", async (req, res, next) => {
       typeof envelope.result === 'object' &&
       envelope.result !== null &&
       (envelope.result as Record<string, unknown>).route === 'diagnostic'
+    ) {
+      return res.json(envelope.result);
+    }
+
+    if (
+      envelope._route.module === "ARCANOS:GAMING" &&
+      typeof envelope.result === "object" &&
+      envelope.result !== null &&
+      (envelope.result as Record<string, unknown>).route === "gaming"
     ) {
       return res.json(envelope.result);
     }
