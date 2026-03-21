@@ -6,6 +6,10 @@ import {
   logGptAckSent,
   type GptRoutingInfo,
 } from "@platform/logging/gptLogger.js";
+import {
+  prepareBoundedClientJsonPayload,
+  shapeClientRouteResult
+} from '@shared/http/clientResponseGuards.js';
 
 const router = express.Router();
 
@@ -103,10 +107,34 @@ router.post("/:gptId", async (req, res, next) => {
       envelope.result !== null &&
       (envelope.result as Record<string, unknown>).route === 'diagnostic'
     ) {
-      return res.json(envelope.result);
+      const diagnosticPayload = prepareBoundedClientJsonPayload(
+        shapeClientRouteResult(envelope.result) as Record<string, unknown>,
+        {
+          logger: req.logger,
+          logEvent: 'gpt.response.diagnostic',
+        }
+      );
+      res.setHeader('x-response-bytes', String(diagnosticPayload.responseBytes));
+      if (diagnosticPayload.truncated) {
+        res.setHeader('x-response-truncated', 'true');
+      }
+      return res.json(diagnosticPayload.payload);
     }
 
-    return res.json(envelope);
+    const publicEnvelope = prepareBoundedClientJsonPayload({
+      ...envelope,
+      result: shapeClientRouteResult(envelope.result),
+    }, {
+      logger: req.logger,
+      logEvent: 'gpt.response',
+    });
+
+    res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
+    if (publicEnvelope.truncated) {
+      res.setHeader('x-response-truncated', 'true');
+    }
+
+    return res.json(publicEnvelope.payload);
   } catch (err) {
     return next(err);
   }

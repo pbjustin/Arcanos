@@ -6,6 +6,10 @@ import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import type { AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { sendBadRequest } from '@shared/http/index.js';
+import {
+  prepareBoundedClientJsonPayload,
+  shapeClientRouteResult
+} from '@shared/http/clientResponseGuards.js';
 
 const router = express.Router();
 
@@ -87,7 +91,20 @@ router.post('/arcanos', confirmGate, async (
 
   try {
     const output = await runARCANOS(openai, userInput, sessionId, overrideAuditSafe);
-    return res.json(output as ArcanosResponse);
+    const publicPayload = prepareBoundedClientJsonPayload(
+      shapeClientRouteResult(output) as Record<string, unknown>,
+      {
+        logger: req.logger,
+        logEvent: 'arcanos.response',
+      }
+    );
+
+    res.setHeader('x-response-bytes', String(publicPayload.responseBytes));
+    if (publicPayload.truncated) {
+      res.setHeader('x-response-truncated', 'true');
+    }
+
+    return res.json(publicPayload.payload as unknown as ArcanosResponse);
   } catch (err) {
     handleAIError(err, userInput, 'arcanos', res);
   }

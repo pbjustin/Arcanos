@@ -8,9 +8,13 @@ import { createFallbackMiddleware, createHealthCheckMiddleware } from "@transpor
 import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionGate.js";
 import errorHandler from "@transport/http/middleware/errorHandler.js";
 import { requestContext, sendNotFound } from '@shared/http/index.js';
+import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
 import getGptModuleMap from '@platform/runtime/gptRouterConfig.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { arcanosMcpService } from '@services/arcanosMcp.js';
+
+const SERVICE_NAME = 'arcanos-backend';
+const SERVICE_VERSION = '1.0.0';
 
 function hasConfiguredOpenAIKey(): boolean {
   const key = getEnv('OPENAI_API_KEY');
@@ -42,19 +46,41 @@ export function createApp(): Express {
     enumerable: true,
   });
 
-  app.get('/healthz', async (_req: Request, res: Response, next: NextFunction) => {
+  app.get('/healthz', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const gptMap = await getGptModuleMap();
-      res.json({
-        ok: true,
-        gptMapSize: Object.keys(gptMap).length,
-        hasOpenAIKey: hasConfiguredOpenAIKey(),
-        env: getEnv('NODE_ENV') || 'development'
+      const payload = withJsonResponseBytes({
+        status: 'ok',
+        service: SERVICE_NAME,
+        timestamp: new Date().toISOString(),
+        version: SERVICE_VERSION,
+        gpt_routes: Object.keys(gptMap).length,
+        openai_configured: hasConfiguredOpenAIKey(),
       });
+      req.logger?.info('healthz.response', {
+        responseBytes: payload.response_bytes,
+        gptRoutes: payload.gpt_routes,
+      });
+      res.setHeader('x-response-bytes', String(payload.response_bytes));
+      res.json(payload);
     } catch (error) {
       //audit Assumption: health endpoint should fail loudly when registry load fails; failure risk: hidden misconfiguration; expected invariant: health check reflects startup/runtime integrity; handling strategy: delegate to global error middleware.
       next(error);
     }
+  });
+
+  app.get('/diag/ping', (req: Request, res: Response) => {
+    const payload = withJsonResponseBytes({
+      status: 'ok',
+      service: SERVICE_NAME,
+      timestamp: new Date().toISOString(),
+      version: SERVICE_VERSION,
+    });
+    req.logger?.info('diag.ping.response', {
+      responseBytes: payload.response_bytes,
+    });
+    res.setHeader('x-response-bytes', String(payload.response_bytes));
+    res.json(payload);
   });
 
   app.post('/diag/echo', (req: Request, res: Response) => {
