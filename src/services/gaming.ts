@@ -17,6 +17,22 @@ type GameplayPipelineInput = Pick<
   "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "auditEnabled"
 >;
 
+function stringifyMockResult(result: unknown): string {
+  if (typeof result === "string") {
+    return result;
+  }
+
+  if (result === null || result === undefined) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return String(result);
+  }
+}
+
 const gamingPrompts = {
   webUncertaintyGuidance: getPrompt("gaming", "web_uncertainty_guidance"),
   webContextInstruction: getPrompt("gaming", "web_context_instruction"),
@@ -105,7 +121,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
     return formatGamingSuccess({
       mode: params.mode,
       data: {
-        response: typeof mock.result === "string" ? mock.result : "",
+        response: stringifyMockResult(mock.result),
         sources
       }
     });

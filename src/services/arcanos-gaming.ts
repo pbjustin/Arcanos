@@ -1,5 +1,6 @@
 import { runBuildPipeline, runGuidePipeline, runMetaPipeline } from "@services/gaming.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import {
   formatGamingError,
   type GamingErrorEnvelope,
@@ -37,12 +38,12 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
         hrc
       }
     };
-  } catch {
+  } catch (error: unknown) {
     return formatGamingError({
       mode,
       error: {
         code: "MODULE_ERROR",
-        message: "HRC evaluation failed."
+        message: `HRC evaluation failed: ${resolveErrorMessage(error)}`
       }
     });
   }

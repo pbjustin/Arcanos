@@ -123,18 +123,16 @@ router.post("/:gptId", async (req, res, next) => {
 
     if (
       envelope._route.route === 'diagnostic' &&
-      typeof envelope.result === 'object' &&
-      envelope.result !== null &&
-      (envelope.result as Record<string, unknown>).route === 'diagnostic'
+      isRecord(envelope.result) &&
+      envelope.result.route === 'diagnostic'
     ) {
       return res.json(envelope.result);
     }
 
     if (
       envelope._route.module === "ARCANOS:GAMING" &&
-      typeof envelope.result === "object" &&
-      envelope.result !== null &&
-      (envelope.result as Record<string, unknown>).route === "gaming"
+      isRecord(envelope.result) &&
+      envelope.result.route === "gaming"
     ) {
       return res.json(envelope.result);
     }
