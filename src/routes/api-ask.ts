@@ -13,6 +13,10 @@ import type {
   ClientContextDTO
 } from "@shared/types/dto.js";
 import { asyncHandler, sendInternalErrorPayload } from '@shared/http/index.js';
+import {
+  prepareBoundedClientJsonPayload,
+  shapeClientRouteResult
+} from '@shared/http/clientResponseGuards.js';
 import { routeGptRequest } from "./_core/gptDispatch.js";
 import { hasValidAPIKey } from '@services/openai.js';
 import { createMockAIResponse } from '@transport/http/requestHandler.js';
@@ -191,8 +195,8 @@ router.post(
         } as any);
       }
 
-      return res.json({
-        result: envelope.result,
+      const publicPayload = prepareBoundedClientJsonPayload({
+        result: shapeClientRouteResult(envelope.result),
         module: envelope._route.module ?? 'unknown',
         meta: {
           gptId: envelope._route.gptId,
@@ -202,7 +206,17 @@ router.post(
           timestamp: envelope._route.timestamp,
           requestId: envelope._route.requestId,
         }
+      }, {
+        logger: req.logger,
+        logEvent: 'api.ask.response',
       });
+
+      res.setHeader('x-response-bytes', String(publicPayload.responseBytes));
+      if (publicPayload.truncated) {
+        res.setHeader('x-response-truncated', 'true');
+      }
+
+      return res.json(publicPayload.payload as ApiAskResponse);
     }
   )
 );

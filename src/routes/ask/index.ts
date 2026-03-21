@@ -15,6 +15,10 @@ import type {
 } from "@shared/types/dto.js";
 import { aiRequestSchema } from "@shared/types/dto.js";
 import { asyncHandler, sendBadRequest, sendInternalErrorPayload } from '@shared/http/index.js';
+import {
+  prepareBoundedClientJsonPayload,
+  shapeClientRouteResult
+} from '@shared/http/clientResponseGuards.js';
 import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
 import { askValidationMiddleware } from "./validation.js";
 import type {
@@ -468,6 +472,25 @@ function buildAsyncAskFailurePayload(jobId: string, errorMessage?: string | null
   };
 }
 
+function sendGuardedAskResponse(
+  req: Request<{}, any, AskRequest>,
+  res: Response<any>,
+  payload: object,
+  logEvent: string
+) {
+  const boundedPayload = prepareBoundedClientJsonPayload(payload as Record<string, unknown>, {
+    logger: req.logger,
+    logEvent,
+  });
+
+  res.setHeader('x-response-bytes', String(boundedPayload.responseBytes));
+  if (boundedPayload.truncated) {
+    res.setHeader('x-response-truncated', 'true');
+  }
+
+  return res.json(boundedPayload.payload);
+}
+
 /**
  * Shared handler for both ask and brain endpoints
  * Handles AI request processing with standardized error handling and validation
@@ -512,7 +535,7 @@ export const handleAIRequest = async (
       });
     }
 
-    return res.json(strictState.data);
+    return sendGuardedAskResponse(req, res, strictState.data, `${endpointName}.system_state.response`);
   }
 
   if (mode === 'system_review') {
@@ -583,7 +606,7 @@ export const handleAIRequest = async (
         });
       }
 
-      return res.json(strictReview.data);
+      return sendGuardedAskResponse(req, res, strictReview.data, `${endpointName}.system_review.response`);
     } catch (error) {
       return sendInternalErrorPayload(res, {
         error: 'SYSTEM_REVIEW_EXECUTION_FAILED',
@@ -598,11 +621,14 @@ export const handleAIRequest = async (
 
   //audit Assumption: diagnostic probes must bypass prompt shortcuts, memory, audit-safe, and Trinity to stay deterministic and stateless; failure risk: health checks inherit prior context or gameplay routing; expected invariant: explicit diagnostic traffic returns a stable route-local payload; handling strategy: short-circuit before validation normalization and before any stateful or generative layer executes.
   if (isDiagnosticRequest(req.body, extractTextInput(req.body))) {
-    return res.json(
+    return sendGuardedAskResponse(
+      req,
+      res,
       buildDiagnosticAskResponse({
         endpointName,
         clientContext: req.body.clientContext
-      })
+      }),
+      `${endpointName}.diagnostic.response`
     );
   }
 
@@ -712,12 +738,12 @@ export const handleAIRequest = async (
         fallbackFlag: false,
         extra: { disposition: 'daemon-tool' }
       });
-      return res.json({
-        ...daemonToolResponse,
+      return sendGuardedAskResponse(req, res, {
+        ...(shapeClientRouteResult(daemonToolResponse) as Record<string, unknown>),
         endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
-      });
+      }, `${endpointName}.daemon_tool.response`);
     }
 
     const dagToolResponse = await tryDispatchDagTools(openai, prompt, { sessionId });
@@ -727,12 +753,12 @@ export const handleAIRequest = async (
         fallbackFlag: false,
         extra: { disposition: 'dag-tool' }
       });
-      return res.json({
-        ...dagToolResponse,
+      return sendGuardedAskResponse(req, res, {
+        ...(shapeClientRouteResult(dagToolResponse) as Record<string, unknown>),
         endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
-      });
+      }, `${endpointName}.dag_tool.response`);
     }
 
     const workerToolResponse = await tryDispatchWorkerTools(openai, prompt);
@@ -742,12 +768,12 @@ export const handleAIRequest = async (
         fallbackFlag: false,
         extra: { disposition: 'worker-tool' }
       });
-      return res.json({
-        ...workerToolResponse,
+      return sendGuardedAskResponse(req, res, {
+        ...(shapeClientRouteResult(workerToolResponse) as Record<string, unknown>),
         endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
-      });
+      }, `${endpointName}.worker_tool.response`);
     }
 
     const promptShortcut = await tryExecutePromptRouteShortcut({
@@ -764,13 +790,16 @@ export const handleAIRequest = async (
           shortcutId: promptShortcut.shortcutId
         }
       });
-      return res.json(
+      return sendGuardedAskResponse(
+        req,
+        res,
         buildAskPromptShortcutResponse({
           shortcut: promptShortcut,
           endpointName,
           clientContext: req.body.clientContext,
           auditFlag: bypassAuditFlag ?? undefined
-        })
+        }),
+        `${endpointName}.shortcut.response`
       );
     }
 
@@ -785,7 +814,7 @@ export const handleAIRequest = async (
         fallbackFlag: false,
         extra: { disposition: 'system-health-shortcut' }
       });
-      return res.json(systemHealthResponse);
+      return sendGuardedAskResponse(req, res, systemHealthResponse, `${endpointName}.system_health.response`);
     }
 
     if (repoEvidence) {
@@ -795,7 +824,7 @@ export const handleAIRequest = async (
         fallbackFlag: false,
         extra: { disposition: 'repo-inspection' }
       });
-      return res.json({
+      return sendGuardedAskResponse(req, res, {
         result: repoInspectionResult,
         module: 'repo-inspection',
         meta: {
@@ -809,7 +838,7 @@ export const handleAIRequest = async (
         endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
-      });
+      }, `${endpointName}.repo_inspection.response`);
     }
 
     let trinityPrompt = prompt;
@@ -875,7 +904,7 @@ export const handleAIRequest = async (
             jobId: job.id
           }
         });
-        return res.json(completedResponse);
+        return sendGuardedAskResponse(req, res, completedResponse, `${endpointName}.async_completed.response`);
       }
 
       if (waitedJob.state === 'failed') {
@@ -912,7 +941,13 @@ export const handleAIRequest = async (
           jobId: job.id
         }
       });
-      return res.status(202).json(buildQueuedAskPendingResponse(job.id));
+      res.status(202);
+      return sendGuardedAskResponse(
+        req,
+        res,
+        buildQueuedAskPendingResponse(job.id),
+        `${endpointName}.async_pending.response`
+      );
     }
 
     const runtimeBudget = createRuntimeBudget();
@@ -940,7 +975,12 @@ export const handleAIRequest = async (
         routingStages: output.routingStages
       }
     });
-    return res.json(buildCompletedQueuedAskOutput(output, queuedAskJobInput));
+    return sendGuardedAskResponse(
+      req,
+      res,
+      buildCompletedQueuedAskOutput(output, queuedAskJobInput),
+      `${endpointName}.trinity.response`
+    );
   } catch (err) {
     failAiRouteTrace(req, routeTrace, err, {
       activeModel: getGPT5Model(),

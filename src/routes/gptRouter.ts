@@ -8,6 +8,10 @@ import {
 } from "@platform/logging/gptLogger.js";
 import { resolveGamingMode } from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
+import {
+  prepareBoundedClientJsonPayload,
+  shapeClientRouteResult
+} from '@shared/http/clientResponseGuards.js';
 
 const router = express.Router();
 
@@ -126,7 +130,18 @@ router.post("/:gptId", async (req, res, next) => {
       isRecord(envelope.result) &&
       envelope.result.route === 'diagnostic'
     ) {
-      return res.json(envelope.result);
+      const diagnosticPayload = prepareBoundedClientJsonPayload(
+        shapeClientRouteResult(envelope.result) as Record<string, unknown>,
+        {
+          logger: req.logger,
+          logEvent: 'gpt.response.diagnostic',
+        }
+      );
+      res.setHeader('x-response-bytes', String(diagnosticPayload.responseBytes));
+      if (diagnosticPayload.truncated) {
+        res.setHeader('x-response-truncated', 'true');
+      }
+      return res.json(diagnosticPayload.payload);
     }
 
     if (
@@ -134,10 +149,34 @@ router.post("/:gptId", async (req, res, next) => {
       isRecord(envelope.result) &&
       envelope.result.route === "gaming"
     ) {
-      return res.json(envelope.result);
+      const gamingPayload = prepareBoundedClientJsonPayload(
+        shapeClientRouteResult(envelope.result) as Record<string, unknown>,
+        {
+          logger: req.logger,
+          logEvent: 'gpt.response.gaming',
+        }
+      );
+      res.setHeader('x-response-bytes', String(gamingPayload.responseBytes));
+      if (gamingPayload.truncated) {
+        res.setHeader('x-response-truncated', 'true');
+      }
+      return res.json(gamingPayload.payload);
     }
 
-    return res.json(envelope);
+    const publicEnvelope = prepareBoundedClientJsonPayload({
+      ...envelope,
+      result: shapeClientRouteResult(envelope.result),
+    }, {
+      logger: req.logger,
+      logEvent: 'gpt.response',
+    });
+
+    res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
+    if (publicEnvelope.truncated) {
+      res.setHeader('x-response-truncated', 'true');
+    }
+
+    return res.json(publicEnvelope.payload);
   } catch (err) {
     return next(err);
   }
