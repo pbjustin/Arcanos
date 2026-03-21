@@ -151,4 +151,37 @@ describe('gpt router auth logging', () => {
       errorCode: 'UNKNOWN_GPT',
     });
   });
+
+  it('returns bare diagnostic JSON instead of the dispatcher envelope for ping probes', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'diagnostic',
+        message: 'backend operational',
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'diagnostic',
+        route: 'diagnostic',
+        availableActions: [],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({ action: 'ping' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      route: 'diagnostic',
+      message: 'backend operational',
+    });
+  });
 });

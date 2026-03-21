@@ -97,6 +97,15 @@ router.post("/:gptId", async (req, res, next) => {
       route: envelope._route.route ?? "unknown",
     });
 
+    if (
+      envelope._route.route === 'diagnostic' &&
+      typeof envelope.result === 'object' &&
+      envelope.result !== null &&
+      (envelope.result as Record<string, unknown>).route === 'diagnostic'
+    ) {
+      return res.json(envelope.result);
+    }
+
     return res.json(envelope);
   } catch (err) {
     return next(err);

@@ -16,6 +16,7 @@ import {
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
+import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Request } from "express";
@@ -61,6 +62,24 @@ function extractPrompt(body: any): string | null {
   }
 
   return null;
+}
+
+function extractMode(body: unknown, payload: unknown): string | null {
+  const bodyMode = isRecord(body) && typeof body.mode === "string" ? body.mode.trim().toLowerCase() : "";
+  if (bodyMode) {
+    return bodyMode;
+  }
+
+  const payloadMode = isRecord(payload) && typeof payload.mode === "string" ? payload.mode.trim().toLowerCase() : "";
+  return payloadMode || null;
+}
+
+function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message: "backend operational" } {
+  return {
+    ok: true,
+    route: "diagnostic",
+    message: "backend operational"
+  };
 }
 
 /**
@@ -673,6 +692,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const { gptId, body, requestId, logger, request } = input;
   const trimmedGptId = (gptId ?? "").trim();
   const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
+  const preDispatchPayload = buildDispatchPayload(body);
+  const diagnosticTextInput = extractPrompt(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
 
   const baseRoute: RouteMeta = {
     requestId,
@@ -691,6 +712,22 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   }
   if (trimmedGptId.length > 256) {
     return { ok: false, error: { code: "BAD_REQUEST", message: "gptId too long" }, _route: baseRoute };
+  }
+
+  //audit Assumption: diagnostic probes must never enter module resolution or gameplay dispatch; failure risk: lightweight health checks trigger simulation, HRC, or persistence side effects; expected invariant: `action:"ping"` or `prompt:"ping"` returns the fixed diagnostic payload immediately; handling strategy: short-circuit before GPT map lookup and before any action inference.
+  if (isDiagnosticRequest(body as Record<string, unknown> | undefined, diagnosticTextInput)) {
+    return {
+      ok: true,
+      result: buildDiagnosticRouteResult(),
+      _route: {
+        ...baseRoute,
+        module: "diagnostic",
+        action: "diagnostic",
+        route: "diagnostic",
+        availableActions: [],
+        moduleVersion: null,
+      }
+    };
   }
 
   const forcedDirectResolved = resolveForcedDirectGptEntry(trimmedGptId);
@@ -721,11 +758,33 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     forcedDirectRoute: forceDirectModuleRouting,
   });
   const requestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
-  const payload = buildDispatchPayload(body);
+  const payload = preDispatchPayload;
   const prompt = extractPrompt(payload);
+  const requestedMode = extractMode(body, payload);
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
+
+  //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
+  if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
+    return {
+      ok: false,
+      error: {
+        code: "GAMEPLAY_MODE_REQUIRED",
+        message: "Gameplay requests require explicit mode 'gameplay'."
+      },
+      _route: {
+        ...baseRoute,
+        module: activeEntry.module,
+        action: requestedAction ?? null,
+        matchMethod,
+        route: activeEntry.route,
+        availableActions,
+        moduleVersion: (moduleMetadata as any)?.version ?? null,
+      }
+    };
+  }
+
   const mcpDispatch = forceDirectModuleRouting
     ? { intent: null as McpDispatchIntent | null, error: undefined }
     : parseMcpDispatchIntent(requestedAction, payload);

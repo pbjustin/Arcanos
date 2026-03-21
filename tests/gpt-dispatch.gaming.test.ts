@@ -103,6 +103,7 @@ describe('routeGptRequest gaming routing', () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
+        mode: 'gameplay',
         action: 'query',
         payload: {
           prompt: 'Ping the gaming backend and inspect whether repo tools exist before SWTOR tips ingestion.',
@@ -145,6 +146,7 @@ describe('routeGptRequest gaming routing', () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
+        mode: 'gameplay',
         action: 'query',
         payload: {
           prompt: 'Inspect the repo tools before answering my SWTOR guide question.',
@@ -173,6 +175,7 @@ describe('routeGptRequest gaming routing', () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
+        mode: 'gameplay',
         action: 'query',
         payload: {
           schema: 'gaming',
@@ -219,6 +222,7 @@ describe('routeGptRequest gaming routing', () => {
       const envelopePromise = routeGptRequest({
         gptId: 'arcanos-gaming',
         body: {
+          mode: 'gameplay',
           action: 'query',
           payload: {
             prompt: 'Give me SWTOR gearing help.',
@@ -306,6 +310,119 @@ describe('routeGptRequest gaming routing', () => {
         error: expect.objectContaining({
           code: 'UNKNOWN_GPT',
           message: "gptId 'unknown-gpt' is not registered",
+        }),
+      })
+    );
+  });
+
+  it('returns the fixed diagnostic payload for ping probes before gameplay routing', async () => {
+    const first = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'ping'
+      },
+      requestId: 'req-gaming-ping-1',
+    });
+    const second = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'ping'
+      },
+      requestId: 'req-gaming-ping-2',
+    });
+    const third = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'ping'
+      },
+      requestId: 'req-gaming-ping-3',
+    });
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(first).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'diagnostic',
+        message: 'backend operational',
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-gaming',
+        module: 'diagnostic',
+        action: 'diagnostic',
+        route: 'diagnostic',
+      }),
+    });
+    expect(second).toEqual({
+      ...first,
+      _route: expect.objectContaining({
+        ...first._route,
+        requestId: 'req-gaming-ping-2',
+      }),
+    });
+    expect(third).toEqual({
+      ...first,
+      _route: expect.objectContaining({
+        ...first._route,
+        requestId: 'req-gaming-ping-3',
+      }),
+    });
+    expect(second.result).toEqual(first.result);
+    expect(third.result).toEqual(first.result);
+  });
+
+  it('requires explicit gameplay mode instead of inferring gaming from the GPT binding', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        payload: {
+          prompt: 'Give me SWTOR gearing help.'
+        }
+      },
+      requestId: 'req-gaming-mode-required-1',
+    });
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'GAMEPLAY_MODE_REQUIRED',
+          message: "Gameplay requests require explicit mode 'gameplay'.",
+        }),
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          route: 'gaming',
+        }),
+      })
+    );
+  });
+
+  it('treats nested payload prompt ping as a diagnostic probe before gameplay routing', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        payload: {
+          prompt: 'ping'
+        }
+      },
+      requestId: 'req-gaming-payload-ping-1',
+    });
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          ok: true,
+          route: 'diagnostic',
+          message: 'backend operational',
+        },
+        _route: expect.objectContaining({
+          module: 'diagnostic',
+          route: 'diagnostic',
         }),
       })
     );
