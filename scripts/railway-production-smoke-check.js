@@ -867,8 +867,17 @@ export async function requestHealthCheck(healthUrl, config, expectedNodeEnvironm
       //audit assumption: ARCANOS health endpoint should return JSON, but parse failures should still report the HTTP status; failure risk: endpoint regressions are hidden behind generic request failures; expected invariant: JSON body when healthy; handling strategy: continue with null parsedBody and fail with body preview if needed.
     }
 
-    //audit assumption: the public health endpoint must return HTTP 200 plus `{ ok: true }`, and its reported runtime env should match the app's configured NODE_ENV rather than the Railway environment label; failure risk: ingress returns a generic page or preview environments fail despite healthy production-mode app settings; expected invariant: status 200, JSON body, body.ok===true, body.env matches the app runtime env; handling strategy: fail on any contract violation.
-    if (!response.ok || !parsedBody || parsedBody.ok !== true || parsedBody.env !== expectedNodeEnvironment) {
+    const usesLegacyHealthContract =
+      Boolean(parsedBody)
+      && parsedBody.ok === true
+      && parsedBody.env === expectedNodeEnvironment;
+    const usesCurrentHealthContract =
+      Boolean(parsedBody)
+      && normalizeString(parsedBody.status).toLowerCase() === 'ok'
+      && isNonEmptyString(parsedBody.service);
+
+    //audit assumption: the public health endpoint can legitimately expose either the legacy `{ ok, env }` contract or the current `{ status, service, ... }` contract during rollout windows; failure risk: a healthy ingress check fails solely because the payload shape evolved; expected invariant: status 200 with one recognized JSON health schema; handling strategy: accept both known contracts and fail only when neither shape matches.
+    if (!response.ok || !parsedBody || (!usesLegacyHealthContract && !usesCurrentHealthContract)) {
       return createResult(
         'App public health endpoint',
         RESULT_STATUS.FAIL,
@@ -876,10 +885,18 @@ export async function requestHealthCheck(healthUrl, config, expectedNodeEnvironm
       );
     }
 
+    if (usesLegacyHealthContract) {
+      return createResult(
+        'App public health endpoint',
+        RESULT_STATUS.PASS,
+        `GET ${healthUrl} returned ${response.status} with ok=true and env=${parsedBody.env}.`
+      );
+    }
+
     return createResult(
       'App public health endpoint',
       RESULT_STATUS.PASS,
-      `GET ${healthUrl} returned ${response.status} with ok=true and env=${parsedBody.env}.`
+      `GET ${healthUrl} returned ${response.status} with status=${parsedBody.status} and service=${parsedBody.service}.`
     );
   } finally {
     clearTimeout(timeoutHandle);
