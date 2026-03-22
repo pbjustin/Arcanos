@@ -12,6 +12,7 @@ import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
 import getGptModuleMap from '@platform/runtime/gptRouterConfig.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { arcanosMcpService } from '@services/arcanosMcp.js';
+import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -100,6 +101,7 @@ export function createApp(): Express {
 
   setupDiagnostics(app);
   registerRoutes(app);
+  void runtimeDiagnosticsService.logStartupSummary(app);
 
   app.use(createFallbackMiddleware());
   app.use(errorHandler);
