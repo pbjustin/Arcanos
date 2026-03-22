@@ -76,7 +76,7 @@ import {
   enforceFinalStageHonesty,
   enforceFinalStageHonestyAndMinimalism
 } from './trinityHonesty.js';
-import { shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
+import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
 import {
   applyTrinityDirectAnswerOutputContract,
   TRINITY_DIRECT_ANSWER_AUDIT_FLAG,
@@ -401,7 +401,10 @@ export async function runThroughBrain(
   const internalMode = options.internalMode ?? isInternalArchitecturalMode(prompt);
   const internalDirective = internalMode ? getInternalArchitecturalEvaluationPrompt() : undefined;
   const clarificationAllowed = !internalMode;
-  const prefersDirectAnswerMode = !internalMode && shouldPreferDirectAnswerMode(prompt);
+  const directAnswerPreferenceReason = internalMode
+    ? null
+    : resolveTrinityDirectAnswerPreference(prompt);
+  const prefersDirectAnswerMode = directAnswerPreferenceReason !== null;
 
   // --- Retry lineage check ---
   registerRetry(requestId);
@@ -529,6 +532,14 @@ export async function runThroughBrain(
     if (prefersDirectAnswerMode) {
       budget.increment();
       checkWatchdog();
+
+      logger.info('trinity.direct_answer.auto_selected', {
+        module: 'trinity',
+        operation: 'direct-answer-selection',
+        requestId,
+        tier,
+        reason: directAnswerPreferenceReason
+      });
 
       logArcanosRouting('DIRECT_ANSWER', getGPT5Model(), `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
       routingStages.push(TRINITY_DIRECT_ANSWER_STAGE);

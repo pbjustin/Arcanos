@@ -7,6 +7,14 @@ export interface DirectAnswerModeInstructionOptions {
 
 const DIRECT_ANSWER_MODE_PATTERN =
   /\b(?:answer|respond|reply|say)\s+directly\b|\bjust\s+answer\b|\b(?:do\s+not|don't|no|without)\s+(?:simulate|simulation|role-?play|pretend)\b|\bno\s+hypothetical(?:\s+runs?)?\b|\bhypothetical\s+run\b/i;
+const SIMPLE_INFORMATIONAL_PROMPT_PATTERN =
+  /^(?:what(?:'s|\s+is)?|who(?:'s|\s+is)?|when|where|why|how|explain|define|summari[sz]e|compare|contrast|differentiate|difference\s+between)\b/i;
+const SIMPLE_INFORMATIONAL_COMPLEXITY_PATTERN =
+  /\b(?:implement|implementation|write|generate|build|fix|debug|refactor|patch|audit|research|investigate|root\s+cause|architecture|architectural|orchestrat(?:e|ion)|workflow|dag|pull\s+request|code\s+(?:sample|snippet|example)|step-?by-?step|migration|deploy|rollback)\b/i;
+
+export type TrinityDirectAnswerPreferenceReason =
+  | 'explicit_direct_answer'
+  | 'simple_informational_prompt';
 
 /**
  * Detect when a prompt explicitly asks for a direct, non-simulated answer.
@@ -22,6 +30,36 @@ export function shouldPreferDirectAnswerMode(prompt: string | null | undefined):
   }
 
   return DIRECT_ANSWER_MODE_PATTERN.test(normalizedPrompt);
+}
+
+/**
+ * Detect ordinary informational prompts that are safe to answer through Trinity's direct-answer path.
+ * Inputs/outputs: prompt-like text -> reason string or null.
+ * Edge cases: blank prompts, multiline prompts, and prompts with implementation/debug keywords resolve to null.
+ */
+export function resolveTrinityDirectAnswerPreference(
+  prompt: string | null | undefined
+): TrinityDirectAnswerPreferenceReason | null {
+  const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+
+  if (!normalizedPrompt) {
+    return null;
+  }
+
+  if (DIRECT_ANSWER_MODE_PATTERN.test(normalizedPrompt)) {
+    return 'explicit_direct_answer';
+  }
+
+  if (
+    normalizedPrompt.length > 180 ||
+    normalizedPrompt.includes('\n') ||
+    !SIMPLE_INFORMATIONAL_PROMPT_PATTERN.test(normalizedPrompt) ||
+    SIMPLE_INFORMATIONAL_COMPLEXITY_PATTERN.test(normalizedPrompt)
+  ) {
+    return null;
+  }
+
+  return 'simple_informational_prompt';
 }
 
 /**
