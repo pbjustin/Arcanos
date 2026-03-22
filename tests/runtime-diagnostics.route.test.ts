@@ -135,6 +135,65 @@ describe('runtime diagnostics routes', () => {
     }));
   });
 
+  it('returns real diagnostics JSON through the GPT diagnostics action', async () => {
+    const app = await buildApp();
+
+    const directBeforeResponse = await request(app).get('/diagnostics');
+    expect(directBeforeResponse.status).toBe(200);
+
+    const gptDiagnosticsResponse = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'diagnostics'
+      });
+
+    expect(gptDiagnosticsResponse.status).toBe(200);
+    expect(gptDiagnosticsResponse.body).toEqual(expect.objectContaining({
+      uptime: expect.any(Number),
+      memory: expect.objectContaining({
+        rss_mb: expect.any(Number),
+        heap_total_mb: expect.any(Number),
+        heap_used_mb: expect.any(Number),
+        external_mb: expect.any(Number),
+        array_buffers_mb: expect.any(Number)
+      }),
+      active_routes: expect.any(Array),
+      registered_gpts: expect.any(Array),
+      requests_total: expect.any(Number),
+      errors_total: expect.any(Number),
+      error_rate: expect.any(Number),
+      avg_latency_ms: expect.any(Number),
+      recent_latency_ms: expect.any(Array),
+      modules: expect.objectContaining({
+        CORE: 'active'
+      })
+    }));
+    expect(gptDiagnosticsResponse.body).not.toHaveProperty('ok');
+    expect(gptDiagnosticsResponse.body).not.toHaveProperty('result');
+    expect(gptDiagnosticsResponse.body.active_routes).toEqual(expect.arrayContaining([
+      'GET /diagnostics',
+      'POST /gpt/:gptId'
+    ]));
+    expect(gptDiagnosticsResponse.body.registered_gpts).toEqual(expect.arrayContaining([
+      'arcanos-core',
+      'core'
+    ]));
+
+    const directAfterResponse = await request(app).get('/diagnostics');
+    expect(directAfterResponse.status).toBe(200);
+    expect(gptDiagnosticsResponse.body.requests_total).toBeGreaterThan(
+      directBeforeResponse.body.requests_total
+    );
+    expect(directAfterResponse.body.requests_total).toBeGreaterThan(
+      gptDiagnosticsResponse.body.requests_total
+    );
+    expect(Array.isArray(gptDiagnosticsResponse.body.recent_latency_ms)).toBe(true);
+    expect(Array.isArray(directAfterResponse.body.recent_latency_ms)).toBe(true);
+    expect(gptDiagnosticsResponse.body.modules).toEqual(
+      expect.objectContaining(directBeforeResponse.body.modules)
+    );
+  });
+
   it('enforces optional diagnostics bearer protection when configured', async () => {
     process.env.DIAGNOSTICS_BEARER_TOKEN = 'diagnostics-secret';
     const app = await buildApp();
@@ -145,12 +204,34 @@ describe('runtime diagnostics routes', () => {
       error: 'Not Found'
     });
 
+    const forbiddenGptDiagnosticsResponse = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'diagnostics'
+      });
+    expect(forbiddenGptDiagnosticsResponse.status).toBe(404);
+    expect(forbiddenGptDiagnosticsResponse.body).toEqual({
+      error: 'Not Found'
+    });
+
     const allowedResponse = await request(app)
       .get('/diagnostics')
       .set('authorization', 'Bearer diagnostics-secret');
 
     expect(allowedResponse.status).toBe(200);
-    expect(allowedResponse.body.requests_total).toBe(1);
-    expect(allowedResponse.body.errors_total).toBe(1);
+    expect(allowedResponse.body.requests_total).toBe(2);
+    expect(allowedResponse.body.errors_total).toBe(2);
+
+    const allowedGptDiagnosticsResponse = await request(app)
+      .post('/gpt/arcanos-core')
+      .set('authorization', 'Bearer diagnostics-secret')
+      .send({
+        action: 'diagnostics'
+      });
+    expect(allowedGptDiagnosticsResponse.status).toBe(200);
+    expect(allowedGptDiagnosticsResponse.body).toEqual(expect.objectContaining({
+      requests_total: 3,
+      errors_total: 2
+    }));
   });
 });

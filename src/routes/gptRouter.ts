@@ -12,8 +12,18 @@ import {
 } from '@shared/http/clientResponseGuards.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { authorizeDiagnosticsRequest, getDiagnosticsSnapshot } from '@core/diagnostics.js';
 
 const router = express.Router();
+
+function resolveRequestedAction(body: unknown): string | null {
+  return typeof body === 'object' &&
+    body !== null &&
+    typeof (body as { action?: unknown }).action === 'string' &&
+    (body as { action: string }).action.trim().length > 0
+    ? (body as { action: string }).action.trim().toLowerCase()
+    : null;
+}
 
 function buildGptRequestAuthState(req: express.Request): Record<string, unknown> {
   const authorizationHeader = req.header("authorization");
@@ -54,6 +64,7 @@ router.post("/:gptId", async (req, res, next) => {
   try {
     const incomingGptId = req.params.gptId;
     const requestLogger = (req as any).logger;
+    const requestedAction = resolveRequestedAction(req.body);
     applyCanonicalGptRouteHeaders(res, incomingGptId);
 
     requestLogger?.info?.("gpt.request.auth_state", {
@@ -61,6 +72,41 @@ router.post("/:gptId", async (req, res, next) => {
       gptId: incomingGptId,
       ...buildGptRequestAuthState(req),
     });
+
+    if (requestedAction === 'diagnostics') {
+      const access = authorizeDiagnosticsRequest(req);
+      if (!access.authorized) {
+        return res.status(404).json({
+          error: 'Not Found'
+        });
+      }
+
+      const diagnostics = await getDiagnosticsSnapshot(req.app);
+      requestLogger?.info?.('gpt.request.diagnostics', {
+        endpoint: req.originalUrl,
+        gptId: incomingGptId,
+        protected: access.protected,
+        registeredGpts: Array.isArray(diagnostics.registered_gpts)
+          ? diagnostics.registered_gpts.length
+          : diagnostics.registered_gpts,
+        routeCount: Array.isArray(diagnostics.active_routes)
+          ? diagnostics.active_routes.length
+          : diagnostics.active_routes
+      });
+
+      const diagnosticsPayload = prepareBoundedClientJsonPayload(
+        diagnostics as unknown as Record<string, unknown>,
+        {
+          logger: req.logger,
+          logEvent: 'gpt.response.diagnostics'
+        }
+      );
+      res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
+      if (diagnosticsPayload.truncated) {
+        res.setHeader('x-response-truncated', 'true');
+      }
+      return res.json(diagnosticsPayload.payload);
+    }
 
     const envelope = await routeGptRequest({
       gptId: incomingGptId,
