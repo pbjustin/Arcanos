@@ -60,7 +60,7 @@ type RuntimeDiagnosticsRedisClient = ReturnType<typeof createClient>;
 const RECENT_LATENCY_LIMIT = Math.max(10, getEnvNumber('DIAGNOSTICS_RECENT_LATENCY_LIMIT', 50));
 const REDIS_SHARED_METRICS_ENABLED = getEnv('DIAGNOSTICS_SHARED_METRICS', 'true') !== 'false';
 
-const MODULE_PROBES: Record<string, { moduleNames?: string[]; routes?: string[] }> = {
+const MODULE_PROBES: Record<string, { moduleNames?: string[]; routes?: string[]; exposed?: boolean }> = {
   CORE: {
     moduleNames: ['ARCANOS:CORE'],
     routes: ['core']
@@ -164,10 +164,14 @@ class RuntimeDiagnosticsService {
     try {
       this.primeRouteTableCache(app);
       const diagnostics = await this.getDiagnosticsSnapshot(app);
+      const registry = await this.getRegistrySnapshot();
       logger.info('runtime.registration.summary', {
         module: 'runtime-diagnostics',
         routeCount: Array.isArray(diagnostics.active_routes) ? diagnostics.active_routes.length : diagnostics.active_routes,
         registeredGptCount: Array.isArray(diagnostics.registered_gpts) ? diagnostics.registered_gpts.length : diagnostics.registered_gpts,
+        loadedModuleRoutes: Array.isArray(registry.loadedModules)
+          ? registry.loadedModules.map(({ route, definition }) => `${route}:${definition.name}`)
+          : 'DATA NOT EXPOSED: loaded_modules',
         modules: diagnostics.modules
       });
     } catch (error) {
@@ -248,7 +252,7 @@ class RuntimeDiagnosticsService {
         continue;
       }
 
-      const probeHasDirectRuntimeMapping = Boolean(probe.moduleNames?.length || probe.routes?.length);
+      const probeHasDirectRuntimeMapping = probe.exposed !== false && Boolean(probe.moduleNames?.length || probe.routes?.length);
       moduleStatuses[moduleKey] = probeHasDirectRuntimeMapping
         ? 'unavailable'
         : `DATA NOT EXPOSED: ${moduleKey}`;
