@@ -6,6 +6,80 @@
     "description": "Canonical public contract for GPT-routed module requests. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body or default unsupported actions such as \"ask\"."
   },
   "paths": {
+    "/ask": {
+      "post": {
+        "deprecated": true,
+        "operationId": "legacyAskCompatibility",
+        "summary": "Legacy ask compatibility endpoint",
+        "description": "Deprecated compatibility endpoint retained only during migration. New GPT and OpenAPI integrations must use POST /gpt/{gptId}. Requests that include gptId in the body are rejected so routing stays path-bound.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyAskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Legacy ask response with deprecation headers",
+            "headers": {
+              "Deprecation": {
+                "$ref": "#/components/headers/DeprecationHeader"
+              },
+              "Sunset": {
+                "$ref": "#/components/headers/SunsetHeader"
+              },
+              "Link": {
+                "$ref": "#/components/headers/LinkHeader"
+              },
+              "x-canonical-route": {
+                "$ref": "#/components/headers/CanonicalRouteHeader"
+              },
+              "x-route-deprecated": {
+                "$ref": "#/components/headers/DeprecatedRouteHeader"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyAskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failure or rejected GPT misroute",
+            "headers": {
+              "Deprecation": {
+                "$ref": "#/components/headers/DeprecationHeader"
+              },
+              "Sunset": {
+                "$ref": "#/components/headers/SunsetHeader"
+              },
+              "Link": {
+                "$ref": "#/components/headers/LinkHeader"
+              },
+              "x-canonical-route": {
+                "$ref": "#/components/headers/CanonicalRouteHeader"
+              },
+              "x-route-deprecated": {
+                "$ref": "#/components/headers/DeprecatedRouteHeader"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyAskErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/gpt/{gptId}": {
       "post": {
         "operationId": "invokeGptRoute",
@@ -88,7 +162,155 @@
     }
   },
   "components": {
+    "headers": {
+      "DeprecationHeader": {
+        "description": "HTTP deprecation signal for the legacy /ask route.",
+        "schema": {
+          "type": "string",
+          "const": "true"
+        }
+      },
+      "SunsetHeader": {
+        "description": "Sunset date for the legacy /ask route.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "LinkHeader": {
+        "description": "Links to the canonical GPT route and live contract.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "CanonicalRouteHeader": {
+        "description": "Canonical GPT route for this request.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "DeprecatedRouteHeader": {
+        "description": "Boolean-like marker indicating the route is deprecated.",
+        "schema": {
+          "type": "string",
+          "const": "true"
+        }
+      }
+    },
     "schemas": {
+      "LegacyAskRequest": {
+        "type": "object",
+        "description": "Deprecated compatibility request for the legacy /ask route. Do not use for new GPT or OpenAPI integrations.",
+        "additionalProperties": true,
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "userInput": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "clientContext": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "prompt"
+            ]
+          },
+          {
+            "required": [
+              "message"
+            ]
+          },
+          {
+            "required": [
+              "userInput"
+            ]
+          },
+          {
+            "required": [
+              "content"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          },
+          {
+            "required": [
+              "query"
+            ]
+          }
+        ],
+        "not": {
+          "required": [
+            "gptId"
+          ]
+        }
+      },
+      "LegacyAskResponse": {
+        "type": "object",
+        "description": "Generic legacy /ask response shape. The exact payload depends on the compatibility handler.",
+        "properties": {
+          "result": {},
+          "module": {
+            "type": "string"
+          },
+          "activeModel": {
+            "type": "string"
+          },
+          "routingStages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "endpoint": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "LegacyAskErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "array",
+            "items": {}
+          },
+          "deprecated": {
+            "type": "boolean"
+          },
+          "canonicalRoute": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": true
+      },
       "GptRouteRequest": {
         "type": "object",
         "description": "Prompt-first request contract for GPT-routed module calls. The backend resolves the route from the path parameter, not from body metadata.",

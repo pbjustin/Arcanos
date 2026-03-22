@@ -179,9 +179,98 @@ describe('gpt router auth logging', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
-      ok: true,
+      status: 'ok',
       route: 'diagnostic',
       message: 'backend operational',
+    });
+  });
+
+  it('returns bare gaming envelopes for explicit guide mode responses', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Guide response',
+          sources: [],
+        },
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        availableActions: ['query'],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({ mode: 'guide', prompt: 'Where do I go next?' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+      },
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Guide response',
+          sources: {
+            total: 0,
+          },
+        },
+      },
+    });
+  });
+
+  it('returns structured gaming errors when explicit mode is missing', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: false,
+      error: {
+        code: 'GAMEPLAY_MODE_REQUIRED',
+        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({ prompt: 'Give me a walkthrough.' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+      },
+      error: {
+        code: 'GAMEPLAY_MODE_REQUIRED',
+        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+      },
     });
   });
 });

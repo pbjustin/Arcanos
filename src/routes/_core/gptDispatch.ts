@@ -16,6 +16,7 @@ import {
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
+import { validateGamingRequest } from "@services/gamingModes.js";
 import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -80,6 +81,154 @@ function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message:
     route: "diagnostic",
     message: "backend operational"
   };
+}
+
+function buildGamingDispatchPayload(payload: unknown, requestedMode: string | null): unknown {
+  if (!requestedMode) {
+    return payload;
+  }
+
+  if (isRecord(payload)) {
+    return payload.mode === undefined ? { ...payload, mode: requestedMode } : payload;
+  }
+
+  return { mode: requestedMode };
+}
+
+function buildResolvedRouteMeta(params: {
+  baseRoute: RouteMeta;
+  module: string;
+  action?: string | null;
+  matchMethod?: RouteMeta["matchMethod"];
+  route?: string | null;
+  availableActions: string[];
+  moduleVersion?: string | null;
+}): RouteMeta {
+  return {
+    ...params.baseRoute,
+    module: params.module,
+    action: params.action ?? undefined,
+    matchMethod: params.matchMethod,
+    route: params.route ?? undefined,
+    availableActions: params.availableActions,
+    moduleVersion: params.moduleVersion ?? null,
+  };
+}
+
+async function dispatchResolvedModuleAction(params: {
+  body: unknown;
+  payload: unknown;
+  moduleName: string;
+  route: string;
+  action: string;
+  gptId: string;
+  requestId?: string;
+  matchMethod?: RouteMeta["matchMethod"];
+  timeoutMs: number;
+  timeoutSource: string;
+  logger?: RouteGptRequestInput["logger"];
+  baseRoute: RouteMeta;
+  availableActions: string[];
+  moduleVersion?: string | null;
+}): Promise<AskEnvelope> {
+  const routeMeta = buildResolvedRouteMeta({
+    baseRoute: params.baseRoute,
+    module: params.moduleName,
+    action: params.action,
+    matchMethod: params.matchMethod,
+    route: params.route,
+    availableActions: params.availableActions,
+    moduleVersion: params.moduleVersion ?? null,
+  });
+
+  params.logger?.info?.("gpt.dispatch.plan", {
+    requestId: params.requestId,
+    gptId: params.gptId,
+    module: params.moduleName,
+    action: params.action,
+    matchMethod: params.matchMethod,
+    timeoutMs: params.timeoutMs,
+    timeoutSource: params.timeoutSource,
+  });
+
+  const dispatchStartedAt = Date.now();
+  try {
+    const result = await withTimeout(
+      dispatchModuleAction(params.moduleName, params.action, params.payload),
+      params.timeoutMs
+    );
+
+    const resolvedSessionId = resolveSessionId(params.body, params.payload);
+    await persistModuleConversation({
+      moduleName: params.moduleName,
+      route: params.route,
+      action: params.action,
+      gptId: params.gptId,
+      sessionId: resolvedSessionId,
+      requestId: params.requestId,
+      requestPayload: params.payload,
+      responsePayload: result
+    }).catch((error: unknown) => {
+      params.logger?.warn?.("gpt.dispatch.persistence_failed", {
+        requestId: params.requestId,
+        gptId: params.gptId,
+        module: params.moduleName,
+        action: params.action,
+        error: String((error as Error)?.message ?? error),
+      });
+    });
+
+    params.logger?.info?.("gpt.dispatch.ok", {
+      requestId: params.requestId,
+      gptId: params.gptId,
+      module: params.moduleName,
+      action: params.action,
+      timeoutMs: params.timeoutMs,
+      timeoutSource: params.timeoutSource,
+      durationMs: Date.now() - dispatchStartedAt,
+    });
+
+    return {
+      ok: true,
+      result,
+      _route: routeMeta,
+    };
+  } catch (err: any) {
+    const errorMessage = String(err?.message ?? err);
+    const isDispatchTimeout = errorMessage === `Module dispatch timeout after ${params.timeoutMs}ms`;
+    const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
+
+    params.logger?.error?.("gpt.dispatch.error", {
+      requestId: params.requestId,
+      gptId: params.gptId,
+      module: params.moduleName,
+      action: params.action,
+      matchMethod: params.matchMethod,
+      error: errorMessage,
+      timeoutMs: params.timeoutMs,
+      timeoutSource: params.timeoutSource,
+      durationMs: Date.now() - dispatchStartedAt,
+    });
+    if (isDispatchTimeout) {
+      params.logger?.error?.(dispatchLogEvent, {
+        requestId: params.requestId,
+        gptId: params.gptId,
+        module: params.moduleName,
+        action: params.action,
+        matchMethod: params.matchMethod,
+        error: errorMessage,
+        timeoutMs: params.timeoutMs,
+        timeoutSource: params.timeoutSource,
+        durationMs: Date.now() - dispatchStartedAt,
+      });
+    }
+
+    return {
+      ok: false,
+      error: { code: "MODULE_ERROR", message: err?.message ?? "Module dispatch failed" },
+      _route: routeMeta,
+    };
+  }
 }
 
 /**
@@ -765,24 +914,68 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
 
-  //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
-  if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
-    return {
-      ok: false,
-      error: {
-        code: "GAMEPLAY_MODE_REQUIRED",
-        message: "Gameplay requests require explicit mode 'gameplay'."
-      },
-      _route: {
-        ...baseRoute,
-        module: activeEntry.module,
-        action: requestedAction ?? null,
-        matchMethod,
-        route: activeEntry.route,
-        availableActions,
-        moduleVersion: (moduleMetadata as any)?.version ?? null,
-      }
-    };
+  const gamingPayload = activeEntry.module === "ARCANOS:GAMING"
+    ? buildGamingDispatchPayload(payload, requestedMode)
+    : payload;
+
+  //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"guide"`, `mode:"build"`, or `mode:"meta"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
+  if (activeEntry.module === "ARCANOS:GAMING") {
+    const gamingValidation = validateGamingRequest(gamingPayload);
+    if (!gamingValidation.ok) {
+      return {
+        ok: false,
+        error: gamingValidation.error.error,
+        _route: buildResolvedRouteMeta({
+          baseRoute,
+          module: activeEntry.module,
+          action: requestedAction ?? null,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        })
+      };
+    }
+
+    const action = pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
+    if (!action) {
+      return {
+        ok: false,
+        error: {
+          code: "NO_DEFAULT_ACTION",
+          message: requestedAction
+            ? `Requested action '${requestedAction}' is not available for module ${activeEntry.module}`
+            : `No actions available for module ${activeEntry.module}`,
+          details: { availableActions, requestedAction },
+        },
+        _route: buildResolvedRouteMeta({
+          baseRoute,
+          module: activeEntry.module,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        }),
+      };
+    }
+
+    const { timeoutMs, timeoutSource } = resolveDispatchTimeout(body, moduleMetadata);
+    return dispatchResolvedModuleAction({
+      body,
+      payload: gamingPayload,
+      moduleName: activeEntry.module,
+      route: activeEntry.route,
+      action,
+      gptId: trimmedGptId,
+      requestId,
+      matchMethod,
+      timeoutMs,
+      timeoutSource,
+      logger,
+      baseRoute,
+      availableActions,
+      moduleVersion: (moduleMetadata as any)?.version ?? null,
+    });
   }
 
   const mcpDispatch = forceDirectModuleRouting
@@ -1219,107 +1412,20 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
-  logger?.info?.("gpt.dispatch.plan", {
-    requestId,
-    gptId: trimmedGptId,
-    module: activeEntry.module,
+  return dispatchResolvedModuleAction({
+    body,
+    payload,
+    moduleName: activeEntry.module,
+    route: activeEntry.route,
     action,
+    gptId: trimmedGptId,
+    requestId,
     matchMethod,
     timeoutMs,
     timeoutSource,
+    logger,
+    baseRoute,
+    availableActions,
+    moduleVersion: (moduleMetadata as any)?.version ?? null,
   });
-
-  const dispatchStartedAt = Date.now();
-
-  try {
-    const result = await withTimeout(dispatchModuleAction(activeEntry.module, action, payload), timeoutMs);
-
-    const resolvedSessionId = resolveSessionId(body, payload);
-    await persistModuleConversation({
-      moduleName: activeEntry.module,
-      route: activeEntry.route,
-      action,
-      gptId: trimmedGptId,
-      sessionId: resolvedSessionId,
-      requestId,
-      requestPayload: payload,
-      responsePayload: result
-    }).catch((error: unknown) => {
-      //audit Assumption: persistence failures should not fail successful module responses; failure risk: dropped conversation history; expected invariant: user still receives module output; handling strategy: warn and continue.
-      logger?.warn?.("gpt.dispatch.persistence_failed", {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        action,
-        error: String((error as Error)?.message ?? error),
-      });
-    });
-
-    logger?.info?.("gpt.dispatch.ok", {
-      requestId,
-      gptId: trimmedGptId,
-      module: activeEntry.module,
-      action,
-      timeoutMs,
-      timeoutSource,
-      durationMs: Date.now() - dispatchStartedAt,
-    });
-
-    return {
-      ok: true,
-      result,
-      _route: {
-        ...baseRoute,
-        module: activeEntry.module,
-        action,
-        matchMethod,
-        route: activeEntry.route,
-        availableActions,
-        moduleVersion: (moduleMetadata as any)?.version ?? null,
-      },
-    };
-  } catch (err: any) {
-    const errorMessage = String(err?.message ?? err);
-    const isDispatchTimeout = errorMessage === `Module dispatch timeout after ${timeoutMs}ms`;
-    const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
-
-    logger?.error?.("gpt.dispatch.error", {
-      requestId,
-      gptId: trimmedGptId,
-      module: activeEntry.module,
-      action,
-      matchMethod,
-      error: errorMessage,
-      timeoutMs,
-      timeoutSource,
-      durationMs: Date.now() - dispatchStartedAt,
-    });
-    if (isDispatchTimeout) {
-      logger?.error?.(dispatchLogEvent, {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        action,
-        matchMethod,
-        error: errorMessage,
-        timeoutMs,
-        timeoutSource,
-        durationMs: Date.now() - dispatchStartedAt,
-      });
-    }
-
-    return {
-      ok: false,
-      error: { code: "MODULE_ERROR", message: err?.message ?? "Module dispatch failed" },
-      _route: {
-        ...baseRoute,
-        module: activeEntry.module,
-        action,
-        matchMethod,
-        route: activeEntry.route,
-        availableActions,
-        moduleVersion: (moduleMetadata as any)?.version ?? null,
-      },
-    };
-  }
 }

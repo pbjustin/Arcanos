@@ -102,6 +102,9 @@ function decodeMountPath(layer: ExpressRouteLayer): string {
     return '';
   }
 
+  // Express does not expose mount paths directly on nested layers, so this decodes the
+  // framework's current regexp serialization. If Express changes that internal format,
+  // route-table diagnostics here will need to be updated alongside the framework upgrade.
   const decoded = regexpSource
     .replace(/\\\/\?\(\?=\\\/\|\$\)/g, '')
     .replace(/\(\?=\\\/\|\$\)/g, '')

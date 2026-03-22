@@ -45,6 +45,30 @@ interface TrackerOverviewResult {
   verification: DagVerificationData;
 }
 
+const TRACKER_VIEW_ALIASES: Record<string, TrackerQueryView> = {
+  overview: 'overview',
+  summary: 'run',
+  status: 'run',
+  run: 'run',
+  getrun: 'run',
+  wait: 'wait',
+  waitforrunupdate: 'wait',
+  tree: 'tree',
+  getruntree: 'tree',
+  node: 'node',
+  getnode: 'node',
+  events: 'events',
+  getrunevents: 'events',
+  metrics: 'metrics',
+  getrunmetrics: 'metrics',
+  errors: 'errors',
+  getrunerrors: 'errors',
+  lineage: 'lineage',
+  getrunlineage: 'lineage',
+  verification: 'verification',
+  getrunverification: 'verification'
+};
+
 const ArcanosTracker: ModuleDef = {
   name: 'ARCANOS:TRACKER',
   description: 'Trinity DAG run tracker for status, metrics, verification, and cancellation.',
@@ -160,42 +184,12 @@ function resolveTrackerView(payload: ArcanosTrackerPayload): TrackerQueryView {
   }
 
   const normalizedView = rawValue.trim().toLowerCase().replace(/[\s_-]+/g, '');
-
-  switch (normalizedView) {
-    case 'overview':
-      return 'overview';
-    case 'summary':
-    case 'status':
-    case 'run':
-    case 'getrun':
-      return 'run';
-    case 'wait':
-    case 'waitforrunupdate':
-      return 'wait';
-    case 'tree':
-    case 'getruntree':
-      return 'tree';
-    case 'node':
-    case 'getnode':
-      return 'node';
-    case 'events':
-    case 'getrunevents':
-      return 'events';
-    case 'metrics':
-    case 'getrunmetrics':
-      return 'metrics';
-    case 'errors':
-    case 'getrunerrors':
-      return 'errors';
-    case 'lineage':
-    case 'getrunlineage':
-      return 'lineage';
-    case 'verification':
-    case 'getrunverification':
-      return 'verification';
-    default:
-      throw new Error(`ARCANOS:TRACKER query does not support view "${rawValue}".`);
+  const resolvedView = TRACKER_VIEW_ALIASES[normalizedView];
+  if (resolvedView) {
+    return resolvedView;
   }
+
+  throw new Error(`ARCANOS:TRACKER query does not support view "${rawValue}".`);
 }
 
 function requireTrackerRunId(payload: ArcanosTrackerPayload): string {

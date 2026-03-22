@@ -3,46 +3,11 @@ import {
   buildUnsafeToProceedPayload,
   hasUnsafeBlockingConditions
 } from '@services/safety/runtimeState.js';
+import { normalizeRequestBody } from '@shared/http/normalizeRequestBody.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
 const GPT_PATH_PATTERN = /^\/gpt\/[^/]+$/;
-
-function tryParseBodyRecord(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-function normalizeRequestBody(body: unknown): Record<string, unknown> | null {
-  if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
-    const recordBody = body as Record<string, unknown>;
-    const entries = Object.entries(recordBody);
-    if (entries.length === 1) {
-      const [candidateJson, candidateValue] = entries[0];
-      if (candidateValue === '' || candidateValue === null) {
-        const reparsedBody = tryParseBodyRecord(candidateJson);
-        if (reparsedBody) {
-          return reparsedBody;
-        }
-      }
-    }
-    return recordBody;
-  }
-
-  if (typeof body === 'string' && body.trim().length > 0) {
-    return tryParseBodyRecord(body);
-  }
-
-  return null;
-}
 
 function isDiagnosticsActionRequest(req: Request): boolean {
   if (req.method.toUpperCase() !== 'POST' || !GPT_PATH_PATTERN.test(req.path)) {

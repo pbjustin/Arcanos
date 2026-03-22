@@ -60,7 +60,7 @@ type RuntimeDiagnosticsRedisClient = ReturnType<typeof createClient>;
 const RECENT_LATENCY_LIMIT = Math.max(10, getEnvNumber('DIAGNOSTICS_RECENT_LATENCY_LIMIT', 50));
 const REDIS_SHARED_METRICS_ENABLED = getEnv('DIAGNOSTICS_SHARED_METRICS', 'true') !== 'false';
 
-const MODULE_PROBES: Record<string, { moduleNames?: string[]; routes?: string[]; exposed?: boolean }> = {
+const MODULE_PROBES: Record<string, { moduleNames?: string[]; routes?: string[] }> = {
   CORE: {
     moduleNames: ['ARCANOS:CORE'],
     routes: ['core']
@@ -252,7 +252,7 @@ class RuntimeDiagnosticsService {
         continue;
       }
 
-      const probeHasDirectRuntimeMapping = probe.exposed !== false && Boolean(probe.moduleNames?.length || probe.routes?.length);
+      const probeHasDirectRuntimeMapping = Boolean(probe.moduleNames?.length || probe.routes?.length);
       moduleStatuses[moduleKey] = probeHasDirectRuntimeMapping
         ? 'unavailable'
         : `DATA NOT EXPOSED: ${moduleKey}`;
