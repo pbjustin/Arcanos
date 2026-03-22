@@ -179,7 +179,7 @@ describe('gpt router auth logging', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
-      ok: true,
+      status: 'ok',
       route: 'diagnostic',
       message: 'backend operational',
     });
@@ -215,13 +215,23 @@ describe('gpt router auth logging', () => {
       .send({ mode: 'guide', prompt: 'Where do I go next?' });
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
+    expect(response.body).toMatchObject({
       ok: true,
-      route: 'gaming',
-      mode: 'guide',
-      data: {
-        response: 'Guide response',
-        sources: [],
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+      },
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Guide response',
+          sources: {
+            total: 0,
+          },
+        },
       },
     });
   });
@@ -252,8 +262,11 @@ describe('gpt router auth logging', () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
       ok: false,
-      route: 'gaming',
-      mode: null,
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+      },
       error: {
         code: 'GAMEPLAY_MODE_REQUIRED',
         message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",

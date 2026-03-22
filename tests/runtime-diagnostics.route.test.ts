@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const request = (await import('supertest')).default;
+const EXPECTED_GPT_ROUTER_HASH = '0ef88eb096a39411620ca0780bf3bdd2a359f83c4e4883c42ef2e14e7afabdf3';
 
 async function buildApp() {
   jest.resetModules();
@@ -26,6 +27,7 @@ describe('runtime diagnostics routes', () => {
   const originalApiKey = process.env.API_KEY;
   const originalOpenAiKey = process.env.OPENAI_KEY;
   const originalDiagnosticsSharedMetrics = process.env.DIAGNOSTICS_SHARED_METRICS;
+  const originalGptRouterHash = process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
@@ -34,6 +36,7 @@ describe('runtime diagnostics routes', () => {
     process.env.API_KEY = '';
     process.env.OPENAI_KEY = '';
     process.env.DIAGNOSTICS_SHARED_METRICS = 'false';
+    process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = EXPECTED_GPT_ROUTER_HASH;
   });
 
   afterEach(() => {
@@ -43,6 +46,7 @@ describe('runtime diagnostics routes', () => {
     restoreEnvVar('API_KEY', originalApiKey);
     restoreEnvVar('OPENAI_KEY', originalOpenAiKey);
     restoreEnvVar('DIAGNOSTICS_SHARED_METRICS', originalDiagnosticsSharedMetrics);
+    restoreEnvVar('SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG', originalGptRouterHash);
   });
 
   it('returns real diagnostics JSON through the GPT diagnostics action', async () => {
@@ -89,11 +93,34 @@ describe('runtime diagnostics routes', () => {
     if (Array.isArray(gptDiagnosticsResponse.body.registered_gpts)) {
       expect(gptDiagnosticsResponse.body.registered_gpts).toEqual(expect.arrayContaining([
         'arcanos-core',
-        'core'
+        'core',
+        'arcanos-write',
+        'write',
+        'arcanos-guide',
+        'guide',
+        'arcanos-audit',
+        'audit',
+        'arcanos-research',
+        'research',
+        'arcanos-build',
+        'build',
+        'arcanos-tracker',
+        'tracker'
       ]));
     } else {
       expect(gptDiagnosticsResponse.body.registered_gpts).toBe('DATA NOT EXPOSED: registered_gpts');
     }
+    expect(gptDiagnosticsResponse.body.modules).toEqual(expect.objectContaining({
+      CORE: 'active',
+      WRITE: 'active',
+      RESEARCH: 'active',
+      AUDIT: 'active',
+      SIM: 'active',
+      BOOKING: 'active',
+      GUIDE: 'active',
+      BUILD: 'active',
+      TRACKER: 'active'
+    }));
 
     const directAfterResponse = await request(app).get('/diagnostics');
     expect(directAfterResponse.status).toBe(200);

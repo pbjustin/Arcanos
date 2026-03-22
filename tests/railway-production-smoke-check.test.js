@@ -208,6 +208,50 @@ describe('railway-production-smoke-check', () => {
     }
   });
 
+  it('accepts the current production health payload contract', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        status: 'ok',
+        service: 'arcanos-backend',
+        timestamp: '2026-03-22T19:31:38.654Z',
+        version: '1.0.0',
+        gpt_routes: 23,
+        openai_configured: true,
+        response_bytes: 162
+      })
+    }));
+
+    try {
+      const result = await requestHealthCheck(
+        'https://acranos-production.up.railway.app/healthz',
+        {
+          environment: 'production',
+          appService: 'ARCANOS V2',
+          workerService: 'ARCANOS Worker',
+          databaseService: '',
+          redisService: '',
+          appUrl: '',
+          healthPath: '/healthz',
+          appLogLines: 300,
+          workerLogLines: 300,
+          databaseLogLines: 500,
+          redisLogLines: 200,
+          requestTimeoutMs: 15000
+        },
+        'production'
+      );
+
+      expect(result.status).toBe(RESULT_STATUS.PASS);
+      expect(result.detail).toMatch(/status=ok/);
+      expect(result.detail).toMatch(/service=arcanos-backend/);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('fails database log evaluation when the missing User table error appears', () => {
     const result = evaluateDatabaseLogEntries(
       parseJsonLines([

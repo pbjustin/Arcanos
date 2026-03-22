@@ -526,7 +526,6 @@ function attachAskDeprecationMetadata(req: Request, res: Response, next: () => v
 
   next();
 }
-
 /**
  * Shared handler for both ask and brain endpoints
  * Handles AI request processing with standardized error handling and validation

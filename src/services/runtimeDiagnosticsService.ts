@@ -164,10 +164,14 @@ class RuntimeDiagnosticsService {
     try {
       this.primeRouteTableCache(app);
       const diagnostics = await this.getDiagnosticsSnapshot(app);
+      const registry = await this.getRegistrySnapshot();
       logger.info('runtime.registration.summary', {
         module: 'runtime-diagnostics',
         routeCount: Array.isArray(diagnostics.active_routes) ? diagnostics.active_routes.length : diagnostics.active_routes,
         registeredGptCount: Array.isArray(diagnostics.registered_gpts) ? diagnostics.registered_gpts.length : diagnostics.registered_gpts,
+        loadedModuleRoutes: Array.isArray(registry.loadedModules)
+          ? registry.loadedModules.map(({ route, definition }) => `${route}:${definition.name}`)
+          : 'DATA NOT EXPOSED: loaded_modules',
         modules: diagnostics.modules
       });
     } catch (error) {
