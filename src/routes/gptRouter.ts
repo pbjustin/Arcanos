@@ -12,6 +12,7 @@ import {
   prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
+import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
 
 const router = express.Router();
 
@@ -68,6 +69,7 @@ router.post("/:gptId", async (req, res, next) => {
   try {
     const incomingGptId = req.params.gptId;
     const requestLogger = (req as any).logger;
+    applyCanonicalGptRouteHeaders(res, incomingGptId);
 
     requestLogger?.info?.("gpt.request.auth_state", {
       endpoint: req.originalUrl,

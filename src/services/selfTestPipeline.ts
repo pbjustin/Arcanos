@@ -36,11 +36,21 @@ export interface SelfTestOptions {
 }
 
 const LOG_FILE = path.join(process.cwd(), 'logs', 'healthcheck.json');
+const DEFAULT_SELF_TEST_GPT_ID = 'arcanos-core';
 
 function resolveBaseUrl(): string {
   const selfTestBaseUrl = getEnv('SELF_TEST_BASE_URL');
   if (selfTestBaseUrl) return selfTestBaseUrl;
   return getBackendBaseUrl().toString().replace(/\/$/, '');
+}
+
+function resolveSelfTestGptId(): string {
+  const configured = getEnv('BACKEND_GPT_ID');
+  if (configured) {
+    return configured;
+  }
+
+  return DEFAULT_SELF_TEST_GPT_ID;
 }
 
 function ensureLogFile(): void {
@@ -88,7 +98,7 @@ async function executePrompt(
   prompt: SelfTestPrompt
 ): Promise<SelfTestResult> {
   const started = Date.now();
-  const endpoint = `${baseUrl.replace(/\/$/, '')}/ask`;
+  const endpoint = `${baseUrl.replace(/\/$/, '')}/gpt/${encodeURIComponent(resolveSelfTestGptId())}`;
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
@@ -120,11 +130,33 @@ async function executePrompt(
     }
 
     const data = (await res.json()) as Record<string, any>;
-    const activeModel = typeof data.activeModel === 'string' ? data.activeModel : undefined;
-    const moduleName = typeof data.module === 'string' ? data.module : undefined;
-    const responsePreview = typeof data.result === 'string' ? data.result.slice(0, 200) : undefined;
+    const nestedResult =
+      typeof data.result === 'object' && data.result !== null
+        ? (data.result as Record<string, any>)
+        : null;
+    const activeModel =
+      typeof data.activeModel === 'string'
+        ? data.activeModel
+        : typeof nestedResult?.activeModel === 'string'
+          ? nestedResult.activeModel
+          : undefined;
+    const moduleName =
+      typeof data.module === 'string'
+        ? data.module
+        : typeof nestedResult?.module === 'string'
+          ? nestedResult.module
+          : typeof data._route?.module === 'string'
+            ? data._route.module
+            : undefined;
+    const resultText =
+      typeof data.result === 'string'
+        ? data.result
+        : typeof nestedResult?.result === 'string'
+          ? nestedResult.result
+          : undefined;
+    const responsePreview = typeof resultText === 'string' ? resultText.slice(0, 200) : undefined;
     const modelMatches = activeModel ? activeModel.includes(targetModel) : true;
-    const success = Boolean(data.result) && modelMatches;
+    const success = Boolean(resultText) && modelMatches;
 
     return {
       id: prompt.id,
