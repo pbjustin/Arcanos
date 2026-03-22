@@ -1,27 +1,19 @@
 import type { Application, Express, Request, Response } from 'express';
-import crypto from 'node:crypto';
 import cron from 'node-cron';
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { config } from "@platform/runtime/config.js";
 import { getEnv } from "@platform/runtime/env.js";
 import {
-  isDiagnosticsProtected,
   type DiagnosticsSnapshot,
   runtimeDiagnosticsService
 } from '@services/runtimeDiagnosticsService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
-export interface DiagnosticsAccessDecision {
-  authorized: boolean;
-  protected: boolean;
-}
-
 /**
  * Registers health check endpoint and monitoring cron job.
  */
 export function setupDiagnostics(app: Express): void {
-  // Use config layer for env access (adapter boundary pattern)
   const diagnosticsEnabled =
     config.server.environment !== 'test' &&
     getEnv('DISABLE_DIAGNOSTICS_CRON') !== 'true';
@@ -59,18 +51,10 @@ export function setupDiagnostics(app: Express): void {
   });
 
   app.get('/diagnostics', async (req: Request, res: Response) => {
-    const access = authorizeDiagnosticsRequest(req);
-    if (!access.authorized) {
-      res.status(404).json({
-        error: 'Not Found'
-      });
-      return;
-    }
-
     try {
       const diagnostics = await getDiagnosticsSnapshot(app);
       req.logger?.info?.('diagnostics.response', {
-        protected: isDiagnosticsProtected(),
+        protected: false,
         registeredGpts: Array.isArray(diagnostics.registered_gpts)
           ? diagnostics.registered_gpts.length
           : diagnostics.registered_gpts,
@@ -92,54 +76,6 @@ export function setupDiagnostics(app: Express): void {
   });
 }
 
-export function authorizeDiagnosticsRequest(
-  req: Pick<Request, 'header' | 'logger'>
-): DiagnosticsAccessDecision {
-  const expectedToken =
-    getEnv('DIAGNOSTICS_BEARER_TOKEN')?.trim() ||
-    getEnv('MCP_BEARER_TOKEN')?.trim() ||
-    getEnv('DEBUG_WATCHDOG_KEY')?.trim();
-  const bearerHeader = req.header('authorization');
-  const headerToken = req.header('x-diagnostics-token')?.trim();
-  const providedBearerToken =
-    bearerHeader && bearerHeader.startsWith('Bearer ')
-      ? bearerHeader.slice('Bearer '.length).trim()
-      : null;
-  const providedToken = providedBearerToken || headerToken || '';
-
-  if (expectedToken && !timingSafeStringEqual(providedToken, expectedToken)) {
-    req.logger?.warn?.('diagnostics.access.denied', {
-      protected: true
-    });
-    return {
-      authorized: false,
-      protected: true
-    };
-  }
-
-  if (!expectedToken && config.server.environment === 'production') {
-    req.logger?.warn?.('diagnostics.access.public', {
-      protected: false
-    });
-  }
-
-  return {
-    authorized: true,
-    protected: Boolean(expectedToken)
-  };
-}
-
 export function getDiagnosticsSnapshot(app: Application): Promise<DiagnosticsSnapshot> {
   return runtimeDiagnosticsService.getDiagnosticsSnapshot(app);
-}
-
-function timingSafeStringEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }

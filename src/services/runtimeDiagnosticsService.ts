@@ -471,14 +471,6 @@ function sanitizeKeySegment(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9:_-]+/g, '-');
 }
 
-export function isDiagnosticsProtected(): boolean {
-  const token =
-    getEnv('DIAGNOSTICS_BEARER_TOKEN') ||
-    getEnv('MCP_BEARER_TOKEN') ||
-    getEnv('DEBUG_WATCHDOG_KEY');
-  return typeof token === 'string' && token.trim().length > 0;
-}
-
 export const runtimeDiagnosticsService = new RuntimeDiagnosticsService();
 
 export function resetRuntimeDiagnosticsState(): void {

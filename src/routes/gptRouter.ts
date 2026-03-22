@@ -12,16 +12,51 @@ import {
 } from '@shared/http/clientResponseGuards.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
-import { authorizeDiagnosticsRequest, getDiagnosticsSnapshot } from '@core/diagnostics.js';
+import { getDiagnosticsSnapshot } from '@core/diagnostics.js';
 
 const router = express.Router();
 
+function tryParseBodyRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function normalizeRequestBody(body: unknown): Record<string, unknown> | null {
+  if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+    const recordBody = body as Record<string, unknown>;
+    const entries = Object.entries(recordBody);
+    if (entries.length === 1) {
+      const [candidateJson, candidateValue] = entries[0];
+      if (candidateValue === '' || candidateValue === null) {
+        const reparsedBody = tryParseBodyRecord(candidateJson);
+        if (reparsedBody) {
+          return reparsedBody;
+        }
+      }
+    }
+    return recordBody;
+  }
+
+  if (typeof body === 'string' && body.trim().length > 0) {
+    return tryParseBodyRecord(body);
+  }
+
+  return null;
+}
+
 function resolveRequestedAction(body: unknown): string | null {
-  return typeof body === 'object' &&
-    body !== null &&
-    typeof (body as { action?: unknown }).action === 'string' &&
-    (body as { action: string }).action.trim().length > 0
-    ? (body as { action: string }).action.trim().toLowerCase()
+  const normalizedBody = normalizeRequestBody(body);
+  const action = normalizedBody?.action;
+  return typeof action === 'string' && action.trim().length > 0
+    ? action.trim().toLowerCase()
     : null;
 }
 
@@ -64,8 +99,21 @@ router.post("/:gptId", async (req, res, next) => {
   try {
     const incomingGptId = req.params.gptId;
     const requestLogger = (req as any).logger;
+    const normalizedBody = normalizeRequestBody(req.body);
     const requestedAction = resolveRequestedAction(req.body);
     applyCanonicalGptRouteHeaders(res, incomingGptId);
+
+    requestLogger?.info?.('gpt.request.body', {
+      endpoint: req.originalUrl,
+      gptId: incomingGptId,
+      bodyType: normalizedBody ? 'json-object' : typeof req.body,
+      body: normalizedBody ?? req.body ?? null
+    });
+    requestLogger?.info?.('gpt.request.action', {
+      endpoint: req.originalUrl,
+      gptId: incomingGptId,
+      action: requestedAction
+    });
 
     requestLogger?.info?.("gpt.request.auth_state", {
       endpoint: req.originalUrl,
@@ -74,18 +122,11 @@ router.post("/:gptId", async (req, res, next) => {
     });
 
     if (requestedAction === 'diagnostics') {
-      const access = authorizeDiagnosticsRequest(req);
-      if (!access.authorized) {
-        return res.status(404).json({
-          error: 'Not Found'
-        });
-      }
-
       const diagnostics = await getDiagnosticsSnapshot(req.app);
       requestLogger?.info?.('gpt.request.diagnostics', {
         endpoint: req.originalUrl,
         gptId: incomingGptId,
-        protected: access.protected,
+        internal: true,
         registeredGpts: Array.isArray(diagnostics.registered_gpts)
           ? diagnostics.registered_gpts.length
           : diagnostics.registered_gpts,
@@ -101,6 +142,7 @@ router.post("/:gptId", async (req, res, next) => {
           logEvent: 'gpt.response.diagnostics'
         }
       );
+
       res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
       if (diagnosticsPayload.truncated) {
         res.setHeader('x-response-truncated', 'true');
@@ -110,7 +152,7 @@ router.post("/:gptId", async (req, res, next) => {
 
     const envelope = await routeGptRequest({
       gptId: incomingGptId,
-      body: req.body,
+      body: normalizedBody ?? req.body,
       requestId: (req as any).requestId,
       logger: requestLogger,
       request: req,
