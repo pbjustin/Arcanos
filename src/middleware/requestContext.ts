@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { resolveSafeRequestPath } from '@shared/requestPathSanitizer.js';
 import { redactSensitive } from '@shared/redaction.js';
+import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -120,6 +121,8 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
       statusCode,
       contentLength: res.getHeader('content-length') ?? null
     };
+
+    runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs);
 
     let level: RequestLogLevel = 'info';
     if (statusCode >= 500) {

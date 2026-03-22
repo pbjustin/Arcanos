@@ -10,8 +10,38 @@ import {
   prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
+import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
+import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { getDiagnosticsSnapshot } from '@core/diagnostics.js';
 
 const router = express.Router();
+
+function normalizeRequestBody(body: unknown): Record<string, unknown> | null {
+  if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+    return body as Record<string, unknown>;
+  }
+
+  if (typeof body === 'string' && body.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function resolveRequestedAction(body: unknown): string | null {
+  const normalizedBody = normalizeRequestBody(body);
+  const action = normalizedBody?.action;
+  return typeof action === 'string' && action.trim().length > 0
+    ? action.trim().toLowerCase()
+    : null;
+}
 
 function buildGptRequestAuthState(req: express.Request): Record<string, unknown> {
   const authorizationHeader = req.header("authorization");
@@ -52,6 +82,21 @@ router.post("/:gptId", async (req, res, next) => {
   try {
     const incomingGptId = req.params.gptId;
     const requestLogger = (req as any).logger;
+    const normalizedBody = normalizeRequestBody(req.body);
+    const requestedAction = resolveRequestedAction(req.body);
+    applyCanonicalGptRouteHeaders(res, incomingGptId);
+
+    requestLogger?.info?.('gpt.request.body', {
+      endpoint: req.originalUrl,
+      gptId: incomingGptId,
+      bodyType: normalizedBody ? 'json-object' : typeof req.body,
+      body: normalizedBody ?? req.body ?? null
+    });
+    requestLogger?.info?.('gpt.request.action', {
+      endpoint: req.originalUrl,
+      gptId: incomingGptId,
+      action: requestedAction
+    });
 
     requestLogger?.info?.("gpt.request.auth_state", {
       endpoint: req.originalUrl,
@@ -59,9 +104,38 @@ router.post("/:gptId", async (req, res, next) => {
       ...buildGptRequestAuthState(req),
     });
 
+    if (requestedAction === 'diagnostics') {
+      const diagnostics = await getDiagnosticsSnapshot(req.app);
+      requestLogger?.info?.('gpt.request.diagnostics', {
+        endpoint: req.originalUrl,
+        gptId: incomingGptId,
+        internal: true,
+        registeredGpts: Array.isArray(diagnostics.registered_gpts)
+          ? diagnostics.registered_gpts.length
+          : diagnostics.registered_gpts,
+        routeCount: Array.isArray(diagnostics.active_routes)
+          ? diagnostics.active_routes.length
+          : diagnostics.active_routes
+      });
+
+      const diagnosticsPayload = prepareBoundedClientJsonPayload(
+        diagnostics as unknown as Record<string, unknown>,
+        {
+          logger: req.logger,
+          logEvent: 'gpt.response.diagnostics'
+        }
+      );
+
+      res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
+      if (diagnosticsPayload.truncated) {
+        res.setHeader('x-response-truncated', 'true');
+      }
+      return res.json(diagnosticsPayload.payload);
+    }
+
     const envelope = await routeGptRequest({
       gptId: incomingGptId,
-      body: req.body,
+      body: normalizedBody ?? req.body,
       requestId: (req as any).requestId,
       logger: requestLogger,
       request: req,
@@ -136,6 +210,11 @@ router.post("/:gptId", async (req, res, next) => {
 
     return res.json(publicEnvelope.payload);
   } catch (err) {
+    req.logger?.error?.('gpt.request.unexpected_failure', {
+      endpoint: req.originalUrl,
+      gptId: req.params.gptId,
+      error: resolveErrorMessage(err)
+    });
     return next(err);
   }
 });

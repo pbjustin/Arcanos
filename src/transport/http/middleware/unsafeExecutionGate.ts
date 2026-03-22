@@ -6,6 +6,36 @@ import {
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
+const GPT_PATH_PATTERN = /^\/gpt\/[^/]+$/;
+
+function normalizeRequestBody(body: unknown): Record<string, unknown> | null {
+  if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+    return body as Record<string, unknown>;
+  }
+
+  if (typeof body === 'string' && body.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function isDiagnosticsActionRequest(req: Request): boolean {
+  if (req.method.toUpperCase() !== 'POST' || !GPT_PATH_PATTERN.test(req.path)) {
+    return false;
+  }
+
+  const normalizedBody = normalizeRequestBody(req.body);
+  const action = normalizedBody?.action;
+  return typeof action === 'string' && action.trim().toLowerCase() === 'diagnostics';
+}
 
 /**
  * Purpose: Block mutating requests when unsafe safety conditions are active.
@@ -26,6 +56,15 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
     return;
   }
 
+  if (isDiagnosticsActionRequest(req)) {
+    req.logger?.info?.('unsafe_execution_gate.bypass', {
+      reason: 'gpt_diagnostics',
+      path: req.path
+    });
+    next();
+    return;
+  }
+
   if (!hasUnsafeBlockingConditions()) {
     next();
     return;
@@ -35,4 +74,3 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
 }
 
 export default unsafeExecutionGate;
-
