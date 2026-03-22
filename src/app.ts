@@ -27,11 +27,29 @@ function hasConfiguredOpenAIKey(): boolean {
  */
 export function createApp(): Express {
   const app = express();
+  const gptFallbackBodyParser = express.text({
+    type: () => true,
+    limit: config.limits.jsonLimit
+  });
 
   app.use(requestContext);
   app.use(cors(config.cors));
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
+  app.use('/gpt', (req: Request, res: Response, next: NextFunction) => {
+    if (req.body !== undefined) {
+      next();
+      return;
+    }
+
+    gptFallbackBodyParser(req, res, next);
+  });
+  app.use('/gpt', (req: Request, _res: Response, next: NextFunction) => {
+    if (req.body === undefined) {
+      req.body = {};
+    }
+    next();
+  });
 
   app.use(unsafeExecutionGate);
   app.use(createHealthCheckMiddleware());
