@@ -39,8 +39,10 @@ jest.unstable_mockModule('@services/promptRouteShortcuts.js', () => ({
 jest.unstable_mockModule('@services/openai.js', () => ({
   getDefaultModel: () => 'arcanos-intake-model',
   getComplexModel: () => 'arcanos-final-model',
+  getFallbackModel: () => 'gpt-4.1',
   getGPT5Model: () => 'gpt-5-reasoning-model',
   createChatCompletionWithFallback: mockCreateChatCompletionWithFallback,
+  createSingleChatCompletion: mockCreateChatCompletionWithFallback,
   runStructuredReasoning: mockRunStructuredReasoning,
   createGPT5Reasoning: jest.fn()
 }));

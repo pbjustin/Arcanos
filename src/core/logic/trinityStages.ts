@@ -5,7 +5,14 @@
 
 import type OpenAI from 'openai';
 import { logGPT5Invocation } from "@platform/logging/aiLogger.js";
-import { getDefaultModel, getGPT5Model, getComplexModel, createChatCompletionWithFallback } from "@services/openai.js";
+import {
+  getDefaultModel,
+  getGPT5Model,
+  getComplexModel,
+  getFallbackModel,
+  createChatCompletionWithFallback,
+  createSingleChatCompletion
+} from "@services/openai.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import {
@@ -34,7 +41,7 @@ import { enforceTokenCap } from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Tier } from './trinityTier.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
-import { assertBudgetAvailable } from '@platform/resilience/runtimeBudget.js';
+import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 import { runStructuredReasoning } from '@services/openai.js';
 import {
   buildFinalHonestyInstruction,
@@ -70,6 +77,46 @@ function resolveTemperature(cognitiveDomain?: CognitiveDomain): number {
 
 export { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH };
 export { calculateMemoryScoreSummary };
+
+const DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS = 12_000;
+
+function resolveDirectAnswerStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  const configuredTimeoutMs = Number.parseInt(
+    process.env.TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS ?? '',
+    10
+  );
+  const normalizedConfiguredTimeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? Math.trunc(configuredTimeoutMs)
+      : DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS;
+
+  if (!runtimeBudget) {
+    return normalizedConfiguredTimeoutMs;
+  }
+
+  return Math.max(1, Math.min(normalizedConfiguredTimeoutMs, getSafeRemainingMs(runtimeBudget)));
+}
+
+async function withStageTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  errorFactory: () => Error
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(errorFactory()), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 /**
  * Validates the availability of the configured AI model.
@@ -384,30 +431,75 @@ export async function runDirectAnswerStage(
   memoryContextSummary: string,
   auditSafePrompt: string,
   cognitiveDomain?: CognitiveDomain,
-  runtimeBudget?: RuntimeBudget
+  runtimeBudget?: RuntimeBudget,
+  requestId?: string
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
-  const complexModel = getComplexModel();
+  const directAnswerModel = getFallbackModel();
   const directAnswerTokenLimit = resolveTrinityDirectAnswerTokenLimit(
     auditSafePrompt,
     APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
   );
   const cappedTokenLimit = enforceTokenCap(directAnswerTokenLimit);
-  const directAnswerTokenParams = getTokenParameter(complexModel, cappedTokenLimit);
+  const directAnswerTokenParams = getTokenParameter(directAnswerModel, cappedTokenLimit);
   const temperature = Math.min(resolveTemperature(cognitiveDomain), 0.2);
-  const directAnswerResponse = await createChatCompletionWithFallback(client, {
-    messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
-    temperature,
-    model: complexModel,
-    ...directAnswerTokenParams
+  const stageTimeoutMs = resolveDirectAnswerStageTimeoutMs(runtimeBudget);
+
+  logger.info('trinity.direct_answer.execution_plan', {
+    module: 'trinity',
+    operation: 'direct-answer-stage',
+    requestId,
+    model: directAnswerModel,
+    timeoutMs: stageTimeoutMs,
+    tokenLimit: cappedTokenLimit
   });
+
+  let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
+  try {
+    directAnswerResponse = await withStageTimeout(
+      createSingleChatCompletion(client, {
+        messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
+        temperature,
+        model: directAnswerModel,
+        ...directAnswerTokenParams
+      }),
+      stageTimeoutMs,
+      () =>
+        new Error(
+          `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
+        )
+    );
+  } catch (error) {
+    const errorMessage = resolveErrorMessage(error);
+    logger.warn(
+      errorMessage.includes(`timed out after ${stageTimeoutMs}ms`)
+        ? 'trinity.direct_answer.stage_timeout'
+        : 'trinity.direct_answer.stage_error',
+      {
+        module: 'trinity',
+        operation: 'direct-answer-stage',
+        requestId,
+        model: directAnswerModel,
+        timeoutMs: stageTimeoutMs,
+        promptLength: auditSafePrompt.length,
+        error: errorMessage
+      }
+    );
+    throw error;
+  }
+
   const directAnswerText = directAnswerResponse.choices[0]?.message?.content || '';
-  const actualModel = directAnswerResponse.activeModel || complexModel;
+  const actualModel = directAnswerResponse.activeModel || directAnswerModel;
   const fallbackUsed = directAnswerResponse.fallbackFlag || false;
 
   if (fallbackUsed) {
-    logFallbackEvent('ARCANOS-DIRECT-ANSWER', complexModel, actualModel, 'Fallback flag set by direct-answer completion');
+    logFallbackEvent(
+      'ARCANOS-DIRECT-ANSWER',
+      directAnswerModel,
+      actualModel,
+      'Fallback flag set by direct-answer completion'
+    );
   }
 
   return {

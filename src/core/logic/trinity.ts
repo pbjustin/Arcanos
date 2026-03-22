@@ -550,7 +550,8 @@ export async function runThroughBrain(
         memoryContext.contextSummary,
         auditSafePrompt,
         cognitiveDomain,
-        runtimeBudget
+        runtimeBudget,
+        requestId
       );
       checkWatchdog();
 

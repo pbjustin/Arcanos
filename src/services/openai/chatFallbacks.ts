@@ -255,4 +255,29 @@ export const createChatCompletionWithFallback = async (
   return executeModelFallbacks(attempts, `${failureContext} [COMPLETE FAILURE]`);
 };
 
+/**
+ * Execute a single chat completion attempt without retry/fallback expansion.
+ * Inputs: OpenAI client/adapter plus completion params.
+ * Outputs: completion response augmented with active model metadata.
+ * Edge cases: preserves the default-model fallback when params.model is omitted.
+ */
+export const createSingleChatCompletion = async (
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  params: ChatCompletionParams,
+): Promise<ChatCompletionWithFallback> => {
+  const primaryModel = params.model ?? getDefaultModel();
+  const { response, model } = await attemptModelCall(
+    clientOrAdapter,
+    params,
+    primaryModel,
+    CHAT_FALLBACK_LOG_PREFIXES.primary
+  );
+
+  return {
+    ...response,
+    activeModel: model,
+    fallbackFlag: false
+  };
+};
+
 export { ensureModelMatchesExpectation };

@@ -12,7 +12,7 @@ import {
 } from './openai/credentialProvider.js';
 import { generateMockResponse } from './openai/mock.js';
 import { getCircuitBreakerSnapshot } from './openai/resilience.js';
-import { createChatCompletionWithFallback } from './openai/chatFallbacks.js';
+import { createChatCompletionWithFallback, createSingleChatCompletion } from './openai/chatFallbacks.js';
 import { runStructuredReasoning } from './openai/structuredReasoning.js';
 
 export type {
@@ -49,7 +49,8 @@ export {
   generateMockResponse,
   getCircuitBreakerSnapshot,
   validateClientHealth,
-  createChatCompletionWithFallback
+  createChatCompletionWithFallback,
+  createSingleChatCompletion
 };
 
 export default {
@@ -65,5 +66,6 @@ export default {
   generateImage,
   getOpenAIServiceHealth,
   createCentralizedCompletion,
-  createChatCompletionWithFallback
+  createChatCompletionWithFallback,
+  createSingleChatCompletion
 };
