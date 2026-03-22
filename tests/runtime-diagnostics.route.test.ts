@@ -104,4 +104,23 @@ describe('runtime diagnostics routes', () => {
       gptDiagnosticsResponse.body.requests_total
     );
   });
+
+  it('parses diagnostics action from non-json request bodies', async () => {
+    const app = await buildApp();
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .set('content-type', 'application/x-www-form-urlencoded')
+      .send('{"action":"diagnostics"}');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      uptime: expect.any(Number),
+      requests_total: expect.any(Number),
+      errors_total: expect.any(Number),
+      modules: expect.any(Object)
+    }));
+    expect(response.body).not.toHaveProperty('ok');
+    expect(response.body).not.toHaveProperty('result');
+  });
 });

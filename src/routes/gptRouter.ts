@@ -16,20 +16,37 @@ import { getDiagnosticsSnapshot } from '@core/diagnostics.js';
 
 const router = express.Router();
 
+function tryParseBodyRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function normalizeRequestBody(body: unknown): Record<string, unknown> | null {
   if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
-    return body as Record<string, unknown>;
+    const recordBody = body as Record<string, unknown>;
+    const entries = Object.entries(recordBody);
+    if (entries.length === 1) {
+      const [candidateJson, candidateValue] = entries[0];
+      if (candidateValue === '' || candidateValue === null) {
+        const reparsedBody = tryParseBodyRecord(candidateJson);
+        if (reparsedBody) {
+          return reparsedBody;
+        }
+      }
+    }
+    return recordBody;
   }
 
   if (typeof body === 'string' && body.trim().length > 0) {
-    try {
-      const parsed = JSON.parse(body);
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return null;
-    }
+    return tryParseBodyRecord(body);
   }
 
   return null;
