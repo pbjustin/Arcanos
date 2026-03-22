@@ -120,6 +120,21 @@ describe('runtime diagnostics routes', () => {
     expect(diagnosticsResponse.body.recent_latency_ms).toHaveLength(3);
   }, 15000);
 
+  it('allows unprotected diagnostics when no token is configured', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.DIAGNOSTICS_BEARER_TOKEN;
+    const app = await buildApp();
+
+    const response = await request(app).get('/diagnostics');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      requests_total: 0,
+      errors_total: 0,
+      modules: expect.any(Object)
+    }));
+  });
+
   it('enforces optional diagnostics bearer protection when configured', async () => {
     process.env.DIAGNOSTICS_BEARER_TOKEN = 'diagnostics-secret';
     const app = await buildApp();

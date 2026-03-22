@@ -64,19 +64,6 @@ export function setupDiagnostics(app: Express): void {
         ? bearerHeader.slice('Bearer '.length).trim()
         : null;
     const providedToken = providedBearerToken || headerToken || '';
-    const isLocalDiagnosticsMode =
-      config.server.environment === 'test' ||
-      config.server.environment === 'development';
-
-    if (!expectedToken && !isLocalDiagnosticsMode) {
-      req.logger?.warn?.('diagnostics.access.unconfigured', {
-        protected: true
-      });
-      res.status(404).json({
-        error: 'Not Found'
-      });
-      return;
-    }
 
     if (expectedToken && !timingSafeStringEqual(providedToken, expectedToken)) {
       req.logger?.warn?.('diagnostics.access.denied', {
@@ -86,6 +73,12 @@ export function setupDiagnostics(app: Express): void {
         error: 'Not Found'
       });
       return;
+    }
+
+    if (!expectedToken && config.server.environment === 'production') {
+      req.logger?.warn?.('diagnostics.access.public', {
+        protected: false
+      });
     }
 
     try {
