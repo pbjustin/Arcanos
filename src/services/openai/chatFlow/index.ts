@@ -60,6 +60,13 @@ import {
   convertResponseToLegacyChatCompletion,
   extractResponseOutputText
 } from '../requestBuilders.js';
+import {
+  createLinkedAbortController,
+  getRequestAbortSignal,
+  getRequestRemainingMs,
+  isAbortError,
+  throwIfRequestAborted
+} from "@arcanos/runtime";
 /**
  * Enhanced OpenAI call helper with circuit breaker, exponential backoff, and caching
  */
@@ -172,15 +179,50 @@ export async function callOpenAI(
 const extractReasoningText = (response: ChatCompletion, fallback: string = REASONING_FALLBACK_TEXT): string =>
   response?.choices?.[0]?.message?.content?.trim() || fallback;
 
+interface OpenAIResponsesRequestOptions {
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+function resolveResponsesTimeoutMs(explicitTimeoutMs?: number): number {
+  const baseTimeoutMs = explicitTimeoutMs ?? getApiTimeoutMs();
+  const remainingRequestMs = getRequestRemainingMs();
+
+  if (remainingRequestMs === null) {
+    return baseTimeoutMs;
+  }
+
+  return Math.max(1, Math.min(baseTimeoutMs, remainingRequestMs));
+}
+
 async function invokeResponsesCompletion(
   clientOrAdapter: OpenAI | OpenAIAdapter,
   payload: ReturnType<typeof buildResponsesRequest>,
-  expectedModel: string
+  expectedModel: string,
+  options: OpenAIResponsesRequestOptions = {}
 ): Promise<ChatCompletion> {
-  const responsesResult = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object'
-    ? await (clientOrAdapter as OpenAIAdapter).responses.create(payload)
-    : await (clientOrAdapter as OpenAI).responses.create(payload);
-  return convertResponseToLegacyChatCompletion(responsesResult, expectedModel);
+  throwIfRequestAborted();
+
+  const requestTimeoutMs = resolveResponsesTimeoutMs(options.timeoutMs);
+  const requestScope = createLinkedAbortController({
+    timeoutMs: requestTimeoutMs,
+    parentSignal: options.signal ?? getRequestAbortSignal(),
+    abortMessage: `OpenAI Responses request timed out after ${requestTimeoutMs}ms`
+  });
+
+  try {
+    const requestOptions = {
+      signal: requestScope.signal,
+      headers: options.headers
+    };
+    const responsesResult = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object'
+      ? await (clientOrAdapter as OpenAIAdapter).responses.create(payload, requestOptions)
+      : await (clientOrAdapter as OpenAI).responses.create(payload, requestOptions);
+    return convertResponseToLegacyChatCompletion(responsesResult, expectedModel);
+  } finally {
+    requestScope.cleanup();
+  }
 }
 
 /**
@@ -190,7 +232,8 @@ async function invokeResponsesCompletion(
 export const createGPT5Reasoning = async (
   clientOrAdapter: OpenAI | OpenAIAdapter | null,
   prompt: string,
-  systemPrompt?: string
+  systemPrompt?: string,
+  options: OpenAIResponsesRequestOptions = {}
 ): Promise<{ content: string; model?: string; error?: string }> => {
   if (!clientOrAdapter) {
     return { content: '[Fallback: GPT-5.1 unavailable - no OpenAI client]', error: 'No OpenAI client' };
@@ -214,7 +257,7 @@ export const createGPT5Reasoning = async (
       ),
       includeRoutingMessage: false
     });
-    const response = await invokeResponsesCompletion(clientOrAdapter, requestPayload, gpt5Model);
+    const response = await invokeResponsesCompletion(clientOrAdapter, requestPayload, gpt5Model, options);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const content = extractReasoningText(response as ChatCompletion);
@@ -225,6 +268,9 @@ export const createGPT5Reasoning = async (
     return { content, model: resolvedModel };
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
+    if (isAbortError(error)) {
+      throw error;
+    }
     const errorMsg = error.message || 'Unknown error';
     logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.REASONING_ERROR, { model: gpt5Model }, error);
     return { content: `[Fallback: GPT-5.1 unavailable - ${errorMsg}]`, error: errorMsg };
@@ -239,7 +285,8 @@ export const createGPT5ReasoningLayer = async (
   clientOrAdapter: OpenAI | OpenAIAdapter | null,
   arcanosResult: string,
   originalPrompt: string,
-  context?: string
+  context?: string,
+  options: OpenAIResponsesRequestOptions = {}
 ): Promise<{
   refinedResult: string;
   reasoningUsed: boolean;
@@ -276,7 +323,7 @@ export const createGPT5ReasoningLayer = async (
       temperature: REASONING_TEMPERATURE,
       includeRoutingMessage: false
     });
-    const response = await invokeResponsesCompletion(clientOrAdapter, requestPayload, gpt5Model);
+    const response = await invokeResponsesCompletion(clientOrAdapter, requestPayload, gpt5Model, options);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
     const reasoningContent = extractReasoningText(response as ChatCompletion);
@@ -297,6 +344,9 @@ export const createGPT5ReasoningLayer = async (
     };
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
+    if (isAbortError(error)) {
+      throw error;
+    }
     const errorMsg = error.message || 'Unknown error';
     logOpenAIEvent('error', OPENAI_LOG_MESSAGES.GPT5.LAYER_ERROR, { model: gpt5Model }, error);
     
@@ -316,7 +366,8 @@ export const createGPT5ReasoningLayer = async (
  */
 export async function call_gpt5_strict(
   prompt: string, 
-  kwargs: Partial<ChatCompletionCreateParams> = {}
+  kwargs: Partial<ChatCompletionCreateParams> = {},
+  options: OpenAIResponsesRequestOptions = {}
 ): Promise<ChatCompletion> {
   const { client } = getOpenAIClientOrAdapter();
   if (!client) {
@@ -345,10 +396,7 @@ export async function call_gpt5_strict(
       includeRoutingMessage: false
     });
 
-    const response = convertResponseToLegacyChatCompletion(
-      await client.responses.create(requestPayload),
-      gpt5Model
-    );
+    const response = await invokeResponsesCompletion(client, requestPayload, gpt5Model, options);
 
     // Validate that the response actually came from GPT-5.1
     // Response is guaranteed to be ChatCompletion (not Stream) because stream: false
@@ -386,6 +434,7 @@ export async function createCentralizedCompletion(
     top_p?: number;
     frequency_penalty?: number;
     presence_penalty?: number;
+    signal?: AbortSignal;
   } = {}
 ): Promise<ChatCompletion | AsyncIterable<unknown>> {
   const { adapter, client } = getOpenAIClientOrAdapter();
@@ -424,7 +473,9 @@ export async function createCentralizedCompletion(
   };
 
   try {
+    throwIfRequestAborted();
     const requestOptions = {
+      signal: options.signal ?? getRequestAbortSignal(),
       headers: {
         [REQUEST_ID_HEADER]: crypto.randomUUID()
       }
@@ -452,7 +503,21 @@ export async function createCentralizedCompletion(
         includeRoutingMessage: false
       }) as any;
 
-      response = await (streamClient as any).responses.create({ ...responsePayload, stream: true }, requestOptions);
+      const requestTimeoutMs = resolveResponsesTimeoutMs();
+      const requestScope = createLinkedAbortController({
+        timeoutMs: requestTimeoutMs,
+        parentSignal: options.signal ?? getRequestAbortSignal(),
+        abortMessage: `OpenAI Responses request timed out after ${requestTimeoutMs}ms`
+      });
+
+      try {
+        response = await (streamClient as any).responses.create(
+          { ...responsePayload, stream: true },
+          { ...requestOptions, signal: requestScope.signal }
+        );
+      } finally {
+        requestScope.cleanup();
+      }
     } else if (adapter) {
       const responsePayload = buildResponsesRequest({
         prompt: '',
@@ -468,10 +533,7 @@ export async function createCentralizedCompletion(
         presence_penalty: requestPayload.presence_penalty,
         includeRoutingMessage: false
       });
-      response = convertResponseToLegacyChatCompletion(
-        await adapter.responses.create(responsePayload, requestOptions),
-        model
-      );
+      response = await invokeResponsesCompletion(adapter, responsePayload, model, requestOptions);
     } else if (client) {
       const responsePayload = buildResponsesRequest({
         prompt: '',
@@ -487,10 +549,7 @@ export async function createCentralizedCompletion(
         presence_penalty: requestPayload.presence_penalty,
         includeRoutingMessage: false
       });
-      response = convertResponseToLegacyChatCompletion(
-        await client.responses.create(responsePayload, requestOptions),
-        model
-      );
+      response = await invokeResponsesCompletion(client, responsePayload, model, requestOptions);
     } else {
       throw new Error('OpenAI client not initialized');
     }
