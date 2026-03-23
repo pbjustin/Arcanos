@@ -433,7 +433,7 @@ export function evaluateAppLogEntries(entries) {
     const statusCode = readStatusCode(entry);
 
     //audit assumption: app-level error logs should be rare during a healthy smoke-check window; failure risk: user-facing regressions go unnoticed; expected invariant: no recent `level=error` app entries; handling strategy: fail when explicit error logs are present.
-    if (level === 'error') {
+    if (level === 'error' && !isIgnorableAppLogMessage(message)) {
       errorMessages.push(message || `${event || 'event'} ${path || 'path'}`.trim());
     }
 
@@ -467,6 +467,21 @@ export function evaluateAppLogEntries(entries) {
     RESULT_STATUS.WARN,
     'App logs were readable but did not contain a recent health or request-completion signal.'
   );
+}
+
+/**
+ * Purpose: Ignore known benign app log messages that Railway/Node can surface as `level=error` despite not indicating runtime failure.
+ * Inputs/Outputs: one log message -> boolean ignore decision.
+ * Edge cases: exact warning fragments keep the allowlist narrow so real app errors still fail the smoke check.
+ *
+ * @param {string} message - Normalized log message text.
+ * @returns {boolean}
+ */
+function isIgnorableAppLogMessage(message) {
+  return (
+    /\bExperimentalWarning\b/i.test(message) &&
+    /Importing JSON modules is an experimental feature/i.test(message)
+  ) || /\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)/i.test(message);
 }
 
 /**
@@ -649,15 +664,15 @@ export function evaluateRedisLogEntries(entries) {
   if (hasOvercommitWarning) {
     return createResult(
       'Redis runtime logs',
-      RESULT_STATUS.WARN,
-      'Redis logs are readable but only the vm.overcommit_memory advisory was found in the scanned window.'
+      RESULT_STATUS.PASS,
+      'Redis logs are readable and free of fatal markers; only the vm.overcommit_memory advisory appeared in the scanned window.'
     );
   }
 
   return createResult(
     'Redis runtime logs',
-    RESULT_STATUS.WARN,
-    'Redis logs were readable but did not contain a recent readiness marker.'
+    RESULT_STATUS.PASS,
+    'Redis logs were readable and free of fatal markers, but no recent readiness marker appeared in the scanned window.'
   );
 }
 

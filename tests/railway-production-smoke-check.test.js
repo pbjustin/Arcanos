@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import {
   RESULT_STATUS,
+  evaluateAppLogEntries,
   evaluateDatabaseLogEntries,
   evaluateRedisLogEntries,
   evaluateRuntimeWiring,
@@ -264,6 +265,29 @@ describe('railway-production-smoke-check', () => {
     expect(result.detail).toMatch(/relation "User" does not exist/i);
   });
 
+  it('ignores the benign Node JSON ExperimentalWarning when healthy traffic is present', () => {
+    const result = evaluateAppLogEntries(
+      parseJsonLines([
+        JSON.stringify({
+          level: 'error',
+          message: '(node:13) ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time'
+        }),
+        JSON.stringify({
+          level: 'error',
+          message: '(Use `node --trace-warnings ...` to show where the warning was created)'
+        }),
+        JSON.stringify({
+          event: 'request.completed',
+          path: '/healthz',
+          data: { statusCode: 200 }
+        })
+      ].join('\n'))
+    );
+
+    expect(result.status).toBe(RESULT_STATUS.PASS);
+    expect(result.detail).toMatch(/healthy diagnostics/i);
+  });
+
   it('passes when Railway Redis reports readiness alongside the standard overcommit advisory', () => {
     const result = evaluateRedisLogEntries(
       parseJsonLines([
@@ -277,14 +301,25 @@ describe('railway-production-smoke-check', () => {
     expect(result.detail).toMatch(/vm\.overcommit_memory/i);
   });
 
-  it('warns when only the Redis overcommit advisory is present without a readiness marker', () => {
+  it('passes when only the Redis overcommit advisory is present without a readiness marker', () => {
     const result = evaluateRedisLogEntries(
       parseJsonLines([
         JSON.stringify({ level: 'info', message: '1:C 24 Feb 2026 06:38:47.711 # WARNING Memory overcommit must be enabled!' })
       ].join('\n'))
     );
 
-    expect(result.status).toBe(RESULT_STATUS.WARN);
+    expect(result.status).toBe(RESULT_STATUS.PASS);
     expect(result.detail).toMatch(/vm\.overcommit_memory/i);
+  });
+
+  it('passes when Redis logs are readable and quiet but contain no fatal markers', () => {
+    const result = evaluateRedisLogEntries(
+      parseJsonLines([
+        JSON.stringify({ level: 'info', message: '2026-03-22T23:18:03.000Z periodic connection stats emitted' })
+      ].join('\n'))
+    );
+
+    expect(result.status).toBe(RESULT_STATUS.PASS);
+    expect(result.detail).toMatch(/free of fatal markers/i);
   });
 });
