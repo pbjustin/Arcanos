@@ -27,6 +27,7 @@ export interface CallOpenAIOptions {
   responseFormat?: ChatCompletionResponseFormat;
   user?: string;
   metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export interface CallOpenAICacheEntry {

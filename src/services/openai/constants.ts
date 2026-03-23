@@ -24,7 +24,7 @@ export const CACHE_TTL_MS = parseIntegerEnv('OPENAI_CACHE_TTL_MS', 5 * 60 * 1000
 
 export const REQUEST_ID_HEADER = 'X-Request-ID';
 
-export const DEFAULT_MAX_RETRIES = parseIntegerEnv('OPENAI_MAX_RETRIES', 3);
+export const DEFAULT_MAX_RETRIES = Math.min(parseIntegerEnv('OPENAI_MAX_RETRIES', 2), 2);
 
 export const IMAGE_PROMPT_TOKEN_LIMIT = parseIntegerEnv('OPENAI_IMAGE_PROMPT_TOKEN_LIMIT', 256);
 

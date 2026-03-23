@@ -21,6 +21,12 @@ import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/di
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Request } from "express";
+import {
+  getRequestAbortContext,
+  getRequestRemainingMs,
+  isAbortError,
+  runWithRequestAbortTimeout
+} from "@arcanos/runtime";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -153,9 +159,15 @@ async function dispatchResolvedModuleAction(params: {
 
   const dispatchStartedAt = Date.now();
   try {
-    const result = await withTimeout(
-      dispatchModuleAction(params.moduleName, params.action, params.payload),
-      params.timeoutMs
+    const activeAbortContext = getRequestAbortContext();
+    const result = await runWithRequestAbortTimeout(
+      {
+        timeoutMs: params.timeoutMs,
+        requestId: params.requestId,
+        parentSignal: activeAbortContext?.signal,
+        abortMessage: `Module dispatch timeout after ${params.timeoutMs}ms`
+      },
+      () => dispatchModuleAction(params.moduleName, params.action, params.payload)
     );
 
     const resolvedSessionId = resolveSessionId(params.body, params.payload);
@@ -195,7 +207,8 @@ async function dispatchResolvedModuleAction(params: {
     };
   } catch (err: any) {
     const errorMessage = String(err?.message ?? err);
-    const isDispatchTimeout = errorMessage === `Module dispatch timeout after ${params.timeoutMs}ms`;
+    const isDispatchTimeout =
+      errorMessage === `Module dispatch timeout after ${params.timeoutMs}ms` || isAbortError(err);
     const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
 
     params.logger?.error?.("gpt.dispatch.error", {
@@ -225,7 +238,10 @@ async function dispatchResolvedModuleAction(params: {
 
     return {
       ok: false,
-      error: { code: "MODULE_ERROR", message: err?.message ?? "Module dispatch failed" },
+      error: {
+        code: isDispatchTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
+        message: err?.message ?? "Module dispatch failed"
+      },
       _route: routeMeta,
     };
   }
@@ -660,15 +676,37 @@ function resolvePositiveTimeoutMs(value: unknown): number | null {
 function resolveDispatchTimeout(
   body: unknown,
   moduleMetadata: { defaultTimeoutMs?: number } | null
-): { timeoutMs: number; timeoutSource: "request" | "module-default" | "dispatcher-default" } {
+): { timeoutMs: number; timeoutSource: "request" | "module-default" | "dispatcher-default" | "request-cap" } {
   const requestTimeoutMs = resolvePositiveTimeoutMs((body as any)?.timeoutMs);
   if (requestTimeoutMs !== null) {
+    const requestRemainingMs = getRequestRemainingMs();
+    if (requestRemainingMs !== null) {
+      return {
+        timeoutMs: Math.max(1, Math.min(requestTimeoutMs, requestRemainingMs)),
+        timeoutSource: requestTimeoutMs > requestRemainingMs ? "request-cap" : "request"
+      };
+    }
     return { timeoutMs: requestTimeoutMs, timeoutSource: "request" };
   }
 
   const moduleTimeoutMs = resolvePositiveTimeoutMs(moduleMetadata?.defaultTimeoutMs);
   if (moduleTimeoutMs !== null) {
+    const requestRemainingMs = getRequestRemainingMs();
+    if (requestRemainingMs !== null) {
+      return {
+        timeoutMs: Math.max(1, Math.min(moduleTimeoutMs, requestRemainingMs)),
+        timeoutSource: moduleTimeoutMs > requestRemainingMs ? "request-cap" : "module-default"
+      };
+    }
     return { timeoutMs: moduleTimeoutMs, timeoutSource: "module-default" };
+  }
+
+  const requestRemainingMs = getRequestRemainingMs();
+  if (requestRemainingMs !== null) {
+    return {
+      timeoutMs: Math.max(1, Math.min(DEFAULT_MODULE_DISPATCH_TIMEOUT_MS, requestRemainingMs)),
+      timeoutSource: DEFAULT_MODULE_DISPATCH_TIMEOUT_MS > requestRemainingMs ? "request-cap" : "dispatcher-default"
+    };
   }
 
   return {

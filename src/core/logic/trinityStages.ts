@@ -44,6 +44,11 @@ import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
 import { runStructuredReasoning } from '@services/openai.js';
 import {
+  getRequestAbortSignal,
+  isAbortError,
+  runWithRequestAbortTimeout
+} from '@arcanos/runtime';
+import {
   buildFinalHonestyInstruction,
   buildFinalStageInstruction,
   buildIntakeCapabilityEnvelope,
@@ -79,6 +84,7 @@ export { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_
 export { calculateMemoryScoreSummary };
 
 const DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS = 12_000;
+const DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS = 4_000;
 
 function resolveDirectAnswerStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
   const configuredTimeoutMs = Number.parseInt(
@@ -97,25 +103,12 @@ function resolveDirectAnswerStageTimeoutMs(runtimeBudget?: RuntimeBudget): numbe
   return Math.max(1, Math.min(normalizedConfiguredTimeoutMs, getSafeRemainingMs(runtimeBudget)));
 }
 
-async function withStageTimeout<T>(
-  operation: Promise<T>,
-  timeoutMs: number,
-  errorFactory: () => Error
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(errorFactory()), timeoutMs);
-      })
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
+function resolveModelValidationTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  if (!runtimeBudget) {
+    return DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS;
   }
+
+  return Math.max(1, Math.min(DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS, getSafeRemainingMs(runtimeBudget)));
 }
 
 /**
@@ -127,7 +120,19 @@ export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudge
 
   const defaultModel = getDefaultModel();
   try {
-    await client.models.retrieve(defaultModel);
+    const timeoutMs = resolveModelValidationTimeoutMs(runtimeBudget);
+    await runWithRequestAbortTimeout(
+      {
+        timeoutMs,
+        parentSignal: getRequestAbortSignal(),
+        abortMessage: `Trinity model validation timed out after ${timeoutMs}ms`
+      },
+      async () => {
+        await client.models.retrieve(defaultModel, {
+          signal: getRequestAbortSignal()
+        } as any);
+      }
+    );
     logger.info('Fine-tuned model validation successful', {
       module: 'trinity',
       operation: 'model-validation',
@@ -136,6 +141,10 @@ export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudge
     });
     return defaultModel;
   } catch (err) {
+    if (isAbortError(err)) {
+      throw err;
+    }
+
     logger.warn('MODEL_FALLBACK_TRIGGERED', {
       module: 'trinity',
       operation: 'model-fallback',
@@ -457,18 +466,21 @@ export async function runDirectAnswerStage(
 
   let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
   try {
-    directAnswerResponse = await withStageTimeout(
-      createSingleChatCompletion(client, {
-        messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
-        temperature,
-        model: directAnswerModel,
-        ...directAnswerTokenParams
-      }),
-      stageTimeoutMs,
+    directAnswerResponse = await runWithRequestAbortTimeout(
+      {
+        timeoutMs: stageTimeoutMs,
+        requestId,
+        parentSignal: getRequestAbortSignal(),
+        abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
+      },
       () =>
-        new Error(
-          `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
-        )
+        createSingleChatCompletion(client, {
+          messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
+          temperature,
+          model: directAnswerModel,
+          signal: getRequestAbortSignal(),
+          ...directAnswerTokenParams
+        })
     );
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);

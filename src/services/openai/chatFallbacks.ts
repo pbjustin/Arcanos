@@ -3,6 +3,7 @@ import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { prepareGPT5Request } from './requestTransforms.js';
 import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
+import { executeWithResilience } from './resilience.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { formatErrorMessage } from "@core/lib/errors/reusable.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
@@ -15,12 +16,22 @@ import {
   buildGpt5SuccessLog,
   CHAT_FALLBACK_LOG_PREFIXES,
 } from "@platform/runtime/chatFallbackMessages.js";
+import {
+  createAbortError,
+  createLinkedAbortController,
+  getRequestAbortSignal,
+  getRequestRemainingMs,
+  isAbortError,
+  throwIfRequestAborted
+} from "@arcanos/runtime";
 
 const normalizeModelId = (model: string): string => model.trim().toLowerCase();
+const DEFAULT_CHAT_COMPLETION_TIMEOUT_MS = 8_000;
 
 type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'> & {
   model?: string;
   max_completion_tokens?: number | null;
+  signal?: AbortSignal;
 };
 
 type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
@@ -69,6 +80,8 @@ const executeChatCompletionRequest = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
   payload: ChatCompletionParams & { model: string },
 ): Promise<ChatCompletionResponse> => {
+  throwIfRequestAborted();
+
   const requestPayload = buildResponsesRequest({
     prompt: extractPromptFromParams(payload),
     model: payload.model,
@@ -83,13 +96,29 @@ const executeChatCompletionRequest = async (
     includeRoutingMessage: true
   });
 
-  const usesAdapter = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object';
-  //audit Assumption: fallback orchestration should execute against Responses API across client types; risk: mixed endpoint behavior across stages; invariant: one Responses call per attempt; handling: branch on adapter/client Responses surface.
-  const response = usesAdapter
-    ? await (clientOrAdapter as OpenAIAdapter).responses.create(requestPayload)
-    : await (clientOrAdapter as OpenAI).responses.create(requestPayload);
+  const requestSignal = payload.signal ?? getRequestAbortSignal();
+  const remainingRequestMs = getRequestRemainingMs();
+  const requestTimeoutMs =
+    remainingRequestMs === null
+      ? DEFAULT_CHAT_COMPLETION_TIMEOUT_MS
+      : Math.max(1, Math.min(DEFAULT_CHAT_COMPLETION_TIMEOUT_MS, remainingRequestMs));
+  const requestScope = createLinkedAbortController({
+    timeoutMs: requestTimeoutMs,
+    parentSignal: requestSignal,
+    abortMessage: `OpenAI chat completion timed out after ${requestTimeoutMs}ms`
+  });
 
-  return convertResponseToLegacyChatCompletion(response, payload.model);
+  const usesAdapter = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object';
+  try {
+    //audit Assumption: fallback orchestration should execute against Responses API across client types; risk: mixed endpoint behavior across stages; invariant: one Responses call per attempt; handling: branch on adapter/client Responses surface.
+    const response = usesAdapter
+      ? await (clientOrAdapter as OpenAIAdapter).responses.create(requestPayload, { signal: requestScope.signal })
+      : await (clientOrAdapter as OpenAI).responses.create(requestPayload, { signal: requestScope.signal });
+
+    return convertResponseToLegacyChatCompletion(response, payload.model);
+  } finally {
+    requestScope.cleanup();
+  }
 };
 
 async function attemptModelCall(
@@ -98,12 +127,18 @@ async function attemptModelCall(
   model: string,
   logPrefix: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
+  const startedAt = Date.now();
   aiLogger.info(`${logPrefix} Attempting with model: ${model}`);
-  const response = await executeChatCompletionRequest(clientOrAdapter, {
-    ...params,
+  const response = await executeWithResilience(() =>
+    executeChatCompletionRequest(clientOrAdapter, {
+      ...params,
+      model,
+    })
+  );
+  aiLogger.info(`${logPrefix} Success with ${model}`, {
     model,
+    latencyMs: Date.now() - startedAt
   });
-  aiLogger.info(`${logPrefix} Success with ${model}`);
   return { response, model };
 }
 
@@ -112,6 +147,7 @@ async function attemptGPT5Call(
   params: ChatCompletionParams,
   gpt5Model: string,
 ): Promise<{ response: ChatCompletionResponse; model: string }> {
+  const startedAt = Date.now();
   aiLogger.info(buildGpt5AttemptLog(gpt5Model));
 
   const tokenParams = getTokenParameter(gpt5Model, getTokensFromParams(params));
@@ -121,8 +157,13 @@ async function attemptGPT5Call(
     ...tokenParams,
   }) as ChatCompletionParams & { model: string };
 
-  const response = await executeChatCompletionRequest(clientOrAdapter, gpt5Payload);
-  aiLogger.info(buildGpt5SuccessLog(gpt5Model));
+  const response = await executeWithResilience(() =>
+    executeChatCompletionRequest(clientOrAdapter, gpt5Payload)
+  );
+  aiLogger.info(buildGpt5SuccessLog(gpt5Model), {
+    model: gpt5Model,
+    latencyMs: Date.now() - startedAt
+  });
   return { response, model: gpt5Model };
 }
 
@@ -172,10 +213,18 @@ const executeModelFallbacks = async <T>(
   let lastError: unknown;
 
   for (const { label, executor, transform } of attempts) {
+    const remainingRequestMs = getRequestRemainingMs();
+    if (remainingRequestMs !== null && remainingRequestMs <= 0) {
+      throw createAbortError(`${failureContext}: request deadline exhausted before ${label}`);
+    }
+
     try {
       const result = await executor();
       return transform(result);
     } catch (error: unknown) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       //audit Assumption: failed attempts should continue to next fallback; risk: error masking; invariant: only one attempt succeeds; handling: capture error and proceed.
       lastError = error;
       aiLogger.warn(`${label} Failed: ${formatErrorMessage(error)}`);

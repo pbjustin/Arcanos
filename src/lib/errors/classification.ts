@@ -67,9 +67,14 @@ export function isRetryableError(error: unknown): boolean {
   const errorCode = getErrorCode(error);
   const errorStatus = getErrorStatus(error);
 
-  // Network errors and timeouts are retryable
-  //audit Assumption: retrying network/timeouts is safe; Risk: repeated failures
-  if (errorName === 'AbortError' || errorCode === 'ECONNRESET' || errorCode === 'ETIMEDOUT') {
+  //audit Assumption: explicit aborts come from caller-imposed deadlines or cancellations; Risk: retry storms after a request is already timed out; invariant: aborts fail fast; handling: never retry abort/cancel signals.
+  if (errorName === 'AbortError' || errorCode === 'ABORT_ERR') {
+    return false;
+  }
+
+  // Network errors and timeouts are retryable when they are not caller-triggered aborts.
+  //audit Assumption: retrying transport resets and upstream timeouts is safe within bounded budgets; Risk: repeated failures; invariant: only transient transport issues retry.
+  if (errorCode === 'ECONNRESET' || errorCode === 'ETIMEDOUT') {
     return true;
   }
   
