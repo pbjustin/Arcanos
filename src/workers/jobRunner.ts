@@ -36,6 +36,7 @@ import {
 import { createDagNodeRunPromptBridge } from './dagNodePromptBridge.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
 import { sleep } from '@shared/sleep.js';
+import { recordWorkerJobDuration } from '@platform/observability/appMetrics.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed';
@@ -255,6 +256,7 @@ async function runWorkerConsumerSlot(
       job.id,
       slotDefinition.workerId
     );
+    const jobStartedAtMs = Date.now();
 
     try {
       let outcome: JobExecutionOutcome;
@@ -276,13 +278,23 @@ async function runWorkerConsumerSlot(
       if (outcome.status === 'completed') {
         await updateJob(job.id, 'completed', outcome.output, null);
         await autonomyService.markJobCompleted(job.id);
+        recordWorkerJobDuration({
+          jobType: job.job_type,
+          outcome: 'completed',
+          durationMs: Date.now() - jobStartedAtMs,
+        });
       } else {
-        await autonomyService.handleJobFailure(
+        const failureResult = await autonomyService.handleJobFailure(
           job,
           outcome.errorMessage ?? 'Job execution failed.',
           outcome.retryable ?? false,
           outcome.output
         );
+        recordWorkerJobDuration({
+          jobType: job.job_type,
+          outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
+          durationMs: Date.now() - jobStartedAtMs,
+        });
       }
     } catch (error: unknown) {
       const classifiedError = classifyWorkerExecutionError(error);
@@ -299,12 +311,17 @@ async function runWorkerConsumerSlot(
         }
       }
 
-      await autonomyService.handleJobFailure(
+      const failureResult = await autonomyService.handleJobFailure(
         job,
         classifiedError.message,
         classifiedError.retryable,
         null
       );
+      recordWorkerJobDuration({
+        jobType: job.job_type,
+        outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
+        durationMs: Date.now() - jobStartedAtMs,
+      });
     } finally {
       clearInterval(heartbeatHandle);
     }

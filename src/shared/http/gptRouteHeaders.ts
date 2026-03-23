@@ -3,6 +3,16 @@ import type { Response } from 'express';
 export const CUSTOM_GPT_CONTRACT_PATH = '/contracts/custom_gpt_route.openapi.v1.json';
 export const GPT_CANONICAL_ROUTE_TEMPLATE = '/gpt/{gptId}';
 export const ASK_ROUTE_SUNSET_HEADER = 'Wed, 01 Jul 2026 00:00:00 GMT';
+export const ASK_ROUTE_MODE_HEADER = 'x-ask-route-mode';
+
+export type AskRouteMode = 'compat' | 'gone';
+
+export function resolveAskRouteMode(): AskRouteMode {
+  const configuredMode = (process.env.ASK_ROUTE_MODE ?? '').trim().toLowerCase();
+  return configuredMode === 'gone' || configuredMode === '410'
+    ? 'gone'
+    : 'compat';
+}
 
 export function buildCanonicalGptRoute(gptId?: string | null): string {
   const trimmed = typeof gptId === 'string' ? gptId.trim() : '';
@@ -25,6 +35,7 @@ export function applyDeprecatedAskRouteHeaders(res: Response, gptId?: string | n
   res.setHeader('Deprecation', 'true');
   res.setHeader('Sunset', ASK_ROUTE_SUNSET_HEADER);
   res.setHeader('x-route-deprecated', 'true');
+  res.setHeader(ASK_ROUTE_MODE_HEADER, resolveAskRouteMode());
   res.append('Link', `<${canonicalRoute}>; rel="successor-version"`);
   return canonicalRoute;
 }

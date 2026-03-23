@@ -187,6 +187,79 @@ export async function getDagRunSnapshotById(runId: string): Promise<DagRunSnapsh
   };
 }
 
+/**
+ * Load the most recently updated DAG verification snapshot.
+ * Purpose: support bounded "latest run" inspection without requiring callers to scan or guess run ids.
+ * Inputs/outputs: optional session id filter; returns the newest stored snapshot record or `null`.
+ * Edge cases: returns `null` when persistence is unavailable or no matching runs exist.
+ */
+export async function getLatestDagRunSnapshot(
+  sessionId?: string
+): Promise<DagRunSnapshotRecord | null> {
+  const persistenceReady = await ensureDagRunPersistenceReady();
+  if (!persistenceReady) {
+    return null;
+  }
+
+  const normalizedSessionId =
+    typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
+  const result = normalizedSessionId
+    ? await query(
+        `SELECT
+           run_id,
+           session_id,
+           template,
+           status,
+           planner_node_id,
+           root_node_id,
+           created_at,
+           updated_at,
+           snapshot
+         FROM dag_runs
+         WHERE session_id = $1
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [normalizedSessionId]
+      )
+    : await query(
+        `SELECT
+           run_id,
+           session_id,
+           template,
+           status,
+           planner_node_id,
+           root_node_id,
+           created_at,
+           updated_at,
+           snapshot
+         FROM dag_runs
+         ORDER BY updated_at DESC
+         LIMIT 1`
+      );
+
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row) {
+    return null;
+  }
+
+  const normalizedSnapshot = normalizeSnapshotObject(row.snapshot);
+  if (!normalizedSnapshot) {
+    return null;
+  }
+
+  return {
+    runId: String(row.run_id ?? ''),
+    sessionId: String(row.session_id ?? ''),
+    template: String(row.template ?? ''),
+    status: String(row.status ?? ''),
+    plannerNodeId: normalizeNullableString(row.planner_node_id),
+    rootNodeId: normalizeNullableString(row.root_node_id),
+    createdAt: normalizeIsoString(row.created_at),
+    updatedAt: normalizeIsoString(row.updated_at),
+    snapshot: normalizedSnapshot
+  };
+}
+
 function normalizeSnapshotObject(value: unknown): Record<string, unknown> | null {
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     return value as Record<string, unknown>;

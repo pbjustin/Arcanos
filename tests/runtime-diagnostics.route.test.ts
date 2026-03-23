@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const request = (await import('supertest')).default;
+const CURRENT_GPT_ROUTER_HASH = '038d9a189896633b03691aa674e8656374424dc6a1ce120c8191629c592118c4';
 
 async function buildApp() {
   jest.resetModules();
@@ -26,6 +27,7 @@ describe('runtime diagnostics routes', () => {
   const originalApiKey = process.env.API_KEY;
   const originalOpenAiKey = process.env.OPENAI_KEY;
   const originalDiagnosticsSharedMetrics = process.env.DIAGNOSTICS_SHARED_METRICS;
+  const originalGptRouterHash = process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
@@ -34,6 +36,7 @@ describe('runtime diagnostics routes', () => {
     process.env.API_KEY = '';
     process.env.OPENAI_KEY = '';
     process.env.DIAGNOSTICS_SHARED_METRICS = 'false';
+    process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = CURRENT_GPT_ROUTER_HASH;
   });
 
   afterEach(() => {
@@ -43,6 +46,7 @@ describe('runtime diagnostics routes', () => {
     restoreEnvVar('API_KEY', originalApiKey);
     restoreEnvVar('OPENAI_KEY', originalOpenAiKey);
     restoreEnvVar('DIAGNOSTICS_SHARED_METRICS', originalDiagnosticsSharedMetrics);
+    restoreEnvVar('SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG', originalGptRouterHash);
   });
 
   it('returns real diagnostics JSON through the GPT diagnostics action', async () => {
@@ -122,5 +126,21 @@ describe('runtime diagnostics routes', () => {
     }));
     expect(response.body).not.toHaveProperty('ok');
     expect(response.body).not.toHaveProperty('result');
+  });
+
+  it('reports required GPT registration status from /healthz', async () => {
+    const app = await buildApp();
+
+    const response = await request(app).get('/healthz');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      status: 'ok',
+      gpt_routes: expect.any(Number),
+      required_gpts: {
+        required: expect.arrayContaining(['arcanos-core', 'core']),
+        missing: []
+      }
+    }));
   });
 });

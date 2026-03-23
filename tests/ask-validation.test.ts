@@ -20,7 +20,16 @@ describe('ask route validation', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('GPT-routed requests must target /gpt/:gptId');
+    expect(res.body.deprecated).toBe(true);
+    expect(res.body.canonicalRoute).toBe('/gpt/arcanos-gaming');
     expect(res.body.details).toContain("Received gptId 'arcanos-gaming' on /ask; use /gpt/arcanos-gaming instead.");
+    expect(res.headers.deprecation).toBe('true');
+    expect(res.headers.sunset).toBeDefined();
+    expect(res.headers['x-route-deprecated']).toBe('true');
+    expect(res.headers['x-ask-route-mode']).toBe('compat');
+    expect(res.headers['x-canonical-route']).toBe('/gpt/arcanos-gaming');
+    expect(res.headers.link).toContain('/contracts/custom_gpt_route.openapi.v1.json');
+    expect(res.headers.link).toContain('/gpt/arcanos-gaming');
   });
 
   it('rejects payloads without any recognized text fields', async () => {
@@ -41,6 +50,10 @@ describe('ask route validation', () => {
     expect(res.status).toBe(200);
     expect(res.body.result).toBeDefined();
     expect(res.body.clientContext).toEqual({ routingDirectives: ['concise'] });
+    expect(res.headers.deprecation).toBe('true');
+    expect(res.headers['x-route-deprecated']).toBe('true');
+    expect(res.headers['x-ask-route-mode']).toBe('compat');
+    expect(res.headers['x-canonical-route']).toBe('/gpt/{gptId}');
   });
 
   it('treats CI mock OpenAI keys as placeholders and still returns a mock response', async () => {
@@ -58,6 +71,34 @@ describe('ask route validation', () => {
         Reflect.deleteProperty(process.env, 'OPENAI_API_KEY');
       } else {
         Reflect.set(process.env, 'OPENAI_API_KEY', previousApiKey);
+      }
+    }
+  });
+
+  it('can hard-disable /ask with a 410 removal response', async () => {
+    const previousAskRouteMode = process.env.ASK_ROUTE_MODE;
+    Reflect.set(process.env, 'ASK_ROUTE_MODE', 'gone');
+
+    try {
+      const res = await request(app).post('/ask').send({
+        prompt: 'Legacy route probe',
+        gptId: 'arcanos-core'
+      });
+
+      expect(res.status).toBe(410);
+      expect(res.body.error).toBe('Legacy /ask route has been removed; use /gpt/:gptId');
+      expect(res.body.deprecated).toBe(true);
+      expect(res.body.canonicalRoute).toBe('/gpt/arcanos-core');
+      expect(res.headers.deprecation).toBe('true');
+      expect(res.headers.sunset).toBeDefined();
+      expect(res.headers['x-route-deprecated']).toBe('true');
+      expect(res.headers['x-ask-route-mode']).toBe('gone');
+      expect(res.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
+    } finally {
+      if (previousAskRouteMode === undefined) {
+        Reflect.deleteProperty(process.env, 'ASK_ROUTE_MODE');
+      } else {
+        Reflect.set(process.env, 'ASK_ROUTE_MODE', previousAskRouteMode);
       }
     }
   });

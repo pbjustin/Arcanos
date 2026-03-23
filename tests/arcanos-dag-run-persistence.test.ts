@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetDagRunSnapshotById = jest.fn();
+const mockGetLatestDagRunSnapshot = jest.fn();
 const mockUpsertDagRunSnapshot = jest.fn();
 
 jest.unstable_mockModule('../src/core/db/repositories/dagRunRepository.js', () => ({
+  getLatestDagRunSnapshot: mockGetLatestDagRunSnapshot,
   getDagRunSnapshotById: mockGetDagRunSnapshotById,
   upsertDagRunSnapshot: mockUpsertDagRunSnapshot
 }));
@@ -122,6 +124,7 @@ function buildPersistedSnapshotRecord() {
 describe('ArcanosDagRunService persistence fallback', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetLatestDagRunSnapshot.mockResolvedValue(null);
   });
 
   it('loads run summaries from shared persistence when local memory is empty', async () => {
@@ -141,6 +144,52 @@ describe('ArcanosDagRunService persistence fallback', () => {
     );
     expect(tree?.nodes).toHaveLength(2);
     expect(tree?.nodes[1]?.nodeId).toBe('writer');
+    expect(mockGetDagRunSnapshotById).toHaveBeenCalledWith('run-db-1');
+  });
+
+  it('loads the latest run summary from shared persistence when local memory is empty', async () => {
+    mockGetLatestDagRunSnapshot.mockResolvedValue(buildPersistedSnapshotRecord());
+    const service = new ArcanosDagRunService();
+
+    const latestRun = await service.getLatestRun();
+
+    expect(latestRun).toEqual(
+      expect.objectContaining({
+        runId: 'run-db-1',
+        sessionId: 'session-db-1',
+        template: 'trinity-core',
+        status: 'running'
+      })
+    );
+    expect(mockGetLatestDagRunSnapshot).toHaveBeenCalledWith(undefined);
+  });
+
+  it('builds a full trace from one persisted snapshot lookup', async () => {
+    mockGetDagRunSnapshotById.mockResolvedValue(buildPersistedSnapshotRecord());
+    const service = new ArcanosDagRunService();
+
+    const trace = await service.getRunTrace('run-db-1');
+
+    expect(trace).toEqual(
+      expect.objectContaining({
+        run: expect.objectContaining({
+          runId: 'run-db-1'
+        }),
+        tree: expect.objectContaining({
+          nodes: expect.arrayContaining([
+            expect.objectContaining({ nodeId: 'planner' }),
+            expect.objectContaining({ nodeId: 'writer' })
+          ])
+        }),
+        sections: expect.objectContaining({
+          events: expect.objectContaining({
+            returned: 0,
+            maxEvents: 200
+          })
+        })
+      })
+    );
+    expect(mockGetDagRunSnapshotById).toHaveBeenCalledTimes(1);
     expect(mockGetDagRunSnapshotById).toHaveBeenCalledWith('run-db-1');
   });
 });

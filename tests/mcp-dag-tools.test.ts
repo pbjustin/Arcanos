@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockGetFeatureFlags = jest.fn();
 const mockGetExecutionLimits = jest.fn();
 const mockCreateRun = jest.fn();
+const mockInspectLatestRun = jest.fn();
+const mockInspectRunTrace = jest.fn();
 const mockGetRun = jest.fn();
 const mockWaitForRunUpdate = jest.fn();
 const mockGetRunTree = jest.fn();
@@ -19,6 +21,8 @@ jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
     getFeatureFlags: mockGetFeatureFlags,
     getExecutionLimits: mockGetExecutionLimits,
     createRun: mockCreateRun,
+    inspectLatestRun: mockInspectLatestRun,
+    inspectRunTrace: mockInspectRunTrace,
     getRun: mockGetRun,
     waitForRunUpdate: mockWaitForRunUpdate,
     getRunTree: mockGetRunTree,
@@ -63,6 +67,7 @@ function buildContext() {
     sessionId: 'mcp-session-1',
     logger: {
       info: jest.fn(),
+      warn: jest.fn(),
       error: jest.fn(),
     },
   } as any;
@@ -81,8 +86,10 @@ describe('registerDagMcpTools', () => {
     expect(Array.from(tools.keys())).toEqual([
       'dag.capabilities',
       'dag.run.create',
+      'dag.run.latest',
       'dag.run.get',
       'dag.run.wait',
+      'dag.run.trace',
       'dag.run.tree',
       'dag.run.node',
       'dag.run.events',
@@ -206,6 +213,92 @@ describe('registerDagMcpTools', () => {
           updated: true,
           waited: true,
         },
+      })
+    );
+  });
+
+  it('returns the latest DAG run summary through the inspection service', async () => {
+    const { server, tools } = buildFakeServer();
+    mockInspectLatestRun.mockResolvedValue({
+      run: {
+        runId: 'dagrun_latest_1',
+        status: 'complete',
+      },
+      diagnostics: {
+        snapshotSource: 'persisted',
+        localLookupMs: 0,
+        persistedLookupMs: 5,
+        totalMs: 5,
+      },
+    });
+
+    registerDagMcpTools(server as any, buildContext());
+    const output = await tools.get('dag.run.latest')!.handler({});
+
+    expect(mockInspectLatestRun).toHaveBeenCalledWith('mcp-session-1');
+    expect(output).toEqual(
+      expect.objectContaining({
+        structuredContent: expect.objectContaining({
+          run: expect.objectContaining({ runId: 'dagrun_latest_1' }),
+        }),
+      })
+    );
+  });
+
+  it('returns one bounded full trace for an explicit run id', async () => {
+    const { server, tools } = buildFakeServer();
+    mockInspectRunTrace.mockResolvedValue({
+      trace: {
+        run: { runId: 'dagrun_trace_1', status: 'running' },
+        tree: { nodes: [{ nodeId: 'planner' }] },
+        events: { events: [{ eventId: 'evt-1' }] },
+        metrics: { metrics: {}, limits: {}, guardViolations: [] },
+        errors: { errors: [] },
+        lineage: { lineage: [{ nodeId: 'planner' }], loopDetected: false },
+        verification: { verification: { runCompleted: false }, lineage: { workerPipeline: 'trinity' } },
+        sections: {
+          requested: ['run', 'tree', 'events', 'metrics', 'errors', 'lineage', 'verification'],
+          events: { total: 1, returned: 1, truncated: false, maxEvents: 200 },
+        },
+      },
+      diagnostics: {
+        snapshotSource: 'persisted',
+        localLookupMs: 0,
+        persistedLookupMs: 3,
+        buildMs: {
+          run: 0,
+          tree: 0,
+          events: 1,
+          metrics: 0,
+          errors: 0,
+          lineage: 0,
+          verification: 0,
+        },
+        totalMs: 4,
+        payload: {
+          nodes: 1,
+          totalEvents: 1,
+          returnedEvents: 1,
+          errors: 0,
+          lineageEntries: 1,
+        },
+      },
+    });
+
+    registerDagMcpTools(server as any, buildContext());
+    const output = await tools.get('dag.run.trace')!.handler({ runId: 'dagrun_trace_1' });
+
+    expect(mockInspectRunTrace).toHaveBeenCalledWith('dagrun_trace_1', {
+      maxEvents: undefined,
+    });
+    expect(output).toEqual(
+      expect.objectContaining({
+        structuredContent: expect.objectContaining({
+          run: expect.objectContaining({ runId: 'dagrun_trace_1' }),
+          sections: expect.objectContaining({
+            events: expect.objectContaining({ returned: 1 }),
+          }),
+        }),
       })
     );
   });

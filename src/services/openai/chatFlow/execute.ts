@@ -6,6 +6,7 @@ import { getApiTimeoutMs } from "@arcanos/openai/unifiedClient";
 import { buildResponsesRequest } from "../requestBuilders.js";
 import { classifyOpenAIError } from "@core/lib/errors/reusable.js";
 import { logRequestAttempt, logRequestPermanentFailure } from "./trace.js";
+import { createLinkedAbortController, getRequestAbortSignal } from "@arcanos/runtime";
 
 /**
  * execute stage: perform the network call (with retry) and return raw Responses API payload.
@@ -24,7 +25,8 @@ export async function executeChatFlow(
     {
       maxRetries: DEFAULT_MAX_RETRIES,
       operationName: "callOpenAI",
-      useCircuitBreaker: true
+      useCircuitBreaker: true,
+      signal: options.signal ?? getRequestAbortSignal()
     }
   );
 }
@@ -36,8 +38,11 @@ async function performResponsesRequest(
   tokenLimit: number,
   options: CallOpenAIOptions
 ): Promise<any> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), getApiTimeoutMs());
+  const requestScope = createLinkedAbortController({
+    timeoutMs: getApiTimeoutMs(),
+    parentSignal: options.signal ?? getRequestAbortSignal(),
+    abortMessage: `OpenAI Responses request timed out after ${getApiTimeoutMs()}ms`
+  });
 
   try {
     const userMessage = messages.find((m: any) => m.role === "user");
@@ -70,7 +75,7 @@ async function performResponsesRequest(
       : crypto.randomUUID();
 
     const response = await adapter.responses.create(requestPayload, {
-      signal: controller.signal,
+      signal: requestScope.signal,
       headers: {
         // Local tracing header used throughout ARCANOS.
         [REQUEST_ID_HEADER]: requestId,
@@ -80,13 +85,13 @@ async function performResponsesRequest(
       }
     });
 
-    clearTimeout(timeout);
     return response;
   } catch (err: unknown) {
-    clearTimeout(timeout);
     const error = err instanceof Error ? err : new Error(String(err));
     const classification = classifyOpenAIError(error);
     logRequestPermanentFailure(model, 1, classification.type, classification.message, error);
     throw error;
+  } finally {
+    requestScope.cleanup();
   }
 }

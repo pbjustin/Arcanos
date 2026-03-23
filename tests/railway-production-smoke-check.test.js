@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import {
   RESULT_STATUS,
+  evaluateAppLogEntries,
   evaluateDatabaseLogEntries,
   evaluateRedisLogEntries,
   evaluateRuntimeWiring,
@@ -208,6 +209,50 @@ describe('railway-production-smoke-check', () => {
     }
   });
 
+  it('accepts the current production health payload shape', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        status: 'ok',
+        service: 'arcanos-backend',
+        timestamp: '2026-03-22T23:39:41.407Z',
+        version: '1.0.0',
+        gpt_routes: 23,
+        openai_configured: true,
+        response_bytes: 162
+      })
+    }));
+
+    try {
+      const result = await requestHealthCheck(
+        'https://acranos-production.up.railway.app/healthz',
+        {
+          environment: 'production',
+          appService: 'ARCANOS V2',
+          workerService: 'ARCANOS Worker',
+          databaseService: '',
+          redisService: '',
+          appUrl: '',
+          healthPath: '/healthz',
+          appLogLines: 300,
+          workerLogLines: 300,
+          databaseLogLines: 500,
+          redisLogLines: 200,
+          requestTimeoutMs: 15000
+        },
+        'production'
+      );
+
+      expect(result.status).toBe(RESULT_STATUS.PASS);
+      expect(result.detail).toMatch(/status=ok/i);
+      expect(result.detail).toMatch(/gpt_routes=23/i);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('fails database log evaluation when the missing User table error appears', () => {
     const result = evaluateDatabaseLogEntries(
       parseJsonLines([
@@ -233,14 +278,50 @@ describe('railway-production-smoke-check', () => {
     expect(result.detail).toMatch(/vm\.overcommit_memory/i);
   });
 
-  it('warns when only the Redis overcommit advisory is present without a readiness marker', () => {
+  it('ignores the benign Node JSON ExperimentalWarning when healthy traffic is present', () => {
+    const result = evaluateAppLogEntries(
+      parseJsonLines([
+        JSON.stringify({
+          level: 'error',
+          message: '(node:13) ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time'
+        }),
+        JSON.stringify({
+          level: 'error',
+          message: '(Use `node --trace-warnings ...` to show where the warning was created)'
+        }),
+        JSON.stringify({
+          level: 'info',
+          event: 'request.completed',
+          path: '/healthz',
+          data: { statusCode: 200 },
+          message: 'request completed'
+        })
+      ].join('\n'))
+    );
+
+    expect(result.status).toBe(RESULT_STATUS.PASS);
+    expect(result.detail).toMatch(/healthy diagnostics/i);
+  });
+
+  it('passes when only the Redis overcommit advisory is present without a readiness marker', () => {
     const result = evaluateRedisLogEntries(
       parseJsonLines([
         JSON.stringify({ level: 'info', message: '1:C 24 Feb 2026 06:38:47.711 # WARNING Memory overcommit must be enabled!' })
       ].join('\n'))
     );
 
-    expect(result.status).toBe(RESULT_STATUS.WARN);
+    expect(result.status).toBe(RESULT_STATUS.PASS);
     expect(result.detail).toMatch(/vm\.overcommit_memory/i);
+  });
+
+  it('passes when Redis logs are readable and quiet but contain no fatal markers', () => {
+    const result = evaluateRedisLogEntries(
+      parseJsonLines([
+        JSON.stringify({ level: 'info', message: '1:M 24 Feb 2026 06:38:47.711 * Background append only file rewriting started by pid 42' })
+      ].join('\n'))
+    );
+
+    expect(result.status).toBe(RESULT_STATUS.PASS);
+    expect(result.detail).toMatch(/free of fatal markers/i);
   });
 });

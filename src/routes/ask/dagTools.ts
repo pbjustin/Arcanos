@@ -17,6 +17,8 @@ import {
 } from './toolRuntime.js';
 import type { AskResponse } from './types.js';
 
+const DEFAULT_DAG_TRACE_SLOW_MS = 1_500;
+
 const DAG_TOOL_SYSTEM_PROMPT = [
   'You are ARCANOS in DAG orchestration mode.',
   'Use DAG control tools only when the operator is asking to create, inspect, verify, or cancel DAG runs.',
@@ -67,6 +69,19 @@ const dagControlToolDefinitions: FunctionToolDefinition[] = [
     },
   },
   {
+    name: 'get_latest_dag_run',
+    description: 'Get the most recently updated DAG run summary, optionally scoped to the current session.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sessionId: {
+          type: 'string',
+          description: 'Optional session identifier to scope the latest-run lookup.',
+        },
+      },
+    },
+  },
+  {
     name: 'get_dag_run',
     description: 'Get one DAG run summary by run id.',
     parameters: {
@@ -75,6 +90,26 @@ const dagControlToolDefinitions: FunctionToolDefinition[] = [
         runId: {
           type: 'string',
           description: 'The DAG run identifier to inspect.',
+        },
+      },
+      required: ['runId'],
+    },
+  },
+  {
+    name: 'get_dag_trace',
+    description: 'Get a staged full trace for one explicit DAG run id, including tree, events, metrics, errors, lineage, and verification.',
+    parameters: {
+      type: 'object',
+      properties: {
+        runId: {
+          type: 'string',
+          description: 'The DAG run identifier to inspect.',
+        },
+        maxEvents: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 1000,
+          description: 'Optional maximum number of most recent events to include.',
         },
       },
       required: ['runId'],
@@ -207,6 +242,15 @@ const dagRunIdArgsSchema = z.object({
   runId: z.string().trim().min(1),
 });
 
+const dagLatestRunArgsSchema = z.object({
+  sessionId: z.string().trim().min(1).optional(),
+});
+
+const dagTraceArgsSchema = z.object({
+  runId: z.string().trim().min(1),
+  maxEvents: z.number().int().min(1).max(1000).optional(),
+});
+
 const dagNodeArgsSchema = z.object({
   runId: z.string().trim().min(1),
   nodeId: z.string().trim().min(1),
@@ -222,12 +266,20 @@ const createDagRunArgsSchema = z.object({
 
 interface DagToolContext {
   sessionId?: string;
+  requestId?: string;
+  traceId?: string;
+  logger?: {
+    info?: (event: string, data?: Record<string, unknown>) => void;
+    warn?: (event: string, data?: Record<string, unknown>) => void;
+  };
 }
 
 type DagControlToolName =
   | 'get_dag_capabilities'
   | 'create_dag_run'
+  | 'get_latest_dag_run'
   | 'get_dag_run'
+  | 'get_dag_trace'
   | 'get_dag_tree'
   | 'get_dag_node'
   | 'get_dag_events'
@@ -240,6 +292,8 @@ type DagControlToolName =
 interface DeterministicDagOperation extends DeterministicToolOperation<DagControlToolName> {}
 
 const dagRunIdPattern = /\b(dagrun[-_][a-z0-9_-]+)\b/i;
+const dagLatestRunPattern =
+  /\b(?:latest|recent|most recent)\b[^.!?\n]{0,40}\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b|\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b[^.!?\n]{0,40}\b(?:latest|recent|most recent)\b/i;
 const dagNodeIdPattern = /\bnode(?:\s+id)?\s*[:#]?\s*([a-z][a-z0-9_-]{1,63})\b/i;
 const dagCapabilitiesPattern =
   /\b(?:dag|workflow|orchestration|orchestrator)\b[^.!?\n]{0,40}\b(?:capabilities|limits|features)\b|\b(?:capabilities|limits|features)\b[^.!?\n]{0,40}\b(?:dag|workflow|orchestration|orchestrator)\b/i;
@@ -253,6 +307,31 @@ const dagLineagePattern = /\b(?:lineage|ancestry|parent\s+chain)\b/i;
 const dagVerificationPattern = /\b(?:verification|verify|validated?)\b/i;
 const dagCancelPattern = /\b(?:cancel|stop|abort)\b/i;
 const dagTemplatePattern = /\btemplate\s*[:=]?\s*([a-z0-9_-]+)\b/i;
+const dagTracePattern = /\b(?:full\s+trace|trace)\b/i;
+
+function resolveDagTraceSlowMs(): number {
+  const rawValue = Number.parseInt(process.env.DAG_TRACE_SLOW_MS ?? '', 10);
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return DEFAULT_DAG_TRACE_SLOW_MS;
+  }
+
+  return Math.trunc(rawValue);
+}
+
+function measurePayloadBytes(payload: unknown): number {
+  return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+}
+
+function logDagInspection(
+  context: DagToolContext,
+  event: 'dag.tools.latest' | 'dag.tools.trace',
+  details: Record<string, unknown> & { durationMs: number }
+): void {
+  const loggerMethod = details.durationMs >= resolveDagTraceSlowMs()
+    ? context.logger?.warn
+    : context.logger?.info;
+  loggerMethod?.(event, details);
+}
 
 function looksLikeDagControlPrompt(prompt: string): boolean {
   const dagControlPatterns = [
@@ -324,68 +403,89 @@ function collectDeterministicDagOperations(
 ): DeterministicDagOperation[] {
   const operations: DeterministicDagOperation[] = [];
   const runIdMatch = dagRunIdPattern.exec(prompt);
+  const latestRunMatch = dagLatestRunPattern.exec(prompt);
   const nodeIdMatch = dagNodeIdPattern.exec(prompt);
   const capabilitiesMatch = dagCapabilitiesPattern.exec(prompt);
   const createDagRun = extractCreateDagRunRequest(prompt, context);
+  const requestsTrace = dagTracePattern.test(prompt);
+  const requestedSectionCount = [
+    dagTreePattern.test(prompt),
+    dagEventsPattern.test(prompt),
+    dagMetricsPattern.test(prompt),
+    dagErrorsPattern.test(prompt),
+    dagLineagePattern.test(prompt),
+    dagVerificationPattern.test(prompt),
+  ].filter(Boolean).length;
 
   appendUniqueDeterministicOperation(operations, capabilitiesMatch?.index, 'get_dag_capabilities');
 
+  if (latestRunMatch && !runIdMatch?.[1]) {
+    appendUniqueDeterministicOperation(operations, latestRunMatch.index, 'get_latest_dag_run', {
+      sessionId: context.sessionId,
+    });
+  }
+
   if (runIdMatch?.[1]) {
     const runId = runIdMatch[1];
+    const shouldUseFullTrace = requestsTrace || requestedSectionCount >= 3;
 
-    appendUniqueDeterministicOperation(
-      operations,
-      dagVerificationPattern.exec(prompt)?.index,
-      'get_dag_verification',
-      { runId },
-    );
-    appendUniqueDeterministicOperation(
-      operations,
-      dagMetricsPattern.exec(prompt)?.index,
-      'get_dag_metrics',
-      { runId },
-    );
-    appendUniqueDeterministicOperation(
-      operations,
-      dagErrorsPattern.exec(prompt)?.index,
-      'get_dag_errors',
-      { runId },
-    );
-    appendUniqueDeterministicOperation(
-      operations,
-      dagLineagePattern.exec(prompt)?.index,
-      'get_dag_lineage',
-      { runId },
-    );
-    appendUniqueDeterministicOperation(
-      operations,
-      dagEventsPattern.exec(prompt)?.index,
-      'get_dag_events',
-      { runId },
-    );
-    appendUniqueDeterministicOperation(
-      operations,
-      dagCancelPattern.exec(prompt)?.index,
-      'cancel_dag_run',
-      { runId },
-    );
+    if (shouldUseFullTrace) {
+      appendUniqueDeterministicOperation(operations, runIdMatch.index, 'get_dag_trace', { runId });
+    } else {
+      appendUniqueDeterministicOperation(
+        operations,
+        dagVerificationPattern.exec(prompt)?.index,
+        'get_dag_verification',
+        { runId },
+      );
+      appendUniqueDeterministicOperation(
+        operations,
+        dagMetricsPattern.exec(prompt)?.index,
+        'get_dag_metrics',
+        { runId },
+      );
+      appendUniqueDeterministicOperation(
+        operations,
+        dagErrorsPattern.exec(prompt)?.index,
+        'get_dag_errors',
+        { runId },
+      );
+      appendUniqueDeterministicOperation(
+        operations,
+        dagLineagePattern.exec(prompt)?.index,
+        'get_dag_lineage',
+        { runId },
+      );
+      appendUniqueDeterministicOperation(
+        operations,
+        dagEventsPattern.exec(prompt)?.index,
+        'get_dag_events',
+        { runId },
+      );
+      appendUniqueDeterministicOperation(
+        operations,
+        dagCancelPattern.exec(prompt)?.index,
+        'cancel_dag_run',
+        { runId },
+      );
 
-    if (nodeIdMatch?.[1]) {
-      appendUniqueDeterministicOperation(operations, nodeIdMatch.index, 'get_dag_node', {
-        runId,
-        nodeId: nodeIdMatch[1],
-      });
+      if (nodeIdMatch?.[1]) {
+        appendUniqueDeterministicOperation(operations, nodeIdMatch.index, 'get_dag_node', {
+          runId,
+          nodeId: nodeIdMatch[1],
+        });
+      }
+
+      appendUniqueDeterministicOperation(
+        operations,
+        dagTreePattern.exec(prompt)?.index,
+        'get_dag_tree',
+        { runId },
+      );
+
+      //audit Assumption: a run id without a more specific selector implies summary inspection; failure risk: prompt returns nothing for simple "show run" requests; expected invariant: one summary fetch for bare run-id prompts; handling strategy: append run summary last so more specific operations still execute first.
+      appendUniqueDeterministicOperation(operations, runIdMatch.index, 'get_dag_run', { runId });
     }
-
-    appendUniqueDeterministicOperation(
-      operations,
-      dagTreePattern.exec(prompt)?.index,
-      'get_dag_tree',
-      { runId },
-    );
-
-    //audit Assumption: a run id without a more specific selector implies summary inspection; failure risk: prompt returns nothing for simple "show run" requests; expected invariant: one summary fetch for bare run-id prompts; handling strategy: append run summary last so more specific operations still execute first.
-    appendUniqueDeterministicOperation(operations, runIdMatch.index, 'get_dag_run', { runId });
   }
 
   if (createDagRun) {
@@ -425,8 +525,15 @@ function summarizeDagToolExecution(toolName: string, payload: Record<string, unk
     }
     case 'create_dag_run':
       return `Started DAG run ${payload.runId ?? 'unknown'} with pipeline=${payload.pipeline ?? 'unknown'}, template=${payload.template ?? 'unknown'}, and status=${payload.status ?? 'unknown'}.`;
+    case 'get_latest_dag_run':
+      return `Most recent DAG run is ${payload.runId ?? 'unknown'} with status=${payload.status ?? 'unknown'}. Use that runId for nodes, metrics, verification, or a full trace.`;
     case 'get_dag_run':
       return `DAG run ${payload.runId ?? 'unknown'} uses pipeline=${payload.pipeline ?? 'unknown'}, template=${payload.template ?? 'unknown'}, status=${payload.status ?? 'unknown'}, completedNodes=${payload.completedNodes ?? 'unknown'}, and failedNodes=${payload.failedNodes ?? 'unknown'}.`;
+    case 'get_dag_trace': {
+      const eventsSection = payload.sections as { events?: { returned?: number; total?: number; truncated?: boolean } } | undefined;
+      const eventsMeta = eventsSection?.events;
+      return `DAG trace for ${payload.runId ?? 'unknown'} includes nodes=${payload.totalNodes ?? 'unknown'}, events=${eventsMeta?.returned ?? 'unknown'}${eventsMeta?.truncated ? `/${eventsMeta.total ?? 'unknown'}` : ''}, errors=${payload.totalErrors ?? 'unknown'}, and verification=${payload.runCompleted ?? 'unknown'}.`;
+    }
     case 'get_dag_tree':
       return `DAG tree for ${payload.runId ?? 'unknown'}: ${summarizeDagTree(payload.nodes)}.`;
     case 'get_dag_node':
@@ -490,6 +597,41 @@ async function executeDagTool(
         summary: summarizeDagToolExecution(toolName, output as unknown as Record<string, unknown>),
       };
     }
+    case 'get_latest_dag_run': {
+      const parsedArgs = parseToolArgumentsWithSchema(rawArgs, dagLatestRunArgsSchema, 'dagTools.get_latest_dag_run');
+      const latestRun = await arcanosDagRunService.inspectLatestRun(parsedArgs.sessionId ?? context.sessionId);
+      const normalizedOutput = latestRun
+        ? {
+            ...latestRun.run,
+            summary:
+              `Most recent DAG run is ${latestRun.run.runId} with status=${latestRun.run.status}. ` +
+              'Use that runId for nodes, metrics, verification, or a full trace.',
+          }
+        : {
+            status: 'not_found',
+            summary: 'No DAG runs were found.',
+          };
+      if (latestRun) {
+        logDagInspection(context, 'dag.tools.latest', {
+          requestId: context.requestId ?? null,
+          traceId: context.traceId ?? context.requestId ?? null,
+          runId: latestRun.run.runId,
+          sessionId: parsedArgs.sessionId ?? context.sessionId ?? null,
+          durationMs: latestRun.diagnostics.totalMs,
+          localLookupMs: latestRun.diagnostics.localLookupMs,
+          persistedLookupMs: latestRun.diagnostics.persistedLookupMs,
+          persistedLookupTimedOut: latestRun.diagnostics.persistedLookupTimedOut,
+          snapshotSource: latestRun.diagnostics.snapshotSource,
+          payloadBytes: measurePayloadBytes(normalizedOutput),
+        });
+      }
+      return {
+        output: normalizedOutput as Record<string, unknown>,
+        summary: latestRun
+          ? summarizeDagToolExecution(toolName, normalizedOutput as Record<string, unknown>)
+          : 'No DAG runs were found.',
+      };
+    }
     case 'get_dag_run': {
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, dagRunIdArgsSchema, 'dagTools.get_dag_run');
       const output = await arcanosDagRunService.getRun(parsedArgs.runId);
@@ -499,6 +641,53 @@ async function executeDagTool(
         summary: output
           ? summarizeDagToolExecution(toolName, normalizedOutput)
           : `DAG run ${parsedArgs.runId} was not found.`,
+      };
+    }
+    case 'get_dag_trace': {
+      const parsedArgs = parseToolArgumentsWithSchema(rawArgs, dagTraceArgsSchema, 'dagTools.get_dag_trace');
+      const inspection = await arcanosDagRunService.inspectRunTrace(parsedArgs.runId, {
+        maxEvents: parsedArgs.maxEvents,
+      });
+      const normalizedOutput = inspection
+        ? {
+            runId: inspection.trace.run.runId,
+            status: inspection.trace.run.status,
+            totalNodes: inspection.trace.tree.nodes.length,
+            totalErrors: inspection.trace.errors.errors.length,
+            runCompleted: inspection.trace.verification.verification.runCompleted,
+            sections: inspection.trace.sections,
+            trace: inspection.trace,
+          }
+        : { runId: parsedArgs.runId, status: 'not_found' };
+      if (inspection) {
+        logDagInspection(context, 'dag.tools.trace', {
+          requestId: context.requestId ?? null,
+          traceId: context.traceId ?? context.requestId ?? null,
+          runId: parsedArgs.runId,
+          durationMs: inspection.diagnostics.totalMs,
+          snapshotSource: inspection.diagnostics.snapshotSource,
+          localLookupMs: inspection.diagnostics.localLookupMs,
+          persistedLookupMs: inspection.diagnostics.persistedLookupMs,
+          buildRunMs: inspection.diagnostics.buildMs.run,
+          buildTreeMs: inspection.diagnostics.buildMs.tree,
+          buildEventsMs: inspection.diagnostics.buildMs.events,
+          buildMetricsMs: inspection.diagnostics.buildMs.metrics,
+          buildErrorsMs: inspection.diagnostics.buildMs.errors,
+          buildLineageMs: inspection.diagnostics.buildMs.lineage,
+          buildVerificationMs: inspection.diagnostics.buildMs.verification,
+          payloadBytes: measurePayloadBytes(inspection.trace),
+          totalNodes: inspection.diagnostics.payload.nodes,
+          totalEvents: inspection.diagnostics.payload.totalEvents,
+          returnedEvents: inspection.diagnostics.payload.returnedEvents,
+          totalErrors: inspection.diagnostics.payload.errors,
+          lineageEntries: inspection.diagnostics.payload.lineageEntries,
+        });
+      }
+      return {
+        output: normalizedOutput as Record<string, unknown>,
+        summary: inspection
+          ? summarizeDagToolExecution(toolName, normalizedOutput as Record<string, unknown>)
+          : `DAG trace for ${parsedArgs.runId} was not found.`,
       };
     }
     case 'get_dag_tree': {

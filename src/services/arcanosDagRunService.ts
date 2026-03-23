@@ -1,5 +1,6 @@
 import { generateRequestId } from '../shared/idGenerator.js';
 import {
+  getLatestDagRunSnapshot,
   getDagRunSnapshotById,
   upsertDagRunSnapshot
 } from '../core/db/repositories/dagRunRepository.js';
@@ -17,12 +18,14 @@ import {
 import type {
   CreateDagRunRequest,
   DagEvent,
+  DagErrorsData,
   DagEventsData,
   DagLineageData,
   DagMetricsData,
   DagRunError,
   DagRunMetrics,
   DagRunSummary,
+  DagTraceData,
   DagTreeData,
   DagTreeNode,
   DagVerification,
@@ -41,6 +44,10 @@ import type {
   TrinityRuntimeMetadata
 } from '../shared/types/arcanos-verification-contract.types.js';
 import { sleep } from '@shared/sleep.js';
+import {
+  recordDagRunRequest,
+  recordDagRunStatus,
+} from '@platform/observability/appMetrics.js';
 
 type DagRunExecutionState = 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';
 
@@ -98,6 +105,8 @@ interface PersistedDagRunSnapshot {
 
 const TRINITY_PIPELINE_NAME = 'trinity' as const;
 const TRINITY_PIPELINE_VERSION = '1.0' as const;
+const DEFAULT_DAG_TRACE_MAX_EVENTS = 200;
+const MAX_DAG_TRACE_MAX_EVENTS = 1000;
 
 export interface WaitForDagRunUpdateOptions {
   updatedAfter?: string;
@@ -108,6 +117,47 @@ export interface DagRunWaitResult {
   run: DagRunSummary;
   updated: boolean;
   waited: boolean;
+}
+
+export interface DagTraceLookupDiagnostics {
+  snapshotSource: 'local' | 'persisted';
+  localLookupMs: number;
+  persistedLookupMs: number;
+  buildMs: {
+    run: number;
+    tree: number;
+    events: number;
+    metrics: number;
+    errors: number;
+    lineage: number;
+    verification: number;
+  };
+  totalMs: number;
+  payload: {
+    nodes: number;
+    totalEvents: number;
+    returnedEvents: number;
+    errors: number;
+    lineageEntries: number;
+  };
+}
+
+export interface DagTraceInspectionResult {
+  trace: DagTraceData;
+  diagnostics: DagTraceLookupDiagnostics;
+}
+
+export interface DagLatestRunLookupDiagnostics {
+  snapshotSource: 'local' | 'persisted';
+  localLookupMs: number;
+  persistedLookupMs: number;
+  persistedLookupTimedOut: boolean;
+  totalMs: number;
+}
+
+export interface DagLatestRunInspectionResult {
+  run: DagRunSummary;
+  diagnostics: DagLatestRunLookupDiagnostics;
 }
 
 function createFeatureFlags(): FeatureFlags {
@@ -335,6 +385,14 @@ function cloneStoredNodeDetail(node: StoredNodeDetail): StoredNodeDetail {
 
 function cloneTrinityRunRecord(record: TrinityRunRecord): TrinityRunRecord {
   return cloneSerializable(record);
+}
+
+function resolveDagTraceMaxEvents(maxEvents?: number): number {
+  if (!Number.isFinite(maxEvents) || (maxEvents ?? 0) <= 0) {
+    return DEFAULT_DAG_TRACE_MAX_EVENTS;
+  }
+
+  return Math.min(MAX_DAG_TRACE_MAX_EVENTS, Math.max(1, Math.trunc(maxEvents as number)));
 }
 
 function normalizeTrinityRunStatus(
@@ -859,6 +917,326 @@ export class ArcanosDagRunService {
     return createExecutionLimits(getDagWorkerPoolSettings(overrides));
   }
 
+  private getLatestLocalSnapshot(sessionId?: string): PersistedDagRunSnapshot | null {
+    const normalizedSessionId =
+      typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : null;
+    let latestRecord: StoredDagRunRecord | null = null;
+    let latestUpdatedAtMs = -1;
+
+    for (const record of this.runsById.values()) {
+      if (normalizedSessionId && record.sessionId !== normalizedSessionId) {
+        continue;
+      }
+
+      const updatedAtMs = toEpochMilliseconds(record.updatedAt);
+      if (!latestRecord || updatedAtMs > latestUpdatedAtMs) {
+        latestRecord = record;
+        latestUpdatedAtMs = updatedAtMs;
+      }
+    }
+
+    return latestRecord ? createPersistedDagRunSnapshot(latestRecord) : null;
+  }
+
+  private async getLatestPersistedSnapshot(sessionId?: string): Promise<PersistedDagRunSnapshot | null> {
+    const persistedRecord = await getLatestDagRunSnapshot(sessionId);
+    if (!persistedRecord) {
+      return null;
+    }
+
+    return normalizePersistedDagRunSnapshot(persistedRecord.snapshot);
+  }
+
+  async inspectLatestRun(sessionId?: string): Promise<DagLatestRunInspectionResult | null> {
+    const startedAtMs = Date.now();
+    const localStartedAtMs = Date.now();
+    const localSnapshot = this.getLatestLocalSnapshot(sessionId);
+    const localLookupMs = Date.now() - localStartedAtMs;
+    if (localSnapshot) {
+      const totalMs = Date.now() - startedAtMs;
+      recordDagRunRequest({
+        handler: 'latest',
+        outcome: 'ok',
+        snapshotSource: 'local',
+        durationMs: totalMs,
+        lookupDurationsMs: {
+          local: localLookupMs,
+          total: totalMs,
+        },
+      });
+      return {
+        run: cloneDagRunSummary(localSnapshot.summary),
+        diagnostics: {
+          snapshotSource: 'local',
+          localLookupMs,
+          persistedLookupMs: 0,
+          persistedLookupTimedOut: false,
+          totalMs
+        }
+      };
+    }
+
+    const persistedStartedAtMs = Date.now();
+    const persistedSnapshot = await this.getLatestPersistedSnapshot(sessionId);
+    const persistedLookupMs = Date.now() - persistedStartedAtMs;
+    if (!persistedSnapshot) {
+      recordDagRunRequest({
+        handler: 'latest',
+        outcome: 'not_found',
+        snapshotSource: 'none',
+        durationMs: Date.now() - startedAtMs,
+        lookupDurationsMs: {
+          local: localLookupMs,
+          persisted: persistedLookupMs,
+          total: Date.now() - startedAtMs,
+        },
+      });
+      return null;
+    }
+
+    const totalMs = Date.now() - startedAtMs;
+    recordDagRunRequest({
+      handler: 'latest',
+      outcome: 'ok',
+      snapshotSource: 'persisted',
+      durationMs: totalMs,
+      lookupDurationsMs: {
+        local: localLookupMs,
+        persisted: persistedLookupMs,
+        total: totalMs,
+      },
+    });
+    return {
+      run: cloneDagRunSummary(persistedSnapshot.summary),
+      diagnostics: {
+        snapshotSource: 'persisted',
+        localLookupMs,
+        persistedLookupMs,
+        persistedLookupTimedOut: false,
+        totalMs
+      }
+    };
+  }
+
+  async getLatestRun(sessionId?: string): Promise<DagRunSummary | null> {
+    const latestRun = await this.inspectLatestRun(sessionId);
+    return latestRun ? latestRun.run : null;
+  }
+
+  private buildTraceFromSnapshot(
+    snapshot: PersistedDagRunSnapshot,
+    options: { maxEvents?: number } = {}
+  ): DagTraceInspectionResult {
+    const buildStartedAtMs = Date.now();
+    const maxEvents = resolveDagTraceMaxEvents(options.maxEvents);
+    const nodesById = createNodeMapFromSnapshot(snapshot);
+    const buildMs: DagTraceLookupDiagnostics['buildMs'] = {
+      run: 0,
+      tree: 0,
+      events: 0,
+      metrics: 0,
+      errors: 0,
+      lineage: 0,
+      verification: 0
+    };
+
+    const runStartedAtMs = Date.now();
+    const run = cloneDagRunSummary(snapshot.summary);
+    buildMs.run = Date.now() - runStartedAtMs;
+
+    const treeStartedAtMs = Date.now();
+    const tree: DagTreeData = {
+      ...createTrinityRuntimeMetadata(),
+      runId: snapshot.runId,
+      nodes: snapshot.nodes.map(node => ({
+        ...createTrinityNodeMetadata(node.agentRole),
+        nodeId: node.nodeId,
+        parentNodeId: node.parentNodeId,
+        agentRole: node.agentRole,
+        jobType: node.jobType,
+        status: normalizeNodeStatus(node.status),
+        dependencyIds: [...node.dependencyIds],
+        childNodeIds: [...node.childNodeIds],
+        spawnDepth: node.spawnDepth,
+        workerId: node.workerId,
+        startedAt: node.startedAt,
+        completedAt: node.completedAt
+      }))
+    };
+    buildMs.tree = Date.now() - treeStartedAtMs;
+
+    const eventsStartedAtMs = Date.now();
+    const totalEvents = snapshot.events.length;
+    const selectedEvents = snapshot.events
+      .slice(Math.max(0, totalEvents - maxEvents))
+      .map(event => ({
+        ...cloneSerializable(event),
+        data: enrichDagEventDataWithTrinityMetadata(event.data, nodesById)
+      }));
+    const events: DagEventsData = {
+      ...createTrinityRuntimeMetadata(),
+      runId: snapshot.runId,
+      events: selectedEvents
+    };
+    buildMs.events = Date.now() - eventsStartedAtMs;
+
+    const metricsStartedAtMs = Date.now();
+    const metrics: DagMetricsData = {
+      runId: snapshot.runId,
+      metrics: cloneSerializable(snapshot.metrics),
+      limits: cloneSerializable(snapshot.limits),
+      guardViolations: cloneSerializable(snapshot.guardViolations)
+    };
+    buildMs.metrics = Date.now() - metricsStartedAtMs;
+
+    const errorsStartedAtMs = Date.now();
+    const errors: DagErrorsData = {
+      runId: snapshot.runId,
+      errors: cloneSerializable(snapshot.errors)
+    };
+    buildMs.errors = Date.now() - errorsStartedAtMs;
+
+    const lineageStartedAtMs = Date.now();
+    const lineage = calculateLineageEntriesFromNodes(
+      snapshot.runId,
+      nodesById,
+      snapshot.loopDetected
+    );
+    buildMs.lineage = Date.now() - lineageStartedAtMs;
+
+    const verificationStartedAtMs = Date.now();
+    const verification: DagVerificationData = {
+      ...createTrinityRuntimeMetadata(),
+      runId: snapshot.runId,
+      verification: cloneSerializable(snapshot.verification),
+      lineage: createVerificationLineage(snapshot)
+    };
+    buildMs.verification = Date.now() - verificationStartedAtMs;
+
+    return {
+      trace: {
+        ...createTrinityRuntimeMetadata(),
+        run,
+        tree,
+        events,
+        metrics,
+        errors,
+        lineage,
+        verification,
+        sections: {
+          requested: ['run', 'tree', 'events', 'metrics', 'errors', 'lineage', 'verification'],
+          events: {
+            total: totalEvents,
+            returned: selectedEvents.length,
+            truncated: totalEvents > selectedEvents.length,
+            maxEvents
+          }
+        }
+      },
+      diagnostics: {
+        snapshotSource: 'local',
+        localLookupMs: 0,
+        persistedLookupMs: 0,
+        buildMs,
+        totalMs: Date.now() - buildStartedAtMs,
+        payload: {
+          nodes: tree.nodes.length,
+          totalEvents,
+          returnedEvents: selectedEvents.length,
+          errors: errors.errors.length,
+          lineageEntries: lineage.lineage.length
+        }
+      }
+    };
+  }
+
+  async inspectRunTrace(
+    runId: string,
+    options: { maxEvents?: number } = {}
+  ): Promise<DagTraceInspectionResult | null> {
+    const startedAtMs = Date.now();
+    const localStartedAtMs = Date.now();
+    const localRecord = this.runsById.get(runId);
+    const localLookupMs = Date.now() - localStartedAtMs;
+    const localSnapshot = localRecord ? createPersistedDagRunSnapshot(localRecord) : null;
+
+    let persistedLookupMs = 0;
+    let selectedSnapshot = localSnapshot;
+    let snapshotSource: DagTraceLookupDiagnostics['snapshotSource'] = 'local';
+
+    if (!selectedSnapshot) {
+      const persistedStartedAtMs = Date.now();
+      const persistedRecord = await getDagRunSnapshotById(runId);
+      persistedLookupMs = Date.now() - persistedStartedAtMs;
+      if (!persistedRecord) {
+        recordDagRunRequest({
+          handler: 'trace',
+          outcome: 'not_found',
+          snapshotSource: 'none',
+          durationMs: Date.now() - startedAtMs,
+          lookupDurationsMs: {
+            local: localLookupMs,
+            persisted: persistedLookupMs,
+            total: Date.now() - startedAtMs,
+          },
+        });
+        return null;
+      }
+
+      const persistedSnapshot = normalizePersistedDagRunSnapshot(persistedRecord.snapshot);
+      if (!persistedSnapshot) {
+        recordDagRunRequest({
+          handler: 'trace',
+          outcome: 'not_found',
+          snapshotSource: 'none',
+          durationMs: Date.now() - startedAtMs,
+          lookupDurationsMs: {
+            local: localLookupMs,
+            persisted: persistedLookupMs,
+            total: Date.now() - startedAtMs,
+          },
+        });
+        return null;
+      }
+
+      selectedSnapshot = persistedSnapshot;
+      snapshotSource = 'persisted';
+    }
+
+    const inspection = this.buildTraceFromSnapshot(selectedSnapshot, options);
+    inspection.diagnostics.snapshotSource = snapshotSource;
+    inspection.diagnostics.localLookupMs = localLookupMs;
+    inspection.diagnostics.persistedLookupMs = persistedLookupMs;
+    inspection.diagnostics.totalMs = Date.now() - startedAtMs;
+    recordDagRunRequest({
+      handler: 'trace',
+      outcome: 'ok',
+      snapshotSource,
+      durationMs: inspection.diagnostics.totalMs,
+      lookupDurationsMs: {
+        local: localLookupMs,
+        persisted: persistedLookupMs,
+        total: inspection.diagnostics.totalMs,
+      },
+      nodesReturned: inspection.diagnostics.payload.nodes,
+      buildDurationsMs: {
+        nodes: inspection.diagnostics.buildMs.tree,
+        events: inspection.diagnostics.buildMs.events,
+        metrics: inspection.diagnostics.buildMs.metrics,
+        verification: inspection.diagnostics.buildMs.verification,
+      },
+    });
+    return inspection;
+  }
+
+  async getRunTrace(
+    runId: string,
+    options: { maxEvents?: number } = {}
+  ): Promise<DagTraceData | null> {
+    const inspection = await this.inspectRunTrace(runId, options);
+    return inspection ? inspection.trace : null;
+  }
+
   /**
    * Resolve the latest snapshot for one DAG run from local memory or shared persistence.
    *
@@ -1116,6 +1494,7 @@ export class ArcanosDagRunService {
     record.summary = createApiSummary(record);
 
     this.runsById.set(runId, record);
+    recordDagRunStatus('queued');
     this.recordEvent(record, 'run.created', {
       runId,
       sessionId: request.sessionId,
@@ -1232,11 +1611,20 @@ export class ArcanosDagRunService {
    * - Returns `null` when the run id is unknown.
    */
   async getRunTree(runId: string): Promise<DagTreeData | null> {
+    const startedAtMs = Date.now();
+    const snapshotSource = this.runsById.has(runId) ? 'local' : 'persisted';
     const snapshot = await this.getRunSnapshot(runId);
     if (!snapshot) {
+      recordDagRunRequest({
+        handler: 'tree',
+        outcome: 'not_found',
+        snapshotSource: 'none',
+        durationMs: Date.now() - startedAtMs,
+      });
       return null;
     }
 
+    const buildStartedAtMs = Date.now();
     const nodes: DagTreeNode[] = snapshot.nodes.map(node => ({
       ...createTrinityNodeMetadata(node.agentRole),
       nodeId: node.nodeId,
@@ -1252,11 +1640,23 @@ export class ArcanosDagRunService {
       completedAt: node.completedAt
     }));
 
-    return {
+    const response = {
       ...createTrinityRuntimeMetadata(),
       runId,
       nodes
     };
+    const buildMs = Date.now() - buildStartedAtMs;
+    recordDagRunRequest({
+      handler: 'tree',
+      outcome: 'ok',
+      snapshotSource,
+      durationMs: Date.now() - startedAtMs,
+      nodesReturned: nodes.length,
+      buildDurationsMs: {
+        nodes: buildMs,
+      },
+    });
+    return response;
   }
 
   /**
@@ -1296,14 +1696,23 @@ export class ArcanosDagRunService {
    * - Returns `null` when the run id is unknown.
    */
   async getRunEvents(runId: string): Promise<DagEventsData | null> {
+    const startedAtMs = Date.now();
+    const snapshotSource = this.runsById.has(runId) ? 'local' : 'persisted';
     const snapshot = await this.getRunSnapshot(runId);
     if (!snapshot) {
+      recordDagRunRequest({
+        handler: 'events',
+        outcome: 'not_found',
+        snapshotSource: 'none',
+        durationMs: Date.now() - startedAtMs,
+      });
       return null;
     }
 
+    const buildStartedAtMs = Date.now();
     const nodesById = new Map(snapshot.nodes.map(node => [node.nodeId, node] as const));
 
-    return {
+    const response = {
       ...createTrinityRuntimeMetadata(),
       runId,
       events: snapshot.events.map(event => ({
@@ -1311,6 +1720,16 @@ export class ArcanosDagRunService {
         data: enrichDagEventDataWithTrinityMetadata(event.data, nodesById)
       }))
     };
+    recordDagRunRequest({
+      handler: 'events',
+      outcome: 'ok',
+      snapshotSource,
+      durationMs: Date.now() - startedAtMs,
+      buildDurationsMs: {
+        events: Date.now() - buildStartedAtMs,
+      },
+    });
+    return response;
   }
 
   /**
@@ -1327,17 +1746,36 @@ export class ArcanosDagRunService {
    * - Returns `null` when the run id is unknown.
    */
   async getRunMetrics(runId: string): Promise<DagMetricsData | null> {
+    const startedAtMs = Date.now();
+    const snapshotSource = this.runsById.has(runId) ? 'local' : 'persisted';
     const snapshot = await this.getRunSnapshot(runId);
     if (!snapshot) {
+      recordDagRunRequest({
+        handler: 'metrics',
+        outcome: 'not_found',
+        snapshotSource: 'none',
+        durationMs: Date.now() - startedAtMs,
+      });
       return null;
     }
 
-    return {
+    const buildStartedAtMs = Date.now();
+    const response = {
       runId,
       metrics: cloneSerializable(snapshot.metrics),
       limits: cloneSerializable(snapshot.limits),
       guardViolations: cloneSerializable(snapshot.guardViolations)
     };
+    recordDagRunRequest({
+      handler: 'metrics',
+      outcome: 'ok',
+      snapshotSource,
+      durationMs: Date.now() - startedAtMs,
+      buildDurationsMs: {
+        metrics: Date.now() - buildStartedAtMs,
+      },
+    });
+    return response;
   }
 
   /**
@@ -1405,17 +1843,36 @@ export class ArcanosDagRunService {
    * - Returns `null` when the run id is unknown.
    */
   async getRunVerification(runId: string): Promise<DagVerificationData | null> {
+    const startedAtMs = Date.now();
+    const snapshotSource = this.runsById.has(runId) ? 'local' : 'persisted';
     const snapshot = await this.getRunSnapshot(runId);
     if (!snapshot) {
+      recordDagRunRequest({
+        handler: 'verification',
+        outcome: 'not_found',
+        snapshotSource: 'none',
+        durationMs: Date.now() - startedAtMs,
+      });
       return null;
     }
 
-    return {
+    const buildStartedAtMs = Date.now();
+    const response = {
       ...createTrinityRuntimeMetadata(),
       runId,
       verification: cloneSerializable(snapshot.verification),
       lineage: createVerificationLineage(snapshot)
     };
+    recordDagRunRequest({
+      handler: 'verification',
+      outcome: 'ok',
+      snapshotSource,
+      durationMs: Date.now() - startedAtMs,
+      buildDurationsMs: {
+        verification: Date.now() - buildStartedAtMs,
+      },
+    });
+    return response;
   }
 
   /**
@@ -1458,6 +1915,7 @@ export class ArcanosDagRunService {
     record.updatedAt = new Date().toISOString();
     record.summary = createApiSummary(record);
     record.verification = calculateVerification(record);
+    recordDagRunStatus('cancelled');
     this.recordEvent(record, 'run.cancelled', {
       runId,
       cancelledNodes
@@ -1477,6 +1935,7 @@ export class ArcanosDagRunService {
     settings: DagWorkerPoolSettings
   ): Promise<void> {
     record.status = 'running';
+    recordDagRunStatus('running');
     record.updatedAt = new Date().toISOString();
     record.summary = createApiSummary(record);
     this.recordEvent(record, 'run.started', {
@@ -1508,6 +1967,7 @@ export class ArcanosDagRunService {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       record.status = record.abortController.signal.aborted ? 'cancelled' : 'failed';
+      recordDagRunStatus(record.status);
       this.syncOrchestratorState(
         record,
         record.abortController.signal.aborted
@@ -1548,6 +2008,7 @@ export class ArcanosDagRunService {
         : internalSummary.status === 'cancelled'
           ? 'cancelled'
           : 'failed';
+    recordDagRunStatus(record.status);
     record.updatedAt = internalSummary.completedAt;
 
     for (const cancelledNodeId of internalSummary.cancelledNodeIds) {

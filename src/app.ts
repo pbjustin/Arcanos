@@ -9,10 +9,11 @@ import { unsafeExecutionGate } from "@transport/http/middleware/unsafeExecutionG
 import errorHandler from "@transport/http/middleware/errorHandler.js";
 import { requestContext, sendNotFound } from '@shared/http/index.js';
 import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
-import getGptModuleMap from '@platform/runtime/gptRouterConfig.js';
+import { getGptRegistrySnapshot } from '@platform/runtime/gptRouterConfig.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { arcanosMcpService } from '@services/arcanosMcp.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
+import { writeMetricsResponse } from '@platform/observability/appMetrics.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -67,21 +68,27 @@ export function createApp(): Express {
 
   app.get('/healthz', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const gptMap = await getGptModuleMap();
+      const { validation } = await getGptRegistrySnapshot();
+      const status = validation.missingGptIds.length === 0 ? 'ok' : 'unhealthy';
       const payload = withJsonResponseBytes({
-        status: 'ok',
+        status,
         service: SERVICE_NAME,
         timestamp: new Date().toISOString(),
         version: SERVICE_VERSION,
-        gpt_routes: Object.keys(gptMap).length,
+        gpt_routes: validation.registeredGptCount,
+        required_gpts: {
+          required: validation.requiredGptIds,
+          missing: validation.missingGptIds
+        },
         openai_configured: hasConfiguredOpenAIKey(),
       });
       req.logger?.info('healthz.response', {
         responseBytes: payload.response_bytes,
         gptRoutes: payload.gpt_routes,
+        missingRequiredGpts: validation.missingGptIds,
       });
       res.setHeader('x-response-bytes', String(payload.response_bytes));
-      res.json(payload);
+      res.status(status === 'ok' ? 200 : 503).json(payload);
     } catch (error) {
       //audit Assumption: health endpoint should fail loudly when registry load fails; failure risk: hidden misconfiguration; expected invariant: health check reflects startup/runtime integrity; handling strategy: delegate to global error middleware.
       next(error);
@@ -100,6 +107,14 @@ export function createApp(): Express {
     });
     res.setHeader('x-response-bytes', String(payload.response_bytes));
     res.json(payload);
+  });
+
+  app.get('/metrics', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await writeMetricsResponse(req, res);
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.post('/diag/echo', (req: Request, res: Response) => {

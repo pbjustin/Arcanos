@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetWorkerControlStatus = jest.fn();
 const mockCreateRun = jest.fn();
+const mockGetLatestRun = jest.fn();
 const mockGetRun = jest.fn();
 const mockWaitForRunUpdate = jest.fn();
+const mockGetRunTrace = jest.fn();
 const mockGetRunTree = jest.fn();
 const mockGetNode = jest.fn();
 const mockGetRunEvents = jest.fn();
@@ -22,8 +24,10 @@ jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
 jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
   arcanosDagRunService: {
     createRun: mockCreateRun,
+    getLatestRun: mockGetLatestRun,
     getRun: mockGetRun,
     waitForRunUpdate: mockWaitForRunUpdate,
+    getRunTrace: mockGetRunTrace,
     getRunTree: mockGetRunTree,
     getNode: mockGetNode,
     getRunEvents: mockGetRunEvents,
@@ -172,6 +176,107 @@ describe('api-arcanos-verification routes', () => {
       updated: true,
       waited: false
     });
+    mockGetLatestRun.mockResolvedValue({
+      pipeline: 'trinity',
+      trinity_version: '1.0',
+      runId: 'run-1',
+      sessionId: 'session-1',
+      template: 'trinity-core',
+      status: 'running',
+      plannerNodeId: 'planner',
+      rootNodeId: 'writer',
+      createdAt: '2026-03-07T00:00:00.000Z',
+      updatedAt: '2026-03-07T00:00:01.000Z'
+    });
+    mockGetRunTrace.mockResolvedValue({
+      pipeline: 'trinity',
+      trinity_version: '1.0',
+      run: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        runId: 'run-1',
+        sessionId: 'session-1',
+        template: 'trinity-core',
+        status: 'running',
+        plannerNodeId: 'planner',
+        rootNodeId: 'writer',
+        createdAt: '2026-03-07T00:00:00.000Z',
+        updatedAt: '2026-03-07T00:00:01.000Z'
+      },
+      tree: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        runId: 'run-1',
+        nodes: [{ nodeId: 'planner' }]
+      },
+      events: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        runId: 'run-1',
+        events: []
+      },
+      metrics: {
+        runId: 'run-1',
+        metrics: {
+          totalNodes: 5,
+          maxParallelNodesObserved: 3,
+          maxSpawnDepthObserved: 2,
+          totalRetries: 1,
+          totalFailures: 0,
+          totalAiCalls: 5,
+          estimatedCostUsd: 0.01,
+          wallClockDurationMs: 1000,
+          sumNodeDurationMs: 1500,
+          queueWaitMsP50: 10,
+          queueWaitMsP95: 20
+        },
+        limits: mockGetExecutionLimits(),
+        guardViolations: []
+      },
+      errors: {
+        runId: 'run-1',
+        errors: []
+      },
+      lineage: {
+        runId: 'run-1',
+        lineage: [],
+        loopDetected: false
+      },
+      verification: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        runId: 'run-1',
+        verification: {
+          runCompleted: false,
+          plannerSpawnedChildren: true,
+          parallelExecutionObserved: true,
+          aggregationRanLast: false,
+          retryPolicyRespected: true,
+          budgetPolicyRespected: true,
+          deadlockDetected: false,
+          stalledJobsDetected: false,
+          loopDetected: false
+        },
+        lineage: {
+          workerPipeline: 'trinity',
+          workerEntryPoint: 'runWorkerTrinityPrompt',
+          sessionId: 'session-1',
+          sessionPropagationMode: 'inherit_run_session',
+          tokenAuditSessionMode: 'dag_node_branch',
+          observedWorkerIds: ['async-queue-slot-1', 'async-queue-slot-2'],
+          observedSourceEndpoints: ['dag.agent.planner', 'dag.agent.audit']
+        }
+      },
+      sections: {
+        requested: ['run', 'tree', 'events', 'metrics', 'errors', 'lineage', 'verification'],
+        events: {
+          total: 0,
+          returned: 0,
+          truncated: false,
+          maxEvents: 200
+        }
+      }
+    });
     mockGetRunTree.mockReturnValue({
       runId: 'run-1',
       nodes: [
@@ -284,12 +389,18 @@ describe('api-arcanos-verification routes', () => {
     expect(createResponse.body.data.run.pipeline).toBe('trinity');
     expect(createResponse.body.data.run.template).toBe('trinity-core');
 
+    const latestResponse = await request(buildApp()).get('/dag/runs/latest');
     const runResponse = await request(buildApp()).get('/dag/runs/run-1');
+    const traceResponse = await request(buildApp()).get('/dag/runs/run-1/trace');
     const treeResponse = await request(buildApp()).get('/dag/runs/run-1/tree');
     const nodeResponse = await request(buildApp()).get('/dag/runs/run-1/nodes/planner');
     const metricsResponse = await request(buildApp()).get('/dag/runs/run-1/metrics');
     const verificationResponse = await request(buildApp()).get('/dag/runs/run-1/verification');
     const cancelResponse = await request(buildApp()).post('/dag/runs/run-1/cancel');
+
+    expect(latestResponse.status).toBe(200);
+    expect(latestResponse.body.data.run.runId).toBe('run-1');
+    expect(mockGetLatestRun).toHaveBeenCalledWith(undefined);
 
     expect(runResponse.status).toBe(200);
     expect(runResponse.body.data.run.status).toBe('running');
@@ -309,6 +420,13 @@ describe('api-arcanos-verification routes', () => {
 
     expect(metricsResponse.status).toBe(200);
     expect(metricsResponse.body.data.metrics.maxParallelNodesObserved).toBe(3);
+
+    expect(traceResponse.status).toBe(200);
+    expect(traceResponse.body.data.run.runId).toBe('run-1');
+    expect(traceResponse.body.data.sections.events.maxEvents).toBe(200);
+    expect(mockGetRunTrace).toHaveBeenCalledWith('run-1', {
+      maxEvents: undefined
+    });
 
     expect(verificationResponse.status).toBe(200);
     expect(verificationResponse.body.data.verification.parallelExecutionObserved).toBe(true);

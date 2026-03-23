@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetGptModuleMap = jest.fn();
+const mockRebuildGptModuleMap = jest.fn();
+const mockValidateGptRegistry = jest.fn();
 const mockDispatchModuleAction = jest.fn();
 const mockGetModuleMetadata = jest.fn();
 const mockPersistModuleConversation = jest.fn();
@@ -8,6 +10,7 @@ const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
 const mockExtractNaturalLanguageStorageLabel = jest.fn();
+const mockHasDagOrchestrationIntentCue = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockBuildRepoInspectionPrompt = jest.fn();
 const mockBuildRepoInspectionAnswer = jest.fn();
@@ -16,6 +19,8 @@ const mockShouldInspectRepoPrompt = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
+  rebuildGptModuleMap: mockRebuildGptModuleMap,
+  validateGptRegistry: mockValidateGptRegistry,
 }));
 
 jest.unstable_mockModule('../src/routes/modules.js', () => ({
@@ -32,6 +37,7 @@ jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
   extractNaturalLanguageStorageLabel: mockExtractNaturalLanguageStorageLabel,
+  hasDagOrchestrationIntentCue: mockHasDagOrchestrationIntentCue,
   hasNaturalLanguageMemoryCue: mockHasNaturalLanguageMemoryCue,
 }));
 
@@ -56,22 +62,35 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 }));
 
 const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const { getMetricsText, resetAppMetricsForTests } = await import('../src/platform/observability/appMetrics.js');
 
 describe('routeGptRequest MCP dispatch branch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.METRICS_INCLUDE_WORKER_STATE = 'false';
+    resetAppMetricsForTests();
     mockGetGptModuleMap.mockResolvedValue({
-      tutor: { route: 'tutor', module: 'ARCANOS:TUTOR' },
+      'arcanos-core': { route: 'core', module: 'ARCANOS:CORE' },
+    });
+    mockRebuildGptModuleMap.mockResolvedValue({
+      'arcanos-core': { route: 'core', module: 'ARCANOS:CORE' },
+    });
+    mockValidateGptRegistry.mockReturnValue({
+      requiredGptIds: ['arcanos-core', 'core'],
+      missingGptIds: [],
+      registeredGptIds: ['arcanos-core'],
+      registeredGptCount: 1,
     });
     mockGetModuleMetadata.mockReturnValue({
-      name: 'ARCANOS:TUTOR',
+      name: 'ARCANOS:CORE',
       actions: ['query'],
-      route: 'tutor',
+      route: 'core',
     });
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
     mockExtractNaturalLanguageStorageLabel.mockReturnValue(null);
+    mockHasDagOrchestrationIntentCue.mockReturnValue(false);
     mockHasNaturalLanguageMemoryCue.mockReturnValue(false);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
     mockShouldInspectRepoPrompt.mockReturnValue(false);
@@ -106,7 +125,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     } as any;
 
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         action: 'mcp.invoke',
         payload: {
@@ -129,8 +148,8 @@ describe('routeGptRequest MCP dispatch branch', () => {
     expect(mockPersistModuleConversation).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'mcp.invoke',
-        gptId: 'tutor',
-        moduleName: 'ARCANOS:TUTOR',
+        gptId: 'arcanos-core',
+        moduleName: 'ARCANOS:CORE',
         sessionId: 'sess-1',
       })
     );
@@ -163,7 +182,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     } as any;
 
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         payload: {
           mcp: {
@@ -214,7 +233,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     } as any;
 
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         action: 'mcp.invoke',
         payload: {
@@ -239,7 +258,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
-  it('automatically routes tutor prompts asking for MCP tools into listTools', async () => {
+  it('automatically routes core prompts asking for MCP tools into listTools', async () => {
     const request = {
       app: {
         locals: {
@@ -254,7 +273,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     } as any;
 
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         message: 'Show me the MCP tools available right now.',
       },
@@ -285,7 +304,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
-  it('automatically routes tutor health prompts into ops.health_report', async () => {
+  it('automatically routes core health prompts into ops.health_report', async () => {
     const invokeTool = jest.fn().mockResolvedValue({
       structuredContent: { ok: true, status: 'healthy' },
     });
@@ -301,7 +320,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     } as any;
 
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         message: 'Give me a backend health report.',
       },
@@ -331,6 +350,196 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
+  it('automatically routes latest DAG trace prompts into dag.run.latest instead of trinity.ask', async () => {
+    const invokeTool = jest.fn().mockResolvedValue({
+      structuredContent: { run: { runId: 'dagrun_latest_1', status: 'complete' } },
+    });
+    const request = {
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool,
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    const prompt = 'Trace the most recent DAG run with full lineage, nodes, events, metrics, and verification summary.';
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: prompt,
+        sessionId: 'sess-dag-1',
+      },
+      requestId: 'req-dag-1',
+      request,
+    });
+
+    expect(invokeTool).toHaveBeenCalledWith({
+      toolName: 'dag.run.latest',
+      toolArguments: {
+        sessionId: 'sess-dag-1',
+      },
+      request,
+      sessionId: 'sess-dag-1',
+    });
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          handledBy: 'mcp-dispatcher',
+          mcp: expect.objectContaining({
+            action: 'invoke',
+            toolName: 'dag.run.latest',
+            dispatchMode: 'automatic',
+            reason: 'prompt_requests_latest_dag_run',
+          }),
+        }),
+      })
+    );
+
+    const metricsText = await getMetricsText();
+    expect(metricsText).toMatch(/mcp_auto_invoke_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*tool_name="dag\.run\.latest"[^}]*reason="prompt_requests_latest_dag_run"[^}]*\} 1/);
+    expect(metricsText).toMatch(/dispatcher_route_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*route="core"[^}]*handler="mcp-dispatcher"[^}]*outcome="ok"[^}]*\} 1/);
+  });
+
+  it('bypasses the memory dispatcher for DAG intent prompts even when memory cues are present', async () => {
+    const invokeTool = jest.fn().mockResolvedValue({
+      structuredContent: { run: { runId: 'dagrun_latest_2', status: 'complete' } },
+    });
+    const request = {
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool,
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    mockHasDagOrchestrationIntentCue.mockReturnValue(true);
+    mockHasNaturalLanguageMemoryCue.mockReturnValue(true);
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'retrieve', latest: true });
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: 'Show the DAG lineage, nodes, metrics, and verification for the latest run.',
+      },
+      requestId: 'req-dag-2',
+      request,
+      logger: { info: jest.fn(), warn: jest.fn() },
+    });
+
+    expect(mockExecuteNaturalLanguageMemoryCommand).not.toHaveBeenCalled();
+    expect(invokeTool).toHaveBeenCalledWith({
+      toolName: 'dag.run.latest',
+      toolArguments: {},
+      request,
+      sessionId: undefined,
+    });
+    expect(envelope.ok).toBe(true);
+  });
+
+  it('retries DAG routing when the memory dispatcher ignores a misclassified DAG prompt', async () => {
+    const invokeTool = jest.fn().mockResolvedValue({
+      structuredContent: { run: { runId: 'dagrun_latest_3', status: 'complete' } },
+    });
+    const logger = { info: jest.fn(), warn: jest.fn() };
+    const request = {
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool,
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    mockHasDagOrchestrationIntentCue
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(true);
+    mockHasNaturalLanguageMemoryCue.mockReturnValue(true);
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'retrieve', latest: true });
+    mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
+      success: false,
+      intent: 'unknown',
+      operation: 'ignored',
+      sessionId: 'sess-dag-fallback',
+      message: 'Command not recognized.'
+    });
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: 'Get the DAG lineage, nodes, metrics, and verification summary.',
+      },
+      requestId: 'req-dag-fallback',
+      request,
+      logger,
+    });
+
+    expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledTimes(1);
+    expect(invokeTool).toHaveBeenCalledWith({
+      toolName: 'dag.run.latest',
+      toolArguments: {},
+      request,
+      sessionId: undefined,
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'gpt.dispatch.intent_fallback',
+      expect.objectContaining({
+        fallbackReason: 'memory_ignored_retry_dag',
+      })
+    );
+    expect(envelope.ok).toBe(true);
+
+    const metricsText = await getMetricsText();
+    expect(metricsText).toMatch(/memory_dispatch_ignored_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*reason="memory_ignored_retry_dag"[^}]*\} 1/);
+    expect(metricsText).toMatch(/dispatcher_misroutes_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*reason="memory_ignored_retry_dag"[^}]*\} 1/);
+    expect(metricsText).toMatch(/dispatcher_fallback_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*reason="memory_ignored_retry_dag"[^}]*\} 1/);
+  });
+
+  it('accepts explicit module:dag commands for latest-run tracing', async () => {
+    const invokeTool = jest.fn().mockResolvedValue({
+      structuredContent: { run: { runId: 'dagrun_latest_4', status: 'complete' } },
+    });
+    const request = {
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool,
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: 'module:dag trace latest run',
+        sessionId: 'sess-dag-command',
+      },
+      requestId: 'req-dag-command',
+      request,
+    });
+
+    expect(invokeTool).toHaveBeenCalledWith({
+      toolName: 'dag.run.latest',
+      toolArguments: {
+        sessionId: 'sess-dag-command',
+      },
+      request,
+      sessionId: 'sess-dag-command',
+    });
+    expect(envelope.ok).toBe(true);
+  });
+
   it('automatically routes broad backend operations prompts into trinity.ask', async () => {
     const invokeTool = jest.fn().mockResolvedValue({
       structuredContent: { ok: true, result: 'dispatched through trinity' },
@@ -348,7 +557,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
 
     const prompt = 'Inspect the backend worker, postgres, and redis state and report what is wrong.';
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         message: prompt,
         sessionId: 'sess-auto-1',
@@ -401,7 +610,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     mockShouldInspectRepoPrompt.mockReturnValue(true);
 
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         message: 'Is my CLI implemented?',
         sessionId: 'sess-repo-1',

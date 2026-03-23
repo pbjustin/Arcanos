@@ -11,6 +11,7 @@ type AnyMcpServer = {
 };
 
 const DAG_RUN_WAIT_MAX_MS = 30_000;
+const DEFAULT_DAG_TRACE_SLOW_MS = 1_500;
 
 const dagCreateInputSchema = z.object({
   goal: z.string().trim().min(1).optional(),
@@ -27,8 +28,16 @@ const dagRunIdSchema = z.object({
   runId: z.string().trim().min(1),
 });
 
+const dagLatestRunSchema = z.object({
+  sessionId: z.string().trim().min(1).optional(),
+});
+
 const dagNodeSchema = dagRunIdSchema.extend({
   nodeId: z.string().trim().min(1),
+});
+
+const dagTraceSchema = dagRunIdSchema.extend({
+  maxEvents: z.number().int().min(1).max(1000).optional(),
 });
 
 const dagWaitSchema = dagRunIdSchema.extend({
@@ -65,6 +74,28 @@ function createDagNotFoundError(
     details,
     requestId: ctx.requestId,
   });
+}
+
+function resolveDagTraceSlowMs(): number {
+  const rawValue = Number.parseInt(process.env.DAG_TRACE_SLOW_MS ?? '', 10);
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return DEFAULT_DAG_TRACE_SLOW_MS;
+  }
+
+  return Math.trunc(rawValue);
+}
+
+function measurePayloadBytes(payload: unknown): number {
+  return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+}
+
+function logDagInspection(
+  ctx: McpRequestContext,
+  event: 'dag.run.latest' | 'dag.run.trace',
+  details: Record<string, unknown> & { durationMs: number }
+): void {
+  const loggerMethod = details.durationMs >= resolveDagTraceSlowMs() ? ctx.logger.warn : ctx.logger.info;
+  loggerMethod(event, details);
 }
 
 /**
@@ -191,6 +222,46 @@ export function registerDagMcpTools(server: AnyMcpServer, ctx: McpRequestContext
   );
 
   server.registerTool(
+    'dag.run.latest',
+    {
+      title: 'Get Latest DAG Run',
+      description: 'Gets the most recently updated DAG run summary, optionally scoped to a session.',
+      annotations: { readOnlyHint: true },
+      inputSchema: dagLatestRunSchema,
+    },
+    wrapTool('dag.run.latest', ctx, async (rawArgs: unknown) => {
+      const startedAtMs = Date.now();
+      const args = dagLatestRunSchema.parse(rawArgs);
+      const resolvedSessionId = args.sessionId ?? ctx.sessionId;
+      const latestRun = await arcanosDagRunService.inspectLatestRun(resolvedSessionId);
+      if (!latestRun) {
+        return createDagNotFoundError(ctx, 'DAG run', { sessionId: resolvedSessionId ?? null });
+      }
+
+      const responseBody = {
+        summary:
+          `Most recent DAG run is ${latestRun.run.runId} with status=${latestRun.run.status}. ` +
+          'Use that explicit runId for nodes, metrics, verification, or a full trace.',
+        run: latestRun.run,
+      };
+      logDagInspection(ctx, 'dag.run.latest', {
+        requestId: ctx.requestId,
+        traceId: ctx.req?.traceId ?? ctx.requestId,
+        runId: latestRun.run.runId,
+        sessionId: resolvedSessionId ?? null,
+        durationMs: latestRun.diagnostics.totalMs,
+        localLookupMs: latestRun.diagnostics.localLookupMs,
+        persistedLookupMs: latestRun.diagnostics.persistedLookupMs,
+        persistedLookupTimedOut: latestRun.diagnostics.persistedLookupTimedOut,
+        snapshotSource: latestRun.diagnostics.snapshotSource,
+        payloadBytes: measurePayloadBytes(responseBody),
+      });
+
+      return mcpText(responseBody);
+    })
+  );
+
+  server.registerTool(
     'dag.run.get',
     {
       title: 'Get DAG Run',
@@ -228,6 +299,50 @@ export function registerDagMcpTools(server: AnyMcpServer, ctx: McpRequestContext
       }
 
       return mcpText(waitedRun);
+    })
+  );
+
+  server.registerTool(
+    'dag.run.trace',
+    {
+      title: 'Get DAG Trace',
+      description: 'Gets a staged full DAG trace for one explicit run id, including tree, events, metrics, errors, lineage, and verification.',
+      annotations: { readOnlyHint: true },
+      inputSchema: dagTraceSchema,
+    },
+    wrapTool('dag.run.trace', ctx, async (rawArgs: unknown) => {
+      const args = dagTraceSchema.parse(rawArgs);
+      const inspection = await arcanosDagRunService.inspectRunTrace(args.runId, {
+        maxEvents: args.maxEvents,
+      });
+      if (!inspection) {
+        return createDagNotFoundError(ctx, 'DAG run', { runId: args.runId });
+      }
+
+      logDagInspection(ctx, 'dag.run.trace', {
+        requestId: ctx.requestId,
+        traceId: ctx.req?.traceId ?? ctx.requestId,
+        runId: args.runId,
+        durationMs: inspection.diagnostics.totalMs,
+        snapshotSource: inspection.diagnostics.snapshotSource,
+        localLookupMs: inspection.diagnostics.localLookupMs,
+        persistedLookupMs: inspection.diagnostics.persistedLookupMs,
+        buildRunMs: inspection.diagnostics.buildMs.run,
+        buildTreeMs: inspection.diagnostics.buildMs.tree,
+        buildEventsMs: inspection.diagnostics.buildMs.events,
+        buildMetricsMs: inspection.diagnostics.buildMs.metrics,
+        buildErrorsMs: inspection.diagnostics.buildMs.errors,
+        buildLineageMs: inspection.diagnostics.buildMs.lineage,
+        buildVerificationMs: inspection.diagnostics.buildMs.verification,
+        payloadBytes: measurePayloadBytes(inspection.trace),
+        totalNodes: inspection.diagnostics.payload.nodes,
+        totalEvents: inspection.diagnostics.payload.totalEvents,
+        returnedEvents: inspection.diagnostics.payload.returnedEvents,
+        totalErrors: inspection.diagnostics.payload.errors,
+        lineageEntries: inspection.diagnostics.payload.lineageEntries,
+      });
+
+      return mcpText(inspection.trace);
     })
   );
 

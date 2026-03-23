@@ -212,6 +212,12 @@ export interface DagRunData {
 
 export type DagRunResponse = ApiEnvelope<DagRunData>;
 
+export interface DagLatestRunData {
+  run: DagRunSummary;
+}
+
+export type DagLatestRunResponse = ApiEnvelope<DagLatestRunData>;
+
 export interface DagTreeNode extends TrinityNodeMetadata {
   nodeId: string;
   parentNodeId: string | null;
@@ -382,6 +388,27 @@ export interface DagVerificationData extends TrinityRuntimeMetadata {
 
 export type DagVerificationResponse = ApiEnvelope<DagVerificationData>;
 
+export interface DagTraceData extends TrinityRuntimeMetadata {
+  run: DagRunSummary;
+  tree: DagTreeData;
+  events: DagEventsData;
+  metrics: DagMetricsData;
+  errors: DagErrorsData;
+  lineage: DagLineageData;
+  verification: DagVerificationData;
+  sections: {
+    requested: Array<'run' | 'tree' | 'events' | 'metrics' | 'errors' | 'lineage' | 'verification'>;
+    events: {
+      total: number;
+      returned: number;
+      truncated: boolean;
+      maxEvents: number | null;
+    };
+  };
+}
+
+export type DagTraceResponse = ApiEnvelope<DagTraceData>;
+
 /**
  * Optional route map for IDE/autocomplete use.
  *
@@ -416,9 +443,17 @@ export interface ArcanosVerificationApi {
     request: CreateDagRunRequest;
     response: CreateDagRunResponse;
   };
+  'GET /api/arcanos/dag/runs/latest': {
+    request: { sessionId?: string };
+    response: DagLatestRunResponse;
+  };
   'GET /api/arcanos/dag/runs/:runId': {
     request: { runId: string };
     response: DagRunResponse;
+  };
+  'GET /api/arcanos/dag/runs/:runId/trace': {
+    request: { runId: string; maxEvents?: number };
+    response: DagTraceResponse;
   };
   'GET /api/arcanos/dag/runs/:runId/tree': {
     request: { runId: string };

@@ -1,4 +1,8 @@
-import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
+import getGptModuleMap, {
+  rebuildGptModuleMap,
+  validateGptRegistry,
+  type GptModuleEntry
+} from "@platform/runtime/gptRouterConfig.js";
 import { dispatchModuleAction, getModuleMetadata } from "../modules.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
@@ -7,6 +11,7 @@ import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
   extractNaturalLanguageStorageLabel,
+  hasDagOrchestrationIntentCue,
   hasNaturalLanguageMemoryCue,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
@@ -20,6 +25,21 @@ import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/di
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Request } from "express";
+import {
+  getRequestAbortContext,
+  getRequestRemainingMs,
+  isAbortError,
+  runWithRequestAbortTimeout
+} from "@arcanos/runtime";
+import {
+  recordDagTraceTimeout,
+  recordDispatcherFallback,
+  recordDispatcherMisroute,
+  recordDispatcherRoute,
+  recordMcpAutoInvoke,
+  recordMemoryDispatchIgnored,
+  recordUnknownGpt,
+} from "@platform/observability/appMetrics.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -147,6 +167,12 @@ type McpDispatchIntent =
       reason: string;
     };
 
+type PromptIntentClassification = {
+  intent: 'dag' | 'memory' | 'generic';
+  reason: string;
+  bypassMemoryDispatcher: boolean;
+};
+
 function getRecordString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
@@ -250,6 +276,13 @@ const automaticMcpModulesListPattern =
   /\b(?:list|show|get)\b[^.!?\n]{0,20}\bmodules?\b|\bmodules?\b[^.!?\n]{0,20}\b(?:list|show|get)\b/i;
 const automaticMcpHealthReportPattern =
   /\b(?:ops|system|backend|service|deployment|railway)\b[^.!?\n]{0,28}\bhealth\b|\bhealth\b[^.!?\n]{0,28}\b(?:ops|system|backend|service|deployment|railway)\b|\bhealth\s+report\b/i;
+const automaticMcpDagLatestRunPattern =
+  /\b(?:latest|recent|most recent)\b[^.!?\n]{0,40}\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b|\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b[^.!?\n]{0,40}\b(?:latest|recent|most recent)\b/i;
+const automaticMcpDagTraceSelectorPattern =
+  /\b(?:full\s+trace|trace|lineage|nodes?|events?|metrics?|verification)\b/i;
+const automaticMcpDagRunIdPattern = /\b(dagrun[-_][a-z0-9_-]+)\b/i;
+const automaticMcpDagExplicitCommandPattern = /^\s*module\s*:\s*dag\b/i;
+const automaticMcpDagApiRoutePattern = /\/api\/arcanos\/dag\b/i;
 const automaticMcpStrongCuePattern = /\b(?:use|via|through)\s+mcp\b|\bmcp\s+(?:server|tools?|tooling)\b/i;
 const automaticMcpOpsVerbPattern =
   /\b(?:diagnose|debug|inspect|audit|analyze|check|report|trace|verify|investigate|orchestrate|manage)\b/i;
@@ -275,8 +308,8 @@ function inferAutomaticMcpDispatchIntent(params: {
     return null;
   }
 
-  //audit Assumption: auto MCP routing is safest on the generic ARCANOS tutor path; failure risk: domain-specific modules lose specialized behavior; expected invariant: gaming/booker/etc. keep existing module dispatch unless MCP was explicit; handling strategy: restrict automatic inference to the tutor module.
-  if (moduleName !== 'ARCANOS:TUTOR') {
+  //audit Assumption: auto MCP routing is safest on the primary ARCANOS core path; failure risk: domain-specific modules lose specialized behavior; expected invariant: gaming/booker/etc. keep existing module dispatch unless MCP was explicit; handling strategy: restrict automatic inference to the core module.
+  if (moduleName !== 'ARCANOS:CORE') {
     return null;
   }
 
@@ -287,6 +320,31 @@ function inferAutomaticMcpDispatchIntent(params: {
 
   if (!prompt) {
     return null;
+  }
+
+  if (automaticMcpDagExplicitCommandPattern.test(prompt)) {
+    const explicitDagRunIdMatch = automaticMcpDagRunIdPattern.exec(prompt);
+    if (explicitDagRunIdMatch?.[1]) {
+      return {
+        action: 'mcp.invoke',
+        toolName: 'dag.run.trace',
+        toolArguments: {
+          runId: explicitDagRunIdMatch[1],
+        },
+        dispatchMode: 'automatic',
+        reason: 'prompt_requests_explicit_dag_trace',
+      };
+    }
+
+    return {
+      action: 'mcp.invoke',
+      toolName: 'dag.run.latest',
+      toolArguments: {
+        ...(sessionId ? { sessionId } : {}),
+      },
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_latest_dag_run',
+    };
   }
 
   if (automaticMcpListToolsPattern.test(prompt)) {
@@ -317,6 +375,46 @@ function inferAutomaticMcpDispatchIntent(params: {
     };
   }
 
+  const dagRunIdMatch = automaticMcpDagRunIdPattern.exec(prompt);
+  if (dagRunIdMatch?.[1] && automaticMcpDagTraceSelectorPattern.test(prompt)) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'dag.run.trace',
+      toolArguments: {
+        runId: dagRunIdMatch[1],
+      },
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_explicit_dag_trace',
+    };
+  }
+
+  if (automaticMcpDagLatestRunPattern.test(prompt)) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'dag.run.latest',
+      toolArguments: {
+        ...(sessionId ? { sessionId } : {}),
+      },
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_latest_dag_run',
+    };
+  }
+
+  if (
+    (automaticMcpDagApiRoutePattern.test(prompt) || hasDagOrchestrationIntentCue(prompt)) &&
+    automaticMcpDagTraceSelectorPattern.test(prompt)
+  ) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'dag.run.latest',
+      toolArguments: {
+        ...(sessionId ? { sessionId } : {}),
+      },
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_dag_orchestration',
+    };
+  }
+
   //audit Assumption: broad operational prompts benefit from the generic Trinity MCP tool when they mention backend state or explicitly ask to use MCP; failure risk: normal tutoring prompts are over-routed into MCP; expected invariant: fallback only triggers on strong MCP cues or combined ops-verb/backend-noun prompts; handling strategy: require explicit regex evidence before delegating to `trinity.ask`.
   if (
     automaticMcpStrongCuePattern.test(prompt) ||
@@ -337,6 +435,48 @@ function inferAutomaticMcpDispatchIntent(params: {
   }
 
   return null;
+}
+
+function classifyPromptIntent(params: {
+  prompt: string | null;
+  parsedMemoryCommand: { intent: string };
+  hasMemoryCue: boolean;
+}): PromptIntentClassification {
+  const { prompt, parsedMemoryCommand, hasMemoryCue } = params;
+
+  if (!prompt) {
+    return {
+      intent: 'generic',
+      reason: 'no_prompt',
+      bypassMemoryDispatcher: false,
+    };
+  }
+
+  if (hasDagOrchestrationIntentCue(prompt)) {
+    return {
+      intent: 'dag',
+      reason: prompt.includes('/api/arcanos/dag')
+        ? 'api_arcanos_dag_reference'
+        : /^\s*module\s*:\s*dag\b/i.test(prompt)
+        ? 'explicit_module_dag_command'
+        : 'dag_orchestration_terms',
+      bypassMemoryDispatcher: true,
+    };
+  }
+
+  if (parsedMemoryCommand.intent !== 'unknown' && hasMemoryCue) {
+    return {
+      intent: 'memory',
+      reason: `memory_${parsedMemoryCommand.intent}`,
+      bypassMemoryDispatcher: false,
+    };
+  }
+
+  return {
+    intent: 'generic',
+    reason: parsedMemoryCommand.intent !== 'unknown' ? 'memory_cue_not_confirmed' : 'no_specialized_intent',
+    bypassMemoryDispatcher: false,
+  };
 }
 
 function getDispatcherMcpService(request: Request | undefined): ArcanosMcpService {
@@ -459,8 +599,8 @@ function inferAutomaticBackstageBookerDispatchIntent(params: {
     };
   }
 
-  //audit Assumption: tutor/default GPT traffic may need to hand off to the dedicated booker module for wrestling-booking prompts; failure risk: prompt remains in generic chat path and returns filler/greetings; expected invariant: a registered backstage route exists before reroute; handling strategy: scan the GPT map for the canonical booker route and reroute only when found.
-  if (currentModuleName === "ARCANOS:TUTOR") {
+  //audit Assumption: core/default GPT traffic may need to hand off to the dedicated booker module for wrestling-booking prompts; failure risk: prompt remains in generic chat path and returns filler/greetings; expected invariant: a registered backstage route exists before reroute; handling strategy: scan the GPT map for the canonical booker route and reroute only when found.
+  if (currentModuleName === "ARCANOS:CORE") {
     const backstageEntry = Object.values(gptModuleMap).find(entry => entry.module === "BACKSTAGE:BOOKER");
     if (!backstageEntry) {
       return null;
@@ -477,31 +617,6 @@ function inferAutomaticBackstageBookerDispatchIntent(params: {
   return null;
 }
 
-/**
- * Bound a dispatcher operation by a timeout without leaking pending timers.
- * Inputs/outputs: async work promise plus timeout milliseconds -> original result or timeout error.
- * Edge cases: timer is always cleared once the raced operation settles, including fast success and fast failure paths.
- */
-function withTimeout<T>(workPromise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timeoutHandle = setTimeout(() => {
-      reject(new Error(`Module dispatch timeout after ${ms}ms`));
-    }, ms);
-
-    //audit Assumption: the timeout guard should not keep the process alive after the dispatch settles; failure risk: successful requests leave pending timers that stall Jest workers and long-lived processes; expected invariant: exactly one terminal outcome resolves and the timer is always cleared; handling strategy: wrap the work promise and clear the timeout on both resolve and reject paths.
-    workPromise.then(
-      (value) => {
-        clearTimeout(timeoutHandle);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timeoutHandle);
-        reject(error);
-      }
-    );
-  });
-}
-
 const DEFAULT_MODULE_DISPATCH_TIMEOUT_MS = 15000;
 
 function resolvePositiveTimeoutMs(value: unknown): number | null {
@@ -511,15 +626,37 @@ function resolvePositiveTimeoutMs(value: unknown): number | null {
 function resolveDispatchTimeout(
   body: unknown,
   moduleMetadata: { defaultTimeoutMs?: number } | null
-): { timeoutMs: number; timeoutSource: "request" | "module-default" | "dispatcher-default" } {
+): { timeoutMs: number; timeoutSource: "request" | "module-default" | "dispatcher-default" | "request-cap" } {
   const requestTimeoutMs = resolvePositiveTimeoutMs((body as any)?.timeoutMs);
   if (requestTimeoutMs !== null) {
+    const requestRemainingMs = getRequestRemainingMs();
+    if (requestRemainingMs !== null) {
+      return {
+        timeoutMs: Math.max(1, Math.min(requestTimeoutMs, requestRemainingMs)),
+        timeoutSource: requestTimeoutMs > requestRemainingMs ? "request-cap" : "request"
+      };
+    }
     return { timeoutMs: requestTimeoutMs, timeoutSource: "request" };
   }
 
   const moduleTimeoutMs = resolvePositiveTimeoutMs(moduleMetadata?.defaultTimeoutMs);
   if (moduleTimeoutMs !== null) {
+    const requestRemainingMs = getRequestRemainingMs();
+    if (requestRemainingMs !== null) {
+      return {
+        timeoutMs: Math.max(1, Math.min(moduleTimeoutMs, requestRemainingMs)),
+        timeoutSource: moduleTimeoutMs > requestRemainingMs ? "request-cap" : "module-default"
+      };
+    }
     return { timeoutMs: moduleTimeoutMs, timeoutSource: "module-default" };
+  }
+
+  const requestRemainingMs = getRequestRemainingMs();
+  if (requestRemainingMs !== null) {
+    return {
+      timeoutMs: Math.max(1, Math.min(DEFAULT_MODULE_DISPATCH_TIMEOUT_MS, requestRemainingMs)),
+      timeoutSource: DEFAULT_MODULE_DISPATCH_TIMEOUT_MS > requestRemainingMs ? "request-cap" : "dispatcher-default"
+    };
   }
 
   return {
@@ -528,7 +665,7 @@ function resolveDispatchTimeout(
   };
 }
 
-type GptMapEntry = { module: string; route: string };
+type GptMapEntry = GptModuleEntry;
 
 const FORCED_DIRECT_GPT_BINDINGS: Record<string, GptMapEntry> = {
   "arcanos-gaming": { module: "ARCANOS:GAMING", route: "gaming" },
@@ -629,6 +766,72 @@ function resolveGptEntry(incomingGptId: string, gptModuleMap: Record<string, Gpt
   return null;
 }
 
+type UnknownGptRecoveryResult = {
+  gptModuleMap: Record<string, GptModuleEntry>;
+  resolved: { entry: GptMapEntry; matchMethod: GptMatchMethod | "normalized"; matchedId: string } | null;
+  missingRequiredGpts: string[];
+  requiredGptIds: string[];
+};
+
+async function recoverUnknownGptEntry(params: {
+  gptId: string;
+  requestId?: string;
+  logger?: any;
+  endpoint?: string;
+}): Promise<UnknownGptRecoveryResult> {
+  const { gptId, requestId, logger, endpoint } = params;
+  logger?.warn?.("gpt.dispatch.lookup.rehydrate", {
+    requestId,
+    gptId,
+    endpoint,
+  });
+
+  const gptModuleMap = await rebuildGptModuleMap();
+  const validation = validateGptRegistry(gptModuleMap);
+  const resolved = resolveGptEntry(gptId, gptModuleMap);
+
+  logger?.[resolved ? "info" : "warn"]?.("gpt.dispatch.lookup.rehydrate_result", {
+    requestId,
+    gptId,
+    endpoint,
+    recovered: Boolean(resolved),
+    requiredGptIds: validation.requiredGptIds,
+    missingRequiredGpts: validation.missingGptIds,
+  });
+
+  return {
+    gptModuleMap,
+    resolved,
+    missingRequiredGpts: validation.missingGptIds,
+    requiredGptIds: validation.requiredGptIds
+  };
+}
+
+function buildUnknownGptError(trimmedGptId: string, recovery?: {
+  missingRequiredGpts?: string[];
+  missingGptIds?: string[];
+  requiredGptIds: string[];
+}): { code: string; message: string; details?: Record<string, unknown> } {
+  const missingRequiredGpts = recovery?.missingRequiredGpts ?? recovery?.missingGptIds ?? [];
+  const details = recovery
+    ? {
+        recoveryAttempted: true,
+        requiredGptIds: recovery.requiredGptIds,
+        missingRequiredGpts,
+        recoveryHint:
+          missingRequiredGpts.length > 0
+            ? `Registry rehydration ran, but required GPT bindings are still missing: ${missingRequiredGpts.join(', ')}. Check startup logs for gpt.registry.startup and verify the built-in module definitions loaded correctly.`
+            : `Registry rehydration ran but '${trimmedGptId}' is still unknown. Check GPT_MODULE_MAP overrides and /healthz required_gpts output.`
+      }
+    : undefined;
+
+  return {
+    code: "UNKNOWN_GPT",
+    message: `gptId '${trimmedGptId}' is not registered`,
+    ...(details ? { details } : {})
+  };
+}
+
 
 
 export type ResolveEnvelope =
@@ -653,11 +856,23 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   }
 
   const directResolved = resolveForcedDirectGptEntry(trimmedGptId);
-  const gptModuleMap = directResolved ? null : await getGptModuleMap();
-  const resolved = directResolved ?? resolveGptEntry(trimmedGptId, gptModuleMap ?? {});
+  let gptModuleMap = directResolved ? null : await getGptModuleMap();
+  let resolved = directResolved ?? resolveGptEntry(trimmedGptId, gptModuleMap ?? {});
 
   if (!resolved) {
-    return { ok: false, error: { code: "UNKNOWN_GPT", message: `gptId '${trimmedGptId}' is not registered` }, _route: baseRoute };
+    const recovery = await recoverUnknownGptEntry({
+      gptId: trimmedGptId,
+      requestId
+    });
+    gptModuleMap = recovery.gptModuleMap;
+    resolved = resolveForcedDirectGptEntry(trimmedGptId) ?? recovery.resolved;
+    if (!resolved) {
+      return {
+        ok: false,
+        error: buildUnknownGptError(trimmedGptId, recovery),
+        _route: baseRoute
+      };
+    }
   }
 
   const { entry, matchMethod, matchedId } = resolved;
@@ -716,6 +931,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   //audit Assumption: diagnostic probes must never enter module resolution or gameplay dispatch; failure risk: lightweight health checks trigger simulation, HRC, or persistence side effects; expected invariant: `action:"ping"` or `prompt:"ping"` returns the fixed diagnostic payload immediately; handling strategy: short-circuit before GPT map lookup and before any action inference.
   if (isDiagnosticRequest(body as Record<string, unknown> | undefined, diagnosticTextInput)) {
+    recordDispatcherRoute({
+      gptId: trimmedGptId,
+      module: 'diagnostic',
+      route: 'diagnostic',
+      handler: 'diagnostic',
+      outcome: 'ok',
+    });
     return {
       ok: true,
       result: buildDiagnosticRouteResult(),
@@ -732,17 +954,42 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   const forcedDirectResolved = resolveForcedDirectGptEntry(trimmedGptId);
   const forceDirectModuleRouting = Boolean(forcedDirectResolved);
-  const gptModuleMap = forcedDirectResolved ? null : await getGptModuleMap();
-  const resolved = forcedDirectResolved ?? resolveGptEntry(trimmedGptId, (gptModuleMap ?? {}) as any);
+  let gptModuleMap = forcedDirectResolved ? null : await getGptModuleMap();
+  let resolved = forcedDirectResolved ?? resolveGptEntry(trimmedGptId, (gptModuleMap ?? {}) as any);
+  if (!resolved) {
+    const recovery = await recoverUnknownGptEntry({
+      gptId: trimmedGptId,
+      requestId,
+      logger,
+      endpoint: requestEndpoint,
+    });
+    gptModuleMap = recovery.gptModuleMap;
+    resolved = resolveForcedDirectGptEntry(trimmedGptId) ?? recovery.resolved;
+  }
   if (!resolved) {
     logger?.warn?.("gpt.dispatch.lookup.unknown", {
       requestId,
       gptId: trimmedGptId,
       endpoint: requestEndpoint,
+      requiredGptIds: validateGptRegistry((gptModuleMap ?? {}) as Record<string, GptModuleEntry>).requiredGptIds,
+    });
+    recordUnknownGpt({
+      gptId: trimmedGptId,
+      outcome: 'not_registered',
+    });
+    recordDispatcherRoute({
+      gptId: trimmedGptId,
+      module: 'unknown',
+      route: 'unknown',
+      handler: 'unknown-gpt',
+      outcome: 'error',
     });
     return {
       ok: false,
-      error: { code: "UNKNOWN_GPT", message: `gptId '${trimmedGptId}' is not registered` },
+      error: buildUnknownGptError(
+        trimmedGptId,
+        validateGptRegistry((gptModuleMap ?? {}) as Record<string, GptModuleEntry>)
+      ),
       _route: baseRoute,
     };
   }
@@ -809,11 +1056,31 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const initialActionCandidate = pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
   const hasNoRoutableAction = !initialActionCandidate;
   const sessionId = resolveSessionId(body, payload);
+  const hasMemoryCue = typeof prompt === "string" && hasNaturalLanguageMemoryCue(prompt);
+  const promptIntentClassification = classifyPromptIntent({
+    prompt,
+    parsedMemoryCommand,
+    hasMemoryCue,
+  });
+
+  logger?.info?.("gpt.dispatch.intent_classification", {
+    requestId,
+    gptId: trimmedGptId,
+    endpoint: requestEndpoint,
+    selectedModule: activeEntry.module,
+    selectedRoute: activeEntry.route,
+    promptIntent: promptIntentClassification.intent,
+    classificationReason: promptIntentClassification.reason,
+    bypassMemoryDispatcher: promptIntentClassification.bypassMemoryDispatcher,
+    memoryIntent: parsedMemoryCommand.intent !== "unknown" ? parsedMemoryCommand.intent : null,
+    fallbackReason: null,
+  });
 
   const shouldInterceptMemoryInDispatcher =
     typeof prompt === "string" &&
     parsedMemoryCommand.intent !== "unknown" &&
-    (hasNaturalLanguageMemoryCue(prompt) || hasNoRoutableAction) &&
+    !promptIntentClassification.bypassMemoryDispatcher &&
+    (hasMemoryCue || hasNoRoutableAction) &&
     (!requestedAction || requestedAction === "query");
 
   //audit Assumption: memory commands should bypass module action ambiguity (e.g., multi-action modules without default query); failure risk: user cannot use memory reliably via dispatcher; expected invariant: explicit memory intents always have a deterministic execution path; handling strategy: early memory execution branch before action resolution.
@@ -859,19 +1126,63 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         memoryOperation: memoryResult.operation
       });
 
-      return {
-        ok: true,
-        result: routedMemoryResult,
-        _route: {
-          ...baseRoute,
+      if (
+        memoryResult.operation === "ignored" &&
+        typeof prompt === "string" &&
+        hasDagOrchestrationIntentCue(prompt)
+      ) {
+        recordMemoryDispatchIgnored({
+          gptId: trimmedGptId,
           module: activeEntry.module,
-          action: requestedAction || "memory",
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null
+          reason: 'memory_ignored_retry_dag',
+        });
+        recordDispatcherMisroute({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          reason: 'memory_ignored_retry_dag',
+        });
+        recordDispatcherFallback({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          reason: 'memory_ignored_retry_dag',
+        });
+        logger?.warn?.("gpt.dispatch.intent_fallback", {
+          requestId,
+          gptId: trimmedGptId,
+          endpoint: requestEndpoint,
+          promptIntent: promptIntentClassification.intent,
+          selectedModule: activeEntry.module,
+          fallbackReason: "memory_ignored_retry_dag",
+        });
+      } else {
+        if (memoryResult.operation === "ignored") {
+          recordMemoryDispatchIgnored({
+            gptId: trimmedGptId,
+            module: activeEntry.module,
+            reason: 'ignored_without_fallback',
+          });
         }
-      };
+        recordDispatcherRoute({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          route: activeEntry.route,
+          handler: 'memory-dispatcher',
+          outcome: memoryResult.operation === 'ignored' ? 'ignored' : 'ok',
+        });
+        return {
+          ok: true,
+          result: routedMemoryResult,
+          _route: {
+            ...baseRoute,
+            module: activeEntry.module,
+            action: requestedAction || "memory",
+            matchMethod,
+            route: activeEntry.route,
+            availableActions,
+            moduleVersion: (moduleMetadata as any)?.version ?? null
+          }
+        };
+      }
     } catch (err: any) {
       return {
         ok: false,
@@ -934,7 +1245,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   if (
     !forceDirectModuleRouting &&
     !mcpDispatch.intent &&
-    activeEntry.module === "ARCANOS:TUTOR" &&
+    activeEntry.module === "ARCANOS:CORE" &&
     (!requestedAction || requestedAction === "query") &&
     (!actionCandidate || actionCandidate === "query") &&
     shouldInspectRepoPrompt(prompt)
@@ -995,6 +1306,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       });
     });
 
+    recordDispatcherRoute({
+      gptId: trimmedGptId,
+      module: activeEntry.module,
+      route: activeEntry.route,
+      handler: 'repo-inspection',
+      outcome: 'ok',
+    });
     return {
       ok: true,
       result: automaticRepoInspectionResult,
@@ -1030,6 +1348,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         : dispatcherAction;
 
     if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
+      if (resolvedMcpDispatchIntent.action === 'mcp.invoke') {
+        recordMcpAutoInvoke({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          toolName: resolvedMcpDispatchIntent.toolName,
+          reason: resolvedMcpDispatchIntent.reason,
+        });
+      }
       logger?.info?.("gpt.dispatch.mcp.auto_selected", {
         requestId,
         gptId: trimmedGptId,
@@ -1068,6 +1394,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
       const mcpToolError = extractMcpToolError(mcpResult);
       if (mcpToolError) {
+        recordDispatcherRoute({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          route: activeEntry.route,
+          handler: 'mcp-dispatcher',
+          outcome: 'error',
+        });
         return {
           ok: false,
           error: mcpToolError,
@@ -1132,6 +1465,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
       });
 
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'mcp-dispatcher',
+        outcome: 'ok',
+      });
       return {
         ok: true,
         result: routedMcpResult,
@@ -1157,6 +1497,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         error: String(err?.message ?? err),
       });
 
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'mcp-dispatcher',
+        outcome: 'error',
+      });
       return {
         ok: false,
         error: { code: "MODULE_ERROR", message: err?.message ?? "MCP dispatch failed" },
@@ -1232,7 +1579,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const dispatchStartedAt = Date.now();
 
   try {
-    const result = await withTimeout(dispatchModuleAction(activeEntry.module, action, payload), timeoutMs);
+    const activeAbortContext = getRequestAbortContext();
+    const result = await runWithRequestAbortTimeout(
+      {
+        timeoutMs,
+        requestId,
+        parentSignal: activeAbortContext?.signal,
+        abortMessage: `Module dispatch timeout after ${timeoutMs}ms`
+      },
+      () => dispatchModuleAction(activeEntry.module, action, payload)
+    );
 
     const resolvedSessionId = resolveSessionId(body, payload);
     await persistModuleConversation({
@@ -1265,6 +1621,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       durationMs: Date.now() - dispatchStartedAt,
     });
 
+    recordDispatcherRoute({
+      gptId: trimmedGptId,
+      module: activeEntry.module,
+      route: activeEntry.route,
+      handler: 'module-dispatcher',
+      outcome: 'ok',
+    });
     return {
       ok: true,
       result,
@@ -1280,7 +1643,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   } catch (err: any) {
     const errorMessage = String(err?.message ?? err);
-    const isDispatchTimeout = errorMessage === `Module dispatch timeout after ${timeoutMs}ms`;
+    const isDispatchTimeout =
+      errorMessage === `Module dispatch timeout after ${timeoutMs}ms` || isAbortError(err);
     const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
 
     logger?.error?.("gpt.dispatch.error", {
@@ -1295,6 +1659,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       durationMs: Date.now() - dispatchStartedAt,
     });
     if (isDispatchTimeout) {
+      if (promptIntentClassification.intent === 'dag') {
+        recordDagTraceTimeout({
+          handler: 'gpt-dispatch',
+          reason: 'module_timeout',
+        });
+      }
       logger?.error?.(dispatchLogEvent, {
         requestId,
         gptId: trimmedGptId,
@@ -1308,9 +1678,19 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       });
     }
 
+    recordDispatcherRoute({
+      gptId: trimmedGptId,
+      module: activeEntry.module,
+      route: activeEntry.route,
+      handler: 'module-dispatcher',
+      outcome: isDispatchTimeout ? 'timeout' : 'error',
+    });
     return {
       ok: false,
-      error: { code: "MODULE_ERROR", message: err?.message ?? "Module dispatch failed" },
+      error: {
+        code: isDispatchTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
+        message: err?.message ?? "Module dispatch failed"
+      },
       _route: {
         ...baseRoute,
         module: activeEntry.module,

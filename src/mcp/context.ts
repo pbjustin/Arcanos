@@ -8,6 +8,7 @@ import { createMcpLogger, type McpLogger } from './log.js';
 
 export interface McpRequestContext {
   requestId: string;
+  traceId: string;
   openai: OpenAI;
   runtimeBudget: RuntimeBudget;
   sessionId?: string;
@@ -58,11 +59,13 @@ export function buildMcpRequestContext(req: Request): McpRequestContext {
     (req.header('x-session-id') ?? undefined) ||
     (typeof (req.body as any)?.sessionId === 'string' ? (req.body as any).sessionId : undefined);
 
-  const requestId = generateRequestId('mcp');
-  const logger = createMcpLogger({ requestId, sessionId, transport: 'http' });
+  const requestId = req.requestId ?? generateRequestId('mcp');
+  const traceId = req.traceId ?? requestId;
+  const logger = createMcpLogger({ requestId, traceId, sessionId, transport: 'http' });
 
   return {
     requestId,
+    traceId,
     openai: client,
     runtimeBudget: createRuntimeBudget(),
     sessionId,
@@ -91,10 +94,12 @@ function buildDetachedMcpContext(sessionId: string | undefined, transport: 'inte
   }
 
   const requestId = generateRequestId('mcp');
-  const logger = createMcpLogger({ requestId, sessionId, transport });
+  const traceId = requestId;
+  const logger = createMcpLogger({ requestId, traceId, sessionId, transport });
 
   return {
     requestId,
+    traceId,
     openai: client,
     runtimeBudget: createRuntimeBudget(),
     sessionId,

@@ -1,10 +1,77 @@
-import { loadModuleDefinitions, LoadedModule } from '@services/moduleLoader.js';
+import {
+  clearModuleDefinitionCache,
+  loadModuleDefinitions,
+  LoadedModule
+} from '@services/moduleLoader.js';
 import { getEnv } from "@platform/runtime/env.js";
 import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
-interface GptModuleEntry {
+export interface GptModuleEntry {
   route: string;
   module: string;
+}
+
+export interface GptRegistryValidation {
+  requiredGptIds: string[];
+  missingGptIds: string[];
+  registeredGptIds: string[];
+  registeredGptCount: number;
+}
+
+const DEFAULT_REQUIRED_GPT_IDS = ['arcanos-core', 'core'] as const;
+
+function normalizeGptIdList(values: Iterable<string | null | undefined>): string[] {
+  const uniqueIds = new Map<string, string>();
+  for (const value of values) {
+    if (typeof value !== 'string') {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const normalized = trimmed.toLowerCase();
+    if (!uniqueIds.has(normalized)) {
+      uniqueIds.set(normalized, trimmed);
+    }
+  }
+
+  return Array.from(uniqueIds.values()).sort((left, right) => left.localeCompare(right));
+}
+
+export function getRequiredGptIds(): string[] {
+  const configured =
+    getEnv('REQUIRED_GPT_IDS') ??
+    getEnv('GPT_REQUIRED_IDS') ??
+    '';
+
+  if (!configured.trim()) {
+    return [...DEFAULT_REQUIRED_GPT_IDS];
+  }
+
+  return normalizeGptIdList(configured.split(','));
+}
+
+export function listRegisteredGptIds(map: Record<string, GptModuleEntry>): string[] {
+  return normalizeGptIdList(Object.keys(map));
+}
+
+export function validateGptRegistry(
+  map: Record<string, GptModuleEntry>,
+  requiredGptIds: string[] = getRequiredGptIds()
+): GptRegistryValidation {
+  const normalizedRegisteredIds = new Set(Object.keys(map).map((id) => id.trim().toLowerCase()).filter(Boolean));
+  const registeredGptIds = listRegisteredGptIds(map);
+  const missingGptIds = normalizeGptIdList(
+    requiredGptIds.filter((requiredId) => !normalizedRegisteredIds.has(requiredId.trim().toLowerCase()))
+  );
+
+  return {
+    requiredGptIds: normalizeGptIdList(requiredGptIds),
+    missingGptIds,
+    registeredGptIds,
+    registeredGptCount: registeredGptIds.length
+  };
 }
 
 /**
@@ -113,13 +180,33 @@ let gptModuleMapPromise: Promise<Record<string, GptModuleEntry>> | null = null;
 
 export function getGptModuleMap(): Promise<Record<string, GptModuleEntry>> {
   if (!gptModuleMapPromise) {
-    gptModuleMapPromise = loadGptModuleMap();
+    gptModuleMapPromise = loadGptModuleMap().catch((error) => {
+      gptModuleMapPromise = null;
+      throw error;
+    });
   }
   return gptModuleMapPromise;
 }
 
 export function resetGptModuleMapCache(): void {
   gptModuleMapPromise = null;
+}
+
+export async function rebuildGptModuleMap(): Promise<Record<string, GptModuleEntry>> {
+  clearModuleDefinitionCache();
+  resetGptModuleMapCache();
+  return getGptModuleMap();
+}
+
+export async function getGptRegistrySnapshot(): Promise<{
+  map: Record<string, GptModuleEntry>;
+  validation: GptRegistryValidation;
+}> {
+  const map = await getGptModuleMap();
+  return {
+    map,
+    validation: validateGptRegistry(map)
+  };
 }
 
 export default getGptModuleMap;

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetGptModuleMap = jest.fn();
+const mockRebuildGptModuleMap = jest.fn();
+const mockValidateGptRegistry = jest.fn();
 const mockDispatchModuleAction = jest.fn();
 const mockGetModuleMetadata = jest.fn();
 const mockPersistModuleConversation = jest.fn();
@@ -8,11 +10,14 @@ const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
 const mockExtractNaturalLanguageStorageLabel = jest.fn();
+const mockHasDagOrchestrationIntentCue = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockDetectBackstageBookerIntent = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
+  rebuildGptModuleMap: mockRebuildGptModuleMap,
+  validateGptRegistry: mockValidateGptRegistry,
 }));
 
 jest.unstable_mockModule('../src/routes/modules.js', () => ({
@@ -29,6 +34,7 @@ jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
   extractNaturalLanguageStorageLabel: mockExtractNaturalLanguageStorageLabel,
+  hasDagOrchestrationIntentCue: mockHasDagOrchestrationIntentCue,
   hasNaturalLanguageMemoryCue: mockHasNaturalLanguageMemoryCue,
 }));
 
@@ -55,8 +61,18 @@ describe('routeGptRequest backstage booker auto-routing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetGptModuleMap.mockResolvedValue({
-      tutor: { route: 'tutor', module: 'ARCANOS:TUTOR' },
+      'arcanos-core': { route: 'core', module: 'ARCANOS:CORE' },
       backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' }
+    });
+    mockRebuildGptModuleMap.mockResolvedValue({
+      'arcanos-core': { route: 'core', module: 'ARCANOS:CORE' },
+      backstage: { route: 'backstage', module: 'BACKSTAGE:BOOKER' }
+    });
+    mockValidateGptRegistry.mockReturnValue({
+      requiredGptIds: ['arcanos-core', 'core'],
+      missingGptIds: [],
+      registeredGptIds: ['arcanos-core', 'backstage'],
+      registeredGptCount: 2,
     });
     mockGetModuleMetadata.mockImplementation((moduleName: string) => {
       if (moduleName === 'BACKSTAGE:BOOKER') {
@@ -70,15 +86,16 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       }
 
       return {
-        name: 'ARCANOS:TUTOR',
+        name: 'ARCANOS:CORE',
         actions: ['query'],
-        route: 'tutor'
+        route: 'core'
       };
     });
     mockPersistModuleConversation.mockResolvedValue(undefined);
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
     mockExtractNaturalLanguageStorageLabel.mockReturnValue(null);
+    mockHasDagOrchestrationIntentCue.mockReturnValue(false);
     mockHasNaturalLanguageMemoryCue.mockReturnValue(false);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
     mockDetectBackstageBookerIntent.mockReturnValue({
@@ -88,9 +105,9 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     mockDispatchModuleAction.mockResolvedValue('Generated rivalry matrix');
   });
 
-  it('reroutes tutor booking prompts to BACKSTAGE:BOOKER generateBooking', async () => {
+  it('reroutes core booking prompts to BACKSTAGE:BOOKER generateBooking', async () => {
     const envelope = await routeGptRequest({
-      gptId: 'tutor',
+      gptId: 'arcanos-core',
       body: {
         message: 'Generate three rivalries for RAW after WrestleMania.',
         sessionId: 'RAW_RIVALRY_TEST'

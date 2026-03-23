@@ -19,6 +19,12 @@ import {
   prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
+import {
+  applyDeprecatedAskRouteHeaders,
+  ASK_ROUTE_SUNSET_HEADER,
+  ASK_ROUTE_MODE_HEADER,
+  resolveAskRouteMode
+} from '@shared/http/gptRouteHeaders.js';
 import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
 import { askValidationMiddleware } from "./validation.js";
 import type {
@@ -491,6 +497,40 @@ function sendGuardedAskResponse(
   return res.json(boundedPayload.payload);
 }
 
+function extractAskRouteGptHint(req: Request): string | null {
+  const source = req.method === 'GET' ? req.query : req.body;
+  const routedBodyGptId = typeof source?.gptId === 'string' ? source.gptId.trim() : '';
+  if (routedBodyGptId) {
+    return routedBodyGptId;
+  }
+
+  const headerGptId = req.header('x-gpt-id');
+  if (typeof headerGptId === 'string' && headerGptId.trim().length > 0) {
+    return headerGptId.trim();
+  }
+
+  return null;
+}
+
+function attachAskDeprecationMetadata(req: Request, res: Response, next: () => void): void {
+  const hintedGptId = extractAskRouteGptHint(req);
+  const canonicalRoute = applyDeprecatedAskRouteHeaders(res, hintedGptId);
+  const askRouteMode = resolveAskRouteMode();
+
+  req.logger?.info?.('ask.deprecated_route_used', {
+    endpoint: req.originalUrl,
+    method: req.method,
+    canonicalRoute,
+    gptIdHint: hintedGptId,
+    headerGptIdPresent: Boolean(req.header('x-gpt-id')),
+    requestId: req.requestId ?? null,
+    routeMode: askRouteMode,
+    sunsetAt: ASK_ROUTE_SUNSET_HEADER
+  });
+
+  next();
+}
+
 /**
  * Shared handler for both ask and brain endpoints
  * Handles AI request processing with standardized error handling and validation
@@ -746,7 +786,12 @@ export const handleAIRequest = async (
       }, `${endpointName}.daemon_tool.response`);
     }
 
-    const dagToolResponse = await tryDispatchDagTools(openai, prompt, { sessionId });
+    const dagToolResponse = await tryDispatchDagTools(openai, prompt, {
+      sessionId,
+      requestId: req.requestId,
+      traceId: req.traceId,
+      logger: req.logger,
+    });
     if (dagToolResponse) {
       completeAiRouteTrace(req, routeTrace, {
         activeModel: 'dag-tool',
@@ -1000,18 +1045,57 @@ function rejectGptRoutedAskRequests(req: Request, res: Response, next: () => voi
 
   req.logger?.warn?.('ask.gpt_misroute', {
     endpoint: req.originalUrl,
-    gptId: rawGptId
+    gptId: rawGptId,
+    canonicalRoute: `/gpt/${encodeURIComponent(rawGptId)}`
   });
   res.status(400).json({
     error: 'GPT-routed requests must target /gpt/:gptId',
+    deprecated: true,
+    canonicalRoute: `/gpt/${encodeURIComponent(rawGptId)}`,
     details: [`Received gptId '${rawGptId}' on ${req.originalUrl}; use /gpt/${rawGptId} instead.`]
+  });
+}
+
+function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): void {
+  if (resolveAskRouteMode() !== 'gone') {
+    next();
+    return;
+  }
+
+  const hintedGptId = extractAskRouteGptHint(req);
+  const responseCanonicalRoute = res.getHeader('x-canonical-route');
+  const canonicalRoute = typeof responseCanonicalRoute === 'string'
+    ? responseCanonicalRoute
+    : hintedGptId
+      ? `/gpt/${encodeURIComponent(hintedGptId)}`
+      : '/gpt/{gptId}';
+
+  req.logger?.warn?.('ask.deprecated_route_blocked', {
+    endpoint: req.originalUrl,
+    method: req.method,
+    canonicalRoute,
+    gptIdHint: hintedGptId,
+    requestId: req.requestId ?? null,
+    routeMode: 'gone',
+    sunsetAt: ASK_ROUTE_SUNSET_HEADER
+  });
+
+  res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
+  res.status(410).json({
+    error: 'Legacy /ask route has been removed; use /gpt/:gptId',
+    deprecated: true,
+    canonicalRoute,
+    sunsetAt: ASK_ROUTE_SUNSET_HEADER,
+    details: [
+      `${req.method} ${req.originalUrl} is no longer available. Migrate callers to POST ${canonicalRoute}.`
+    ]
   });
 }
 
 // Primary ask endpoint routed through the Trinity brain.
 //audit Assumption: the canonical session API now owns replay/restore endpoints; failure risk: duplicate public replay aliases create contract ambiguity; expected invariant: `/ask` remains the only publicly mounted ask route here; handling strategy: remove legacy replay aliases from this router.
-router.post('/ask', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
-router.get('/ask', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
+router.post('/ask', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
+router.get('/ask', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
 
 // Brain endpoint (alias for ask) still requires explicit confirmation.
 //audit Assumption: explicit confirmation gate is sufficient for sensitive brain actions in unsigned mode; failure risk: anonymous challenge attempts; expected invariant: confirmGate enforces confirmation token flow; handling strategy: keep confirmGate in front of handler.

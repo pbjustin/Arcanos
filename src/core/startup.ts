@@ -13,6 +13,7 @@ import { activateUnsafeCondition } from "@services/safety/runtimeState.js";
 import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 import { hydrateJudgedResponseFeedbackContext } from "@services/judgedResponseFeedback.js";
 import { getQueryFinetuneAttemptLatencyBudgetDiagnostics } from "@config/queryFinetune.js";
+import { getGptRegistrySnapshot } from '@platform/runtime/gptRouterConfig.js';
 
 /**
  * Runs startup checks including environment validation, database init,
@@ -102,6 +103,21 @@ export async function performStartup(): Promise<void> {
 
   validateAPIKeyAtStartup(); // Always continue, but log warnings
   await verifySchema();
+  const gptRegistrySnapshot = await getGptRegistrySnapshot();
+
+  logger.info('gpt.registry.startup', {
+    registeredGptCount: gptRegistrySnapshot.validation.registeredGptCount,
+    registeredGptIds: gptRegistrySnapshot.validation.registeredGptIds,
+    requiredGptIds: gptRegistrySnapshot.validation.requiredGptIds,
+    missingGptIds: gptRegistrySnapshot.validation.missingGptIds
+  });
+
+  //audit Assumption: missing required GPT IDs means the primary request path is broken and should not accept traffic; failure risk: backend starts "healthy" but 404s canonical GPT routes; expected invariant: required GPT bindings exist before listen; handling strategy: fail startup immediately.
+  if (gptRegistrySnapshot.validation.missingGptIds.length > 0) {
+    throw new Error(
+      `Required GPT registrations missing at startup: ${gptRegistrySnapshot.validation.missingGptIds.join(', ')}`
+    );
+  }
 
   const queryFinetuneAttemptLatencyBudgetDiagnostics =
     getQueryFinetuneAttemptLatencyBudgetDiagnostics();

@@ -18,6 +18,7 @@ import {
   type WorkerRuntimeSnapshotRecord
 } from '@core/db/repositories/workerRuntimeRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { recordDependencyCall } from '@platform/observability/appMetrics.js';
 
 export type WorkerAutonomyHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'offline';
 
@@ -675,6 +676,7 @@ export class WorkerAutonomyService {
       return;
     }
 
+    const webhookStartedAtMs = Date.now();
     try {
       const response = await fetch(this.settings.failureWebhookUrl, {
         method: 'POST',
@@ -699,8 +701,21 @@ export class WorkerAutonomyService {
         throw new Error(`Failure webhook returned HTTP ${response.status}`);
       }
 
+      recordDependencyCall({
+        dependency: 'worker_failure_webhook',
+        operation: 'post',
+        outcome: 'ok',
+        durationMs: Date.now() - webhookStartedAtMs,
+      });
       failureWebhookHistory.set(failureWebhookCooldownKey, nowMs);
     } catch (error: unknown) {
+      recordDependencyCall({
+        dependency: 'worker_failure_webhook',
+        operation: 'post',
+        outcome: 'error',
+        durationMs: Date.now() - webhookStartedAtMs,
+        error,
+      });
       console.warn('[Worker Autonomy] Failure webhook send failed:', resolveErrorMessage(error));
     }
   }

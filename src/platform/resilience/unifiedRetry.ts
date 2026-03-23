@@ -26,6 +26,7 @@ import {
   getTechnicalMessage
 } from "@core/lib/errors/reusable.js";
 import { ErrorType } from "@core/lib/errors/classification.js";
+import { createAbortError, isAbortError } from "@arcanos/runtime";
 
 /**
  * Retry configuration options
@@ -47,6 +48,8 @@ export interface RetryOptions {
   shouldRetry?: (error: unknown, attempt: number) => boolean;
   /** Operation name for logging and telemetry */
   operationName?: string;
+  /** Abort signal used to stop retries and retry backoff */
+  signal?: AbortSignal;
 }
 
 /**
@@ -110,13 +113,38 @@ export class RetryStrategy {
  * Default retry constants matching resilience.ts
  */
 export const DEFAULT_RETRY_CONSTANTS = {
-  MAX_RETRIES: 3,
+  MAX_RETRIES: 2,
   BASE_DELAY_MS: 1000,
   MAX_DELAY_MS: 30000,
   MULTIPLIER: 2,
   JITTER_MAX_MS: 2000,
   RATE_LIMIT_JITTER_MAX_MS: 2000
 } as const;
+
+function waitForRetryDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  if (signal.aborted) {
+    return Promise.reject(createAbortError('retry_aborted'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeoutHandle = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+
+    const onAbort = () => {
+      clearTimeout(timeoutHandle);
+      signal.removeEventListener('abort', onAbort);
+      reject(createAbortError('retry_aborted'));
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 /**
  * Default circuit breaker configuration
@@ -216,6 +244,7 @@ export async function withRetry<T>(
   const operationName = options.operationName || 'unknown_operation';
   const maxRetries = options.maxRetries ?? DEFAULT_RETRY_CONSTANTS.MAX_RETRIES;
   const useCircuitBreaker = options.useCircuitBreaker !== false;
+  const signal = options.signal;
   
   const strategy = createRetryStrategy({
     maxRetries,
@@ -255,6 +284,10 @@ export async function withRetry<T>(
   // Retry loop
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     try {
+      if (signal?.aborted) {
+        throw createAbortError('retry_aborted');
+      }
+
       const result = await executeOperation();
       
       const duration = Date.now() - startTime;
@@ -277,6 +310,9 @@ export async function withRetry<T>(
       return result;
     } catch (error: unknown) {
       lastError = error;
+      if (isAbortError(error) || signal?.aborted) {
+        throw error;
+      }
       const classification = classifyOpenAIError(error);
       
       // Check if we should retry
@@ -326,7 +362,7 @@ export async function withRetry<T>(
       });
 
       // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await waitForRetryDelay(delay, signal);
     }
   }
 

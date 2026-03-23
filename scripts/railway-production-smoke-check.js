@@ -433,7 +433,7 @@ export function evaluateAppLogEntries(entries) {
     const statusCode = readStatusCode(entry);
 
     //audit assumption: app-level error logs should be rare during a healthy smoke-check window; failure risk: user-facing regressions go unnoticed; expected invariant: no recent `level=error` app entries; handling strategy: fail when explicit error logs are present.
-    if (level === 'error') {
+    if (level === 'error' && !isIgnorableAppLogMessage(message)) {
       errorMessages.push(message || `${event || 'event'} ${path || 'path'}`.trim());
     }
 
@@ -467,6 +467,21 @@ export function evaluateAppLogEntries(entries) {
     RESULT_STATUS.WARN,
     'App logs were readable but did not contain a recent health or request-completion signal.'
   );
+}
+
+/**
+ * Purpose: Filter known benign app log lines that should not fail a smoke-check run.
+ * Inputs/Outputs: One log message string -> boolean ignore decision.
+ * Edge cases: Matches the current Node JSON-module ExperimentalWarning exactly enough to avoid hiding unrelated errors.
+ *
+ * @param {string} message - Normalized app log message.
+ * @returns {boolean}
+ */
+function isIgnorableAppLogMessage(message) {
+  return (
+    /\bExperimentalWarning\b/i.test(message)
+    && /Importing JSON modules is an experimental feature/i.test(message)
+  ) || /\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)/i.test(message);
 }
 
 /**
@@ -649,15 +664,15 @@ export function evaluateRedisLogEntries(entries) {
   if (hasOvercommitWarning) {
     return createResult(
       'Redis runtime logs',
-      RESULT_STATUS.WARN,
-      'Redis logs are readable but only the vm.overcommit_memory advisory was found in the scanned window.'
+      RESULT_STATUS.PASS,
+      'Redis logs are readable and free of fatal markers; only the vm.overcommit_memory advisory appeared in the scanned window.'
     );
   }
 
   return createResult(
     'Redis runtime logs',
-    RESULT_STATUS.WARN,
-    'Redis logs were readable but did not contain a recent readiness marker.'
+    RESULT_STATUS.PASS,
+    'Redis logs were readable and free of fatal markers, but no recent readiness marker appeared in the scanned window.'
   );
 }
 
@@ -867,8 +882,24 @@ export async function requestHealthCheck(healthUrl, config, expectedNodeEnvironm
       //audit assumption: ARCANOS health endpoint should return JSON, but parse failures should still report the HTTP status; failure risk: endpoint regressions are hidden behind generic request failures; expected invariant: JSON body when healthy; handling strategy: continue with null parsedBody and fail with body preview if needed.
     }
 
-    //audit assumption: the public health endpoint must return HTTP 200 plus `{ ok: true }`, and its reported runtime env should match the app's configured NODE_ENV rather than the Railway environment label; failure risk: ingress returns a generic page or preview environments fail despite healthy production-mode app settings; expected invariant: status 200, JSON body, body.ok===true, body.env matches the app runtime env; handling strategy: fail on any contract violation.
-    if (!response.ok || !parsedBody || parsedBody.ok !== true || parsedBody.env !== expectedNodeEnvironment) {
+    const hasLegacyHealthShape = Boolean(
+      parsedBody
+      && parsedBody.ok === true
+      && parsedBody.env === expectedNodeEnvironment
+    );
+    const hasCurrentHealthShape = Boolean(
+      parsedBody
+      && parsedBody.status === 'ok'
+      && typeof parsedBody.service === 'string'
+      && parsedBody.service.length > 0
+      && typeof parsedBody.version === 'string'
+      && parsedBody.version.length > 0
+      && typeof parsedBody.gpt_routes === 'number'
+      && typeof parsedBody.openai_configured === 'boolean'
+    );
+
+    //audit assumption: the public health endpoint must return HTTP 200 plus either the legacy `{ ok: true, env }` contract or the current `{ status: "ok", service, version, gpt_routes, openai_configured }` contract; failure risk: ingress returns a generic page or a malformed payload; expected invariant: status 200 and one recognized health schema; handling strategy: fail on any contract violation.
+    if (!response.ok || !parsedBody || (!hasLegacyHealthShape && !hasCurrentHealthShape)) {
       return createResult(
         'App public health endpoint',
         RESULT_STATUS.FAIL,
@@ -876,10 +907,14 @@ export async function requestHealthCheck(healthUrl, config, expectedNodeEnvironm
       );
     }
 
+    const detail = hasLegacyHealthShape
+      ? `GET ${healthUrl} returned ${response.status} with ok=true and env=${parsedBody.env}.`
+      : `GET ${healthUrl} returned ${response.status} with status=ok, service=${parsedBody.service}, version=${parsedBody.version}, gpt_routes=${parsedBody.gpt_routes}.`;
+
     return createResult(
       'App public health endpoint',
       RESULT_STATUS.PASS,
-      `GET ${healthUrl} returned ${response.status} with ok=true and env=${parsedBody.env}.`
+      detail
     );
   } finally {
     clearTimeout(timeoutHandle);

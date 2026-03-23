@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetGptModuleMap = jest.fn();
+const mockRebuildGptModuleMap = jest.fn();
+const mockValidateGptRegistry = jest.fn();
 const mockDispatchModuleAction = jest.fn();
 const mockGetModuleMetadata = jest.fn();
 const mockPersistModuleConversation = jest.fn();
@@ -8,6 +10,7 @@ const mockExecuteNaturalLanguageMemoryCommand = jest.fn();
 const mockParseNaturalLanguageMemoryCommand = jest.fn();
 const mockExtractNaturalLanguageSessionId = jest.fn();
 const mockExtractNaturalLanguageStorageLabel = jest.fn();
+const mockHasDagOrchestrationIntentCue = jest.fn();
 const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockBuildRepoInspectionAnswer = jest.fn();
 const mockCollectRepoImplementationEvidence = jest.fn();
@@ -15,6 +18,8 @@ const mockShouldInspectRepoPrompt = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
+  rebuildGptModuleMap: mockRebuildGptModuleMap,
+  validateGptRegistry: mockValidateGptRegistry,
 }));
 
 jest.unstable_mockModule('../src/routes/modules.js', () => ({
@@ -31,6 +36,7 @@ jest.unstable_mockModule('../src/services/naturalLanguageMemory.js', () => ({
   parseNaturalLanguageMemoryCommand: mockParseNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId: mockExtractNaturalLanguageSessionId,
   extractNaturalLanguageStorageLabel: mockExtractNaturalLanguageStorageLabel,
+  hasDagOrchestrationIntentCue: mockHasDagOrchestrationIntentCue,
   hasNaturalLanguageMemoryCue: mockHasNaturalLanguageMemoryCue,
 }));
 
@@ -66,6 +72,16 @@ describe('routeGptRequest gaming routing', () => {
       'arcanos-gaming': { route: 'gaming', module: 'ARCANOS:GAMING' },
       tutor: { route: 'tutor', module: 'ARCANOS:TUTOR' },
     });
+    mockRebuildGptModuleMap.mockResolvedValue({
+      'arcanos-gaming': { route: 'gaming', module: 'ARCANOS:GAMING' },
+      tutor: { route: 'tutor', module: 'ARCANOS:TUTOR' },
+    });
+    mockValidateGptRegistry.mockReturnValue({
+      requiredGptIds: ['arcanos-core', 'core'],
+      missingGptIds: [],
+      registeredGptIds: ['arcanos-gaming', 'tutor'],
+      registeredGptCount: 2,
+    });
     mockGetModuleMetadata.mockImplementation((moduleName: string) => {
       if (moduleName === 'ARCANOS:GAMING') {
         return {
@@ -85,6 +101,7 @@ describe('routeGptRequest gaming routing', () => {
     mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'unknown' });
     mockExtractNaturalLanguageSessionId.mockReturnValue(null);
     mockExtractNaturalLanguageStorageLabel.mockReturnValue(null);
+    mockHasDagOrchestrationIntentCue.mockReturnValue(false);
     mockHasNaturalLanguageMemoryCue.mockReturnValue(false);
     mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({ operation: 'noop' });
     mockShouldInspectRepoPrompt.mockReturnValue(true);

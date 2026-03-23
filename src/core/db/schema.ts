@@ -377,6 +377,7 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_job_data_running_lease ON job_data(status, lease_expires_at ASC, last_heartbeat_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_session_updated ON dag_runs(session_id, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_status_updated ON dag_runs(status, updated_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_dag_runs_updated_at_desc ON dag_runs(updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_artifacts_run_created ON dag_artifacts(run_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_artifacts_node_attempt ON dag_artifacts(node_id, attempt DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_worker_runtime_health_updated ON worker_runtime_snapshots(health_status, updated_at DESC)`,

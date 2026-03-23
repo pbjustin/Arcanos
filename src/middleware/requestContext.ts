@@ -3,6 +3,13 @@ import { generateRequestId } from '@shared/idGenerator.js';
 import { resolveSafeRequestPath } from '@shared/requestPathSanitizer.js';
 import { redactSensitive } from '@shared/redaction.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
+import {
+  recordHttpRequestCompletion,
+  recordHttpRequestEnd,
+  recordHttpRequestStart,
+  resolveMetricRouteLabel,
+  shouldSkipHttpMetrics,
+} from '@platform/observability/appMetrics.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -96,6 +103,12 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
   const startTimeMs = Date.now();
   const requestPath = resolveSafeRequestPath(req);
   const requestLogger = createRequestLogger(req, requestId, traceId);
+  const trackHttpMetrics = !shouldSkipHttpMetrics(req);
+  let metricsRecorded = false;
+
+  if (trackHttpMetrics) {
+    recordHttpRequestStart();
+  }
 
   req.requestId = requestId;
   req.traceId = traceId;
@@ -113,6 +126,27 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
     ip: req.ip,
     userAgent: req.get('user-agent') || null
   });
+
+  const finalizeHttpMetrics = (): void => {
+    if (!trackHttpMetrics || metricsRecorded) {
+      return;
+    }
+
+    metricsRecorded = true;
+    const route = resolveMetricRouteLabel(req);
+    recordHttpRequestCompletion({
+      route,
+      method: req.method,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startTimeMs,
+      requestBytes: Number.parseInt(req.get('content-length') ?? '0', 10) || 0,
+      responseBytes:
+        Number.parseInt(String(res.getHeader('x-response-bytes') ?? ''), 10) ||
+        Number.parseInt(String(res.getHeader('content-length') ?? ''), 10) ||
+        0,
+    });
+    recordHttpRequestEnd();
+  };
 
   res.on('finish', () => {
     const latencyMs = Date.now() - startTimeMs;
@@ -142,6 +176,15 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
       latencyMs,
       data: completionData
     });
+
+    finalizeHttpMetrics();
+  });
+
+  res.on('close', () => {
+    if (!metricsRecorded && trackHttpMetrics) {
+      recordHttpRequestEnd();
+      metricsRecorded = true;
+    }
   });
 
   next();

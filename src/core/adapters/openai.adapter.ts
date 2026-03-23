@@ -22,6 +22,7 @@ import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/reso
 import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 import type { ImageGenerateParamsNonStreaming, ImagesResponse } from 'openai/resources/images.js';
 import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import { recordDependencyCall } from '@platform/observability/appMetrics.js';
 
 /**
  * OpenAI adapter configuration
@@ -38,6 +39,32 @@ export interface OpenAIAdapterConfig {
   maxRetries?: number;
   /** Default model for completions */
   defaultModel?: string;
+}
+
+async function instrumentOpenAIDependency<T>(
+  operation: string,
+  callback: () => Promise<T>
+): Promise<T> {
+  const startedAtMs = Date.now();
+  try {
+    const result = await callback();
+    recordDependencyCall({
+      dependency: 'openai',
+      operation,
+      outcome: 'ok',
+      durationMs: Date.now() - startedAtMs,
+    });
+    return result;
+  } catch (error) {
+    recordDependencyCall({
+      dependency: 'openai',
+      operation,
+      outcome: 'error',
+      durationMs: Date.now() - startedAtMs,
+      error,
+    });
+    throw error;
+  }
 }
 
 /**
@@ -315,7 +342,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     const streamRequested = (params as ChatCompletionCreateParams & { stream?: unknown }).stream === true;
     //audit Assumption: streaming remains temporarily on chat endpoint for compatibility; risk: partial dual-surface behavior; invariant: non-stream routes through Responses; handling: preserve native stream path only when explicitly requested.
     if (streamRequested) {
-      const streamingResult = await originalChatCreate(params, options);
+      const streamingResult = await instrumentOpenAIDependency(
+        'chat_completions_create',
+        () => originalChatCreate(params, options)
+      );
       return streamingResult as unknown as ChatCompletion;
     }
 
@@ -323,7 +353,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
     //audit Assumption: legacy chat callers must route through Responses API internally; risk: mixed API surfaces diverge; invariant: one canonical execution path for non-stream chat; handling: convert chat params to responses payload and backfill legacy shape.
     const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
-    const response = await client.responses.create(normalizedResponsePayload, options);
+    const response = await instrumentOpenAIDependency(
+      'responses_create',
+      () => client.responses.create(normalizedResponsePayload, options)
+    );
     return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
   };
 
@@ -356,20 +389,29 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
           } as ChatCompletionCreateParams & { stream: false };
           const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
           const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
-          const response = await client.responses.create(normalizedResponsePayload, options);
+          const response = await instrumentOpenAIDependency(
+            'responses_create',
+            () => client.responses.create(normalizedResponsePayload, options)
+          );
           return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
         }
 
         //audit Assumption: canonical responses payloads should pass through unchanged; risk: accidental mutation of advanced params; invariant: direct responses API path remains available; handling: forward params/options directly.
         const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
-        return client.responses.create(normalizedParams, options);
+        return instrumentOpenAIDependency(
+          'responses_create',
+          () => client.responses.create(normalizedParams, options)
+        );
       },
       parse: async (
         params: Record<string, unknown>,
         options?: OpenAIResponsesRequestOptions
       ): Promise<any> => {
         //audit Assumption: parse may use evolving schema shape; risk: over-constrained types break compile on SDK updates; invariant: parse call remains available; handling: permissive typed pass-through.
-        return await client.responses.parse(params as never, options);
+        return instrumentOpenAIDependency(
+          'responses_parse',
+          () => client.responses.parse(params as never, options)
+        );
       }
     },
     chat: {
@@ -379,7 +421,10 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     },
     embeddings: {
       create: async (params: EmbeddingCreateParams): Promise<CreateEmbeddingResponse> => {
-        return client.embeddings.create(params);
+        return instrumentOpenAIDependency(
+          'embeddings_create',
+          () => client.embeddings.create(params)
+        );
       }
     },
     images: {
@@ -388,13 +433,19 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
         options?: OpenAIAdapterRequestOptions
       ): Promise<ImagesResponse> => {
         //audit Assumption: image generation should support trace/cancel request options; risk: untracked long-running calls; invariant: options forwarded; handling: pass through to SDK.
-        return client.images.generate(params, options);
+        return instrumentOpenAIDependency(
+          'images_generate',
+          () => client.images.generate(params, options)
+        );
       }
     },
     audio: {
       transcriptions: {
         create: async (params: TranscriptionCreateParamsNonStreaming): Promise<Transcription> => {
-          return client.audio.transcriptions.create(params);
+          return instrumentOpenAIDependency(
+            'audio_transcriptions_create',
+            () => client.audio.transcriptions.create(params)
+          );
         }
       }
     },

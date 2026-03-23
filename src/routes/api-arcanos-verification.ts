@@ -20,7 +20,9 @@ import type {
   CapabilitiesData,
   CreateDagRunData,
   CreateDagRunRequest,
+  DagLatestRunData,
   DagRunData,
+  DagTraceData,
   HealthData,
   NodeDetailData,
   QueueStatusData,
@@ -58,6 +60,14 @@ const dagRunRequestSchema = z.object({
 const dagRunWaitQuerySchema = z.object({
   updatedAfter: z.string().datetime().optional(),
   waitForUpdateMs: z.coerce.number().int().min(0).max(DAG_RUN_LONG_POLL_MAX_MS).optional()
+});
+
+const dagLatestRunQuerySchema = z.object({
+  sessionId: z.string().trim().min(1).optional()
+});
+
+const dagTraceQuerySchema = z.object({
+  maxEvents: z.coerce.number().int().min(1).max(1000).optional()
 });
 
 function buildDagRateLimitKey(req: express.Request, scope: string): string {
@@ -284,6 +294,25 @@ router.post(
 );
 
 router.get(
+  '/dag/runs/latest',
+  dagRunStatusRateLimit,
+  validateQuery(dagLatestRunQuerySchema, { errorCode: 'RUN_LATEST_QUERY_INVALID', includeDetails: true }),
+  asyncHandler(async (req, res) => {
+    const requestId = getRequestId(req);
+    const { sessionId } = req.validated!.query as z.infer<typeof dagLatestRunQuerySchema>;
+    const run = await arcanosDagRunService.getLatestRun(sessionId);
+
+    if (!run) {
+      sendNotFound(res, 'RUN_NOT_FOUND');
+      return;
+    }
+
+    const data: DagLatestRunData = { run };
+    res.json(createEnvelope(requestId, data));
+  })
+);
+
+router.get(
   '/dag/runs/:runId',
   dagRunStatusRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
@@ -309,6 +338,27 @@ router.get(
     });
 
     const data: DagRunData = { run: waitedRun.run };
+    res.json(createEnvelope(requestId, data));
+  })
+);
+
+router.get(
+  '/dag/runs/:runId/trace',
+  dagRunInspectRateLimit,
+  validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
+  validateQuery(dagTraceQuerySchema, { errorCode: 'RUN_TRACE_QUERY_INVALID', includeDetails: true }),
+  asyncHandler(async (req, res) => {
+    const requestId = getRequestId(req);
+    const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
+    const { maxEvents } = req.validated!.query as z.infer<typeof dagTraceQuerySchema>;
+    const trace = await arcanosDagRunService.getRunTrace(runId, { maxEvents });
+
+    if (!trace) {
+      sendNotFound(res, 'RUN_NOT_FOUND');
+      return;
+    }
+
+    const data: DagTraceData = trace;
     res.json(createEnvelope(requestId, data));
   })
 );

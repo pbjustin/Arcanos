@@ -1,3 +1,5 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import express, { Request, Response } from "express";
 import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
 import { loadModuleDefinitions } from "@services/moduleLoader.js";
@@ -5,6 +7,26 @@ import { asyncHandler } from "@shared/http/index.js";
 import { resolveGptRouting } from "./_core/gptDispatch.js";
 
 const router = express.Router();
+const CUSTOM_GPT_OPENAPI_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  "contracts",
+  "custom_gpt_route.openapi.v1.json"
+);
+
+async function readCustomGptOpenApiContract(): Promise<unknown> {
+  const rawContract = await fs.readFile(CUSTOM_GPT_OPENAPI_CONTRACT_PATH, "utf8");
+  return JSON.parse(rawContract) as unknown;
+}
+
+router.get(
+  "/contracts/custom_gpt_route.openapi.v1.json",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const contract = await readCustomGptOpenApiContract();
+    //audit Assumption: Custom GPT builders should always fetch the latest contract from the backend instead of caching a stale local copy; failure risk: action routing drifts back to deprecated paths like `/ask`; expected invariant: this endpoint returns the live canonical schema and discourages intermediary caching; handling strategy: serve deterministic JSON with `no-store`.
+    res.set("cache-control", "no-store, max-age=0");
+    return res.json(contract);
+  })
+);
 
 router.get(
   "/_introspection",

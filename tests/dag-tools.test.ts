@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const getFeatureFlagsMock = jest.fn();
 const getExecutionLimitsMock = jest.fn();
 const createRunMock = jest.fn();
+const inspectLatestRunMock = jest.fn();
+const inspectRunTraceMock = jest.fn();
 const getRunMock = jest.fn();
 const getRunMetricsMock = jest.fn();
 
@@ -27,6 +29,8 @@ jest.unstable_mockModule('@services/arcanosDagRunService.js', () => ({
     getFeatureFlags: getFeatureFlagsMock,
     getExecutionLimits: getExecutionLimitsMock,
     createRun: createRunMock,
+    inspectLatestRun: inspectLatestRunMock,
+    inspectRunTrace: inspectRunTraceMock,
     getRun: getRunMock,
     getRunMetrics: getRunMetricsMock
   }
@@ -128,6 +132,114 @@ describe('tryDispatchDagTools', () => {
       expect.objectContaining({
         module: 'dag-tools',
         result: expect.stringContaining('pipeline=trinity, template=trinity-core')
+      })
+    );
+  });
+
+  it('returns the latest DAG run summary for most-recent prompts without invoking OpenAI', async () => {
+    inspectLatestRunMock.mockResolvedValue({
+      run: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        runId: 'dagrun_300_latest',
+        sessionId: 'session-123',
+        template: 'trinity-core',
+        status: 'complete',
+        createdAt: '2026-03-07T12:00:00.000Z',
+        updatedAt: '2026-03-07T12:00:05.000Z'
+      },
+      diagnostics: {
+        snapshotSource: 'persisted',
+        localLookupMs: 0,
+        persistedLookupMs: 4,
+        totalMs: 4
+      }
+    });
+
+    const response = await tryDispatchDagTools(
+      {} as any,
+      'Trace the most recent DAG run with full lineage, nodes, events, metrics, and verification summary.',
+      { sessionId: 'session-123', logger: { info: jest.fn(), warn: jest.fn() } as any }
+    );
+
+    expect(inspectLatestRunMock).toHaveBeenCalledWith('session-123');
+    expect(inspectRunTraceMock).not.toHaveBeenCalled();
+    expect(response).toEqual(
+      expect.objectContaining({
+        module: 'dag-tools',
+        result: expect.stringContaining('Most recent DAG run is dagrun_300_latest'),
+      })
+    );
+  });
+
+  it('collapses explicit full-trace requests into one bounded inspection', async () => {
+    inspectRunTraceMock.mockResolvedValue({
+      trace: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        run: {
+          pipeline: 'trinity',
+          trinity_version: '1.0',
+          runId: 'dagrun_400_trace',
+          sessionId: 'session-123',
+          template: 'trinity-core',
+          status: 'running',
+          createdAt: '2026-03-07T12:00:00.000Z',
+          updatedAt: '2026-03-07T12:00:05.000Z'
+        },
+        tree: { pipeline: 'trinity', trinity_version: '1.0', runId: 'dagrun_400_trace', nodes: [{ nodeId: 'planner' }] },
+        events: { pipeline: 'trinity', trinity_version: '1.0', runId: 'dagrun_400_trace', events: [{ eventId: 'evt-1' }] },
+        metrics: { runId: 'dagrun_400_trace', metrics: {}, limits: {}, guardViolations: [] },
+        errors: { runId: 'dagrun_400_trace', errors: [] },
+        lineage: { runId: 'dagrun_400_trace', lineage: [{ nodeId: 'planner' }], loopDetected: false },
+        verification: {
+          pipeline: 'trinity',
+          trinity_version: '1.0',
+          runId: 'dagrun_400_trace',
+          verification: { runCompleted: false },
+          lineage: { workerPipeline: 'trinity' }
+        },
+        sections: {
+          requested: ['run', 'tree', 'events', 'metrics', 'errors', 'lineage', 'verification'],
+          events: { total: 10, returned: 10, truncated: false, maxEvents: 200 }
+        }
+      },
+      diagnostics: {
+        snapshotSource: 'persisted',
+        localLookupMs: 0,
+        persistedLookupMs: 5,
+        buildMs: {
+          run: 0,
+          tree: 1,
+          events: 1,
+          metrics: 0,
+          errors: 0,
+          lineage: 0,
+          verification: 0
+        },
+        totalMs: 7,
+        payload: {
+          nodes: 1,
+          totalEvents: 10,
+          returnedEvents: 10,
+          errors: 0,
+          lineageEntries: 1
+        }
+      }
+    });
+
+    const response = await tryDispatchDagTools(
+      {} as any,
+      'Show the full trace for dagrun_400_trace with lineage, nodes, events, metrics, and verification.'
+    );
+
+    expect(inspectRunTraceMock).toHaveBeenCalledWith('dagrun_400_trace', {
+      maxEvents: undefined,
+    });
+    expect(response).toEqual(
+      expect.objectContaining({
+        module: 'dag-tools',
+        result: expect.stringContaining('DAG trace for dagrun_400_trace includes nodes=1'),
       })
     );
   });

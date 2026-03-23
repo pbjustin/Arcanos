@@ -465,6 +465,90 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
     });
   });
 
+  it('returns the latest local run summary without persistence lookups', async () => {
+    const service = new ArcanosDagRunService();
+    const olderRecord = buildStoredRunRecord('2026-03-07T00:00:01.000Z');
+    olderRecord.runId = 'run-older';
+    olderRecord.summary = {
+      ...olderRecord.summary,
+      runId: 'run-older',
+      updatedAt: '2026-03-07T00:00:01.000Z'
+    };
+
+    const latestRecord = buildStoredRunRecord('2026-03-07T00:00:05.000Z');
+    latestRecord.runId = 'run-latest';
+    latestRecord.summary = {
+      ...latestRecord.summary,
+      runId: 'run-latest',
+      updatedAt: '2026-03-07T00:00:05.000Z'
+    };
+
+    (service as any).runsById.set('run-older', olderRecord);
+    (service as any).runsById.set('run-latest', latestRecord);
+
+    const latestRun = await service.getLatestRun();
+
+    expect(latestRun).toEqual(
+      expect.objectContaining({
+        runId: 'run-latest',
+        updatedAt: '2026-03-07T00:00:05.000Z'
+      })
+    );
+  });
+
+  it('builds a full trace from the in-memory snapshot once for explicit run ids', async () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:04.000Z');
+
+    record.nodesById.set('planner', {
+      nodeId: 'planner',
+      runId: 'run-1',
+      parentNodeId: null,
+      agentRole: 'planner',
+      jobType: 'plan',
+      status: 'complete',
+      dependencyIds: [],
+      spawnDepth: 0,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer'],
+      error: null,
+      completedAt: '2026-03-07T00:00:02.000Z'
+    });
+    record.nodesById.set('writer', {
+      nodeId: 'writer',
+      runId: 'run-1',
+      parentNodeId: 'planner',
+      agentRole: 'writer',
+      jobType: 'synthesize',
+      status: 'running',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: [],
+      error: null
+    });
+    record.events.push({
+      eventId: 'evt-1',
+      type: 'node.started',
+      at: '2026-03-07T00:00:03.000Z',
+      data: { nodeId: 'writer' }
+    } as any);
+
+    (service as any).runsById.set('run-1', record);
+
+    const inspection = await service.inspectRunTrace('run-1');
+
+    expect(inspection?.trace.run.runId).toBe('run-1');
+    expect(inspection?.trace.tree.nodes).toHaveLength(2);
+    expect(inspection?.trace.events.events).toHaveLength(1);
+    expect(inspection?.trace.sections.events.truncated).toBe(false);
+    expect(inspection?.diagnostics.snapshotSource).toBe('local');
+  });
+
   it('enriches DAG events with Trinity runtime markers', async () => {
     const service = new ArcanosDagRunService();
     const record = buildStoredRunRecord('2026-03-07T00:00:04.000Z');

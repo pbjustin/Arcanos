@@ -35,6 +35,7 @@ const {
   extractNaturalLanguageStorageLabel,
   extractNaturalLanguageSessionId,
   executeNaturalLanguageMemoryCommand,
+  hasNaturalLanguageMemoryCue,
   queryExactNaturalLanguageMemoryEntries,
   parseNaturalLanguageMemoryCommand
 } = await import('../src/services/naturalLanguageMemory.js');
@@ -132,6 +133,15 @@ This recap mentions lookup text but should still save.`;
     expect(parseNaturalLanguageMemoryCommand('Show the full raw memory table for RAW_20260308_VAN')).toEqual({
       intent: 'inspect'
     });
+  });
+
+  it('does not classify DAG trace prompts as memory commands', () => {
+    const dagPrompt = 'Trace the DAG run lineage, nodes, metrics, and verification summary for the latest run.';
+
+    expect(parseNaturalLanguageMemoryCommand(dagPrompt)).toEqual({
+      intent: 'unknown'
+    });
+    expect(hasNaturalLanguageMemoryCue(dagPrompt)).toBe(false);
   });
 
   it('extracts exact record-id and tag selectors from diagnostic retrieval prompts', () => {

@@ -61,6 +61,16 @@ The router injects the module name server-side, so your Custom GPT does not need
 ### Canonical OpenAPI Contract
 The machine-readable contract lives at [contracts/custom_gpt_route.openapi.v1.json](../contracts/custom_gpt_route.openapi.v1.json).
 
+For live integrations, prefer the backend-served contract URL instead of a manually copied local file:
+- `https://<your-backend>/contracts/custom_gpt_route.openapi.v1.json`
+
+Important:
+- Updating the repo file alone does not update an already-configured Custom GPT action.
+- After changing the contract, refresh or re-import the action schema in the Custom GPT builder.
+- `arcanos-core` is the built-in GPT ID for the main `ARCANOS:CORE` route.
+- `arcanos-tutor` and `tutor` remain separate tutor-only GPT IDs for `ARCANOS:TUTOR`.
+- Use `GPT_MODULE_MAP` only when you need additional custom GPT IDs beyond the built-in routes.
+
 ## Spec Sheet Template (for Custom GPT Actions)
 Use this format when defining or documenting a Custom GPT:
 
@@ -86,6 +96,8 @@ success_response:
 - What was broken: older integrations still modeled GPT requests as `/ask` plus body-level `gptId`, and some wrappers injected an implicit `"action": "ask"` even though GPT routes are module-specific.
 - What changed: the canonical contract is now `POST /gpt/{gptId}` with `gptId` as a required path parameter and `action` omitted unless the caller explicitly sets a backend-supported value.
 - How to call it now: send `prompt` in the JSON body, optionally add `gptVersion`, `action`, `payload`, or `context`, and never duplicate `gptId` in the body.
+- Legacy `/ask` responses now advertise migration state with `Deprecation`, `Sunset`, `x-canonical-route`, and `x-ask-route-mode` headers.
+- Safe removal path: leave `ASK_ROUTE_MODE` unset for compatibility mode, then switch to `ASK_ROUTE_MODE=gone` when you are ready for `/ask` to return `410 Gone`.
 
 ## Custom GPT Catalog
 
@@ -140,6 +152,29 @@ body:
   prompt: "How do I beat the Thunderblight boss?"
 success_response:
   description: Strategy guidance plus _gptAck metadata.
+```
+
+### Arcanos Core
+**What it is:** The primary ARCANOS entryway for the main custom GPT. The `ARCANOS:CORE` module sends prompt-first requests through the Trinity brain so the main GPT can use the general ARCANOS pipeline without being coupled to tutor-specific logic.
+
+**Known GPT IDs:** `arcanos-core`, `core`. The module route is derived from `arcanos-core.ts` (route: `core`).
+
+**Available actions (via `/gpt/<gpt-id>`):**
+- `query`
+
+**Spec sheet example:**
+```yaml
+name: Arcanos Core
+gpt_id: arcanos-core
+base_url: https://<your-backend>
+endpoint: /gpt/arcanos-core
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  prompt: "Give me a direct answer using the main ARCANOS pipeline."
+success_response:
+  description: Main ARCANOS response with Trinity metadata and _gptAck metadata.
 ```
 
 ### Arcanos Tutor

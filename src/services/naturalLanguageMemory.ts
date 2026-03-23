@@ -183,6 +183,45 @@ const STRUCTURED_SESSION_SECTION_CUE_PATTERN =
   /(?:^|\n)\s*(?:persisted\s+summary(?:\s*\(stored\))?|session\s+behavior|session\s+capabilities\s+enabled|available\s+actions)\b/i;
 const MIN_STRUCTURED_SESSION_PAYLOAD_LINES = 3;
 const MIN_STRUCTURED_SESSION_PAYLOAD_LENGTH = 80;
+const EXPLICIT_MEMORY_DIRECTIVE_PATTERN =
+  /\b(?:memory|memories|recall|session|storage\s+label|record\s*id|save|store|remember)\b/i;
+const DAG_ORCHESTRATION_NOUN_PATTERNS = [
+  /\bdag\b/i,
+  /\bworkflow\b/i,
+  /\borchestration\b/i,
+  /\/api\/arcanos\/dag\b/i,
+  /^\s*module\s*:\s*dag\b/i
+] as const;
+const DAG_TRACE_TERM_PATTERNS = [
+  /\brun\b/i,
+  /\blineage\b/i,
+  /\bnodes?\b/i,
+  /\bevents?\b/i,
+  /\bmetrics?\b/i,
+  /\bverification\b/i,
+  /\btrace\b/i
+] as const;
+
+function hasExplicitNaturalLanguageMemoryDirective(rawInput: string): boolean {
+  return EXPLICIT_MEMORY_DIRECTIVE_PATTERN.test(rawInput);
+}
+
+export function hasDagOrchestrationIntentCue(rawInput: string): boolean {
+  if (!rawInput.trim()) {
+    return false;
+  }
+
+  if (DAG_ORCHESTRATION_NOUN_PATTERNS.some((pattern) => pattern.test(rawInput))) {
+    return true;
+  }
+
+  const dagTraceTermCount = DAG_TRACE_TERM_PATTERNS.reduce(
+    (count, pattern) => count + (pattern.test(rawInput) ? 1 : 0),
+    0
+  );
+
+  return dagTraceTermCount >= 3;
+}
 
 /**
  * Normalize external session identifiers into a safe bounded token.
@@ -349,6 +388,11 @@ export function parseNaturalLanguageMemoryCommand(rawInput: string): ParsedMemor
     return { intent: 'inspect' };
   }
 
+  //audit Assumption: DAG/orchestration inspection prompts must not be mistaken for memory retrieval just because they include verbs like "show/get" or summary-like nouns; failure risk: DAG traces are intercepted by memory and never reach orchestration tools; expected invariant: DAG cues stay out of the memory command parser unless the user explicitly asked for memory/session recall; handling strategy: fail closed to `unknown` before generic recall/lookup parsing.
+  if (hasDagOrchestrationIntentCue(trimmedInput) && !hasExplicitNaturalLanguageMemoryDirective(trimmedInput)) {
+    return { intent: 'unknown' };
+  }
+
   //audit Assumption: prompts that explicitly name a session id or storage label and ask to query or retrieve it should resolve to the latest session-scoped memory row; failure risk: session-label lookups degrade into generic search text and model-generated backend summaries; expected invariant: explicit session targets become deterministic retrievals; handling strategy: promote exact session-target phrasing before broader recall/search parsing.
   if (hasExplicitNaturalLanguageSessionTargetCue(trimmedInput)) {
     return { intent: 'retrieve', latest: true };
@@ -416,6 +460,10 @@ export function hasNaturalLanguageMemoryCue(rawInput: string): boolean {
 
   //audit Assumption: empty prompts cannot carry actionable memory intent; failure risk: false-positive interception on blank requests; expected invariant: cue detection only runs on non-empty prompts; handling strategy: short-circuit false.
   if (!normalizedInput) {
+    return false;
+  }
+
+  if (hasDagOrchestrationIntentCue(normalizedInput) && !hasExplicitNaturalLanguageMemoryDirective(normalizedInput)) {
     return false;
   }
 

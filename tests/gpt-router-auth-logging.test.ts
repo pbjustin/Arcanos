@@ -179,7 +179,7 @@ describe('gpt router auth logging', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
-      ok: true,
+      status: 'ok',
       route: 'diagnostic',
       message: 'backend operational',
     });

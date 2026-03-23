@@ -31,6 +31,12 @@ vendor/
 .codex/
 /.codex-pr-*/
 /.codex-pr-*
+/.codex-build-tracker-*/
+/.codex-build-tracker-*
+/.codex-hotfix-*/
+/.codex-hotfix-*
+/.codex-tmp-*/
+/.codex-tmp-*
 /.codex-runtime-deploy-*/
 /.codex-runtime-deploy-*
 /.codex-runtime-deploy-clean-*/
