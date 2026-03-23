@@ -10,6 +10,7 @@ import { createGPT5Reasoning } from "@services/openai.js";
 import { ARCANOS_SYSTEM_PROMPTS } from "@platform/runtime/prompts.js";
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { assertBudgetAvailable } from '@platform/resilience/runtimeBudget.js';
+import { getRequestAbortSignal } from "@arcanos/runtime";
 
 // --- Tier Detection ---
 
@@ -89,7 +90,10 @@ export async function runReflection(
   const result = await createGPT5Reasoning(
     client,
     reflectionPrompt,
-    ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING()
+    ARCANOS_SYSTEM_PROMPTS.GPT5_REASONING(),
+    {
+      signal: getRequestAbortSignal()
+    }
   );
 
   if (result.error) {

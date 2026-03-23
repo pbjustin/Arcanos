@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import { createGPT5Reasoning } from "@services/openai.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import type { ReasoningLedger } from "@core/logic/trinityTypes.js";
+import { getRequestAbortSignal } from "@arcanos/runtime";
 
 export interface ClearAuditResult {
   clarity: number;
@@ -40,7 +41,9 @@ Reasoning Ledger:
 
 export async function runClearAudit(client: OpenAI, ledger: ReasoningLedger): Promise<ClearAuditResult> {
   const ledgerText = JSON.stringify(ledger, null, 2);
-  const result = await createGPT5Reasoning(client, ledgerText, CLEAR_AUDIT_PROMPT);
+  const result = await createGPT5Reasoning(client, ledgerText, CLEAR_AUDIT_PROMPT, {
+    signal: getRequestAbortSignal()
+  });
 
   const fallback: ClearAuditResult = {
     clarity: 0,
