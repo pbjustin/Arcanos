@@ -69,6 +69,7 @@ import { runSelfImproveCycle } from '@services/selfImprove/controller.js';
 import { recordTrinityJudgedFeedback } from './trinityJudgedFeedback.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
+import { getRequestAbortSignal, getRequestRemainingMs, isAbortError, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import {
   deriveTrinityCapabilityFlags,
@@ -77,6 +78,7 @@ import {
   enforceFinalStageHonestyAndMinimalism
 } from './trinityHonesty.js';
 import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
+import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   applyTrinityDirectAnswerOutputContract,
   TRINITY_DIRECT_ANSWER_AUDIT_FLAG,
@@ -87,6 +89,8 @@ const MIN_ESCALATION_BUDGET_MS = 5000;
 const EXACT_LITERAL_DISPATCH_MODULE = 'exact-literal-dispatcher';
 const EXACT_LITERAL_DISPATCH_STAGE = 'EXACT-LITERAL-DISPATCH';
 const EXACT_LITERAL_AUDIT_FLAG = 'EXACT_LITERAL_SHORTCUT_ACTIVE';
+const DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS = 3_000;
+const DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS = 750;
 
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
@@ -190,6 +194,79 @@ function truncateStructuredLogValue(value: string, maxLength = 320): string {
   }
 
   return `${value.slice(0, Math.max(0, maxLength - 16))}...[truncated]`;
+}
+
+function logCoreExecution(event: string, context: Record<string, unknown>): void {
+  logger.info(`[core] ${event}`, {
+    module: 'ARCANOS:CORE',
+    ...context
+  });
+}
+
+function resolveAuxiliaryStageTimeoutMs(
+  envName: string,
+  fallbackMs: number,
+  runtimeBudget: RuntimeBudget
+): number {
+  const configuredTimeoutMs = Number.parseInt(process.env[envName] ?? '', 10);
+  const normalizedConfiguredTimeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? Math.trunc(configuredTimeoutMs)
+      : fallbackMs;
+  const remainingBudgetMs = getSafeRemainingMs(runtimeBudget);
+  const remainingRequestMs = getRequestRemainingMs();
+
+  return Math.max(
+    1,
+    Math.min(
+      normalizedConfiguredTimeoutMs,
+      remainingBudgetMs,
+      remainingRequestMs ?? remainingBudgetMs
+    )
+  );
+}
+
+async function runLoggedStage<T>(params: {
+  requestId: string;
+  stage: string;
+  runtimeBudget: RuntimeBudget;
+  operation: () => Promise<T>;
+  timeoutMs?: number;
+}): Promise<T> {
+  const startedAt = Date.now();
+  logCoreExecution(`before ${params.stage}`, {
+    requestId: params.requestId,
+    timeoutMs: params.timeoutMs
+  });
+
+  try {
+    const result =
+      typeof params.timeoutMs === 'number'
+        ? await runWithRequestAbortTimeout(
+            {
+              timeoutMs: params.timeoutMs,
+              requestId: params.requestId,
+              parentSignal: getRequestAbortSignal(),
+              abortMessage: `Trinity ${params.stage} timed out after ${params.timeoutMs}ms`
+            },
+            params.operation
+          )
+        : await params.operation();
+
+    logCoreExecution(`after ${params.stage}`, {
+      requestId: params.requestId,
+      durationMs: Date.now() - startedAt
+    });
+    return result;
+  } catch (error) {
+    logger.warn(`[core] ${params.stage} failed`, {
+      module: 'ARCANOS:CORE',
+      requestId: params.requestId,
+      durationMs: Date.now() - startedAt,
+      error: resolveErrorMessage(error)
+    });
+    throw error;
+  }
 }
 
 function buildTrinityResult(
@@ -390,6 +467,12 @@ export async function runThroughBrain(
   const effectiveMemorySessionId = options.memorySessionId ?? sessionId;
   const effectiveTokenAuditSessionId = options.tokenAuditSessionId ?? sessionId;
   const outputControls = deriveTrinityOutputControls(prompt, options);
+  logCoreExecution('start', {
+    requestId,
+    sourceEndpoint: options.sourceEndpoint,
+    promptLength: prompt.length,
+    remainingBudgetMs: getSafeRemainingMs(runtimeBudget)
+  });
 
   // --- Tier detection ---
   const tier = internalContext?.originalTier ? getNextTier(internalContext.originalTier) : detectTier(prompt);
@@ -498,15 +581,41 @@ export async function runThroughBrain(
       internalMode,
       clarificationAllowed
     });
-    shortcutResult.judgedFeedback = await recordTrinityJudgedFeedback({
+    try {
+      shortcutResult.judgedFeedback = await runLoggedStage({
+        requestId,
+        stage: 'judged-feedback',
+        runtimeBudget,
+        timeoutMs: resolveAuxiliaryStageTimeoutMs(
+          'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
+          DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
+          runtimeBudget
+        ),
+        operation: () =>
+          recordTrinityJudgedFeedback({
+            requestId,
+            prompt,
+            response: exactLiteralShortcut.literal,
+            tier,
+            sessionId: effectiveMemorySessionId,
+            sourceEndpoint: options.sourceEndpoint,
+            internalMode,
+            remainingBudgetMs: getSafeRemainingMs(runtimeBudget)
+          })
+      });
+    } catch (error) {
+      shortcutResult.judgedFeedback = {
+        enabled: true,
+        attempted: false,
+        source: 'clear_audit',
+        reason: isAbortError(error) ? 'timed_out' : `failed:${resolveErrorMessage(error)}`
+      };
+    }
+    logCoreExecution('returning result', {
       requestId,
-      prompt,
-      response: exactLiteralShortcut.literal,
-      tier,
-      sessionId: effectiveMemorySessionId,
       sourceEndpoint: options.sourceEndpoint,
-      internalMode,
-      remainingBudgetMs: getSafeRemainingMs(runtimeBudget)
+      durationMs: Date.now() - start,
+      module: shortcutResult.module
     });
     return shortcutResult;
   }
@@ -545,14 +654,20 @@ export async function runThroughBrain(
       routingStages.push(TRINITY_DIRECT_ANSWER_STAGE);
       auditFlags.push(TRINITY_DIRECT_ANSWER_AUDIT_FLAG);
 
-      const directAnswerOutput = await runDirectAnswerStage(
-        client,
-        memoryContext.contextSummary,
-        auditSafePrompt,
-        cognitiveDomain,
+      const directAnswerOutput = await runLoggedStage({
+        requestId,
+        stage: 'direct-answer',
         runtimeBudget,
-        requestId
-      );
+        operation: () =>
+          runDirectAnswerStage(
+            client,
+            memoryContext.contextSummary,
+            auditSafePrompt,
+            cognitiveDomain,
+            runtimeBudget,
+            requestId
+          )
+      });
       checkWatchdog();
 
       const finalText = applyTrinityDirectAnswerOutputContract(directAnswerOutput.output, prompt);
@@ -654,17 +769,44 @@ export async function runThroughBrain(
         latencyMs,
         latencyDriftDetected
       };
-      result.judgedFeedback = await recordTrinityJudgedFeedback({
-        requestId,
-        prompt: auditSafePrompt,
-        response: finalText,
-        tier,
-        sessionId: effectiveMemorySessionId,
-        sourceEndpoint: options.sourceEndpoint,
-        internalMode,
-        remainingBudgetMs: result.guardInfo.remainingBudgetMs
-      });
+      const directAnswerRemainingBudgetMs = result.guardInfo?.remainingBudgetMs;
+      try {
+        result.judgedFeedback = await runLoggedStage({
+          requestId,
+          stage: 'judged-feedback',
+          runtimeBudget,
+          timeoutMs: resolveAuxiliaryStageTimeoutMs(
+            'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
+            DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
+            runtimeBudget
+          ),
+          operation: () =>
+            recordTrinityJudgedFeedback({
+              requestId,
+              prompt: auditSafePrompt,
+              response: finalText,
+              tier,
+              sessionId: effectiveMemorySessionId,
+              sourceEndpoint: options.sourceEndpoint,
+              internalMode,
+              remainingBudgetMs: directAnswerRemainingBudgetMs
+            })
+        });
+      } catch (error) {
+        result.judgedFeedback = {
+          enabled: true,
+          attempted: false,
+          source: 'clear_audit',
+          reason: isAbortError(error) ? 'timed_out' : `failed:${resolveErrorMessage(error)}`
+        };
+      }
 
+      logCoreExecution('returning result', {
+        requestId,
+        sourceEndpoint: options.sourceEndpoint,
+        durationMs: Date.now() - start,
+        module: result.module
+      });
       return result;
     }
 
@@ -672,21 +814,32 @@ export async function runThroughBrain(
     budget.increment();
     checkWatchdog();
 
-    const arcanosModel = await validateModel(client, runtimeBudget);
+    const arcanosModel = await runLoggedStage({
+      requestId,
+      stage: 'model-validation',
+      runtimeBudget,
+      operation: () => validateModel(client, runtimeBudget)
+    });
     logArcanosRouting('INTAKE', arcanosModel, `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
     routingStages.push(`ARCANOS-INTAKE:${arcanosModel}`);
 
-    const intakeOutput = await runIntakeStage(
-      client,
-      arcanosModel,
-      auditSafePrompt,
-      memoryContext.contextSummary,
-      capabilityFlags,
-      outputControls,
-      cognitiveDomain,
-      internalDirective,
-      runtimeBudget
-    );
+    const intakeOutput = await runLoggedStage({
+      requestId,
+      stage: 'intake',
+      runtimeBudget,
+      operation: () =>
+        runIntakeStage(
+          client,
+          arcanosModel,
+          auditSafePrompt,
+          memoryContext.contextSummary,
+          capabilityFlags,
+          outputControls,
+          cognitiveDomain,
+          internalDirective,
+          runtimeBudget
+        )
+    });
     const framedRequest = intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
@@ -695,14 +848,20 @@ export async function runThroughBrain(
     checkWatchdog();
 
     routingStages.push('GPT5-REASONING');
-    const reasoningOutput = await runReasoningStage(
-      client,
-      framedRequest,
-      capabilityFlags,
-      outputControls,
-      tier,
-      runtimeBudget
-    );
+    const reasoningOutput = await runLoggedStage({
+      requestId,
+      stage: 'reasoning',
+      runtimeBudget,
+      operation: () =>
+        runReasoningStage(
+          client,
+          framedRequest,
+          capabilityFlags,
+          outputControls,
+          tier,
+          runtimeBudget
+        )
+    });
     let gpt5Output = reasoningOutput.output;
     const gpt5ModelUsed = reasoningOutput.model;
     const reasoningLedger = reasoningOutput.reasoningLedger;
@@ -717,22 +876,43 @@ export async function runThroughBrain(
     let clearAudit: ClearAuditResult | undefined = undefined;
     if (reasoningLedger) {
       checkWatchdog();
-      clearAudit = await runClearAudit(client, reasoningLedger);
-      // Self-improve loop trigger (non-blocking): feed CLEAR into controller.
       try {
-        void runSelfImproveCycle({
-          trigger: 'clear',
-          clearOverall: clearAudit.overall,
-          clearMin: getClearMinThreshold(),
-          context: { requestId, tier }
-        }).catch(() => {});
-      } catch {
-        // ignore
+        clearAudit = await runLoggedStage({
+          requestId,
+          stage: 'clear-audit',
+          runtimeBudget,
+          timeoutMs: resolveAuxiliaryStageTimeoutMs(
+            'TRINITY_CLEAR_AUDIT_TIMEOUT_MS',
+            DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS,
+            runtimeBudget
+          ),
+          operation: () => runClearAudit(client, reasoningLedger, runtimeBudget)
+        });
+      } catch (error) {
+        logger.warn('[core] clear-audit skipped', {
+          module: 'ARCANOS:CORE',
+          requestId,
+          error: resolveErrorMessage(error)
+        });
+      }
+      // Self-improve loop trigger (non-blocking): feed CLEAR into controller.
+      if (clearAudit) {
+        try {
+          void runSelfImproveCycle({
+            trigger: 'clear',
+            clearOverall: clearAudit.overall,
+            clearMin: getClearMinThreshold(),
+            context: { requestId, tier }
+          }).catch(() => {});
+        } catch {
+          // ignore
+        }
       }
 
       checkWatchdog();
 
-      if (clearAudit.overall < getClearMinThreshold() && 
+      if (clearAudit &&
+          clearAudit.overall < getClearMinThreshold() && 
           tier !== 'critical' && 
           !internalContext?.escalated && 
           getSafeRemainingMs(runtimeBudget) > MIN_ESCALATION_BUDGET_MS) {
@@ -773,7 +953,12 @@ export async function runThroughBrain(
       budget.increment();
       checkWatchdog();
 
-      const critique = await runReflection(client, gpt5Output, tier, runtimeBudget);
+      const critique = await runLoggedStage({
+        requestId,
+        stage: 'reflection',
+        runtimeBudget,
+        operation: () => runReflection(client, gpt5Output, tier, runtimeBudget)
+      });
       if (critique) {
         gpt5Output += '\n\n--- CRITICAL REVIEW ---\n' + critique;
         reflectionApplied = true;
@@ -786,18 +971,24 @@ export async function runThroughBrain(
 
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
-    const finalOutput = await runFinalStage(
-      client,
-      memoryContext.contextSummary,
-      auditSafePrompt,
-      gpt5Output,
-      capabilityFlags,
-      outputControls,
-      reasoningHonesty,
-      cognitiveDomain,
-      internalDirective,
-      runtimeBudget
-    );
+    const finalOutput = await runLoggedStage({
+      requestId,
+      stage: 'final',
+      runtimeBudget,
+      operation: () =>
+        runFinalStage(
+          client,
+          memoryContext.contextSummary,
+          auditSafePrompt,
+          gpt5Output,
+          capabilityFlags,
+          outputControls,
+          reasoningHonesty,
+          cognitiveDomain,
+          internalDirective,
+          runtimeBudget
+        )
+    });
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
@@ -954,18 +1145,39 @@ export async function runThroughBrain(
       latencyMs,
       latencyDriftDetected
     };
+    const finalStageRemainingBudgetMs = result.guardInfo?.remainingBudgetMs;
 
-    result.judgedFeedback = await recordTrinityJudgedFeedback({
-      requestId,
-      prompt: auditSafePrompt,
-      response: finalText,
-      clearAudit,
-      tier,
-      sessionId: effectiveMemorySessionId,
-      sourceEndpoint: options.sourceEndpoint,
-      internalMode,
-      remainingBudgetMs: result.guardInfo.remainingBudgetMs
-    });
+    try {
+      result.judgedFeedback = await runLoggedStage({
+        requestId,
+        stage: 'judged-feedback',
+        runtimeBudget,
+        timeoutMs: resolveAuxiliaryStageTimeoutMs(
+          'TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS',
+          DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS,
+          runtimeBudget
+        ),
+        operation: () =>
+          recordTrinityJudgedFeedback({
+            requestId,
+            prompt: auditSafePrompt,
+            response: finalText,
+            clearAudit,
+            tier,
+            sessionId: effectiveMemorySessionId,
+            sourceEndpoint: options.sourceEndpoint,
+            internalMode,
+            remainingBudgetMs: finalStageRemainingBudgetMs
+          })
+      });
+    } catch (error) {
+      result.judgedFeedback = {
+        enabled: true,
+        attempted: false,
+        source: 'clear_audit',
+        reason: isAbortError(error) ? 'timed_out' : `failed:${resolveErrorMessage(error)}`
+      };
+    }
 
     if (outputControls.debugPipeline) {
       result.pipelineDebug = {
@@ -993,6 +1205,12 @@ export async function runThroughBrain(
       };
     }
 
+    logCoreExecution('returning result', {
+      requestId,
+      sourceEndpoint: options.sourceEndpoint,
+      durationMs: Date.now() - start,
+      module: result.module
+    });
     return result;
 
   } finally {

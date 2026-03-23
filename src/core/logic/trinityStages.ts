@@ -10,7 +10,6 @@ import {
   getGPT5Model,
   getComplexModel,
   getFallbackModel,
-  createChatCompletionWithFallback,
   createSingleChatCompletion
 } from "@services/openai.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
@@ -85,16 +84,20 @@ export { calculateMemoryScoreSummary };
 
 const DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS = 12_000;
 const DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS = 4_000;
+const DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS = 4_000;
+const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 10_000;
+const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
 
-function resolveDirectAnswerStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
-  const configuredTimeoutMs = Number.parseInt(
-    process.env.TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS ?? '',
-    10
-  );
+function resolveStageTimeoutMs(
+  envName: string,
+  fallbackMs: number,
+  runtimeBudget?: RuntimeBudget
+): number {
+  const configuredTimeoutMs = Number.parseInt(process.env[envName] ?? '', 10);
   const normalizedConfiguredTimeoutMs =
     Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
       ? Math.trunc(configuredTimeoutMs)
-      : DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS;
+      : fallbackMs;
 
   if (!runtimeBudget) {
     return normalizedConfiguredTimeoutMs;
@@ -103,12 +106,44 @@ function resolveDirectAnswerStageTimeoutMs(runtimeBudget?: RuntimeBudget): numbe
   return Math.max(1, Math.min(normalizedConfiguredTimeoutMs, getSafeRemainingMs(runtimeBudget)));
 }
 
-function resolveModelValidationTimeoutMs(runtimeBudget?: RuntimeBudget): number {
-  if (!runtimeBudget) {
-    return DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS;
-  }
+function resolveDirectAnswerStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  return resolveStageTimeoutMs(
+    'TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS',
+    DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS,
+    runtimeBudget
+  );
+}
 
-  return Math.max(1, Math.min(DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS, getSafeRemainingMs(runtimeBudget)));
+function resolveModelValidationTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  return resolveStageTimeoutMs(
+    'TRINITY_MODEL_VALIDATION_TIMEOUT_MS',
+    DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS,
+    runtimeBudget
+  );
+}
+
+function resolveIntakeStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  return resolveStageTimeoutMs(
+    'TRINITY_INTAKE_STAGE_TIMEOUT_MS',
+    DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS,
+    runtimeBudget
+  );
+}
+
+function resolveReasoningStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  return resolveStageTimeoutMs(
+    'TRINITY_REASONING_STAGE_TIMEOUT_MS',
+    DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS,
+    runtimeBudget
+  );
+}
+
+function resolveFinalStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  return resolveStageTimeoutMs(
+    'TRINITY_FINAL_STAGE_TIMEOUT_MS',
+    DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS,
+    runtimeBudget
+  );
 }
 
 /**
@@ -256,7 +291,7 @@ export async function runIntakeStage(
   const intakeSystemPrompt = systemPromptOverride || ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary);
   const intakeTokenParams = getTokenParameter(arcanosModel, TRINITY_INTAKE_TOKEN_LIMIT);
   const temperature = resolveTemperature(cognitiveDomain);
-  const intakeResponse = await createChatCompletionWithFallback(client, {
+  const intakeResponse = await createSingleChatCompletion(client, {
     messages: [
       { role: 'system', content: intakeSystemPrompt },
       {
@@ -273,6 +308,7 @@ export async function runIntakeStage(
       }
     ],
     temperature,
+    timeoutMs: resolveIntakeStageTimeoutMs(runtimeBudget),
     ...intakeTokenParams
   });
 
@@ -324,7 +360,13 @@ export async function runReasoningStage(
 
   logGPT5Invocation('Primary reasoning stage', reasoningPrompt);
   const gpt5ModelUsed = getGPT5Model();
-  const structuredReasoning = await runStructuredReasoning(client, gpt5ModelUsed, reasoningPrompt, runtimeBudget);
+  const structuredReasoning = await runStructuredReasoning(
+    client,
+    gpt5ModelUsed,
+    reasoningPrompt,
+    runtimeBudget,
+    resolveReasoningStageTimeoutMs(runtimeBudget)
+  );
   if (!structuredReasoning) {
     throw new Error('Model failed to provide structured reasoning.');
   }
@@ -393,7 +435,7 @@ export async function runFinalStage(
   const cappedLimit = enforceTokenCap(APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalTokenParams = getTokenParameter(complexModel, cappedLimit);
   const temperature = resolveTemperature(cognitiveDomain);
-  const finalResponse = await createChatCompletionWithFallback(client, {
+  const finalResponse = await createSingleChatCompletion(client, {
     messages: buildFinalArcanosMessages(
       memoryContextSummary,
       auditSafePrompt,
@@ -409,6 +451,7 @@ export async function runFinalStage(
     ),
     temperature,
     model: complexModel,
+    timeoutMs: resolveFinalStageTimeoutMs(runtimeBudget),
     ...finalTokenParams
   });
   const finalText = finalResponse.choices[0]?.message?.content || '';

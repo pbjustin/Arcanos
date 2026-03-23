@@ -4,6 +4,9 @@ const mockRunThroughBrain = jest.fn();
 const mockGenerateMockResponse = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
 const mockCreateRuntimeBudget = jest.fn();
+const loggerInfoMock = jest.fn();
+const loggerErrorMock = jest.fn();
+const runWithRequestAbortTimeoutMock = jest.fn(async (_config: unknown, operation: () => Promise<unknown>) => operation());
 
 jest.unstable_mockModule('@core/logic/trinity.js', () => ({
   runThroughBrain: mockRunThroughBrain,
@@ -19,6 +22,20 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   createRuntimeBudget: mockCreateRuntimeBudget,
+}));
+
+jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  logger: {
+    info: loggerInfoMock,
+    warn: jest.fn(),
+    error: loggerErrorMock
+  }
+}));
+
+jest.unstable_mockModule('@arcanos/runtime', () => ({
+  getRequestAbortSignal: jest.fn(() => undefined),
+  getRequestRemainingMs: jest.fn(() => null),
+  runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock
 }));
 
 const { ArcanosCore } = await import('../src/services/arcanos-core.js');
@@ -55,6 +72,13 @@ describe('ARCANOS:CORE service', () => {
         maxWords: 42,
       },
       { budget: 'runtime' }
+    );
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      '[core] handler.start',
+      expect.objectContaining({
+        sourceEndpoint: 'gpt.arcanos-core.query'
+      })
     );
     expect(result).toBe(trinityResult);
   });
