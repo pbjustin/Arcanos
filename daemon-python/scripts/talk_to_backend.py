@@ -3,7 +3,7 @@ Simple script to talk to the ARCANOS production backend in natural language.
 
 It:
 - Loads config from .env
-- Uses BackendApiClient to call the backend's /api/ask-style endpoint
+- Uses BackendApiClient to call the backend's canonical `/gpt/{gptId}` endpoint
 - Sends a couple of natural-language prompts and prints the responses
 """
 
@@ -73,8 +73,7 @@ def make_client() -> BackendApiClient:
 def ask_backend(client: BackendApiClient, message: str, domain: str | None = None) -> str:
     """
     Send a natural-language message to the backend and return the response text.
-    Prefers the /api/ask-with-domain route when a domain is provided, otherwise
-    falls back to the chat-completion-style route.
+    Uses the canonical GPT route, with optional domain-based GPT selection.
     """
     print("\n" + "=" * 60)
     print("USER -> BACKEND")
@@ -101,8 +100,7 @@ def ask_backend(client: BackendApiClient, message: str, domain: str | None = Non
     }
 
     try:
-        # Prefer the simpler ask-style API that takes a single message,
-        # since this is exactly what we want for natural-language probing.
+        # Prefer the single-message canonical GPT route helper for natural-language probing.
         response = client.request_ask_with_domain(
             message=message,
             domain=domain,
@@ -201,7 +199,7 @@ def ask_backend(client: BackendApiClient, message: str, domain: str | None = Non
 
 def raw_ask_backend(message: str) -> None:
     """
-    Fallback: call the backend /api/ask endpoint directly with requests and
+    Fallback: call the backend canonical daemon GPT endpoint directly with requests and
     print the raw JSON/text response so we can see exactly how it replies.
     """
     if not Config.BACKEND_URL:
@@ -211,7 +209,7 @@ def raw_ask_backend(message: str) -> None:
         print("\n[RAW] BACKEND_TOKEN not set; cannot authenticate raw request.")
         return
 
-    url = f"{Config.BACKEND_URL}/api/ask"
+    url = f"{Config.BACKEND_URL}/gpt/{Config.BACKEND_GPT_ID}"
     headers = {
         "Authorization": f"Bearer {Config.BACKEND_TOKEN}",
         "Content-Type": "application/json",
@@ -225,13 +223,13 @@ def raw_ask_backend(message: str) -> None:
         },
     }
 
-    print("\n[RAW] Sending direct POST to /api/ask ...")
+    print(f"\n[RAW] Sending direct POST to /gpt/{Config.BACKEND_GPT_ID} ...")
 
     # region agent log (no user message content)
     _debug_log(
         hypothesis_id="H6",
         location="talk_to_backend.py:raw_ask_backend:before_post",
-        message="About to send raw POST to /api/ask",
+        message="About to send raw POST to canonical daemon GPT route",
         data={
             "message_length": len(payload["message"]),
         },
@@ -345,4 +343,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

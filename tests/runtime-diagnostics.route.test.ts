@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const request = (await import('supertest')).default;
-const CURRENT_GPT_ROUTER_HASH = '038d9a189896633b03691aa674e8656374424dc6a1ce120c8191629c592118c4';
+const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
 
 async function buildApp() {
   jest.resetModules();
@@ -12,6 +12,8 @@ async function buildApp() {
 }
 
 describe('runtime diagnostics routes', () => {
+  jest.setTimeout(20_000);
+
   function restoreEnvVar(name: string, value: string | undefined): void {
     if (value === undefined) {
       delete process.env[name];

@@ -141,6 +141,44 @@ describe('services/git additional coverage', () => {
     expect(commandCalls.some((entry) => entry.command === 'git' && entry.args[0] === 'push')).toBe(true);
   });
 
+  it('reports git status and repository cleanliness', async () => {
+    const gitService = await loadGitServiceModule();
+    execFileMock.mockImplementation((command: string, args: string[], _options: unknown, callback: unknown) => {
+      if (command === 'git' && args[0] === 'status') {
+        callbackExecFile(callback, null, '', '');
+        return;
+      }
+      callbackExecFile(callback, null, 'ok', '');
+    });
+
+    const status = await gitService.getGitStatus('C:/repo');
+    const clean = await gitService.isRepositoryClean('C:/repo');
+
+    expect(status).toMatchObject({ success: true, output: '' });
+    expect(clean).toBe(true);
+  });
+
+  it('fails PR creation early when gh CLI is unavailable', async () => {
+    const gitService = await loadGitServiceModule();
+    execFileMock.mockImplementation((command: string, args: string[], _options: unknown, callback: unknown) => {
+      if (command === 'gh' && args[0] === '--version') {
+        callbackExecFile(callback, new Error('gh missing'), '', 'gh missing');
+        return;
+      }
+      callbackExecFile(callback, null, 'ok', '');
+    });
+
+    const result = await gitService.createPullRequestFromPatch({
+      title: 'missing gh',
+      body: 'missing gh body',
+      base: 'main',
+      diff: 'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-const oldValue = 1;\n+const oldValue = 2;\n'
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Missing gh CLI');
+  });
+
   it('covers executePRWorkflow happy path including commit hash resolution', async () => {
     const gitService = await loadGitServiceModule();
 

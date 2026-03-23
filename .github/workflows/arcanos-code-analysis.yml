@@ -56,11 +56,16 @@ jobs:
           echo "Commit SHA: $COMMIT_SHA"
           echo "Trigger source: $TRIGGER_SOURCE"
           
-          # Set environment variables (use mock key for CI when secret not set; app returns mock responses)
+          # Set environment variables.
+          # Use test-mode plus empty OpenAI key aliases so the backend stays on deterministic
+          # mock responses instead of attempting live API auth during CI analysis.
           export PORT=8080
-          export NODE_ENV=production
-          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
-          CI_API_KEY="${OPENAI_API_KEY}"
+          export NODE_ENV=test
+          export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || '' }}"
+          export RAILWAY_OPENAI_API_KEY=""
+          export API_KEY=""
+          export OPENAI_KEY=""
+          CI_API_KEY="ci-analysis-token"
           
           # Start ARCANOS backend for analysis
           npm start > server.log 2>&1 &
@@ -89,12 +94,12 @@ jobs:
             exit 1
           fi
           
-          # //audit Assumption: code analysis should use the standard chat entrypoint; failure risk: /api/ask requires route-specific payload fields and auth; expected invariant: CI can authenticate deterministically with the configured mock/openai key; handling strategy: call /ask with an Authorization header.
+          # //audit Assumption: code analysis should use the canonical GPT route; failure risk: legacy ask aliases drift away from the module registry; expected invariant: CI hits the same /gpt/{gptId} surface used in production; handling strategy: call /gpt/arcanos-daemon with the supported query action.
           PROMPT="Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: $COMMIT_SHA"
-          HTTP_CODE=$(curl -X POST http://localhost:8080/ask \
+          HTTP_CODE=$(curl -X POST http://localhost:8080/gpt/arcanos-daemon \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CI_API_KEY" \
-            -d "$(jq -nc --arg p "$PROMPT" '{prompt: $p, context: "code_analysis"}')" \
+            -d "$(jq -nc --arg p "$PROMPT" '{action: "query", prompt: $p, metadata: {context: "code_analysis"}}')" \
             -w "%{http_code}" \
             -o analysis_result.json \
             -s)

@@ -29,6 +29,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
   logRequestFeedback: logRequestFeedbackMock
 }));
 
+jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
+  confirmGate: (_req: unknown, _res: unknown, next: () => void) => next()
+}));
+
 jest.unstable_mockModule('../src/routes/ask/daemonTools.js', () => ({
   tryDispatchDaemonTools: tryDispatchDaemonToolsMock
 }));
@@ -92,7 +96,7 @@ function buildApp() {
   return app;
 }
 
-describe('async /ask queue contract', () => {
+describe('async /brain queue contract', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     createJobMock.mockResolvedValue({ id: 'job-123' });
@@ -110,7 +114,7 @@ describe('async /ask queue contract', () => {
   });
 
   it('queues async ask work with preserved endpoint and client context when bounded waiting is disabled', async () => {
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       message: 'Refactor this TypeScript function.',
       async: true,
       waitForResultMs: 0,
@@ -134,7 +138,7 @@ describe('async /ask queue contract', () => {
         prompt: 'Refactor this TypeScript function.',
         sessionId: 'session-123',
         cognitiveDomain: 'code',
-        endpointName: 'ask',
+        endpointName: 'brain',
         clientContext: {
           routingDirectives: ['concise']
         }
@@ -154,7 +158,7 @@ describe('async /ask queue contract', () => {
       body: {}
     });
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       message: 'Write exactly this token and nothing else: BLUE-RIVER-1773037986080'
     });
 
@@ -182,7 +186,7 @@ describe('async /ask queue contract', () => {
       }
     });
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       message: 'Refactor this TypeScript function.',
       async: true
     });
@@ -207,7 +211,7 @@ describe('async /ask queue contract', () => {
       error_message: 'OpenAI upstream timed out'
     });
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       message: 'Refactor this TypeScript function.',
       async: true
     });

@@ -32,21 +32,21 @@
     }
   },
   "apiContracts": {
-    "/api/ask": {
-      "serverRoute": "src/routes/api-ask.ts",
+    "/gpt/{gptId}": {
+      "serverRoute": "src/routes/gptRouter.ts",
       "clientMethod": "request_chat_completion",
       "clientFile": "daemon-python/arcanos/backend_client/__init__.py",
       "requestFields": {
-        "messages": { "type": "array", "required": true },
-        "temperature": { "type": "number", "required": false },
-        "model": { "type": "string", "required": false },
-        "stream": { "type": "boolean", "required": false }
+        "gptId(path)": { "type": "string", "required": true },
+        "prompt": { "type": "string", "required": false },
+        "messages": { "type": "array", "required": false },
+        "action": { "type": "string", "required": false },
+        "payload": { "type": "object", "required": false }
       },
       "responseFields": {
-        "response": { "type": "string", "required": true },
-        "tokens": { "type": "number", "required": true },
-        "cost": { "type": "number", "required": true },
-        "model": { "type": "string", "required": true }
+        "ok": { "type": "boolean", "required": true },
+        "result": { "type": "object|string", "required": false },
+        "_route": { "type": "object", "required": true }
       }
     },
     "/api/vision": {

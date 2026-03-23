@@ -27,8 +27,8 @@ DEFAULT_BACKEND_BLOCK = """## BACKEND
 
 When the daemon routes to the backend, it reaches the full ARCANOS stack.
 
-- Endpoints: `POST /api/ask` (core logic, module routing, daemon tools), `POST /api/vision`, `POST /api/transcribe`, `GET /api/daemon/commands`, `POST /api/daemon/confirm-actions`.
-- Module routing (via `/api/ask`): `ARCANOS:WRITE`, `ARCANOS:BUILD`, `ARCANOS:RESEARCH`, `ARCANOS:AUDIT`, `ARCANOS:SIM`, `ARCANOS:BOOKING`, `ARCANOS:GUIDE`, `ARCANOS:TRACKER`.
+- Endpoints: `POST /gpt/{gptId}` (core logic, module routing, daemon tools), `POST /api/vision`, `POST /api/transcribe`, `GET /api/daemon/commands`, `POST /api/daemon/confirm-actions`.
+- Module routing (via `/gpt/{gptId}`): `ARCANOS:WRITE`, `ARCANOS:BUILD`, `ARCANOS:RESEARCH`, `ARCANOS:AUDIT`, `ARCANOS:SIM`, `ARCANOS:BOOKING`, `ARCANOS:GUIDE`, `ARCANOS:TRACKER`.
 - Core systems: `CLEAR 2.0` (audit engine), `HRC` (Hallucination-Resistant Core; modes: `HRC:STRICT`, `HRC:LENIENT`, `HRC:SILENTFAIL`, `HRC->CLEAR`).
 - Daemon tools (from backend): `run_command`, `capture_screen`. `run_command` is sensitive and requires user confirmation before the backend queues it.
 """
@@ -149,4 +149,3 @@ def format_registry_for_prompt(registry: Mapping[str, Any]) -> str:
             lines.append(f"- {core_id}: {description}{modes_suffix}")
 
     return "\n".join(lines)
-

@@ -41,47 +41,34 @@ describe('AI endpoints in mock mode', () => {
     });
   });
 
-  it('returns structured mock response for /ask endpoint', async () => {
-    const response = await fetch(`${baseUrl}/ask`, {
+  it('returns structured mock response for the canonical /gpt/:gptId endpoint', async () => {
+    const response = await fetch(`${baseUrl}/gpt/arcanos-daemon`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt: 'test prompt for mock mode' })
+      body: JSON.stringify({ action: 'query', prompt: 'test prompt for mock mode' })
     });
 
     expect(response.status).toBe(200);
     const payload = await response.json();
-    expect(payload.result).toContain('[MOCK AI RESPONSE]');
-    expect(payload.activeModel).toBe('MOCK');
-    expect(payload.meta).toHaveProperty('id');
-    expect(payload.meta).toHaveProperty('created');
-    expect(payload.auditSafe).toBeDefined();
+    expect(payload.result?.result).toContain('[MOCK RESPONSE]');
+    expect(payload.result?.activeModel).toBe('MOCK');
+    expect(payload._route?.requestId).toBeTruthy();
+    expect(payload._route?.gptId).toBe('arcanos-daemon');
   });
 
-  it('normalizes ChatGPT action payload through /api/ask', async () => {
-    const response = await fetch(`${baseUrl}/api/ask`, {
+  it('rejects body gptId overrides on the canonical route', async () => {
+    const response = await fetch(`${baseUrl}/gpt/arcanos-daemon`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        message: 'How does the system behave?',
-        domain: 'diagnostics',
-        useRAG: true,
-        useHRC: false
+        gptId: 'backstage-booker',
+        prompt: 'How does the system behave?'
       })
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     const payload = await response.json();
-    expect(payload.result).toContain('[MOCK AI RESPONSE]');
-    expect(payload.routingStages).toContain('ARCANOS-INTAKE:MOCK');
-    expect(payload.clientContext.basePrompt).toBe('How does the system behave?');
-    expect(payload.clientContext.flags).toMatchObject({
-      domain: 'diagnostics',
-      useRAG: true,
-      useHRC: false,
-      sourceField: 'message'
-    });
-    expect(payload.clientContext.routingDirectives).toContain('Domain routing hint: diagnostics');
-    expect(payload.clientContext.normalizedPrompt).toContain('[ARCANOS CONTEXT]');
+    expect(payload.error?.code).toBe('BODY_GPT_ID_FORBIDDEN');
   });
 
   it('provides deterministic mock diagnostics for /arcanos', async () => {

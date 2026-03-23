@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
 
 from ..backend_client_models import BackendChatResult, BackendRequestError, BackendResponse
+from ..config import Config
 
 if TYPE_CHECKING:
     from ..backend_client import BackendApiClient
@@ -21,7 +22,7 @@ class BackendChatRoute:
     """
     Purpose: Carry the resolved backend endpoint for one chat-style request.
     Inputs/Outputs: normalized gpt_id input; returns canonical endpoint plus normalized GPT identifier.
-    Edge cases: blank GPT ids collapse to generic `/ask` to preserve non-module chat behavior.
+    Edge cases: blank GPT ids fall back to the configured daemon GPT so `/gpt/:gptId` remains the only execution path.
     """
 
     endpoint: str
@@ -31,13 +32,13 @@ class BackendChatRoute:
 def resolve_backend_chat_route(gpt_id: Optional[str] = None) -> BackendChatRoute:
     """
     Purpose: Choose the canonical backend endpoint for chat-style requests.
-    Inputs/Outputs: optional explicit GPT id; returns `/gpt/<id>` for module-bound traffic or `/ask` for generic daemon chat.
-    Edge cases: blank overrides keep legacy `/ask` behavior so daemon/system traffic does not depend on GPT registry entries.
+    Inputs/Outputs: optional explicit GPT id; returns `/gpt/<id>` using the explicit id or configured daemon GPT id.
+    Edge cases: blank overrides fall back to `Config.BACKEND_GPT_ID` so deprecated compatibility routes are never used.
     """
     explicit_gpt_id = (gpt_id or "").strip()
-    if explicit_gpt_id:
-        return BackendChatRoute(endpoint=f"/gpt/{explicit_gpt_id}", gpt_id=explicit_gpt_id)
-    return BackendChatRoute(endpoint="/ask", gpt_id=None)
+    backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", None) or "").strip()
+    resolved_gpt_id = explicit_gpt_id or backend_gpt_id or "arcanos-daemon"
+    return BackendChatRoute(endpoint=f"/gpt/{resolved_gpt_id}", gpt_id=resolved_gpt_id)
 
 
 def request_ask_with_domain(
@@ -48,7 +49,7 @@ def request_ask_with_domain(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[BackendChatResult]:
     """
-    Purpose: Call backend chat routing with a domain hint, using `/gpt/:gptId` for explicit GPT requests and `/ask` otherwise.
+    Purpose: Call backend chat routing with a domain hint through the canonical `/gpt/:gptId` route.
     Inputs/Outputs: message, optional domain, optional metadata; returns BackendChatResult.
     Edge cases: Returns structured error on auth, network, or parsing failures.
     """
@@ -88,12 +89,11 @@ def request_chat_completion(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[BackendChatResult]:
     """
-    Purpose: Call backend chat routing with conversation messages, using `/gpt/:gptId` for explicit GPT requests and `/ask` otherwise.
+    Purpose: Call backend chat routing with conversation messages through the canonical `/gpt/:gptId` route.
     Inputs/Outputs: messages, optional temperature/model, stream flag; returns BackendChatResult.
     Edge cases: Returns structured error on auth, network, or parsing failures.
     """
-    # Extract last user message as the primary 'message' field for backend validation.
-    # The backend /api/ask requires one of: message, prompt, userInput, content, text, query.
+    # Extract last user message as the primary prompt so query-capable GPT modules can validate the request.
     msgs_list = list(messages)
     last_user_msg = ""
     for msg in reversed(msgs_list):
@@ -141,12 +141,12 @@ def request_system_state(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[dict[str, Any]]:
     """
-    Purpose: Request governed backend system state from /ask mode=system_state.
+    Purpose: Request governed backend system state from the canonical daemon GPT route.
     Inputs/Outputs: optional metadata and optimistic-lock update payload; returns raw state JSON.
-    Edge cases: update writes require both expected_version and patch fields together; gpt_id is ignored because system_state is not a GPT-routed module request.
+    Edge cases: update writes require both expected_version and patch fields together; blank GPT ids fall back to the configured daemon GPT.
     """
-    del gpt_id
-    payload = _build_backend_payload(mode="system_state")
+    route = resolve_backend_chat_route(gpt_id)
+    payload = _build_backend_payload(action="system_state")
 
     normalized_metadata = client._normalize_metadata(metadata)
     if normalized_metadata is not None:
@@ -175,7 +175,7 @@ def request_system_state(
         payload["expectedVersion"] = expected_version
         payload["patch"] = dict(patch)
 
-    response = client._request_json("post", "/ask", payload)
+    response = client._request_json("post", route.endpoint, payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return structured error.
         return BackendResponse(ok=False, error=response.error)

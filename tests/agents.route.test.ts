@@ -108,6 +108,23 @@ describe('agents routes', () => {
     expect(response.body.error).toContain('Agent not found');
   });
 
+  it('returns agent details for known agent id on status endpoint', async () => {
+    mockGetAgent.mockResolvedValue({
+      id: 'agent-1',
+      role: 'executor',
+      status: 'idle'
+    });
+
+    const response = await request(buildApp()).get('/agents/agent-1');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      id: 'agent-1',
+      role: 'executor',
+      status: 'idle'
+    });
+  });
+
   it('returns 500 when getAgent throws', async () => {
     mockGetAgent.mockRejectedValue(new Error('lookup failed'));
 

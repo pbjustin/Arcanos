@@ -1,105 +1,115 @@
-import express, { type Express } from 'express';
-import request from 'supertest';
-import askRouter from '../src/routes/ask.js';
+import express from 'express';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-let app: Express;
+const mockRouteGptRequest = jest.fn();
 
-beforeAll(() => {
-  process.env.NODE_ENV = 'test';
-  app = express();
-  app.use(express.json({ limit: '10mb' }));
-  app.use('/', askRouter);
-});
+jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  routeGptRequest: mockRouteGptRequest,
+}));
 
-describe('ask route validation', () => {
-  it('rejects GPT-routed payloads before entering the generic /ask pipeline', async () => {
-    const res = await request(app).post('/ask').send({
-      gptId: 'arcanos-gaming',
+jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
+  logGptConnection: jest.fn(),
+  logGptConnectionFailed: jest.fn(),
+  logGptAckSent: jest.fn(),
+}));
+
+const request = (await import('supertest')).default;
+const { default: requestContext } = await import('../src/middleware/requestContext.js');
+const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+
+function buildApp() {
+  const app = express();
+  app.use(express.json());
+  app.use(requestContext);
+  app.use('/gpt', gptRouter);
+  return app;
+}
+
+describe('canonical GPT route validation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('rejects body-level gptId overrides on the canonical route before dispatching', async () => {
+    const app = buildApp();
+    const res = await request(app).post('/gpt/arcanos-gaming').send({
+      gptId: 'backstage-booker',
       prompt: 'Ping the gaming backend'
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('GPT-routed requests must target /gpt/:gptId');
-    expect(res.body.deprecated).toBe(true);
-    expect(res.body.canonicalRoute).toBe('/gpt/arcanos-gaming');
-    expect(res.body.details).toContain("Received gptId 'arcanos-gaming' on /ask; use /gpt/arcanos-gaming instead.");
-    expect(res.headers.deprecation).toBe('true');
-    expect(res.headers.sunset).toBeDefined();
-    expect(res.headers['x-route-deprecated']).toBe('true');
-    expect(res.headers['x-ask-route-mode']).toBe('compat');
-    expect(res.headers['x-canonical-route']).toBe('/gpt/arcanos-gaming');
-    expect(res.headers.link).toContain('/contracts/custom_gpt_route.openapi.v1.json');
-    expect(res.headers.link).toContain('/gpt/arcanos-gaming');
+    expect(res.body.error?.code).toBe('BODY_GPT_ID_FORBIDDEN');
+    expect(res.body._route?.gptId).toBe('arcanos-gaming');
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('rejects payloads without any recognized text fields', async () => {
-    const res = await request(app).post('/ask').send({ sessionId: 'demo-session' });
+  it('propagates query validation failures from dispatch as HTTP 400', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: "Query actions require message/prompt in the request body."
+      },
+      _route: {
+        gptId: 'arcanos-daemon',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+      },
+    });
+
+    const app = buildApp();
+    const res = await request(app).post('/gpt/arcanos-daemon').send({ action: 'query', sessionId: 'demo-session' });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('Validation failed');
-    expect(Array.isArray(res.body.details)).toBe(true);
-    expect(res.body.details.join(' ')).toContain('prompt, message, userInput, content, text, query');
+    expect(res.body.error?.code).toBe('BAD_REQUEST');
+    expect(String(res.body.error?.message || '')).toContain('message/prompt');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-daemon',
+        body: { action: 'query', sessionId: 'demo-session' }
+      })
+    );
   });
 
-  it('accepts alternate prompt field names', async () => {
-    const res = await request(app).post('/ask').send({
+  it('forwards alternate prompt field aliases to canonical GPT dispatch', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        result: '[MOCK RESPONSE] Hello from test',
+        activeModel: 'MOCK'
+      },
+      _route: {
+        gptId: 'arcanos-daemon',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+      },
+    });
+
+    const app = buildApp();
+    const res = await request(app).post('/gpt/arcanos-daemon').send({
+      action: 'query',
       userInput: 'Hello from test',
       clientContext: { routingDirectives: ['concise'] }
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.result).toBeDefined();
-    expect(res.body.clientContext).toEqual({ routingDirectives: ['concise'] });
-    expect(res.headers.deprecation).toBe('true');
-    expect(res.headers['x-route-deprecated']).toBe('true');
-    expect(res.headers['x-ask-route-mode']).toBe('compat');
-    expect(res.headers['x-canonical-route']).toBe('/gpt/{gptId}');
-  });
-
-  it('treats CI mock OpenAI keys as placeholders and still returns a mock response', async () => {
-    const previousApiKey = process.env.OPENAI_API_KEY;
-    const ciMockApiKey = ['sk', 'mock', 'for', 'ci', 'testing'].join('-');
-    Reflect.set(process.env, 'OPENAI_API_KEY', ciMockApiKey);
-
-    try {
-      const res = await request(app).post('/ask').send({ prompt: 'Hello from CI mock key' });
-
-      expect(res.status).toBe(200);
-      expect(res.body.result).toBeDefined();
-    } finally {
-      if (previousApiKey === undefined) {
-        Reflect.deleteProperty(process.env, 'OPENAI_API_KEY');
-      } else {
-        Reflect.set(process.env, 'OPENAI_API_KEY', previousApiKey);
-      }
-    }
-  });
-
-  it('can hard-disable /ask with a 410 removal response', async () => {
-    const previousAskRouteMode = process.env.ASK_ROUTE_MODE;
-    Reflect.set(process.env, 'ASK_ROUTE_MODE', 'gone');
-
-    try {
-      const res = await request(app).post('/ask').send({
-        prompt: 'Legacy route probe',
-        gptId: 'arcanos-core'
-      });
-
-      expect(res.status).toBe(410);
-      expect(res.body.error).toBe('Legacy /ask route has been removed; use /gpt/:gptId');
-      expect(res.body.deprecated).toBe(true);
-      expect(res.body.canonicalRoute).toBe('/gpt/arcanos-core');
-      expect(res.headers.deprecation).toBe('true');
-      expect(res.headers.sunset).toBeDefined();
-      expect(res.headers['x-route-deprecated']).toBe('true');
-      expect(res.headers['x-ask-route-mode']).toBe('gone');
-      expect(res.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
-    } finally {
-      if (previousAskRouteMode === undefined) {
-        Reflect.deleteProperty(process.env, 'ASK_ROUTE_MODE');
-      } else {
-        Reflect.set(process.env, 'ASK_ROUTE_MODE', previousAskRouteMode);
-      }
-    }
+    expect(res.body._route?.gptId).toBe('arcanos-daemon');
+    expect(res.body._route?.action).toBe('query');
+    expect(res.body.result?.result).toContain('[MOCK RESPONSE]');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-daemon',
+        body: {
+          action: 'query',
+          userInput: 'Hello from test',
+          clientContext: { routingDirectives: ['concise'] }
+        }
+      })
+    );
   });
 });

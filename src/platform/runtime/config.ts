@@ -79,7 +79,7 @@ export const config = {
     shadowOnly: getEnv('DISPATCH_V9_SHADOW_ONLY') === 'true',
     snapshotCacheTtlMs: parseNumber(getEnv('DISPATCH_V9_SNAPSHOT_CACHE_TTL_MS'), 3000, 0),
     policyTimeoutMs: parseNumber(getEnv('DISPATCH_V9_POLICY_TIMEOUT_MS'), 5000, 1),
-    defaultRerouteTarget: getEnv('DISPATCH_V9_DEFAULT_REROUTE_TARGET') || '/api/ask',
+    defaultRerouteTarget: getEnv('DISPATCH_V9_DEFAULT_REROUTE_TARGET') || '/gpt/arcanos-daemon',
     readonlyBindingId: getEnv('DISPATCH_V9_READONLY_BINDING_ID') || 'api.readonly'
   },
 
@@ -138,7 +138,6 @@ export const config = {
     }
   }
 };
-
 
 
 

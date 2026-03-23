@@ -103,7 +103,7 @@ describe("Arcanos CLI", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("sends ask requests to the backend /ask endpoint", async () => {
+  it("sends ask requests to the canonical backend GPT route", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ result: "backend ok" })
     );
@@ -120,7 +120,7 @@ describe("Arcanos CLI", () => {
     expect(stdout.read()).toContain("backend ok");
     expect(stderr.read()).toBe("");
     expect(fetchMock).toHaveBeenCalledWith(
-      new URL("/ask", "http://127.0.0.1:3000/"),
+      new URL("/gpt/arcanos-daemon", "http://127.0.0.1:3000/"),
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining("\"prompt\":\"ship it\"")

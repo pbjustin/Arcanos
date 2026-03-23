@@ -130,7 +130,7 @@ def build_backend_metadata(cli: "ArcanosCLI") -> dict[str, Any]:
 
 def request_backend_system_state_payload(cli: "ArcanosCLI") -> Optional[dict[str, Any]]:
     """
-    Purpose: Fetch backend-owned system state via /ask mode=system_state.
+    Purpose: Fetch backend-owned system state via the canonical daemon GPT route.
     Inputs/Outputs: CLI instance; returns parsed state payload or None.
     Edge cases: Returns None when backend is not configured or request fails.
     """
@@ -310,7 +310,7 @@ def _resolve_backend_gpt_id(domain: Optional[str]) -> Optional[str]:
     """
     Purpose: Resolve a module-specific backend GPT identity from a detected domain.
     Inputs/Outputs: optional domain label; returns explicit gpt id or None for daemon default routing.
-    Edge cases: unknown/blank domains fall back to None so existing behavior is preserved.
+    Edge cases: unknown/blank domains fall back to None so the configured daemon GPT route is used.
     """
     normalized_domain = (domain or "").strip().lower()
     if not normalized_domain:

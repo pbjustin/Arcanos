@@ -38,6 +38,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
   logRequestFeedback: logRequestFeedbackMock
 }));
 
+jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
+  confirmGate: (_req: unknown, _res: unknown, next: () => void) => next()
+}));
+
 jest.unstable_mockModule('../src/routes/ask/daemonTools.js', () => ({
   tryDispatchDaemonTools: tryDispatchDaemonToolsMock
 }));
@@ -109,7 +113,7 @@ describe('/ask worker tools integration', () => {
 
   it('returns worker tool responses before async queue handling', async () => {
     const response = await request(buildApp())
-      .post('/ask')
+      .post('/brain')
       .send({
         prompt: 'show me worker status'
       });
@@ -119,7 +123,7 @@ describe('/ask worker tools integration', () => {
       expect.objectContaining({
         result: 'Workers are healthy.',
         module: 'worker-tools',
-        endpoint: 'ask'
+        endpoint: 'brain'
       })
     );
     expect(tryDispatchWorkerToolsMock).toHaveBeenCalledTimes(1);
@@ -148,7 +152,7 @@ describe('/ask worker tools integration', () => {
     });
 
     const response = await request(buildApp())
-      .post('/ask')
+      .post('/brain')
       .send({
         prompt: 'start a dag workflow for: verify the worker queue',
         sessionId: 'session-789'
@@ -159,7 +163,7 @@ describe('/ask worker tools integration', () => {
       expect.objectContaining({
         result: 'Started DAG run dagrun_test-3.',
         module: 'dag-tools',
-        endpoint: 'ask'
+        endpoint: 'brain'
       })
     );
     expect(tryDispatchDagToolsMock).toHaveBeenCalledTimes(1);

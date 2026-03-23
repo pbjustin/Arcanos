@@ -21,6 +21,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
   logRequestFeedback: logRequestFeedbackMock
 }));
 
+jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
+  confirmGate: (_req: unknown, _res: unknown, next: () => void) => next()
+}));
+
 jest.unstable_mockModule('@core/logic/trinity.js', () => ({
   runThroughBrain: mockRunThroughBrain
 }));
@@ -126,7 +130,7 @@ describe('/ask repo inspection routing', () => {
     collectRepoInspectionEvidenceMock.mockResolvedValue(repoEvidence);
     buildRepoInspectionAnswerMock.mockReturnValue('CLI implementation is present.');
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       prompt: 'Is my CLI implemented?',
       sessionId: 'repo-inspection-session'
     });
@@ -152,7 +156,7 @@ describe('/ask repo inspection routing', () => {
       ]
     });
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       prompt: 'Is my CLI implemented?',
       sessionId: 'repo-inspection-session'
     });

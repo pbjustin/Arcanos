@@ -26,8 +26,15 @@ class BackendClient:
 
         try:
             response = requests.post(
-                f"{self.base_url}/ask",
-                json=request.model_dump(),
+                f"{self.base_url}/gpt/arcanos-daemon",
+                json={
+                    "action": "query",
+                    "prompt": (
+                        "Analyze the following runtime payload and return the standard backend response. "
+                        f"Request: {request.model_dump_json()}"
+                    ),
+                    "metadata": request.model_dump(),
+                },
                 timeout=60,
             )
 

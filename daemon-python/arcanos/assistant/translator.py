@@ -1,7 +1,7 @@
 """
 Response translator / interpreter for Arcanos CLI.
 
-This sits *after* the backend /ask call and *before* rendering to the user.
+This sits *after* the backend GPT route call and *before* rendering to the user.
 
 Goals:
 - Strip backend/system artifacts (leverages cli_midlayer.translate)

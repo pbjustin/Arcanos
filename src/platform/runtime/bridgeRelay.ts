@@ -31,12 +31,9 @@ function resolveRequestId(req: RequestWithBridgeContext): string | undefined {
 
 function resolveGptId(req: RequestWithBridgeContext): string | undefined {
   const param = typeof req.params?.gptId === 'string' ? req.params.gptId : undefined;
-  const body = typeof (req.body as Record<string, unknown> | undefined)?.gptId === 'string'
-    ? ((req.body as Record<string, unknown>).gptId as string)
-    : undefined;
   const confirmation = req.confirmationContext?.gptId;
-  //audit Assumption: GPT identity must be sourced from route/body context, not headers; failure risk: spoofed header identity divergence; expected invariant: gptId aligns with request payload/route intent; handling strategy: prioritize explicit context fields only.
-  return param || body || confirmation;
+  //audit Assumption: canonical GPT identity is path-bound; failure risk: stale body metadata diverges from the requested route; expected invariant: bridge events tag the path GPT id when present; handling strategy: prefer route params and fall back only to confirmation context.
+  return param || confirmation;
 }
 
 export async function routeBridgeRequest(

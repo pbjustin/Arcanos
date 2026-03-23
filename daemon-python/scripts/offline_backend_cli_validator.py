@@ -109,7 +109,7 @@ def _run_backend_cli_manifest_checks(failures: List[str]) -> None:
     if not isinstance(endpoints, dict):
         return
 
-    expected_endpoints = {"/ask", "/api/vision", "/api/transcribe", "/api/update"}
+    expected_endpoints = {"/gpt/{gptId}", "/api/vision", "/api/transcribe", "/api/update"}
     missing_endpoints = sorted(expected_endpoints.difference(endpoints.keys()))
     _assert(not missing_endpoints, f"Manifest missing endpoints: {', '.join(missing_endpoints)}", failures)
 

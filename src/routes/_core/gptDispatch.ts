@@ -40,6 +40,7 @@ import {
   recordMemoryDispatchIgnored,
   recordUnknownGpt,
 } from "@platform/observability/appMetrics.js";
+import { SystemStateConflictError } from "@services/systemState.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -111,7 +112,13 @@ function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message:
 function buildDispatchPayload(body: unknown): unknown {
   //audit Assumption: explicit payload should take precedence for module actions; failure risk: action contracts receiving reshaped fields; expected invariant: payload passed through unchanged when provided; handling strategy: prefer `body.payload`.
   if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "payload")) {
-    return body.payload;
+    const explicitPayload = body.payload;
+    if (isRecord(explicitPayload) && Object.prototype.hasOwnProperty.call(explicitPayload, 'gptId')) {
+      const sanitizedPayload = { ...explicitPayload };
+      delete sanitizedPayload.gptId;
+      return sanitizedPayload;
+    }
+    return explicitPayload;
   }
 
   const prompt = extractPrompt(body);
@@ -119,6 +126,7 @@ function buildDispatchPayload(body: unknown): unknown {
   //audit Assumption: legacy module handlers often inspect `prompt` even for non-query actions; failure risk: callers using message/query aliases break after dispatch normalization; expected invariant: prompt alias is preserved when extractable; handling strategy: inject prompt field for object payload fallbacks.
   if (isRecord(body)) {
     const normalizedPayload = { ...body };
+    delete normalizedPayload.gptId;
     if (prompt) {
       normalizedPayload.prompt = prompt;
     }
@@ -556,6 +564,39 @@ function pickAction(available: string[], requested?: string, defaultAction?: str
   if (available.includes("run")) return "run";
   if (available.length === 1) return available[0];
   return null;
+}
+
+function normalizeRequestedAction(
+  requestedAction: string | undefined,
+  availableActions: string[],
+  defaultAction?: string | null
+): string | undefined {
+  const normalizedRequestedAction =
+    typeof requestedAction === 'string' && requestedAction.trim().length > 0
+      ? requestedAction.trim()
+      : undefined;
+
+  if (!normalizedRequestedAction) {
+    return undefined;
+  }
+
+  const loweredRequestedAction = normalize(normalizedRequestedAction);
+  if (loweredRequestedAction === 'ask' || loweredRequestedAction === 'chat') {
+    if (defaultAction && availableActions.includes(defaultAction)) {
+      return defaultAction;
+    }
+    if (availableActions.includes('query')) {
+      return 'query';
+    }
+    if (availableActions.includes('run')) {
+      return 'run';
+    }
+    if (availableActions.length === 1) {
+      return availableActions[0];
+    }
+  }
+
+  return normalizedRequestedAction;
 }
 
 interface AutomaticBackstageBookerDispatchIntent {
@@ -1004,13 +1045,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     matchMethod,
     forcedDirectRoute: forceDirectModuleRouting,
   });
-  const requestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
+  const rawRequestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
   const payload = preDispatchPayload;
   const prompt = extractPrompt(payload);
   const requestedMode = extractMode(body, payload);
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
+  let requestedAction = normalizeRequestedAction(rawRequestedAction, availableActions, moduleMetadata?.defaultAction ?? null);
 
   //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
   if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
@@ -1023,7 +1065,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       _route: {
         ...baseRoute,
         module: activeEntry.module,
-        action: requestedAction ?? null,
+        action: requestedAction ?? undefined,
         matchMethod,
         route: activeEntry.route,
         availableActions,
@@ -1217,6 +1259,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
     moduleMetadata = getModuleMetadata(activeEntry.module);
     availableActions = moduleMetadata?.actions ?? [];
+    requestedAction = normalizeRequestedAction(rawRequestedAction, availableActions, moduleMetadata?.defaultAction ?? null);
     logger?.info?.("gpt.dispatch.booker.auto_selected", {
       requestId,
       gptId: trimmedGptId,
@@ -1425,13 +1468,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
                 toolName: resolvedMcpDispatchIntent.toolName,
                 dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
                 reason: resolvedMcpDispatchIntent.reason,
-                result: mcpResult,
+                output:
+                  isRecord(mcpResult) && isRecord(mcpResult.structuredContent)
+                    ? mcpResult.structuredContent
+                    : mcpResult,
               }
             : {
                 action: "list_tools",
                 dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
                 reason: resolvedMcpDispatchIntent.reason,
-                result: mcpResult,
+                output: mcpResult,
               }
       };
 
@@ -1642,6 +1688,26 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
     };
   } catch (err: any) {
+    if (err instanceof SystemStateConflictError) {
+      return {
+        ok: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          details: err.conflict
+        },
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    }
+
     const errorMessage = String(err?.message ?? err);
     const isDispatchTimeout =
       errorMessage === `Module dispatch timeout after ${timeoutMs}ms` || isAbortError(err);

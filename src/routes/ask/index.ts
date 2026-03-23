@@ -1092,11 +1092,6 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
   });
 }
 
-// Primary ask endpoint routed through the Trinity brain.
-//audit Assumption: the canonical session API now owns replay/restore endpoints; failure risk: duplicate public replay aliases create contract ambiguity; expected invariant: `/ask` remains the only publicly mounted ask route here; handling strategy: remove legacy replay aliases from this router.
-router.post('/ask', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
-router.get('/ask', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, asyncHandler((req, res) => handleAIRequest(req, res, 'ask')));
-
 // Brain endpoint (alias for ask) still requires explicit confirmation.
 //audit Assumption: explicit confirmation gate is sufficient for sensitive brain actions in unsigned mode; failure risk: anonymous challenge attempts; expected invariant: confirmGate enforces confirmation token flow; handling strategy: keep confirmGate in front of handler.
 router.post('/brain', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));

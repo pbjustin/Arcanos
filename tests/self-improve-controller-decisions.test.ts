@@ -257,6 +257,87 @@ describe('services/selfImprove/controller decision branches', () => {
     }));
   });
 
+  it('returns NOOP with disabled note when self-improve is turned off in config', async () => {
+    getConfigMock.mockReturnValue({
+      selfImproveEnabled: false,
+      selfImproveEnvironment: 'development',
+      selfImproveActuatorMode: 'pr_bot',
+      selfImproveAutonomyLevel: 1
+    });
+    evaluateDriftMock.mockReturnValue({
+      kind: 'none',
+      severity: 'low',
+      details: {}
+    });
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'manual'
+    });
+
+    expect(result.decision).toBe('NOOP');
+    expect(result.notes).toBe('Disabled by config');
+    expect(metricMock).toHaveBeenCalledWith('self_improve.frozen', expect.objectContaining({
+      reason: 'disabled'
+    }));
+  });
+
+  it('creates a PR with repo context, fallback reflection ids, and approval labels', async () => {
+    getConfigMock.mockReturnValue({
+      selfImproveEnabled: true,
+      selfImproveEnvironment: 'development',
+      selfImproveActuatorMode: 'pr_bot',
+      selfImproveAutonomyLevel: 2
+    });
+    evaluateDriftMock.mockReturnValue({
+      kind: 'clear_drop',
+      severity: 'medium',
+      details: { clearOverall: 0.5, clearMin: 0.7 }
+    });
+    canProposePatchesMock.mockResolvedValue(true);
+    createImprovementQueueMock.mockResolvedValue([
+      { metadata: {} }
+    ]);
+    generateComponentReflectionMock.mockResolvedValue({});
+    gatherRepoContextMock.mockResolvedValue({
+      summary: 'repo summary',
+      snippets: ['snippet-1']
+    });
+    generatePatchProposalMock.mockResolvedValue({
+      goal: 'improve reliability',
+      summary: 'improve reliability paths',
+      risk: 'low',
+      files: ['src/services/selfImprove/controller.ts'],
+      diff: 'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-const x = 1;\n+const x = 2;\n'
+    });
+    analyzePRResult = { status: '⚠️', summary: 'needs human approval' };
+
+    const result = await controllerModule.runSelfImproveCycle({
+      trigger: 'clear',
+      component: 'planner',
+      clearOverall: 0.5,
+      clearMin: 0.7,
+      context: { source: 'test' }
+    });
+
+    expect(result.decision).toBe('PATCH_PROPOSAL');
+    expect(result.reflectionIds).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^queue-0-/),
+      expect.stringMatching(/^component-planner-/)
+    ]));
+    expect(generatePatchProposalMock).toHaveBeenCalledWith(expect.objectContaining({
+      context: {
+        source: 'test',
+        repoContext: {
+          summary: 'repo summary',
+          snippets: ['snippet-1']
+        }
+      }
+    }));
+    expect(createPullRequestFromPatchMock).toHaveBeenCalledWith(expect.objectContaining({
+      labels: ['self-improve', 'autonomy-2', 'requires-human-approval']
+    }));
+  });
+
   it('retains proposal but skips PR creation when PR gates fail', async () => {
     evaluateDriftMock.mockReturnValue({
       kind: 'clear_drop',

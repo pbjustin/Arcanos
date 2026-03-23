@@ -114,7 +114,7 @@ describe('routeGptRequest gaming routing', () => {
     mockDispatchModuleAction.mockResolvedValue({
       ok: true,
       route: 'gaming',
-      mode: 'guide',
+      mode: 'gameplay',
       data: {
         response: 'Gaming pipeline response',
         sources: [],
@@ -122,11 +122,11 @@ describe('routeGptRequest gaming routing', () => {
     });
   });
 
-  it('dispatches exact arcanos-gaming requests to the gaming module even when the prompt mentions repo tooling', async () => {
+  it('dispatches exact arcanos-gaming requests to the gaming module when mode gameplay is explicit', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
-        mode: 'guide',
+        mode: 'gameplay',
         action: 'query',
         payload: {
           prompt: 'Ping the gaming backend and inspect whether repo tools exist before SWTOR tips ingestion.',
@@ -139,7 +139,6 @@ describe('routeGptRequest gaming routing', () => {
     });
 
     expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
-      mode: 'guide',
       prompt: 'Ping the gaming backend and inspect whether repo tools exist before SWTOR tips ingestion.',
       schema: 'gaming',
       target: 'gaming_guides',
@@ -151,7 +150,7 @@ describe('routeGptRequest gaming routing', () => {
         ok: true,
         result: expect.objectContaining({
           route: 'gaming',
-          mode: 'guide',
+          mode: 'gameplay',
           data: expect.objectContaining({
             response: 'Gaming pipeline response',
           }),
@@ -174,7 +173,7 @@ describe('routeGptRequest gaming routing', () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
-        mode: 'guide',
+        mode: 'gameplay',
         action: 'query',
         payload: {
           prompt: 'Inspect the repo tools before answering my SWTOR guide question.',
@@ -184,7 +183,6 @@ describe('routeGptRequest gaming routing', () => {
     });
 
     expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
-      mode: 'guide',
       prompt: 'Inspect the repo tools before answering my SWTOR guide question.',
     });
     expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
@@ -200,11 +198,11 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
-  it('fails validation when arcanos-gaming query payload has no prompt', async () => {
+  it('fails validation when gameplay query payload has no prompt', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
-        mode: 'guide',
+        mode: 'gameplay',
         action: 'query',
         payload: {
           schema: 'gaming',
@@ -221,7 +219,7 @@ describe('routeGptRequest gaming routing', () => {
         ok: false,
         error: expect.objectContaining({
           code: 'BAD_REQUEST',
-          message: "Gaming mode 'guide' requires a text prompt.",
+          message: 'Query actions require message/prompt (or messages[]).',
         }),
         _route: expect.objectContaining({
           module: 'ARCANOS:GAMING',
@@ -247,7 +245,7 @@ describe('routeGptRequest gaming routing', () => {
             setTimeout(() => resolve({
               ok: true,
               route: 'gaming',
-              mode: 'guide',
+              mode: 'gameplay',
               data: {
                 response: 'Slow but valid gaming response',
                 sources: [],
@@ -259,7 +257,7 @@ describe('routeGptRequest gaming routing', () => {
       const envelopePromise = routeGptRequest({
         gptId: 'arcanos-gaming',
         body: {
-          mode: 'guide',
+          mode: 'gameplay',
           action: 'query',
           payload: {
             prompt: 'Give me SWTOR gearing help.',
@@ -277,7 +275,7 @@ describe('routeGptRequest gaming routing', () => {
           ok: true,
           result: expect.objectContaining({
             route: 'gaming',
-            mode: 'guide',
+            mode: 'gameplay',
             data: expect.objectContaining({
               response: 'Slow but valid gaming response',
             }),
@@ -412,10 +410,11 @@ describe('routeGptRequest gaming routing', () => {
     expect(third.result).toEqual(first.result);
   });
 
-  it('requires explicit guide, build, or meta mode instead of inferring gaming from the GPT binding', async () => {
+  it('requires explicit gameplay mode instead of accepting legacy guide/build/meta modes', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
+        mode: 'guide',
         action: 'query',
         payload: {
           prompt: 'Give me SWTOR gearing help.'
@@ -430,7 +429,7 @@ describe('routeGptRequest gaming routing', () => {
         ok: false,
         error: expect.objectContaining({
           code: 'GAMEPLAY_MODE_REQUIRED',
-          message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+          message: "Gameplay requests require explicit mode 'gameplay'.",
         }),
         _route: expect.objectContaining({
           module: 'ARCANOS:GAMING',
@@ -469,85 +468,29 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
-  it('dispatches build mode directly without repo or memory interception', async () => {
-    mockDispatchModuleAction.mockResolvedValueOnce({
-      ok: true,
-      route: 'gaming',
-      mode: 'build',
-      data: {
-        response: 'Build pipeline response',
-        sources: [],
-      },
-    });
-
+  it("normalizes legacy 'ask' actions onto the gaming module query action after gameplay gating", async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
-        mode: 'build',
-        action: 'query',
+        mode: 'gameplay',
+        action: 'ask',
         payload: {
-          prompt: 'Recommend a PvP burst build.',
-          game: 'SWTOR'
+          prompt: 'Give me SWTOR gearing help.'
         }
       },
-      requestId: 'req-gaming-build-1',
+      requestId: 'req-gaming-legacy-ask-1',
     });
 
     expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
-      mode: 'build',
-      prompt: 'Recommend a PvP burst build.',
-      game: 'SWTOR'
+      prompt: 'Give me SWTOR gearing help.'
     });
-    expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
-    expect(mockExecuteNaturalLanguageMemoryCommand).not.toHaveBeenCalled();
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,
-        result: expect.objectContaining({
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          action: 'query',
           route: 'gaming',
-          mode: 'build',
-        }),
-      })
-    );
-  });
-
-  it('dispatches meta mode directly without repo or memory interception', async () => {
-    mockDispatchModuleAction.mockResolvedValueOnce({
-      ok: true,
-      route: 'gaming',
-      mode: 'meta',
-      data: {
-        response: 'Meta pipeline response',
-        sources: [],
-      },
-    });
-
-    const envelope = await routeGptRequest({
-      gptId: 'arcanos-gaming',
-      body: {
-        mode: 'meta',
-        action: 'query',
-        payload: {
-          prompt: 'Summarize the current ladder meta.',
-          game: 'SWTOR'
-        }
-      },
-      requestId: 'req-gaming-meta-1',
-    });
-
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
-      mode: 'meta',
-      prompt: 'Summarize the current ladder meta.',
-      game: 'SWTOR'
-    });
-    expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
-    expect(mockExecuteNaturalLanguageMemoryCommand).not.toHaveBeenCalled();
-    expect(envelope).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          route: 'gaming',
-          mode: 'meta',
         }),
       })
     );

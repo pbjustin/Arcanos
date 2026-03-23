@@ -110,6 +110,21 @@ describe('routes/self-improve', () => {
     });
   });
 
+  it('returns 500 when the self-improve cycle throws', async () => {
+    const app = createTestApp();
+    runSelfImproveCycleMock.mockRejectedValueOnce(new Error('cycle failed'));
+
+    await request(app)
+      .post('/api/self-improve/run')
+      .send({ trigger: 'manual' })
+      .expect(500);
+
+    expect(sendInternalErrorPayloadMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ where: 'self-improve/run' })
+    );
+  });
+
   it('defaults to an empty payload when request body is unavailable', async () => {
     const app = express();
     app.use(selfImproveRouter);

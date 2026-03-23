@@ -4,6 +4,7 @@ import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { generateMockResponse } from '@services/openai.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import type { ModuleDef } from './moduleLoader.js';
+import { executeSystemStateRequest } from './systemState.js';
 
 type ArcanosCoreQueryPayload = {
   prompt?: string;
@@ -54,7 +55,7 @@ function normalizeAnswerMode(value: unknown): TrinityAnswerMode | undefined {
 export const ArcanosCore: ModuleDef = {
   name: 'ARCANOS:CORE',
   description: 'Primary ARCANOS core assistant routed through the Trinity execution pipeline.',
-  gptIds: ['arcanos-core', 'core'],
+  gptIds: ['arcanos-core', 'core', 'arcanos-daemon'],
   defaultAction: 'query',
   defaultTimeoutMs: 60_000,
   actions: {
@@ -96,6 +97,9 @@ export const ArcanosCore: ModuleDef = {
         },
         createRuntimeBudget()
       );
+    },
+    async system_state(payload: unknown) {
+      return executeSystemStateRequest(payload);
     }
   }
 };

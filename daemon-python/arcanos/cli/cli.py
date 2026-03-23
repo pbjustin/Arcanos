@@ -243,7 +243,7 @@ class ArcanosCLI:
 
     def handle_status(self) -> bool:
         """
-        Purpose: Show backend-owned governed status using /ask mode=system_state.
+        Purpose: Show backend-owned governed status using the canonical daemon GPT route.
         Inputs/Outputs: None; renders status table and returns success flag.
         Edge cases: Returns False when backend is not configured or state fetch fails.
         """

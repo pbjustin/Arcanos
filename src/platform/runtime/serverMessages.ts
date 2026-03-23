@@ -25,7 +25,7 @@ export const SERVER_MESSAGES = {
   },
   ROUTES: {
     TITLE: '🔧 Core Routes:',
-    ASK: '   🔌 /ask - AI query endpoint',
+    ASK: '   🔌 /gpt/:gptId - Canonical GPT execution endpoint',
     ARCANOS: '   🔌 /arcanos - Main AI interface',
     AI_ENDPOINTS: '   🔌 /ai-endpoints - AI processing endpoints',
     MEMORY: '   🔌 /memory - Memory management',

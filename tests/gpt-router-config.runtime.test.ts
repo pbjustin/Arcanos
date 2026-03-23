@@ -5,7 +5,7 @@ import {
   validateGptRegistry
 } from '../src/platform/runtime/gptRouterConfig.js';
 
-const CURRENT_GPT_ROUTER_HASH = '038d9a189896633b03691aa674e8656374424dc6a1ce120c8191629c592118c4';
+const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
 
 describe('runtime GPT router wiring', () => {
   const originalGptRouterHash = process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
@@ -30,6 +30,9 @@ describe('runtime GPT router wiring', () => {
     const map = await loadGptModuleMap();
 
     expect(map['arcanos-core']).toEqual(
+      expect.objectContaining({ route: 'core', module: 'ARCANOS:CORE' })
+    );
+    expect(map['arcanos-daemon']).toEqual(
       expect.objectContaining({ route: 'core', module: 'ARCANOS:CORE' })
     );
     expect(map['core']).toEqual(
