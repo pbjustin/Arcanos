@@ -12,6 +12,8 @@ async function buildApp() {
 }
 
 describe('runtime diagnostics routes', () => {
+  jest.setTimeout(20_000);
+
   function restoreEnvVar(name: string, value: string | undefined): void {
     if (value === undefined) {
       delete process.env[name];

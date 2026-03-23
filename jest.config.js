@@ -11,6 +11,15 @@ const ignoredRootJestPatterns = [
   '<rootDir>/arcanos-ai-runtime/tests/.*'
 ];
 
+const curatedCoverageThreshold = Object.fromEntries(
+  codecovCoverageScopeFiles.map((filePath) => [filePath, {
+    branches: 100,
+    functions: 100,
+    lines: 100,
+    statements: 100
+  }])
+);
+
 export default {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'node',
@@ -85,12 +94,6 @@ export default {
   coverageReporters: ['lcov', 'text-summary'],
   //audit assumption: reported project coverage should track only the explicitly coverage-owned repository slice; failure risk: incidental imports drag in partially tested files and dilute the Codecov project signal; expected invariant: coverage is collected only for the curated opt-in file list; handling strategy: bind collectCoverageFrom to a static scope module reviewed in-repo.
   collectCoverageFrom: codecovCoverageScopeFiles,
-  coverageThreshold: {
-    global: {
-      branches: 100,
-      functions: 100,
-      lines: 100,
-      statements: 100
-    }
-  }
+  //audit assumption: Jest's global threshold also counts incidentally imported files outside the curated scope; failure risk: CI fails even when the coverage-owned surface is fully covered; expected invariant: only the explicit coverageScope.js file set is held to 100%; handling strategy: materialize per-file thresholds for that curated list instead of a single global gate.
+  coverageThreshold: curatedCoverageThreshold
 };

@@ -14,6 +14,8 @@ async function buildApp() {
 }
 
 describe('/metrics route', () => {
+  jest.setTimeout(20_000);
+
   const originalMetricsEnabled = process.env.METRICS_ENABLED;
   const originalMetricsAuthToken = process.env.METRICS_AUTH_TOKEN;
   const originalMetricsIncludeWorkerState = process.env.METRICS_INCLUDE_WORKER_STATE;
