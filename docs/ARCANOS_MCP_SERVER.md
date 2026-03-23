@@ -70,7 +70,7 @@ Destructive tools:
 ## Tool Catalog
 
 Core reasoning:
-- `trinity.ask`
+- `trinity.query`
 - `arcanos.run`
 - `trinity.query_finetune`
 
@@ -152,12 +152,12 @@ curl -X POST http://localhost:3000/mcp \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}'
 ```
 
-Call `trinity.ask`:
+Call `trinity.query`:
 ```bash
 curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"trinity.ask\",\"arguments\":{\"prompt\":\"Health check\"}}}"
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"trinity.query\",\"arguments\":{\"prompt\":\"Health check\"}}}"
 ```
 
 Create a DAG run:

@@ -53,7 +53,7 @@ export interface MockResponse {
  * Generate a mock OpenAI response for testing/fallback scenarios
  * @confidence 1.0 - Type-safe mock response generation
  */
-export const generateMockResponse = (input: string, endpoint: string = 'ask'): MockResponse => {
+export const generateMockResponse = (input: string, endpoint: string = 'query'): MockResponse => {
   const mockId = generateRequestId('mock');
   const timestamp = Math.floor(Date.now() / 1000);
   const inputPreview = truncateInput(input);
@@ -107,11 +107,12 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): M
           delegatedQuery: input
         }
       };
+    case 'query':
     case 'ask':
     case 'brain':
       return {
         ...baseMockResponse,
-        result: `[MOCK AI RESPONSE] Processed request: "${inputPreview}"`,
+        result: `[MOCK QUERY RESPONSE] Processed request: "${inputPreview}"`,
         module: 'MockBrain'
       };
     case 'write':
@@ -150,4 +151,3 @@ export const generateMockResponse = (input: string, endpoint: string = 'ask'): M
       };
   }
 };
-

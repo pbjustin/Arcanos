@@ -81,10 +81,10 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
   // Core reasoning tools
   // -------------------------
   server.registerTool(
-    'trinity.ask',
+    'trinity.query',
     {
-      title: 'Trinity Ask',
-      description: 'Runs the Trinity pipeline (same as POST /ask).',
+      title: 'Trinity Query',
+      description: 'Runs the Trinity pipeline through the canonical query action.',
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: z
         .object({
@@ -100,15 +100,21 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         })
         .passthrough(),
     },
-    wrapTool('trinity.ask', ctx, async (args: any) => {
+    wrapTool('trinity.query', ctx, async (args: any) => {
       const prompt = args.prompt ?? args.userInput ?? args.content ?? args.text ?? args.query ?? '';
       const sessionId = args.sessionId ?? ctx.sessionId;
+      ctx.logger.info('[trinity-exec]', {
+        action: 'query',
+        handler: 'trinity.query',
+        path: 'mcp://trinity.query',
+        sessionId,
+      });
       const result = await runThroughBrain(
         ctx.openai,
         prompt,
         sessionId,
         args.overrideAuditSafe,
-        { sourceEndpoint: 'mcp.trinity.ask' },
+        { sourceEndpoint: 'mcp.trinity.query' },
         ctx.runtimeBudget
       );
       return mcpText(result);

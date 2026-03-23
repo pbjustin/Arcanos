@@ -134,7 +134,7 @@ async function runTutorPipeline(
 
   //audit Assumption: missing adapter or test mode uses mock pipeline
   if (!adapter || testMode) {
-    const mock = generateMockResponse(prompt, 'ask');
+    const mock = generateMockResponse(prompt, 'query');
     return {
       tutor_response: mock.result || '',
       pipeline_trace: {
@@ -213,7 +213,7 @@ async function runTutorPipeline(
   } catch (error: unknown) {
     //audit Assumption: pipeline failure should fallback to mock
     console.error('Tutor pipeline execution error:', resolveErrorMessage(error));
-    const mock = generateMockResponse(prompt, 'ask');
+    const mock = generateMockResponse(prompt, 'query');
     return {
       tutor_response: mock.result || '',
       pipeline_trace: {

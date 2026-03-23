@@ -54,3 +54,9 @@ vendor/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Temp deploy shrink
+/release/
+/tests/
+/docs/
+/legacy/

@@ -49,7 +49,7 @@ describe('OpenAI SDK Integration Tests', () => {
         expect(client).toBeNull();
 
         // Test mock response generation
-        const mockResponse = generateMockResponse('Test input', 'ask');
+        const mockResponse = generateMockResponse('Test input', 'query');
         expect(mockResponse).toHaveProperty('meta');
         expect(mockResponse.meta).toHaveProperty('id');
         expect(mockResponse.meta).toHaveProperty('created');
@@ -232,7 +232,7 @@ describe('OpenAI SDK Integration Tests', () => {
       // Import the service
       const { generateMockResponse } = await import('../src/services/openai.js');
       
-      const mockResponse = generateMockResponse('Test input', 'ask');
+      const mockResponse = generateMockResponse('Test input', 'query');
       
       expect(mockResponse).toHaveProperty('meta');
       expect(mockResponse.meta).toHaveProperty('id');
@@ -247,7 +247,7 @@ describe('OpenAI SDK Integration Tests', () => {
       // Import the service
       const { generateMockResponse } = await import('../src/services/openai.js');
       
-      const askResponse = generateMockResponse('Test input', 'ask');
+      const askResponse = generateMockResponse('Test input', 'query');
       const simResponse = generateMockResponse('Test input', 'sim');
       
       expect(askResponse.result).not.toBe(simResponse.result);
@@ -258,7 +258,7 @@ describe('OpenAI SDK Integration Tests', () => {
       // Import the service
       const { generateMockResponse } = await import('../src/services/openai.js');
       
-      const endpoints = ['ask', 'sim', 'write', 'guide', 'audit'];
+      const endpoints = ['query', 'sim', 'write', 'guide', 'audit'];
       
       endpoints.forEach(endpoint => {
         const response = generateMockResponse('Test input', endpoint);

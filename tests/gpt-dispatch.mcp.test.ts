@@ -350,9 +350,19 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
-  it('automatically routes latest DAG trace prompts into dag.run.latest instead of trinity.ask', async () => {
+  it('automatically routes latest DAG trace prompts into dag.run.latest instead of trinity.query', async () => {
     const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: { run: { runId: 'dagrun_latest_1', status: 'complete' } },
+      structuredContent: {
+        __debug: 'NEW_DAG_LOGIC_ACTIVE',
+        found: true,
+        runId: 'dagrun_latest_1',
+        status: 'complete',
+        nodeCount: 4,
+        durationMs: 123,
+        timings: { lookupMs: 5, totalMs: 9 },
+        topLevelMetrics: { eventCount: 8, completedNodes: 4, failedNodes: 0, verificationStatus: 'passed' },
+        available: { nodes: true, events: true, metrics: true, verification: true, fullTrace: true },
+      },
     });
     const request = {
       app: {
@@ -394,10 +404,16 @@ describe('routeGptRequest MCP dispatch branch', () => {
             toolName: 'dag.run.latest',
             dispatchMode: 'automatic',
             reason: 'prompt_requests_latest_dag_run',
+            output: expect.objectContaining({
+              __debug: 'NEW_DAG_LOGIC_ACTIVE',
+              found: true,
+              runId: 'dagrun_latest_1',
+            }),
           }),
         }),
       })
     );
+    expect((envelope as any).result.mcp.output.summary).toBeUndefined();
 
     const metricsText = await getMetricsText();
     expect(metricsText).toMatch(/mcp_auto_invoke_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*tool_name="dag\.run\.latest"[^}]*reason="prompt_requests_latest_dag_run"[^}]*\} 1/);
@@ -406,7 +422,12 @@ describe('routeGptRequest MCP dispatch branch', () => {
 
   it('bypasses the memory dispatcher for DAG intent prompts even when memory cues are present', async () => {
     const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: { run: { runId: 'dagrun_latest_2', status: 'complete' } },
+      structuredContent: {
+        __debug: 'NEW_DAG_LOGIC_ACTIVE',
+        found: true,
+        runId: 'dagrun_latest_2',
+        status: 'complete',
+      },
     });
     const request = {
       app: {
@@ -445,7 +466,12 @@ describe('routeGptRequest MCP dispatch branch', () => {
 
   it('retries DAG routing when the memory dispatcher ignores a misclassified DAG prompt', async () => {
     const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: { run: { runId: 'dagrun_latest_3', status: 'complete' } },
+      structuredContent: {
+        __debug: 'NEW_DAG_LOGIC_ACTIVE',
+        found: true,
+        runId: 'dagrun_latest_3',
+        status: 'complete',
+      },
     });
     const logger = { info: jest.fn(), warn: jest.fn() };
     const request = {
@@ -506,7 +532,12 @@ describe('routeGptRequest MCP dispatch branch', () => {
 
   it('accepts explicit module:dag commands for latest-run tracing', async () => {
     const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: { run: { runId: 'dagrun_latest_4', status: 'complete' } },
+      structuredContent: {
+        __debug: 'NEW_DAG_LOGIC_ACTIVE',
+        found: true,
+        runId: 'dagrun_latest_4',
+        status: 'complete',
+      },
     });
     const request = {
       app: {
@@ -540,20 +571,19 @@ describe('routeGptRequest MCP dispatch branch', () => {
     expect(envelope.ok).toBe(true);
   });
 
-  it('automatically routes broad backend operations prompts into trinity.ask', async () => {
-    const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: { ok: true, result: 'dispatched through trinity' },
-    });
+  it('dispatches broad backend operations prompts through the direct core query path', async () => {
     const request = {
       app: {
         locals: {
           arcanosMcp: {
-            invokeTool,
+            invokeTool: jest.fn(),
             listTools: jest.fn(),
           },
         },
       },
     } as any;
+
+    mockDispatchModuleAction.mockResolvedValueOnce({ ok: true, result: 'dispatched through direct query' });
 
     const prompt = 'Inspect the backend worker, postgres, and redis state and report what is wrong.';
     const envelope = await routeGptRequest({
@@ -566,29 +596,19 @@ describe('routeGptRequest MCP dispatch branch', () => {
       request,
     });
 
-    expect(invokeTool).toHaveBeenCalledWith({
-      toolName: 'trinity.ask',
-      toolArguments: {
-        prompt,
-        sessionId: 'sess-auto-1',
-      },
-      request,
+    expect(request.app.locals.arcanosMcp.invokeTool).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      message: prompt,
       sessionId: 'sess-auto-1',
+      prompt,
     });
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,
-        result: expect.objectContaining({
-          handledBy: 'mcp-dispatcher',
-          mcp: expect.objectContaining({
-            action: 'invoke',
-            toolName: 'trinity.ask',
-            dispatchMode: 'automatic',
-            reason: 'prompt_requests_backend_operations',
-          }),
-        }),
+        result: { ok: true, result: 'dispatched through direct query' },
         _route: expect.objectContaining({
-          action: 'mcp.auto.invoke',
+          action: 'query',
+          route: 'core',
         }),
       })
     );

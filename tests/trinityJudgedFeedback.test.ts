@@ -137,7 +137,7 @@ describe('trinityJudgedFeedback', () => {
         overall: 4.1
       },
       tier: 'critical',
-      sourceEndpoint: 'ask',
+      sourceEndpoint: 'query',
       sessionId: 'session-3',
       internalMode: false,
       remainingBudgetMs: 8000
@@ -165,7 +165,7 @@ describe('trinityJudgedFeedback', () => {
   it('skips persistence when source endpoint is not allowlisted', async () => {
     const harness = await loadTrinityJudgedFeedbackHarness({
       enabled: true,
-      allowedSourceEndpoints: 'ask,siri'
+      allowedSourceEndpoints: 'query,siri'
     });
 
     const summary = await harness.module.recordTrinityJudgedFeedback({
@@ -181,13 +181,13 @@ describe('trinityJudgedFeedback', () => {
         overall: 4
       },
       tier: 'simple',
-      sourceEndpoint: 'mcp.trinity.ask'
+      sourceEndpoint: 'mcp.trinity.query'
     });
 
     expect(summary).toMatchObject({
       enabled: true,
       attempted: false,
-      reason: 'source_endpoint_not_allowed:mcp.trinity.ask'
+      reason: 'source_endpoint_not_allowed:mcp.trinity.query'
     });
     expect(harness.processJudgedResponseFeedbackMock).not.toHaveBeenCalled();
   });

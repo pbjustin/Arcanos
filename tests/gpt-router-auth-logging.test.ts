@@ -43,6 +43,7 @@ function collectStructuredLogs(logCalls: unknown[][]): LoggedPayload[] {
 
 describe('gpt router auth logging', () => {
   let consoleLogSpy: ReturnType<typeof jest.spyOn>;
+  const originalGptRouteHardTimeoutMs = process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
 
   beforeEach(() => {
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -50,6 +51,11 @@ describe('gpt router auth logging', () => {
   });
 
   afterEach(() => {
+    if (originalGptRouteHardTimeoutMs === undefined) {
+      delete process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
+    } else {
+      process.env.GPT_ROUTE_HARD_TIMEOUT_MS = originalGptRouteHardTimeoutMs;
+    }
     consoleLogSpy.mockRestore();
   });
 
@@ -386,5 +392,60 @@ describe('gpt router auth logging', () => {
         }),
       })
     );
+  });
+
+  it('maps route-level aborts onto 504 MODULE_TIMEOUT envelopes', async () => {
+    const abortError = new Error('GPT route timeout after 12000ms');
+    abortError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValue(abortError);
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'Inspect the backend worker.' });
+
+    expect(response.status).toBe(504);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'MODULE_TIMEOUT',
+        message: 'GPT route timeout after 12000ms',
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+      }),
+    });
+  });
+
+  it('honors larger configured GPT route timeout budgets without clipping them to 15s', async () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '60000';
+    const abortError = new Error('GPT route timeout after 60000ms');
+    abortError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValue(abortError);
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'Inspect the backend worker.' });
+
+    expect(response.status).toBe(504);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'MODULE_TIMEOUT',
+        message: 'GPT route timeout after 60000ms',
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+      }),
+    });
   });
 });

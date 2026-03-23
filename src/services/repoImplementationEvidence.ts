@@ -182,7 +182,7 @@ export async function collectRepoInspectionEvidence(userPrompt: string): Promise
 /**
  * Builds a grounded prompt that forces the answering model to rely on collected repo evidence.
  * Inputs: original user prompt plus structured implementation evidence.
- * Outputs: enriched prompt text safe for `trinity.ask`.
+ * Outputs: enriched prompt text safe for `trinity.query`.
  * Edge cases: evidence is serialized as JSON to preserve deterministic facts over narrative paraphrase.
  */
 export function buildRepoInspectionPrompt(
