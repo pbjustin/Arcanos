@@ -161,12 +161,10 @@ class BackendApiClient:
     def _resolve_outbound_path(
         cls,
         path: str,
-        effective_gpt_id: Optional[str],
-        payload: Optional[Mapping[str, Any]] = None,
     ) -> str:
         """
         Purpose: Resolve the final outbound path for chat-style backend requests.
-        Inputs/Outputs: caller path plus effective GPT identity and optional payload; returns normalized outbound path.
+        Inputs/Outputs: caller path; returns normalized outbound path.
         Edge cases: callers must already provide canonical routes when targeting GPT endpoints.
         """
         return cls._normalize_request_path(path)
@@ -257,7 +255,7 @@ class BackendApiClient:
             )
             raise BackendRequestError(kind="auth", message="Backend token is missing")
 
-        resolved_path = self._resolve_outbound_path(normalized_path, effective_gpt_id, payload)
+        resolved_path = self._resolve_outbound_path(normalized_path)
         outbound_payload = self._prepare_outbound_payload(resolved_path, payload)
         headers = {"Content-Type": "application/json"}
 

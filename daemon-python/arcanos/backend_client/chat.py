@@ -36,7 +36,8 @@ def resolve_backend_chat_route(gpt_id: Optional[str] = None) -> BackendChatRoute
     Edge cases: blank overrides fall back to `Config.BACKEND_GPT_ID` so deprecated compatibility routes are never used.
     """
     explicit_gpt_id = (gpt_id or "").strip()
-    resolved_gpt_id = explicit_gpt_id or (getattr(Config, "BACKEND_GPT_ID", "") or "").strip() or "arcanos-daemon"
+    backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", None) or "").strip()
+    resolved_gpt_id = explicit_gpt_id or backend_gpt_id or "arcanos-daemon"
     return BackendChatRoute(endpoint=f"/gpt/{resolved_gpt_id}", gpt_id=resolved_gpt_id)
 
 

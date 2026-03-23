@@ -33,6 +33,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
   logRequestFeedback: logRequestFeedbackMock
 }));
 
+jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
+  confirmGate: (_req: unknown, _res: unknown, next: () => void) => next()
+}));
+
 jest.unstable_mockModule('@core/logic/trinity.js', () => ({
   runThroughBrain: mockRunThroughBrain
 }));
@@ -185,7 +189,7 @@ describe('/ask prompt shortcuts', () => {
       }
     });
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       prompt: 'Recall: RAW_20260308_VAN_PROBE2',
       sessionId: 'RAW_20260308_VAN_PROBE2'
     });
@@ -226,7 +230,7 @@ describe('/ask prompt shortcuts', () => {
       }
     });
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       prompt: 'Generate three rivalries for RAW after WrestleMania.',
       sessionId: 'RAW_RIVALRY_TEST'
     });
@@ -249,7 +253,7 @@ describe('/ask prompt shortcuts', () => {
       body: {}
     });
 
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       prompt: 'system health test'
     });
 

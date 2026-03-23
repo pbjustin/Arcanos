@@ -43,6 +43,7 @@ describe('MCP detached context builders', () => {
 
     expect(mockCreateMcpLogger).toHaveBeenCalledWith({
       requestId: 'mcp_1',
+      traceId: 'mcp_1',
       sessionId: 'worker:planner',
       transport: 'internal',
     });
@@ -60,6 +61,7 @@ describe('MCP detached context builders', () => {
 
     expect(mockCreateMcpLogger).toHaveBeenCalledWith({
       requestId: 'mcp_1',
+      traceId: 'mcp_1',
       sessionId: 'stdio-session',
       transport: 'stdio',
     });

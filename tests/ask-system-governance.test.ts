@@ -1,105 +1,66 @@
-import express, { type Express } from 'express';
-import request from 'supertest';
-import askRouter from '../src/routes/ask.js';
+import { describe, expect, it } from '@jest/globals';
+import { executeSystemStateRequest } from '../src/services/systemState.js';
+import { recordChatIntent } from '../src/routes/ask/intent_store.js';
 
-let app: Express;
-let previousNodeEnv: string | undefined;
-let previousSystemModeBypass: string | undefined;
+describe('canonical system_state action', () => {
+  it('returns strict system_state payload', () => {
+    const result = executeSystemStateRequest({ sessionId: 'jest-system-state-read' });
 
-beforeAll(() => {
-  //audit Assumption: system mode auth bypass is required for deterministic test execution; failure risk: unexpected 401 responses; expected invariant: bypass enabled only within this suite; handling strategy: set and restore env vars in lifecycle hooks.
-  previousNodeEnv = process.env.NODE_ENV;
-  previousSystemModeBypass = process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS;
-  process.env.NODE_ENV = 'test';
-  process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS = '1';
-  app = express();
-  app.use(express.json({ limit: '10mb' }));
-  app.use('/', askRouter);
-});
-
-afterAll(() => {
-  if (previousNodeEnv === undefined) {
-    delete process.env.NODE_ENV;
-  } else {
-    process.env.NODE_ENV = previousNodeEnv;
-  }
-
-  if (previousSystemModeBypass === undefined) {
-    delete process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS;
-  } else {
-    process.env.ENABLE_TEST_SYSTEM_MODE_BYPASS = previousSystemModeBypass;
-  }
-});
-
-describe('/ask governed system modes', () => {
-  it('returns strict system_state payload', async () => {
-    const res = await request(app).post('/ask').send({
-      mode: 'system_state',
-      metadata: { instanceId: 'jest-instance' }
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.mode).toBe('system_state');
-    expect(res.body.intent).toBeDefined();
-    expect(res.body.routing).toBeDefined();
-    expect(res.body.backend).toBeDefined();
-    expect(res.body.stateFreshness).toBeDefined();
-    expect(res.body.generatedAt).toBeDefined();
+    expect(result.mode).toBe('system_state');
+    expect(result.intent).toBeDefined();
+    expect(result.routing).toBeDefined();
+    expect(result.backend).toBeDefined();
+    expect(result.stateFreshness).toBeDefined();
+    expect(result.generatedAt).toBeDefined();
   });
 
-  it('records chat intent and exposes it through system_state', async () => {
-    const chatRes = await request(app).post('/ask').send({
-      prompt: 'Implement governed backend mode dispatch in /ask',
-      sessionId: 'governed-test-session'
+  it('updates session-scoped intent state and exposes it through system_state', () => {
+    const sessionId = 'system-state-update-session';
+    const intent = recordChatIntent('Implement governed backend mode dispatch', sessionId);
+
+    const result = executeSystemStateRequest({
+      sessionId,
+      expectedVersion: intent.version,
+      patch: {
+        confidence: 0.9,
+        phase: 'execution',
+        status: 'active',
+        label: 'governed-test-label'
+      }
     });
 
-    expect(chatRes.status).toBe(200);
-
-    const stateRes = await request(app).post('/ask').send({
-      mode: 'system_state',
-      sessionId: 'governed-test-session'
-    });
-    expect(stateRes.status).toBe(200);
-    expect(stateRes.body.intent.intentId).toBeTruthy();
-    //audit Assumption: intent labels are normalized for safe persistence; failure risk: brittle exact-text assertions; expected invariant: label preserves semantic prefix with optional hash suffix; handling strategy: assert normalized pattern.
-    expect(String(stateRes.body.intent.label)).toMatch(
-      /^implement-governed-backend-mode-dispatch(?:-[a-f0-9]{8})?$/
-    );
-    expect(stateRes.body.intent.status).toBe('active');
+    expect(result.intent.label).toBe('governed-test-label');
+    expect(result.intent.phase).toBe('execution');
+    expect(result.intent.status).toBe('active');
+    expect(result.intent.confidence).toBe(0.9);
+    expect(result.intent.version).toBe(intent.version + 1);
   });
 
-  it('keeps anonymous /ask system_state requests stateless', async () => {
-    const chatRes = await request(app).post('/ask').send({
-      prompt: 'Anonymous requests should not persist shared backend intent'
-    });
+  it('keeps anonymous system_state requests stateless', () => {
+    const result = executeSystemStateRequest({});
 
-    expect(chatRes.status).toBe(200);
-
-    const stateRes = await request(app).post('/ask').send({ mode: 'system_state' });
-    expect(stateRes.status).toBe(200);
-    expect(stateRes.body.intent.intentId).toBeNull();
-    expect(stateRes.body.intent.label).toBeNull();
+    expect(result.intent.intentId).toBeNull();
+    expect(result.intent.label).toBeNull();
   });
 
-  it('returns 409 on intent optimistic lock mismatch', async () => {
-    const stateRes = await request(app).post('/ask').send({ mode: 'system_state' });
-    const currentVersion = Number(stateRes.body?.intent?.version || 1);
+  it('throws a conflict when the optimistic lock version is stale', () => {
+    const sessionId = 'system-state-conflict-session';
+    const intent = recordChatIntent('Seed conflict state', sessionId);
 
-    const conflictRes = await request(app).post('/ask').send({
-      mode: 'system_state',
-      expectedVersion: currentVersion + 100,
-      patch: { confidence: 0.9, phase: 'execution' }
-    });
-
-    expect(conflictRes.status).toBe(409);
-    expect(conflictRes.body.error).toBe('INTENT_VERSION_CONFLICT');
-    expect(typeof conflictRes.body.currentVersion).toBe('number');
+    expect(() =>
+      executeSystemStateRequest({
+        sessionId,
+        expectedVersion: intent.version + 100,
+        patch: { confidence: 0.9, phase: 'execution' }
+      })
+    ).toThrow('system_state update conflict');
   });
 
-  it('hard-fails invalid system_review input', async () => {
-    const reviewRes = await request(app).post('/ask').send({ mode: 'system_review' });
-
-    expect(reviewRes.status).toBe(400);
-    expect(reviewRes.body.error).toBe('Validation failed');
+  it('hard-fails incomplete system_state update input', () => {
+    expect(() =>
+      executeSystemStateRequest({
+        patch: { status: 'active' }
+      })
+    ).toThrow("system_state updates require both 'expectedVersion' and 'patch'");
   });
 });

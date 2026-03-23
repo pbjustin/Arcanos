@@ -33,7 +33,7 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnvNumber: mockGetEnvNumber
 }));
 
-const { runGaming } = await import('../src/services/gaming.js');
+const { runGuidePipeline } = await import('../src/services/gaming.js');
 
 describe('gaming direct-answer hardening', () => {
   beforeEach(() => {
@@ -61,12 +61,21 @@ describe('gaming direct-answer hardening', () => {
       choices: [{ message: { content: 'Direct gameplay answer' } }]
     });
 
-    const result = await runGaming(
-      'Answer directly. Do not simulate, role-play, or describe a hypothetical run. How do I beat the temple boss?'
-    );
+    const result = await runGuidePipeline({
+      prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. How do I beat the temple boss?',
+      guideUrls: [],
+      auditEnabled: false
+    });
 
-    expect(result.gaming_response).toBe('Direct gameplay answer');
-    expect(result.audit_trace.intake).toBe('[DIRECT_ANSWER] Persona pipeline bypassed.');
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: 'Direct gameplay answer',
+        sources: []
+      })
+    }));
     expect(mockResponsesCreate).toHaveBeenCalledTimes(1);
     expect(mockResponsesCreate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -75,7 +84,7 @@ describe('gaming direct-answer hardening', () => {
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: 'system',
-            content: expect.stringContaining('Do not simulate hotline dialogue')
+            content: expect.stringContaining('add hotline banter or theatrical framing')
           })
         ])
       })
@@ -83,18 +92,20 @@ describe('gaming direct-answer hardening', () => {
   });
 
   it('short-circuits exact-literal prompts before any provider call', async () => {
-    const result = await runGaming(
-      'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: no-simulation.'
-    );
+    const result = await runGuidePipeline({
+      prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: no-simulation.',
+      guideUrls: [],
+      auditEnabled: false
+    });
 
     expect(result).toEqual({
-      gaming_response: 'no-simulation',
-      audit_trace: {
-        intake: '[SHORTCUT] Exact literal gaming shortcut matched.',
-        reasoning: '[SHORTCUT] Model reasoning bypassed.',
-        finalized: 'no-simulation'
-      },
-      sources: []
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'no-simulation',
+        sources: []
+      }
     });
     expect(mockResponsesCreate).not.toHaveBeenCalled();
   });

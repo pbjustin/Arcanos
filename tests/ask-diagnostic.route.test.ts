@@ -17,6 +17,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
   logRequestFeedback: logRequestFeedbackMock
 }));
 
+jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
+  confirmGate: (_req: unknown, _res: unknown, next: () => void) => next()
+}));
+
 jest.unstable_mockModule('@core/logic/trinity.js', () => ({
   runThroughBrain: mockRunThroughBrain
 }));
@@ -84,23 +88,23 @@ describe('/ask diagnostic shortcut', () => {
       sessionId: 'diag-session-1'
     };
 
-    const first = await request(app).post('/ask').send(payload);
-    const second = await request(app).post('/ask').send(payload);
-    const third = await request(app).post('/ask').send(payload);
+    const first = await request(app).post('/brain').send(payload);
+    const second = await request(app).post('/brain').send(payload);
+    const third = await request(app).post('/brain').send(payload);
 
     expect(first.status).toBe(200);
     expect(first.body).toEqual({
       result: 'backend operational',
       module: 'diagnostic',
       meta: {
-        id: 'diagnostic-ask-v1',
+        id: 'diagnostic-brain-v1',
         created: 0
       },
       activeModel: 'diagnostic',
       fallbackFlag: false,
       routingStages: ['DIAGNOSTIC-SHORTCUT'],
       gpt5Used: false,
-      endpoint: 'ask'
+      endpoint: 'brain'
     });
     expect(second.body).toEqual(first.body);
     expect(third.body).toEqual(first.body);
@@ -115,7 +119,7 @@ describe('/ask diagnostic shortcut', () => {
   });
 
   it('accepts action-only ping probes before chat validation runs', async () => {
-    const response = await request(buildApp()).post('/ask').send({
+    const response = await request(buildApp()).post('/brain').send({
       action: 'ping'
     });
 
