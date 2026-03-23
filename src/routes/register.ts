@@ -123,7 +123,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', debugConfirmationRouter);
   app.use('/', reusableCodeRouter);
   app.use('/', workerHelperRouter);
-  console.info('[ROUTES] Mounted /worker-helper helper endpoints and /ask worker-control interception support.');
+  console.info('[ROUTES] Mounted /worker-helper helper endpoints and canonical /gpt routing.');
   app.use('/', hrcRouter);
   app.use('/', imageRouter);
   app.use('/', ragRouter);

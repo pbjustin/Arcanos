@@ -15,7 +15,7 @@ from arcanos.backend_client import BackendApiClient
 from arcanos.backend_client_models import BackendResponse
 
 
-def test_request_chat_completion_keeps_generic_ask_payload_free_of_gpt_id() -> None:
+def test_request_chat_completion_uses_daemon_gpt_route_without_body_gpt_id() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
     client._request_json = MagicMock(
@@ -41,7 +41,7 @@ def test_request_chat_completion_keeps_generic_ask_payload_free_of_gpt_id() -> N
     assert response is parsed_response
     client._request_json.assert_called_once()
     _, path, payload = client._request_json.call_args.args
-    assert path == "/ask"
+    assert path == "/gpt/arcanos-daemon"
     assert "gptId" not in payload
     assert payload["prompt"] == "ping backend"
     assert payload["messages"] == messages
@@ -59,11 +59,11 @@ def test_resolve_backend_chat_route_uses_gpt_gateway_for_explicit_gpt_id() -> No
     assert route.gpt_id == "arcanos-gaming"
 
 
-def test_resolve_backend_chat_route_keeps_generic_chat_on_ask_without_gpt_id() -> None:
+def test_resolve_backend_chat_route_falls_back_to_daemon_gpt_without_explicit_id() -> None:
     route = resolve_backend_chat_route("   ")
 
-    assert route.endpoint == "/ask"
-    assert route.gpt_id is None
+    assert route.endpoint == "/gpt/arcanos-daemon"
+    assert route.gpt_id == "arcanos-daemon"
 
 
 def test_request_ask_with_domain_honors_explicit_gpt_id_override() -> None:
@@ -110,7 +110,7 @@ def test_request_chat_completion_routes_explicit_gpt_ids_to_gpt_endpoint() -> No
     assert payload["prompt"] == "ping gaming"
 
 
-def test_request_system_state_uses_ask_mode_without_gpt_id_and_with_update_fields() -> None:
+def test_request_system_state_uses_daemon_gpt_route_with_update_fields() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
     client._request_json = MagicMock(
@@ -128,16 +128,16 @@ def test_request_system_state_uses_ask_mode_without_gpt_id_and_with_update_field
     assert response.value == {"state": {"ok": True}}
     client._request_json.assert_called_once()
     _, path, payload = client._request_json.call_args.args
-    assert path == "/ask"
+    assert path == "/gpt/arcanos-daemon"
     assert "gptId" not in payload
-    assert payload["mode"] == "system_state"
+    assert payload["action"] == "system_state"
     assert payload["metadata"] == {"instanceId": "cli-123"}
     assert payload["sessionId"] == "cli-123"
     assert payload["expectedVersion"] == 4
     assert payload["patch"] == {"status": "ready"}
 
 
-def test_request_system_state_ignores_explicit_gpt_id_for_ask_mode_payload() -> None:
+def test_request_system_state_honors_explicit_gpt_id_on_canonical_route() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value=None)
     client._request_json = MagicMock(
@@ -148,9 +148,9 @@ def test_request_system_state_ignores_explicit_gpt_id_for_ask_mode_payload() -> 
 
     assert response.ok is True
     _, path, payload = client._request_json.call_args.args
-    assert path == "/ask"
+    assert path == "/gpt/arcanos-gaming"
     assert "gptId" not in payload
-    assert payload["mode"] == "system_state"
+    assert payload["action"] == "system_state"
 
 
 def test_backend_api_client_parses_gpt_envelope_chat_response() -> None:
@@ -219,7 +219,7 @@ def test_backend_api_client_request_json_prefers_route_gpt_id_for_header_and_log
     assert route_response_log["gpt_id"] == "arcanos-gaming"
 
 
-def test_backend_api_client_request_json_reroutes_gpt_payloads_away_from_ask(monkeypatch) -> None:
+def test_backend_api_client_request_json_uses_canonical_gpt_route_for_gpt_payloads(monkeypatch) -> None:
     captured_request: dict[str, Any] = {}
 
     def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
@@ -252,7 +252,7 @@ def test_backend_api_client_request_json_reroutes_gpt_payloads_away_from_ask(mon
 
     response = client._request_json(
         "post",
-        "/ask",
+        "/gpt/arcanos-gaming",
         {"gptId": "arcanos-gaming", "prompt": "Ping the gaming backend"},
     )
 
@@ -291,7 +291,7 @@ def test_backend_api_client_request_json_reroutes_gpt_payloads_away_from_ask(mon
     )
 
 
-def test_backend_api_client_request_json_keeps_generic_ask_without_gpt_id(monkeypatch) -> None:
+def test_backend_api_client_request_json_uses_canonical_daemon_route(monkeypatch) -> None:
     captured_request: dict[str, Any] = {}
 
     def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
@@ -315,13 +315,13 @@ def test_backend_api_client_request_json_keeps_generic_ask_without_gpt_id(monkey
 
     response = client._request_json(
         "post",
-        "/ask",
+        "/gpt/arcanos-daemon",
         {"prompt": "Explain the routing flow"},
     )
 
     assert response.ok is True
-    assert captured_request["url"] == "https://backend.example.com/ask"
-    assert "x-gpt-id" not in captured_request["kwargs"]["headers"]
+    assert captured_request["url"] == "https://backend.example.com/gpt/arcanos-daemon"
+    assert captured_request["kwargs"]["headers"]["Authorization"] == "Bearer token"
     assert captured_request["kwargs"]["json"] == {"prompt": "Explain the routing flow"}
 
 
@@ -360,8 +360,8 @@ def test_backend_api_client_end_user_login_flow_preserves_auth_on_gpt_request(mo
 
     anonymous_response = client._request_json(
         "post",
-        "/ask",
-        {"gptId": "arcanos-gaming", "prompt": "Ping before login"},
+        "/gpt/arcanos-gaming",
+        {"prompt": "Ping before login"},
     )
     assert anonymous_response.ok is False
     assert anonymous_response.error is not None
@@ -372,8 +372,8 @@ def test_backend_api_client_end_user_login_flow_preserves_auth_on_gpt_request(mo
 
     authenticated_response = client._request_json(
         "post",
-        "/ask",
-        {"gptId": "arcanos-gaming", "prompt": "Ping after login"},
+        "/gpt/arcanos-gaming",
+        {"prompt": "Ping after login"},
     )
 
     assert authenticated_response.ok is True
@@ -428,8 +428,8 @@ def test_backend_api_client_request_json_supports_gpt_id_auth_without_bearer_tok
 
     response = client._request_json(
         "post",
-        "/ask",
-        {"gptId": "arcanos-gaming", "prompt": "Ping with GPT auth"},
+        "/gpt/arcanos-gaming",
+        {"prompt": "Ping with GPT auth"},
     )
 
     assert response.ok is True

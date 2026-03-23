@@ -9,19 +9,8 @@ import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity
  */
 export const DISPATCH_PATTERN_BINDINGS: DispatchPatternBindingV9[] = [
   {
-    id: 'api.ask',
-    priority: 120,
-    methods: ['POST'],
-    exactPaths: ['/api/ask'],
-    intentHints: ['ask', 'prompt', 'chat'],
-    sensitivity: 'non-sensitive',
-    conflictPolicy: 'refresh_then_reroute',
-    rerouteTarget: '/api/ask',
-    expectedRoute: '/api/ask'
-  },
-  {
     id: 'api.gpt',
-    priority: 110,
+    priority: 120,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     pathRegexes: ['^/api/gpt(?:/.*)?$', '^/gpt(?:/.*)?$'],
     intentHints: ['gpt', 'module', 'route'],
@@ -59,7 +48,7 @@ export const DISPATCH_PATTERN_BINDINGS: DispatchPatternBindingV9[] = [
     intentHints: ['default', 'fallback', 'api'],
     sensitivity: 'non-sensitive',
     conflictPolicy: 'refresh_then_reroute',
-    rerouteTarget: '/api/ask',
+    rerouteTarget: '/gpt/arcanos-daemon',
     expectedRoute: '*'
   }
 ];
@@ -112,4 +101,3 @@ assertProtectedConfigIntegrity(
     source: 'src/platform/runtime/dispatchPatterns.ts'
   }
 );
-

@@ -6,9 +6,9 @@ export const DAEMON_REGISTRY_VERSION = 1;
 
 export const DAEMON_REGISTRY_ENDPOINTS = [
   {
-    path: '/api/ask',
+    path: '/gpt/arcanos-daemon',
     method: 'POST',
-    description: 'Core logic, module routing, daemon tools'
+    description: 'Canonical GPT execution path for daemon/core routing'
   },
   {
     path: '/api/vision',

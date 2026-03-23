@@ -22,7 +22,7 @@ function createHandler(mod: ModuleDef) {
       return res.status(409).json({
         error: 'Dispatch rerouted to safe default dispatcher',
         code: 'DISPATCH_REROUTED',
-        target: '/api/ask'
+        target: '/gpt/arcanos-daemon'
       });
     }
 
@@ -115,7 +115,7 @@ for (const { route, definition } of loadedModules) {
 
 /**
  * Dispatch a module action directly by module name, action, and payload.
- * Used by /api/ask to route gptId-identified requests to the correct module.
+ * Used by the canonical /gpt/:gptId route to execute a resolved module action.
  */
 export async function dispatchModuleAction(
   moduleName: string,
@@ -184,7 +184,7 @@ router.post('/queryroute', async (req: Request, res: Response) => {
     return res.status(409).json({
       error: 'Dispatch rerouted to safe default dispatcher',
       code: 'DISPATCH_REROUTED',
-      target: '/api/ask'
+      target: '/gpt/arcanos-daemon'
     });
   }
 

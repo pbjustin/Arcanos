@@ -47,21 +47,21 @@ describe('dispatchControllerV9', () => {
         id: 'z-binding',
         priority: 80,
         methods: ['POST'],
-        exactPaths: ['/api/ask'],
+        exactPaths: ['/gpt/arcanos-daemon'],
         sensitivity: 'non-sensitive',
         conflictPolicy: 'refresh_then_reroute',
-        rerouteTarget: '/api/ask',
-        expectedRoute: '/api/ask'
+        rerouteTarget: '/gpt/arcanos-daemon',
+        expectedRoute: '/gpt/arcanos-daemon'
       },
       {
         id: 'a-binding',
         priority: 80,
         methods: ['POST'],
-        exactPaths: ['/api/ask'],
+        exactPaths: ['/gpt/arcanos-daemon'],
         sensitivity: 'non-sensitive',
         conflictPolicy: 'refresh_then_reroute',
-        rerouteTarget: '/api/ask',
-        expectedRoute: '/api/ask'
+        rerouteTarget: '/gpt/arcanos-daemon',
+        expectedRoute: '/gpt/arcanos-daemon'
       },
       {
         id: 'fallback',
@@ -70,29 +70,29 @@ describe('dispatchControllerV9', () => {
         pathRegexes: ['^/api/.*$'],
         sensitivity: 'non-sensitive',
         conflictPolicy: 'refresh_then_reroute',
-        rerouteTarget: '/api/ask',
+        rerouteTarget: '/gpt/arcanos-daemon',
         expectedRoute: '*'
       }
     ];
 
-    const resolved = resolveBinding(createAttempt('POST', '/api/ask'), bindings);
+    const resolved = resolveBinding(createAttempt('POST', '/gpt/arcanos-daemon'), bindings);
     expect(resolved?.id).toBe('a-binding');
     expect(resolved?.matchKind).toBe('exact');
   });
 
   it('classifies stale version conflicts', () => {
     const binding: DispatchPatternBindingV9 = {
-      id: 'api.ask',
+      id: 'api.gpt',
       priority: 10,
       methods: ['POST'],
-      exactPaths: ['/api/ask'],
+      exactPaths: ['/gpt/arcanos-daemon'],
       sensitivity: 'non-sensitive',
       conflictPolicy: 'refresh_then_reroute',
-      rerouteTarget: '/api/ask',
-      expectedRoute: '/api/ask'
+      rerouteTarget: '/gpt/arcanos-daemon',
+      expectedRoute: '/gpt/arcanos-daemon'
     };
-    const attempt = createAttempt('POST', '/api/ask');
-    const snapshot = createSnapshot('POST /api/ask', 'POST /api/ask');
+    const attempt = createAttempt('POST', '/gpt/arcanos-daemon');
+    const snapshot = createSnapshot('POST /gpt/arcanos-daemon', 'POST /gpt/arcanos-daemon');
     const validation = validateAgainstSnapshot(binding, attempt, snapshot, '2026-02-05T00:00:00.000Z');
 
     expect(validation.valid).toBe(false);
@@ -101,17 +101,17 @@ describe('dispatchControllerV9', () => {
 
   it('uses monotonic baseline comparison when provided', () => {
     const binding: DispatchPatternBindingV9 = {
-      id: 'api.ask',
+      id: 'api.gpt',
       priority: 10,
       methods: ['POST'],
-      exactPaths: ['/api/ask'],
+      exactPaths: ['/gpt/arcanos-daemon'],
       sensitivity: 'non-sensitive',
       conflictPolicy: 'refresh_then_reroute',
-      rerouteTarget: '/api/ask',
-      expectedRoute: '/api/ask'
+      rerouteTarget: '/gpt/arcanos-daemon',
+      expectedRoute: '/gpt/arcanos-daemon'
     };
-    const attempt = createAttempt('POST', '/api/ask');
-    const snapshot = createSnapshot('POST /api/ask', 'POST /api/ask');
+    const attempt = createAttempt('POST', '/gpt/arcanos-daemon');
+    const snapshot = createSnapshot('POST /gpt/arcanos-daemon', 'POST /gpt/arcanos-daemon');
 
     const validWithBaseline = validateAgainstSnapshot(
       binding,
@@ -190,4 +190,3 @@ describe('dispatchControllerV9', () => {
     expect(blockStrictDecision).toBe('block');
   });
 });
-

@@ -273,4 +273,118 @@ describe('gpt router auth logging', () => {
       },
     });
   });
+
+  it('rejects body-level gptId on the canonical route before dispatching', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        gptId: 'backstage-booker',
+        prompt: 'Ping the gaming backend',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: {
+          code: 'BODY_GPT_ID_FORBIDDEN',
+          message: 'gptId must be supplied by the /gpt/{gptId} path only.',
+        },
+        _route: expect.objectContaining({
+          gptId: 'arcanos-gaming',
+        }),
+      })
+    );
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('maps system state conflicts to HTTP 409 on the canonical route', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: false,
+      error: {
+        code: 'SYSTEM_STATE_CONFLICT',
+        message: 'system_state update conflict',
+        details: {
+          expectedVersion: 1,
+          currentVersion: 2,
+        },
+      },
+      _route: {
+        gptId: 'arcanos-daemon',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-daemon')
+      .send({ action: 'system_state' });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      ok: false,
+      _route: {
+        gptId: 'arcanos-daemon',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+      },
+      error: {
+        code: 'SYSTEM_STATE_CONFLICT',
+        message: 'system_state update conflict',
+        details: {
+          expectedVersion: 1,
+          currentVersion: 2,
+        },
+      },
+    });
+  });
+
+  it('allows system_state reads without update fields on the canonical route', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        mode: 'system_state',
+      },
+      _route: {
+        gptId: 'arcanos-daemon',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'system_state',
+        availableActions: ['query', 'system_state'],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-daemon')
+      .send({ action: 'system_state' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          mode: 'system_state',
+        },
+        _route: expect.objectContaining({
+          gptId: 'arcanos-daemon',
+          action: 'system_state',
+        }),
+      })
+    );
+  });
 });

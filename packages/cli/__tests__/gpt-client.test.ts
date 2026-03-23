@@ -100,9 +100,15 @@ describe("GPT route OpenAPI contract and client", () => {
     );
 
     const requestSchema = spec.components?.schemas?.GptRouteRequest;
-    expect(requestSchema?.required).toContain("prompt");
+    expect(requestSchema).toEqual(
+      expect.objectContaining({
+        type: "object",
+        additionalProperties: false,
+      })
+    );
+    expect(requestSchema?.properties?.prompt).toBeDefined();
     expect(requestSchema?.required ?? []).not.toContain("action");
     expect(requestSchema?.properties?.gptId).toBeUndefined();
-    expect(requestSchema?.additionalProperties).toBe(false);
+    expect(requestSchema?.not?.required).toContain("gptId");
   });
 });

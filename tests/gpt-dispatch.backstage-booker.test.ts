@@ -183,6 +183,34 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     );
   });
 
+  it("normalizes legacy 'ask' actions onto the module default action", async () => {
+    mockDetectBackstageBookerIntent.mockReturnValue(null);
+
+    const envelope = await routeGptRequest({
+      gptId: 'backstage',
+      body: {
+        action: 'ask',
+        prompt: 'Book tonight\'s main event arc.'
+      },
+      requestId: 'req-booker-legacy-ask-1'
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', {
+      action: 'ask',
+      prompt: 'Book tonight\'s main event arc.'
+    });
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          module: 'BACKSTAGE:BOOKER',
+          action: 'generateBooking',
+          route: 'backstage'
+        })
+      })
+    );
+  });
+
   it('uses the backstage module timeout budget instead of the generic 15s dispatcher timeout', async () => {
     jest.useFakeTimers();
     try {

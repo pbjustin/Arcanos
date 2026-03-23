@@ -17,11 +17,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.openapi).toBe('3.1.0');
-    expect(Object.keys(response.body.paths ?? {})).toEqual(['/ask', '/gpt/{gptId}']);
-    expect(response.body.paths?.['/ask']?.post?.deprecated).toBe(true);
-    expect(response.body.paths?.['/ask']?.post?.operationId).toBe('legacyAskCompatibility');
-    expect(response.body.paths?.['/ask']?.post?.responses?.['410']).toBeDefined();
-    expect(response.body.components?.headers?.AskRouteModeHeader).toBeDefined();
+    expect(Object.keys(response.body.paths ?? {})).toEqual(['/gpt/{gptId}']);
     expect(response.body.paths?.['/gpt/{gptId}']?.post?.operationId).toBe('invokeGptRoute');
   });
 });

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import apiAskRouter from "@routes/api-ask.js";
 import apiArcanosRouter from "@routes/api-arcanos.js";
 import apiSimRouter from "@routes/api-sim.js";
 import apiMemoryRouter from "@routes/api-memory.js";
@@ -23,7 +22,6 @@ const router = Router();
 
 router.use(memoryConsistencyGate);
 
-router.use('/', apiAskRouter);
 router.use('/', apiSaveConversationRouter);
 router.use('/api/arcanos', apiArcanosRouter);
 router.use('/api/sim', apiSimRouter);

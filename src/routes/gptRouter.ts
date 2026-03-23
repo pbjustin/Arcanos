@@ -97,6 +97,14 @@ function extractPromptText(body: unknown): string | null {
     : null;
 }
 
+function resolveBodyGptId(body: unknown): string | null {
+  const normalizedBody = normalizeRequestBody(body);
+  const gptId = normalizedBody?.gptId;
+  return typeof gptId === 'string' && gptId.trim().length > 0
+    ? gptId.trim()
+    : null;
+}
+
 function buildGptRequestAuthState(req: express.Request): Record<string, unknown> {
   const authorizationHeader = req.header("authorization");
   const cookieHeader = req.header("cookie");
@@ -157,6 +165,7 @@ router.post("/:gptId", async (req, res, next) => {
         const incomingGptId = req.params.gptId;
         const requestLogger = (req as any).logger;
         const normalizedBody = normalizeRequestBody(req.body);
+        const bodyGptId = resolveBodyGptId(req.body);
         const requestedAction = resolveRequestedAction(req.body);
         applyCanonicalGptRouteHeaders(res, incomingGptId);
 
@@ -177,6 +186,26 @@ router.post("/:gptId", async (req, res, next) => {
           gptId: incomingGptId,
           action: requestedAction
         });
+
+        if (bodyGptId) {
+          requestLogger?.warn?.('gpt.request.invalid_body_gpt_id', {
+            endpoint: req.originalUrl,
+            pathGptId: incomingGptId,
+            bodyGptId
+          });
+          return res.status(400).json({
+            ok: false,
+            error: {
+              code: 'BODY_GPT_ID_FORBIDDEN',
+              message: 'gptId must be supplied by the /gpt/{gptId} path only.'
+            },
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
 
         requestLogger?.info?.("gpt.request.auth_state", {
           endpoint: req.originalUrl,
@@ -234,6 +263,8 @@ router.post("/:gptId", async (req, res, next) => {
           const statusCode =
             envelope.error.code === "UNKNOWN_GPT"
               ? 404
+              : envelope.error.code === "SYSTEM_STATE_CONFLICT"
+              ? 409
               : envelope.error.code === "MODULE_TIMEOUT"
               ? 504
               : 400;
@@ -247,6 +278,9 @@ router.post("/:gptId", async (req, res, next) => {
           if (envelope.error.code === "UNKNOWN_GPT") {
             logGptConnectionFailed(incomingGptId);
             return res.status(404).json(envelope);
+          }
+          if (envelope.error.code === "SYSTEM_STATE_CONFLICT") {
+            return res.status(409).json(envelope);
           }
           if (envelope.error.code === "MODULE_TIMEOUT") {
             return res.status(504).json(envelope);

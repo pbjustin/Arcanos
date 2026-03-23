@@ -47,19 +47,18 @@ const SHARED_DEPS = {
 
 // API contract definitions
 const API_CONTRACTS = {
-  '/api/ask': {
+  '/gpt/{gptId}': {
     method: 'POST',
     request: {
-      messages: 'array',
-      temperature: 'number?',
-      model: 'string?',
-      stream: 'boolean?'
+      prompt: 'string?',
+      messages: 'array?',
+      action: 'string?',
+      payload: 'object?'
     },
     response: {
-      response: 'string',
-      tokens: 'number',
-      cost: 'number',
-      model: 'string'
+      ok: 'boolean',
+      result: 'object?',
+      _route: 'object'
     },
     clientMethod: 'request_chat_completion'
   },
@@ -156,6 +155,18 @@ async function resolveDaemonClientPath() {
     }
   }
   return null;
+}
+
+function endpointMatchesRouteContent(endpoint, routeContent) {
+  if (routeContent.includes(endpoint)) {
+    return true;
+  }
+
+  if (endpoint === '/gpt/{gptId}') {
+    return routeContent.includes('/gpt/:gptId') || routeContent.includes('/gpt/{gptId}');
+  }
+
+  return routeContent.includes(endpoint.replace('/api/', ''));
 }
 
 /**
@@ -391,7 +402,7 @@ async function checkAPIContracts() {
   }
   
   const contractChecks = [
-    { endpoint: '/api/ask', clientFile: daemonClientPath.daemonRelativePath },
+    { endpoint: '/gpt/{gptId}', clientFile: daemonClientPath.daemonRelativePath },
     { endpoint: '/api/vision', clientFile: daemonClientPath.daemonRelativePath },
     { endpoint: '/api/transcribe', clientFile: daemonClientPath.daemonRelativePath },
     { endpoint: '/api/update', clientFile: daemonClientPath.daemonRelativePath }
@@ -758,9 +769,7 @@ async function detectDaemonChangesNotMatchingServer() {
           try {
             const routeContent = await fs.readFile(routePath, 'utf-8');
             // Check if route file contains this endpoint (more flexible matching)
-            if (routeContent.includes(endpoint) || 
-                routeContent.includes(endpoint.replace('/api/', '')) ||
-                (endpoint === '/api/ask' && (routeContent.includes('router.post') || routeContent.includes('app.post')) && routeContent.includes('ask'))) {
+            if (endpointMatchesRouteContent(endpoint, routeContent)) {
               serverHasRoute = true;
               break;
             }
@@ -806,8 +815,7 @@ async function detectDaemonChangesNotMatchingServer() {
                 try {
                   const routeContent = await fs.readFile(routePath, 'utf-8');
                   // More flexible matching - check if endpoint is in file and field is mentioned
-                  if ((routeContent.includes(endpoint) || 
-                       (endpoint === '/api/ask' && routeContent.includes('ask'))) && 
+                  if (endpointMatchesRouteContent(endpoint, routeContent) && 
                       (routeContent.includes(field) || 
                        routeContent.includes(`req.body`) || 
                        routeContent.includes('body.'))) {
@@ -859,9 +867,7 @@ async function detectDaemonChangesNotMatchingServer() {
               try {
                 const routeContent = await fs.readFile(routePath, 'utf-8');
                 // Check if this is the right endpoint file (more flexible matching)
-                const hasEndpoint = routeContent.includes(endpoint) || 
-                                   routeContent.includes(endpoint.replace('/api/', '')) ||
-                                   (endpoint === '/api/ask' && routeContent.includes('ask')) ||
+                const hasEndpoint = endpointMatchesRouteContent(endpoint, routeContent) ||
                                    (endpoint === '/api/vision' && (routeFile.includes('vision') || routeContent.includes('vision'))) ||
                                    (endpoint === '/api/transcribe' && (routeFile.includes('transcribe') || routeContent.includes('transcribe'))) ||
                                    (endpoint === '/api/update' && (routeFile.includes('update') || routeContent.includes('update'))) ||
@@ -1177,5 +1183,3 @@ export {
   detectServerChangesRequiringDaemonUpdates,
   detectDaemonChangesNotMatchingServer
 };
-
-

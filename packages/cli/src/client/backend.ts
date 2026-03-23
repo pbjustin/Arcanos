@@ -44,6 +44,15 @@ export interface InvokeGptRouteOptions {
   headers?: Record<string, string>;
 }
 
+const DEFAULT_BACKEND_GPT_ID =
+  process.env.ARCANOS_BACKEND_GPT_ID?.trim() ||
+  process.env.BACKEND_GPT_ID?.trim() ||
+  "arcanos-daemon";
+
+function resolveDefaultBackendGptId(): string {
+  return DEFAULT_BACKEND_GPT_ID;
+}
+
 export async function executeTaskCreate(
   request: ProtocolRequest<{ prompt: string }>,
   options: CliGlobalOptions
@@ -53,13 +62,10 @@ export async function executeTaskCreate(
     throw new Error("Invalid payload for task.create: prompt is missing or empty.");
   }
 
-  const backendResponse = await postJson(options.baseUrl, "/ask", {
-    prompt,
-    sessionId: request.context?.sessionId,
-    metadata: {
-      protocolCommand: request.command,
-      protocolRequestId: request.requestId
-    }
+  const backendResponse = await invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: resolveDefaultBackendGptId(),
+    prompt
   });
 
   return assertTaskCreateResponse({
@@ -91,18 +97,15 @@ export async function executePlanGenerate(
     throw new Error("Invalid payload for plan.generate: prompt is missing or empty.");
   }
 
-  const backendResponse = await postJson(options.baseUrl, "/ask", {
+  const backendResponse = await invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: resolveDefaultBackendGptId(),
     prompt: [
       "Generate an implementation plan for the following request.",
       "Return concise, concrete steps and include key risks.",
       "",
       prompt
-    ].join("\n"),
-    sessionId: request.context?.sessionId,
-    metadata: {
-      protocolCommand: request.command,
-      protocolRequestId: request.requestId
-    }
+    ].join("\n")
   });
 
   return assertPlanGenerateResponse({

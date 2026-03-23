@@ -142,10 +142,18 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
 
   const confirmationHeader = resolveHeader(req.headers, 'x-confirmed');
   const oneTimeTokenHeader = resolveHeader(req.headers, 'x-arcanos-confirm-token');
+  const gptIdFromPath = typeof req.params?.gptId === 'string' ? req.params.gptId.trim() : '';
   const gptIdFromBody = typeof req.body?.gptId === 'string' ? req.body.gptId.trim() : '';
   const gptIdFromHeader = (resolveHeader(req.headers, 'x-gpt-id') || '').toString().trim();
-  //audit Assumption: body gptId is canonical when present, but legacy callers may still supply x-gpt-id; failure risk: dropped identity metadata in compatibility paths; expected invariant: preserve identity for trust checks/context; handling strategy: prefer body then header fallback.
-  const gptId = gptIdFromBody.length > 0 ? gptIdFromBody : gptIdFromHeader.length > 0 ? gptIdFromHeader : undefined;
+  //audit Assumption: path-bound GPT routing is authoritative, but compatibility callers may still rely on body/header metadata on non-canonical routes; failure risk: trust checks bind to the wrong identity; expected invariant: route params win whenever present; handling strategy: prefer path, then body, then header.
+  const gptId =
+    gptIdFromPath.length > 0
+      ? gptIdFromPath
+      : gptIdFromBody.length > 0
+      ? gptIdFromBody
+      : gptIdFromHeader.length > 0
+      ? gptIdFromHeader
+      : undefined;
   const isTrustedGpt = gptId ? trustedGptIds.has(gptId) : false;
   const automationHeaderValue = automationBypassEnabled
     ? resolveHeader(req.headers, automationBypassHeader)

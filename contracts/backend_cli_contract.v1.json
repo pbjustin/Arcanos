@@ -4,21 +4,24 @@
   "schemaVersion": 1,
   "description": "Versioned interface between TypeScript backend routes and Python daemon backend client.",
   "endpoints": {
-    "/ask": {
+    "/gpt/{gptId}": {
       "method": "POST",
-      "tsRouteFile": "src/routes/ask.ts",
+      "tsRouteFile": "src/routes/gptRouter.ts",
       "pythonClientMethods": [
         "request_ask_with_domain",
         "request_chat_completion",
         "request_system_state"
       ],
       "requestFields": [
+        "action",
+        "context",
+        "gptId(path)",
+        "messages",
+        "mode",
+        "patch",
         "prompt",
-        "message",
-        "userInput",
-        "content",
-        "text",
-        "query"
+        "expectedVersion",
+        "payload"
       ]
     },
     "/api/vision": {
@@ -61,4 +64,3 @@
     }
   }
 }
-

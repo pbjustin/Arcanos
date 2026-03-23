@@ -25,7 +25,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 const CONTRACT_MANIFEST_PATH = path.join(ROOT, 'contracts', 'backend_cli_contract.v1.json');
 const EXPECTED_CONTRACT_VERSION = '1.0.0';
-const REQUIRED_ENDPOINTS = ['/ask', '/api/vision', '/api/transcribe', '/api/update'];
+const REQUIRED_ENDPOINTS = ['/gpt/{gptId}', '/api/vision', '/api/transcribe', '/api/update'];
 const PYTHON_BACKEND_CLIENT_INIT_PATH = path.join(
   ROOT,
   'daemon-python',
@@ -45,6 +45,10 @@ function assertCondition(condition, message, findings) {
   if (!condition) {
     findings.push(message);
   }
+}
+
+function toExpressRoutePath(endpointPath) {
+  return endpointPath.replace(/\{([^}]+)\}/g, ':$1');
 }
 
 /**
@@ -148,8 +152,9 @@ async function validateTypeScriptBindings(manifest, findings) {
 
     const routeSource = await fs.readFile(tsRoutePath, 'utf8');
     //audit Assumption: manifest endpoint path should be visible in declared route source; Failure risk: stale mapping to unrelated file; Invariant: endpoint literal exists in route file; Handling strategy: fail when endpoint text not found.
+    const acceptableRoutePaths = [endpointPath, toExpressRoutePath(endpointPath)];
     assertCondition(
-      routeSource.includes(endpointPath),
+      acceptableRoutePaths.some((routePath) => routeSource.includes(routePath)),
       `Route file does not reference endpoint ${endpointPath}: ${tsRouteFile}`,
       findings,
     );
@@ -238,4 +243,3 @@ main().catch((error) => {
   console.error(`[validate-backend-cli-contract] ERROR: ${message}`);
   process.exitCode = 1;
 });
-

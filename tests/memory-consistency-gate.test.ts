@@ -47,14 +47,14 @@ function createSnapshotRecord(
 
 const TEST_BINDINGS: DispatchPatternBindingV9[] = [
   {
-    id: 'api.ask',
+    id: 'api.gpt',
     priority: 120,
     methods: ['POST'],
-    exactPaths: ['/api/ask'],
+    exactPaths: ['/gpt/arcanos-daemon'],
     sensitivity: 'non-sensitive',
     conflictPolicy: 'refresh_then_reroute',
-    rerouteTarget: '/api/ask',
-    expectedRoute: '/api/ask'
+    rerouteTarget: '/gpt/arcanos-daemon',
+    expectedRoute: '/gpt/arcanos-daemon'
   },
   {
     id: 'api.modules',
@@ -63,12 +63,12 @@ const TEST_BINDINGS: DispatchPatternBindingV9[] = [
     exactPaths: ['/api/commands/execute'],
     sensitivity: 'non-sensitive',
     conflictPolicy: 'refresh_then_reroute',
-    rerouteTarget: '/api/ask',
+    rerouteTarget: '/gpt/arcanos-daemon',
     expectedRoute: '/api/commands/execute'
   },
   {
     id: 'api.gpt',
-    priority: 110,
+    priority: 120,
     methods: ['POST'],
     exactPaths: ['/api/gpt/run'],
     sensitivity: 'sensitive',
@@ -82,7 +82,7 @@ const TEST_BINDINGS: DispatchPatternBindingV9[] = [
     pathRegexes: ['^/api(?:/.*)?$'],
     sensitivity: 'non-sensitive',
     conflictPolicy: 'refresh_then_reroute',
-    rerouteTarget: '/api/ask',
+    rerouteTarget: '/gpt/arcanos-daemon',
     expectedRoute: '*'
   }
 ];
@@ -131,9 +131,9 @@ function createTestApp(options: {
     });
   });
 
-  app.post('/api/ask', (req, res) => {
+  app.post('/gpt/arcanos-daemon', (req, res) => {
     res.json({
-      handled: 'ask',
+      handled: 'gpt',
       decision: req.dispatchDecision,
       rerouted: req.dispatchRerouted ?? false,
       body: req.body
@@ -262,7 +262,7 @@ describe('memoryConsistencyGate', () => {
       .send({ message: 'reroute this command' });
 
     expect(response.status).toBe(200);
-    expect(response.body.handled).toBe('ask');
+    expect(response.body.handled).toBe('gpt');
     expect(response.body.decision).toBe('reroute');
     expect(response.body.rerouted).toBe(true);
     expect(response.body.body.dispatchReroute).toEqual(
@@ -455,4 +455,3 @@ describe('memoryConsistencyGate', () => {
     expect(rollbackToTrustedSnapshot).toHaveBeenCalledTimes(1);
   });
 });
-

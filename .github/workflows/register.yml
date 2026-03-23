@@ -104,10 +104,10 @@ jobs:
 
           # Send registration request to ARCANOS backend
           HTTP_CODE=$(curl -s -w "%{http_code}" -o response.json \
-            -X POST https://arcanos-v2-production.up.railway.app/ask \
+            -X POST https://arcanos-v2-production.up.railway.app/gpt/arcanos-daemon \
             -H "Content-Type: application/json" \
             -H "User-Agent: ARCANOS-GitHub-Actions/1.0" \
-            -d "$PAYLOAD")
+            -d "$(jq -nc --arg prompt "Register repository features and persist the attached metadata for later retrieval. Payload: $PAYLOAD" --argjson metadata "$PAYLOAD" '{action: \"query\", prompt: $prompt, metadata: $metadata}')")
 
           echo "HTTP Response Code: $HTTP_CODE"
 

@@ -132,15 +132,6 @@ class BackendApiClient:
         return normalized_path
 
     @classmethod
-    def _is_ask_route(cls, path: str) -> bool:
-        """
-        Purpose: Identify chat-style routes that can be rewritten to canonical GPT endpoints.
-        Inputs/Outputs: normalized request path; returns True when path is an ask compatibility route.
-        Edge cases: non-ask API routes remain untouched.
-        """
-        return cls._normalize_request_path(path) in {"/ask", "/api/ask"}
-
-    @classmethod
     def _extract_request_gpt_id(
         cls,
         path: str,
@@ -170,21 +161,15 @@ class BackendApiClient:
     def _resolve_outbound_path(
         cls,
         path: str,
+        effective_gpt_id: Optional[str],
         payload: Optional[Mapping[str, Any]] = None,
     ) -> str:
         """
         Purpose: Resolve the final outbound path for chat-style backend requests.
-        Inputs/Outputs: caller path plus optional payload; returns canonical `/ask` or `/gpt/:gptId` path.
-        Edge cases: non-ask routes bypass rewriting; stale callers that send `gptId` on ask routes are corrected here.
+        Inputs/Outputs: caller path plus effective GPT identity and optional payload; returns normalized outbound path.
+        Edge cases: callers must already provide canonical routes when targeting GPT endpoints.
         """
-        normalized_path = cls._normalize_request_path(path)
-        if not cls._is_ask_route(normalized_path):
-            return normalized_path
-
-        request_gpt_id = cls._extract_request_gpt_id(normalized_path, payload)
-        if request_gpt_id:
-            return f"/gpt/{request_gpt_id}"
-        return "/ask"
+        return cls._normalize_request_path(path)
 
     @classmethod
     def _prepare_outbound_payload(
@@ -213,7 +198,7 @@ class BackendApiClient:
         """
         Purpose: Extract the backend module identifier from a response envelope for routing diagnostics.
         Inputs/Outputs: parsed backend response payload; returns module/model name when available.
-        Edge cases: falls back across `_route.module`, `model`, and nested result metadata to support both `/ask` and `/gpt/:gptId` contracts.
+        Edge cases: falls back across `_route.module`, `model`, and nested result metadata to support both legacy and canonical response envelopes.
         """
         if not isinstance(response_json, Mapping):
             return None
@@ -272,7 +257,7 @@ class BackendApiClient:
             )
             raise BackendRequestError(kind="auth", message="Backend token is missing")
 
-        resolved_path = self._resolve_outbound_path(normalized_path, payload)
+        resolved_path = self._resolve_outbound_path(normalized_path, effective_gpt_id, payload)
         outbound_payload = self._prepare_outbound_payload(resolved_path, payload)
         headers = {"Content-Type": "application/json"}
 
@@ -304,7 +289,7 @@ class BackendApiClient:
         """
         Purpose: Emit deterministic routing telemetry before a backend request is sent.
         Inputs/Outputs: request method, full URL, resolved endpoint, and normalized GPT id; writes audit logs only.
-        Edge cases: `gpt_id` may be None for generic `/ask` traffic and is logged explicitly as null-equivalent metadata.
+        Edge cases: `gpt_id` may be None when callers omitted routing hints and the configured daemon GPT id was used.
         """
         log_audit_event(
             "backend_route_request",
@@ -500,7 +485,7 @@ class BackendApiClient:
         gpt_id: Optional[str] = None,
     ) -> BackendResponse[dict[str, Any]]:
         """
-        Purpose: Request backend system state through /ask mode=system_state.
+        Purpose: Request backend system state through the canonical daemon GPT route.
         Inputs/Outputs: optional metadata and optimistic-lock patch fields; returns raw state payload.
         Edge cases: returns structured validation errors for partial update payloads.
         """
@@ -838,7 +823,7 @@ class BackendApiClient:
     @staticmethod
     def _extract_chat_text(response_payload: Any) -> Optional[str]:
         """
-        Purpose: Normalize chat text from both legacy `/ask` responses and `/gpt/:gptId` envelopes.
+        Purpose: Normalize chat text from both legacy compatibility responses and `/gpt/:gptId` envelopes.
         Inputs/Outputs: arbitrary response payload; returns best-effort text string or None.
         Edge cases: structured module responses without a canonical text field are serialized to deterministic JSON.
         """

@@ -74,11 +74,14 @@ jobs:
           sleep 10
           
           # Analyze deployment readiness
-          curl -X POST http://localhost:8080/ask \
+          curl -X POST http://localhost:8080/gpt/arcanos-daemon \
             -H "Content-Type: application/json" \
             -d '{
+              "action": "query",
               "prompt": "Analyze the current codebase for deployment readiness. Check for: 1) Build integrity, 2) Configuration validity, 3) Security considerations, 4) Performance implications. Merge commit: ${{ inputs.merge_commit_sha }}",
-              "context": "deployment_analysis"
+              "metadata": {
+                "context": "deployment_analysis"
+              }
             }' \
             -o deployment_analysis.json
           

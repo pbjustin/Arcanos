@@ -75,11 +75,14 @@ jobs:
           sleep 10
           
           # Analyze release
-          curl -X POST http://localhost:8080/ask \
+          curl -X POST http://localhost:8080/gpt/arcanos-daemon \
             -H "Content-Type: application/json" \
             -d '{
+              "action": "query",
               "prompt": "Analyze this release: Tag ${{ inputs.tag_name }}. Generate: 1) Release notes summary, 2) Breaking changes assessment, 3) Upgrade instructions, 4) Documentation updates needed, 5) Post-release monitoring recommendations.",
-              "context": "release_analysis"
+              "metadata": {
+                "context": "release_analysis"
+              }
             }' \
             -o release_analysis.json
           
@@ -253,11 +256,14 @@ jobs:
           sleep 10
           
           # Security analysis via ARCANOS
-          curl -X POST http://localhost:8080/ask \
+          curl -X POST http://localhost:8080/gpt/arcanos-daemon \
             -H "Content-Type: application/json" \
             -d '{
+              "action": "query",
               "prompt": "Perform a security analysis of this release. Check for: 1) Known vulnerabilities, 2) Dependency risks, 3) Configuration security, 4) API security, 5) Deployment security considerations.",
-              "context": "security_analysis"
+              "metadata": {
+                "context": "security_analysis"
+              }
             }' \
             -o security_analysis.json
           
