@@ -3,6 +3,7 @@ import {
   ArcanosDagRunService,
   type DagRunWaitResult
 } from '../src/services/arcanosDagRunService.js';
+import { runWithRequestAbortTimeout } from '@arcanos/runtime';
 
 function buildStoredRunRecord(updatedAt: string) {
   return {
@@ -169,6 +170,31 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
       updated: false,
       waited: true
     });
+  });
+
+  it('clamps long-poll waits to the active request timeout', async () => {
+    const service = new ArcanosDagRunService();
+    const record = buildStoredRunRecord('2026-03-07T00:00:01.000Z');
+
+    (service as any).runsById.set('run-1', record);
+
+    const waitPromise = runWithRequestAbortTimeout(
+      {
+        timeoutMs: 25,
+        requestId: 'req_dag_wait_abort',
+        abortMessage: 'GPT route timeout after 25ms'
+      },
+      () =>
+        service.waitForRunUpdate('run-1', {
+          updatedAfter: '2026-03-07T00:00:01.000Z',
+          waitForUpdateMs: 60_000
+        })
+    );
+    const rejectionExpectation = expect(waitPromise).rejects.toThrow('GPT route timeout after 25ms');
+
+    await jest.advanceTimersByTimeAsync(30);
+
+    await rejectionExpectation;
   });
 
   it('canonicalizes legacy DAG template aliases in run summaries', async () => {

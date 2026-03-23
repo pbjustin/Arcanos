@@ -41,6 +41,15 @@ import type {
   TrinityRuntimeMetadata
 } from '../shared/types/arcanos-verification-contract.types.js';
 import { sleep } from '@shared/sleep.js';
+import {
+  createAbortError,
+  getRequestAbortContext,
+  getRequestAbortSignal,
+  getRequestRemainingMs,
+  isAbortError,
+  runWithRequestAbortTimeout,
+  throwIfRequestAborted
+} from '@arcanos/runtime';
 
 type DagRunExecutionState = 'queued' | 'running' | 'complete' | 'failed' | 'cancelled';
 
@@ -247,6 +256,44 @@ function toEpochMilliseconds(timestamp: string | undefined): number {
 
   const parsedValue = Date.parse(timestamp);
   return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function waitForAbortableDelay(milliseconds: number): Promise<void> {
+  const requestSignal = getRequestAbortSignal();
+  if (!requestSignal) {
+    return sleep(milliseconds, { unref: true });
+  }
+
+  if (requestSignal.aborted) {
+    return Promise.reject(
+      requestSignal.reason instanceof Error
+        ? requestSignal.reason
+        : createAbortError()
+    );
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      requestSignal.removeEventListener('abort', onAbort);
+      resolve();
+    }, Math.max(0, Math.trunc(milliseconds)));
+
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      requestSignal.removeEventListener('abort', onAbort);
+      reject(
+        requestSignal.reason instanceof Error
+          ? requestSignal.reason
+          : createAbortError()
+      );
+    };
+
+    requestSignal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function calculateMaxParallelNodesObserved(
@@ -1188,34 +1235,66 @@ export class ArcanosDagRunService {
       };
     }
 
-    const deadlineMs = Date.now() + waitForUpdateMs;
-    let latestSnapshot = initialSnapshot;
+    const requestRemainingMs = getRequestRemainingMs();
+    const effectiveWaitForUpdateMs =
+      requestRemainingMs === null
+        ? waitForUpdateMs
+        : Math.max(0, Math.min(waitForUpdateMs, requestRemainingMs));
+    const requestAbortContext = getRequestAbortContext();
+    const requestAbortSignal = getRequestAbortSignal();
 
-    while (Date.now() < deadlineMs) {
-      const remainingMs = Math.max(0, deadlineMs - Date.now());
-      await sleep(Math.min(remainingMs, 250), { unref: true });
+    const waitForUpdate = async (): Promise<DagRunWaitResult> => {
+      const deadlineMs = Date.now() + effectiveWaitForUpdateMs;
+      let latestSnapshot = initialSnapshot;
 
-      const nextSnapshot = await this.getRunSnapshot(runId);
-      //audit Assumption: a persisted run should remain readable while a client is waiting on it; failure risk: transient read miss could incorrectly downgrade to not-found; expected invariant: the last known snapshot remains usable; handling strategy: keep the latest successful snapshot when a poll read returns null.
-      if (!nextSnapshot) {
-        continue;
+      while (Date.now() < deadlineMs) {
+        throwIfRequestAborted();
+
+        const remainingMs = Math.max(0, deadlineMs - Date.now());
+        await waitForAbortableDelay(Math.min(remainingMs, 250));
+        throwIfRequestAborted();
+
+        const nextSnapshot = await this.getRunSnapshot(runId);
+        //audit Assumption: a persisted run should remain readable while a client is waiting on it; failure risk: transient read miss could incorrectly downgrade to not-found; expected invariant: the last known snapshot remains usable; handling strategy: keep the latest successful snapshot when a poll read returns null.
+        if (!nextSnapshot) {
+          continue;
+        }
+
+        latestSnapshot = nextSnapshot;
+        if (toEpochMilliseconds(nextSnapshot.updatedAt) > updatedAfterTimestampMs) {
+          return {
+            run: cloneDagRunSummary(nextSnapshot.summary),
+            updated: true,
+            waited: true
+          };
+        }
       }
 
-      latestSnapshot = nextSnapshot;
-      if (toEpochMilliseconds(nextSnapshot.updatedAt) > updatedAfterTimestampMs) {
-        return {
-          run: cloneDagRunSummary(nextSnapshot.summary),
-          updated: true,
-          waited: true
-        };
-      }
+      return {
+        run: cloneDagRunSummary(latestSnapshot.summary),
+        updated: toEpochMilliseconds(latestSnapshot.updatedAt) > updatedAfterTimestampMs,
+        waited: true
+      };
+    };
+
+    if (!requestAbortContext && !requestAbortSignal) {
+      return waitForUpdate();
     }
 
-    return {
-      run: cloneDagRunSummary(latestSnapshot.summary),
-      updated: toEpochMilliseconds(latestSnapshot.updatedAt) > updatedAfterTimestampMs,
-      waited: true
-    };
+    return runWithRequestAbortTimeout(
+      {
+        timeoutMs: Math.max(1, effectiveWaitForUpdateMs || 1),
+        requestId: requestAbortContext?.requestId,
+        parentSignal: requestAbortSignal,
+        abortMessage: `DAG run wait timed out after ${Math.max(1, effectiveWaitForUpdateMs || 1)}ms`
+      },
+      waitForUpdate
+    ).catch((error: unknown) => {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      throw error;
+    });
   }
 
   /**
