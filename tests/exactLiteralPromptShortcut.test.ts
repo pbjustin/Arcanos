@@ -22,6 +22,15 @@ describe('exactLiteralPromptShortcut', () => {
     });
   });
 
+  it('extracts compact reply-with-exactly directives without invoking Trinity', () => {
+    expect(
+      tryExtractExactLiteralPromptShortcut('Reply with exactly OK.')
+    ).toEqual({
+      literal: 'OK',
+      matchedPattern: 'reply_with_exactly'
+    });
+  });
+
   it('accepts directive-only anti-simulation prefixes before a say-exactly clause', () => {
     expect(
       tryExtractExactLiteralPromptShortcut(

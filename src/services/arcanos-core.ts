@@ -21,7 +21,10 @@ type ArcanosCoreQueryPayload = {
   maxWords?: number;
 };
 
-const DEFAULT_ARCANOS_CORE_STALL_GUARD_MS = 5_000;
+const DEFAULT_ARCANOS_CORE_ROUTE_TIMEOUT_MS = 60_000;
+const DEFAULT_ARCANOS_CORE_HANDLER_HEADROOM_MS = 5_000;
+const DEFAULT_ARCANOS_CORE_HANDLER_TIMEOUT_MS =
+  DEFAULT_ARCANOS_CORE_ROUTE_TIMEOUT_MS - DEFAULT_ARCANOS_CORE_HANDLER_HEADROOM_MS;
 
 function extractPrompt(payload: ArcanosCoreQueryPayload): string {
   for (const candidate of [
@@ -58,10 +61,11 @@ function normalizeAnswerMode(value: unknown): TrinityAnswerMode | undefined {
 
 function resolveCoreHandlerTimeoutMs(): number {
   const configuredTimeoutMs = Number.parseInt(process.env.ARCANOS_CORE_HANDLER_TIMEOUT_MS ?? '', 10);
+  //audit Assumption: the core handler should finish slightly before the outer route timeout when no explicit override is configured; failure risk: a shorter default aborts Trinity mid-stage, while a longer default lets Railway edge time out first; expected invariant: the fallback handler timeout stays below the route cap and above Trinity's per-stage guards; handling strategy: default to route timeout minus fixed headroom, then clamp to the remaining request budget.
   const normalizedConfiguredTimeoutMs =
     Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
       ? Math.trunc(configuredTimeoutMs)
-      : DEFAULT_ARCANOS_CORE_STALL_GUARD_MS;
+      : DEFAULT_ARCANOS_CORE_HANDLER_TIMEOUT_MS;
   const remainingRequestMs = getRequestRemainingMs();
 
   if (remainingRequestMs === null) {
@@ -76,7 +80,7 @@ export const ArcanosCore: ModuleDef = {
   description: 'Primary ARCANOS core assistant routed through the Trinity execution pipeline.',
   gptIds: ['arcanos-core', 'core', 'arcanos-daemon'],
   defaultAction: 'query',
-  defaultTimeoutMs: 60_000,
+  defaultTimeoutMs: DEFAULT_ARCANOS_CORE_ROUTE_TIMEOUT_MS,
   actions: {
     async query(payload: unknown) {
       const startedAt = Date.now();
