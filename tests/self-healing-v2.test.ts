@@ -115,6 +115,21 @@ describe('selfHealingV2', () => {
     expect(getTrinitySelfHealingSnapshot().final.verifiedAtMs).not.toBeNull();
   });
 
+  it('does not mark direct answer mode as a verified mitigation without a retained action', () => {
+    expect(
+      getTrinitySelfHealingMitigation({
+        tier: 'simple',
+        answerMode: 'direct'
+      })
+    ).toMatchObject({
+      activeAction: null,
+      stage: null,
+      forceDirectAnswer: false,
+      bypassFinalStage: false,
+      verified: false
+    });
+  });
+
   it('rolls back a failed intake mitigation and honors cooldown without repeating the same action', () => {
     recordTrinityStageFailure({
       stage: 'intake',

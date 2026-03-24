@@ -331,10 +331,7 @@ export function getTrinitySelfHealingMitigation(params: {
     stage: activeStage,
     bypassFinalStage,
     forceDirectAnswer,
-    verified:
-      intakeState.verifiedAtMs !== null ||
-      finalState.verifiedAtMs !== null ||
-      params.answerMode === 'direct'
+    verified: intakeState.verifiedAtMs !== null || finalState.verifiedAtMs !== null
   };
 }
 
