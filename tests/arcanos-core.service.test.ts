@@ -74,6 +74,13 @@ describe('ARCANOS:CORE service', () => {
       { budget: 'runtime' }
     );
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 30_000,
+        abortMessage: 'ARCANOS:CORE handler timed out after 30000ms'
+      }),
+      expect.any(Function)
+    );
     expect(loggerInfoMock).toHaveBeenCalledWith(
       '[core] handler.start',
       expect.objectContaining({

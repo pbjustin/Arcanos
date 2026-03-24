@@ -6,6 +6,7 @@ const mockHandleAIError = jest.fn((error: unknown) => {
   throw error;
 });
 const mockCreateChatCompletionWithFallback = jest.fn();
+const mockGenerateMockResponse = jest.fn();
 const mockRunStructuredReasoning = jest.fn();
 const mockTryExecutePromptRouteShortcut = jest.fn();
 const mockStorePattern = jest.fn();
@@ -41,6 +42,7 @@ jest.unstable_mockModule('@services/openai.js', () => ({
   getComplexModel: () => 'arcanos-final-model',
   getFallbackModel: () => 'gpt-4.1',
   getGPT5Model: () => 'gpt-5-reasoning-model',
+  generateMockResponse: mockGenerateMockResponse,
   createChatCompletionWithFallback: mockCreateChatCompletionWithFallback,
   createSingleChatCompletion: mockCreateChatCompletionWithFallback,
   runStructuredReasoning: mockRunStructuredReasoning,

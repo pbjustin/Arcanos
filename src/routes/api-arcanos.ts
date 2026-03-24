@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { runThroughBrain, type TrinityResult } from '@core/logic/trinity.js';
+import type { TrinityResult } from '@core/logic/trinity.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   createValidationMiddleware,
@@ -19,7 +19,6 @@ import {
   handleAIError,
   validateAIRequest
 } from '@transport/http/requestHandler.js';
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import {
@@ -33,6 +32,7 @@ import {
   tryExecutePromptRouteShortcut,
   type PromptRouteShortcutResult
 } from '@services/promptRouteShortcuts.js';
+import { runArcanosCoreQuery } from '@services/arcanos-core.js';
 
 const router = express.Router();
 
@@ -493,20 +493,15 @@ const handleArcanosAsk = asyncHandler(async (
       );
     }
 
-    const runtimeBudget = createRuntimeBudget();
-
-    //audit Assumption: legacy `/api/arcanos/ask` requests should now enter the same Trinity brain as the primary `/ask` route; failure risk: route-level pipeline drift persists even after the cleanup; expected invariant: every non-ping request on this route calls `runThroughBrain`; handling strategy: invoke Trinity directly and stamp the compatibility response with explicit pipeline metadata.
-    const trinityResult = await runThroughBrain(
-      openai,
+    //audit Assumption: legacy `/api/arcanos/ask` requests should share the same outer core-query timeout guard as the canonical `/gpt/arcanos-core` path; failure risk: the compatibility route drifts into a different timeout stack and reproduces errors that the canonical path would not; expected invariant: both routes run Trinity through one shared core wrapper while preserving route-specific response metadata; handling strategy: reuse the shared ARCANOS core query runner and stamp the compatibility response with explicit pipeline metadata.
+    const trinityResult = await runArcanosCoreQuery({
+      client: openai,
       prompt,
-      req.body.sessionId,
-      req.body.overrideAuditSafe,
-      {
-        sourceEndpoint: ARCANOS_API_ENDPOINT_NAME,
-        ...buildTrinityOutputControlOptions(req.body)
-      },
-      runtimeBudget
-    );
+      sessionId: req.body.sessionId,
+      overrideAuditSafe: req.body.overrideAuditSafe,
+      sourceEndpoint: ARCANOS_API_ENDPOINT_NAME,
+      runOptions: buildTrinityOutputControlOptions(req.body)
+    });
 
     const responsePayload = buildArcanosCompatibilityResponse(trinityResult);
 
