@@ -8,7 +8,7 @@ export interface DirectAnswerModeInstructionOptions {
 const DIRECT_ANSWER_MODE_PATTERN =
   /\b(?:answer|respond|reply|say)\s+directly\b|\bjust\s+answer\b|\b(?:do\s+not|don't|no|without)\s+(?:simulate|simulation|role-?play|pretend)\b|\bno\s+hypothetical(?:\s+runs?)?\b|\bhypothetical\s+run\b/i;
 const SIMPLE_INFORMATIONAL_PROMPT_PATTERN =
-  /^(?:what(?:'s|\s+is)?|who(?:'s|\s+is)?|when|where|why|how|explain|define|describe|summari[sz]e|compare|contrast|differentiate|difference\s+between|tell\s+me\s+about)\b/i;
+  /^(?:what(?:'s|\s+is)?|who(?:'s|\s+is)?|when|where|why|how|explain|define|describe|summari[sz]e|compare|contrast|differentiate|difference\s+between|tell\s+me\s+about|give\s+me|provide|list|outline|draft)\b/i;
 const SIMPLE_INFORMATIONAL_COMPLEXITY_PATTERN =
   /\b(?:implement|implementation|write|generate|build|fix|debug|refactor|patch|audit|research|investigate|root\s+cause|architecture|architectural|orchestrat(?:e|ion)|workflow|dag|pull\s+request|code\s+(?:sample|snippet|example)|step-?by-?step|migration|deploy|rollback)\b/i;
 
