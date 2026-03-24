@@ -1,11 +1,19 @@
 import type OpenAI from 'openai';
 import type { RuntimeBudget } from '@arcanos/runtime/runtimeBudget';
-import type { TrinityStructuredReasoning } from '@core/logic/trinitySchema.js';
-import { TRINITY_STRUCTURED_REASONING_SCHEMA } from '@core/logic/trinitySchema.js';
+import type {
+  TrinityCompactStructuredReasoning,
+  TrinityStructuredReasoning
+} from '@core/logic/trinitySchema.js';
+import {
+  TRINITY_COMPACT_STRUCTURED_REASONING_SCHEMA,
+  TRINITY_STRUCTURED_REASONING_SCHEMA
+} from '@core/logic/trinitySchema.js';
 import { runStructuredReasoning as runStructuredReasoningGeneric } from '@arcanos/openai/structuredReasoning';
 
+type TrinityResolvedStructuredReasoning = TrinityCompactStructuredReasoning | TrinityStructuredReasoning;
+
 interface ParsedReasoningResponse {
-  output_parsed: TrinityStructuredReasoning | null;
+  output_parsed: TrinityResolvedStructuredReasoning | null;
   output?: Array<{
     type?: string;
     content?: Array<{
@@ -28,7 +36,7 @@ function extractRefusalReason(response: ParsedReasoningResponse): string | null 
   return null;
 }
 
-function isStructuredReasoningPayload(value: unknown): value is TrinityStructuredReasoning {
+function isCompactStructuredReasoningPayload(value: unknown): value is TrinityCompactStructuredReasoning {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   const isStringArray = (field: unknown) => Array.isArray(field) && field.every(item => typeof item === 'string');
@@ -45,12 +53,6 @@ function isStructuredReasoningPayload(value: unknown): value is TrinityStructure
     );
   });
   return (
-    isStringArray(candidate.reasoning_steps) &&
-    isStringArray(candidate.assumptions) &&
-    isStringArray(candidate.constraints) &&
-    isStringArray(candidate.tradeoffs) &&
-    isStringArray(candidate.alternatives_considered) &&
-    typeof candidate.chosen_path_justification === 'string' &&
     isEnumValue(candidate.response_mode, ['answer', 'partial_refusal', 'refusal'] as const) &&
     isStringArray(candidate.achievable_subtasks) &&
     isStringArray(candidate.blocked_subtasks) &&
@@ -60,19 +62,44 @@ function isStructuredReasoningPayload(value: unknown): value is TrinityStructure
   );
 }
 
+function isStructuredReasoningPayload(value: unknown): value is TrinityStructuredReasoning {
+  if (!isCompactStructuredReasoningPayload(value)) return false;
+  const candidate = value as unknown as Record<string, unknown>;
+  const isStringArray = (field: unknown) => Array.isArray(field) && field.every(item => typeof item === 'string');
+  return (
+    isStringArray(candidate.reasoning_steps) &&
+    isStringArray(candidate.assumptions) &&
+    isStringArray(candidate.constraints) &&
+    isStringArray(candidate.tradeoffs) &&
+    isStringArray(candidate.alternatives_considered) &&
+    typeof candidate.chosen_path_justification === 'string'
+  );
+}
+
+export interface StructuredReasoningSchemaOptions {
+  schemaVariant?: 'compact' | 'full';
+}
+
 export async function runStructuredReasoning(
   client: OpenAI,
   model: string,
   prompt: string,
   budget: RuntimeBudget,
-  timeoutMs?: number
-): Promise<TrinityStructuredReasoning> {
+  timeoutMs?: number,
+  options: StructuredReasoningSchemaOptions = {}
+): Promise<TrinityResolvedStructuredReasoning> {
+  const schemaVariant = options.schemaVariant ?? 'full';
   return runStructuredReasoningGeneric(client, {
     model,
     prompt,
     budget,
-    schema: { type: 'json_schema', ...TRINITY_STRUCTURED_REASONING_SCHEMA } as any,
-    validate: isStructuredReasoningPayload,
+    schema: {
+      type: 'json_schema',
+      ...(schemaVariant === 'compact'
+        ? TRINITY_COMPACT_STRUCTURED_REASONING_SCHEMA
+        : TRINITY_STRUCTURED_REASONING_SCHEMA)
+    } as any,
+    validate: schemaVariant === 'compact' ? isCompactStructuredReasoningPayload : isStructuredReasoningPayload,
     extractRefusal: extractRefusalReason as any,
     ...(typeof timeoutMs === 'number' ? { timeoutMs } : {})
   });

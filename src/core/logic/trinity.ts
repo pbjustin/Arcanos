@@ -1031,11 +1031,14 @@ export async function runThroughBrain(
 
       checkWatchdog();
 
+      const canEscalateForClearScore =
+        tier === 'complex' &&
+        !internalContext?.escalated &&
+        getSafeRemainingMs(runtimeBudget) > MIN_ESCALATION_BUDGET_MS;
+
       if (clearAudit &&
-          clearAudit.overall < getClearMinThreshold() && 
-          tier !== 'critical' && 
-          !internalContext?.escalated && 
-          getSafeRemainingMs(runtimeBudget) > MIN_ESCALATION_BUDGET_MS) {
+          clearAudit.overall < getClearMinThreshold() &&
+          canEscalateForClearScore) {
         
         logger.info('Low CLEAR score detected, triggering single-hop escalation', {
           requestId, tier, clearScore: clearAudit.overall, threshold: getClearMinThreshold()
@@ -1064,6 +1067,13 @@ export async function runThroughBrain(
         });
 
         return escalatedResult;
+      } else if (clearAudit && clearAudit.overall < getClearMinThreshold() && tier === 'simple') {
+        logger.info('Low CLEAR score retained without escalation for simple tier', {
+          requestId,
+          tier,
+          clearScore: clearAudit.overall,
+          threshold: getClearMinThreshold()
+        });
       }
     }
 

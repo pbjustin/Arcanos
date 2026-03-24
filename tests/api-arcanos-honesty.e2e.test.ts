@@ -337,4 +337,106 @@ describe('/api/arcanos/ask honesty e2e', () => {
     expect(response.body.result).not.toContain('actual tooling');
     expect(countWords(response.body.result)).toBeLessThanOrEqual(20);
   });
+
+  it('does not escalate simple-tier requests on low CLEAR scores after compact reasoning succeeds', async () => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockRunStructuredReasoning.mockReset();
+    mockRunClearAudit.mockResolvedValue({
+      clarity: 1,
+      leverage: 1,
+      efficiency: 2,
+      alignment: 2,
+      resilience: 2,
+      overall: 1.6
+    });
+
+    mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
+      client: {
+        models: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+        }
+      },
+      input: 'Assess this launch plan and note any limitation around competitor moves.',
+      body: {
+        prompt: 'Assess this launch plan and note any limitation around competitor moves.',
+        answerMode: 'explained'
+      }
+    }));
+
+    mockCreateChatCompletionWithFallback
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: 'User needs a launch plan and a limitation note about unverifiable competitor moves.'
+            }
+          }
+        ],
+        activeModel: 'arcanos-intake-model',
+        fallbackFlag: false,
+        usage: {
+          prompt_tokens: 12,
+          completion_tokens: 10,
+          total_tokens: 22
+        },
+        id: 'intake-response-3',
+        created: 1773339300400
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: "I can't verify current competitor moves here. Plan: spec Mon; build Tue-Wed; QA Thu; launch Fri."
+            }
+          }
+        ],
+        activeModel: 'arcanos-final-model',
+        fallbackFlag: false,
+        usage: {
+          prompt_tokens: 18,
+          completion_tokens: 18,
+          total_tokens: 36
+        },
+        id: 'final-response-3',
+        created: 1773339300500
+      });
+
+    mockRunStructuredReasoning.mockResolvedValue({
+      response_mode: 'partial_refusal',
+      achievable_subtasks: [
+        'give the launch plan'
+      ],
+      blocked_subtasks: [
+        'verify current competitor moves'
+      ],
+      user_visible_caveats: [
+        "I can't verify current competitor moves here."
+      ],
+      claim_tags: [
+        {
+          claim_text: 'Competitor commentary is unverified here.',
+          source_type: 'inference',
+          confidence: 'low',
+          verification_status: 'unverified'
+        }
+      ],
+      final_answer: "I can't verify current competitor moves here. Plan: spec Mon; build Tue-Wed; QA Thu; launch Fri."
+    });
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Assess this launch plan and note any limitation around competitor moves.',
+        answerMode: 'explained',
+        sessionId: 'honesty-session-3'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.result).toContain("I can't verify current competitor moves here.");
+    expect(response.body.result).toContain('Plan: spec Mon; build Tue-Wed; QA Thu; launch Fri.');
+    expect(mockRunStructuredReasoning).toHaveBeenCalledTimes(1);
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
+    expect(mockTrackEscalation).not.toHaveBeenCalled();
+  });
 });

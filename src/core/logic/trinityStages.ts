@@ -360,24 +360,26 @@ export async function runReasoningStage(
 
   logGPT5Invocation('Primary reasoning stage', reasoningPrompt);
   const gpt5ModelUsed = getGPT5Model();
+  const schemaVariant = tier === 'simple' ? 'compact' : 'full';
   const structuredReasoning = await runStructuredReasoning(
     client,
     gpt5ModelUsed,
     reasoningPrompt,
     runtimeBudget,
-    resolveReasoningStageTimeoutMs(runtimeBudget)
+    resolveReasoningStageTimeoutMs(runtimeBudget),
+    { schemaVariant }
   );
   if (!structuredReasoning) {
     throw new Error('Model failed to provide structured reasoning.');
   }
 
   const reasoningLedger: ReasoningLedger = {
-    steps: structuredReasoning.reasoning_steps,
-    assumptions: structuredReasoning.assumptions,
-    constraints: structuredReasoning.constraints,
-    tradeoffs: structuredReasoning.tradeoffs,
-    alternatives: structuredReasoning.alternatives_considered,
-    justification: structuredReasoning.chosen_path_justification,
+    steps: 'reasoning_steps' in structuredReasoning ? structuredReasoning.reasoning_steps : [],
+    assumptions: 'assumptions' in structuredReasoning ? structuredReasoning.assumptions : [],
+    constraints: 'constraints' in structuredReasoning ? structuredReasoning.constraints : [],
+    tradeoffs: 'tradeoffs' in structuredReasoning ? structuredReasoning.tradeoffs : [],
+    alternatives: 'alternatives_considered' in structuredReasoning ? structuredReasoning.alternatives_considered : [],
+    justification: 'chosen_path_justification' in structuredReasoning ? structuredReasoning.chosen_path_justification : '',
     responseMode: structuredReasoning.response_mode,
     achievableSubtasks: structuredReasoning.achievable_subtasks,
     blockedSubtasks: structuredReasoning.blocked_subtasks,
@@ -402,6 +404,7 @@ export async function runReasoningStage(
     operation: 'gpt5-reasoning',
     model: gpt5ModelUsed,
     tier: tier ?? 'simple',
+    schemaVariant,
     structured: true
   });
 
