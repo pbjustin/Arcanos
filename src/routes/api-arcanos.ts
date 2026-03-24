@@ -1,39 +1,18 @@
 import express, { Request, Response } from 'express';
-import { runThroughBrain, type TrinityResult } from '@core/logic/trinity.js';
-import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
-  createValidationMiddleware,
   createRateLimitMiddleware,
   getRequestActorKey
 } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
-import { isDiagnosticRequest } from '@shared/http/diagnosticRequest.js';
-import type {
-  AIRequestDTO,
-  AIResponseDTO,
-  ErrorResponseDTO
-} from '@shared/types/dto.js';
 import type { IdleStateService } from '@services/idleStateService.js';
-import {
-  extractInput,
-  handleAIError,
-  validateAIRequest
-} from '@transport/http/requestHandler.js';
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
-import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
-import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
-import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
-import {
-  tryExecutePromptRouteShortcut,
-  type PromptRouteShortcutResult
-} from '@services/promptRouteShortcuts.js';
+import { routeGptRequest, type AskEnvelope } from './_core/gptDispatch.js';
 
 const router = express.Router();
 
-const ARCANOS_API_ENDPOINT_NAME = 'api-arcanos.ask';
-const TRINITY_PIPELINE_NAME = 'trinity' as const;
-const TRINITY_PIPELINE_VERSION = '1.0' as const;
+const DEPRECATED_ARCANOS_ENDPOINT = '/api/arcanos/ask';
+const CANONICAL_ARCANOS_GPT_ID = 'arcanos-core';
+const CANONICAL_ARCANOS_ROUTE = `/gpt/${CANONICAL_ARCANOS_GPT_ID}`;
 
 const arcanosAskRateLimit = createRateLimitMiddleware({
   bucketName: 'api-arcanos-ask',
@@ -44,15 +23,24 @@ const arcanosAskRateLimit = createRateLimitMiddleware({
 
 router.use('/', apiArcanosVerificationRouter);
 
-interface AskBody extends Partial<AIRequestDTO> {
-  mode?: string;
-  action?: string;
+interface DeprecatedAskOptions {
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
+interface DeprecatedAskBody {
   prompt?: string;
   message?: string;
   userInput?: string;
   content?: string;
   text?: string;
   query?: string;
+  action?: string;
+  mode?: string;
+  domain?: string;
+  metadata?: Record<string, unknown>;
+  clientContext?: Record<string, unknown>;
   sessionId?: string;
   overrideAuditSafe?: string;
   requestedVerbosity?: 'minimal' | 'normal' | 'detailed';
@@ -65,11 +53,8 @@ interface AskBody extends Partial<AIRequestDTO> {
   debug_pipeline?: boolean;
   strictUserVisibleOutput?: boolean;
   strict_user_visible_output?: boolean;
-  options?: {
-    temperature?: number;
-    max_tokens?: number;
-    stream?: boolean;
-  };
+  timeoutMs?: number;
+  options?: DeprecatedAskOptions;
 }
 
 interface AskResponse {
@@ -80,237 +65,117 @@ interface AskResponse {
     service?: string;
     version?: string;
     model?: string;
-    tokensUsed?: number;
     timestamp?: string;
     arcanosRouting?: boolean;
-    pipeline?: typeof TRINITY_PIPELINE_NAME;
-    trinityVersion?: typeof TRINITY_PIPELINE_VERSION;
-    endpoint?: string;
-    requestId?: string;
+    deprecatedEndpoint?: boolean;
+    canonicalRoute?: string;
+    route?: string;
+    gptId?: string;
+    matchMethod?: string;
     routingStages?: string[];
+    fallbackFlag?: boolean;
   };
   module?: string;
   activeModel?: string;
   fallbackFlag?: boolean;
   routingStages?: string[];
-  gpt5Used?: boolean;
-  gpt5Model?: string;
-  dryRun?: boolean;
-  pipelineDebug?: TrinityResult['pipelineDebug'];
 }
 
-const arcanosSchema = {
-  mode: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 64,
-    sanitize: true
-  },
-  action: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 64,
-    sanitize: true
-  },
-  prompt: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 4000,
-    sanitize: true
-  },
-  message: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 4000,
-    sanitize: true
-  },
-  userInput: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 4000,
-    sanitize: true
-  },
-  content: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 4000,
-    sanitize: true
-  },
-  text: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 4000,
-    sanitize: true
-  },
-  query: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 4000,
-    sanitize: true
-  },
-  sessionId: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 100,
-    sanitize: true
-  },
-  overrideAuditSafe: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 50,
-    sanitize: true
-  },
-  requestedVerbosity: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 16,
-    sanitize: true
-  },
-  requested_verbosity: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 16,
-    sanitize: true
-  },
-  maxWords: {
-    required: false,
-    type: 'number' as const
-  },
-  max_words: {
-    required: false,
-    type: 'number' as const
-  },
-  answerMode: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 16,
-    sanitize: true
-  },
-  answer_mode: {
-    required: false,
-    type: 'string' as const,
-    minLength: 1,
-    maxLength: 16,
-    sanitize: true
-  },
-  debugPipeline: {
-    required: false,
-    type: 'boolean' as const
-  },
-  debug_pipeline: {
-    required: false,
-    type: 'boolean' as const
-  },
-  strictUserVisibleOutput: {
-    required: false,
-    type: 'boolean' as const
-  },
-  strict_user_visible_output: {
-    required: false,
-    type: 'boolean' as const
-  },
-  metadata: {
-    required: false,
-    type: 'object' as const
-  },
-  clientContext: {
-    required: false,
-    type: 'object' as const
-  },
-  options: {
-    required: false,
-    type: 'object' as const
+type SuccessfulAskEnvelope = Extract<AskEnvelope, { ok: true }>;
+type FailedAskEnvelope = Extract<AskEnvelope, { ok: false }>;
+
+/**
+ * Purpose: Attach stable deprecation headers so legacy callers can discover the canonical route.
+ * Inputs/Outputs: Mutates the outgoing response headers in place.
+ * Edge cases: Safe to call repeatedly because the emitted values are deterministic.
+ */
+function applyDeprecatedEndpointHeaders(res: Response<AskResponse>): void {
+  res.setHeader('X-Deprecated-Endpoint', DEPRECATED_ARCANOS_ENDPOINT);
+  res.setHeader('X-Canonical-Route', CANONICAL_ARCANOS_ROUTE);
+}
+
+/**
+ * Purpose: Extract the first usable text prompt from the deprecated ARCANOS payload.
+ * Inputs/Outputs: Accepts the legacy request body and returns the first non-empty string prompt.
+ * Edge cases: Returns null when every candidate field is empty or absent.
+ */
+function extractLegacyPrompt(body: DeprecatedAskBody): string | null {
+  const candidateValues = [
+    body.prompt,
+    body.message,
+    body.userInput,
+    body.content,
+    body.text,
+    body.query
+  ];
+
+  for (const candidateValue of candidateValues) {
+    //audit Assumption: only explicit non-empty strings are safe prompts for compatibility forwarding; failure risk: objects or blank text leaking into GPT dispatch; expected invariant: prompt remains textual; handling strategy: ignore non-string and blank values.
+    if (typeof candidateValue === 'string' && candidateValue.trim().length > 0) {
+      return candidateValue.trim();
+    }
   }
-};
+
+  return null;
+}
 
 /**
- * Build stable Trinity metadata for the compatibility response envelope.
- *
- * Purpose:
- * - Make the legacy `/api/arcanos/ask` route explicitly identify the same Trinity pipeline used by the main `/ask` endpoint.
- *
- * Inputs/outputs:
- * - Input: Trinity execution result.
- * - Output: compatibility metadata block for the HTTP response.
- *
- * Edge case behavior:
- * - Missing token usage resolves to `0` to preserve a numeric compatibility field.
+ * Purpose: Canonicalize legacy ARCANOS request bodies for GPT-router dispatch.
+ * Inputs/Outputs: Accepts the deprecated body and returns a `/gpt/:gptId` compatible payload.
+ * Edge cases: Rewrites blank or legacy `ask` actions onto canonical `query`.
  */
-function buildArcanosCompatibilityMetadata(result: TrinityResult): NonNullable<AskResponse['metadata']> {
+function buildCanonicalAskBody(body: DeprecatedAskBody): Record<string, unknown> {
+  const prompt = extractLegacyPrompt(body);
+  const normalizedAction =
+    typeof body.action === 'string' ? body.action.trim().toLowerCase() : '';
+
+  //audit Assumption: deprecated clients either omit `action` or send `ask`; failure risk: legacy callers keep failing after migration; expected invariant: ARCANOS core dispatch receives canonical `query`; handling strategy: rewrite blank/legacy action names before GPT routing.
+  const canonicalAction =
+    normalizedAction.length === 0 || normalizedAction === 'ask'
+      ? 'query'
+      : body.action;
+
   return {
-    service: 'ARCANOS API',
-    version: '1.0.0',
-    model: result.activeModel,
-    tokensUsed: result.meta.tokens?.total_tokens ?? 0,
-    timestamp: new Date().toISOString(),
-    arcanosRouting: true,
-    pipeline: TRINITY_PIPELINE_NAME,
-    trinityVersion: TRINITY_PIPELINE_VERSION,
-    endpoint: ARCANOS_API_ENDPOINT_NAME,
-    requestId: result.taskLineage.requestId,
-    routingStages: result.routingStages
+    ...body,
+    ...(prompt ? { prompt } : {}),
+    action: canonicalAction
   };
 }
 
 /**
- * Convert a Trinity result into the legacy `/api/arcanos/ask` response envelope.
- *
- * Purpose:
- * - Preserve the compatibility shape for existing clients while routing execution through Trinity.
- *
- * Inputs/outputs:
- * - Input: Trinity execution result.
- * - Output: compatibility response payload with explicit pipeline metadata.
- *
- * Edge case behavior:
- * - Optional observability fields remain omitted when Trinity does not provide them.
+ * Purpose: Safely treat module results as records before extracting compatibility metadata.
+ * Inputs/Outputs: Accepts unknown module output and returns a plain-object record or null.
+ * Edge cases: Rejects arrays to avoid index-based compatibility assumptions.
  */
-function buildArcanosCompatibilityResponse(result: TrinityResult): AskResponse {
-  const userVisibleResponse = buildTrinityUserVisibleResponse({
-    trinityResult: result,
-    endpoint: ARCANOS_API_ENDPOINT_NAME
-  });
+function getModuleResultRecord(moduleResult: unknown): Record<string, unknown> | null {
+  //audit Assumption: compatibility metadata reads are valid only on plain objects; failure risk: array-like payloads causing unsafe property access; expected invariant: metadata extraction reads object fields only; handling strategy: guard for non-array objects.
+  if (moduleResult && typeof moduleResult === 'object' && !Array.isArray(moduleResult)) {
+    return moduleResult as Record<string, unknown>;
+  }
 
-  return {
-    success: true,
-    result: userVisibleResponse.result,
-    metadata: buildArcanosCompatibilityMetadata(result),
-    module: userVisibleResponse.module,
-    activeModel: userVisibleResponse.activeModel,
-    fallbackFlag: userVisibleResponse.fallbackFlag,
-    routingStages: userVisibleResponse.routingStages,
-    gpt5Used: userVisibleResponse.gpt5Used,
-    gpt5Model: userVisibleResponse.gpt5Model,
-    dryRun: userVisibleResponse.dryRun,
-    ...(userVisibleResponse.pipelineDebug ? { pipelineDebug: userVisibleResponse.pipelineDebug } : {})
-  };
+  return null;
 }
 
 /**
- * Serialize a Trinity compatibility result for SSE clients.
- *
- * Purpose:
- * - Keep the streaming compatibility path alive even though Trinity returns one finalized payload.
- *
- * Inputs/outputs:
- * - Input: compatibility response payload.
- * - Output: string chunk content suitable for one SSE `data:` frame.
- *
- * Edge case behavior:
- * - Non-string results are JSON encoded so structured outputs still reach streaming clients.
+ * Purpose: Preserve the legacy route's top-level `result` semantics when wrapping GPT-router output.
+ * Inputs/Outputs: Accepts canonical module output and returns the legacy-facing `result` payload.
+ * Edge cases: Falls back to the original module result when no nested `result` field exists.
+ */
+function extractLegacyResultPayload(moduleResult: unknown): unknown {
+  const moduleResultRecord = getModuleResultRecord(moduleResult);
+
+  //audit Assumption: ARCANOS core responses often wrap the final text in `result`; failure risk: legacy clients needing a new parsing contract; expected invariant: compatibility response keeps the historical top-level `result`; handling strategy: unwrap nested `result` when present.
+  if (moduleResultRecord && 'result' in moduleResultRecord) {
+    return moduleResultRecord.result;
+  }
+
+  return moduleResult;
+}
+
+/**
+ * Purpose: Serialize compatibility results for the deprecated route's SSE mode.
+ * Inputs/Outputs: Accepts the legacy `result` payload and returns one string chunk.
+ * Edge cases: JSON-encodes structured results instead of dropping them.
  */
 function serializeCompatibilityResult(result: AskResponse['result']): string {
   if (typeof result === 'string') {
@@ -325,38 +190,28 @@ function serializeCompatibilityResult(result: AskResponse['result']): string {
 }
 
 /**
- * Stream one finalized Trinity compatibility response over SSE.
- *
- * Purpose:
- * - Preserve the existing `options.stream` contract without falling back to the legacy non-Trinity completion path.
- *
- * Inputs/outputs:
- * - Input: Express response plus compatibility payload.
- * - Output: writes the terminal SSE frames and closes the connection.
- *
- * Edge case behavior:
- * - Sends a single terminal chunk because Trinity currently resolves as one finalized response.
+ * Purpose: Stream one finalized compatibility response for legacy SSE callers.
+ * Inputs/Outputs: Writes terminal SSE frames to the Express response and closes the socket.
+ * Edge cases: Emits a single final chunk because the deprecated shim forwards to canonical one-shot routing.
  */
-function sendTrinityCompatibilityStream(
-  res: Response<AskResponse | ErrorResponseDTO>,
+function sendCompatibilityStream(
+  res: Response<AskResponse>,
   responsePayload: AskResponse
 ): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
+    Connection: 'keep-alive',
     'Access-Control-Allow-Origin': '*'
   });
 
   const content = serializeCompatibilityResult(responsePayload.result);
-
-  //audit Assumption: compatibility streaming clients still prefer SSE framing even when Trinity returns one finalized payload; failure risk: route-specific streaming clients break after the Trinity cleanup; expected invariant: the route emits one content frame and one done frame; handling strategy: serialize the final Trinity result into a terminal SSE sequence.
   if (content.length > 0) {
     res.write(`data: ${JSON.stringify({
       success: true,
       content,
       type: 'chunk',
-      pipeline: TRINITY_PIPELINE_NAME
+      canonicalRoute: CANONICAL_ARCANOS_ROUTE
     })}\n\n`);
   }
 
@@ -369,139 +224,157 @@ function sendTrinityCompatibilityStream(
 }
 
 /**
- * Build a compatibility response for any registered prompt shortcut on `/api/arcanos/ask`.
- * Inputs/outputs: normalized shortcut result -> legacy-compatible response envelope.
- * Edge cases: new shortcut types reuse the same compatibility envelope without bespoke per-shortcut route builders.
+ * Purpose: Convert a successful canonical GPT dispatch response into the deprecated route envelope.
+ * Inputs/Outputs: Accepts the canonical GPT-router success envelope and returns the historical JSON shape.
+ * Edge cases: Copies optional routing metadata only when present on the module result.
  */
-function buildArcanosPromptShortcutResponse(params: {
-  shortcut: PromptRouteShortcutResult;
-}): AskResponse {
-  const shortcutTelemetry = buildPromptShortcutTelemetry(params.shortcut);
+function buildLegacySuccessResponse(envelope: SuccessfulAskEnvelope): AskResponse {
+  const moduleResultRecord = getModuleResultRecord(envelope.result);
+  const routingStages = Array.isArray(moduleResultRecord?.routingStages)
+    ? moduleResultRecord.routingStages.filter(
+        (routingStage): routingStage is string => typeof routingStage === 'string'
+      )
+    : undefined;
+  const activeModel =
+    typeof moduleResultRecord?.activeModel === 'string'
+      ? moduleResultRecord.activeModel
+      : undefined;
+  const fallbackFlag =
+    typeof moduleResultRecord?.fallbackFlag === 'boolean'
+      ? moduleResultRecord.fallbackFlag
+      : undefined;
 
   return {
     success: true,
-    result: params.shortcut.resultText,
+    result: extractLegacyResultPayload(envelope.result),
     metadata: {
       service: 'ARCANOS API',
-      version: '1.0.0',
-      timestamp: shortcutTelemetry.timestamp,
-      arcanosRouting: false,
-      endpoint: ARCANOS_API_ENDPOINT_NAME,
-      requestId: shortcutTelemetry.requestId,
-      routingStages: shortcutTelemetry.routingStages
+      version: '2.0.0',
+      model: activeModel,
+      timestamp: new Date().toISOString(),
+      arcanosRouting: true,
+      deprecatedEndpoint: true,
+      canonicalRoute: CANONICAL_ARCANOS_ROUTE,
+      route: envelope._route.route,
+      gptId: envelope._route.gptId,
+      matchMethod: String(envelope._route.matchMethod ?? 'unknown'),
+      routingStages,
+      fallbackFlag
     },
-    module: shortcutTelemetry.module,
-    activeModel: shortcutTelemetry.activeModel,
-    fallbackFlag: shortcutTelemetry.fallbackFlag,
-    routingStages: shortcutTelemetry.routingStages
+    module: envelope._route.module,
+    activeModel,
+    fallbackFlag,
+    routingStages
   };
 }
 
 /**
- * Execute the legacy `/api/arcanos/ask` route through the Trinity pipeline.
- *
- * Purpose:
- * - Remove the old centralized-completion split while preserving the compatibility response envelope for existing clients.
- *
- * Inputs/outputs:
- * - Input: Express request carrying one prompt plus optional session and audit-safe overrides.
- * - Output: JSON or SSE compatibility response derived from a Trinity result.
- *
- * Edge case behavior:
- * - Ping requests bypass Trinity and return an immediate health response.
+ * Purpose: Translate canonical GPT-router failures into the deprecated route's HTTP/error shape.
+ * Inputs/Outputs: Accepts the canonical error envelope and returns an HTTP status plus response body.
+ * Edge cases: Maps validation issues to 400, unknown GPTs to 404, and module timeouts to 504.
  */
-const handleArcanosAsk = asyncHandler(async (
-  req: Request<{}, AskResponse | ErrorResponseDTO, AskBody>,
-  res: Response<AskResponse | ErrorResponseDTO>
-) => {
-  const pingCandidate = extractInput((req.body ?? {}) as AIRequestDTO)?.trim().toLowerCase();
-  const diagnosticProbe = isDiagnosticRequest(req.body, pingCandidate);
+function buildLegacyErrorResponse(
+  envelope: FailedAskEnvelope
+): { statusCode: number; body: AskResponse } {
+  let statusCode = 500;
 
-  //audit Assumption: explicit diagnostic probes on the compatibility route must bypass Trinity and shortcuts just like the primary `/ask` route; failure risk: compatibility clients accidentally trigger stateful AI paths for health checks; expected invariant: diagnostic traffic returns a deterministic route-local payload; handling strategy: reuse the shared diagnostic classifier and short-circuit before model execution.
-  if (diagnosticProbe) {
-    const idleStateService = req.app.locals.idleStateService as IdleStateService | undefined;
-    idleStateService?.noteUserPing({ route: '/api/arcanos/ask', source: ARCANOS_API_ENDPOINT_NAME });
-    return res.json({
-      success: true,
-      result: pingCandidate === 'ping' ? 'pong' : 'backend operational',
-      metadata: {
-        service: 'ARCANOS API',
-        version: '1.0.0',
-        timestamp: new Date().toISOString(),
-        arcanosRouting: true,
-        pipeline: TRINITY_PIPELINE_NAME,
-        trinityVersion: TRINITY_PIPELINE_VERSION,
-        endpoint: ARCANOS_API_ENDPOINT_NAME
-      },
-      module: 'diagnostic',
-      activeModel: 'diagnostic',
-      fallbackFlag: false,
-      routingStages: ['DIAGNOSTIC-SHORTCUT'],
-      gpt5Used: false
-    });
+  //audit Assumption: caller-fixable routing and validation failures should surface as 4xx, not generic backend errors; failure risk: clients misclassifying bad requests as service outages; expected invariant: canonical error classes preserve their retry semantics; handling strategy: map known validation and lookup failures explicitly.
+  if (envelope.error.code === 'BAD_REQUEST' || envelope.error.code === 'NO_DEFAULT_ACTION') {
+    statusCode = 400;
+  } else if (envelope.error.code === 'UNKNOWN_GPT') {
+    statusCode = 404;
+  } else if (envelope.error.code === 'MODULE_TIMEOUT') {
+    statusCode = 504;
   }
 
-  let promptForError = pingCandidate ?? '';
-
-  try {
-    const validation = validateAIRequest(
-      req as unknown as Request<{}, AIResponseDTO | ErrorResponseDTO, AIRequestDTO>,
-      res as unknown as Response<AIResponseDTO | ErrorResponseDTO>,
-      ARCANOS_API_ENDPOINT_NAME
-    );
-
-    if (!validation) {
-      return;
+  return {
+    statusCode,
+    body: {
+      success: false,
+      error: envelope.error.message,
+      metadata: {
+        service: 'ARCANOS API',
+        version: '2.0.0',
+        timestamp: new Date().toISOString(),
+        arcanosRouting: true,
+        deprecatedEndpoint: true,
+        canonicalRoute: CANONICAL_ARCANOS_ROUTE,
+        route: envelope._route.route ?? 'core',
+        gptId: CANONICAL_ARCANOS_GPT_ID,
+        matchMethod: String(envelope._route.matchMethod ?? 'exact')
+      }
     }
+  };
+}
 
-    const { client: openai, input: prompt } = validation;
-    promptForError = prompt;
-    const promptShortcut = await tryExecutePromptRouteShortcut({
-      prompt,
-      sessionId: req.body.sessionId
+/**
+ * Purpose: Compatibility handler for deprecated `/api/arcanos/ask` traffic.
+ * Inputs/Outputs: Accepts legacy request bodies and returns the historical route envelope.
+ * Edge cases: Preserves `ping` health checks and rewrites deprecated traffic through `arcanos-core`.
+ */
+const handleArcanosAsk = asyncHandler(
+  async (req: Request<{}, AskResponse, DeprecatedAskBody>, res: Response<AskResponse>) => {
+    applyDeprecatedEndpointHeaders(res);
+
+    req.logger?.warn?.('deprecated.endpoint.used', {
+      deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
+      canonicalRoute: CANONICAL_ARCANOS_ROUTE,
+      requestId: req.requestId ?? null
     });
-    //audit Assumption: deterministic prompt shortcuts should bypass Trinity generation on the compatibility route when they have a confident route-specific execution path; failure risk: route-specific prompts regress into generic Trinity output; expected invariant: registered shortcuts return stable deterministic content before Trinity; handling strategy: short-circuit through the shared shortcut registry.
-    if (promptShortcut) {
-      return res.json(
-        buildArcanosPromptShortcutResponse({
-          shortcut: promptShortcut
-        })
-      );
+
+    const prompt = extractLegacyPrompt(req.body ?? {});
+
+    //audit Assumption: existing health probes still rely on legacy `ping` semantics even on the deprecated path; failure risk: migration shim breaks operational checks; expected invariant: `ping` remains a cheap local response; handling strategy: preserve the direct `pong` shortcut.
+    if (prompt?.toLowerCase() === 'ping') {
+      const idleStateService = req.app.locals.idleStateService as IdleStateService | undefined;
+      idleStateService?.noteUserPing({
+        route: DEPRECATED_ARCANOS_ENDPOINT,
+        source: 'api-arcanos-deprecated'
+      });
+
+      return res.json({
+        success: true,
+        result: 'pong',
+        metadata: {
+          service: 'ARCANOS API',
+          version: '2.0.0',
+          timestamp: new Date().toISOString(),
+          arcanosRouting: true,
+          deprecatedEndpoint: true,
+          canonicalRoute: CANONICAL_ARCANOS_ROUTE
+        }
+      });
     }
 
-    const runtimeBudget = createRuntimeBudget();
+    const envelope = await routeGptRequest({
+      gptId: CANONICAL_ARCANOS_GPT_ID,
+      body: buildCanonicalAskBody(req.body ?? {}),
+      requestId: req.requestId,
+      logger: req.logger,
+      request: req
+    });
 
-    //audit Assumption: legacy `/api/arcanos/ask` requests should now enter the same Trinity brain as the primary `/ask` route; failure risk: route-level pipeline drift persists even after the cleanup; expected invariant: every non-ping request on this route calls `runThroughBrain`; handling strategy: invoke Trinity directly and stamp the compatibility response with explicit pipeline metadata.
-    const trinityResult = await runThroughBrain(
-      openai,
-      prompt,
-      req.body.sessionId,
-      req.body.overrideAuditSafe,
-      {
-        sourceEndpoint: ARCANOS_API_ENDPOINT_NAME,
-        ...buildTrinityOutputControlOptions(req.body)
-      },
-      runtimeBudget
-    );
+    //audit Assumption: canonical GPT routing is the source of truth for deprecated traffic; failure risk: shim hides canonical validation failures; expected invariant: canonical success/error semantics survive the wrapper; handling strategy: map the canonical envelope explicitly before responding.
+    if (!envelope.ok) {
+      const legacyErrorResponse = buildLegacyErrorResponse(envelope);
+      return res.status(legacyErrorResponse.statusCode).json(legacyErrorResponse.body);
+    }
 
-    const responsePayload = buildArcanosCompatibilityResponse(trinityResult);
-
+    const responsePayload = buildLegacySuccessResponse(envelope);
     if (req.body.options?.stream === true) {
-      sendTrinityCompatibilityStream(res, responsePayload);
+      sendCompatibilityStream(res, responsePayload);
       return;
     }
 
     return res.json(responsePayload);
-  } catch (error: unknown) {
-    handleAIError(
-      error,
-      promptForError,
-      ARCANOS_API_ENDPOINT_NAME,
-      res as unknown as Response<AIResponseDTO | ErrorResponseDTO>
-    );
   }
-});
+);
 
-router.post('/ask', arcanosAskRateLimit, confirmGate, createValidationMiddleware(arcanosSchema), handleArcanosAsk);
+router.post('/ask', arcanosAskRateLimit, handleArcanosAsk);
+
+// Test plan:
+// - Happy path: legacy `/api/arcanos/ask` rewrites to `arcanos-core` and returns the historical JSON envelope.
+// - Edge case: prompt `ping` returns `pong` without invoking canonical GPT routing.
+// - Failure modes: missing prompt returns a mapped 400; canonical dispatcher failures surface with preserved status semantics.
 
 export default router;

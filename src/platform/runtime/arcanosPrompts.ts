@@ -1,6 +1,7 @@
 export const ARCANOS_PROMPTS = {
   system: 'You are ARCANOS core AI.',
-  reasoningLayer: 'You are GPT-5.1 reasoning layer. Refine and audit the response for clarity, alignment, and safety.'
+  reasoningLayer:
+    'You are GPT-5.1 reasoning layer. Refine the candidate response for clarity, alignment, and safety while preserving the original user intent and any explicit output constraints exactly. When the user asks for an exact or verbatim answer, return only a compliant final answer without commentary.'
 };
 
 export function formatPromptPreview(prompt: string, maxLength = 50): string {

@@ -1,0 +1,72 @@
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const mockRunThroughBrain = jest.fn();
+const mockCreateRuntimeBudget = jest.fn(() => ({}));
+const mockGenerateMockResponse = jest.fn();
+const mockGetOpenAIClientOrAdapter = jest.fn();
+const mockExecuteSystemStateRequest = jest.fn();
+
+let ArcanosCoreModule: typeof import('../src/services/arcanos-core.js').default;
+
+beforeEach(async () => {
+  jest.resetModules();
+  mockRunThroughBrain.mockReset();
+  mockCreateRuntimeBudget.mockClear();
+  mockGenerateMockResponse.mockReset();
+  mockGetOpenAIClientOrAdapter.mockReset();
+  mockExecuteSystemStateRequest.mockReset();
+
+  mockGetOpenAIClientOrAdapter.mockReturnValue({ client: null });
+  mockGenerateMockResponse.mockReturnValue('mock response');
+
+  jest.unstable_mockModule('@core/logic/trinity.js', () => ({
+    runThroughBrain: mockRunThroughBrain,
+  }));
+
+  jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
+    createRuntimeBudget: mockCreateRuntimeBudget,
+  }));
+
+  jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+    logger: {
+      info: jest.fn(),
+      error: jest.fn(),
+    },
+  }));
+
+  jest.unstable_mockModule('@services/openai.js', () => ({
+    generateMockResponse: mockGenerateMockResponse,
+  }));
+
+  jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
+    getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter,
+  }));
+
+  jest.unstable_mockModule('../src/services/systemState.js', () => ({
+    executeSystemStateRequest: mockExecuteSystemStateRequest,
+  }));
+
+  jest.unstable_mockModule('@arcanos/runtime', () => ({
+    getRequestAbortSignal: jest.fn(),
+    getRequestRemainingMs: jest.fn(() => null),
+    runWithRequestAbortTimeout: jest.fn(async (_config: unknown, run: () => unknown) => run()),
+  }));
+
+  ({ default: ArcanosCoreModule } = await import('../src/services/arcanos-core.js'));
+});
+
+describe('ARCANOS core module registration', () => {
+  it('registers the canonical arcanos-core GPT ID and required actions', () => {
+    expect(ArcanosCoreModule.name).toBe('ARCANOS:CORE');
+    expect(ArcanosCoreModule.gptIds).toEqual(
+      expect.arrayContaining(['arcanos-core'])
+    );
+    expect(Object.keys(ArcanosCoreModule.actions)).toEqual(
+      expect.arrayContaining(['query', 'system_state'])
+    );
+  });
+
+  it('fails fast when query payloads omit prompt text', async () => {
+    await expect(ArcanosCoreModule.actions.query({})).rejects.toThrow(/Prompt is required/);
+  });
+});
