@@ -232,7 +232,8 @@ describe('/api/arcanos/ask honesty e2e', () => {
       },
       input: 'Direct answer only under 20 words: give me a launch plan and note any limitation around competitor moves.',
       body: {
-        prompt: 'Direct answer only under 20 words: give me a launch plan and note any limitation around competitor moves.'
+        prompt: 'Direct answer only under 20 words: give me a launch plan and note any limitation around competitor moves.',
+        answerMode: 'explained'
       }
     }));
 
@@ -321,6 +322,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
       .post('/ask')
       .send({
         prompt: 'Direct answer only under 20 words: give me a launch plan and note any limitation around competitor moves.',
+        answerMode: 'explained',
         sessionId: 'honesty-session-2'
       });
 
