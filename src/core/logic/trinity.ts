@@ -942,20 +942,46 @@ export async function runThroughBrain(
     checkWatchdog();
 
     routingStages.push('GPT5-REASONING');
-    const reasoningOutput = await runLoggedStage({
-      requestId,
-      stage: 'reasoning',
-      runtimeBudget,
-      operation: () =>
-        runReasoningStage(
-          client,
-          framedRequest,
-          capabilityFlags,
-          outputControls,
-          tier,
-          runtimeBudget
-        )
-    });
+    let reasoningRecoveryAction: TrinitySelfHealingAction | null = null;
+    let reasoningOutput: Awaited<ReturnType<typeof runReasoningStage>>;
+    try {
+      reasoningOutput = await runLoggedStage({
+        requestId,
+        stage: 'reasoning',
+        runtimeBudget,
+        operation: () =>
+          runReasoningStage(
+            client,
+            framedRequest,
+            capabilityFlags,
+            outputControls,
+            tier,
+            runtimeBudget
+          )
+      });
+    } catch (error) {
+      if (tier === 'simple' && isAbortError(error)) {
+        reasoningRecoveryAction = recordTrinityStageFailure({
+          stage: 'reasoning',
+          error: resolveErrorMessage(error),
+          requestId,
+          sourceEndpoint: options.sourceEndpoint
+        });
+        const recoveredResult = await completeWithDirectAnswer('reasoning_timeout_fallback', {
+          recovery: true,
+          recoveryError: error
+        });
+        noteTrinityMitigationOutcome({
+          stage: 'reasoning',
+          outcome: 'success',
+          requestId,
+          sourceEndpoint: options.sourceEndpoint,
+          action: reasoningRecoveryAction
+        });
+        return recoveredResult;
+      }
+      throw error;
+    }
     let gpt5Output = reasoningOutput.output;
     const gpt5ModelUsed = reasoningOutput.model;
     const reasoningLedger = reasoningOutput.reasoningLedger;

@@ -99,7 +99,7 @@ describe('trinity stage budgets', () => {
       1,
       expect.anything(),
       expect.objectContaining({
-        timeoutMs: 4000
+        timeoutMs: 6000
       })
     );
     expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
@@ -150,7 +150,7 @@ describe('trinity stage budgets', () => {
       'gpt-5.1',
       expect.any(String),
       runtimeBudget,
-      10000
+      20000
     );
   });
 });

@@ -115,6 +115,45 @@ describe('selfHealingV2', () => {
     expect(getTrinitySelfHealingSnapshot().final.verifiedAtMs).not.toBeNull();
   });
 
+  it('enables degraded mode after repeated reasoning aborts on simple traffic', () => {
+    expect(
+      recordTrinityStageFailure({
+        stage: 'reasoning',
+        error: 'openai_call_aborted_due_to_budget',
+        requestId: 'reasoning-1',
+        sourceEndpoint: 'gpt.arcanos-core.query'
+      })
+    ).toBeNull();
+    expect(
+      recordTrinityStageFailure({
+        stage: 'reasoning',
+        error: 'openai_call_aborted_due_to_budget',
+        requestId: 'reasoning-2',
+        sourceEndpoint: 'gpt.arcanos-core.query'
+      })
+    ).toBeNull();
+
+    const action = recordTrinityStageFailure({
+      stage: 'reasoning',
+      error: 'openai_call_aborted_due_to_budget',
+      requestId: 'reasoning-3',
+      sourceEndpoint: 'gpt.arcanos-core.query'
+    });
+
+    expect(action).toBe('enable_degraded_mode');
+    expect(
+      getTrinitySelfHealingMitigation({
+        tier: 'simple',
+        answerMode: 'explained'
+      })
+    ).toMatchObject({
+      activeAction: 'enable_degraded_mode',
+      stage: 'reasoning',
+      forceDirectAnswer: true,
+      bypassFinalStage: false
+    });
+  });
+
   it('does not mark direct answer mode as a verified mitigation without a retained action', () => {
     expect(
       getTrinitySelfHealingMitigation({

@@ -3,7 +3,7 @@ import type { Tier } from '@core/logic/trinityTier.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 
-export type TrinitySelfHealingStage = 'intake' | 'final';
+export type TrinitySelfHealingStage = 'intake' | 'reasoning' | 'final';
 export type TrinitySelfHealingAction = 'enable_degraded_mode' | 'bypass_final_stage';
 
 type StageState = {
@@ -37,11 +37,13 @@ const DEFAULT_VERIFY_FAILURE_THRESHOLD = 2;
 
 const ACTION_ORDER: Record<TrinitySelfHealingStage, TrinitySelfHealingAction[]> = {
   intake: ['enable_degraded_mode'],
+  reasoning: ['enable_degraded_mode'],
   final: ['bypass_final_stage', 'enable_degraded_mode']
 };
 
 const stageState: Record<TrinitySelfHealingStage, StageState> = {
   intake: createStageState(),
+  reasoning: createStageState(),
   final: createStageState()
 };
 
@@ -314,33 +316,47 @@ export function getTrinitySelfHealingMitigation(params: {
 
   const nowMs = Date.now();
   expireActionIfNeeded('intake', nowMs);
+  expireActionIfNeeded('reasoning', nowMs);
   expireActionIfNeeded('final', nowMs);
 
   const intakeState = stageState.intake;
+  const reasoningState = stageState.reasoning;
   const finalState = stageState.final;
   const activeStage: TrinitySelfHealingStage | null =
-    intakeState.activeAction !== null ? 'intake' : finalState.activeAction !== null ? 'final' : null;
+    intakeState.activeAction !== null
+      ? 'intake'
+      : reasoningState.activeAction !== null
+        ? 'reasoning'
+        : finalState.activeAction !== null
+          ? 'final'
+          : null;
 
   const bypassFinalStage = finalState.activeAction === 'bypass_final_stage';
   const forceDirectAnswer =
     intakeState.activeAction === 'enable_degraded_mode' ||
+    reasoningState.activeAction === 'enable_degraded_mode' ||
     finalState.activeAction === 'enable_degraded_mode';
 
   return {
-    activeAction: intakeState.activeAction ?? finalState.activeAction,
+    activeAction: intakeState.activeAction ?? reasoningState.activeAction ?? finalState.activeAction,
     stage: activeStage,
     bypassFinalStage,
     forceDirectAnswer,
-    verified: intakeState.verifiedAtMs !== null || finalState.verifiedAtMs !== null
+    verified:
+      intakeState.verifiedAtMs !== null ||
+      reasoningState.verifiedAtMs !== null ||
+      finalState.verifiedAtMs !== null
   };
 }
 
 export function getTrinitySelfHealingSnapshot() {
   const nowMs = Date.now();
   expireActionIfNeeded('intake', nowMs);
+  expireActionIfNeeded('reasoning', nowMs);
   expireActionIfNeeded('final', nowMs);
   return {
     intake: { ...stageState.intake, failedActions: [...stageState.intake.failedActions] },
+    reasoning: { ...stageState.reasoning, failedActions: [...stageState.reasoning.failedActions] },
     final: { ...stageState.final, failedActions: [...stageState.final.failedActions] }
   };
 }
@@ -368,5 +384,6 @@ export function resetTrinitySelfHealingStateForTests(): void {
   }
 
   stageState.intake = createStageState();
+  stageState.reasoning = createStageState();
   stageState.final = createStageState();
 }
