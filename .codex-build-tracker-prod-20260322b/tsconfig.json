@@ -1,0 +1,106 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "strict": true,
+    "allowJs": false,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": true,
+    "inlineSources": true,
+    "baseUrl": ".",
+    "paths": {
+      "@core/lib/*.js": [
+        "src/lib/*.ts"
+      ],
+      "@core/lib/*": [
+        "src/lib/*"
+      ],
+      "@platform/*": [
+        "src/platform/*"
+      ],
+      "@shared": [
+        "src/shared/index.ts"
+      ],
+      "@shared/*": [
+        "src/shared/*"
+      ],
+      "@transport": [
+        "src/transport/index.ts"
+      ],
+      "@services/*": [
+        "src/services/*"
+      ],
+      "@transport/*": [
+        "src/transport/*"
+      ],
+      "@core/*": [
+        "src/core/*"
+      ],
+      "@analytics/*": [
+        "src/analytics/*"
+      ],
+      "@config/*": [
+        "src/config/*"
+      ],
+      "@stores/*": [
+        "src/stores/*"
+      ],
+      "@dispatcher/*": [
+        "src/dispatcher/*"
+      ],
+      "@trinity/*": [
+        "src/trinity/*"
+      ],
+      "@middleware/*": [
+        "src/middleware/*"
+      ],
+      "@routes/*": [
+        "src/routes/*"
+      ],
+      "@dag/*": [
+        "src/dag/*"
+      ],
+      "@workers/*": [
+        "src/workers/*"
+      ],
+      "@platform": [
+        "src/platform/index.ts"
+      ],
+      "@arcanos/openai": [
+        "packages/arcanos-openai/dist/index.d.ts"
+      ],
+      "@arcanos/openai/*": [
+        "packages/arcanos-openai/dist/*"
+      ],
+      "@arcanos/runtime": [
+        "packages/arcanos-runtime/dist/index.d.ts"
+      ],
+      "@arcanos/runtime/*": [
+        "packages/arcanos-runtime/dist/*"
+      ]
+    }
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "packages",
+    "packages/**/*"
+  ],
+  "ts-node": {
+    "esm": true,
+    "experimentalSpecifierResolution": "node",
+    "compilerOptions": {
+      "module": "NodeNext",
+      "moduleResolution": "NodeNext"
+    }
+  }
+}

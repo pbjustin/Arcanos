@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/exec.status.request.schema.json",
+  "title": "exec.status request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "executionId"
+  ],
+  "properties": {
+    "executionId": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

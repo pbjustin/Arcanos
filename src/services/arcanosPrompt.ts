@@ -23,7 +23,7 @@ export async function handleArcanosPrompt(prompt: string) {
   // When no OpenAI API key is configured we return a mock response
   //audit Assumption: missing client triggers mock response
   if (!client) {
-    return generateMockResponse(prompt, 'ask');
+    return generateMockResponse(prompt, 'query');
   }
 
   try {

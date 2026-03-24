@@ -39,10 +39,14 @@ export async function runStructuredReasoning<T>(
   const requestRemainingMs = getRequestRemainingMs();
   const safeRemainingMs = getSafeRemainingMs(opts.budget);
   if (safeRemainingMs <= 0) throw new RuntimeBudgetExceededError();
+  const preferredTimeoutMs =
+    typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+      ? Math.trunc(opts.timeoutMs)
+      : safeRemainingMs;
   const requestTimeoutMs = Math.max(
     1,
     Math.min(
-      opts.timeoutMs ?? 8_000,
+      preferredTimeoutMs,
       safeRemainingMs,
       requestRemainingMs ?? safeRemainingMs
     )

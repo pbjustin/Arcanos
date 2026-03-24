@@ -4,6 +4,7 @@ import type { McpRequestContext } from '../context.js';
 import { mcpError, mcpText } from '../errors.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '@dag/templates.js';
+import { DAG_LATEST_DEBUG_MARKER, type DagLatestRunToolOutput } from '../../types/dag.js';
 import { requireNonceOrIssue, stripConfirmationFields, wrapTool } from './helpers.js';
 
 type AnyMcpServer = {
@@ -96,6 +97,18 @@ function logDagInspection(
 ): void {
   const loggerMethod = details.durationMs >= resolveDagTraceSlowMs() ? ctx.logger.warn : ctx.logger.info;
   loggerMethod(event, details);
+}
+
+function buildLatestDagRunToolOutput(latestRun: Awaited<ReturnType<typeof arcanosDagRunService.inspectLatestRunSummary>>): DagLatestRunToolOutput {
+  if (!latestRun) {
+    throw new Error('Latest DAG run summary is required to build the tool output.');
+  }
+
+  return {
+    __debug: DAG_LATEST_DEBUG_MARKER,
+    found: true,
+    ...latestRun.latest,
+  };
 }
 
 /**
@@ -230,24 +243,25 @@ export function registerDagMcpTools(server: AnyMcpServer, ctx: McpRequestContext
       inputSchema: dagLatestRunSchema,
     },
     wrapTool('dag.run.latest', ctx, async (rawArgs: unknown) => {
-      const startedAtMs = Date.now();
       const args = dagLatestRunSchema.parse(rawArgs);
       const resolvedSessionId = args.sessionId ?? ctx.sessionId;
-      const latestRun = await arcanosDagRunService.inspectLatestRun(resolvedSessionId);
+      const latestRun = await arcanosDagRunService.inspectLatestRunSummary(resolvedSessionId);
       if (!latestRun) {
         return createDagNotFoundError(ctx, 'DAG run', { sessionId: resolvedSessionId ?? null });
       }
 
-      const responseBody = {
-        summary:
-          `Most recent DAG run is ${latestRun.run.runId} with status=${latestRun.run.status}. ` +
-          'Use that explicit runId for nodes, metrics, verification, or a full trace.',
-        run: latestRun.run,
-      };
+      const responseBody = buildLatestDagRunToolOutput(latestRun);
+      ctx.logger.info('dag.run.latest.invoke', {
+        tool: 'dag.run.latest',
+        source: 'NEW_IMPLEMENTATION',
+        requestId: ctx.requestId,
+        sessionId: resolvedSessionId ?? null,
+        runId: responseBody.runId,
+      });
       logDagInspection(ctx, 'dag.run.latest', {
         requestId: ctx.requestId,
         traceId: ctx.req?.traceId ?? ctx.requestId,
-        runId: latestRun.run.runId,
+        runId: responseBody.runId,
         sessionId: resolvedSessionId ?? null,
         durationMs: latestRun.diagnostics.totalMs,
         localLookupMs: latestRun.diagnostics.localLookupMs,

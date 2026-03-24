@@ -522,6 +522,114 @@ describe('ArcanosDagRunService.waitForRunUpdate', () => {
     );
   });
 
+  it('builds the latest DAG run summary DTO from the resolved snapshot', async () => {
+    const service = new ArcanosDagRunService();
+    const latestRecord = buildStoredRunRecord('2026-03-07T00:00:05.000Z');
+    latestRecord.runId = 'run-latest';
+    latestRecord.status = 'complete';
+    latestRecord.summary = {
+      ...latestRecord.summary,
+      runId: 'run-latest',
+      status: 'complete',
+      completedNodes: 2,
+      failedNodes: 1,
+      updatedAt: '2026-03-07T00:00:05.000Z',
+    };
+    latestRecord.metrics.wallClockDurationMs = 5000;
+    latestRecord.events.push({
+      eventId: 'evt-1',
+      type: 'run.completed',
+      at: '2026-03-07T00:00:05.000Z',
+      data: { runId: 'run-latest' },
+    } as any);
+    latestRecord.events.push({
+      eventId: 'evt-2',
+      type: 'verification.completed',
+      at: '2026-03-07T00:00:05.000Z',
+      data: { runId: 'run-latest' },
+    } as any);
+    latestRecord.nodesById.set('planner', {
+      nodeId: 'planner',
+      runId: 'run-latest',
+      parentNodeId: null,
+      agentRole: 'planner',
+      jobType: 'plan',
+      status: 'complete',
+      dependencyIds: [],
+      spawnDepth: 0,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: ['writer', 'audit'],
+      error: null,
+    });
+    latestRecord.nodesById.set('writer', {
+      nodeId: 'writer',
+      runId: 'run-latest',
+      parentNodeId: 'planner',
+      agentRole: 'writer',
+      jobType: 'synthesize',
+      status: 'complete',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: [],
+      error: null,
+    });
+    latestRecord.nodesById.set('audit', {
+      nodeId: 'audit',
+      runId: 'run-latest',
+      parentNodeId: 'planner',
+      agentRole: 'audit',
+      jobType: 'verify',
+      status: 'failed',
+      dependencyIds: ['planner'],
+      spawnDepth: 1,
+      attempt: 1,
+      maxRetries: 2,
+      input: {},
+      childNodeIds: [],
+      error: null,
+    });
+    latestRecord.verification = {
+      ...latestRecord.verification,
+      runCompleted: true,
+      plannerSpawnedChildren: true,
+      parallelExecutionObserved: true,
+      aggregationRanLast: true,
+    };
+
+    (service as any).runsById.set('run-latest', latestRecord);
+
+    const latestSummary = await service.getLatestRunSummary();
+
+    expect(latestSummary).toEqual(
+      expect.objectContaining({
+        runId: 'run-latest',
+        status: 'complete',
+        nodeCount: 3,
+        durationMs: 5000,
+        topLevelMetrics: expect.objectContaining({
+          eventCount: 2,
+          completedNodes: 2,
+          failedNodes: 1,
+          verificationStatus: 'passed',
+        }),
+        available: {
+          nodes: true,
+          events: true,
+          metrics: true,
+          verification: true,
+          fullTrace: true,
+        },
+      })
+    );
+    expect(latestSummary?.timings.lookupMs).toBeGreaterThanOrEqual(0);
+    expect(latestSummary?.timings.totalMs).toBeGreaterThanOrEqual(latestSummary?.timings.lookupMs ?? 0);
+  });
+
   it('builds a full trace from the in-memory snapshot once for explicit run ids', async () => {
     const service = new ArcanosDagRunService();
     const record = buildStoredRunRecord('2026-03-07T00:00:04.000Z');

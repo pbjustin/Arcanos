@@ -4,6 +4,7 @@ const getFeatureFlagsMock = jest.fn();
 const getExecutionLimitsMock = jest.fn();
 const createRunMock = jest.fn();
 const inspectLatestRunMock = jest.fn();
+const inspectLatestRunSummaryMock = jest.fn();
 const inspectRunTraceMock = jest.fn();
 const getRunMock = jest.fn();
 const getRunMetricsMock = jest.fn();
@@ -30,6 +31,7 @@ jest.unstable_mockModule('@services/arcanosDagRunService.js', () => ({
     getExecutionLimits: getExecutionLimitsMock,
     createRun: createRunMock,
     inspectLatestRun: inspectLatestRunMock,
+    inspectLatestRunSummary: inspectLatestRunSummaryMock,
     inspectRunTrace: inspectRunTraceMock,
     getRun: getRunMock,
     getRunMetrics: getRunMetricsMock
@@ -137,7 +139,7 @@ describe('tryDispatchDagTools', () => {
   });
 
   it('returns the latest DAG run summary for most-recent prompts without invoking OpenAI', async () => {
-    inspectLatestRunMock.mockResolvedValue({
+    inspectLatestRunSummaryMock.mockResolvedValue({
       run: {
         pipeline: 'trinity',
         trinity_version: '1.0',
@@ -147,6 +149,33 @@ describe('tryDispatchDagTools', () => {
         status: 'complete',
         createdAt: '2026-03-07T12:00:00.000Z',
         updatedAt: '2026-03-07T12:00:05.000Z'
+      },
+      latest: {
+        runId: 'dagrun_300_latest',
+        status: 'complete',
+        nodeCount: 5,
+        durationMs: 5000,
+        timings: {
+          lookupMs: 4,
+          nodesMs: 1,
+          eventsMs: 1,
+          metricsMs: 1,
+          verificationMs: 1,
+          totalMs: 8,
+        },
+        topLevelMetrics: {
+          eventCount: 9,
+          completedNodes: 5,
+          failedNodes: 0,
+          verificationStatus: 'passed',
+        },
+        available: {
+          nodes: true,
+          events: true,
+          metrics: true,
+          verification: true,
+          fullTrace: true,
+        },
       },
       diagnostics: {
         snapshotSource: 'persisted',
@@ -162,14 +191,15 @@ describe('tryDispatchDagTools', () => {
       { sessionId: 'session-123', logger: { info: jest.fn(), warn: jest.fn() } as any }
     );
 
-    expect(inspectLatestRunMock).toHaveBeenCalledWith('session-123');
+    expect(inspectLatestRunSummaryMock).toHaveBeenCalledWith('session-123');
     expect(inspectRunTraceMock).not.toHaveBeenCalled();
     expect(response).toEqual(
       expect.objectContaining({
         module: 'dag-tools',
-        result: expect.stringContaining('Most recent DAG run is dagrun_300_latest'),
+        result: expect.stringContaining('"__debug":"NEW_DAG_LOGIC_ACTIVE"'),
       })
     );
+    expect(response.result).not.toContain('Most recent DAG run is');
   });
 
   it('collapses explicit full-trace requests into one bounded inspection', async () => {

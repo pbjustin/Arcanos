@@ -5,6 +5,7 @@ import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/ope
 import { parseToolArgumentsWithSchema } from '@services/safety/aiOutputBoundary.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 import { generateRequestId } from '@shared/idGenerator.js';
+import { DAG_LATEST_DEBUG_MARKER, type DagLatestRunToolOutput } from '../../types/dag.js';
 
 import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '@dag/templates.js';
 import {
@@ -526,7 +527,7 @@ function summarizeDagToolExecution(toolName: string, payload: Record<string, unk
     case 'create_dag_run':
       return `Started DAG run ${payload.runId ?? 'unknown'} with pipeline=${payload.pipeline ?? 'unknown'}, template=${payload.template ?? 'unknown'}, and status=${payload.status ?? 'unknown'}.`;
     case 'get_latest_dag_run':
-      return `Most recent DAG run is ${payload.runId ?? 'unknown'} with status=${payload.status ?? 'unknown'}. Use that runId for nodes, metrics, verification, or a full trace.`;
+      return JSON.stringify(payload);
     case 'get_dag_run':
       return `DAG run ${payload.runId ?? 'unknown'} uses pipeline=${payload.pipeline ?? 'unknown'}, template=${payload.template ?? 'unknown'}, status=${payload.status ?? 'unknown'}, completedNodes=${payload.completedNodes ?? 'unknown'}, and failedNodes=${payload.failedNodes ?? 'unknown'}.`;
     case 'get_dag_trace': {
@@ -561,6 +562,18 @@ function summarizeDagToolExecution(toolName: string, payload: Record<string, unk
     default:
       return `Executed ${toolName}.`;
   }
+}
+
+function buildLatestDagRunToolOutput(latestRun: Awaited<ReturnType<typeof arcanosDagRunService.inspectLatestRunSummary>>): DagLatestRunToolOutput {
+  if (!latestRun) {
+    throw new Error('Latest DAG run summary is required to build the tool output.');
+  }
+
+  return {
+    __debug: DAG_LATEST_DEBUG_MARKER,
+    found: true,
+    ...latestRun.latest,
+  };
 }
 
 async function executeDagTool(
@@ -599,19 +612,22 @@ async function executeDagTool(
     }
     case 'get_latest_dag_run': {
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, dagLatestRunArgsSchema, 'dagTools.get_latest_dag_run');
-      const latestRun = await arcanosDagRunService.inspectLatestRun(parsedArgs.sessionId ?? context.sessionId);
+      const latestRun = await arcanosDagRunService.inspectLatestRunSummary(parsedArgs.sessionId ?? context.sessionId);
       const normalizedOutput = latestRun
-        ? {
-            ...latestRun.run,
-            summary:
-              `Most recent DAG run is ${latestRun.run.runId} with status=${latestRun.run.status}. ` +
-              'Use that runId for nodes, metrics, verification, or a full trace.',
-          }
+        ? buildLatestDagRunToolOutput(latestRun)
         : {
+            __debug: DAG_LATEST_DEBUG_MARKER,
+            found: false,
             status: 'not_found',
-            summary: 'No DAG runs were found.',
           };
       if (latestRun) {
+        context.logger?.info?.('dag.run.latest.invoke', {
+          tool: 'dag.run.latest',
+          source: 'NEW_IMPLEMENTATION',
+          requestId: context.requestId ?? null,
+          sessionId: parsedArgs.sessionId ?? context.sessionId ?? null,
+          runId: latestRun.run.runId,
+        });
         logDagInspection(context, 'dag.tools.latest', {
           requestId: context.requestId ?? null,
           traceId: context.traceId ?? context.requestId ?? null,
@@ -629,7 +645,7 @@ async function executeDagTool(
         output: normalizedOutput as Record<string, unknown>,
         summary: latestRun
           ? summarizeDagToolExecution(toolName, normalizedOutput as Record<string, unknown>)
-          : 'No DAG runs were found.',
+          : JSON.stringify(normalizedOutput),
       };
     }
     case 'get_dag_run': {

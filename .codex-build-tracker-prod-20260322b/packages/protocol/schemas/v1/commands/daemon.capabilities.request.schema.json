@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/daemon.capabilities.request.schema.json",
+  "title": "daemon.capabilities request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

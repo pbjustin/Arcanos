@@ -1,0 +1,52 @@
+# Build artifacts
+node_modules/
+dist/
+build/
+/coverage-run/
+/coverage-scoped/
+/output/
+/converge-artifacts/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs and temp files
+logs/
+npm_logs/
+tmp/
+temp/
+tmp-*
+coverage/
+*.log
+*.tmp
+vendor/
+/.mypy_cache/
+/memory/
+
+# Version control and CI files
+.git/
+.git
+.github/
+.codex/
+/.codex-pr-*/
+/.codex-pr-*
+/.codex-runtime-deploy-*/
+/.codex-runtime-deploy-*
+/.codex-runtime-deploy-clean-*/
+/.codex-runtime-deploy-clean-*
+/.deploy-pr-*/
+/.deploy-pr-*
+/.claude/
+/.workspace/
+/.tmp-locktest/
+release/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

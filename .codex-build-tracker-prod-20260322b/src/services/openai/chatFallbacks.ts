@@ -1,0 +1,258 @@
+import type OpenAI from 'openai';
+import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
+import { prepareGPT5Request } from './requestTransforms.js';
+import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
+import { RESILIENCE_CONSTANTS } from './resilience.js';
+import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { formatErrorMessage } from "@core/lib/errors/reusable.js";
+import { aiLogger } from "@platform/logging/structuredLogging.js";
+import { buildResponsesRequest, convertResponseToLegacyChatCompletion } from './requestBuilders.js';
+import {
+  buildFailureContext,
+  buildFinalFallbackReason,
+  buildGpt5AttemptLog,
+  buildGpt5FallbackReason,
+  buildGpt5SuccessLog,
+  CHAT_FALLBACK_LOG_PREFIXES,
+} from "@platform/runtime/chatFallbackMessages.js";
+
+const normalizeModelId = (model: string): string => model.trim().toLowerCase();
+
+type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, 'model'> & {
+  model?: string;
+  max_completion_tokens?: number | null;
+};
+
+type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
+
+interface ChatCompletionWithFallback extends ChatCompletionResponse {
+  activeModel: string;
+  fallbackFlag: boolean;
+  retryUsed?: boolean;
+  fallbackReason?: string;
+  gpt5Used?: boolean;
+}
+
+const getTokensFromParams = (params: ChatCompletionParams): number =>
+  params.max_tokens || params.max_completion_tokens || RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS;
+
+function extractPromptFromParams(params: ChatCompletionParams): string {
+  const messages = Array.isArray(params.messages) ? params.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== 'user') {
+      continue;
+    }
+    if (typeof message.content === 'string' && message.content.trim().length > 0) {
+      return message.content;
+    }
+    if (Array.isArray(message.content)) {
+      for (const contentPart of message.content) {
+        if (
+          contentPart &&
+          typeof contentPart === 'object' &&
+          (contentPart as { type?: unknown }).type === 'text' &&
+          typeof (contentPart as { text?: unknown }).text === 'string'
+        ) {
+          const normalizedText = (contentPart as { text: string }).text.trim();
+          if (normalizedText.length > 0) {
+            return normalizedText;
+          }
+        }
+      }
+    }
+  }
+  return 'Fallback request context.';
+}
+
+const executeChatCompletionRequest = async (
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  payload: ChatCompletionParams & { model: string },
+): Promise<ChatCompletionResponse> => {
+  const requestPayload = buildResponsesRequest({
+    prompt: extractPromptFromParams(payload),
+    model: payload.model,
+    maxTokens: getTokensFromParams(payload),
+    temperature: payload.temperature ?? undefined,
+    top_p: payload.top_p ?? undefined,
+    frequency_penalty: payload.frequency_penalty ?? undefined,
+    presence_penalty: payload.presence_penalty ?? undefined,
+    responseFormat: payload.response_format as any,
+    user: payload.user,
+    messages: payload.messages,
+    includeRoutingMessage: true
+  });
+
+  const usesAdapter = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object';
+  //audit Assumption: fallback orchestration should execute against Responses API across client types; risk: mixed endpoint behavior across stages; invariant: one Responses call per attempt; handling: branch on adapter/client Responses surface.
+  const response = usesAdapter
+    ? await (clientOrAdapter as OpenAIAdapter).responses.create(requestPayload)
+    : await (clientOrAdapter as OpenAI).responses.create(requestPayload);
+
+  return convertResponseToLegacyChatCompletion(response, payload.model);
+};
+
+async function attemptModelCall(
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  params: ChatCompletionParams,
+  model: string,
+  logPrefix: string,
+): Promise<{ response: ChatCompletionResponse; model: string }> {
+  aiLogger.info(`${logPrefix} Attempting with model: ${model}`);
+  const response = await executeChatCompletionRequest(clientOrAdapter, {
+    ...params,
+    model,
+  });
+  aiLogger.info(`${logPrefix} Success with ${model}`);
+  return { response, model };
+}
+
+async function attemptGPT5Call(
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  params: ChatCompletionParams,
+  gpt5Model: string,
+): Promise<{ response: ChatCompletionResponse; model: string }> {
+  aiLogger.info(buildGpt5AttemptLog(gpt5Model));
+
+  const tokenParams = getTokenParameter(gpt5Model, getTokensFromParams(params));
+  const gpt5Payload = prepareGPT5Request({
+    ...params,
+    model: gpt5Model,
+    ...tokenParams,
+  }) as ChatCompletionParams & { model: string };
+
+  const response = await executeChatCompletionRequest(clientOrAdapter, gpt5Payload);
+  aiLogger.info(buildGpt5SuccessLog(gpt5Model));
+  return { response, model: gpt5Model };
+}
+
+/**
+ * Ensure response model matches the expected model family.
+ * Inputs: response (OpenAI response), expectedModel (string).
+ * Outputs: actual model identifier string.
+ * Edge cases: throws when response model is missing or mismatched.
+ */
+const ensureModelMatchesExpectation = (response: ChatCompletionResponse, expectedModel: string): string => {
+  const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
+
+  //audit Assumption: response must include model identifier; risk: downstream mismatches; invariant: non-empty model id; handling: throw explicit error.
+  if (!actualModel) {
+    throw new Error(`GPT-5.1 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
+  }
+
+  const normalizedActual = normalizeModelId(actualModel);
+  const normalizedExpected = normalizeModelId(expectedModel);
+
+  const matchesExpected =
+    normalizedActual === normalizedExpected ||
+    normalizedActual.startsWith(`${normalizedExpected}-`) ||
+    normalizedActual.startsWith(`${normalizedExpected}.`);
+
+  //audit Assumption: model should match expected prefix; risk: unexpected model usage; invariant: prefix match or exact match; handling: throw explicit error.
+  if (!matchesExpected) {
+    throw new Error(
+      `GPT-5.1 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`,
+    );
+  }
+
+  return actualModel;
+};
+
+type ModelAttemptResult = { response: ChatCompletionResponse; model: string };
+type ModelAttemptTransformer<T> = (result: ModelAttemptResult) => T;
+
+const executeModelFallbacks = async <T>(
+  attempts: Array<{
+    label: string;
+    executor: () => Promise<ModelAttemptResult>;
+    transform: ModelAttemptTransformer<T>;
+  }>,
+  failureContext: string,
+): Promise<T> => {
+  let lastError: unknown;
+
+  for (const { label, executor, transform } of attempts) {
+    try {
+      const result = await executor();
+      return transform(result);
+    } catch (error: unknown) {
+      //audit Assumption: failed attempts should continue to next fallback; risk: error masking; invariant: only one attempt succeeds; handling: capture error and proceed.
+      lastError = error;
+      aiLogger.warn(`${label} Failed: ${formatErrorMessage(error)}`);
+    }
+  }
+
+  aiLogger.error(`${failureContext}`);
+  //audit Assumption: lastError may hold context; risk: losing root cause; invariant: thrown error includes context; handling: wrap and rethrow if possible.
+  if (lastError instanceof Error) {
+    throw new Error(`${failureContext}: ${formatErrorMessage(lastError)}`);
+  }
+  throw new Error(failureContext);
+};
+
+/**
+ * Create a chat completion with multi-stage model fallbacks.
+ * Inputs: clientOrAdapter (OpenAI client or adapter), params (chat completion params).
+ * Outputs: completion response augmented with fallback metadata.
+ * Edge cases: throws when all fallback attempts fail.
+ */
+export const createChatCompletionWithFallback = async (
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  params: ChatCompletionParams,
+): Promise<ChatCompletionWithFallback> => {
+  const primaryModel = params.model ?? getDefaultModel();
+  const gpt5Model = getGPT5Model();
+  const finalFallbackModel = getFallbackModel();
+
+  const attempts = [
+    {
+      label: CHAT_FALLBACK_LOG_PREFIXES.primary,
+      executor: () =>
+        attemptModelCall(clientOrAdapter, params, primaryModel, CHAT_FALLBACK_LOG_PREFIXES.primary),
+      transform: ({ response, model }: ModelAttemptResult) => ({
+        ...response,
+        activeModel: model,
+        fallbackFlag: false,
+      }),
+    },
+    {
+      label: CHAT_FALLBACK_LOG_PREFIXES.retry,
+      executor: () =>
+        attemptModelCall(clientOrAdapter, params, primaryModel, CHAT_FALLBACK_LOG_PREFIXES.retry),
+      transform: ({ response, model }: ModelAttemptResult) => ({
+        ...response,
+        activeModel: model,
+        fallbackFlag: false,
+        retryUsed: true,
+      }),
+    },
+    {
+      label: CHAT_FALLBACK_LOG_PREFIXES.gpt5,
+      executor: () => attemptGPT5Call(clientOrAdapter, params, gpt5Model),
+      transform: ({ response, model }: ModelAttemptResult) => ({
+        ...response,
+        activeModel: model,
+        fallbackFlag: true,
+        fallbackReason: buildGpt5FallbackReason(primaryModel),
+        gpt5Used: true,
+      }),
+    },
+    {
+      label: CHAT_FALLBACK_LOG_PREFIXES.final,
+      executor: () =>
+        attemptModelCall(clientOrAdapter, params, finalFallbackModel, CHAT_FALLBACK_LOG_PREFIXES.final),
+      transform: ({ response, model }: ModelAttemptResult) => ({
+        ...response,
+        activeModel: model,
+        fallbackFlag: true,
+        fallbackReason: buildFinalFallbackReason(primaryModel, gpt5Model),
+      }),
+    },
+  ];
+
+  const failureContext = buildFailureContext(primaryModel, gpt5Model, finalFallbackModel);
+
+  return executeModelFallbacks(attempts, `${failureContext} [COMPLETE FAILURE]`);
+};
+
+export { ensureModelMatchesExpectation };

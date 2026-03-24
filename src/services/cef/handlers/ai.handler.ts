@@ -131,7 +131,7 @@ const allowedHandlerActions = {
     },
     async invokeFallback(payload: AiPromptPayload) {
       const sanitizedPrompt = sanitizeInput(payload.prompt);
-      const mock = generateMockResponse(sanitizedPrompt, 'ask');
+      const mock = generateMockResponse(sanitizedPrompt, 'query');
       return {
         message: 'OpenAI API key not configured - returning mock response.',
         output: {

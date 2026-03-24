@@ -423,25 +423,6 @@ function inferAutomaticMcpDispatchIntent(params: {
     };
   }
 
-  //audit Assumption: broad operational prompts benefit from the generic Trinity MCP tool when they mention backend state or explicitly ask to use MCP; failure risk: normal tutoring prompts are over-routed into MCP; expected invariant: fallback only triggers on strong MCP cues or combined ops-verb/backend-noun prompts; handling strategy: require explicit regex evidence before delegating to `trinity.ask`.
-  if (
-    automaticMcpStrongCuePattern.test(prompt) ||
-    (automaticMcpOpsVerbPattern.test(prompt) && automaticMcpBackendNounPattern.test(prompt))
-  ) {
-    return {
-      action: 'mcp.invoke',
-      toolName: 'trinity.ask',
-      toolArguments: {
-        prompt,
-        sessionId,
-      },
-      dispatchMode: 'automatic',
-      reason: automaticMcpStrongCuePattern.test(prompt)
-        ? 'prompt_requests_mcp_routing'
-        : 'prompt_requests_backend_operations',
-    };
-  }
-
   return null;
 }
 
@@ -566,37 +547,86 @@ function pickAction(available: string[], requested?: string, defaultAction?: str
   return null;
 }
 
-function normalizeRequestedAction(
-  requestedAction: string | undefined,
-  availableActions: string[],
-  defaultAction?: string | null
-): string | undefined {
-  const normalizedRequestedAction =
-    typeof requestedAction === 'string' && requestedAction.trim().length > 0
-      ? requestedAction.trim()
-      : undefined;
+function normalizeRequestedAction(requestedAction: string | undefined): string | undefined {
+  return typeof requestedAction === 'string' && requestedAction.trim().length > 0
+    ? requestedAction.trim()
+    : undefined;
+}
 
+function getLegacyQueryAlias(requestedAction: string | undefined): 'ask' | 'chat' | null {
+  const normalizedRequestedAction = normalizeRequestedAction(requestedAction);
   if (!normalizedRequestedAction) {
-    return undefined;
+    return null;
   }
 
   const loweredRequestedAction = normalize(normalizedRequestedAction);
   if (loweredRequestedAction === 'ask' || loweredRequestedAction === 'chat') {
-    if (defaultAction && availableActions.includes(defaultAction)) {
-      return defaultAction;
-    }
-    if (availableActions.includes('query')) {
-      return 'query';
-    }
-    if (availableActions.includes('run')) {
-      return 'run';
-    }
-    if (availableActions.length === 1) {
-      return availableActions[0];
-    }
+    return loweredRequestedAction;
   }
 
-  return normalizedRequestedAction;
+  return null;
+}
+
+const DISPATCH_TIMEOUT_ERROR_MARKERS = [
+  'openai_call_aborted_due_to_budget',
+  'runtime_budget_exhausted',
+  'runtimebudget',
+  'budgetexceeded',
+  'watchdog threshold',
+  'execution aborted by watchdog',
+  'request was aborted.',
+];
+
+function isDispatchTimeoutError(err: unknown, timeoutMs?: number): boolean {
+  if (isAbortError(err)) {
+    return true;
+  }
+
+  const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+  if (!normalizedMessage) {
+    return false;
+  }
+
+  if (typeof timeoutMs === 'number' && normalizedMessage === `module dispatch timeout after ${timeoutMs}ms`) {
+    return true;
+  }
+
+  return DISPATCH_TIMEOUT_ERROR_MARKERS.some((marker) => normalizedMessage.includes(marker));
+}
+
+function buildDispatchTimeoutMessage(timeoutMs?: number, scope: 'module' | 'mcp' = 'module'): string {
+  if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    return scope === 'mcp'
+      ? `MCP dispatch timeout after ${timeoutMs}ms`
+      : `Module dispatch timeout after ${timeoutMs}ms`;
+  }
+
+  return scope === 'mcp'
+    ? 'MCP dispatch timed out before completion.'
+    : 'Module dispatch timed out before completion.';
+}
+
+function logTrinityExecution(
+  requestLogger: { info?: (message: string, meta?: Record<string, unknown>) => void } | undefined,
+  params: {
+    requestId?: string;
+    gptId: string;
+    action: 'query';
+    handler: string;
+    path: string;
+    module: string;
+    route: string;
+  }
+): void {
+  requestLogger?.info?.('[trinity-exec]', {
+    requestId: params.requestId,
+    gptId: params.gptId,
+    action: params.action,
+    handler: params.handler,
+    path: params.path,
+    module: params.module,
+    route: params.route,
+  });
 }
 
 interface AutomaticBackstageBookerDispatchIntent {
@@ -1052,7 +1082,27 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
-  let requestedAction = normalizeRequestedAction(rawRequestedAction, availableActions, moduleMetadata?.defaultAction ?? null);
+  let requestedAction = normalizeRequestedAction(rawRequestedAction);
+  const legacyQueryAlias = getLegacyQueryAlias(requestedAction);
+
+  if (legacyQueryAlias) {
+    return {
+      ok: false,
+      error: {
+        code: "BAD_REQUEST",
+        message: `Legacy action '${legacyQueryAlias}' is not supported; use 'query'.`
+      },
+      _route: {
+        ...baseRoute,
+        module: activeEntry.module,
+        action: requestedAction,
+        matchMethod,
+        route: activeEntry.route,
+        availableActions,
+        moduleVersion: (moduleMetadata as any)?.version ?? null,
+      }
+    };
+  }
 
   //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
   if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
@@ -1259,7 +1309,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
     moduleMetadata = getModuleMetadata(activeEntry.module);
     availableActions = moduleMetadata?.actions ?? [];
-    requestedAction = normalizeRequestedAction(rawRequestedAction, availableActions, moduleMetadata?.defaultAction ?? null);
+    requestedAction = normalizeRequestedAction(rawRequestedAction);
     logger?.info?.("gpt.dispatch.booker.auto_selected", {
       requestId,
       gptId: trimmedGptId,
@@ -1421,6 +1471,18 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
     });
 
+    if (resolvedMcpDispatchIntent.action === "mcp.invoke" && resolvedMcpDispatchIntent.toolName === "trinity.query") {
+      logTrinityExecution(logger, {
+        requestId,
+        gptId: trimmedGptId,
+        action: "query",
+        handler: "mcp.trinity.query",
+        path: `/gpt/${trimmedGptId}`,
+        module: activeEntry.module,
+        route: activeEntry.route,
+      });
+    }
+
     try {
       const mcpResult =
         resolvedMcpDispatchIntent.action === "mcp.invoke"
@@ -1532,6 +1594,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         },
       };
     } catch (err: any) {
+      const activeAbortContext = getRequestAbortContext();
+      const isMcpTimeout = isDispatchTimeoutError(err, activeAbortContext?.timeoutMs);
+      const mcpErrorMessage = isMcpTimeout
+        ? buildDispatchTimeoutMessage(activeAbortContext?.timeoutMs, 'mcp')
+        : err?.message ?? "MCP dispatch failed";
+
       logger?.error?.("gpt.dispatch.mcp.error", {
         requestId,
         gptId: trimmedGptId,
@@ -1541,6 +1609,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
         reason: resolvedMcpDispatchIntent.reason,
         error: String(err?.message ?? err),
+        timeoutMs: activeAbortContext?.timeoutMs,
       });
 
       recordDispatcherRoute({
@@ -1548,11 +1617,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         module: activeEntry.module,
         route: activeEntry.route,
         handler: 'mcp-dispatcher',
-        outcome: 'error',
+        outcome: isMcpTimeout ? 'timeout' : 'error',
       });
       return {
         ok: false,
-        error: { code: "MODULE_ERROR", message: err?.message ?? "MCP dispatch failed" },
+        error: {
+          code: isMcpTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
+          message: mcpErrorMessage
+        },
         _route: {
           ...baseRoute,
           module: activeEntry.module,
@@ -1621,6 +1693,18 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     timeoutMs,
     timeoutSource,
   });
+
+  if (action === "query") {
+    logTrinityExecution(logger, {
+      requestId,
+      gptId: trimmedGptId,
+      action,
+      handler: activeEntry.module,
+      path: `/gpt/${trimmedGptId}`,
+      module: activeEntry.module,
+      route: activeEntry.route,
+    });
+  }
 
   const dispatchStartedAt = Date.now();
 
@@ -1709,9 +1793,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     }
 
     const errorMessage = String(err?.message ?? err);
-    const isDispatchTimeout =
-      errorMessage === `Module dispatch timeout after ${timeoutMs}ms` || isAbortError(err);
+    const isDispatchTimeout = isDispatchTimeoutError(err, timeoutMs);
     const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
+    const dispatchErrorMessage = isDispatchTimeout
+      ? buildDispatchTimeoutMessage(timeoutMs)
+      : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {
       requestId,
@@ -1755,7 +1841,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       ok: false,
       error: {
         code: isDispatchTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
-        message: err?.message ?? "Module dispatch failed"
+        message: dispatchErrorMessage
       },
       _route: {
         ...baseRoute,

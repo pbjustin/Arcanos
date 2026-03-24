@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/nouns/project.schema.json",
+  "title": "Project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "rootPath": {
+      "type": "string"
+    },
+    "remoteSource": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/remote-source.schema.json"
+    }
+  }
+}

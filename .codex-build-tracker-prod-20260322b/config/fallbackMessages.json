@@ -1,0 +1,6 @@
+{
+  "arcanos": "ARCANOS is temporarily in fallback mode. I noted your request but can't fully process it right now — please try again shortly.",
+  "sim": "Simulation temporarily unavailable. I recorded your request; please retry when services are restored.",
+  "memory": "Memory service is read-only right now. I can continue without saving changes, or try again later.",
+  "default": "Service temporarily limited. I can help with guidance, but full features may be unavailable."
+}

@@ -1,7 +1,40 @@
 import { RuntimeBudgetExceededError } from "./runtimeErrors.js";
 
-export const WATCHDOG_LIMIT_MS = 45000;
-export const SAFETY_BUFFER_MS = 2000;
+function parseEnvInteger(rawValue: string | undefined, fallbackValue: number): number {
+  if (typeof rawValue !== 'string' || rawValue.trim().length === 0) {
+    return fallbackValue;
+  }
+
+  const parsedValue = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsedValue) && parsedValue > 0
+    ? Math.trunc(parsedValue)
+    : fallbackValue;
+}
+
+function parseEnvBoolean(rawValue: string | undefined, fallbackValue: boolean): boolean {
+  if (typeof rawValue !== 'string') {
+    return fallbackValue;
+  }
+
+  switch (rawValue.trim().toLowerCase()) {
+    case '1':
+    case 'true':
+    case 'yes':
+    case 'on':
+      return true;
+    case '0':
+    case 'false':
+    case 'no':
+    case 'off':
+      return false;
+    default:
+      return fallbackValue;
+  }
+}
+
+export const WATCHDOG_LIMIT_MS = parseEnvInteger(process.env.WATCHDOG_LIMIT_MS, 120_000);
+export const SAFETY_BUFFER_MS = parseEnvInteger(process.env.SAFETY_BUFFER_MS, 2_000);
+export const BUDGET_DISABLED = parseEnvBoolean(process.env.BUDGET_DISABLED, false);
 
 export interface RuntimeBudget {
   readonly startedAt: number;
@@ -30,7 +63,11 @@ export function getRemainingMs(budget: RuntimeBudget): number {
 }
 
 export function getSafeRemainingMs(budget: RuntimeBudget): number {
-  return getRemainingMs(budget) - budget.safetyBuffer;
+  if (BUDGET_DISABLED) {
+    return Math.max(1, WATCHDOG_LIMIT_MS - SAFETY_BUFFER_MS);
+  }
+
+  return Math.max(0, getRemainingMs(budget) - budget.safetyBuffer);
 }
 
 export function hasSufficientBudget(
@@ -41,7 +78,10 @@ export function hasSufficientBudget(
 }
 
 export function assertBudgetAvailable(budget: RuntimeBudget): void {
-  // Use a minimal required amount, or just check if > 0
+  if (BUDGET_DISABLED) {
+    return;
+  }
+
   if (getSafeRemainingMs(budget) <= 0) {
     throw new RuntimeBudgetExceededError();
   }

@@ -2,7 +2,8 @@ import type OpenAI from 'openai';
 import { createGPT5Reasoning } from "@services/openai.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import type { ReasoningLedger } from "@core/logic/trinityTypes.js";
-import { getRequestAbortSignal } from "@arcanos/runtime";
+import type { RuntimeBudget } from "@platform/resilience/runtimeBudget.js";
+import { getRequestAbortSignal, getRequestRemainingMs, getSafeRemainingMs, isAbortError } from "@arcanos/runtime";
 
 export interface ClearAuditResult {
   clarity: number;
@@ -39,13 +40,7 @@ Reasoning Ledger:
 `;
 
 
-export async function runClearAudit(client: OpenAI, ledger: ReasoningLedger): Promise<ClearAuditResult> {
-  const ledgerText = JSON.stringify(ledger, null, 2);
-  const result = await createGPT5Reasoning(client, ledgerText, CLEAR_AUDIT_PROMPT, {
-    signal: getRequestAbortSignal()
-  });
-
-  const fallback: ClearAuditResult = {
+const fallback: ClearAuditResult = {
     clarity: 0,
     leverage: 0,
     efficiency: 0,
@@ -53,6 +48,44 @@ export async function runClearAudit(client: OpenAI, ledger: ReasoningLedger): Pr
     resilience: 0,
     overall: 0
   };
+
+function resolveClearAuditTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+  const configuredTimeoutMs = Number.parseInt(process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS ?? '', 10);
+  const normalizedConfiguredTimeoutMs =
+    Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+      ? Math.trunc(configuredTimeoutMs)
+      : 3_000;
+  const requestRemainingMs = getRequestRemainingMs();
+  const budgetRemainingMs = runtimeBudget ? getSafeRemainingMs(runtimeBudget) : normalizedConfiguredTimeoutMs;
+
+  return Math.max(
+    1,
+    Math.min(normalizedConfiguredTimeoutMs, requestRemainingMs ?? normalizedConfiguredTimeoutMs, budgetRemainingMs)
+  );
+}
+
+export async function runClearAudit(
+  client: OpenAI,
+  ledger: ReasoningLedger,
+  runtimeBudget?: RuntimeBudget
+): Promise<ClearAuditResult> {
+  const ledgerText = JSON.stringify(ledger, null, 2);
+  let result: Awaited<ReturnType<typeof createGPT5Reasoning>>;
+  try {
+    result = await createGPT5Reasoning(client, ledgerText, CLEAR_AUDIT_PROMPT, {
+      signal: getRequestAbortSignal(),
+      timeoutMs: resolveClearAuditTimeoutMs(runtimeBudget)
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      logger.warn('CLEAR audit timed out', {
+        module: 'audit',
+        operation: 'runClearAudit'
+      });
+      return fallback;
+    }
+    throw error;
+  }
 
   if (result.error) {
     logger.error('CLEAR audit failed due to LLM error', {

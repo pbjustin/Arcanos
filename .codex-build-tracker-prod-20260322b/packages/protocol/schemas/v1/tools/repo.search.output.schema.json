@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/repo.search.output.schema.json",
+  "title": "repo.search output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rootPath",
+    "query",
+    "searchType",
+    "offset",
+    "limit",
+    "searchedFileCount",
+    "matches",
+    "truncated"
+  ],
+  "properties": {
+    "rootPath": {
+      "type": "string"
+    },
+    "query": {
+      "type": "string"
+    },
+    "searchType": {
+      "type": "string",
+      "enum": [
+        "text",
+        "symbol"
+      ]
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nextOffset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "searchedFileCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "line",
+          "column",
+          "preview"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "preview": {
+            "type": "string"
+          },
+          "symbolKind": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  }
+}

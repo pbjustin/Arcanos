@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/state.snapshot.response.schema.json",
+  "title": "state.snapshot response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "snapshotId",
+    "state"
+  ],
+  "properties": {
+    "snapshotId": {
+      "type": "string"
+    },
+    "state": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/execution-state.schema.json"
+    }
+  }
+}

@@ -16,6 +16,10 @@ import {
   type TrinityRunRecord
 } from '../workers/orchestrator.js';
 import type {
+  DagLatestRunSummary,
+  DagRunStatus as PublicDagRunStatus,
+} from '../types/dag.js';
+import type {
   CreateDagRunRequest,
   DagEvent,
   DagErrorsData,
@@ -160,6 +164,17 @@ export interface DagLatestRunInspectionResult {
   diagnostics: DagLatestRunLookupDiagnostics;
 }
 
+export interface DagLatestRunSummaryInspectionResult {
+  run: DagRunSummary;
+  latest: DagLatestRunSummary;
+  diagnostics: DagLatestRunLookupDiagnostics;
+}
+
+interface DagLatestSnapshotInspectionResult {
+  snapshot: PersistedDagRunSnapshot;
+  diagnostics: DagLatestRunLookupDiagnostics;
+}
+
 function createFeatureFlags(): FeatureFlags {
   return {
     dagOrchestration: true,
@@ -258,6 +273,48 @@ function extractNodeDuration(metrics: NodeMetrics | undefined, output: Record<st
 
 function normalizeNodeStatus(status: NodeStatus): NodeStatus {
   return status;
+}
+
+function normalizePublicDagRunStatus(input?: string | null): PublicDagRunStatus {
+  const normalizedStatus = String(input ?? '').toLowerCase();
+  if (
+    normalizedStatus === 'queued' ||
+    normalizedStatus === 'running' ||
+    normalizedStatus === 'complete' ||
+    normalizedStatus === 'failed' ||
+    normalizedStatus === 'cancelled'
+  ) {
+    return normalizedStatus;
+  }
+
+  return 'unknown';
+}
+
+function summarizeVerificationStatus(verification: DagVerification | null | undefined): string | undefined {
+  if (!verification) {
+    return undefined;
+  }
+
+  if (
+    verification.deadlockDetected ||
+    verification.stalledJobsDetected ||
+    verification.loopDetected ||
+    !verification.retryPolicyRespected ||
+    !verification.budgetPolicyRespected
+  ) {
+    return 'failed';
+  }
+
+  if (
+    verification.runCompleted &&
+    verification.plannerSpawnedChildren &&
+    verification.parallelExecutionObserved &&
+    verification.aggregationRanLast
+  ) {
+    return 'passed';
+  }
+
+  return 'partial';
 }
 
 function createDefaultMetrics(totalNodes: number): DagRunMetrics {
@@ -947,7 +1004,7 @@ export class ArcanosDagRunService {
     return normalizePersistedDagRunSnapshot(persistedRecord.snapshot);
   }
 
-  async inspectLatestRun(sessionId?: string): Promise<DagLatestRunInspectionResult | null> {
+  private async inspectLatestSnapshot(sessionId?: string): Promise<DagLatestSnapshotInspectionResult | null> {
     const startedAtMs = Date.now();
     const localStartedAtMs = Date.now();
     const localSnapshot = this.getLatestLocalSnapshot(sessionId);
@@ -965,7 +1022,7 @@ export class ArcanosDagRunService {
         },
       });
       return {
-        run: cloneDagRunSummary(localSnapshot.summary),
+        snapshot: localSnapshot,
         diagnostics: {
           snapshotSource: 'local',
           localLookupMs,
@@ -1007,7 +1064,7 @@ export class ArcanosDagRunService {
       },
     });
     return {
-      run: cloneDagRunSummary(persistedSnapshot.summary),
+      snapshot: persistedSnapshot,
       diagnostics: {
         snapshotSource: 'persisted',
         localLookupMs,
@@ -1018,9 +1075,94 @@ export class ArcanosDagRunService {
     };
   }
 
+  async inspectLatestRun(sessionId?: string): Promise<DagLatestRunInspectionResult | null> {
+    const latestSnapshot = await this.inspectLatestSnapshot(sessionId);
+    if (!latestSnapshot) {
+      return null;
+    }
+
+    return {
+      run: cloneDagRunSummary(latestSnapshot.snapshot.summary),
+      diagnostics: latestSnapshot.diagnostics,
+    };
+  }
+
   async getLatestRun(sessionId?: string): Promise<DagRunSummary | null> {
     const latestRun = await this.inspectLatestRun(sessionId);
     return latestRun ? latestRun.run : null;
+  }
+
+  async inspectLatestRunSummary(sessionId?: string): Promise<DagLatestRunSummaryInspectionResult | null> {
+    const startedAtMs = Date.now();
+    const latestSnapshot = await this.inspectLatestSnapshot(sessionId);
+    if (!latestSnapshot) {
+      return null;
+    }
+
+    const { snapshot, diagnostics } = latestSnapshot;
+
+    const nodesStartedAtMs = Date.now();
+    const nodeCount = snapshot.nodes.length;
+    const completedNodes = snapshot.nodes.filter(node => node.status === 'complete').length;
+    const failedNodes = snapshot.nodes.filter(node => node.status === 'failed').length;
+    const nodesMs = Date.now() - nodesStartedAtMs;
+
+    const eventsStartedAtMs = Date.now();
+    const eventCount = snapshot.events.length;
+    const eventsMs = Date.now() - eventsStartedAtMs;
+
+    const metricsStartedAtMs = Date.now();
+    const metricsAvailable = Boolean(snapshot.metrics);
+    const metricsMs = Date.now() - metricsStartedAtMs;
+
+    const verificationStartedAtMs = Date.now();
+    const verificationStatus = summarizeVerificationStatus(snapshot.verification);
+    const verificationAvailable = Boolean(snapshot.verification);
+    const verificationMs = Date.now() - verificationStartedAtMs;
+
+    const latest: DagLatestRunSummary = {
+      runId: snapshot.runId,
+      status: normalizePublicDagRunStatus(snapshot.summary.status ?? snapshot.status),
+      nodeCount,
+      durationMs:
+        typeof snapshot.summary.durationMs === 'number' && snapshot.summary.durationMs > 0
+          ? snapshot.summary.durationMs
+          : typeof snapshot.metrics.wallClockDurationMs === 'number' && snapshot.metrics.wallClockDurationMs > 0
+            ? snapshot.metrics.wallClockDurationMs
+            : null,
+      timings: {
+        lookupMs: diagnostics.totalMs,
+        nodesMs,
+        eventsMs,
+        metricsMs,
+        verificationMs,
+        totalMs: Date.now() - startedAtMs,
+      },
+      topLevelMetrics: {
+        eventCount,
+        completedNodes,
+        failedNodes,
+        verificationStatus,
+      },
+      available: {
+        nodes: true,
+        events: true,
+        metrics: metricsAvailable,
+        verification: verificationAvailable,
+        fullTrace: true,
+      },
+    };
+
+    return {
+      run: cloneDagRunSummary(snapshot.summary),
+      latest,
+      diagnostics,
+    };
+  }
+
+  async getLatestRunSummary(sessionId?: string): Promise<DagLatestRunSummary | null> {
+    const latestRunSummary = await this.inspectLatestRunSummary(sessionId);
+    return latestRunSummary ? latestRunSummary.latest : null;
   }
 
   private buildTraceFromSnapshot(

@@ -8,7 +8,7 @@ export interface WorkerContext {
     ) => Promise<{ rows?: Array<Record<string, unknown>> }>;
   };
   ai: {
-    ask: (prompt: string) => Promise<string>;
+    query: (prompt: string) => Promise<string>;
   };
   mcp: {
     invokeTool: (

@@ -85,7 +85,7 @@ async function executeModelRoute(
       error: message
     });
 
-    const mock = generateMockResponse(prompt, 'ask');
+    const mock = generateMockResponse(prompt, 'query');
     return {
       route: route.name,
       input: prompt,
@@ -127,4 +127,3 @@ export async function executeRoute(route: RouteSelection, input: DecideInput): P
       };
   }
 }
-

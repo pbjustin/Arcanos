@@ -24,7 +24,7 @@ import { recordDagTraceTimeout } from '@platform/observability/appMetrics.js';
 const router = express.Router();
 const DEFAULT_GPT_ROUTE_HARD_TIMEOUT_MS = 12_000;
 const MIN_GPT_ROUTE_HARD_TIMEOUT_MS = 10_000;
-const MAX_GPT_ROUTE_HARD_TIMEOUT_MS = 15_000;
+const MAX_GPT_ROUTE_HARD_TIMEOUT_MS = 60_000;
 
 function resolveGptRouteHardTimeoutMs(): number {
   const configuredTimeoutMs = Number.parseInt(process.env.GPT_ROUTE_HARD_TIMEOUT_MS ?? '', 10);
@@ -379,7 +379,7 @@ router.post("/:gptId", async (req, res, next) => {
         return res.status(504).json({
           ok: false,
           error: {
-            code: 'REQUEST_TIMEOUT',
+            code: 'MODULE_TIMEOUT',
             message: timeoutMessage
           },
           _route: {

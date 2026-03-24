@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/nouns/remote-source.schema.json",
+  "title": "RemoteSource",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "git",
+        "railway"
+      ]
+    },
+    "provider": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "workspaceRoot": {
+      "type": "string"
+    },
+    "railwayProjectId": {
+      "type": "string"
+    },
+    "railwayEnvironmentId": {
+      "type": "string"
+    },
+    "railwayServiceId": {
+      "type": "string"
+    },
+    "railwayServiceName": {
+      "type": "string"
+    }
+  }
+}

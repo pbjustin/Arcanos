@@ -6,7 +6,7 @@ export const schedule = '0 */6 * * *';
 
 async function requestStatusSummary(context: WorkerContext) {
   try {
-    const response = await context.ai.ask(
+    const response = await context.ai.query(
       'Provide a single-sentence status summary for the ARCANOS background services.'
     );
     return response;

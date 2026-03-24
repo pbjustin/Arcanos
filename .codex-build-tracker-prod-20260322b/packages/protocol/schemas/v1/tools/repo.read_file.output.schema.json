@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/repo.read_file.output.schema.json",
+  "title": "repo.read_file output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rootPath",
+    "path",
+    "content",
+    "encoding",
+    "truncated",
+    "startLine",
+    "endLine",
+    "totalLines",
+    "bytes"
+  ],
+  "properties": {
+    "rootPath": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "content": {
+      "type": "string"
+    },
+    "encoding": {
+      "type": "string"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "startLine": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "endLine": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "totalLines": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -468,7 +468,7 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
-  it("normalizes legacy 'ask' actions onto the gaming module query action after gameplay gating", async () => {
+  it("rejects legacy 'ask' actions after gameplay gating", async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
@@ -481,15 +481,17 @@ describe('routeGptRequest gaming routing', () => {
       requestId: 'req-gaming-legacy-ask-1',
     });
 
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
-      prompt: 'Give me SWTOR gearing help.'
-    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
     expect(envelope).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
+        error: expect.objectContaining({
+          code: 'BAD_REQUEST',
+          message: "Legacy action 'ask' is not supported; use 'query'.",
+        }),
         _route: expect.objectContaining({
           module: 'ARCANOS:GAMING',
-          action: 'query',
+          action: 'ask',
           route: 'gaming',
         }),
       })

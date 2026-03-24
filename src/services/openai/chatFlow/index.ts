@@ -89,7 +89,7 @@ export async function callOpenAI(
 
   // No client/adapter → deterministic mock path
   if (!adapter) {
-    const mock = generateMockResponse(prompt, 'ask');
+    const mock = generateMockResponse(prompt, 'query');
     traceOpenAIMock(model, options.metadata?.route, 'client_unavailable');
 
     const mockResult = mock.result ?? '';

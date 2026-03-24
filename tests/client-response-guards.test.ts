@@ -8,38 +8,35 @@ import {
 } from '../src/shared/http/clientResponseGuards.js';
 
 describe('client response guards', () => {
-  it('reduces oversized MCP health results to a compact public shape', () => {
+  it('passes raw MCP dispatcher output through without reshaping it', () => {
     const rawResult = {
       handledBy: 'mcp-dispatcher',
       mcp: {
         action: 'invoke',
-        toolName: 'ops.health_report',
+        toolName: 'dag.run.latest',
         dispatchMode: 'automatic',
-        reason: 'prompt_requests_ops_health',
-        result: {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                status: 'ok',
-                summary: 'Heap stable',
-                raw: { heapUsed: 12345678 },
-              }),
-            },
-          ],
-          structuredContent: {
-            status: 'ok',
-            summary: 'Heap stable',
-            raw: {
-              heapUsed: 12345678,
-              rss: 98765432,
-            },
-            components: {
-              workers: {
-                healthy: true,
-                files: new Array(50).fill('worker.js'),
-              },
-            },
+        reason: 'prompt_requests_latest_dag_run',
+        output: {
+          __debug: 'NEW_DAG_LOGIC_ACTIVE',
+          found: true,
+          runId: 'dagrun_latest_1',
+          status: 'complete',
+          nodeCount: 4,
+          timings: {
+            lookupMs: 5,
+            totalMs: 9,
+          },
+          topLevelMetrics: {
+            eventCount: 8,
+            completedNodes: 4,
+            failedNodes: 0,
+          },
+          available: {
+            nodes: true,
+            events: true,
+            metrics: true,
+            verification: true,
+            fullTrace: true,
           },
         },
       },
@@ -53,17 +50,14 @@ describe('client response guards', () => {
       handledBy: 'mcp-dispatcher',
       mcp: {
         action: 'invoke',
-        toolName: 'ops.health_report',
+        toolName: 'dag.run.latest',
         dispatchMode: 'automatic',
-        reason: 'prompt_requests_ops_health',
-        output: {
-          status: 'ok',
-          summary: 'Heap stable',
-        },
+        reason: 'prompt_requests_latest_dag_run',
+        output: rawResult.mcp.output,
       },
     });
-    expect(output.raw).toBeUndefined();
-    expect(measureJsonBytes(shaped)).toBeLessThan(1024);
+    expect(output.__debug).toBe('NEW_DAG_LOGIC_ACTIVE');
+    expect(output.summary).toBeUndefined();
   });
 
   it('strips internal Trinity fields from client-visible results', () => {

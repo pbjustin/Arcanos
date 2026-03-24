@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/repo.getStatus.output.schema.json",
+  "title": "repo.getStatus output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rootPath",
+    "clean",
+    "changes"
+  ],
+  "properties": {
+    "rootPath": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "head": {
+      "type": "string"
+    },
+    "clean": {
+      "type": "boolean"
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "indexStatus",
+          "workTreeStatus"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "indexStatus": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1
+          },
+          "workTreeStatus": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1
+          },
+          "originalPath": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

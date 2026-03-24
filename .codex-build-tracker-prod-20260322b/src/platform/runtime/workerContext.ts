@@ -1,0 +1,110 @@
+/**
+ * Worker Context Factory
+ * Provides context object for workers with db, ai, and logging capabilities
+ */
+
+import { query as dbQuery, logExecution } from "@core/db/index.js";
+import { generateMockResponse } from "@services/openai.js";
+import type { QueryResult } from 'pg';
+import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { runWorkerTrinityPrompt } from '@workers/trinityWorkerPipeline.js';
+import {
+  invokeArcanosMcpTool,
+  listArcanosMcpTools,
+  type ArcanosMcpToolCallResult,
+  type ArcanosMcpToolListResult
+} from '@services/arcanosMcp.js';
+
+export interface WorkerContext {
+  log: (message: string) => Promise<void>;
+  error: (message: string, ...args: unknown[]) => Promise<void>;
+  db: {
+    query: (text: string, params?: unknown[]) => Promise<QueryResult<Record<string, unknown>>>;
+  };
+  ai: {
+    ask: (prompt: string) => Promise<string>;
+  };
+  mcp: {
+    invokeTool: (toolName: string, toolArguments?: Record<string, unknown>) => Promise<ArcanosMcpToolCallResult>;
+    listTools: () => Promise<ArcanosMcpToolListResult>;
+  };
+}
+
+/**
+ * Create a context object for a worker
+ */
+export function createWorkerContext(workerId: string): WorkerContext {
+  return {
+    log: async (message: string) => {
+      console.log(`[${workerId}] ${message}`);
+      try {
+        await logExecution(workerId, 'info', message);
+      } catch (error: unknown) {
+        //audit Assumption: logging failures should not break worker flow
+        void error;
+      }
+    },
+
+    error: async (message: string, ...args: unknown[]) => {
+      const fullMessage = args.length > 0 ? `${message} ${args.join(' ')}` : message;
+      console.error(`[${workerId}] ERROR: ${fullMessage}`);
+      try {
+        await logExecution(workerId, 'error', fullMessage);
+      } catch (error: unknown) {
+        //audit Assumption: error logging failures should not break worker flow
+        void error;
+      }
+    },
+
+    db: {
+      query: async (text: string, params: unknown[] = []) => {
+        try {
+          //audit Assumption: dbQuery returns QueryResult; Handling: pass through
+          const result = await dbQuery(text, params);
+          return result;
+        } catch (error) {
+          throw error;
+        }
+      }
+    },
+
+    ai: {
+      ask: async (prompt: string) => {
+        try {
+          const { client } = getOpenAIClientOrAdapter();
+          if (!client) {
+            // Return mock response when API key not available
+            const mockResponse = generateMockResponse(prompt, 'ask');
+            return mockResponse.result || 'Hello from the AI mock system!';
+          }
+
+          const result = await runWorkerTrinityPrompt(client, {
+            prompt,
+            sourceEndpoint: `worker:${workerId}`
+          });
+          return result.result;
+        } catch (error: unknown) {
+          //audit Assumption: AI failures should propagate with safe message
+          throw new Error(`AI request failed: ${resolveErrorMessage(error)}`);
+        }
+      }
+    },
+
+    mcp: {
+      invokeTool: async (toolName: string, toolArguments: Record<string, unknown> = {}) => {
+        return invokeArcanosMcpTool({
+          toolName,
+          toolArguments,
+          sessionId: `worker:${workerId}`
+        });
+      },
+
+      listTools: async () => {
+        return listArcanosMcpTools({
+          sessionId: `worker:${workerId}`
+        });
+      }
+    }
+  };
+}

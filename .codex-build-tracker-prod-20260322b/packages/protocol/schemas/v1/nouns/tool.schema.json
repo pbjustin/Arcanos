@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/nouns/tool.schema.json",
+  "title": "ToolDefinition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "description",
+    "inputSchemaId",
+    "outputSchemaId",
+    "approvalRequired",
+    "allowedClients",
+    "scopes",
+    "requiredCapabilities",
+    "preferredEnvironmentType"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "inputSchemaId": {
+      "type": "string"
+    },
+    "outputSchemaId": {
+      "type": "string"
+    },
+    "approvalRequired": {
+      "type": "boolean"
+    },
+    "allowedClients": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "requiredCapabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "preferredEnvironmentType": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/environment.schema.json#/properties/type"
+    }
+  }
+}

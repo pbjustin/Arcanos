@@ -23,7 +23,7 @@ export interface WorkerContext {
     query: (text: string, params?: unknown[]) => Promise<QueryResult<Record<string, unknown>>>;
   };
   ai: {
-    ask: (prompt: string) => Promise<string>;
+    query: (prompt: string) => Promise<string>;
   };
   mcp: {
     invokeTool: (toolName: string, toolArguments?: Record<string, unknown>) => Promise<ArcanosMcpToolCallResult>;
@@ -70,18 +70,19 @@ export function createWorkerContext(workerId: string): WorkerContext {
     },
 
     ai: {
-      ask: async (prompt: string) => {
+      query: async (prompt: string) => {
         try {
+          console.log(`[trinity-exec] workerId=${workerId} action=query handler=worker:${workerId}.query path=worker:${workerId}`);
           const { client } = getOpenAIClientOrAdapter();
           if (!client) {
             // Return mock response when API key not available
-            const mockResponse = generateMockResponse(prompt, 'ask');
+            const mockResponse = generateMockResponse(prompt, 'query');
             return mockResponse.result || 'Hello from the AI mock system!';
           }
 
           const result = await runWorkerTrinityPrompt(client, {
             prompt,
-            sourceEndpoint: `worker:${workerId}`
+            sourceEndpoint: `worker:${workerId}.query`
           });
           return result.result;
         } catch (error: unknown) {

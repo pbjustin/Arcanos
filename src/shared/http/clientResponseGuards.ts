@@ -135,75 +135,6 @@ function pickTrinitySummary(value: Record<string, unknown>): Record<string, unkn
   };
 }
 
-function pickHealthSummary(value: Record<string, unknown>): Record<string, unknown> | null {
-  const status = readString(value.status);
-  const summary = readString(value.summary);
-
-  if (!status && !summary) {
-    return null;
-  }
-
-  return {
-    ...(status ? { status } : {}),
-    ...(summary ? { summary } : {}),
-    ...(readString(value.timestamp) ? { timestamp: readString(value.timestamp) } : {}),
-  };
-}
-
-function pickModulesSummary(value: Record<string, unknown>): Record<string, unknown> | null {
-  const rawModules = Array.isArray(value.value)
-    ? value.value
-    : Array.isArray(value.modules)
-      ? value.modules
-      : null;
-
-  if (!rawModules) {
-    return null;
-  }
-
-  const modules = rawModules
-    .filter(isRecord)
-    .slice(0, 16)
-    .map((entry) => {
-      const definition = isRecord(entry.definition) ? entry.definition : null;
-      return {
-        ...(readString(entry.route) ? { route: readString(entry.route) } : {}),
-        ...(definition && readString(definition.name) ? { name: readString(definition.name) } : {}),
-        ...(definition && readString(definition.description)
-          ? { description: truncateText(readString(definition.description) as string, 240) }
-          : {}),
-        ...(definition && readString(definition.defaultAction)
-          ? { defaultAction: readString(definition.defaultAction) }
-          : {}),
-        ...(definition && readStringArray(definition.gptIds, 6)
-          ? { gptIds: readStringArray(definition.gptIds, 6) }
-          : {}),
-      };
-    });
-
-  return {
-    total: rawModules.length,
-    modules,
-  };
-}
-
-function extractMcpText(value: Record<string, unknown>): string | null {
-  if (!Array.isArray(value.content)) {
-    return null;
-  }
-
-  const parts = value.content
-    .filter(isRecord)
-    .map((item) => readString(item.text))
-    .filter((item): item is string => typeof item === 'string');
-
-  if (parts.length === 0) {
-    return null;
-  }
-
-  return parts.join('\n').trim();
-}
-
 function pruneGenericValue(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') {
     return truncateText(value, STRING_PREVIEW_MAX_BYTES);
@@ -244,46 +175,6 @@ function pruneGenericValue(value: unknown, depth = 0): unknown {
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
-function shapeMcpToolOutput(toolName: string | undefined, rawResult: unknown): unknown {
-  if (!isRecord(rawResult)) {
-    return rawResult;
-  }
-
-  const structured = isRecord(rawResult.structuredContent) ? rawResult.structuredContent : null;
-
-  if (structured) {
-    const trinitySummary = pickTrinitySummary(structured);
-    if (trinitySummary) {
-      return trinitySummary;
-    }
-
-    const healthSummary = pickHealthSummary(structured);
-    if (healthSummary) {
-      return healthSummary;
-    }
-
-    if (toolName === 'modules.list') {
-      const modulesSummary = pickModulesSummary(structured);
-      if (modulesSummary) {
-        return modulesSummary;
-      }
-    }
-
-    const genericStructured = pruneGenericValue(structured);
-    if (genericStructured !== undefined) {
-      return genericStructured;
-    }
-  }
-
-  const text = extractMcpText(rawResult);
-  if (text) {
-    return { text: truncateText(text, STRING_PREVIEW_MAX_BYTES) };
-  }
-
-  const genericRaw = pruneGenericValue(rawResult);
-  return genericRaw ?? { ok: true };
-}
-
 function shapeMcpDispatchResult(value: Record<string, unknown>): Record<string, unknown> | null {
   if (value.handledBy !== 'mcp-dispatcher' || !isRecord(value.mcp)) {
     return null;
@@ -291,6 +182,9 @@ function shapeMcpDispatchResult(value: Record<string, unknown>): Record<string, 
 
   const mcpAction = readString(value.mcp.action) ?? 'invoke';
   const toolName = readString(value.mcp.toolName);
+  const rawOutput = Object.prototype.hasOwnProperty.call(value.mcp, 'output')
+    ? value.mcp.output
+    : undefined;
 
   return {
     handledBy: 'mcp-dispatcher',
@@ -299,7 +193,7 @@ function shapeMcpDispatchResult(value: Record<string, unknown>): Record<string, 
       ...(toolName ? { toolName } : {}),
       ...(readString(value.mcp.dispatchMode) ? { dispatchMode: readString(value.mcp.dispatchMode) } : {}),
       ...(readString(value.mcp.reason) ? { reason: readString(value.mcp.reason) } : {}),
-      output: shapeMcpToolOutput(toolName, value.mcp.result),
+      ...(rawOutput !== undefined ? { output: rawOutput } : {}),
     },
   };
 }

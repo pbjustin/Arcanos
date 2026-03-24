@@ -32,6 +32,7 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   model?: string;
   max_completion_tokens?: number | null;
   signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
@@ -98,10 +99,16 @@ const executeChatCompletionRequest = async (
 
   const requestSignal = payload.signal ?? getRequestAbortSignal();
   const remainingRequestMs = getRequestRemainingMs();
+  const configuredTimeoutMs =
+    typeof payload.timeoutMs === 'number' &&
+    Number.isFinite(payload.timeoutMs) &&
+    payload.timeoutMs > 0
+      ? Math.trunc(payload.timeoutMs)
+      : DEFAULT_CHAT_COMPLETION_TIMEOUT_MS;
   const requestTimeoutMs =
     remainingRequestMs === null
-      ? DEFAULT_CHAT_COMPLETION_TIMEOUT_MS
-      : Math.max(1, Math.min(DEFAULT_CHAT_COMPLETION_TIMEOUT_MS, remainingRequestMs));
+      ? configuredTimeoutMs
+      : Math.max(1, Math.min(configuredTimeoutMs, remainingRequestMs));
   const requestScope = createLinkedAbortController({
     timeoutMs: requestTimeoutMs,
     parentSignal: requestSignal,

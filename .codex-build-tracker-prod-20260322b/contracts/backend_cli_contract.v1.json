@@ -1,0 +1,64 @@
+{
+  "name": "backend-cli-contract",
+  "contractVersion": "1.0.0",
+  "schemaVersion": 1,
+  "description": "Versioned interface between TypeScript backend routes and Python daemon backend client.",
+  "endpoints": {
+    "/ask": {
+      "method": "POST",
+      "tsRouteFile": "src/routes/ask.ts",
+      "pythonClientMethods": [
+        "request_ask_with_domain",
+        "request_chat_completion",
+        "request_system_state"
+      ],
+      "requestFields": [
+        "prompt",
+        "message",
+        "userInput",
+        "content",
+        "text",
+        "query"
+      ]
+    },
+    "/api/vision": {
+      "method": "POST",
+      "tsRouteFile": "src/routes/api-vision.ts",
+      "pythonClientMethods": [
+        "request_vision_analysis"
+      ],
+      "requestFields": [
+        "imageBase64",
+        "prompt",
+        "temperature",
+        "model",
+        "maxTokens"
+      ]
+    },
+    "/api/transcribe": {
+      "method": "POST",
+      "tsRouteFile": "src/routes/api-transcribe.ts",
+      "pythonClientMethods": [
+        "request_transcription"
+      ],
+      "requestFields": [
+        "audioBase64",
+        "filename",
+        "model",
+        "language"
+      ]
+    },
+    "/api/update": {
+      "method": "POST",
+      "tsRouteFile": "src/routes/api-update.ts",
+      "pythonClientMethods": [
+        "submit_update_event"
+      ],
+      "requestFields": [
+        "updateType",
+        "data"
+      ]
+    }
+  }
+}
+

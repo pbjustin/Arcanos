@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/tools/repo.getLog.output.schema.json",
+  "title": "repo.getLog output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rootPath",
+    "offset",
+    "limit",
+    "commits",
+    "truncated"
+  ],
+  "properties": {
+    "rootPath": {
+      "type": "string"
+    },
+    "head": {
+      "type": "string"
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "nextOffset": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "commits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hash",
+          "shortHash",
+          "authorName",
+          "authorEmail",
+          "authoredAt",
+          "subject"
+        ],
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "shortHash": {
+            "type": "string"
+          },
+          "authorName": {
+            "type": "string"
+          },
+          "authorEmail": {
+            "type": "string"
+          },
+          "authoredAt": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  }
+}

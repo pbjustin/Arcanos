@@ -4,6 +4,7 @@ const mockGetFeatureFlags = jest.fn();
 const mockGetExecutionLimits = jest.fn();
 const mockCreateRun = jest.fn();
 const mockInspectLatestRun = jest.fn();
+const mockInspectLatestRunSummary = jest.fn();
 const mockInspectRunTrace = jest.fn();
 const mockGetRun = jest.fn();
 const mockWaitForRunUpdate = jest.fn();
@@ -22,6 +23,7 @@ jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
     getExecutionLimits: mockGetExecutionLimits,
     createRun: mockCreateRun,
     inspectLatestRun: mockInspectLatestRun,
+    inspectLatestRunSummary: mockInspectLatestRunSummary,
     inspectRunTrace: mockInspectRunTrace,
     getRun: mockGetRun,
     waitForRunUpdate: mockWaitForRunUpdate,
@@ -219,10 +221,37 @@ describe('registerDagMcpTools', () => {
 
   it('returns the latest DAG run summary through the inspection service', async () => {
     const { server, tools } = buildFakeServer();
-    mockInspectLatestRun.mockResolvedValue({
+    mockInspectLatestRunSummary.mockResolvedValue({
       run: {
         runId: 'dagrun_latest_1',
         status: 'complete',
+      },
+      latest: {
+        runId: 'dagrun_latest_1',
+        status: 'complete',
+        nodeCount: 4,
+        durationMs: 123,
+        timings: {
+          lookupMs: 5,
+          nodesMs: 1,
+          eventsMs: 1,
+          metricsMs: 1,
+          verificationMs: 1,
+          totalMs: 9,
+        },
+        topLevelMetrics: {
+          eventCount: 8,
+          completedNodes: 4,
+          failedNodes: 0,
+          verificationStatus: 'passed',
+        },
+        available: {
+          nodes: true,
+          events: true,
+          metrics: true,
+          verification: true,
+          fullTrace: true,
+        },
       },
       diagnostics: {
         snapshotSource: 'persisted',
@@ -235,14 +264,18 @@ describe('registerDagMcpTools', () => {
     registerDagMcpTools(server as any, buildContext());
     const output = await tools.get('dag.run.latest')!.handler({});
 
-    expect(mockInspectLatestRun).toHaveBeenCalledWith('mcp-session-1');
+    expect(mockInspectLatestRunSummary).toHaveBeenCalledWith('mcp-session-1');
     expect(output).toEqual(
       expect.objectContaining({
         structuredContent: expect.objectContaining({
-          run: expect.objectContaining({ runId: 'dagrun_latest_1' }),
+          __debug: 'NEW_DAG_LOGIC_ACTIVE',
+          found: true,
+          runId: 'dagrun_latest_1',
+          nodeCount: 4,
         }),
       })
     );
+    expect((output as any).structuredContent.summary).toBeUndefined();
   });
 
   it('returns one bounded full trace for an explicit run id', async () => {

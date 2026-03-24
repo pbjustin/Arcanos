@@ -64,7 +64,8 @@ export async function runStructuredReasoning(
   client: OpenAI,
   model: string,
   prompt: string,
-  budget: RuntimeBudget
+  budget: RuntimeBudget,
+  timeoutMs?: number
 ): Promise<TrinityStructuredReasoning> {
   return runStructuredReasoningGeneric(client, {
     model,
@@ -72,6 +73,7 @@ export async function runStructuredReasoning(
     budget,
     schema: { type: 'json_schema', ...TRINITY_STRUCTURED_REASONING_SCHEMA } as any,
     validate: isStructuredReasoningPayload,
-    extractRefusal: extractRefusalReason as any
+    extractRefusal: extractRefusalReason as any,
+    ...(typeof timeoutMs === 'number' ? { timeoutMs } : {})
   });
 }

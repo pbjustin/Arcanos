@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS saves (
+  id SERIAL PRIMARY KEY,
+  module TEXT NOT NULL,
+  data JSONB NOT NULL,
+  timestamp BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id SERIAL PRIMARY KEY,
+  event TEXT NOT NULL,
+  payload JSONB,
+  timestamp BIGINT NOT NULL
+);

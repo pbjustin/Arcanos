@@ -1,0 +1,196 @@
+/**
+ * Agent Registry — In-memory cache + Prisma persistence
+ *
+ * Manages zero-trust agent registration, capability tracking, and heartbeat.
+ */
+
+import { PrismaClient } from '@prisma/client';
+import type { AgentRecord, AgentRegistration } from '@shared/types/actionPlan.js';
+import { aiLogger } from '@platform/logging/structuredLogging.js';
+
+let prisma: PrismaClient | null = null;
+
+function getPrisma(): PrismaClient {
+  if (!prisma) {
+    prisma = new PrismaClient();
+  }
+  return prisma;
+}
+
+// --- In-memory cache ---
+const agentCache = new Map<string, AgentRecord>();
+
+// --- Store Operations ---
+
+export async function registerAgent(input: AgentRegistration): Promise<AgentRecord> {
+  const db = getPrisma();
+
+  const agent = await db.agent.create({
+    data: {
+      role: input.role,
+      capabilities: input.capabilities,
+      publicKey: input.public_key ?? null,
+      status: 'idle',
+      lastHeartbeat: new Date(),
+    },
+  });
+
+  const record = agent as unknown as AgentRecord;
+  agentCache.set(record.id, record);
+
+  aiLogger.info('Agent registered', {
+    module: 'agentRegistry',
+    agentId: record.id,
+    role: record.role,
+    capabilities: record.capabilities,
+  });
+
+  return record;
+}
+
+export async function getAgent(agentId: string): Promise<AgentRecord | null> {
+  const cached = agentCache.get(agentId);
+  if (cached) return cached;
+
+  try {
+    const db = getPrisma();
+    const agent = await db.agent.findUnique({ where: { id: agentId } });
+    if (!agent) return null;
+
+    const record = agent as unknown as AgentRecord;
+    agentCache.set(agentId, record);
+    return record;
+  } catch (error) {
+    //audit Assumption: DB can be temporarily unavailable; risk: capability checks fail hard; invariant: cache remains source of truth fallback; handling: log warning and return null.
+    aiLogger.warn('Failed to fetch agent from DB; falling back to cache', {
+      module: 'agentRegistry',
+      agentId,
+      error: String(error)
+    });
+    return null;
+  }
+}
+
+export async function updateHeartbeat(agentId: string): Promise<AgentRecord | null> {
+  const db = getPrisma();
+
+  try {
+    const agent = await db.agent.update({
+      where: { id: agentId },
+      data: { lastHeartbeat: new Date(), status: 'idle' },
+    });
+
+    const record = agent as unknown as AgentRecord;
+    agentCache.set(agentId, record);
+    return record;
+  } catch (error) {
+    aiLogger.error('Failed to update heartbeat', {
+      module: 'agentRegistry',
+      agentId,
+      error: String(error)
+    });
+    return null;
+  }
+}
+
+export async function updateAgentStatus(agentId: string, status: string): Promise<AgentRecord | null> {
+  const db = getPrisma();
+
+  try {
+    const agent = await db.agent.update({
+      where: { id: agentId },
+      data: { status },
+    });
+
+    const record = agent as unknown as AgentRecord;
+    agentCache.set(agentId, record);
+    return record;
+  } catch (error) {
+    aiLogger.error('Failed to update agent status', {
+      module: 'agentRegistry',
+      agentId,
+      status,
+      error: String(error)
+    });
+    return null;
+  }
+}
+
+export async function listAgents(): Promise<AgentRecord[]> {
+  try {
+    const db = getPrisma();
+    const agents = await db.agent.findMany({ orderBy: { createdAt: 'desc' } });
+
+    for (const agent of agents) {
+      agentCache.set(agent.id, agent as unknown as AgentRecord);
+    }
+
+    return agents as unknown as AgentRecord[];
+  } catch (error) {
+    //audit Assumption: listing should remain available during DB outages; risk: stale/incomplete view; invariant: response stays shape-compatible; handling: return cached agents.
+    aiLogger.warn('Failed to list agents from DB; returning cached agents', {
+      module: 'agentRegistry',
+      error: String(error),
+      cacheSize: agentCache.size
+    });
+    return Array.from(agentCache.values());
+  }
+}
+
+/**
+ * Validate that an agent has a specific capability.
+ */
+export async function validateCapability(agentId: string, capability: string): Promise<boolean> {
+  const agent = await getAgent(agentId);
+  if (!agent) return false;
+  return agent.capabilities.includes(capability);
+}
+
+/**
+ * Warm the agent cache from Prisma on startup.
+ */
+
+export async function grantCapabilities(agentId: string, capabilities: string[]): Promise<AgentRecord | null> {
+  const db = getPrisma();
+  try {
+    const current = await db.agent.findUnique({ where: { id: agentId } });
+    if (!current) return null;
+    const merged = Array.from(new Set([...(current.capabilities || []), ...capabilities]));
+    const updated = await db.agent.update({
+      where: { id: agentId },
+      data: { capabilities: merged }
+    });
+    const record = updated as unknown as AgentRecord;
+    agentCache.set(record.id, record);
+    aiLogger.info('Capabilities granted', { module: 'agentRegistry', agentId, capabilities });
+    return record;
+  } catch (error) {
+    aiLogger.error('Failed to grant capabilities', {
+      module: 'agentRegistry',
+      agentId,
+      capabilities,
+      error: String(error)
+    });
+    return null;
+  }
+}
+
+export async function warmAgentCache(): Promise<void> {
+  try {
+    const db = getPrisma();
+    const agents = await db.agent.findMany();
+
+    for (const agent of agents) {
+      agentCache.set(agent.id, agent as unknown as AgentRecord);
+    }
+
+    aiLogger.info('Agent cache warmed', {
+      module: 'agentRegistry',
+      count: agents.length,
+    });
+  } catch {
+    aiLogger.warn('Failed to warm Agent cache (DB may not be available)', {
+      module: 'agentRegistry',
+    });
+  }
+}

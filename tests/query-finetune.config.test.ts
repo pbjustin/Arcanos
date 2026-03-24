@@ -51,6 +51,20 @@ describe('query finetune latency budget config', () => {
     );
   });
 
+  it('accepts larger bounded overrides up to the production ceiling', () => {
+    process.env[QUERY_FINETUNE_ATTEMPT_LATENCY_BUDGET_ENV_NAME] = '60000';
+
+    expect(resolveQueryFinetuneAttemptLatencyBudgetMs()).toBe(60_000);
+    expect(getQueryFinetuneAttemptLatencyBudgetDiagnostics()).toEqual(
+      expect.objectContaining({
+        configuredValue: '60000',
+        resolvedValueMs: 60_000,
+        source: 'environment',
+        usedFallbackDefault: false
+      })
+    );
+  });
+
   it('falls back to the default when the configured override is out of bounds', () => {
     process.env[QUERY_FINETUNE_ATTEMPT_LATENCY_BUDGET_ENV_NAME] = '999999';
 

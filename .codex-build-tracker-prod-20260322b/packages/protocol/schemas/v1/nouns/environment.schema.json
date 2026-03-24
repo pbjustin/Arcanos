@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/nouns/environment.schema.json",
+  "title": "Environment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "workspace",
+        "sandbox",
+        "host",
+        "remote"
+      ]
+    },
+    "id": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "shell": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "remoteSource": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/remote-source.schema.json"
+    }
+  }
+}

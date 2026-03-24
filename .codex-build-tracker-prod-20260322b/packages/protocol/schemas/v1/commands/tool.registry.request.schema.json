@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/tool.registry.request.schema.json",
+  "title": "tool.registry request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "preferredEnvironmentType": {
+      "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/environment.schema.json#/properties/type"
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    }
+  }
+}

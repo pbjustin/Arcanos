@@ -1,0 +1,84 @@
+import { CircuitBreaker, ExponentialBackoff } from "@platform/resilience/circuitBreaker.js";
+import { recordTraceEvent, markOperation } from "@platform/logging/telemetry.js";
+import { resolveErrorMessage } from "@core/lib/errors/index.js";
+
+export const RESILIENCE_CONSTANTS = {
+  DEFAULT_MAX_TOKENS: 1024,
+  RATE_LIMIT_JITTER_MAX_MS: 2000,
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5,
+  CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000,
+  CIRCUIT_BREAKER_MONITORING_PERIOD_MS: 60000,
+  BACKOFF_BASE_DELAY_MS: 1000,
+  BACKOFF_MAX_DELAY_MS: 30000,
+  BACKOFF_MULTIPLIER: 2,
+  BACKOFF_JITTER_MAX_MS: 500
+} as const;
+
+const circuitBreaker = new CircuitBreaker({
+  failureThreshold: RESILIENCE_CONSTANTS.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+  resetTimeoutMs: RESILIENCE_CONSTANTS.CIRCUIT_BREAKER_RESET_TIMEOUT_MS,
+  monitoringPeriodMs: RESILIENCE_CONSTANTS.CIRCUIT_BREAKER_MONITORING_PERIOD_MS
+});
+
+const backoffStrategy = new ExponentialBackoff(
+  RESILIENCE_CONSTANTS.BACKOFF_BASE_DELAY_MS,
+  RESILIENCE_CONSTANTS.BACKOFF_MAX_DELAY_MS,
+  RESILIENCE_CONSTANTS.BACKOFF_MULTIPLIER,
+  RESILIENCE_CONSTANTS.BACKOFF_JITTER_MAX_MS
+);
+
+export async function executeWithResilience<T>(operation: () => Promise<T>): Promise<T> {
+  recordTraceEvent('openai.resilience.execute', {
+    state: circuitBreaker.getState()
+  });
+
+  return circuitBreaker.execute(async () => {
+    try {
+      const result = await operation();
+      markOperation('openai.success');
+      recordTraceEvent('openai.resilience.success', {
+        state: circuitBreaker.getState()
+      });
+      return result;
+    } catch (error: unknown) {
+      markOperation('openai.failure');
+      recordTraceEvent('openai.resilience.failure', {
+        state: circuitBreaker.getState(),
+        error: resolveErrorMessage(error, 'unknown')
+      });
+      throw error;
+    }
+  });
+}
+
+export function calculateRetryDelay(attempt: number, error: unknown): number {
+  const delay = backoffStrategy.calculateDelay(attempt);
+  //audit Assumption: 429 indicates rate limiting; Handling: add jitter
+  if (getErrorStatus(error) === 429) {
+    const jitter = Math.random() * RESILIENCE_CONSTANTS.RATE_LIMIT_JITTER_MAX_MS;
+    return delay + jitter;
+  }
+  return delay;
+}
+
+export function getCircuitBreakerSnapshot() {
+  const metrics = circuitBreaker.getMetrics();
+  return {
+    ...metrics,
+    state: circuitBreaker.getState(),
+    constants: RESILIENCE_CONSTANTS
+  };
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  const status = (error as { status?: unknown }).status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+export function getCircuitBreakerState() {
+  return circuitBreaker.getState();
+}
+
