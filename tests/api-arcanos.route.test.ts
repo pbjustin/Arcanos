@@ -141,6 +141,10 @@ describe('api-arcanos route', () => {
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
     expect(response.body.result).toBe('Deployment state explained.');
+    expect(response.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
+    expect(response.headers['x-route-deprecated']).toBe('true');
+    expect(response.headers['x-ask-route-mode']).toBe('compat');
+    expect(response.headers.deprecation).toBe('true');
     expect(response.body.metadata.pipeline).toBe('trinity');
     expect(response.body.metadata.trinityVersion).toBe('1.0');
     expect(response.body.metadata.endpoint).toBe('api-arcanos.ask');

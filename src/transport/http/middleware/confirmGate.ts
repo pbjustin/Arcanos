@@ -217,6 +217,14 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   if (!manualConfirmation && !hasValidToken && !oneTimeTokenApproved && !automationBypassApproved && !trustedGptBypassApproved && !allowAllGpts) {
     const challenge = createConfirmationChallenge(req.method, req.path, gptId || null);
     const tokenStatus = providedToken ? 'invalid' : 'missing';
+    const canonicalRouteHeader = res.getHeader('x-canonical-route');
+    const routeDeprecatedHeader = res.getHeader('x-route-deprecated');
+    const routeModeHeader = res.getHeader('x-ask-route-mode');
+    const sunsetHeader = res.getHeader('Sunset');
+    const canonicalRoute = typeof canonicalRouteHeader === 'string' ? canonicalRouteHeader : undefined;
+    const routeDeprecated = routeDeprecatedHeader === 'true' || routeDeprecatedHeader === '1';
+    const routeMode = typeof routeModeHeader === 'string' ? routeModeHeader : undefined;
+    const sunsetAt = typeof sunsetHeader === 'string' ? sunsetHeader : undefined;
 
     res.setHeader('x-confirmation-status', 'pending');
     res.setHeader('x-confirmation-challenge', challenge.id);
@@ -245,6 +253,10 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
       gptId: gptId || null,
       confirmationRequired: true,
       confirmationStatus: 'pending',
+      ...(canonicalRoute ? { canonicalRoute } : {}),
+      ...(routeDeprecated ? { deprecated: true } : {}),
+      ...(routeMode ? { routeMode } : {}),
+      ...(sunsetAt ? { sunsetAt } : {}),
       confirmationChallenge: {
         id: challenge.id,
         issuedAt: new Date(challenge.issuedAt).toISOString(),
