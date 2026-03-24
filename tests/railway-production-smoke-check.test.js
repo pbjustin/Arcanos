@@ -97,7 +97,7 @@ describe('railway-production-smoke-check', () => {
       databaseService: '',
       redisService: '',
       appUrl: '',
-      healthPath: '/healthz',
+      healthPath: '/health',
       appLogLines: 300,
       workerLogLines: 300,
       databaseLogLines: 500,
@@ -184,7 +184,7 @@ describe('railway-production-smoke-check', () => {
 
     try {
       const result = await requestHealthCheck(
-        'https://arcanos-v2-arcanos-pr-1227.up.railway.app/healthz',
+        'https://arcanos-v2-arcanos-pr-1227.up.railway.app/health',
         {
           environment: 'Arcanos-pr-1227',
           appService: 'ARCANOS V2',
@@ -192,7 +192,7 @@ describe('railway-production-smoke-check', () => {
           databaseService: '',
           redisService: '',
           appUrl: '',
-          healthPath: '/healthz',
+          healthPath: '/health',
           appLogLines: 300,
           workerLogLines: 300,
           databaseLogLines: 500,
@@ -227,7 +227,7 @@ describe('railway-production-smoke-check', () => {
 
     try {
       const result = await requestHealthCheck(
-        'https://acranos-production.up.railway.app/healthz',
+        'https://acranos-production.up.railway.app/health',
         {
           environment: 'production',
           appService: 'ARCANOS V2',
@@ -235,7 +235,7 @@ describe('railway-production-smoke-check', () => {
           databaseService: '',
           redisService: '',
           appUrl: '',
-          healthPath: '/healthz',
+          healthPath: '/health',
           appLogLines: 300,
           workerLogLines: 300,
           databaseLogLines: 500,
@@ -292,7 +292,7 @@ describe('railway-production-smoke-check', () => {
         JSON.stringify({
           level: 'info',
           event: 'request.completed',
-          path: '/healthz',
+          path: '/health',
           data: { statusCode: 200 },
           message: 'request completed'
         })

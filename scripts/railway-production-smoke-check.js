@@ -24,7 +24,7 @@ const DEFAULTS = Object.freeze({
   databaseService: '',
   redisService: '',
   appUrl: '',
-  healthPath: '/healthz',
+  healthPath: '/health',
   appLogLines: 300,
   workerLogLines: 300,
   databaseLogLines: 500,
@@ -437,7 +437,11 @@ export function evaluateAppLogEntries(entries) {
       errorMessages.push(message || `${event || 'event'} ${path || 'path'}`.trim());
     }
 
-    if (message.includes('ARCANOS:HEALTH') || (event === 'request.completed' && path === '/healthz' && statusCode === 200)) {
+    //audit assumption: recent successful probes may hit either /health or /healthz depending on deploy generation; failure risk: false-negative smoke checks during an intentional probe migration; expected invariant: a 200 on either canonical health path counts as a positive health signal; handling strategy: accept both paths.
+    if (
+      message.includes('ARCANOS:HEALTH')
+      || (event === 'request.completed' && (path === '/health' || path === '/healthz') && statusCode === 200)
+    ) {
       hasHealthSignal = true;
     }
 
