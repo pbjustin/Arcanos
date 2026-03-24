@@ -21,6 +21,9 @@ describe('directAnswerMode', () => {
     expect(
       resolveTrinityDirectAnswerPreference('Summarize the purpose of a database index in one paragraph.')
     ).toBe('simple_informational_prompt');
+    expect(
+      resolveTrinityDirectAnswerPreference('Describe a mutex in one sentence.')
+    ).toBe('simple_informational_prompt');
   });
 
   it('keeps complex implementation prompts on the full Trinity path', () => {

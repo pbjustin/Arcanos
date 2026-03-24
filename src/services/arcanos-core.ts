@@ -21,6 +21,8 @@ type ArcanosCoreQueryPayload = {
   maxWords?: number;
 };
 
+const DEFAULT_ARCANOS_CORE_STALL_GUARD_MS = 5_000;
+
 function extractPrompt(payload: ArcanosCoreQueryPayload): string {
   for (const candidate of [
     payload.prompt,
@@ -59,16 +61,14 @@ function resolveCoreHandlerTimeoutMs(): number {
   const normalizedConfiguredTimeoutMs =
     Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
       ? Math.trunc(configuredTimeoutMs)
-      : Number.MAX_SAFE_INTEGER;
+      : DEFAULT_ARCANOS_CORE_STALL_GUARD_MS;
   const remainingRequestMs = getRequestRemainingMs();
 
   if (remainingRequestMs === null) {
-    return normalizedConfiguredTimeoutMs === Number.MAX_SAFE_INTEGER ? 60_000 : normalizedConfiguredTimeoutMs;
+    return normalizedConfiguredTimeoutMs;
   }
 
-  return normalizedConfiguredTimeoutMs === Number.MAX_SAFE_INTEGER
-    ? remainingRequestMs
-    : Math.max(1, Math.min(normalizedConfiguredTimeoutMs, remainingRequestMs));
+  return Math.max(1, Math.min(normalizedConfiguredTimeoutMs, remainingRequestMs));
 }
 
 export const ArcanosCore: ModuleDef = {
@@ -116,6 +116,11 @@ export const ArcanosCore: ModuleDef = {
         sourceEndpoint: 'gpt.arcanos-core.query',
         promptLength: prompt.length,
         sessionId,
+        timeoutMs: handlerTimeoutMs
+      });
+      logger.info('[core] stall_guard.armed', {
+        module: 'ARCANOS:CORE',
+        sourceEndpoint: 'gpt.arcanos-core.query',
         timeoutMs: handlerTimeoutMs
       });
 
