@@ -73,6 +73,12 @@
       "@platform": [
         "src/platform/index.ts"
       ],
+      "@arcanos/protocol": [
+        "packages/protocol/dist/src/index.d.ts"
+      ],
+      "@arcanos/protocol/*": [
+        "packages/protocol/dist/src/*"
+      ],
       "@arcanos/openai": [
         "packages/arcanos-openai/dist/index.d.ts"
       ],
