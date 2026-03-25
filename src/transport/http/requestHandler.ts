@@ -52,6 +52,25 @@ const GENERIC_ABORT_ERROR_MARKERS = [
   'signal is aborted without reason'
 ];
 
+const TIMEOUT_PAYLOAD_BY_KIND = {
+  pipeline_timeout: {
+    error: 'AI pipeline timeout',
+    code: 'PIPELINE_TIMEOUT'
+  },
+  provider_timeout: {
+    error: 'AI provider timeout',
+    code: 'PROVIDER_TIMEOUT'
+  },
+  worker_timeout: {
+    error: 'AI worker timeout',
+    code: 'WORKER_TIMEOUT'
+  },
+  budget_abort: {
+    error: 'AI timeout/budget abort',
+    code: 'BUDGET_ABORT'
+  }
+} as const;
+
 /**
  * Extract input text from various possible field names in request body
  */
@@ -233,25 +252,7 @@ export function handleAIError(
 
   const budgetAbortKind = classifyBudgetAbortKind(err);
   if (budgetAbortKind) {
-    const timeoutPayloadByKind = {
-      pipeline_timeout: {
-        error: 'AI pipeline timeout',
-        code: 'PIPELINE_TIMEOUT'
-      },
-      provider_timeout: {
-        error: 'AI provider timeout',
-        code: 'PROVIDER_TIMEOUT'
-      },
-      worker_timeout: {
-        error: 'AI worker timeout',
-        code: 'WORKER_TIMEOUT'
-      },
-      budget_abort: {
-        error: 'AI timeout/budget abort',
-        code: 'BUDGET_ABORT'
-      }
-    } as const;
-    const timeoutPayload = timeoutPayloadByKind[budgetAbortKind];
+    const timeoutPayload = TIMEOUT_PAYLOAD_BY_KIND[budgetAbortKind];
     res.status(408).json({
       error: timeoutPayload.error,
       detail: errorMessage,
