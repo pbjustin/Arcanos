@@ -1485,6 +1485,13 @@ function maybeVerifyPendingAction(
   );
 
   if (verificationResult.outcome === 'improved') {
+    if (pending.action === 'activatePromptRouteMitigation:reduced_latency') {
+      recordCooldown(
+        runtime.actionCooldowns,
+        'activate_prompt_route_degraded_mode',
+        Math.max(resolveActionCooldownMs(), pending.verifyAfterMs)
+      );
+    }
     runtime.status.lastHealthyObservedAt = verificationResult.verifiedAt;
     return {
       verificationResult,

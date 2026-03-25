@@ -935,6 +935,30 @@ describe('selfHealingLoop', () => {
             p95LatencyMs: 1600
           }
         ]
+      }))
+      .mockReturnValueOnce(createRequestWindow({
+        requestCount: 16,
+        errorCount: 1,
+        clientErrorCount: 0,
+        serverErrorCount: 1,
+        errorRate: 0.063,
+        timeoutCount: 4,
+        timeoutRate: 0.25,
+        slowRequestCount: 8,
+        avgLatencyMs: 3016.313,
+        p95LatencyMs: 6021,
+        maxLatencyMs: 6021,
+        routes: [
+          {
+            route: '/api/openai/prompt',
+            requestCount: 12,
+            errorCount: 1,
+            timeoutCount: 4,
+            avgLatencyMs: 4020.917,
+            p95LatencyMs: 6021,
+            maxLatencyMs: 6021
+          }
+        ]
       }));
     getRequestWindowSinceMock.mockReturnValueOnce(createRequestWindow({
       requestCount: 5,
@@ -963,14 +987,21 @@ describe('selfHealingLoop', () => {
     await runSelfHealingLoop({ trigger: 'interval' });
     await jest.advanceTimersByTimeAsync(31000);
     const result = await runSelfHealingLoop({ trigger: 'interval' });
+    await jest.advanceTimersByTimeAsync(30000);
+    const followUpTick = await runSelfHealingLoop({ trigger: 'interval' });
 
     expect(rollbackPromptRouteMitigationMock).not.toHaveBeenCalled();
+    expect(activatePromptRouteDegradedModeMock).not.toHaveBeenCalled();
     expect(result.verificationResult).toEqual(expect.objectContaining({
       outcome: 'improved',
       action: 'activatePromptRouteMitigation:reduced_latency'
     }));
+    expect(followUpTick.action).toBeNull();
     expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
       activeMitigation: 'prompt:/api/openai/prompt:reduced_latency',
+      cooldowns: expect.objectContaining({
+        'action:activate_prompt_route_degraded_mode': expect.any(String)
+      }),
       lastVerificationResult: expect.objectContaining({
         outcome: 'improved'
       })
