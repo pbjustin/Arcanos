@@ -6,6 +6,17 @@ import { getConfig } from '@platform/runtime/unifiedConfig.js';
 export type TrinitySelfHealingStage = 'intake' | 'reasoning' | 'final';
 export type TrinitySelfHealingAction = 'enable_degraded_mode' | 'bypass_final_stage';
 
+export interface TrinitySelfHealingMitigationCommandResult {
+  applied: boolean;
+  rolledBack: boolean;
+  stage: TrinitySelfHealingStage;
+  action: TrinitySelfHealingAction | null;
+  reason: string;
+  activeAction: TrinitySelfHealingAction | null;
+  verified: boolean;
+  expiresAtMs: number | null;
+}
+
 type StageState = {
   observations: number[];
   attempts: number;
@@ -167,6 +178,120 @@ function nextActionForStage(stage: TrinitySelfHealingStage): TrinitySelfHealingA
     }
   }
   return null;
+}
+
+function buildMitigationCommandResult(
+  stage: TrinitySelfHealingStage,
+  reason: string,
+  params: {
+    applied?: boolean;
+    rolledBack?: boolean;
+    action?: TrinitySelfHealingAction | null;
+  } = {}
+): TrinitySelfHealingMitigationCommandResult {
+  const state = stageState[stage];
+  return {
+    applied: params.applied ?? false,
+    rolledBack: params.rolledBack ?? false,
+    stage,
+    action: params.action ?? state.activeAction,
+    reason,
+    activeAction: state.activeAction,
+    verified: state.verifiedAtMs !== null,
+    expiresAtMs: state.expiresAtMs
+  };
+}
+
+export function activateTrinitySelfHealingMitigation(params: {
+  stage: TrinitySelfHealingStage;
+  action: TrinitySelfHealingAction;
+  reason: string;
+}): TrinitySelfHealingMitigationCommandResult {
+  const cfg = getRuntimeConfig();
+  if (!cfg.enabled) {
+    return buildMitigationCommandResult(params.stage, 'disabled');
+  }
+
+  if (!ACTION_ORDER[params.stage].includes(params.action)) {
+    return buildMitigationCommandResult(params.stage, 'action_not_supported_for_stage', {
+      action: params.action
+    });
+  }
+
+  const nowMs = Date.now();
+  const state = stageState[params.stage];
+  expireActionIfNeeded(params.stage, nowMs);
+  state.observations = pruneWindow(state.observations, nowMs, cfg.windowMs);
+
+  if (state.activeAction === params.action) {
+    return buildMitigationCommandResult(params.stage, 'already_active', {
+      action: params.action
+    });
+  }
+
+  if (state.attempts >= cfg.maxAttempts) {
+    return buildMitigationCommandResult(params.stage, 'attempt_budget_exhausted', {
+      action: params.action
+    });
+  }
+
+  if (state.cooldownUntilMs !== null && state.cooldownUntilMs > nowMs) {
+    return buildMitigationCommandResult(params.stage, 'cooldown_active', {
+      action: params.action
+    });
+  }
+
+  if (state.failedActions.includes(params.action)) {
+    return buildMitigationCommandResult(params.stage, 'recently_failed', {
+      action: params.action
+    });
+  }
+
+  if (state.activeAction && state.activeAction !== params.action) {
+    rollbackAction(params.stage, nowMs, 'superseded_by_operator_loop');
+  }
+
+  const appliedAction = applyAction(params.stage, params.action, nowMs, params.reason);
+  return buildMitigationCommandResult(params.stage, 'applied', {
+    applied: true,
+    action: appliedAction
+  });
+}
+
+export function rollbackTrinitySelfHealingMitigation(params: {
+  stage: TrinitySelfHealingStage;
+  reason: string;
+  action?: TrinitySelfHealingAction | null;
+}): TrinitySelfHealingMitigationCommandResult {
+  const cfg = getRuntimeConfig();
+  if (!cfg.enabled) {
+    return buildMitigationCommandResult(params.stage, 'disabled', {
+      action: params.action ?? null
+    });
+  }
+
+  const nowMs = Date.now();
+  const state = stageState[params.stage];
+  expireActionIfNeeded(params.stage, nowMs);
+
+  if (!state.activeAction) {
+    return buildMitigationCommandResult(params.stage, 'no_active_action', {
+      action: params.action ?? null
+    });
+  }
+
+  if (params.action && state.activeAction !== params.action) {
+    return buildMitigationCommandResult(params.stage, 'active_action_mismatch', {
+      action: params.action
+    });
+  }
+
+  const previousAction = state.activeAction;
+  rollbackAction(params.stage, nowMs, params.reason);
+  return buildMitigationCommandResult(params.stage, 'rolled_back', {
+    rolledBack: true,
+    action: previousAction
+  });
 }
 
 export function recordTrinityStageFailure(params: {

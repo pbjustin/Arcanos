@@ -42,6 +42,42 @@ export interface DiagnosticsSnapshot {
   modules: Record<string, ModuleStatus>;
 }
 
+export interface RequestSample {
+  timestamp: string;
+  route: string;
+  statusCode: number;
+  latencyMs: number;
+  timedOut: boolean;
+}
+
+export interface RequestWindowRouteSnapshot {
+  route: string;
+  requestCount: number;
+  errorCount: number;
+  timeoutCount: number;
+  slowRequestCount: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  maxLatencyMs: number;
+}
+
+export interface RequestWindowSnapshot {
+  generatedAt: string;
+  windowMs: number;
+  requestCount: number;
+  errorCount: number;
+  clientErrorCount: number;
+  serverErrorCount: number;
+  errorRate: number;
+  timeoutCount: number;
+  timeoutRate: number;
+  slowRequestCount: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  maxLatencyMs: number;
+  routes: RequestWindowRouteSnapshot[];
+}
+
 interface RegistrySnapshot {
   registeredGpts: string[] | `DATA NOT EXPOSED: ${string}`;
   loadedModules: LoadedModule[] | null;
@@ -58,6 +94,9 @@ interface MetricsSnapshot {
 type RuntimeDiagnosticsRedisClient = ReturnType<typeof createClient>;
 
 const RECENT_LATENCY_LIMIT = Math.max(10, getEnvNumber('DIAGNOSTICS_RECENT_LATENCY_LIMIT', 50));
+const RECENT_REQUEST_LIMIT = Math.max(25, getEnvNumber('DIAGNOSTICS_RECENT_REQUEST_LIMIT', 250));
+const TIMEOUT_LATENCY_MS = Math.max(2_500, getEnvNumber('DIAGNOSTICS_TIMEOUT_LATENCY_MS', 5_000));
+const SLOW_REQUEST_LATENCY_MS = Math.max(1_000, getEnvNumber('DIAGNOSTICS_SLOW_REQUEST_LATENCY_MS', 2_500));
 const REDIS_SHARED_METRICS_ENABLED = getEnv('DIAGNOSTICS_SHARED_METRICS', 'true') !== 'false';
 
 const MODULE_PROBES: Record<string, { moduleNames?: string[]; routes?: string[] }> = {
@@ -104,10 +143,11 @@ class RuntimeDiagnosticsService {
   private errorsTotal = 0;
   private totalLatencyMs = 0;
   private recentLatencyMs: number[] = [];
+  private recentRequests: RequestSample[] = [];
   private readonly redisStore = new RuntimeDiagnosticsRedisStore();
   private activeRouteTableCache: string[] | null = null;
 
-  recordRequestCompletion(statusCode: number, latencyMs: number): void {
+  recordRequestCompletion(statusCode: number, latencyMs: number, route = 'unmatched'): void {
     this.requestsTotal += 1;
     this.totalLatencyMs += latencyMs;
 
@@ -120,7 +160,42 @@ class RuntimeDiagnosticsService {
       this.recentLatencyMs.splice(0, this.recentLatencyMs.length - RECENT_LATENCY_LIMIT);
     }
 
+    this.recentRequests.push(buildRequestSample(route, statusCode, latencyMs));
+    if (this.recentRequests.length > RECENT_REQUEST_LIMIT) {
+      this.recentRequests.splice(0, this.recentRequests.length - RECENT_REQUEST_LIMIT);
+    }
+
     void this.redisStore.recordRequestCompletion(statusCode, latencyMs);
+  }
+
+  getRollingRequestWindow(windowMs: number): RequestWindowSnapshot {
+    const nowMs = Date.now();
+    const normalizedWindowMs = Math.max(5_000, Math.trunc(windowMs));
+    const cutoffMs = nowMs - normalizedWindowMs;
+    const samples = this.recentRequests.filter((sample) => Date.parse(sample.timestamp) >= cutoffMs);
+
+    return aggregateRequestSamples(samples, normalizedWindowMs);
+  }
+
+  getRequestWindowSince(
+    since: string | number | Date,
+    windowMs: number,
+    route?: string
+  ): RequestWindowSnapshot {
+    const nowMs = Date.now();
+    const normalizedWindowMs = Math.max(5_000, Math.trunc(windowMs));
+    const sinceMs = normalizeTimestampInput(since);
+    const cutoffMs = Math.max(nowMs - normalizedWindowMs, sinceMs);
+    const normalizedRoute = typeof route === 'string' && route.trim().length > 0 ? route.trim() : null;
+    const samples = this.recentRequests.filter((sample) => {
+      if (Date.parse(sample.timestamp) < cutoffMs) {
+        return false;
+      }
+
+      return normalizedRoute === null || sample.route === normalizedRoute;
+    });
+
+    return aggregateRequestSamples(samples, normalizedWindowMs);
   }
 
   reset(): void {
@@ -128,6 +203,7 @@ class RuntimeDiagnosticsService {
     this.errorsTotal = 0;
     this.totalLatencyMs = 0;
     this.recentLatencyMs = [];
+    this.recentRequests = [];
     this.activeRouteTableCache = null;
     void this.redisStore.reset();
   }
@@ -469,6 +545,124 @@ function roundMetric(value: number): number {
 
 function sanitizeKeySegment(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9:_-]+/g, '-');
+}
+
+function buildRequestSample(route: string, statusCode: number, latencyMs: number): RequestSample {
+  return {
+    timestamp: new Date().toISOString(),
+    route: route.trim().length > 0 ? route : 'unmatched',
+    statusCode,
+    latencyMs: roundMetric(latencyMs),
+    timedOut: statusCode === 408 || statusCode === 504 || latencyMs >= TIMEOUT_LATENCY_MS
+  };
+}
+
+function normalizeTimestampInput(value: string | number | Date): number {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function aggregateRequestSamples(samples: RequestSample[], windowMs: number): RequestWindowSnapshot {
+  const routeBuckets = new Map<string, RequestSample[]>();
+  let errorCount = 0;
+  let clientErrorCount = 0;
+  let serverErrorCount = 0;
+  let timeoutCount = 0;
+  let slowRequestCount = 0;
+  let totalLatencyMs = 0;
+  let maxLatencyMs = 0;
+
+  for (const sample of samples) {
+    totalLatencyMs += sample.latencyMs;
+    maxLatencyMs = Math.max(maxLatencyMs, sample.latencyMs);
+    if (sample.statusCode >= 400) {
+      errorCount += 1;
+    }
+    if (sample.statusCode >= 400 && sample.statusCode < 500) {
+      clientErrorCount += 1;
+    }
+    if (sample.statusCode >= 500) {
+      serverErrorCount += 1;
+    }
+    if (sample.timedOut) {
+      timeoutCount += 1;
+    }
+    if (sample.latencyMs >= SLOW_REQUEST_LATENCY_MS) {
+      slowRequestCount += 1;
+    }
+
+    const existing = routeBuckets.get(sample.route) ?? [];
+    existing.push(sample);
+    routeBuckets.set(sample.route, existing);
+  }
+
+  const requestCount = samples.length;
+  const routes = [...routeBuckets.entries()]
+    .map(([route, routeSamples]) => ({
+      route,
+      requestCount: routeSamples.length,
+      errorCount: routeSamples.filter((sample) => sample.statusCode >= 400).length,
+      timeoutCount: routeSamples.filter((sample) => sample.timedOut).length,
+      slowRequestCount: routeSamples.filter((sample) => sample.latencyMs >= SLOW_REQUEST_LATENCY_MS).length,
+      avgLatencyMs: routeSamples.length > 0 ? roundMetric(average(routeSamples.map((sample) => sample.latencyMs))) : 0,
+      p95LatencyMs: routeSamples.length > 0 ? roundMetric(percentile(routeSamples.map((sample) => sample.latencyMs), 95)) : 0,
+      maxLatencyMs: routeSamples.length > 0 ? roundMetric(Math.max(...routeSamples.map((sample) => sample.latencyMs))) : 0
+    }))
+    .sort((left, right) => {
+      if (right.errorCount !== left.errorCount) {
+        return right.errorCount - left.errorCount;
+      }
+      if (right.timeoutCount !== left.timeoutCount) {
+        return right.timeoutCount - left.timeoutCount;
+      }
+      return right.avgLatencyMs - left.avgLatencyMs;
+    })
+    .slice(0, 5);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    windowMs,
+    requestCount,
+    errorCount,
+    clientErrorCount,
+    serverErrorCount,
+    errorRate: requestCount > 0 ? roundMetric(errorCount / requestCount) : 0,
+    timeoutCount,
+    timeoutRate: requestCount > 0 ? roundMetric(timeoutCount / requestCount) : 0,
+    slowRequestCount,
+    avgLatencyMs: requestCount > 0 ? roundMetric(totalLatencyMs / requestCount) : 0,
+    p95LatencyMs: requestCount > 0 ? roundMetric(percentile(samples.map((sample) => sample.latencyMs), 95)) : 0,
+    maxLatencyMs: roundMetric(maxLatencyMs),
+    routes
+  };
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function percentile(values: number[], percentileRank: number): number {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((percentileRank / 100) * sorted.length) - 1)
+  );
+  return sorted[index] ?? 0;
 }
 
 export const runtimeDiagnosticsService = new RuntimeDiagnosticsService();

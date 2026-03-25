@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { capabilityGate } from "@transport/http/middleware/capabilityGate.js";
-import { runSelfImproveCycle } from "@services/selfImprove/controller.js";
+import { runSelfHealingLoop } from "@services/selfImprove/selfHealingLoop.js";
 import {
   freezeSelfImprove,
   unfreezeSelfImprove,
@@ -10,7 +10,6 @@ import {
 } from "@services/incidentResponse/killSwitch.js";
 import { sendInternalErrorPayload } from "@shared/http/index.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { getSelfHealingControlLoopStatus } from "@services/selfImprove/controlLoop.js";
 
 const router = Router();
 
@@ -31,8 +30,7 @@ router.get('/api/self-improve/status', capabilityGate('self_improve_admin'), asy
   try {
     res.json({
       status: 'ok',
-      killSwitch: await getKillSwitchStatus(),
-      selfHealing: getSelfHealingControlLoopStatus()
+      killSwitch: await getKillSwitchStatus()
     });
   } catch (error) {
     sendInternalErrorPayload(res, {
@@ -43,8 +41,8 @@ router.get('/api/self-improve/status', capabilityGate('self_improve_admin'), asy
 });
 
 /**
- * Run a self-improve cycle (proposal only).
- * Protected by capability gate; use staged rollout via SELF_IMPROVE_AUTONOMY_LEVEL.
+ * Run one self-healing loop iteration on demand.
+ * Protected by capability gate so the same bounded runtime path can be triggered manually.
  */
 router.post('/api/self-improve/run', capabilityGate('self_improve_admin'), async (req: Request, res: Response) => {
   try {
@@ -56,7 +54,10 @@ router.post('/api/self-improve/run', capabilityGate('self_improve_admin'), async
       });
       return;
     }
-    const result = await runSelfImproveCycle(parsed.data);
+    const result = await runSelfHealingLoop({
+      trigger: 'manual',
+      requestedCycle: parsed.data
+    });
     res.json({ status: 'ok', result });
   } catch (error) {
     sendInternalErrorPayload(res, {

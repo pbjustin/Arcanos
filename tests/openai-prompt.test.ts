@@ -6,6 +6,14 @@ const validateAIRequest = jest.fn() as jest.MockedFunction<any>;
 const handleAIError = jest.fn() as jest.MockedFunction<any>;
 const getFallbackModel = jest.fn(() => 'ft:fallback-model');
 const getGPT5Model = jest.fn(() => 'gpt-5');
+const recordTraceEvent = jest.fn();
+const generateDegradedResponse = jest.fn(() => ({
+  status: 'degraded',
+  message: 'fallback active',
+  data: 'degraded output',
+  fallbackMode: 'mock',
+  timestamp: '2026-03-25T12:00:00.000Z'
+}));
 const getOpenAIServiceHealth = jest.fn(() => ({
   apiKey: { configured: false, status: 'missing' },
   client: { initialized: false, timeout: 0, baseURL: null },
@@ -16,9 +24,14 @@ const getOpenAIServiceHealth = jest.fn(() => ({
 const getOpenAIKeySource = jest.fn(() => null);
 
 let handlePrompt: (req: any, res: any) => Promise<void>;
+let activatePromptRouteDegradedMode: (reason: string) => unknown;
+let resetPromptRouteMitigationStateForTests: () => void;
+let originalNodeEnv: string | undefined;
 
 beforeEach(async () => {
   jest.resetModules();
+  originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
 
   jest.unstable_mockModule('../src/services/openai.js', () => ({
     callOpenAI,
@@ -34,10 +47,29 @@ beforeEach(async () => {
     handleAIError
   }));
 
+  jest.unstable_mockModule('../src/platform/logging/telemetry.js', () => ({
+    recordTraceEvent,
+    getTelemetrySnapshot: jest.fn(),
+    recordLogEvent: jest.fn(),
+    markOperation: jest.fn(),
+    onTelemetry: jest.fn(),
+    resetTelemetry: jest.fn()
+  }));
+
+  jest.unstable_mockModule('../src/transport/http/middleware/fallbackHandler.js', () => ({
+    generateDegradedResponse
+  }));
+
   ({ handlePrompt } = await import('../src/transport/http/controllers/openaiController.js'));
+  ({ activatePromptRouteDegradedMode, resetPromptRouteMitigationStateForTests } = await import(
+    '../src/services/openai/promptRouteMitigation.js'
+  ));
+  resetPromptRouteMitigationStateForTests();
 });
 
 afterEach(() => {
+  resetPromptRouteMitigationStateForTests();
+  process.env.NODE_ENV = originalNodeEnv;
   jest.clearAllMocks();
 });
 
@@ -114,5 +146,45 @@ describe('handlePrompt', () => {
         created: expect.any(Number)
       })
     );
+  });
+
+  it('returns a degraded response when prompt-route mitigation is active', async () => {
+    validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
+    activatePromptRouteDegradedMode('latency spike cluster detected');
+
+    const req: any = {
+      body: { prompt: 'hello' },
+      logger: {
+        warn: jest.fn()
+      }
+    };
+    const res: any = { json: jest.fn() };
+
+    await handlePrompt(req, res);
+
+    expect(callOpenAI).not.toHaveBeenCalled();
+    expect(generateDegradedResponse).toHaveBeenCalledWith('hello', 'prompt');
+    expect(req.logger.warn).toHaveBeenCalledWith('prompt.route.mitigated', expect.objectContaining({
+      mitigationMode: 'degraded_response',
+      mitigationReason: 'latency spike cluster detected'
+    }));
+    expect(recordTraceEvent).toHaveBeenCalledWith('prompt_route.degraded', expect.objectContaining({
+      mitigationMode: 'degraded_response',
+      mitigationReason: 'latency spike cluster detected',
+      fallbackMode: 'mock'
+    }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      result: 'degraded output',
+      model: 'ft:fallback-model',
+      activeModel: 'prompt-route:degraded_response',
+      fallbackFlag: true,
+      error: 'PROMPT_ROUTE_DEGRADED_MODE',
+      degradedResponse: expect.objectContaining({
+        status: 'degraded',
+        message: 'fallback active',
+        fallbackMode: 'mock',
+        timestamp: '2026-03-25T12:00:00.000Z'
+      })
+    }));
   });
 });

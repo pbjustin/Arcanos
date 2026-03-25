@@ -15,8 +15,8 @@ jest.unstable_mockModule('@transport/http/middleware/capabilityGate.js', () => (
   capabilityGate: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next()
 }));
 
-jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({
-  runSelfImproveCycle: runSelfImproveCycleMock
+jest.unstable_mockModule('@services/selfImprove/selfHealingLoop.js', () => ({
+  runSelfHealingLoop: runSelfImproveCycleMock
 }));
 
 jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
@@ -28,44 +28,6 @@ jest.unstable_mockModule('@services/incidentResponse/killSwitch.js', () => ({
 
 jest.unstable_mockModule('@shared/http/index.js', () => ({
   sendInternalErrorPayload: sendInternalErrorPayloadMock
-}));
-
-jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
-  getSelfHealingControlLoopStatus: () => ({
-    active: true,
-    loopRunning: true,
-    internalExecutionAvailable: true,
-    repoToolingAvailable: true,
-    railwayCliAvailable: true,
-    lastDiagnosis: 'timeout_cluster count=2',
-    lastAction: 'enable_degraded_mode',
-    attempts: 1,
-    lastResult: 'improved',
-    errorRate: 0.04,
-    avgLatencyMs: 420,
-    operationalRequests: 12,
-    lastObservedAt: '2026-03-24T00:00:00.000Z',
-    lastActionAt: '2026-03-24T00:00:05.000Z',
-    lastVerifiedAt: '2026-03-24T00:00:10.000Z',
-    incidentActive: false,
-    incidentId: null,
-    executionId: 'exec-self-heal',
-    executionStatus: 'completed',
-    mitigation: {
-      activeAction: null,
-      tiers: [],
-      stage: null,
-      reason: null,
-      activeSinceMs: null,
-      expiresAtMs: null
-    },
-    latestObservation: null,
-    trinity: {
-      enabled: true,
-      config: {},
-      snapshot: {}
-    }
-  })
 }));
 
 const selfImproveRouter = (await import('../src/routes/self-improve.js')).default;
@@ -102,13 +64,7 @@ describe('routes/self-improve', () => {
 
     expect(response.body).toEqual({
       status: 'ok',
-      killSwitch: { frozen: false, autonomyLevel: 1, overrides: { freeze: null, autonomy: null } },
-      selfHealing: expect.objectContaining({
-        active: true,
-        loopRunning: true,
-        lastAction: 'enable_degraded_mode',
-        errorRate: 0.04
-      })
+      killSwitch: { frozen: false, autonomyLevel: 1, overrides: { freeze: null, autonomy: null } }
     });
   });
 
@@ -136,9 +92,18 @@ describe('routes/self-improve', () => {
     expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
   });
 
-  it('runs self-improve cycle for valid payload', async () => {
+  it('runs one self-healing loop iteration for valid payload', async () => {
     const app = createTestApp();
-    runSelfImproveCycleMock.mockResolvedValueOnce({ id: 'cycle-1', decision: 'PATCH_PROPOSAL' });
+    runSelfImproveCycleMock.mockResolvedValueOnce({
+      trigger: 'manual',
+      tickAt: '2026-03-25T12:00:00.000Z',
+      tickCount: 1,
+      loopRunning: true,
+      lastError: null,
+      diagnosis: 'manual self-heal evaluation',
+      action: null,
+      controllerDecision: 'PATCH_PROPOSAL'
+    });
 
     const response = await request(app)
       .post('/api/self-improve/run')
@@ -146,11 +111,23 @@ describe('routes/self-improve', () => {
       .expect(200);
 
     expect(runSelfImproveCycleMock).toHaveBeenCalledWith(
-      expect.objectContaining({ trigger: 'manual', component: 'planner' })
+      expect.objectContaining({
+        trigger: 'manual',
+        requestedCycle: expect.objectContaining({ trigger: 'manual', component: 'planner' })
+      })
     );
     expect(response.body).toEqual({
       status: 'ok',
-      result: { id: 'cycle-1', decision: 'PATCH_PROPOSAL' }
+      result: {
+        trigger: 'manual',
+        tickAt: '2026-03-25T12:00:00.000Z',
+        tickCount: 1,
+        loopRunning: true,
+        lastError: null,
+        diagnosis: 'manual self-heal evaluation',
+        action: null,
+        controllerDecision: 'PATCH_PROPOSAL'
+      }
     });
   });
 
@@ -172,16 +149,28 @@ describe('routes/self-improve', () => {
   it('defaults to an empty payload when request body is unavailable', async () => {
     const app = express();
     app.use(selfImproveRouter);
-    runSelfImproveCycleMock.mockResolvedValueOnce({ id: 'cycle-default', decision: 'PATCH_PROPOSAL' });
+    runSelfImproveCycleMock.mockResolvedValueOnce({
+      trigger: 'manual',
+      tickAt: '2026-03-25T12:00:00.000Z',
+      tickCount: 1,
+      loopRunning: false,
+      lastError: null,
+      diagnosis: 'manual self-heal evaluation',
+      action: null,
+      controllerDecision: 'PATCH_PROPOSAL'
+    });
 
     const response = await request(app)
       .post('/api/self-improve/run')
       .expect(200);
 
     expect(runSelfImproveCycleMock).toHaveBeenCalledWith(
-      expect.objectContaining({ trigger: 'manual' })
+      expect.objectContaining({
+        trigger: 'manual',
+        requestedCycle: expect.objectContaining({ trigger: 'manual' })
+      })
     );
-    expect(response.body.result.id).toBe('cycle-default');
+    expect(response.body.result.trigger).toBe('manual');
   });
 
   it('handles freeze and unfreeze success flows', async () => {

@@ -10,8 +10,6 @@ import {
   resolveMetricRouteLabel,
   shouldSkipHttpMetrics,
 } from '@platform/observability/appMetrics.js';
-import { requestSelfHealingLoopEvaluation } from '@services/selfImprove/controlLoop.js';
-import { recordSelfHealingHttpSignal } from '@services/selfImprove/signals.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -153,12 +151,13 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
   res.on('finish', () => {
     const latencyMs = Date.now() - startTimeMs;
     const statusCode = res.statusCode;
+    const route = resolveMetricRouteLabel(req);
     const completionData = {
       statusCode,
       contentLength: res.getHeader('content-length') ?? null
     };
 
-    runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs);
+    runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs, route);
 
     let level: RequestLogLevel = 'info';
     if (statusCode >= 500) {
@@ -178,17 +177,6 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
       latencyMs,
       data: completionData
     });
-
-    const selfHealingSignal = recordSelfHealingHttpSignal({
-      route: requestPath,
-      method: req.method,
-      statusCode,
-      latencyMs,
-      requestId
-    });
-    if (statusCode >= 400 && !selfHealingSignal.expected && selfHealingSignal.cluster !== null) {
-      void requestSelfHealingLoopEvaluation('http_completion');
-    }
 
     finalizeHttpMetrics();
   });
