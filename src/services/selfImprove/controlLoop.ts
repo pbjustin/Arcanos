@@ -106,6 +106,7 @@ const loopState: {
   incidentId: string | null;
   attempts: number;
   attemptedActions: LoopAction[];
+  signalCursorMs: number | null;
   active: boolean;
   loopRunning: boolean;
   lastDiagnosis: string | null;
@@ -126,6 +127,7 @@ const loopState: {
   incidentId: null,
   attempts: 0,
   attemptedActions: [],
+  signalCursorMs: null,
   active: false,
   loopRunning: false,
   lastDiagnosis: null,
@@ -412,6 +414,7 @@ async function closeIncident(params: {
   result: 'improved' | 'failed' | 'idle';
   detail: string;
 }): Promise<void> {
+  const closedAtMs = Date.now();
   if (loopState.incidentId) {
     try {
       await resumeIncidentExecution({
@@ -434,6 +437,7 @@ async function closeIncident(params: {
     }
   }
 
+  loopState.signalCursorMs = closedAtMs;
   loopState.incidentId = null;
   loopState.attemptedActions = [];
   loopState.verificationPendingUntilMs = null;
@@ -572,7 +576,11 @@ async function collectObservation(app: Application): Promise<ObservationSummary>
   const config = getLoopConfig();
   const diagnostics = await runtimeDiagnosticsService.getDiagnosticsSnapshot(app);
   const diagnosticsErrorRate = typeof diagnostics.error_rate === 'number' ? diagnostics.error_rate : null;
-  const signals = getSelfHealingSignalsSince(Date.now() - config.lookbackMs);
+  const signalSinceMs = Math.max(
+    Date.now() - config.lookbackMs,
+    loopState.signalCursorMs ?? 0
+  );
+  const signals = getSelfHealingSignalsSince(signalSinceMs);
   const httpSignals = signals.filter((signal): signal is Extract<SelfHealingSignal, { kind: 'http' }> =>
     signal.kind === 'http'
       && !signal.expected
@@ -1045,6 +1053,7 @@ export function stopSelfHealingControlLoopForTests(): void {
   loopState.incidentId = null;
   loopState.attempts = 0;
   loopState.attemptedActions = [];
+  loopState.signalCursorMs = null;
   loopState.active = false;
   loopState.loopRunning = false;
   loopState.lastDiagnosis = null;
