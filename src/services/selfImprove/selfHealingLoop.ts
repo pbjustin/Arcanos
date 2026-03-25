@@ -44,6 +44,8 @@ const DEFAULT_TIMEOUT_RATE_THRESHOLD = 0.15;
 const DEFAULT_TIMEOUT_COUNT_THRESHOLD = 3;
 const DEFAULT_LATENCY_P95_THRESHOLD_MS = 4_500;
 const DEFAULT_AVG_LATENCY_THRESHOLD_MS = 2_000;
+const DEFAULT_MAX_LATENCY_THRESHOLD_MS = 5_000;
+const DEFAULT_LATENCY_BURST_COUNT_THRESHOLD = 2;
 const DEFAULT_PROVIDER_FAILURE_THRESHOLD = 3;
 const DEFAULT_VALIDATION_NOISE_THRESHOLD = 6;
 const DEFAULT_INEFFECTIVE_COOLDOWN_MS = 10 * 60_000;
@@ -78,6 +80,7 @@ type SelfHealingVerificationSnapshot = {
   timeoutCount: number;
   p95LatencyMs: number;
   avgLatencyMs: number;
+  maxLatencyMs: number;
   stalledRunning: number;
   oldestPendingJobAgeMs: number;
   workerHealth: string | null;
@@ -89,8 +92,10 @@ type SelfHealingVerificationSnapshot = {
     errorRate: number;
     timeoutCount: number;
     timeoutRate: number;
+    slowRequestCount: number;
     avgLatencyMs: number;
     p95LatencyMs: number;
+    maxLatencyMs: number;
   } | null;
 };
 
@@ -293,6 +298,14 @@ function resolveAverageLatencyThresholdMs(): number {
   return Math.max(750, getEnvNumber('SELF_HEAL_AVG_LATENCY_THRESHOLD_MS', DEFAULT_AVG_LATENCY_THRESHOLD_MS));
 }
 
+function resolveMaxLatencyThresholdMs(): number {
+  return Math.max(3_000, getEnvNumber('SELF_HEAL_MAX_LATENCY_THRESHOLD_MS', DEFAULT_MAX_LATENCY_THRESHOLD_MS));
+}
+
+function resolveLatencyBurstCountThreshold(): number {
+  return Math.max(1, getEnvNumber('SELF_HEAL_LATENCY_BURST_COUNT_THRESHOLD', DEFAULT_LATENCY_BURST_COUNT_THRESHOLD));
+}
+
 function resolveProviderFailureThreshold(): number {
   return Math.max(1, getEnvNumber('SELF_HEAL_PROVIDER_FAILURE_THRESHOLD', DEFAULT_PROVIDER_FAILURE_THRESHOLD));
 }
@@ -454,6 +467,7 @@ function captureVerificationSnapshot(observation: SelfHealingObservation): SelfH
     timeoutCount: observation.requestWindow.timeoutCount,
     p95LatencyMs: observation.requestWindow.p95LatencyMs,
     avgLatencyMs: observation.requestWindow.avgLatencyMs,
+    maxLatencyMs: observation.requestWindow.maxLatencyMs,
     stalledRunning: observation.workerHealth?.queueSummary?.stalledRunning ?? 0,
     oldestPendingJobAgeMs: observation.workerHealth?.queueSummary?.oldestPendingJobAgeMs ?? 0,
     workerHealth: observation.workerHealth?.overallStatus ?? null,
@@ -477,8 +491,10 @@ function buildPromptRouteVerificationSnapshot(
     errorRate: Number((promptRoute.errorCount / Math.max(1, promptRoute.requestCount)).toFixed(3)),
     timeoutCount: promptRoute.timeoutCount,
     timeoutRate: Number((promptRoute.timeoutCount / Math.max(1, promptRoute.requestCount)).toFixed(3)),
+    slowRequestCount: promptRoute.slowRequestCount ?? 0,
     avgLatencyMs: promptRoute.avgLatencyMs,
-    p95LatencyMs: promptRoute.p95LatencyMs
+    p95LatencyMs: promptRoute.p95LatencyMs,
+    maxLatencyMs: promptRoute.maxLatencyMs ?? promptRoute.p95LatencyMs
   };
 }
 
@@ -532,8 +548,10 @@ function buildRequestEvidence(window: RequestWindowSnapshot): Record<string, unk
       requestCount: route.requestCount,
       errorCount: route.errorCount,
       timeoutCount: route.timeoutCount,
+      slowRequestCount: route.slowRequestCount ?? 0,
       avgLatencyMs: route.avgLatencyMs,
-      p95LatencyMs: route.p95LatencyMs
+      p95LatencyMs: route.p95LatencyMs,
+      maxLatencyMs: route.maxLatencyMs ?? route.p95LatencyMs
     }))
   };
 }
@@ -547,6 +565,7 @@ function getPromptRouteCandidate(window: RequestWindowSnapshot): RequestWindowSn
   const dominatesWindow = promptRoute.requestCount >= Math.max(4, Math.floor(window.requestCount * 0.35));
   const materiallyDegraded =
     promptRoute.timeoutCount > 0 ||
+    (promptRoute.maxLatencyMs ?? promptRoute.p95LatencyMs) >= resolveMaxLatencyThresholdMs() ||
     promptRoute.errorCount >= 2 ||
     promptRoute.p95LatencyMs >= resolveLatencyP95ThresholdMs() ||
     promptRoute.avgLatencyMs >= resolveAverageLatencyThresholdMs();
@@ -603,10 +622,26 @@ function withPromptRouteEvidence(
       requestShare: Number((promptRouteCandidate.requestCount / Math.max(1, requestWindow.requestCount)).toFixed(3)),
       errorCount: promptRouteCandidate.errorCount,
       timeoutCount: promptRouteCandidate.timeoutCount,
+      slowRequestCount: promptRouteCandidate.slowRequestCount ?? 0,
       avgLatencyMs: promptRouteCandidate.avgLatencyMs,
-      p95LatencyMs: promptRouteCandidate.p95LatencyMs
+      p95LatencyMs: promptRouteCandidate.p95LatencyMs,
+      maxLatencyMs: promptRouteCandidate.maxLatencyMs ?? promptRouteCandidate.p95LatencyMs
     }
   };
+}
+
+function detectBurstingLatency(requestWindow: RequestWindowSnapshot, minRequestCount: number): boolean {
+  const burstRequestThreshold = Math.max(2, resolveLatencyBurstCountThreshold());
+  const burstWindowMinRequests = Math.max(6, Math.floor(minRequestCount / 2));
+  const severeMaxLatencyDetected = requestWindow.maxLatencyMs >= resolveMaxLatencyThresholdMs();
+  const timeoutBurstDetected = requestWindow.timeoutCount >= burstRequestThreshold;
+  const slowBurstDetected = requestWindow.slowRequestCount >= Math.max(4, burstRequestThreshold * 2);
+
+  return (
+    requestWindow.requestCount >= burstWindowMinRequests &&
+    severeMaxLatencyDetected &&
+    (timeoutBurstDetected || slowBurstDetected)
+  );
 }
 
 function buildDiagnosisSummary(
@@ -701,8 +736,19 @@ function buildDiagnosisSummary(
   if (type === 'latency_spike') {
     return {
       summary: 'latency spike cluster detected',
-      confidence: 0.84,
-      evidence: withPromptRouteEvidence(requestEvidence, observation.requestWindow),
+      confidence: observation.requestWindow.maxLatencyMs >= resolveMaxLatencyThresholdMs() ? 0.88 : 0.84,
+      evidence: withPromptRouteEvidence(
+        {
+          ...requestEvidence,
+          spikeDetector: {
+            p95ThresholdMs: resolveLatencyP95ThresholdMs(),
+            avgThresholdMs: resolveAverageLatencyThresholdMs(),
+            maxThresholdMs: resolveMaxLatencyThresholdMs(),
+            burstTimeoutThreshold: resolveLatencyBurstCountThreshold()
+          }
+        },
+        observation.requestWindow
+      ),
       actionPlan: buildLatencyMitigationActionPlan(observation.requestWindow, activeMitigation),
       shouldRunController: activeMitigation !== null
     };
@@ -866,6 +912,7 @@ function diagnoseSelfHealingRuntime(
     observation.workerRuntime.enabled &&
     (!observation.workerRuntime.started || observation.workerRuntime.activeListeners === 0);
   const minRequestCount = resolveMinRequestCount();
+  const latencyBurstDetected = detectBurstingLatency(requestWindow, minRequestCount);
   const providerFailureCount = telemetrySignals.openaiFailureCount + telemetrySignals.resilienceFailureCount;
   const providerClusterDetected =
     String(observation.openaiHealth.circuitBreaker.state).toUpperCase() !== 'CLOSED' ||
@@ -875,12 +922,19 @@ function diagnoseSelfHealingRuntime(
     requestWindow.requestCount >= Math.max(6, Math.floor(minRequestCount / 2)) &&
     (requestWindow.timeoutCount >= resolveTimeoutCountThreshold() ||
       requestWindow.timeoutRate >= resolveTimeoutRateThreshold()) &&
-    (requestWindow.p95LatencyMs >= resolveLatencyP95ThresholdMs() || requestWindow.serverErrorCount >= 2);
+    (
+      requestWindow.p95LatencyMs >= resolveLatencyP95ThresholdMs() ||
+      requestWindow.maxLatencyMs >= resolveMaxLatencyThresholdMs() ||
+      requestWindow.serverErrorCount >= 2
+    );
   const latencySpikeDetected =
-    requestWindow.requestCount >= minRequestCount &&
-    requestWindow.p95LatencyMs >= resolveLatencyP95ThresholdMs() &&
-    requestWindow.avgLatencyMs >= resolveAverageLatencyThresholdMs() &&
-    requestWindow.slowRequestCount >= Math.max(4, Math.floor(minRequestCount / 3));
+    (
+      requestWindow.requestCount >= minRequestCount &&
+      requestWindow.p95LatencyMs >= resolveLatencyP95ThresholdMs() &&
+      requestWindow.avgLatencyMs >= resolveAverageLatencyThresholdMs() &&
+      requestWindow.slowRequestCount >= Math.max(4, Math.floor(minRequestCount / 3))
+    ) ||
+    latencyBurstDetected;
   const elevatedErrorRateDetected =
     requestWindow.requestCount >= minRequestCount &&
     requestWindow.errorRate >= resolveErrorRateThreshold() &&
@@ -1143,6 +1197,20 @@ function evaluateVerificationOutcome(
     reasons.push('p95 latency worsened');
   }
 
+  const maxLatencyTrend = compareMetricTrend(pending.baseline.maxLatencyMs, current.maxLatencyMs, {
+    betterAbsoluteDelta: 1_000,
+    worseAbsoluteDelta: 1_000,
+    betterRatio: 0.75,
+    worseRatio: 1.15
+  });
+  if (maxLatencyTrend === 'better') {
+    betterCount += 1;
+    reasons.push('max latency improved');
+  } else if (maxLatencyTrend === 'worse') {
+    worseCount += 1;
+    reasons.push('max latency worsened');
+  }
+
   if (pending.action === 'recoverStaleJobs' || pending.action === 'healWorkerRuntime') {
     if (
       current.stalledRunning < pending.baseline.stalledRunning ||
@@ -1214,6 +1282,24 @@ function evaluateVerificationOutcome(
       } else if (promptRouteLatencyTrend === 'worse') {
         worseCount += 1;
         reasons.push('prompt route average latency worsened');
+      }
+
+      const promptRouteMaxLatencyTrend = compareMetricTrend(
+        baselinePromptRoute.maxLatencyMs,
+        currentPromptRoute.maxLatencyMs,
+        {
+          betterAbsoluteDelta: 1_000,
+          worseAbsoluteDelta: 1_000,
+          betterRatio: 0.75,
+          worseRatio: 1.15
+        }
+      );
+      if (promptRouteMaxLatencyTrend === 'better') {
+        betterCount += 1;
+        reasons.push('prompt route max latency improved');
+      } else if (promptRouteMaxLatencyTrend === 'worse') {
+        worseCount += 1;
+        reasons.push('prompt route max latency worsened');
       }
     }
   }

@@ -55,8 +55,10 @@ export interface RequestWindowRouteSnapshot {
   requestCount: number;
   errorCount: number;
   timeoutCount: number;
+  slowRequestCount: number;
   avgLatencyMs: number;
   p95LatencyMs: number;
+  maxLatencyMs: number;
 }
 
 export interface RequestWindowSnapshot {
@@ -609,8 +611,10 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
       requestCount: routeSamples.length,
       errorCount: routeSamples.filter((sample) => sample.statusCode >= 400).length,
       timeoutCount: routeSamples.filter((sample) => sample.timedOut).length,
+      slowRequestCount: routeSamples.filter((sample) => sample.latencyMs >= SLOW_REQUEST_LATENCY_MS).length,
       avgLatencyMs: routeSamples.length > 0 ? roundMetric(average(routeSamples.map((sample) => sample.latencyMs))) : 0,
-      p95LatencyMs: routeSamples.length > 0 ? roundMetric(percentile(routeSamples.map((sample) => sample.latencyMs), 95)) : 0
+      p95LatencyMs: routeSamples.length > 0 ? roundMetric(percentile(routeSamples.map((sample) => sample.latencyMs), 95)) : 0,
+      maxLatencyMs: routeSamples.length > 0 ? roundMetric(Math.max(...routeSamples.map((sample) => sample.latencyMs))) : 0
     }))
     .sort((left, right) => {
       if (right.errorCount !== left.errorCount) {

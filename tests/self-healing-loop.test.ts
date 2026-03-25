@@ -490,6 +490,65 @@ describe('selfHealingLoop', () => {
     }));
   });
 
+  it('detects latency spike bursts even when the rolling average stays below threshold', async () => {
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 14,
+      errorCount: 1,
+      serverErrorCount: 1,
+      errorRate: 0.071,
+      timeoutCount: 2,
+      timeoutRate: 0.143,
+      slowRequestCount: 5,
+      avgLatencyMs: 1450,
+      p95LatencyMs: 2900,
+      maxLatencyMs: 8800,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 8,
+          errorCount: 1,
+          timeoutCount: 2,
+          slowRequestCount: 4,
+          avgLatencyMs: 1750,
+          p95LatencyMs: 3200,
+          maxLatencyMs: 8800
+        },
+        {
+          route: '/ask',
+          requestCount: 6,
+          errorCount: 0,
+          timeoutCount: 0,
+          slowRequestCount: 1,
+          avgLatencyMs: 810,
+          p95LatencyMs: 1200,
+          maxLatencyMs: 1500
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(activatePromptRouteDegradedModeMock).toHaveBeenCalledWith('latency spike cluster detected');
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'latency spike cluster detected',
+      action: 'activatePromptRouteMitigation:degraded_response'
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastEvidence: expect.objectContaining({
+        maxLatencyMs: 8800,
+        spikeDetector: expect.objectContaining({
+          maxThresholdMs: 5000,
+          burstTimeoutThreshold: 2
+        }),
+        targetedRoute: expect.objectContaining({
+          route: '/api/openai/prompt',
+          timeoutCount: 2,
+          maxLatencyMs: 8800
+        })
+      })
+    }));
+  });
+
   it('activates prompt-route degraded mode when /api/openai/prompt dominates the incident window', async () => {
     getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
       requestCount: 20,
