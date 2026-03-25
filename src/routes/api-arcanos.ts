@@ -22,6 +22,11 @@ import {
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
+import {
+  applyCanonicalGptRouteHeaders,
+  ASK_ROUTE_MODE_HEADER,
+  ASK_ROUTE_SUNSET_HEADER
+} from '@shared/http/gptRouteHeaders.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
 import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
 import {
@@ -397,6 +402,25 @@ function buildArcanosPromptShortcutResponse(params: {
   };
 }
 
+function attachApiArcanosCompatibilityMetadata(
+  req: Request<{}, AskResponse | ErrorResponseDTO, AskBody>,
+  res: Response<AskResponse | ErrorResponseDTO>,
+  next: () => void
+): void {
+  const canonicalRoute = applyCanonicalGptRouteHeaders(res, 'arcanos-core');
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('Sunset', ASK_ROUTE_SUNSET_HEADER);
+  res.setHeader('x-route-deprecated', 'true');
+  res.setHeader(ASK_ROUTE_MODE_HEADER, 'compat');
+  res.append('Link', `<${canonicalRoute}>; rel="successor-version"`);
+  req.logger?.info?.('deprecated.endpoint.used', {
+    deprecatedEndpoint: '/api/arcanos/ask',
+    canonicalRoute,
+    requestId: req.requestId ?? null
+  });
+  next();
+}
+
 /**
  * Execute the legacy `/api/arcanos/ask` route through the Trinity pipeline.
  *
@@ -502,6 +526,13 @@ const handleArcanosAsk = asyncHandler(async (
   }
 });
 
-router.post('/ask', arcanosAskRateLimit, confirmGate, createValidationMiddleware(arcanosSchema), handleArcanosAsk);
+router.post(
+  '/ask',
+  arcanosAskRateLimit,
+  attachApiArcanosCompatibilityMetadata,
+  confirmGate,
+  createValidationMiddleware(arcanosSchema),
+  handleArcanosAsk
+);
 
 export default router;
