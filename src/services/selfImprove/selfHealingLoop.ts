@@ -17,9 +17,10 @@ import {
 } from '@services/selfImprove/selfHealingV2.js';
 import {
   activatePromptRouteDegradedMode,
+  activatePromptRouteReducedLatencyMode,
   getPromptRouteMitigationState,
   resetPromptRouteMitigationStateForTests,
-  rollbackPromptRouteDegradedMode
+  rollbackPromptRouteMitigation
 } from '@services/openai/promptRouteMitigation.js';
 import { getOpenAIServiceHealth } from '@services/openai/serviceHealth.js';
 import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services/runtimeDiagnosticsService.js';
@@ -172,6 +173,20 @@ export interface SelfHealingLoopStatus {
   lastEvidence: Record<string, unknown> | null;
   lastVerificationResult: SelfHealingVerificationResult | null;
   activeMitigation: string | null;
+  lastLatencySnapshot: {
+    requestCount: number;
+    avgLatencyMs: number;
+    p95LatencyMs: number;
+    maxLatencyMs: number;
+    promptRoute: SelfHealingVerificationSnapshot['promptRoute'];
+  } | null;
+  recentTimeoutCounts: {
+    windowMs: number;
+    total: number;
+    promptRoute: number;
+  } | null;
+  bypassedSubsystems: string[];
+  ineffectiveActions: Record<string, string>;
   attemptsByDiagnosis: Record<string, number>;
   cooldowns: Record<string, string>;
   lastHealthyObservedAt: string | null;
@@ -260,6 +275,12 @@ type SelfHealingActionPlan =
       cooldownMs: number;
       stage: TrinitySelfHealingStage;
       trinityAction: TrinitySelfHealingAction;
+    }
+  | {
+      kind: 'activate_prompt_route_reduced_latency_mode';
+      actionKey: 'activate_prompt_route_reduced_latency_mode';
+      cooldownKey: string;
+      cooldownMs: number;
     }
   | {
       kind: 'activate_prompt_route_degraded_mode';
@@ -392,6 +413,10 @@ function createInitialStatus(): SelfHealingLoopStatus {
     lastEvidence: null,
     lastVerificationResult: null,
     activeMitigation: null,
+    lastLatencySnapshot: null,
+    recentTimeoutCounts: null,
+    bypassedSubsystems: [],
+    ineffectiveActions: {},
     attemptsByDiagnosis: {},
     cooldowns: {},
     lastHealthyObservedAt: null
@@ -488,6 +513,11 @@ function getActiveAutomatedMitigation(
   return activeMitigations.length > 0 ? activeMitigations.join(', ') : null;
 }
 
+function getActiveBypassedSubsystems(): string[] {
+  const promptRouteMitigation = getPromptRouteMitigationState();
+  return promptRouteMitigation.active ? [...promptRouteMitigation.bypassedSubsystems] : [];
+}
+
 function deriveTelemetrySignals(
   telemetry: ReturnType<typeof getTelemetrySnapshot>,
   windowMs: number
@@ -548,7 +578,7 @@ function buildVerificationSnapshotForPendingAction(
   observation: SelfHealingObservation
 ): SelfHealingVerificationSnapshot {
   const snapshot = captureVerificationSnapshot(observation);
-  if (pending.action !== 'activatePromptRouteMitigation:degraded_response') {
+  if (!isPromptRouteMitigationAction(pending.action)) {
     return snapshot;
   }
 
@@ -568,13 +598,40 @@ function shouldDeferPromptRouteVerification(
   pending: PendingVerification,
   current: SelfHealingVerificationSnapshot
 ): boolean {
-  if (pending.action !== 'activatePromptRouteMitigation:degraded_response') {
+  if (!isPromptRouteMitigationAction(pending.action)) {
     return false;
   }
 
   const requiredSamples = resolvePromptRouteVerificationMinRequests();
   const observedSamples = current.promptRoute?.requestCount ?? 0;
   return observedSamples < requiredSamples;
+}
+
+function isPromptRouteMitigationAction(action: string): boolean {
+  return action.startsWith('activatePromptRouteMitigation:');
+}
+
+function buildLatencySnapshot(
+  requestWindow: RequestWindowSnapshot
+): SelfHealingLoopStatus['lastLatencySnapshot'] {
+  return {
+    requestCount: requestWindow.requestCount,
+    avgLatencyMs: requestWindow.avgLatencyMs,
+    p95LatencyMs: requestWindow.p95LatencyMs,
+    maxLatencyMs: requestWindow.maxLatencyMs,
+    promptRoute: buildPromptRouteVerificationSnapshot(requestWindow)
+  };
+}
+
+function buildRecentTimeoutCounts(
+  requestWindow: RequestWindowSnapshot
+): SelfHealingLoopStatus['recentTimeoutCounts'] {
+  const promptRoute = requestWindow.routes.find((route) => route.route === PROMPT_ROUTE_PATH) ?? null;
+  return {
+    windowMs: requestWindow.windowMs,
+    total: requestWindow.timeoutCount,
+    promptRoute: promptRoute?.timeoutCount ?? 0
+  };
 }
 
 function buildRequestEvidence(window: RequestWindowSnapshot): Record<string, unknown> {
@@ -626,18 +683,36 @@ function buildLatencyMitigationActionPlan(
   window: RequestWindowSnapshot,
   activeMitigation: string | null
 ): SelfHealingActionPlan | null {
-  if (activeMitigation) {
-    return null;
-  }
-
   const promptRouteCandidate = getPromptRouteCandidate(window);
+  const promptRouteMitigation = getPromptRouteMitigationState();
   if (promptRouteCandidate) {
+    if (promptRouteMitigation.active && promptRouteMitigation.mode === 'degraded_response') {
+      return null;
+    }
+
+    if (promptRouteMitigation.active && promptRouteMitigation.mode === 'reduced_latency') {
+      return {
+        kind: 'activate_prompt_route_degraded_mode',
+        actionKey: 'activate_prompt_route_degraded_mode',
+        cooldownKey: 'activate_prompt_route_degraded_mode',
+        cooldownMs: resolveActionCooldownMs() * 2
+      };
+    }
+
+    if (activeMitigation && !String(activeMitigation).includes('prompt:/api/openai/prompt')) {
+      return null;
+    }
+
     return {
-      kind: 'activate_prompt_route_degraded_mode',
-      actionKey: 'activate_prompt_route_degraded_mode',
-      cooldownKey: 'activate_prompt_route_degraded_mode',
+      kind: 'activate_prompt_route_reduced_latency_mode',
+      actionKey: 'activate_prompt_route_reduced_latency_mode',
+      cooldownKey: 'activate_prompt_route_reduced_latency_mode',
       cooldownMs: resolveActionCooldownMs() * 2
     };
+  }
+
+  if (activeMitigation) {
+    return null;
   }
 
   return {
@@ -1135,9 +1210,25 @@ function serializeCooldowns(runtime: SelfHealingLoopRuntime): Record<string, str
   return result;
 }
 
+function serializeIneffectiveActions(runtime: SelfHealingLoopRuntime): Record<string, string> {
+  const nowMs = Date.now();
+  const result: Record<string, string> = {};
+  for (const [key, expiresAtMs] of runtime.ineffectiveActionCooldowns.entries()) {
+    if (expiresAtMs <= nowMs) {
+      runtime.ineffectiveActionCooldowns.delete(key);
+      continue;
+    }
+    result[key] = new Date(expiresAtMs).toISOString();
+  }
+
+  return result;
+}
+
 function refreshStatusViews(runtime: SelfHealingLoopRuntime): void {
   runtime.status.attemptsByDiagnosis = serializeDiagnosisAttempts(runtime);
   runtime.status.cooldowns = serializeCooldowns(runtime);
+  runtime.status.ineffectiveActions = serializeIneffectiveActions(runtime);
+  runtime.status.bypassedSubsystems = getActiveBypassedSubsystems();
 }
 
 function beginVerification(
@@ -1279,7 +1370,7 @@ function evaluateVerificationOutcome(
     }
   }
 
-  if (pending.action === 'activatePromptRouteMitigation:degraded_response') {
+  if (isPromptRouteMitigationAction(pending.action)) {
     const baselinePromptRoute = pending.baseline.promptRoute;
     const currentPromptRoute = current.promptRoute;
 
@@ -1428,7 +1519,7 @@ function maybeVerifyPendingAction(
 
     followUpAction = `rollbackTrinityMitigation:${pending.rollback.stage}:${pending.rollback.action}`;
   } else {
-    const rollbackResult = rollbackPromptRouteDegradedMode(pending.rollback.reason);
+    const rollbackResult = rollbackPromptRouteMitigation(pending.rollback.reason);
     if (!rollbackResult.rolledBack) {
       return {
         verificationResult,
@@ -1436,7 +1527,7 @@ function maybeVerifyPendingAction(
       };
     }
 
-    followUpAction = 'rollbackPromptRouteMitigation:degraded_response';
+    followUpAction = 'rollbackPromptRouteMitigation';
   }
 
   runtime.status.lastAction = followUpAction;
@@ -1456,6 +1547,15 @@ async function executeActionPlan(
   diagnosis: SelfHealingDiagnosis,
   observation: SelfHealingObservation
 ): Promise<SelfHealingActionExecution> {
+  if (runtime.pendingVerification) {
+    console.log('[SELF-HEAL] action skipped reason=pending-verification');
+    return {
+      executed: false,
+      action: null,
+      pendingVerification: null
+    };
+  }
+
   if (!diagnosis.actionPlan || !diagnosis.incidentKey) {
     return {
       executed: false,
@@ -1473,6 +1573,10 @@ async function executeActionPlan(
 
     if (actionPlan.kind === 'heal_worker_runtime') {
       return actionPlan.actionKey;
+    }
+
+    if (actionPlan.kind === 'activate_prompt_route_reduced_latency_mode') {
+      return 'activatePromptRouteMitigation:reduced_latency';
     }
 
     if (actionPlan.kind === 'activate_prompt_route_degraded_mode') {
@@ -1584,6 +1688,32 @@ async function executeActionPlan(
       };
     }
 
+    if (actionPlan.kind === 'activate_prompt_route_reduced_latency_mode') {
+      const defaultTokenLimit = Math.max(64, Math.min(256, observation.openaiHealth.defaults?.maxTokens ?? 256));
+      const mitigationResult = activatePromptRouteReducedLatencyMode(diagnosis.summary, defaultTokenLimit);
+      if (!mitigationResult.applied) {
+        console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
+        return {
+          executed: false,
+          action: null,
+          pendingVerification: null
+        };
+      }
+
+      const action = resolveActionTrackingKey();
+      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
+      recordDiagnosisAttempt(runtime, diagnosis.type);
+      console.log(`[SELF-HEAL] action ${action}`);
+      return {
+        executed: true,
+        action,
+        pendingVerification: beginVerification(diagnosis, action, observation, {
+          kind: 'prompt_route',
+          reason: 'self_heal_verification_failed'
+        })
+      };
+    }
+
     if (actionPlan.kind === 'activate_prompt_route_degraded_mode') {
       const mitigationResult = activatePromptRouteDegradedMode(diagnosis.summary);
       if (!mitigationResult.applied) {
@@ -1633,9 +1763,20 @@ export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
 
   return {
     ...runtime.status,
+    bypassedSubsystems: [...runtime.status.bypassedSubsystems],
+    ineffectiveActions: { ...runtime.status.ineffectiveActions },
     attemptsByDiagnosis: { ...runtime.status.attemptsByDiagnosis },
     cooldowns: { ...runtime.status.cooldowns },
     lastEvidence: runtime.status.lastEvidence ? { ...runtime.status.lastEvidence } : null,
+    lastLatencySnapshot: runtime.status.lastLatencySnapshot
+      ? {
+          ...runtime.status.lastLatencySnapshot,
+          promptRoute: runtime.status.lastLatencySnapshot.promptRoute
+            ? { ...runtime.status.lastLatencySnapshot.promptRoute }
+            : null
+        }
+      : null,
+    recentTimeoutCounts: runtime.status.recentTimeoutCounts ? { ...runtime.status.recentTimeoutCounts } : null,
     lastVerificationResult: runtime.status.lastVerificationResult
       ? {
           ...runtime.status.lastVerificationResult,
@@ -1688,6 +1829,9 @@ export async function runSelfHealingLoop(options: {
     runtime.status.lastWorkerHealth = diagnosis.workerHealthLabel;
     runtime.status.lastTrinityMitigation = diagnosis.trinityMitigation;
     runtime.status.activeMitigation = getActiveAutomatedMitigation(observation.trinityStatus);
+    runtime.status.lastLatencySnapshot = buildLatencySnapshot(observation.requestWindow);
+    runtime.status.recentTimeoutCounts = buildRecentTimeoutCounts(observation.requestWindow);
+    runtime.status.bypassedSubsystems = getActiveBypassedSubsystems();
 
     if (diagnosis.type === 'healthy') {
       runtime.status.lastHealthyObservedAt = tickAt;
@@ -1696,7 +1840,7 @@ export async function runSelfHealingLoop(options: {
     console.log(`[SELF-HEAL] diagnosis ${diagnosis.summary}`);
 
     let action: string | null = verification.followUpAction;
-    if (!action) {
+    if (!action && verification.verificationResult === null) {
       const actionResult = await executeActionPlan(runtime, diagnosis, observation);
       if (actionResult.executed && actionResult.action) {
         action = actionResult.action;

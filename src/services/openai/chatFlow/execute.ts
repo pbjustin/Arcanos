@@ -23,7 +23,10 @@ export async function executeChatFlow(
       return await performResponsesRequest(adapter, model, messages, tokenLimit, options);
     },
     {
-      maxRetries: DEFAULT_MAX_RETRIES,
+      maxRetries:
+        typeof options.maxRetries === 'number' && Number.isFinite(options.maxRetries)
+          ? Math.max(0, Math.trunc(options.maxRetries))
+          : DEFAULT_MAX_RETRIES,
       operationName: "callOpenAI",
       useCircuitBreaker: true,
       signal: options.signal ?? getRequestAbortSignal()
@@ -38,10 +41,14 @@ async function performResponsesRequest(
   tokenLimit: number,
   options: CallOpenAIOptions
 ): Promise<any> {
+  const requestTimeoutMs =
+    typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)
+      ? Math.max(1, Math.trunc(options.timeoutMs))
+      : getApiTimeoutMs();
   const requestScope = createLinkedAbortController({
-    timeoutMs: getApiTimeoutMs(),
+    timeoutMs: requestTimeoutMs,
     parentSignal: options.signal ?? getRequestAbortSignal(),
-    abortMessage: `OpenAI Responses request timed out after ${getApiTimeoutMs()}ms`
+    abortMessage: `OpenAI Responses request timed out after ${requestTimeoutMs}ms`
   });
 
   try {

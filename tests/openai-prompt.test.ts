@@ -4,6 +4,7 @@ const callOpenAI = jest.fn() as jest.MockedFunction<any>;
 const getDefaultModel = jest.fn() as jest.MockedFunction<any>;
 const validateAIRequest = jest.fn() as jest.MockedFunction<any>;
 const handleAIError = jest.fn() as jest.MockedFunction<any>;
+const classifyBudgetAbortKind = jest.fn(() => null) as jest.MockedFunction<any>;
 const getFallbackModel = jest.fn(() => 'ft:fallback-model');
 const getGPT5Model = jest.fn(() => 'gpt-5');
 const recordTraceEvent = jest.fn();
@@ -25,6 +26,7 @@ const getOpenAIKeySource = jest.fn(() => null);
 
 let handlePrompt: (req: any, res: any) => Promise<void>;
 let activatePromptRouteDegradedMode: (reason: string) => unknown;
+let activatePromptRouteReducedLatencyMode: (reason: string, defaultTokenLimit: number) => unknown;
 let resetPromptRouteMitigationStateForTests: () => void;
 let originalNodeEnv: string | undefined;
 
@@ -44,7 +46,13 @@ beforeEach(async () => {
 
   jest.unstable_mockModule('../src/transport/http/requestHandler.js', () => ({
     validateAIRequest,
-    handleAIError
+    handleAIError,
+    classifyBudgetAbortKind
+  }));
+
+  jest.unstable_mockModule('@arcanos/runtime', () => ({
+    runWithRequestAbortTimeout: async (_options: unknown, fn: () => Promise<unknown>) => await fn(),
+    getRequestAbortSignal: jest.fn(() => undefined)
   }));
 
   jest.unstable_mockModule('../src/platform/logging/telemetry.js', () => ({
@@ -61,7 +69,7 @@ beforeEach(async () => {
   }));
 
   ({ handlePrompt } = await import('../src/transport/http/controllers/openaiController.js'));
-  ({ activatePromptRouteDegradedMode, resetPromptRouteMitigationStateForTests } = await import(
+  ({ activatePromptRouteDegradedMode, activatePromptRouteReducedLatencyMode, resetPromptRouteMitigationStateForTests } = await import(
     '../src/services/openai/promptRouteMitigation.js'
   ));
   resetPromptRouteMitigationStateForTests();
@@ -83,7 +91,20 @@ describe('handlePrompt', () => {
 
     await handlePrompt(req, res);
 
-    expect(callOpenAI).toHaveBeenCalledWith('ft:custom-model', 'hi', 256);
+    expect(callOpenAI).toHaveBeenCalledWith(
+      'ft:custom-model',
+      'hi',
+      256,
+      true,
+      expect.objectContaining({
+        timeoutMs: 6000,
+        maxRetries: 1,
+        metadata: expect.objectContaining({
+          route: '/api/openai/prompt',
+          mitigationMode: 'normal'
+        })
+      })
+    );
     const payload = res.json.mock.calls[0][0];
     expect(payload).toEqual(
       expect.objectContaining({
@@ -110,7 +131,16 @@ describe('handlePrompt', () => {
 
     await handlePrompt(req, res);
 
-    expect(callOpenAI).toHaveBeenCalledWith('ft:custom-model', 'hi', 256);
+    expect(callOpenAI).toHaveBeenCalledWith(
+      'ft:custom-model',
+      'hi',
+      256,
+      true,
+      expect.objectContaining({
+        timeoutMs: 6000,
+        maxRetries: 1
+      })
+    );
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'ft:custom-model',
@@ -130,7 +160,16 @@ describe('handlePrompt', () => {
     await handlePrompt(req, res);
 
     expect(getDefaultModel).toHaveBeenCalled();
-    expect(callOpenAI).toHaveBeenCalledWith('ft:default-model', 'hello', 256);
+    expect(callOpenAI).toHaveBeenCalledWith(
+      'ft:default-model',
+      'hello',
+      256,
+      true,
+      expect.objectContaining({
+        timeoutMs: 6000,
+        maxRetries: 1
+      })
+    );
     const payload = res.json.mock.calls[0][0];
     expect(payload).toEqual(
       expect.objectContaining({
@@ -186,5 +225,65 @@ describe('handlePrompt', () => {
         timestamp: '2026-03-25T12:00:00.000Z'
       })
     }));
+  });
+
+  it('uses the reduced-latency prompt-route policy when mitigation is active', async () => {
+    validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
+    activatePromptRouteReducedLatencyMode('timeout storm detected', 256);
+    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:fallback-model', cached: false });
+
+    const req: any = {
+      body: { prompt: 'hello' },
+      logger: {
+        warn: jest.fn()
+      }
+    };
+    const res: any = { json: jest.fn() };
+
+    await handlePrompt(req, res);
+
+    expect(callOpenAI).toHaveBeenCalledWith(
+      'ft:fallback-model',
+      'hello',
+      96,
+      true,
+      expect.objectContaining({
+        timeoutMs: 2250,
+        maxRetries: 0,
+        metadata: expect.objectContaining({
+          route: '/api/openai/prompt',
+          mitigationMode: 'reduced_latency',
+          bypassedSubsystems: expect.arrayContaining(['provider_retry', 'long_generation_tail'])
+        })
+      })
+    );
+    expect(req.logger.warn).toHaveBeenCalledWith(
+      'prompt.route.reduced_latency',
+      expect.objectContaining({
+        mitigationMode: 'reduced_latency',
+        providerTimeoutMs: 2250,
+        pipelineTimeoutMs: 2500,
+        maxRetries: 0,
+        maxTokens: 96,
+        targetModel: 'ft:fallback-model'
+      })
+    );
+    expect(recordTraceEvent).toHaveBeenCalledWith(
+      'prompt_route.reduced_latency',
+      expect.objectContaining({
+        mitigationMode: 'reduced_latency',
+        providerTimeoutMs: 2250,
+        pipelineTimeoutMs: 2500,
+        maxRetries: 0
+      })
+    );
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: 'ok',
+        model: 'ft:fallback-model',
+        activeModel: 'ft:fallback-model',
+        fallbackFlag: true
+      })
+    );
   });
 });

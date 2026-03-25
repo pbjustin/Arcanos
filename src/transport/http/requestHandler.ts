@@ -26,6 +26,24 @@ const BUDGET_ABORT_ERROR_MARKERS = [
   'execution aborted by watchdog'
 ];
 
+const PIPELINE_TIMEOUT_ERROR_MARKERS = [
+  'prompt route timeout after',
+  'prompt_route_pipeline_timeout_after',
+  'gpt route timeout after',
+  'handler timed out after'
+];
+
+const PROVIDER_TIMEOUT_ERROR_MARKERS = [
+  'openai responses request timed out after',
+  'openai chat completion timed out after'
+];
+
+const WORKER_TIMEOUT_ERROR_MARKERS = [
+  'worker timeout after',
+  'worker timed out after',
+  'worker runtime timed out after'
+];
+
 /**
  * Extract input text from various possible field names in request body
  */
@@ -142,7 +160,32 @@ export function isBudgetAbort(err: unknown): boolean {
   }
 
   const normalizedMessage = resolveErrorMessage(err).toLowerCase();
-  return BUDGET_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker));
+  return (
+    BUDGET_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    PIPELINE_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    PROVIDER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    WORKER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))
+  );
+}
+
+export function classifyBudgetAbortKind(
+  err: unknown
+): 'pipeline_timeout' | 'provider_timeout' | 'worker_timeout' | 'budget_abort' | null {
+  const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+
+  if (PIPELINE_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'pipeline_timeout';
+  }
+
+  if (PROVIDER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'provider_timeout';
+  }
+
+  if (WORKER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'worker_timeout';
+  }
+
+  return isBudgetAbort(err) ? 'budget_abort' : null;
 }
 
 /**
@@ -166,12 +209,32 @@ export function handleAIError(
     return;
   }
 
-  if (isBudgetAbort(err)) {
+  const budgetAbortKind = classifyBudgetAbortKind(err);
+  if (budgetAbortKind) {
+    const timeoutPayloadByKind = {
+      pipeline_timeout: {
+        error: 'AI pipeline timeout',
+        code: 'PIPELINE_TIMEOUT'
+      },
+      provider_timeout: {
+        error: 'AI provider timeout',
+        code: 'PROVIDER_TIMEOUT'
+      },
+      worker_timeout: {
+        error: 'AI worker timeout',
+        code: 'WORKER_TIMEOUT'
+      },
+      budget_abort: {
+        error: 'AI timeout/budget abort',
+        code: 'BUDGET_ABORT'
+      }
+    } as const;
+    const timeoutPayload = timeoutPayloadByKind[budgetAbortKind];
     res.status(408).json({
-      error: 'AI timeout/budget abort',
+      error: timeoutPayload.error,
       detail: errorMessage,
       details: errorMessage,
-      code: 'BUDGET_ABORT'
+      code: timeoutPayload.code
     } as ErrorResponseDTO);
     return;
   }

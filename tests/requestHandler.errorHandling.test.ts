@@ -9,6 +9,7 @@ const getOpenAIClientOrAdapterMock = jest.fn(() => ({ adapter: {}, client: {} })
 
 let handleAIError: typeof import('../src/transport/http/requestHandler.js').handleAIError;
 let isBudgetAbort: typeof import('../src/transport/http/requestHandler.js').isBudgetAbort;
+let classifyBudgetAbortKind: typeof import('../src/transport/http/requestHandler.js').classifyBudgetAbortKind;
 
 const originalAllowMockFallback = process.env.ALLOW_MOCK_FALLBACK;
 
@@ -36,7 +37,7 @@ beforeEach(async () => {
     getOpenAIClientOrAdapter: getOpenAIClientOrAdapterMock,
   }));
 
-  ({ handleAIError, isBudgetAbort } = await import('../src/transport/http/requestHandler.js'));
+  ({ handleAIError, isBudgetAbort, classifyBudgetAbortKind } = await import('../src/transport/http/requestHandler.js'));
 });
 
 afterEach(() => {
@@ -63,6 +64,36 @@ describe('requestHandler error mapping', () => {
 
   it('classifies watchdog threshold messages as budget aborts', () => {
     expect(isBudgetAbort(new Error('Execution exceeded watchdog threshold (70000ms > 60000ms)'))).toBe(true);
+  });
+
+  it('classifies provider timeout messages distinctly', () => {
+    const error = new Error('OpenAI Responses request timed out after 2250ms');
+    expect(isBudgetAbort(error)).toBe(true);
+    expect(classifyBudgetAbortKind(error)).toBe('provider_timeout');
+  });
+
+  it('returns 408 with provider timeout code for provider timeouts', () => {
+    const res = createResponseMock();
+
+    handleAIError(new Error('OpenAI Responses request timed out after 2250ms'), 'prompt', 'prompt', res);
+
+    expect(res.status).toHaveBeenCalledWith(408);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'AI provider timeout',
+      code: 'PROVIDER_TIMEOUT'
+    }));
+  });
+
+  it('returns 408 with pipeline timeout code for pipeline timeouts', () => {
+    const res = createResponseMock();
+
+    handleAIError(new Error('prompt_route_pipeline_timeout_after_2500ms'), 'prompt', 'prompt', res);
+
+    expect(res.status).toHaveBeenCalledWith(408);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'AI pipeline timeout',
+      code: 'PIPELINE_TIMEOUT'
+    }));
   });
 
   it('returns 500 for non-budget errors when mock fallback is disabled', () => {
