@@ -311,19 +311,18 @@ class ProtocolRuntimeHandler:
             raise KeyError(f'Execution "{execution_id}" was not found.')
 
         updated_at = self._clock().isoformat()
-        run_result = deepcopy(execution_state.get("runResult") or {})
+        run_result = execution_state.get("runResult") or {}
         stdout_append = str(payload.get("stdoutAppend") or "")
         stderr_append = str(payload.get("stderrAppend") or "")
         finished_at = payload.get("finishedAt")
         status = str(payload["status"])
 
-        updated_state = deepcopy(execution_state)
+        updated_state = execution_state
         updated_state["status"] = status
         updated_state["updatedAt"] = updated_at
-        updated_state["artifacts"] = [
-            *list(execution_state.get("artifacts") or []),
-            *list(payload.get("artifacts") or []),
-        ]
+        updated_state["artifacts"] = (execution_state.get("artifacts") or []) + (
+            payload.get("artifacts") or []
+        )
         updated_state["runResult"] = {
             "status": status,
             "exitCode": payload.get("exitCode", run_result.get("exitCode")),

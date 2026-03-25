@@ -238,6 +238,24 @@ function resolveAuxiliaryStageTimeoutMs(
   );
 }
 
+function resolveSelfHealingStageErrorCode(error: unknown, stageError: string): string {
+  const normalizedStageError = stageError.toLowerCase();
+
+  if (normalizedStageError.includes('openai_call_aborted_due_to_budget')) {
+    return 'openai_call_aborted_due_to_budget';
+  }
+
+  if (normalizedStageError.includes('module_timeout')) {
+    return 'module_timeout';
+  }
+
+  if (isAbortError(error)) {
+    return 'request_aborted';
+  }
+
+  return 'unknown';
+}
+
 async function runLoggedStage<T>(params: {
   requestId: string;
   stage: string;
@@ -934,6 +952,7 @@ export async function runThroughBrain(
           stage: 'intake',
           tier,
           error: stageError,
+          errorCode: resolveSelfHealingStageErrorCode(error, stageError),
           requestId,
           sourceEndpoint: options.sourceEndpoint
         });
@@ -998,6 +1017,7 @@ export async function runThroughBrain(
           stage: 'reasoning',
           tier,
           error: stageError,
+          errorCode: resolveSelfHealingStageErrorCode(error, stageError),
           requestId,
           sourceEndpoint: options.sourceEndpoint
         });
@@ -1201,6 +1221,7 @@ export async function runThroughBrain(
             stage: 'final',
             tier,
             error: stageError,
+            errorCode: resolveSelfHealingStageErrorCode(error, stageError),
             requestId,
             sourceEndpoint: options.sourceEndpoint
           });
