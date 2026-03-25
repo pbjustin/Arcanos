@@ -24,6 +24,12 @@ describe('directAnswerMode', () => {
     expect(
       resolveTrinityDirectAnswerPreference('Describe a mutex in one sentence.')
     ).toBe('simple_informational_prompt');
+    expect(
+      resolveTrinityDirectAnswerPreference('Give me a launch plan for next week.')
+    ).toBe('simple_informational_prompt');
+    expect(
+      resolveTrinityDirectAnswerPreference('Outline a launch plan for next week.')
+    ).toBe('simple_informational_prompt');
   });
 
   it('keeps complex implementation prompts on the full Trinity path', () => {
@@ -32,6 +38,9 @@ describe('directAnswerMode', () => {
     ).toBeNull();
     expect(
       resolveTrinityDirectAnswerPreference('Implement a database migration plan for the booking service.')
+    ).toBeNull();
+    expect(
+      resolveTrinityDirectAnswerPreference('Give me a patch for the queue worker retry storm.')
     ).toBeNull();
   });
 });

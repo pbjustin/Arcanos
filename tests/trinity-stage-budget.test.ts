@@ -99,7 +99,7 @@ describe('trinity stage budgets', () => {
       1,
       expect.anything(),
       expect.objectContaining({
-        timeoutMs: 4000
+        timeoutMs: 6000
       })
     );
     expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
@@ -145,12 +145,60 @@ describe('trinity stage budgets', () => {
       runtimeBudget
     );
 
+    const complexReasoningCall = runStructuredReasoningMock.mock.calls[0];
     expect(runStructuredReasoningMock).toHaveBeenCalledWith(
       expect.anything(),
       'gpt-5.1',
       expect.any(String),
       runtimeBudget,
-      10000
+      expect.any(Number),
+      { schemaVariant: 'full' }
     );
+    expect(complexReasoningCall?.[4]).toBeLessThanOrEqual(20000);
+    expect(complexReasoningCall?.[4]).toBeGreaterThan(0);
+  });
+
+  it('uses the compact structured reasoning schema for simple-tier requests', async () => {
+    runStructuredReasoningMock.mockResolvedValue({
+      response_mode: 'answer',
+      achievable_subtasks: ['answer'],
+      blocked_subtasks: [],
+      user_visible_caveats: [],
+      claim_tags: [],
+      final_answer: 'final'
+    });
+
+    const runtimeBudget = createRuntimeBudgetWithLimit(20_000, 0);
+
+    const result = await runReasoningStage(
+      {} as never,
+      'Framed request',
+      {
+        canBrowse: false,
+        canVerifyProvidedData: false,
+        canVerifyLiveData: false,
+        canConfirmExternalState: false,
+        canPersistData: false,
+        canCallBackend: false
+      },
+      { strictUserVisibleOutput: true },
+      'simple',
+      runtimeBudget
+    );
+
+    const simpleReasoningCall = runStructuredReasoningMock.mock.calls[0];
+    expect(runStructuredReasoningMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'gpt-5.1',
+      expect.any(String),
+      runtimeBudget,
+      expect.any(Number),
+      { schemaVariant: 'compact' }
+    );
+    expect(simpleReasoningCall?.[4]).toBeLessThanOrEqual(20000);
+    expect(simpleReasoningCall?.[4]).toBeGreaterThan(0);
+    expect(result.output).toBe('final');
+    expect(result.reasoningLedger?.steps).toEqual([]);
+    expect(result.reasoningLedger?.justification).toBe('');
   });
 });

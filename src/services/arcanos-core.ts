@@ -1,5 +1,6 @@
+import OpenAI from 'openai';
 import { runThroughBrain } from '@core/logic/trinity.js';
-import type { TrinityAnswerMode } from '@core/logic/trinity.js';
+import type { TrinityAnswerMode, TrinityResult, TrinityRunOptions } from '@core/logic/trinity.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { generateMockResponse } from '@services/openai.js';
@@ -25,6 +26,15 @@ const DEFAULT_ARCANOS_CORE_ROUTE_TIMEOUT_MS = 60_000;
 const DEFAULT_ARCANOS_CORE_HANDLER_HEADROOM_MS = 5_000;
 const DEFAULT_ARCANOS_CORE_HANDLER_TIMEOUT_MS =
   DEFAULT_ARCANOS_CORE_ROUTE_TIMEOUT_MS - DEFAULT_ARCANOS_CORE_HANDLER_HEADROOM_MS;
+
+export interface RunArcanosCoreQueryParams {
+  client: OpenAI;
+  prompt: string;
+  sourceEndpoint: string;
+  sessionId?: string;
+  overrideAuditSafe?: string;
+  runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
+}
 
 function extractPrompt(payload: ArcanosCoreQueryPayload): string {
   for (const candidate of [
@@ -75,6 +85,72 @@ function resolveCoreHandlerTimeoutMs(): number {
   return Math.max(1, Math.min(normalizedConfiguredTimeoutMs, remainingRequestMs));
 }
 
+export async function runArcanosCoreQuery(
+  params: RunArcanosCoreQueryParams
+): Promise<TrinityResult> {
+  const startedAt = Date.now();
+  const handlerTimeoutMs = resolveCoreHandlerTimeoutMs();
+  const runtimeBudget = createRuntimeBudget();
+
+  logger.info('[core] handler.start', {
+    module: 'ARCANOS:CORE',
+    sourceEndpoint: params.sourceEndpoint,
+    promptLength: params.prompt.length,
+    sessionId: params.sessionId,
+    timeoutMs: handlerTimeoutMs
+  });
+  logger.info('[core] stall_guard.armed', {
+    module: 'ARCANOS:CORE',
+    sourceEndpoint: params.sourceEndpoint,
+    timeoutMs: handlerTimeoutMs
+  });
+
+  try {
+    logger.info('[core] before trinity.query', {
+      module: 'ARCANOS:CORE',
+      sourceEndpoint: params.sourceEndpoint
+    });
+    const result = await runWithRequestAbortTimeout(
+      {
+        timeoutMs: handlerTimeoutMs,
+        parentSignal: getRequestAbortSignal(),
+        abortMessage: `ARCANOS:CORE handler timed out after ${handlerTimeoutMs}ms`
+      },
+      () =>
+        runThroughBrain(
+          params.client,
+          params.prompt,
+          params.sessionId,
+          params.overrideAuditSafe,
+          {
+            sourceEndpoint: params.sourceEndpoint,
+            ...(params.runOptions ?? {})
+          },
+          runtimeBudget
+        )
+    );
+    logger.info('[core] after trinity.query', {
+      module: 'ARCANOS:CORE',
+      sourceEndpoint: params.sourceEndpoint,
+      durationMs: Date.now() - startedAt
+    });
+    logger.info('[core] returning result', {
+      module: 'ARCANOS:CORE',
+      sourceEndpoint: params.sourceEndpoint,
+      durationMs: Date.now() - startedAt
+    });
+    return result;
+  } catch (error) {
+    logger.error('[core] handler.error', {
+      module: 'ARCANOS:CORE',
+      sourceEndpoint: params.sourceEndpoint,
+      durationMs: Date.now() - startedAt,
+      error: String((error as Error)?.message ?? error)
+    });
+    throw error;
+  }
+}
+
 export const ArcanosCore: ModuleDef = {
   name: 'ARCANOS:CORE',
   description: 'Primary ARCANOS core assistant routed through the Trinity execution pipeline.',
@@ -83,7 +159,6 @@ export const ArcanosCore: ModuleDef = {
   defaultTimeoutMs: DEFAULT_ARCANOS_CORE_ROUTE_TIMEOUT_MS,
   actions: {
     async query(payload: unknown) {
-      const startedAt = Date.now();
       const normalizedPayload =
         payload && typeof payload === 'object' && !Array.isArray(payload)
           ? (payload as ArcanosCoreQueryPayload)
@@ -108,71 +183,22 @@ export const ArcanosCore: ModuleDef = {
       if (!client) {
         logger.info('[core] handler.mock_response', {
           module: 'ARCANOS:CORE',
-          durationMs: Date.now() - startedAt
+          durationMs: 0
         });
         return generateMockResponse(prompt, 'gpt/arcanos-core');
       }
 
-      const handlerTimeoutMs = resolveCoreHandlerTimeoutMs();
-      const runtimeBudget = createRuntimeBudget();
-      logger.info('[core] handler.start', {
-        module: 'ARCANOS:CORE',
-        sourceEndpoint: 'gpt.arcanos-core.query',
-        promptLength: prompt.length,
+      return runArcanosCoreQuery({
+        client,
+        prompt,
         sessionId,
-        timeoutMs: handlerTimeoutMs
-      });
-      logger.info('[core] stall_guard.armed', {
-        module: 'ARCANOS:CORE',
+        overrideAuditSafe,
         sourceEndpoint: 'gpt.arcanos-core.query',
-        timeoutMs: handlerTimeoutMs
+        runOptions: {
+          ...(answerMode ? { answerMode } : {}),
+          ...(maxWords ? { maxWords } : {})
+        }
       });
-
-      try {
-        logger.info('[core] before trinity.query', {
-          module: 'ARCANOS:CORE',
-          sourceEndpoint: 'gpt.arcanos-core.query'
-        });
-        const result = await runWithRequestAbortTimeout(
-          {
-            timeoutMs: handlerTimeoutMs,
-            parentSignal: getRequestAbortSignal(),
-            abortMessage: `ARCANOS:CORE handler timed out after ${handlerTimeoutMs}ms`
-          },
-          () =>
-            runThroughBrain(
-              client,
-              prompt,
-              sessionId,
-              overrideAuditSafe,
-              {
-                sourceEndpoint: 'gpt.arcanos-core.query',
-                ...(answerMode ? { answerMode } : {}),
-                ...(maxWords ? { maxWords } : {})
-              },
-              runtimeBudget
-            )
-        );
-        logger.info('[core] after trinity.query', {
-          module: 'ARCANOS:CORE',
-          sourceEndpoint: 'gpt.arcanos-core.query',
-          durationMs: Date.now() - startedAt
-        });
-        logger.info('[core] returning result', {
-          module: 'ARCANOS:CORE',
-          sourceEndpoint: 'gpt.arcanos-core.query',
-          durationMs: Date.now() - startedAt
-        });
-        return result;
-      } catch (error) {
-        logger.error('[core] handler.error', {
-          module: 'ARCANOS:CORE',
-          sourceEndpoint: 'gpt.arcanos-core.query',
-          durationMs: Date.now() - startedAt,
-          error: String((error as Error)?.message ?? error)
-        });
-        throw error;
-      }
     },
     async system_state(payload: unknown) {
       return executeSystemStateRequest(payload);

@@ -84,6 +84,12 @@ import {
   TRINITY_DIRECT_ANSWER_AUDIT_FLAG,
   TRINITY_DIRECT_ANSWER_STAGE
 } from './trinityDirectAnswerMode.js';
+import {
+  getTrinitySelfHealingMitigation,
+  noteTrinityMitigationOutcome,
+  recordTrinityStageFailure,
+  type TrinitySelfHealingAction
+} from '@services/selfImprove/selfHealingV2.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
 const EXACT_LITERAL_DISPATCH_MODULE = 'exact-literal-dispatcher';
@@ -91,6 +97,7 @@ const EXACT_LITERAL_DISPATCH_STAGE = 'EXACT-LITERAL-DISPATCH';
 const EXACT_LITERAL_AUDIT_FLAG = 'EXACT_LITERAL_SHORTCUT_ACTIVE';
 const DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS = 3_000;
 const DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS = 750;
+const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 8_000;
 
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
@@ -486,8 +493,9 @@ export async function runThroughBrain(
   const clarificationAllowed = !internalMode;
   const directAnswerPreferenceReason = internalMode
     ? null
-    : resolveTrinityDirectAnswerPreference(prompt);
-  const prefersDirectAnswerMode = directAnswerPreferenceReason !== null;
+    : outputControls.answerMode === 'direct'
+      ? 'explicit_answer_mode'
+      : null;
 
   // --- Retry lineage check ---
   registerRetry(requestId);
@@ -636,28 +644,68 @@ export async function runThroughBrain(
   try {
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
+    const selfHealingMitigation = getTrinitySelfHealingMitigation({
+      tier,
+      answerMode: outputControls.answerMode
+    });
+    const directAnswerReason =
+      directAnswerPreferenceReason ??
+      (internalMode
+        ? null
+        : selfHealingMitigation.forceDirectAnswer
+          ? 'self_heal_enable_degraded_mode'
+          : resolveTrinityDirectAnswerPreference(prompt));
+    const shouldPreferDirectAnswerMode = directAnswerReason !== null;
 
-    //audit Assumption: explicit anti-simulation prompts on the main Trinity route should bypass persona-heavy multi-stage framing; failure risk: the normal intake/final pipeline or translator reintroduces theatrical language after the operator asked for a direct answer; expected invariant: direct-answer mode performs one guarded model call with strict output cleanup while preserving telemetry, audit, and budget controls; handling strategy: branch inside the guarded execution window when the prompt explicitly requests direct, non-simulated output.
-    if (prefersDirectAnswerMode) {
-      budget.increment();
+    const completeWithDirectAnswer = async (
+      selectionReason: string,
+      directAnswerOptions: {
+        recovery?: boolean;
+        recoveryError?: unknown;
+      } = {}
+    ): Promise<TrinityResult> => {
+      if (!directAnswerOptions.recovery) {
+        budget.increment();
+      }
       checkWatchdog();
 
       logger.info('trinity.direct_answer.auto_selected', {
         module: 'trinity',
-        operation: 'direct-answer-selection',
+        operation: directAnswerOptions.recovery ? 'direct-answer-recovery' : 'direct-answer-selection',
         requestId,
         tier,
-        reason: directAnswerPreferenceReason
+        reason: selectionReason,
+        recovery: directAnswerOptions.recovery ?? false,
+        recoveryError: directAnswerOptions.recovery ? resolveErrorMessage(directAnswerOptions.recoveryError) : undefined
       });
 
-      logArcanosRouting('DIRECT_ANSWER', getGPT5Model(), `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
-      routingStages.push(TRINITY_DIRECT_ANSWER_STAGE);
-      auditFlags.push(TRINITY_DIRECT_ANSWER_AUDIT_FLAG);
+      logArcanosRouting(
+        'DIRECT_ANSWER',
+        getGPT5Model(),
+        `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`
+      );
+      if (!routingStages.includes(TRINITY_DIRECT_ANSWER_STAGE)) {
+        routingStages.push(TRINITY_DIRECT_ANSWER_STAGE);
+      }
+      if (!auditFlags.includes(TRINITY_DIRECT_ANSWER_AUDIT_FLAG)) {
+        auditFlags.push(TRINITY_DIRECT_ANSWER_AUDIT_FLAG);
+      }
+      if (directAnswerOptions.recovery && !auditFlags.includes('REASONING_TIMEOUT_DIRECT_ANSWER_FALLBACK')) {
+        auditFlags.push('REASONING_TIMEOUT_DIRECT_ANSWER_FALLBACK');
+      }
 
+      const recoveryTimeoutMs = directAnswerOptions.recovery
+        ? resolveAuxiliaryStageTimeoutMs(
+            'TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS',
+            DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS,
+            runtimeBudget
+          )
+        : undefined;
       const directAnswerOutput = await runLoggedStage({
         requestId,
-        stage: 'direct-answer',
+        stage: directAnswerOptions.recovery ? 'direct-answer-recovery' : 'direct-answer',
         runtimeBudget,
+        timeoutMs: recoveryTimeoutMs,
         operation: () =>
           runDirectAnswerStage(
             client,
@@ -720,6 +768,7 @@ export async function runThroughBrain(
         gpt5FallbackUsed: false,
         finalFallbackUsed: directAnswerOutput.fallbackUsed,
         fallbackReasons: [
+          ...(directAnswerOptions.recovery ? [`Recovered after reasoning failure: ${selectionReason}`] : []),
           ...(directAnswerOutput.fallbackUsed ? ['Direct-answer fallback used'] : [])
         ]
       };
@@ -808,6 +857,25 @@ export async function runThroughBrain(
         module: result.module
       });
       return result;
+    };
+
+    //audit Assumption: explicit anti-simulation prompts on the main Trinity route should bypass persona-heavy multi-stage framing; failure risk: the normal intake/final pipeline or translator reintroduces theatrical language after the operator asked for a direct answer; expected invariant: direct-answer mode performs one guarded model call with strict output cleanup while preserving telemetry, audit, and budget controls; handling strategy: branch inside the guarded execution window when the prompt explicitly requests direct, non-simulated output.
+    if (shouldPreferDirectAnswerMode) {
+      const directAnswerResult = await completeWithDirectAnswer(String(directAnswerReason));
+      if (
+        selfHealingMitigation.forceDirectAnswer &&
+        selfHealingMitigation.activeAction &&
+        selfHealingMitigation.stage
+      ) {
+        noteTrinityMitigationOutcome({
+          stage: selfHealingMitigation.stage,
+          outcome: 'success',
+          requestId,
+          sourceEndpoint: options.sourceEndpoint,
+          action: selfHealingMitigation.activeAction
+        });
+      }
+      return directAnswerResult;
     }
 
     // --- Stage 1: Intake ---
@@ -823,23 +891,49 @@ export async function runThroughBrain(
     logArcanosRouting('INTAKE', arcanosModel, `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
     routingStages.push(`ARCANOS-INTAKE:${arcanosModel}`);
 
-    const intakeOutput = await runLoggedStage({
-      requestId,
-      stage: 'intake',
-      runtimeBudget,
-      operation: () =>
-        runIntakeStage(
-          client,
-          arcanosModel,
-          auditSafePrompt,
-          memoryContext.contextSummary,
-          capabilityFlags,
-          outputControls,
-          cognitiveDomain,
-          internalDirective,
-          runtimeBudget
-        )
-    });
+    let intakeRecoveryAction: TrinitySelfHealingAction | null = null;
+    let intakeOutput: Awaited<ReturnType<typeof runIntakeStage>>;
+    try {
+      intakeOutput = await runLoggedStage({
+        requestId,
+        stage: 'intake',
+        runtimeBudget,
+        operation: () =>
+          runIntakeStage(
+            client,
+            arcanosModel,
+            auditSafePrompt,
+            memoryContext.contextSummary,
+            capabilityFlags,
+            outputControls,
+            cognitiveDomain,
+            internalDirective,
+            runtimeBudget
+          )
+      });
+    } catch (error) {
+      if (tier === 'simple' && isAbortError(error)) {
+        intakeRecoveryAction = recordTrinityStageFailure({
+          stage: 'intake',
+          error: resolveErrorMessage(error),
+          requestId,
+          sourceEndpoint: options.sourceEndpoint
+        });
+        const recoveredResult = await completeWithDirectAnswer('intake_timeout_fallback', {
+          recovery: true,
+          recoveryError: error
+        });
+        noteTrinityMitigationOutcome({
+          stage: 'intake',
+          outcome: 'success',
+          requestId,
+          sourceEndpoint: options.sourceEndpoint,
+          action: intakeRecoveryAction
+        });
+        return recoveredResult;
+      }
+      throw error;
+    }
     const framedRequest = intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
@@ -848,20 +942,46 @@ export async function runThroughBrain(
     checkWatchdog();
 
     routingStages.push('GPT5-REASONING');
-    const reasoningOutput = await runLoggedStage({
-      requestId,
-      stage: 'reasoning',
-      runtimeBudget,
-      operation: () =>
-        runReasoningStage(
-          client,
-          framedRequest,
-          capabilityFlags,
-          outputControls,
-          tier,
-          runtimeBudget
-        )
-    });
+    let reasoningRecoveryAction: TrinitySelfHealingAction | null = null;
+    let reasoningOutput: Awaited<ReturnType<typeof runReasoningStage>>;
+    try {
+      reasoningOutput = await runLoggedStage({
+        requestId,
+        stage: 'reasoning',
+        runtimeBudget,
+        operation: () =>
+          runReasoningStage(
+            client,
+            framedRequest,
+            capabilityFlags,
+            outputControls,
+            tier,
+            runtimeBudget
+          )
+      });
+    } catch (error) {
+      if (tier === 'simple' && isAbortError(error)) {
+        reasoningRecoveryAction = recordTrinityStageFailure({
+          stage: 'reasoning',
+          error: resolveErrorMessage(error),
+          requestId,
+          sourceEndpoint: options.sourceEndpoint
+        });
+        const recoveredResult = await completeWithDirectAnswer('reasoning_timeout_fallback', {
+          recovery: true,
+          recoveryError: error
+        });
+        noteTrinityMitigationOutcome({
+          stage: 'reasoning',
+          outcome: 'success',
+          requestId,
+          sourceEndpoint: options.sourceEndpoint,
+          action: reasoningRecoveryAction
+        });
+        return recoveredResult;
+      }
+      throw error;
+    }
     let gpt5Output = reasoningOutput.output;
     const gpt5ModelUsed = reasoningOutput.model;
     const reasoningLedger = reasoningOutput.reasoningLedger;
@@ -874,7 +994,7 @@ export async function runThroughBrain(
 
     // --- CLEAR Audit & Escalation Logic ---
     let clearAudit: ClearAuditResult | undefined = undefined;
-    if (reasoningLedger) {
+    if (reasoningLedger && !selfHealingMitigation.bypassFinalStage) {
       checkWatchdog();
       try {
         clearAudit = await runLoggedStage({
@@ -911,11 +1031,14 @@ export async function runThroughBrain(
 
       checkWatchdog();
 
+      const canEscalateForClearScore =
+        tier === 'complex' &&
+        !internalContext?.escalated &&
+        getSafeRemainingMs(runtimeBudget) > MIN_ESCALATION_BUDGET_MS;
+
       if (clearAudit &&
-          clearAudit.overall < getClearMinThreshold() && 
-          tier !== 'critical' && 
-          !internalContext?.escalated && 
-          getSafeRemainingMs(runtimeBudget) > MIN_ESCALATION_BUDGET_MS) {
+          clearAudit.overall < getClearMinThreshold() &&
+          canEscalateForClearScore) {
         
         logger.info('Low CLEAR score detected, triggering single-hop escalation', {
           requestId, tier, clearScore: clearAudit.overall, threshold: getClearMinThreshold()
@@ -944,6 +1067,13 @@ export async function runThroughBrain(
         });
 
         return escalatedResult;
+      } else if (clearAudit && clearAudit.overall < getClearMinThreshold() && tier === 'simple') {
+        logger.info('Low CLEAR score retained without escalation for simple tier', {
+          requestId,
+          tier,
+          clearScore: clearAudit.overall,
+          threshold: getClearMinThreshold()
+        });
       }
     }
 
@@ -971,24 +1101,82 @@ export async function runThroughBrain(
 
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
-    const finalOutput = await runLoggedStage({
-      requestId,
-      stage: 'final',
-      runtimeBudget,
-      operation: () =>
-        runFinalStage(
-          client,
-          memoryContext.contextSummary,
-          auditSafePrompt,
-          gpt5Output,
-          capabilityFlags,
-          outputControls,
-          reasoningHonesty,
-          cognitiveDomain,
-          internalDirective,
-          runtimeBudget
-        )
-    });
+    let finalRecoveryAction: TrinitySelfHealingAction | null = selfHealingMitigation.bypassFinalStage
+      ? selfHealingMitigation.activeAction
+      : null;
+    let finalOutput: Awaited<ReturnType<typeof runFinalStage>>;
+    if (selfHealingMitigation.bypassFinalStage) {
+      auditFlags.push('SELF_HEAL_V2_FINAL_BYPASS');
+      logger.warn('self_heal.v2.final_bypass', {
+        module: 'self_heal.v2',
+        requestId,
+        sourceEndpoint: options.sourceEndpoint,
+        tier,
+        action: selfHealingMitigation.activeAction
+      });
+      finalOutput = {
+        output:
+          outputControls.answerMode === 'direct'
+            ? applyTrinityDirectAnswerOutputContract(gpt5Output, prompt)
+            : gpt5Output,
+        activeModel: gpt5ModelUsed,
+        fallbackUsed: true,
+        usage: undefined,
+        responseId: undefined,
+        created: undefined
+      };
+    } else {
+      try {
+        finalOutput = await runLoggedStage({
+          requestId,
+          stage: 'final',
+          runtimeBudget,
+          operation: () =>
+            runFinalStage(
+              client,
+              memoryContext.contextSummary,
+              auditSafePrompt,
+              gpt5Output,
+              capabilityFlags,
+              outputControls,
+              reasoningHonesty,
+              cognitiveDomain,
+              internalDirective,
+              runtimeBudget
+            )
+        });
+      } catch (error) {
+        if (tier === 'simple' && isAbortError(error)) {
+          finalRecoveryAction = recordTrinityStageFailure({
+            stage: 'final',
+            error: resolveErrorMessage(error),
+            requestId,
+            sourceEndpoint: options.sourceEndpoint
+          });
+          auditFlags.push('SELF_HEAL_V2_FINAL_DEGRADED_MODE');
+          logger.warn('self_heal.v2.final_degraded_response', {
+            module: 'self_heal.v2',
+            requestId,
+            sourceEndpoint: options.sourceEndpoint,
+            tier,
+            action: finalRecoveryAction
+          });
+          finalOutput = {
+            output:
+              outputControls.answerMode === 'direct'
+                ? applyTrinityDirectAnswerOutputContract(gpt5Output, prompt)
+                : gpt5Output,
+            activeModel: gpt5ModelUsed,
+            fallbackUsed: true,
+            usage: undefined,
+            responseId: undefined,
+            created: undefined
+          };
+        } else {
+          throw error;
+        }
+      }
+    }
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(prompt);
@@ -1057,7 +1245,18 @@ export async function runThroughBrain(
 
     logRoutingSummary(arcanosModel, true, 'ARCANOS-FINAL');
 
-    const auditLogEntry: AuditLogEntry = buildAuditLogEntry(requestId, prompt, finalText, auditConfig, memoryContext, actualModel, gpt5ModelUsed, finalProcessedSafely, auditFlags);
+    const completedModel = finalOutput.activeModel || actualModel;
+    const auditLogEntry: AuditLogEntry = buildAuditLogEntry(
+      requestId,
+      prompt,
+      finalText,
+      auditConfig,
+      memoryContext,
+      completedModel,
+      gpt5ModelUsed,
+      finalProcessedSafely,
+      auditFlags
+    );
     logAITaskLineage(auditLogEntry);
 
     // --- Post-execution guards ---
@@ -1099,7 +1298,7 @@ export async function runThroughBrain(
 
     const result = buildTrinityResult(
       finalText,
-      actualModel,
+      completedModel,
       requestId,
       routingStages,
       gpt5Used,
@@ -1211,6 +1410,21 @@ export async function runThroughBrain(
       durationMs: Date.now() - start,
       module: result.module
     });
+    const mitigationOutcomeStage =
+      finalRecoveryAction !== null || selfHealingMitigation.bypassFinalStage
+        ? 'final'
+        : selfHealingMitigation.forceDirectAnswer && selfHealingMitigation.stage
+          ? selfHealingMitigation.stage
+          : null;
+    if (mitigationOutcomeStage) {
+      noteTrinityMitigationOutcome({
+        stage: mitigationOutcomeStage,
+        outcome: 'success',
+        requestId,
+        sourceEndpoint: options.sourceEndpoint,
+        action: finalRecoveryAction ?? selfHealingMitigation.activeAction
+      });
+    }
     return result;
 
   } finally {
