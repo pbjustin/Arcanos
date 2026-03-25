@@ -10,7 +10,9 @@ import {
 import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
 import { assertDeterministicConfirmation } from '../services/safety/aiOutputBoundary.js';
 import { resolveHeader } from '@transport/http/requestHeaders.js';
-import { getSelfHealingControlLoopStatus } from '@services/selfImprove/controlLoop.js';
+import { getTrinitySelfHealingStatus } from '@services/selfImprove/selfHealingV2.js';
+import { getSelfHealingLoopStatus } from '@services/selfImprove/selfHealingLoop.js';
+import { getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
 
 const router = express.Router();
 
@@ -41,14 +43,16 @@ router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
  */
 router.get('/status/safety', (_req: Request, res: Response) => {
   const snapshot = getSafetyRuntimeSnapshot();
-  const selfHealing = getSelfHealingControlLoopStatus();
   res.json({
     status: hasUnsafeBlockingConditions() ? 'unsafe' : 'safe',
     timestamp: new Date().toISOString(),
     activeConditions: getActiveUnsafeConditions(),
     activeQuarantines: getActiveQuarantines(),
     counters: snapshot.counters,
-    selfHealing
+    selfHealing: {
+      loop: getSelfHealingLoopStatus(),
+      trinity: getTrinitySelfHealingStatus()
+    }
   });
 });
 
@@ -57,11 +61,32 @@ router.get('/status/safety', (_req: Request, res: Response) => {
  * Purpose: expose bounded self-healing state for operator diagnostics.
  */
 router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
-  const status = getSelfHealingControlLoopStatus();
+  const loopStatus = getSelfHealingLoopStatus();
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    ...status
+    active: loopStatus.active,
+    loopRunning: loopStatus.loopRunning,
+    startedAt: loopStatus.startedAt,
+    lastTick: loopStatus.lastTick,
+    tickCount: loopStatus.tickCount,
+    lastError: loopStatus.lastError,
+    intervalMs: loopStatus.intervalMs,
+    lastDiagnosis: loopStatus.lastDiagnosis,
+    lastAction: loopStatus.lastAction,
+    lastActionAt: loopStatus.lastActionAt,
+    lastControllerDecision: loopStatus.lastControllerDecision,
+    lastControllerRunAt: loopStatus.lastControllerRunAt,
+    lastWorkerHealth: loopStatus.lastWorkerHealth,
+    lastTrinityMitigation: loopStatus.lastTrinityMitigation,
+    lastEvidence: loopStatus.lastEvidence,
+    lastVerificationResult: loopStatus.lastVerificationResult,
+    activeMitigation: loopStatus.activeMitigation,
+    attemptsByDiagnosis: loopStatus.attemptsByDiagnosis,
+    cooldowns: loopStatus.cooldowns,
+    lastHealthyObservedAt: loopStatus.lastHealthyObservedAt,
+    promptRouteMitigation: getPromptRouteMitigationState(),
+    trinity: getTrinitySelfHealingStatus()
   });
 });
 

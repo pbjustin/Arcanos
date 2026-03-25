@@ -16,6 +16,9 @@ import {
   getOpenAIServiceHealth,
   getOpenAIKeySource
 } from "@services/openai.js";
+import { recordTraceEvent } from '@platform/logging/telemetry.js';
+import { getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
+import { generateDegradedResponse } from '@transport/http/middleware/fallbackHandler.js';
 import { validateAIRequest, handleAIError } from "@transport/http/requestHandler.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { getConfirmGateConfiguration } from "@transport/http/middleware/confirmGate.js";
@@ -57,6 +60,46 @@ export async function handlePrompt(
   const { input: prompt } = validation;
   const modelOverride = typeof req.body.model === 'string' ? req.body.model.trim() : undefined;
   const model = modelOverride && modelOverride.length > 0 ? modelOverride : getDefaultModel();
+  const promptRouteMitigation = getPromptRouteMitigationState();
+
+  if (promptRouteMitigation.active && promptRouteMitigation.mode === 'degraded_response') {
+    const degradedResponse = generateDegradedResponse(prompt, 'prompt');
+    const timestamp = Math.floor(Date.now() / 1000);
+    const degradedResult =
+      typeof degradedResponse.data === 'string'
+        ? degradedResponse.data
+        : JSON.stringify(degradedResponse.data);
+
+    req.logger?.warn?.('prompt.route.mitigated', {
+      mitigationMode: promptRouteMitigation.mode,
+      mitigationReason: promptRouteMitigation.reason
+    });
+    recordTraceEvent('prompt_route.degraded', {
+      mitigationMode: promptRouteMitigation.mode,
+      mitigationReason: promptRouteMitigation.reason,
+      fallbackMode: degradedResponse.fallbackMode
+    });
+
+    res.json({
+      result: degradedResult,
+      model: getFallbackModel(),
+      meta: {
+        id: `prompt_degraded_${timestamp}`,
+        created: timestamp,
+        tokens: undefined
+      },
+      activeModel: `prompt-route:${promptRouteMitigation.mode}`,
+      fallbackFlag: true,
+      error: 'PROMPT_ROUTE_DEGRADED_MODE',
+      degradedResponse: {
+        status: degradedResponse.status,
+        message: degradedResponse.message,
+        fallbackMode: degradedResponse.fallbackMode,
+        timestamp: degradedResponse.timestamp
+      }
+    } as PromptResponse);
+    return;
+  }
 
   try {
     const { output } = await callOpenAI(model, prompt, PROMPT_MAX_TOKENS);

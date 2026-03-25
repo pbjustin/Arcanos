@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 import { app } from './app.js';
 import { performStartup } from './core/startup.js';
+import { startSelfHealingLoop } from '@services/selfImprove/selfHealingLoop.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -51,9 +52,10 @@ async function startServer(): Promise<void> {
   await performStartup();
 
   app.listen(PORT, () => {
+    const selfHealLoopStatus = startSelfHealingLoop();
     const startupDeploymentSummary = resolveStartupDeploymentSummary();
     console.log(
-      `ARCANOS running on port ${PORT} | service=${startupDeploymentSummary.serviceName} | deployment=${startupDeploymentSummary.deploymentId} | git=${startupDeploymentSummary.gitCommit} | branch=${startupDeploymentSummary.gitBranch} | workerHelperRoutes=enabled | askWorkerTools=enabled`
+      `ARCANOS running on port ${PORT} | service=${startupDeploymentSummary.serviceName} | deployment=${startupDeploymentSummary.deploymentId} | git=${startupDeploymentSummary.gitCommit} | branch=${startupDeploymentSummary.gitBranch} | workerHelperRoutes=enabled | askWorkerTools=enabled | selfHealLoop=${selfHealLoopStatus.loopRunning ? 'enabled' : 'disabled'} | selfHealIntervalMs=${selfHealLoopStatus.intervalMs}`
     );
   });
 }
