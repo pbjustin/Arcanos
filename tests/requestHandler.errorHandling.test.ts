@@ -96,6 +96,23 @@ describe('requestHandler error mapping', () => {
     }));
   });
 
+  it('treats generic aborted requests as budget aborts instead of generic service failures', () => {
+    const res = createResponseMock();
+    const error = new Error('Request was aborted.');
+    error.name = 'AbortError';
+
+    expect(isBudgetAbort(error)).toBe(true);
+    expect(classifyBudgetAbortKind(error)).toBe('budget_abort');
+
+    handleAIError(error, 'prompt', 'prompt', res);
+
+    expect(res.status).toHaveBeenCalledWith(408);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'AI timeout/budget abort',
+      code: 'BUDGET_ABORT'
+    }));
+  });
+
   it('returns 500 for non-budget errors when mock fallback is disabled', () => {
     const res = createResponseMock();
 

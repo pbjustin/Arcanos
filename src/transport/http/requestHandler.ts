@@ -44,6 +44,14 @@ const WORKER_TIMEOUT_ERROR_MARKERS = [
   'worker runtime timed out after'
 ];
 
+const GENERIC_ABORT_ERROR_MARKERS = [
+  'request was aborted',
+  'the operation was aborted',
+  'this operation was aborted',
+  'operation was aborted',
+  'signal is aborted without reason'
+];
+
 /**
  * Extract input text from various possible field names in request body
  */
@@ -154,7 +162,11 @@ export function validateAIRequest(
 
 export function isBudgetAbort(err: unknown): boolean {
   if (err instanceof Error) {
-    if (err.name === 'RuntimeBudgetExceededError' || err.name === 'OpenAIAbortError') {
+    if (
+      err.name === 'RuntimeBudgetExceededError' ||
+      err.name === 'OpenAIAbortError' ||
+      err.name === 'AbortError'
+    ) {
       return true;
     }
   }
@@ -164,7 +176,8 @@ export function isBudgetAbort(err: unknown): boolean {
     BUDGET_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
     PIPELINE_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
     PROVIDER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
-    WORKER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))
+    WORKER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    GENERIC_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))
   );
 }
 
@@ -172,6 +185,7 @@ export function classifyBudgetAbortKind(
   err: unknown
 ): 'pipeline_timeout' | 'provider_timeout' | 'worker_timeout' | 'budget_abort' | null {
   const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+  const normalizedName = err instanceof Error ? err.name.toLowerCase() : '';
 
   if (PIPELINE_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
     return 'pipeline_timeout';
@@ -183,6 +197,14 @@ export function classifyBudgetAbortKind(
 
   if (WORKER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
     return 'worker_timeout';
+  }
+
+  if (normalizedName === 'openaiaborterror') {
+    return 'provider_timeout';
+  }
+
+  if (normalizedName === 'aborterror' || GENERIC_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'budget_abort';
   }
 
   return isBudgetAbort(err) ? 'budget_abort' : null;

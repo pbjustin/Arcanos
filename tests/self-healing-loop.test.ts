@@ -1008,6 +1008,165 @@ describe('selfHealingLoop', () => {
     }));
   });
 
+  it('reports prompt-route stability from post-mitigation traffic instead of stale global burst samples', async () => {
+    promptRouteMitigationActive = true;
+    promptRouteMitigationMode = 'reduced_latency';
+    promptRouteMitigationReason = 'timeout storm detected';
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 16,
+      errorCount: 1,
+      clientErrorCount: 0,
+      serverErrorCount: 1,
+      errorRate: 0.063,
+      timeoutCount: 4,
+      timeoutRate: 0.25,
+      slowRequestCount: 8,
+      avgLatencyMs: 3016.313,
+      p95LatencyMs: 6021,
+      maxLatencyMs: 6021,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 12,
+          errorCount: 1,
+          timeoutCount: 4,
+          slowRequestCount: 8,
+          avgLatencyMs: 4020.917,
+          p95LatencyMs: 6021,
+          maxLatencyMs: 6021
+        }
+      ]
+    }));
+    getRequestWindowSinceMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 5,
+      errorCount: 0,
+      clientErrorCount: 0,
+      serverErrorCount: 0,
+      errorRate: 0,
+      timeoutCount: 0,
+      timeoutRate: 0,
+      slowRequestCount: 0,
+      avgLatencyMs: 150,
+      p95LatencyMs: 220,
+      maxLatencyMs: 220,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 5,
+          errorCount: 0,
+          timeoutCount: 0,
+          slowRequestCount: 0,
+          avgLatencyMs: 150,
+          p95LatencyMs: 220,
+          maxLatencyMs: 220
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'prompt route stabilized under reduced-latency mitigation',
+      action: null
+    }));
+    expect(activatePromptRouteDegradedModeMock).not.toHaveBeenCalled();
+    expect(activatePromptRouteReducedLatencyModeMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastDiagnosis: 'prompt route stabilized under reduced-latency mitigation',
+      activeMitigation: 'prompt:/api/openai/prompt:reduced_latency',
+      lastHealthyObservedAt: expect.any(String),
+      lastEvidence: expect.objectContaining({
+        mitigationWindow: expect.objectContaining({
+          observedSamples: 5,
+          activeMitigation: 'prompt:/api/openai/prompt:reduced_latency'
+        }),
+        targetedRoute: expect.objectContaining({
+          route: '/api/openai/prompt',
+          requestCount: 5,
+          timeoutCount: 0,
+          maxLatencyMs: 220
+        })
+      })
+    }));
+  });
+
+  it('treats a mostly-healthy post-mitigation prompt window as stabilized even with a single bounded timeout', async () => {
+    promptRouteMitigationActive = true;
+    promptRouteMitigationMode = 'reduced_latency';
+    promptRouteMitigationReason = 'latency spike cluster detected';
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 16,
+      errorCount: 1,
+      clientErrorCount: 0,
+      serverErrorCount: 1,
+      errorRate: 0.063,
+      timeoutCount: 1,
+      timeoutRate: 0.063,
+      slowRequestCount: 10,
+      avgLatencyMs: 2890,
+      p95LatencyMs: 6013,
+      maxLatencyMs: 6013,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 14,
+          errorCount: 1,
+          timeoutCount: 1,
+          slowRequestCount: 10,
+          avgLatencyMs: 3320,
+          p95LatencyMs: 6013,
+          maxLatencyMs: 6013
+        }
+      ]
+    }));
+    getRequestWindowSinceMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 16,
+      errorCount: 1,
+      clientErrorCount: 0,
+      serverErrorCount: 1,
+      errorRate: 0.063,
+      timeoutCount: 1,
+      timeoutRate: 0.063,
+      slowRequestCount: 1,
+      avgLatencyMs: 640,
+      p95LatencyMs: 1800,
+      maxLatencyMs: 2400,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 16,
+          errorCount: 1,
+          timeoutCount: 1,
+          slowRequestCount: 1,
+          avgLatencyMs: 640,
+          p95LatencyMs: 1800,
+          maxLatencyMs: 2400
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'prompt route stabilized under reduced-latency mitigation',
+      action: null
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastDiagnosis: 'prompt route stabilized under reduced-latency mitigation',
+      lastEvidence: expect.objectContaining({
+        mitigationWindow: expect.objectContaining({
+          timeoutSampleAllowance: 1,
+          observedSamples: 16
+        }),
+        targetedRoute: expect.objectContaining({
+          timeoutCount: 1,
+          timeoutRate: 0.063,
+          maxLatencyMs: 2400
+        })
+      })
+    }));
+  });
+
   it('runs the broader controller for manual self-heal requests when no direct action is needed', async () => {
     runSelfImproveCycleMock.mockResolvedValueOnce({
       id: 'cycle-manual',

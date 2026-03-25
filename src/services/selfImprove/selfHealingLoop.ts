@@ -101,6 +101,7 @@ const PROMPT_ROUTE_AVG_LATENCY_TREND_THRESHOLDS = {
 
 type DiagnosisType =
   | 'healthy'
+  | 'prompt_route_stabilized'
   | 'worker_stall'
   | 'timeout_storm'
   | 'latency_spike'
@@ -253,6 +254,12 @@ type TelemetrySignals = {
   fallbackDegradedCount: number;
   fallbackPreemptiveCount: number;
   validationNoiseCount: number;
+};
+
+type PromptRouteStabilityAssessment = {
+  summary: string;
+  confidence: number;
+  evidence: Record<string, unknown>;
 };
 
 type SelfHealingActionPlan =
@@ -750,6 +757,73 @@ function withPromptRouteEvidence(
   };
 }
 
+function assessPromptRouteMitigationStability(
+  requestWindow: RequestWindowSnapshot
+): PromptRouteStabilityAssessment | null {
+  const promptRouteMitigation = getPromptRouteMitigationState();
+  if (!promptRouteMitigation.active || !promptRouteMitigation.mode) {
+    return null;
+  }
+
+  const mitigationStartedAt = promptRouteMitigation.updatedAt ?? promptRouteMitigation.activatedAt;
+  if (!mitigationStartedAt) {
+    return null;
+  }
+
+  const postMitigationWindow = runtimeDiagnosticsService.getRequestWindowSince(
+    mitigationStartedAt,
+    resolveSignalWindowMs(),
+    PROMPT_ROUTE_PATH
+  );
+  const postMitigationPromptRoute = buildPromptRouteVerificationSnapshot(postMitigationWindow);
+  const requiredSamples = resolvePromptRouteVerificationMinRequests();
+  if (!postMitigationPromptRoute || postMitigationPromptRoute.requestCount < requiredSamples) {
+    return null;
+  }
+
+  const stabilizedLatencyCeilingMs = Math.max(
+    750,
+    promptRouteMitigation.pipelineTimeoutMs ?? Math.min(resolveLatencyP95ThresholdMs(), 2_500)
+  );
+  const stabilizedErrorRateThreshold = Math.max(0.05, Number((resolveErrorRateThreshold() * 0.5).toFixed(3)));
+  const stabilizedTimeoutRateThreshold = Math.max(0, Number((resolveTimeoutRateThreshold() * 0.5).toFixed(3)));
+  const timeoutSampleAllowance = Math.max(
+    1,
+    Math.floor(postMitigationPromptRoute.requestCount * stabilizedTimeoutRateThreshold)
+  );
+  const routeLooksHealthy =
+    postMitigationPromptRoute.timeoutRate <= stabilizedTimeoutRateThreshold &&
+    postMitigationPromptRoute.timeoutCount <= timeoutSampleAllowance &&
+    postMitigationPromptRoute.errorRate <= stabilizedErrorRateThreshold &&
+    postMitigationPromptRoute.p95LatencyMs <= stabilizedLatencyCeilingMs &&
+    postMitigationPromptRoute.maxLatencyMs <= stabilizedLatencyCeilingMs;
+
+  if (!routeLooksHealthy) {
+    return null;
+  }
+
+  const modeLabel = promptRouteMitigation.mode.replace(/_/g, '-');
+  return {
+    summary: `prompt route stabilized under ${modeLabel} mitigation`,
+    confidence: 0.86,
+    evidence: {
+      ...buildRequestEvidence(requestWindow),
+      mitigationWindow: {
+        activeMitigation: `prompt:${promptRouteMitigation.route}:${promptRouteMitigation.mode}`,
+        since: mitigationStartedAt,
+        requiredSamples,
+        observedSamples: postMitigationPromptRoute.requestCount,
+        latencyCeilingMs: stabilizedLatencyCeilingMs,
+        errorRateThreshold: stabilizedErrorRateThreshold,
+        timeoutRateThreshold: stabilizedTimeoutRateThreshold,
+        timeoutSampleAllowance,
+        bypassedSubsystems: [...promptRouteMitigation.bypassedSubsystems]
+      },
+      targetedRoute: postMitigationPromptRoute
+    }
+  };
+}
+
 function detectBurstingLatency(requestWindow: RequestWindowSnapshot, minRequestCount: number): boolean {
   const burstRequestThreshold = Math.max(2, resolveLatencyBurstCountThreshold());
   const burstWindowMinRequests = Math.max(6, Math.floor(minRequestCount / 2));
@@ -768,7 +842,8 @@ function buildDiagnosisSummary(
   type: DiagnosisType,
   observation: SelfHealingObservation,
   telemetrySignals: TelemetrySignals,
-  activeMitigation: string | null
+  activeMitigation: string | null,
+  promptRouteStability: PromptRouteStabilityAssessment | null = null
 ): {
   summary: string;
   confidence: number;
@@ -808,6 +883,16 @@ function buildDiagnosisSummary(
             cooldownKey: 'heal_worker_runtime',
             cooldownMs: resolveActionCooldownMs()
           },
+      shouldRunController: false
+    };
+  }
+
+  if (type === 'prompt_route_stabilized' && promptRouteStability) {
+    return {
+      summary: promptRouteStability.summary,
+      confidence: promptRouteStability.confidence,
+      evidence: promptRouteStability.evidence,
+      actionPlan: null,
       shouldRunController: false
     };
   }
@@ -1028,6 +1113,7 @@ function diagnoseSelfHealingRuntime(
   const queueSummary = observation.workerHealth?.queueSummary;
   const telemetrySignals = deriveTelemetrySignals(observation.telemetry, observation.requestWindow.windowMs);
   const requestWindow = observation.requestWindow;
+  const promptRouteStability = assessPromptRouteMitigationStability(requestWindow);
   const runtimeInactive =
     observation.workerRuntime.enabled &&
     (!observation.workerRuntime.started || observation.workerRuntime.activeListeners === 0);
@@ -1084,6 +1170,8 @@ function diagnoseSelfHealingRuntime(
   let diagnosisType: DiagnosisType = 'healthy';
   if (workerStallDetected) {
     diagnosisType = 'worker_stall';
+  } else if (promptRouteStability) {
+    diagnosisType = 'prompt_route_stabilized';
   } else if (providerClusterDetected) {
     diagnosisType = 'provider_failure_cluster';
   } else if (timeoutStormDetected) {
@@ -1108,10 +1196,16 @@ function diagnoseSelfHealingRuntime(
     diagnosisType = 'manual';
   }
 
-  const summary = buildDiagnosisSummary(diagnosisType, observation, telemetrySignals, activeMitigation);
+  const summary = buildDiagnosisSummary(
+    diagnosisType,
+    observation,
+    telemetrySignals,
+    activeMitigation,
+    promptRouteStability
+  );
   const baseDiagnosis = {
     type: diagnosisType,
-    incidentKey: diagnosisType === 'healthy' ? null : diagnosisType,
+    incidentKey: diagnosisType === 'healthy' || diagnosisType === 'prompt_route_stabilized' ? null : diagnosisType,
     summary: summary.summary,
     confidence: summary.confidence,
     evidence: summary.evidence,
@@ -1840,7 +1934,7 @@ export async function runSelfHealingLoop(options: {
     runtime.status.recentTimeoutCounts = buildRecentTimeoutCounts(observation.requestWindow);
     runtime.status.bypassedSubsystems = getActiveBypassedSubsystems();
 
-    if (diagnosis.type === 'healthy') {
+    if (diagnosis.type === 'healthy' || diagnosis.type === 'prompt_route_stabilized') {
       runtime.status.lastHealthyObservedAt = tickAt;
     }
 
