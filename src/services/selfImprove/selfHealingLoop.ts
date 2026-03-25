@@ -52,6 +52,51 @@ const DEFAULT_INEFFECTIVE_COOLDOWN_MS = 10 * 60_000;
 const DEFAULT_PROMPT_ROUTE_VERIFICATION_MIN_REQUESTS = 3;
 const SELF_HEAL_RUNTIME_KEY = '__ARCANOS_SELF_HEAL_RUNTIME__';
 const PROMPT_ROUTE_PATH = '/api/openai/prompt';
+const VERIFICATION_SUCCESS_SIGNAL_COUNT = 2;
+const VERIFICATION_FAILURE_SIGNAL_COUNT = 2;
+const VERIFICATION_TIMEOUT_COUNT_WORSE_DELTA = 1;
+const ERROR_RATE_TREND_THRESHOLDS = {
+  betterAbsoluteDelta: 0.03,
+  worseAbsoluteDelta: 0.02,
+  betterRatio: 0.8,
+  worseRatio: 1.1
+} as const;
+const TIMEOUT_RATE_TREND_THRESHOLDS = {
+  betterAbsoluteDelta: 0.05,
+  worseAbsoluteDelta: 0.05,
+  betterRatio: 0.75,
+  worseRatio: 1.2
+} as const;
+const P95_LATENCY_TREND_THRESHOLDS = {
+  betterAbsoluteDelta: 500,
+  worseAbsoluteDelta: 500,
+  betterRatio: 0.85,
+  worseRatio: 1.1
+} as const;
+const MAX_LATENCY_TREND_THRESHOLDS = {
+  betterAbsoluteDelta: 1_000,
+  worseAbsoluteDelta: 1_000,
+  betterRatio: 0.75,
+  worseRatio: 1.15
+} as const;
+const PROMPT_ROUTE_ERROR_TREND_THRESHOLDS = {
+  betterAbsoluteDelta: 0.08,
+  worseAbsoluteDelta: 0.05,
+  betterRatio: 0.7,
+  worseRatio: 1.15
+} as const;
+const PROMPT_ROUTE_TIMEOUT_TREND_THRESHOLDS = {
+  betterAbsoluteDelta: 0.08,
+  worseAbsoluteDelta: 0.05,
+  betterRatio: 0.7,
+  worseRatio: 1.15
+} as const;
+const PROMPT_ROUTE_AVG_LATENCY_TREND_THRESHOLDS = {
+  betterAbsoluteDelta: 500,
+  worseAbsoluteDelta: 500,
+  betterRatio: 0.75,
+  worseRatio: 1.15
+} as const;
 
 type DiagnosisType =
   | 'healthy'
@@ -918,6 +963,8 @@ function diagnoseSelfHealingRuntime(
     String(observation.openaiHealth.circuitBreaker.state).toUpperCase() !== 'CLOSED' ||
     providerFailureCount >= resolveProviderFailureThreshold() ||
     telemetrySignals.fallbackDegradedCount >= 2;
+  // Timeout storms should capture repeated timeout-class failures plus either long-tail latency or
+  // server-side breakage, so a burst of 5-13s requests does not slip through on average latency alone.
   const timeoutStormDetected =
     requestWindow.requestCount >= Math.max(6, Math.floor(minRequestCount / 2)) &&
     (requestWindow.timeoutCount >= resolveTimeoutCountThreshold() ||
@@ -927,6 +974,8 @@ function diagnoseSelfHealingRuntime(
       requestWindow.maxLatencyMs >= resolveMaxLatencyThresholdMs() ||
       requestWindow.serverErrorCount >= 2
     );
+  // Latency spikes should catch both sustained degradation and bursty outliers that keep the rolling
+  // average deceptively low while operators still experience multi-second stalls.
   const latencySpikeDetected =
     (
       requestWindow.requestCount >= minRequestCount &&
@@ -935,15 +984,21 @@ function diagnoseSelfHealingRuntime(
       requestWindow.slowRequestCount >= Math.max(4, Math.floor(minRequestCount / 3))
     ) ||
     latencyBurstDetected;
+  // Elevated error rate requires enough traffic and server-side failures to avoid acting on tiny samples
+  // or mostly client-driven noise.
   const elevatedErrorRateDetected =
     requestWindow.requestCount >= minRequestCount &&
     requestWindow.errorRate >= resolveErrorRateThreshold() &&
     requestWindow.serverErrorCount >= 2;
+  // Validation noise is intentionally separated from server incidents so the loop can surface it without
+  // burning mitigation budget on caller mistakes.
   const validationNoiseDetected =
     requestWindow.requestCount >= minRequestCount &&
     requestWindow.clientErrorCount >= resolveValidationNoiseThreshold() &&
     requestWindow.clientErrorCount / Math.max(1, requestWindow.requestCount) >= 0.4 &&
     requestWindow.serverErrorCount <= 1;
+  // Pending work only counts as a worker stall when the queue is ageing past autonomy limits and users are
+  // already seeing failures, which avoids healing healthy backlog.
   const workerStallDetected =
     runtimeInactive ||
     (queueSummary?.stalledRunning ?? 0) > 0 ||
@@ -1130,17 +1185,17 @@ function compareMetricTrend(
     return current > 0 ? 'worse' : 'neutral';
   }
 
-  if (
-    current <= baseline - (options.betterAbsoluteDelta ?? 0) ||
-    current <= baseline * (options.betterRatio ?? 1)
-  ) {
+  const betterByAbsolute =
+    options.betterAbsoluteDelta !== undefined && current <= baseline - options.betterAbsoluteDelta;
+  const betterByRatio = options.betterRatio !== undefined && current <= baseline * options.betterRatio;
+  if (betterByAbsolute || betterByRatio) {
     return 'better';
   }
 
-  if (
-    current >= baseline + (options.worseAbsoluteDelta ?? 0) ||
-    current >= baseline * (options.worseRatio ?? Number.POSITIVE_INFINITY)
-  ) {
+  const worseByAbsolute =
+    options.worseAbsoluteDelta !== undefined && current >= baseline + options.worseAbsoluteDelta;
+  const worseByRatio = options.worseRatio !== undefined && current >= baseline * options.worseRatio;
+  if (worseByAbsolute || worseByRatio) {
     return 'worse';
   }
 
@@ -1155,12 +1210,7 @@ function evaluateVerificationOutcome(
   let betterCount = 0;
   let worseCount = 0;
 
-  const errorTrend = compareMetricTrend(pending.baseline.errorRate, current.errorRate, {
-    betterAbsoluteDelta: 0.03,
-    worseAbsoluteDelta: 0.02,
-    betterRatio: 0.8,
-    worseRatio: 1.1
-  });
+  const errorTrend = compareMetricTrend(pending.baseline.errorRate, current.errorRate, ERROR_RATE_TREND_THRESHOLDS);
   if (errorTrend === 'better') {
     betterCount += 1;
     reasons.push('rolling error rate improved');
@@ -1169,26 +1219,27 @@ function evaluateVerificationOutcome(
     reasons.push('rolling error rate worsened');
   }
 
-  const timeoutTrend = compareMetricTrend(pending.baseline.timeoutRate, current.timeoutRate, {
-    betterAbsoluteDelta: 0.05,
-    worseAbsoluteDelta: 0.05,
-    betterRatio: 0.75,
-    worseRatio: 1.2
-  });
+  const timeoutTrend = compareMetricTrend(
+    pending.baseline.timeoutRate,
+    current.timeoutRate,
+    TIMEOUT_RATE_TREND_THRESHOLDS
+  );
   if (timeoutTrend === 'better' || current.timeoutCount < pending.baseline.timeoutCount) {
     betterCount += 1;
     reasons.push('timeout frequency improved');
-  } else if (timeoutTrend === 'worse' || current.timeoutCount > pending.baseline.timeoutCount + 1) {
+  } else if (
+    timeoutTrend === 'worse' ||
+    current.timeoutCount > pending.baseline.timeoutCount + VERIFICATION_TIMEOUT_COUNT_WORSE_DELTA
+  ) {
     worseCount += 1;
     reasons.push('timeout frequency worsened');
   }
 
-  const latencyTrend = compareMetricTrend(pending.baseline.p95LatencyMs, current.p95LatencyMs, {
-    betterAbsoluteDelta: 500,
-    worseAbsoluteDelta: 500,
-    betterRatio: 0.85,
-    worseRatio: 1.1
-  });
+  const latencyTrend = compareMetricTrend(
+    pending.baseline.p95LatencyMs,
+    current.p95LatencyMs,
+    P95_LATENCY_TREND_THRESHOLDS
+  );
   if (latencyTrend === 'better') {
     betterCount += 1;
     reasons.push('p95 latency improved');
@@ -1197,12 +1248,11 @@ function evaluateVerificationOutcome(
     reasons.push('p95 latency worsened');
   }
 
-  const maxLatencyTrend = compareMetricTrend(pending.baseline.maxLatencyMs, current.maxLatencyMs, {
-    betterAbsoluteDelta: 1_000,
-    worseAbsoluteDelta: 1_000,
-    betterRatio: 0.75,
-    worseRatio: 1.15
-  });
+  const maxLatencyTrend = compareMetricTrend(
+    pending.baseline.maxLatencyMs,
+    current.maxLatencyMs,
+    MAX_LATENCY_TREND_THRESHOLDS
+  );
   if (maxLatencyTrend === 'better') {
     betterCount += 1;
     reasons.push('max latency improved');
@@ -1234,12 +1284,11 @@ function evaluateVerificationOutcome(
     const currentPromptRoute = current.promptRoute;
 
     if (baselinePromptRoute && currentPromptRoute) {
-      const promptRouteErrorTrend = compareMetricTrend(baselinePromptRoute.errorRate, currentPromptRoute.errorRate, {
-        betterAbsoluteDelta: 0.08,
-        worseAbsoluteDelta: 0.05,
-        betterRatio: 0.7,
-        worseRatio: 1.15
-      });
+      const promptRouteErrorTrend = compareMetricTrend(
+        baselinePromptRoute.errorRate,
+        currentPromptRoute.errorRate,
+        PROMPT_ROUTE_ERROR_TREND_THRESHOLDS
+      );
       if (promptRouteErrorTrend === 'better') {
         betterCount += 1;
         reasons.push('prompt route error rate improved');
@@ -1251,12 +1300,7 @@ function evaluateVerificationOutcome(
       const promptRouteTimeoutTrend = compareMetricTrend(
         baselinePromptRoute.timeoutRate,
         currentPromptRoute.timeoutRate,
-        {
-          betterAbsoluteDelta: 0.08,
-          worseAbsoluteDelta: 0.05,
-          betterRatio: 0.7,
-          worseRatio: 1.15
-        }
+        PROMPT_ROUTE_TIMEOUT_TREND_THRESHOLDS
       );
       if (promptRouteTimeoutTrend === 'better') {
         betterCount += 1;
@@ -1269,12 +1313,7 @@ function evaluateVerificationOutcome(
       const promptRouteLatencyTrend = compareMetricTrend(
         baselinePromptRoute.avgLatencyMs,
         currentPromptRoute.avgLatencyMs,
-        {
-          betterAbsoluteDelta: 500,
-          worseAbsoluteDelta: 500,
-          betterRatio: 0.75,
-          worseRatio: 1.15
-        }
+        PROMPT_ROUTE_AVG_LATENCY_TREND_THRESHOLDS
       );
       if (promptRouteLatencyTrend === 'better') {
         betterCount += 1;
@@ -1287,12 +1326,7 @@ function evaluateVerificationOutcome(
       const promptRouteMaxLatencyTrend = compareMetricTrend(
         baselinePromptRoute.maxLatencyMs,
         currentPromptRoute.maxLatencyMs,
-        {
-          betterAbsoluteDelta: 1_000,
-          worseAbsoluteDelta: 1_000,
-          betterRatio: 0.75,
-          worseRatio: 1.15
-        }
+        MAX_LATENCY_TREND_THRESHOLDS
       );
       if (promptRouteMaxLatencyTrend === 'better') {
         betterCount += 1;
@@ -1305,9 +1339,9 @@ function evaluateVerificationOutcome(
   }
 
   let outcome: VerificationOutcome = 'unchanged';
-  if (betterCount >= 2 && betterCount > worseCount) {
+  if (betterCount >= VERIFICATION_SUCCESS_SIGNAL_COUNT && betterCount > worseCount) {
     outcome = 'improved';
-  } else if (worseCount >= 2 && worseCount >= betterCount) {
+  } else if (worseCount >= VERIFICATION_FAILURE_SIGNAL_COUNT && worseCount >= betterCount) {
     outcome = 'worse';
   }
 
