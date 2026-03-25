@@ -38,13 +38,14 @@ export async function dispatchProtocolRequest(
     : response;
 }
 
+const localDispatcher = createLocalProtocolDispatcher({
+  now: () => new Date(),
+  cwd: () => process.cwd(),
+  platform: process.platform
+});
+
 async function dispatchLocally(request: ProtocolRequest<unknown>): Promise<ProtocolResponse<unknown>> {
-  const dispatcher = createLocalProtocolDispatcher({
-    now: () => new Date(),
-    cwd: () => process.cwd(),
-    platform: process.platform
-  });
-  return dispatcher.dispatch(request);
+  return localDispatcher.dispatch(request);
 }
 
 async function dispatchViaPythonRuntime(

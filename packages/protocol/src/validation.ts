@@ -8,6 +8,7 @@ import type {
   ArtifactStoreResponseData,
   ContextInspectResponseData,
   DaemonCapabilitiesResponseData,
+  ExecResumeResponseData,
   ExecStartResponseData,
   ExecStatusResponseData,
   ImplementedProtocolCommandId,
@@ -40,6 +41,8 @@ const sharedSchemas: AnySchema[] = [
   schemaCatalog.commands.planGenerate.response,
   schemaCatalog.commands.execStart.request,
   schemaCatalog.commands.execStart.response,
+  schemaCatalog.commands.execResume.request,
+  schemaCatalog.commands.execResume.response,
   schemaCatalog.commands.execStatus.request,
   schemaCatalog.commands.execStatus.response,
   schemaCatalog.commands.stateSnapshot.request,
@@ -78,6 +81,7 @@ const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
   "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.request,
   "plan.generate": schemaCatalog.commands.planGenerate.request,
   "exec.start": schemaCatalog.commands.execStart.request,
+  "exec.resume": schemaCatalog.commands.execResume.request,
   "exec.status": schemaCatalog.commands.execStatus.request,
   "state.snapshot": schemaCatalog.commands.stateSnapshot.request,
   "task.create": schemaCatalog.commands.taskCreate.request,
@@ -92,6 +96,7 @@ const commandResponseSchemas: Record<ImplementedProtocolCommandId, AnySchema> = 
   "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.response,
   "plan.generate": schemaCatalog.commands.planGenerate.response,
   "exec.start": schemaCatalog.commands.execStart.response,
+  "exec.resume": schemaCatalog.commands.execResume.response,
   "exec.status": schemaCatalog.commands.execStatus.response,
   "state.snapshot": schemaCatalog.commands.stateSnapshot.response,
   "task.create": schemaCatalog.commands.taskCreate.response,
@@ -284,6 +289,7 @@ export function assertTypedImplementedResponse(
   | ArtifactStoreResponseData
   | ContextInspectResponseData
   | DaemonCapabilitiesResponseData
+  | ExecResumeResponseData
   | ExecStartResponseData
   | ExecStatusResponseData
   | PlanGenerateResponseData
@@ -297,6 +303,7 @@ export function assertTypedImplementedResponse(
     | ArtifactStoreResponseData
     | ContextInspectResponseData
     | DaemonCapabilitiesResponseData
+    | ExecResumeResponseData
     | ExecStartResponseData
     | ExecStatusResponseData
     | PlanGenerateResponseData
@@ -315,6 +322,7 @@ function compileCommandValidators(commandSchemas: Record<ImplementedProtocolComm
     "daemon.capabilities": protocolAjv.compile(commandSchemas["daemon.capabilities"]),
     "plan.generate": protocolAjv.compile(commandSchemas["plan.generate"]),
     "exec.start": protocolAjv.compile(commandSchemas["exec.start"]),
+    "exec.resume": protocolAjv.compile(commandSchemas["exec.resume"]),
     "exec.status": protocolAjv.compile(commandSchemas["exec.status"]),
     "state.snapshot": protocolAjv.compile(commandSchemas["state.snapshot"]),
     "task.create": protocolAjv.compile(commandSchemas["task.create"]),

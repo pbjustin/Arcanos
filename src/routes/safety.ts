@@ -10,7 +10,7 @@ import {
 import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
 import { assertDeterministicConfirmation } from '../services/safety/aiOutputBoundary.js';
 import { resolveHeader } from '@transport/http/requestHeaders.js';
-import { getTrinitySelfHealingStatus } from '@services/selfImprove/selfHealingV2.js';
+import { getSelfHealingControlLoopStatus } from '@services/selfImprove/controlLoop.js';
 
 const router = express.Router();
 
@@ -41,15 +41,14 @@ router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
  */
 router.get('/status/safety', (_req: Request, res: Response) => {
   const snapshot = getSafetyRuntimeSnapshot();
+  const selfHealing = getSelfHealingControlLoopStatus();
   res.json({
     status: hasUnsafeBlockingConditions() ? 'unsafe' : 'safe',
     timestamp: new Date().toISOString(),
     activeConditions: getActiveUnsafeConditions(),
     activeQuarantines: getActiveQuarantines(),
     counters: snapshot.counters,
-    selfHealing: {
-      trinity: getTrinitySelfHealingStatus()
-    }
+    selfHealing
   });
 });
 
@@ -58,10 +57,11 @@ router.get('/status/safety', (_req: Request, res: Response) => {
  * Purpose: expose bounded self-healing state for operator diagnostics.
  */
 router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
+  const status = getSelfHealingControlLoopStatus();
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    trinity: getTrinitySelfHealingStatus()
+    ...status
   });
 });
 

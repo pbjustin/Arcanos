@@ -40,6 +40,7 @@ export const ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS = [
   "tool.describe",
   "tool.invoke",
   "exec.start",
+  "exec.resume",
   "exec.status",
   "state.snapshot"
 ] as const;

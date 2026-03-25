@@ -7,6 +7,8 @@ import {
   type ContextInspectRequestPayload,
   type ContextInspectResponseData,
   type DaemonCapabilitiesResponseData,
+  type ExecResumeRequestPayload,
+  type ExecResumeResponseData,
   type ExecStartRequestPayload,
   type ExecStartResponseData,
   type ExecStatusRequestPayload,
@@ -105,6 +107,13 @@ export function buildExecStatusRequest(
   return buildRequest("exec.status", { executionId }, options);
 }
 
+export function buildExecResumeRequest(
+  payload: ExecResumeRequestPayload,
+  options: CliGlobalOptions
+): ProtocolRequest<ExecResumeRequestPayload> {
+  return buildRequest("exec.resume", payload, options);
+}
+
 export function assertTaskCreateResponse(
   response: ProtocolResponse<TaskCreateResponseData>
 ): ProtocolResponse<TaskCreateResponseData> {
@@ -145,6 +154,12 @@ export function assertExecStatusResponse(
   response: ProtocolResponse<ExecStatusResponseData>
 ): ProtocolResponse<ExecStatusResponseData> {
   return assertValidProtocolResponse("exec.status", response);
+}
+
+export function assertExecResumeResponse(
+  response: ProtocolResponse<ExecResumeResponseData>
+): ProtocolResponse<ExecResumeResponseData> {
+  return assertValidProtocolResponse("exec.resume", response);
 }
 
 export function serializeDeterministicJson(value: unknown): string {

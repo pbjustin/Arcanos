@@ -13,6 +13,7 @@ import { getGptRegistrySnapshot } from '@platform/runtime/gptRouterConfig.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { arcanosMcpService } from '@services/arcanosMcp.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
+import { startSelfHealingControlLoop } from '@services/selfImprove/controlLoop.js';
 import { writeMetricsResponse } from '@platform/observability/appMetrics.js';
 
 const SERVICE_NAME = 'arcanos-backend';
@@ -134,6 +135,7 @@ export function createApp(): Express {
 
   setupDiagnostics(app);
   registerRoutes(app);
+  startSelfHealingControlLoop(app);
   void runtimeDiagnosticsService.logStartupSummary(app);
 
   app.use(createFallbackMiddleware());

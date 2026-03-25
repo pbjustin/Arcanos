@@ -139,6 +139,8 @@ class ProtocolRuntimeHandler:
             return self._handle_daemon_capabilities()
         if command_name == "exec.start":
             return self._handle_exec_start(request_id, payload, context)
+        if command_name == "exec.resume":
+            return self._handle_exec_resume(payload)
         if command_name == "exec.status":
             return self._handle_exec_status(payload)
         if command_name == "state.snapshot":
@@ -301,6 +303,40 @@ class ProtocolRuntimeHandler:
         if execution_state is None:
             raise KeyError(f'Execution "{execution_id}" was not found.')
         return {"state": execution_state}
+
+    def _handle_exec_resume(self, payload: dict[str, Any]) -> dict[str, Any]:
+        execution_id = str(payload["executionId"])
+        execution_state = self._state_store.get_execution(execution_id)
+        if execution_state is None:
+            raise KeyError(f'Execution "{execution_id}" was not found.')
+
+        updated_at = self._clock().isoformat()
+        run_result = deepcopy(execution_state.get("runResult") or {})
+        stdout_append = str(payload.get("stdoutAppend") or "")
+        stderr_append = str(payload.get("stderrAppend") or "")
+        finished_at = payload.get("finishedAt")
+        status = str(payload["status"])
+
+        updated_state = deepcopy(execution_state)
+        updated_state["status"] = status
+        updated_state["updatedAt"] = updated_at
+        updated_state["artifacts"] = [
+            *list(execution_state.get("artifacts") or []),
+            *list(payload.get("artifacts") or []),
+        ]
+        updated_state["runResult"] = {
+            "status": status,
+            "exitCode": payload.get("exitCode", run_result.get("exitCode")),
+            "stdout": f'{run_result.get("stdout", "")}{stdout_append}',
+            "stderr": f'{run_result.get("stderr", "")}{stderr_append}',
+            "startedAt": run_result.get("startedAt", updated_at),
+            "finishedAt": finished_at or (
+                updated_at if status in {"completed", "failed"} else run_result.get("finishedAt")
+            ),
+        }
+
+        stored_state = self._state_store.update_execution(execution_id, updated_state)
+        return {"state": stored_state}
 
     def _handle_state_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
         execution_id = str(payload["executionId"])

@@ -17,6 +17,8 @@ export type {
   EnvironmentType,
   ExecStartRequestPayload,
   ExecStartResponseData,
+  ExecResumeRequestPayload,
+  ExecResumeResponseData,
   ExecStatusRequestPayload,
   ExecStatusResponseData,
   ExecutionStateDescriptor,

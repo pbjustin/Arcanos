@@ -7,6 +7,8 @@ import daemonCapabilitiesRequestSchema from "../schemas/v1/commands/daemon.capab
 import daemonCapabilitiesResponseSchema from "../schemas/v1/commands/daemon.capabilities.response.schema.json" with { type: "json" };
 import execStartRequestSchema from "../schemas/v1/commands/exec.start.request.schema.json" with { type: "json" };
 import execStartResponseSchema from "../schemas/v1/commands/exec.start.response.schema.json" with { type: "json" };
+import execResumeRequestSchema from "../schemas/v1/commands/exec.resume.request.schema.json" with { type: "json" };
+import execResumeResponseSchema from "../schemas/v1/commands/exec.resume.response.schema.json" with { type: "json" };
 import planGenerateRequestSchema from "../schemas/v1/commands/plan.generate.request.schema.json" with { type: "json" };
 import planGenerateResponseSchema from "../schemas/v1/commands/plan.generate.response.schema.json" with { type: "json" };
 import execStatusRequestSchema from "../schemas/v1/commands/exec.status.request.schema.json" with { type: "json" };
@@ -95,6 +97,10 @@ export function getProtocolSchemaCatalog() {
       execStart: {
         request: execStartRequestSchema,
         response: execStartResponseSchema
+      },
+      execResume: {
+        request: execResumeRequestSchema,
+        response: execResumeResponseSchema
       },
       execStatus: {
         request: execStatusRequestSchema,
