@@ -1,6 +1,10 @@
 export interface ExactLiteralPromptShortcut {
   literal: string;
-  matchedPattern: 'exact_literal_colon' | 'reply_with_only' | 'exact_literal_directive_suffix';
+  matchedPattern:
+    | 'exact_literal_colon'
+    | 'reply_with_exactly'
+    | 'reply_with_only'
+    | 'exact_literal_directive_suffix';
 }
 
 interface ExactLiteralPromptPattern {
@@ -27,6 +31,12 @@ const EXACT_LITERAL_PROMPT_PATTERNS: ExactLiteralPromptPattern[] = [
     expression: /(?:^|[\s.!?])(?<directive>(?:say|write|return|reply|respond|output)\s+exactly\s*:\s*(?<literal>.+?))\s*$/i,
     preserveWrappingDelimiters: true,
     allowDirectiveOnlyPrefix: true,
+    trimTerminalSentencePunctuation: true
+  },
+  {
+    matchedPattern: 'reply_with_exactly',
+    expression: /^\s*(?:reply|respond|return|write|output|say)\s+with\s+exactly\s+(?<literal>"[^"\r\n]+"|'[^'\r\n]+'|`[^`\r\n]+`|[A-Za-z0-9][A-Za-z0-9._:@/+\\=-]{0,159})[.!?]?\s*$/i,
+    preserveWrappingDelimiters: false,
     trimTerminalSentencePunctuation: true
   },
   {

@@ -567,6 +567,44 @@ function getLegacyQueryAlias(requestedAction: string | undefined): 'ask' | 'chat
   return null;
 }
 
+/**
+ * Purpose: Canonicalize legacy requested actions onto supported module actions.
+ * Inputs/Outputs: Accepts an optional caller-provided action plus the module's available actions and returns the canonical action name.
+ * Edge cases: Preserves direct matches and blank actions while rewriting legacy `ask`/`chat` requests onto `query` when safe.
+ */
+function resolveRequestedActionAlias(
+  requestedAction: string | undefined,
+  availableActions: string[]
+): string | undefined {
+  //audit Assumption: blank action names should behave like absent actions; failure risk: whitespace-only actions forcing false NO_DEFAULT_ACTION errors; expected invariant: blank actions do not override defaults; handling strategy: trim and return undefined for blank values.
+  if (typeof requestedAction !== 'string') {
+    return undefined;
+  }
+
+  const trimmedRequestedAction = requestedAction.trim();
+  if (trimmedRequestedAction.length === 0) {
+    return undefined;
+  }
+
+  const normalizedRequestedAction = trimmedRequestedAction.toLowerCase();
+  const directMatch = availableActions.find(
+    (actionName) => actionName.toLowerCase() === normalizedRequestedAction
+  );
+
+  //audit Assumption: case-only mismatches are safe to normalize onto the module's canonical casing; failure risk: action lookup missing valid handlers due to casing drift; expected invariant: returned actions use registered module casing; handling strategy: prefer the first direct module action match.
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const legacyQueryAlias = getLegacyQueryAlias(trimmedRequestedAction);
+  //audit Assumption: legacy callers still send `ask`/`chat` during migration; failure risk: canonical `query` modules reject compatible legacy traffic; expected invariant: query-capable modules accept legacy aliases via canonical `query`; handling strategy: rewrite only when `query` is actually supported.
+  if (legacyQueryAlias && availableActions.includes('query')) {
+    return 'query';
+  }
+
+  return trimmedRequestedAction;
+}
+
 const DISPATCH_TIMEOUT_ERROR_MARKERS = [
   'openai_call_aborted_due_to_budget',
   'runtime_budget_exhausted',
@@ -1082,27 +1120,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
-  let requestedAction = normalizeRequestedAction(rawRequestedAction);
-  const legacyQueryAlias = getLegacyQueryAlias(requestedAction);
-
-  if (legacyQueryAlias) {
-    return {
-      ok: false,
-      error: {
-        code: "BAD_REQUEST",
-        message: `Legacy action '${legacyQueryAlias}' is not supported; use 'query'.`
-      },
-      _route: {
-        ...baseRoute,
-        module: activeEntry.module,
-        action: requestedAction,
-        matchMethod,
-        route: activeEntry.route,
-        availableActions,
-        moduleVersion: (moduleMetadata as any)?.version ?? null,
-      }
-    };
-  }
+  let requestedAction = resolveRequestedActionAlias(rawRequestedAction, availableActions);
 
   //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
   if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
@@ -1309,7 +1327,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
     moduleMetadata = getModuleMetadata(activeEntry.module);
     availableActions = moduleMetadata?.actions ?? [];
-    requestedAction = normalizeRequestedAction(rawRequestedAction);
+    requestedAction = resolveRequestedActionAlias(rawRequestedAction, availableActions);
     logger?.info?.("gpt.dispatch.booker.auto_selected", {
       requestId,
       gptId: trimmedGptId,
@@ -1325,6 +1343,21 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const actionCandidate =
     automaticBackstageBookerDispatch?.action ??
     pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
+
+  //audit Assumption: action alias rewrites must remain visible during the deprecation window; failure risk: silent compatibility behavior masks stale callers; expected invariant: logs show when legacy action names are rewritten; handling strategy: emit structured alias telemetry whenever canonical action differs from caller input.
+  if (
+    rawRequestedAction &&
+    requestedAction &&
+    rawRequestedAction.trim().toLowerCase() !== requestedAction.toLowerCase()
+  ) {
+    logger?.info?.("gpt.dispatch.action_alias", {
+      requestId,
+      gptId: trimmedGptId,
+      module: activeEntry.module,
+      requestedAction: rawRequestedAction,
+      canonicalAction: requestedAction,
+    });
+  }
   let automaticRepoInspectionResult:
     | {
         handledBy: "repo-inspection";
@@ -1642,7 +1675,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   if (!action) {
     const message = requestedAction
-      ? `Requested action '${requestedAction}' is not available for module ${activeEntry.module}`
+      ? `Requested action '${rawRequestedAction ?? requestedAction}' is not available for module ${activeEntry.module}`
       : availableActions.length > 1
       ? `Ambiguous actions and no default 'query' action found for module ${activeEntry.module}`
       : `No actions available for module ${activeEntry.module}`;

@@ -7,6 +7,7 @@ const mockCreateRuntimeBudget = jest.fn();
 const loggerInfoMock = jest.fn();
 const loggerErrorMock = jest.fn();
 const runWithRequestAbortTimeoutMock = jest.fn(async (_config: unknown, operation: () => Promise<unknown>) => operation());
+const getRequestRemainingMsMock = jest.fn(() => null);
 
 jest.unstable_mockModule('@core/logic/trinity.js', () => ({
   runThroughBrain: mockRunThroughBrain,
@@ -34,7 +35,7 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   getRequestAbortSignal: jest.fn(() => undefined),
-  getRequestRemainingMs: jest.fn(() => null),
+  getRequestRemainingMs: getRequestRemainingMsMock,
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock
 }));
 
@@ -43,6 +44,8 @@ const { ArcanosCore } = await import('../src/services/arcanos-core.js');
 describe('ARCANOS:CORE service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.ARCANOS_CORE_HANDLER_TIMEOUT_MS;
+    getRequestRemainingMsMock.mockReturnValue(null);
     mockCreateRuntimeBudget.mockReturnValue({ budget: 'runtime' });
   });
 
@@ -76,8 +79,8 @@ describe('ARCANOS:CORE service', () => {
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 30_000,
-        abortMessage: 'ARCANOS:CORE handler timed out after 30000ms'
+        timeoutMs: 55_000,
+        abortMessage: 'ARCANOS:CORE handler timed out after 55000ms'
       }),
       expect.any(Function)
     );
@@ -88,6 +91,24 @@ describe('ARCANOS:CORE service', () => {
       })
     );
     expect(result).toBe(trinityResult);
+  });
+
+  it('keeps the default handler timeout aligned with the route budget instead of aborting after five seconds', async () => {
+    const client = { id: 'openai-client' };
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
+    mockRunThroughBrain.mockResolvedValue({ result: 'core-response' });
+    getRequestRemainingMsMock.mockReturnValue(60_000);
+
+    await ArcanosCore.actions.query({
+      prompt: 'Reply with exactly OK.'
+    });
+
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 55_000
+      }),
+      expect.any(Function)
+    );
   });
 
   it('falls back to a mock response when the OpenAI client is unavailable', async () => {

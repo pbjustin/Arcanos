@@ -22,6 +22,7 @@ const PROJECT_ROOT = process.cwd();
 const RAILWAY_CONFIG_PATH = path.join(PROJECT_ROOT, 'railway.json');
 const ENV_TEMPLATE_PATH = path.join(PROJECT_ROOT, '.env.example');
 const EXPECTED_START_COMMAND = 'node scripts/start-railway-service.mjs';
+const EXPECTED_HEALTHCHECK_PATH = '/health';
 const REQUIRED_PRODUCTION_VARIABLES = [
   'NODE_ENV',
   'PORT',
@@ -122,9 +123,9 @@ export function validateConfig(config) {
     errors.push(`Expected deploy.startCommand to be "${EXPECTED_START_COMMAND}" but found "${String(deploy.startCommand ?? '')}"`);
   }
 
-  //audit Assumption: healthcheck path drives Railway restarts; risk: unhealthy services marked healthy; invariant: path is /healthz; handling: fail on drift.
-  if (deploy.healthcheckPath !== '/healthz') {
-    errors.push(`Expected deploy.healthcheckPath to be "/healthz" but found "${String(deploy.healthcheckPath ?? '')}"`);
+  //audit Assumption: Railway should probe the stable service-availability endpoint; risk: probing stricter diagnostics like /healthz can fail healthy deployments on non-critical readiness drift; invariant: deploy health checks use /health; handling: fail on drift.
+  if (deploy.healthcheckPath !== EXPECTED_HEALTHCHECK_PATH) {
+    errors.push(`Expected deploy.healthcheckPath to be "${EXPECTED_HEALTHCHECK_PATH}" but found "${String(deploy.healthcheckPath ?? '')}"`);
   }
 
   //audit Assumption: explicit restart policy is required for stable recovery behavior; risk: unbounded crash loops or no restart; invariant: ON_FAILURE policy present; handling: fail on mismatch.

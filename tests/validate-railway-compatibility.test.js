@@ -13,7 +13,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
     },
     deploy: {
       startCommand: 'node scripts/start-railway-service.mjs',
-      healthcheckPath: '/healthz',
+      healthcheckPath: '/health',
       restartPolicyType: 'ON_FAILURE',
       env: {
         RUN_WORKERS: 'true',
@@ -47,7 +47,7 @@ describe('validate-railway-compatibility', () => {
       buildMinimalRailwayConfig({
         deploy: {
           startCommand: 'node scripts/start-railway-service.mjs',
-          healthcheckPath: '/healthz',
+          healthcheckPath: '/health',
           restartPolicyType: 'ON_FAILURE',
           env: {
             RUN_WORKERS: 'sometimes',
