@@ -10,6 +10,7 @@ import {
 } from "@services/incidentResponse/killSwitch.js";
 import { sendInternalErrorPayload } from "@shared/http/index.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { getSelfHealingControlLoopStatus } from "@services/selfImprove/controlLoop.js";
 
 const router = Router();
 
@@ -30,7 +31,8 @@ router.get('/api/self-improve/status', capabilityGate('self_improve_admin'), asy
   try {
     res.json({
       status: 'ok',
-      killSwitch: await getKillSwitchStatus()
+      killSwitch: await getKillSwitchStatus(),
+      selfHealing: getSelfHealingControlLoopStatus()
     });
   } catch (error) {
     sendInternalErrorPayload(res, {

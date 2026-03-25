@@ -241,6 +241,20 @@ export interface ExecStatusResponseData {
   state: ExecutionStateDescriptor;
 }
 
+export interface ExecResumeRequestPayload {
+  executionId: string;
+  status: ExecutionStateDescriptor["status"];
+  stdoutAppend?: string;
+  stderrAppend?: string;
+  exitCode?: number | null;
+  finishedAt?: string;
+  artifacts?: ArtifactDescriptor[];
+}
+
+export interface ExecResumeResponseData {
+  state: ExecutionStateDescriptor;
+}
+
 export interface DaemonCapabilitiesResponseData {
   protocolVersion: string;
   runtimeVersion: string;

@@ -242,7 +242,10 @@ jobs:
       - name: 🔒 Run Python dependency audit
         run: |
           pip install pip-audit
-          pip-audit -r daemon-python/requirements.txt
+          # CVE-2026-4539 is currently reported against transitive `pygments` with no
+          # published fix version. Keep the audit active while suppressing only this
+          # unfixed advisory so CI still catches newly remediable issues.
+          pip-audit --ignore-vuln CVE-2026-4539 -r daemon-python/requirements.txt
 
   sdk-compliance-audit:
     name: Convergence Gate

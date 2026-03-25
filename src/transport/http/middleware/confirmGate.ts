@@ -115,6 +115,14 @@ function maskConfirmationHeader(value: string | undefined): string {
   return value.toLowerCase().startsWith(confirmationTokenPrefix) ? `${confirmationTokenPrefix}***` : value;
 }
 
+function getOptionalResponseHeader(res: Response, headerName: string): unknown {
+  const headerReader = (res as Response & {
+    getHeader?: (name: string) => unknown;
+  }).getHeader;
+
+  return typeof headerReader === 'function' ? headerReader.call(res, headerName) : undefined;
+}
+
 export function confirmGate(req: Request, res: Response, next: NextFunction): void {
   const diagnosticEligibleRoute = req.path === '/ask' || req.path === '/brain';
   const diagnosticProbe =
@@ -217,10 +225,10 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   if (!manualConfirmation && !hasValidToken && !oneTimeTokenApproved && !automationBypassApproved && !trustedGptBypassApproved && !allowAllGpts) {
     const challenge = createConfirmationChallenge(req.method, req.path, gptId || null);
     const tokenStatus = providedToken ? 'invalid' : 'missing';
-    const canonicalRouteHeader = res.getHeader('x-canonical-route');
-    const routeDeprecatedHeader = res.getHeader('x-route-deprecated');
-    const routeModeHeader = res.getHeader('x-ask-route-mode');
-    const sunsetHeader = res.getHeader('Sunset');
+    const canonicalRouteHeader = getOptionalResponseHeader(res, 'x-canonical-route');
+    const routeDeprecatedHeader = getOptionalResponseHeader(res, 'x-route-deprecated');
+    const routeModeHeader = getOptionalResponseHeader(res, 'x-ask-route-mode');
+    const sunsetHeader = getOptionalResponseHeader(res, 'Sunset');
     const canonicalRoute = typeof canonicalRouteHeader === 'string' ? canonicalRouteHeader : undefined;
     const routeDeprecated = routeDeprecatedHeader === 'true' || routeDeprecatedHeader === '1';
     const routeMode = typeof routeModeHeader === 'string' ? routeModeHeader : undefined;

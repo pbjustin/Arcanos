@@ -83,6 +83,8 @@ export { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_
 export { calculateMemoryScoreSummary };
 
 const DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS = 12_000;
+const DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TIMEOUT_MS = 4_000;
+const DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TOKEN_LIMIT = 320;
 const DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS = 4_000;
 const DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS = 6_000;
 const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 20_000;
@@ -510,24 +512,37 @@ export async function runDirectAnswerStage(
     tokenLimit: cappedTokenLimit
   });
 
-  let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
-  try {
-    directAnswerResponse = await runWithRequestAbortTimeout(
+  const executeDirectAnswerAttempt = async (params: {
+    model: string;
+    timeoutMs: number;
+    tokenLimit: number;
+  }): Promise<Awaited<ReturnType<typeof createSingleChatCompletion>>> => {
+    const tokenParams = getTokenParameter(params.model, params.tokenLimit);
+    return runWithRequestAbortTimeout(
       {
-        timeoutMs: stageTimeoutMs,
+        timeoutMs: params.timeoutMs,
         requestId,
         parentSignal: getRequestAbortSignal(),
-        abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
+        abortMessage: `Trinity direct-answer stage timed out after ${params.timeoutMs}ms using ${params.model}.`
       },
       () =>
         createSingleChatCompletion(client, {
           messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
           temperature,
-          model: directAnswerModel,
+          model: params.model,
           signal: getRequestAbortSignal(),
-          ...directAnswerTokenParams
+          ...tokenParams
         })
     );
+  };
+
+  let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
+  try {
+    directAnswerResponse = await executeDirectAnswerAttempt({
+      model: directAnswerModel,
+      timeoutMs: stageTimeoutMs,
+      tokenLimit: cappedTokenLimit
+    });
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
     logger.warn(
@@ -544,7 +559,43 @@ export async function runDirectAnswerStage(
         error: errorMessage
       }
     );
-    throw error;
+    const retryModel = APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
+    const retryTimeoutMs = Math.max(
+      1,
+      Math.min(DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TIMEOUT_MS, resolveDirectAnswerStageTimeoutMs(runtimeBudget))
+    );
+    const retryTokenLimit = enforceTokenCap(
+      Math.min(cappedTokenLimit, DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TOKEN_LIMIT)
+    );
+
+    logger.warn('trinity.direct_answer.retry', {
+      module: 'trinity',
+      operation: 'direct-answer-stage',
+      requestId,
+      fromModel: directAnswerModel,
+      retryModel,
+      retryTimeoutMs,
+      retryTokenLimit,
+      error: errorMessage
+    });
+
+    try {
+      directAnswerResponse = await executeDirectAnswerAttempt({
+        model: retryModel,
+        timeoutMs: retryTimeoutMs,
+        tokenLimit: retryTokenLimit
+      });
+    } catch (retryError) {
+      logger.warn('trinity.direct_answer.retry_failed', {
+        module: 'trinity',
+        operation: 'direct-answer-stage',
+        requestId,
+        retryModel,
+        retryTimeoutMs,
+        error: resolveErrorMessage(retryError)
+      });
+      throw retryError;
+    }
   }
 
   const directAnswerText = directAnswerResponse.choices[0]?.message?.content || '';

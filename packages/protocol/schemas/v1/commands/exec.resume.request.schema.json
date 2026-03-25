@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/exec.resume.request.schema.json",
+  "title": "exec.resume request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "executionId",
+    "status"
+  ],
+  "properties": {
+    "executionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed"
+      ]
+    },
+    "stdoutAppend": {
+      "type": "string"
+    },
+    "stderrAppend": {
+      "type": "string"
+    },
+    "exitCode": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "finishedAt": {
+      "type": "string"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.arcanos.dev/protocol/v1/nouns/artifact.schema.json"
+      }
+    }
+  }
+}

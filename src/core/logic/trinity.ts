@@ -90,6 +90,11 @@ import {
   recordTrinityStageFailure,
   type TrinitySelfHealingAction
 } from '@services/selfImprove/selfHealingV2.js';
+import {
+  getSelfHealingLoopMitigation,
+  requestSelfHealingLoopEvaluation
+} from '@services/selfImprove/controlLoop.js';
+import { recordSelfHealingStageFailureSignal } from '@services/selfImprove/signals.js';
 
 const MIN_ESCALATION_BUDGET_MS = 5000;
 const EXACT_LITERAL_DISPATCH_MODULE = 'exact-literal-dispatcher';
@@ -97,7 +102,7 @@ const EXACT_LITERAL_DISPATCH_STAGE = 'EXACT-LITERAL-DISPATCH';
 const EXACT_LITERAL_AUDIT_FLAG = 'EXACT_LITERAL_SHORTCUT_ACTIVE';
 const DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS = 3_000;
 const DEFAULT_TRINITY_JUDGED_FEEDBACK_TIMEOUT_MS = 750;
-const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 8_000;
+const DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS = 16_000;
 
 function isInternalArchitecturalMode(prompt: string): boolean {
   const keywords = ['system directive', 'internal', 'evaluate', 'architectural'];
@@ -231,6 +236,24 @@ function resolveAuxiliaryStageTimeoutMs(
       remainingRequestMs ?? remainingBudgetMs
     )
   );
+}
+
+function resolveSelfHealingStageErrorCode(error: unknown, stageError: string): string {
+  const normalizedStageError = stageError.toLowerCase();
+
+  if (normalizedStageError.includes('openai_call_aborted_due_to_budget')) {
+    return 'openai_call_aborted_due_to_budget';
+  }
+
+  if (normalizedStageError.includes('module_timeout')) {
+    return 'module_timeout';
+  }
+
+  if (isAbortError(error)) {
+    return 'request_aborted';
+  }
+
+  return 'unknown';
 }
 
 async function runLoggedStage<T>(params: {
@@ -644,10 +667,20 @@ export async function runThroughBrain(
   try {
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
     const cognitiveDomain = options.cognitiveDomain;
-    const selfHealingMitigation = getTrinitySelfHealingMitigation({
+    const trinitySelfHealingMitigation = getTrinitySelfHealingMitigation({
       tier,
       answerMode: outputControls.answerMode
     });
+    const loopSelfHealingMitigation = getSelfHealingLoopMitigation({ tier });
+    const selfHealingMitigation = {
+      activeAction: loopSelfHealingMitigation.activeAction ?? trinitySelfHealingMitigation.activeAction,
+      stage: trinitySelfHealingMitigation.stage ?? loopSelfHealingMitigation.stage,
+      bypassFinalStage:
+        trinitySelfHealingMitigation.bypassFinalStage || loopSelfHealingMitigation.bypassFinalStage,
+      forceDirectAnswer:
+        trinitySelfHealingMitigation.forceDirectAnswer || loopSelfHealingMitigation.forceDirectAnswer,
+      verified: trinitySelfHealingMitigation.verified
+    };
     const directAnswerReason =
       directAnswerPreferenceReason ??
       (internalMode
@@ -865,7 +898,8 @@ export async function runThroughBrain(
       if (
         selfHealingMitigation.forceDirectAnswer &&
         selfHealingMitigation.activeAction &&
-        selfHealingMitigation.stage
+        selfHealingMitigation.stage &&
+        selfHealingMitigation.stage !== 'global'
       ) {
         noteTrinityMitigationOutcome({
           stage: selfHealingMitigation.stage,
@@ -912,25 +946,42 @@ export async function runThroughBrain(
           )
       });
     } catch (error) {
-      if (tier === 'simple' && isAbortError(error)) {
-        intakeRecoveryAction = recordTrinityStageFailure({
+      if (isAbortError(error)) {
+        const stageError = resolveErrorMessage(error);
+        recordSelfHealingStageFailureSignal({
           stage: 'intake',
-          error: resolveErrorMessage(error),
+          tier,
+          error: stageError,
+          errorCode: resolveSelfHealingStageErrorCode(error, stageError),
           requestId,
           sourceEndpoint: options.sourceEndpoint
         });
-        const recoveredResult = await completeWithDirectAnswer('intake_timeout_fallback', {
-          recovery: true,
-          recoveryError: error
-        });
-        noteTrinityMitigationOutcome({
-          stage: 'intake',
-          outcome: 'success',
-          requestId,
-          sourceEndpoint: options.sourceEndpoint,
-          action: intakeRecoveryAction
-        });
-        return recoveredResult;
+        await requestSelfHealingLoopEvaluation('trinity_intake_failure');
+        const loopMitigationAfterFailure = getSelfHealingLoopMitigation({ tier });
+        if (tier === 'simple') {
+          intakeRecoveryAction = recordTrinityStageFailure({
+            stage: 'intake',
+            error: stageError,
+            requestId,
+            sourceEndpoint: options.sourceEndpoint
+          });
+        }
+        if (tier === 'simple' || loopMitigationAfterFailure.forceDirectAnswer) {
+          const recoveredResult = await completeWithDirectAnswer('intake_timeout_fallback', {
+            recovery: true,
+            recoveryError: error
+          });
+          if (intakeRecoveryAction) {
+            noteTrinityMitigationOutcome({
+              stage: 'intake',
+              outcome: 'success',
+              requestId,
+              sourceEndpoint: options.sourceEndpoint,
+              action: intakeRecoveryAction
+            });
+          }
+          return recoveredResult;
+        }
       }
       throw error;
     }
@@ -960,25 +1011,42 @@ export async function runThroughBrain(
           )
       });
     } catch (error) {
-      if (tier === 'simple' && isAbortError(error)) {
-        reasoningRecoveryAction = recordTrinityStageFailure({
+      if (isAbortError(error)) {
+        const stageError = resolveErrorMessage(error);
+        recordSelfHealingStageFailureSignal({
           stage: 'reasoning',
-          error: resolveErrorMessage(error),
+          tier,
+          error: stageError,
+          errorCode: resolveSelfHealingStageErrorCode(error, stageError),
           requestId,
           sourceEndpoint: options.sourceEndpoint
         });
-        const recoveredResult = await completeWithDirectAnswer('reasoning_timeout_fallback', {
-          recovery: true,
-          recoveryError: error
-        });
-        noteTrinityMitigationOutcome({
-          stage: 'reasoning',
-          outcome: 'success',
-          requestId,
-          sourceEndpoint: options.sourceEndpoint,
-          action: reasoningRecoveryAction
-        });
-        return recoveredResult;
+        await requestSelfHealingLoopEvaluation('trinity_reasoning_failure');
+        const loopMitigationAfterFailure = getSelfHealingLoopMitigation({ tier });
+        if (tier === 'simple') {
+          reasoningRecoveryAction = recordTrinityStageFailure({
+            stage: 'reasoning',
+            error: stageError,
+            requestId,
+            sourceEndpoint: options.sourceEndpoint
+          });
+        }
+        if (tier === 'simple' || loopMitigationAfterFailure.forceDirectAnswer) {
+          const recoveredResult = await completeWithDirectAnswer('reasoning_timeout_fallback', {
+            recovery: true,
+            recoveryError: error
+          });
+          if (reasoningRecoveryAction) {
+            noteTrinityMitigationOutcome({
+              stage: 'reasoning',
+              outcome: 'success',
+              requestId,
+              sourceEndpoint: options.sourceEndpoint,
+              action: reasoningRecoveryAction
+            });
+          }
+          return recoveredResult;
+        }
       }
       throw error;
     }
@@ -1101,7 +1169,8 @@ export async function runThroughBrain(
 
     logArcanosRouting('FINAL_FILTERING', actualModel, 'Processing GPT-5.1 output through ARCANOS');
     routingStages.push('ARCANOS-FINAL');
-    let finalRecoveryAction: TrinitySelfHealingAction | null = selfHealingMitigation.bypassFinalStage
+    let finalRecoveryAction: TrinitySelfHealingAction | null =
+      selfHealingMitigation.bypassFinalStage && selfHealingMitigation.stage !== 'global'
       ? selfHealingMitigation.activeAction
       : null;
     let finalOutput: Awaited<ReturnType<typeof runFinalStage>>;
@@ -1146,32 +1215,49 @@ export async function runThroughBrain(
             )
         });
       } catch (error) {
-        if (tier === 'simple' && isAbortError(error)) {
-          finalRecoveryAction = recordTrinityStageFailure({
+        if (isAbortError(error)) {
+          const stageError = resolveErrorMessage(error);
+          recordSelfHealingStageFailureSignal({
             stage: 'final',
-            error: resolveErrorMessage(error),
+            tier,
+            error: stageError,
+            errorCode: resolveSelfHealingStageErrorCode(error, stageError),
             requestId,
             sourceEndpoint: options.sourceEndpoint
           });
-          auditFlags.push('SELF_HEAL_V2_FINAL_DEGRADED_MODE');
-          logger.warn('self_heal.v2.final_degraded_response', {
-            module: 'self_heal.v2',
-            requestId,
-            sourceEndpoint: options.sourceEndpoint,
-            tier,
-            action: finalRecoveryAction
-          });
-          finalOutput = {
-            output:
-              outputControls.answerMode === 'direct'
-                ? applyTrinityDirectAnswerOutputContract(gpt5Output, prompt)
-                : gpt5Output,
-            activeModel: gpt5ModelUsed,
-            fallbackUsed: true,
-            usage: undefined,
-            responseId: undefined,
-            created: undefined
-          };
+          await requestSelfHealingLoopEvaluation('trinity_final_failure');
+          const loopMitigationAfterFailure = getSelfHealingLoopMitigation({ tier });
+          if (tier === 'simple') {
+            finalRecoveryAction = recordTrinityStageFailure({
+              stage: 'final',
+              error: stageError,
+              requestId,
+              sourceEndpoint: options.sourceEndpoint
+            });
+          }
+          if (tier === 'simple' || loopMitigationAfterFailure.bypassFinalStage || loopMitigationAfterFailure.forceDirectAnswer) {
+            auditFlags.push('SELF_HEAL_V2_FINAL_DEGRADED_MODE');
+            logger.warn('self_heal.v2.final_degraded_response', {
+              module: 'self_heal.v2',
+              requestId,
+              sourceEndpoint: options.sourceEndpoint,
+              tier,
+              action: finalRecoveryAction ?? loopMitigationAfterFailure.activeAction
+            });
+            finalOutput = {
+              output:
+                outputControls.answerMode === 'direct'
+                  ? applyTrinityDirectAnswerOutputContract(gpt5Output, prompt)
+                  : gpt5Output,
+              activeModel: gpt5ModelUsed,
+              fallbackUsed: true,
+              usage: undefined,
+              responseId: undefined,
+              created: undefined
+            };
+          } else {
+            throw error;
+          }
         } else {
           throw error;
         }
@@ -1411,9 +1497,9 @@ export async function runThroughBrain(
       module: result.module
     });
     const mitigationOutcomeStage =
-      finalRecoveryAction !== null || selfHealingMitigation.bypassFinalStage
+      finalRecoveryAction !== null || (selfHealingMitigation.bypassFinalStage && selfHealingMitigation.stage !== 'global')
         ? 'final'
-        : selfHealingMitigation.forceDirectAnswer && selfHealingMitigation.stage
+        : selfHealingMitigation.forceDirectAnswer && selfHealingMitigation.stage && selfHealingMitigation.stage !== 'global'
           ? selfHealingMitigation.stage
           : null;
     if (mitigationOutcomeStage) {
@@ -1422,7 +1508,7 @@ export async function runThroughBrain(
         outcome: 'success',
         requestId,
         sourceEndpoint: options.sourceEndpoint,
-        action: finalRecoveryAction ?? selfHealingMitigation.activeAction
+        action: finalRecoveryAction ?? (selfHealingMitigation.stage !== 'global' ? selfHealingMitigation.activeAction : null)
       });
     }
     return result;

@@ -30,6 +30,44 @@ jest.unstable_mockModule('@shared/http/index.js', () => ({
   sendInternalErrorPayload: sendInternalErrorPayloadMock
 }));
 
+jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
+  getSelfHealingControlLoopStatus: () => ({
+    active: true,
+    loopRunning: true,
+    internalExecutionAvailable: true,
+    repoToolingAvailable: true,
+    railwayCliAvailable: true,
+    lastDiagnosis: 'timeout_cluster count=2',
+    lastAction: 'enable_degraded_mode',
+    attempts: 1,
+    lastResult: 'improved',
+    errorRate: 0.04,
+    avgLatencyMs: 420,
+    operationalRequests: 12,
+    lastObservedAt: '2026-03-24T00:00:00.000Z',
+    lastActionAt: '2026-03-24T00:00:05.000Z',
+    lastVerifiedAt: '2026-03-24T00:00:10.000Z',
+    incidentActive: false,
+    incidentId: null,
+    executionId: 'exec-self-heal',
+    executionStatus: 'completed',
+    mitigation: {
+      activeAction: null,
+      tiers: [],
+      stage: null,
+      reason: null,
+      activeSinceMs: null,
+      expiresAtMs: null
+    },
+    latestObservation: null,
+    trinity: {
+      enabled: true,
+      config: {},
+      snapshot: {}
+    }
+  })
+}));
+
 const selfImproveRouter = (await import('../src/routes/self-improve.js')).default;
 
 /**
@@ -64,7 +102,13 @@ describe('routes/self-improve', () => {
 
     expect(response.body).toEqual({
       status: 'ok',
-      killSwitch: { frozen: false, autonomyLevel: 1, overrides: { freeze: null, autonomy: null } }
+      killSwitch: { frozen: false, autonomyLevel: 1, overrides: { freeze: null, autonomy: null } },
+      selfHealing: expect.objectContaining({
+        active: true,
+        loopRunning: true,
+        lastAction: 'enable_degraded_mode',
+        errorRate: 0.04
+      })
     });
   });
 

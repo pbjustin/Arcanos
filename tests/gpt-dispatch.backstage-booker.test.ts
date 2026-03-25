@@ -183,7 +183,7 @@ describe('routeGptRequest backstage booker auto-routing', () => {
     );
   });
 
-  it("rejects legacy 'ask' actions instead of remapping them onto the module default action", async () => {
+  it("surfaces NO_DEFAULT_ACTION for legacy 'ask' actions when the module has no canonical query action", async () => {
     mockDetectBackstageBookerIntent.mockReturnValue(null);
 
     const envelope = await routeGptRequest({
@@ -200,12 +200,14 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({
-          code: 'BAD_REQUEST',
-          message: "Legacy action 'ask' is not supported; use 'query'.",
+          code: 'NO_DEFAULT_ACTION',
+          message: "Requested action 'ask' is not available for module BACKSTAGE:BOOKER",
+          details: expect.objectContaining({
+            requestedAction: 'ask',
+          }),
         }),
         _route: expect.objectContaining({
           module: 'BACKSTAGE:BOOKER',
-          action: 'ask',
           route: 'backstage'
         })
       })

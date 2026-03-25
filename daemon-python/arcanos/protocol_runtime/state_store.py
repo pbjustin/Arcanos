@@ -29,6 +29,14 @@ class InMemoryProtocolStateStore:
         state = self._executions.get(execution_id)
         return deepcopy(state) if state is not None else None
 
+    def update_execution(self, execution_id: str, execution_state: dict[str, Any]) -> dict[str, Any]:
+        """Update an existing execution state and return a defensive copy."""
+
+        if execution_id not in self._executions:
+            raise KeyError(f'Execution "{execution_id}" was not found.')
+        self._executions[execution_id] = deepcopy(execution_state)
+        return deepcopy(self._executions[execution_id])
+
     def store_snapshot(self, snapshot_id: str, execution_state: dict[str, Any]) -> dict[str, Any]:
         """Persist a snapshot of an execution state."""
 

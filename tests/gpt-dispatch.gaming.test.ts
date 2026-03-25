@@ -392,20 +392,30 @@ describe('routeGptRequest gaming routing', () => {
         route: 'diagnostic',
       }),
     });
-    expect(second).toEqual({
-      ...first,
-      _route: expect.objectContaining({
-        ...first._route,
-        requestId: 'req-gaming-ping-2',
-      }),
-    });
-    expect(third).toEqual({
-      ...first,
-      _route: expect.objectContaining({
-        ...first._route,
-        requestId: 'req-gaming-ping-3',
-      }),
-    });
+    expect(second).toEqual(
+      expect.objectContaining({
+        ...first,
+        _route: expect.objectContaining({
+          gptId: 'arcanos-gaming',
+          module: 'diagnostic',
+          action: 'diagnostic',
+          route: 'diagnostic',
+          requestId: 'req-gaming-ping-2',
+        }),
+      })
+    );
+    expect(third).toEqual(
+      expect.objectContaining({
+        ...first,
+        _route: expect.objectContaining({
+          gptId: 'arcanos-gaming',
+          module: 'diagnostic',
+          action: 'diagnostic',
+          route: 'diagnostic',
+          requestId: 'req-gaming-ping-3',
+        }),
+      })
+    );
     expect(second.result).toEqual(first.result);
     expect(third.result).toEqual(first.result);
   });
@@ -468,7 +478,7 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
-  it("rejects legacy 'ask' actions after gameplay gating", async () => {
+  it("rewrites legacy 'ask' actions onto canonical 'query' for query-capable gameplay modules", async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
       body: {
@@ -481,17 +491,22 @@ describe('routeGptRequest gaming routing', () => {
       requestId: 'req-gaming-legacy-ask-1',
     });
 
-    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
+      prompt: 'Give me SWTOR gearing help.'
+    });
     expect(envelope).toEqual(
       expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: 'BAD_REQUEST',
-          message: "Legacy action 'ask' is not supported; use 'query'.",
+        ok: true,
+        result: expect.objectContaining({
+          route: 'gaming',
+          mode: 'gameplay',
+          data: expect.objectContaining({
+            response: 'Gaming pipeline response',
+          }),
         }),
         _route: expect.objectContaining({
           module: 'ARCANOS:GAMING',
-          action: 'ask',
+          action: 'query',
           route: 'gaming',
         }),
       })
