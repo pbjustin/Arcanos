@@ -207,6 +207,109 @@ function computeNodeDurationMs(node: Record<string, unknown>): number | undefine
   return completedAtMs - startedAtMs;
 }
 
+function pickDagTraceNodeSummary(node: Record<string, unknown>): Record<string, unknown> {
+  const nodeId = readString(node.nodeId);
+  const agentRole = readString(node.agentRole);
+  const jobType = readString(node.jobType);
+  const status = readString(node.status);
+  const workerId = readString(node.workerId);
+  const startedAt = readString(node.startedAt);
+  const completedAt = readString(node.completedAt);
+  const spawnDepth = readNumber(node.spawnDepth);
+  const durationMs = computeNodeDurationMs(node);
+
+  return {
+    ...(nodeId ? { nodeId } : {}),
+    ...(agentRole ? { agentRole } : {}),
+    ...(jobType ? { jobType } : {}),
+    ...(status ? { status } : {}),
+    ...(workerId ? { workerId } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    ...(spawnDepth !== undefined ? { spawnDepth } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+}
+
+function pickDagRunSummary(run: Record<string, unknown>): Record<string, unknown> {
+  const runId = readString(run.runId);
+  const sessionId = readString(run.sessionId);
+  const status = readString(run.status);
+  const template = readString(run.template);
+  const durationMs = readNumber(run.durationMs);
+  const totalNodes = readNumber(run.totalNodes);
+  const completedNodes = readNumber(run.completedNodes);
+  const failedNodes = readNumber(run.failedNodes);
+  const createdAt = readString(run.createdAt);
+  const updatedAt = readString(run.updatedAt);
+
+  return {
+    ...(runId ? { runId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(status ? { status } : {}),
+    ...(template ? { template } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(totalNodes !== undefined ? { totalNodes } : {}),
+    ...(completedNodes !== undefined ? { completedNodes } : {}),
+    ...(failedNodes !== undefined ? { failedNodes } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+  };
+}
+
+function pickDagMetricsSummary(metricBody: Record<string, unknown>): Record<string, unknown> {
+  const totalNodes = readNumber(metricBody.totalNodes);
+  const totalAiCalls = readNumber(metricBody.totalAiCalls);
+  const totalRetries = readNumber(metricBody.totalRetries);
+  const totalFailures = readNumber(metricBody.totalFailures);
+  const wallClockDurationMs = readNumber(metricBody.wallClockDurationMs);
+  const maxParallelNodesObserved = readNumber(metricBody.maxParallelNodesObserved);
+  const maxSpawnDepthObserved = readNumber(metricBody.maxSpawnDepthObserved);
+
+  return {
+    ...(totalNodes !== undefined ? { totalNodes } : {}),
+    ...(totalAiCalls !== undefined ? { totalAiCalls } : {}),
+    ...(totalRetries !== undefined ? { totalRetries } : {}),
+    ...(totalFailures !== undefined ? { totalFailures } : {}),
+    ...(wallClockDurationMs !== undefined ? { wallClockDurationMs } : {}),
+    ...(maxParallelNodesObserved !== undefined ? { maxParallelNodesObserved } : {}),
+    ...(maxSpawnDepthObserved !== undefined ? { maxSpawnDepthObserved } : {}),
+  };
+}
+
+function pickDagVerificationSummary(verificationBody: Record<string, unknown>): Record<string, unknown> {
+  const runCompleted = readBoolean(verificationBody.runCompleted);
+  const parallelExecutionObserved = readBoolean(verificationBody.parallelExecutionObserved);
+  const aggregationRanLast = readBoolean(verificationBody.aggregationRanLast);
+  const retryPolicyRespected = readBoolean(verificationBody.retryPolicyRespected);
+  const budgetPolicyRespected = readBoolean(verificationBody.budgetPolicyRespected);
+  const loopDetected = readBoolean(verificationBody.loopDetected);
+
+  return {
+    ...(runCompleted !== undefined ? { runCompleted } : {}),
+    ...(parallelExecutionObserved !== undefined ? { parallelExecutionObserved } : {}),
+    ...(aggregationRanLast !== undefined ? { aggregationRanLast } : {}),
+    ...(retryPolicyRespected !== undefined ? { retryPolicyRespected } : {}),
+    ...(budgetPolicyRespected !== undefined ? { budgetPolicyRespected } : {}),
+    ...(loopDetected !== undefined ? { loopDetected } : {}),
+  };
+}
+
+function pickDagLineageSummary(lineage: Record<string, unknown>): Record<string, unknown> {
+  const loopDetected = readBoolean(lineage.loopDetected);
+
+  return {
+    ...(Array.isArray(lineage.lineage) ? { total: lineage.lineage.length } : {}),
+    ...(loopDetected !== undefined ? { loopDetected } : {}),
+  };
+}
+
+function pickDagErrorsSummary(errors: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(Array.isArray(errors.errors) ? { total: errors.errors.length } : {}),
+  };
+}
+
 function pickDagTraceSummary(value: Record<string, unknown>): Record<string, unknown> | null {
   const run = isRecord(value.run) ? value.run : null;
   const tree = isRecord(value.tree) ? value.tree : null;
@@ -218,17 +321,7 @@ function pickDagTraceSummary(value: Record<string, unknown>): Record<string, unk
     ? tree.nodes
         .filter(isRecord)
         .slice(0, 32)
-        .map((node) => ({
-          ...(readString(node.nodeId) ? { nodeId: readString(node.nodeId) } : {}),
-          ...(readString(node.agentRole) ? { agentRole: readString(node.agentRole) } : {}),
-          ...(readString(node.jobType) ? { jobType: readString(node.jobType) } : {}),
-          ...(readString(node.status) ? { status: readString(node.status) } : {}),
-          ...(readString(node.workerId) ? { workerId: readString(node.workerId) } : {}),
-          ...(readString(node.startedAt) ? { startedAt: readString(node.startedAt) } : {}),
-          ...(readString(node.completedAt) ? { completedAt: readString(node.completedAt) } : {}),
-          ...(readNumber(node.spawnDepth) !== undefined ? { spawnDepth: readNumber(node.spawnDepth) } : {}),
-          ...(computeNodeDurationMs(node) !== undefined ? { durationMs: computeNodeDurationMs(node) } : {}),
-        }))
+        .map((node) => pickDagTraceNodeSummary(node))
     : [];
 
   const metrics = isRecord(value.metrics) ? value.metrics : null;
@@ -240,75 +333,26 @@ function pickDagTraceSummary(value: Record<string, unknown>): Record<string, unk
   const errors = isRecord(value.errors) ? value.errors : null;
 
   return {
-    run: {
-      ...(readString(run.runId) ? { runId: readString(run.runId) } : {}),
-      ...(readString(run.sessionId) ? { sessionId: readString(run.sessionId) } : {}),
-      ...(readString(run.status) ? { status: readString(run.status) } : {}),
-      ...(readString(run.template) ? { template: readString(run.template) } : {}),
-      ...(readNumber(run.durationMs) !== undefined ? { durationMs: readNumber(run.durationMs) } : {}),
-      ...(readNumber(run.totalNodes) !== undefined ? { totalNodes: readNumber(run.totalNodes) } : {}),
-      ...(readNumber(run.completedNodes) !== undefined ? { completedNodes: readNumber(run.completedNodes) } : {}),
-      ...(readNumber(run.failedNodes) !== undefined ? { failedNodes: readNumber(run.failedNodes) } : {}),
-      ...(readString(run.createdAt) ? { createdAt: readString(run.createdAt) } : {}),
-      ...(readString(run.updatedAt) ? { updatedAt: readString(run.updatedAt) } : {}),
-    },
+    run: pickDagRunSummary(run),
     nodes,
     ...(metricBody
       ? {
-          metrics: {
-            ...(readNumber(metricBody.totalNodes) !== undefined ? { totalNodes: readNumber(metricBody.totalNodes) } : {}),
-            ...(readNumber(metricBody.totalAiCalls) !== undefined ? { totalAiCalls: readNumber(metricBody.totalAiCalls) } : {}),
-            ...(readNumber(metricBody.totalRetries) !== undefined ? { totalRetries: readNumber(metricBody.totalRetries) } : {}),
-            ...(readNumber(metricBody.totalFailures) !== undefined ? { totalFailures: readNumber(metricBody.totalFailures) } : {}),
-            ...(readNumber(metricBody.wallClockDurationMs) !== undefined
-              ? { wallClockDurationMs: readNumber(metricBody.wallClockDurationMs) }
-              : {}),
-            ...(readNumber(metricBody.maxParallelNodesObserved) !== undefined
-              ? { maxParallelNodesObserved: readNumber(metricBody.maxParallelNodesObserved) }
-              : {}),
-            ...(readNumber(metricBody.maxSpawnDepthObserved) !== undefined
-              ? { maxSpawnDepthObserved: readNumber(metricBody.maxSpawnDepthObserved) }
-              : {}),
-          }
+          metrics: pickDagMetricsSummary(metricBody)
         }
       : {}),
     ...(verificationBody
       ? {
-          verification: {
-            ...(readBoolean(verificationBody.runCompleted) !== undefined
-              ? { runCompleted: readBoolean(verificationBody.runCompleted) }
-              : {}),
-            ...(readBoolean(verificationBody.parallelExecutionObserved) !== undefined
-              ? { parallelExecutionObserved: readBoolean(verificationBody.parallelExecutionObserved) }
-              : {}),
-            ...(readBoolean(verificationBody.aggregationRanLast) !== undefined
-              ? { aggregationRanLast: readBoolean(verificationBody.aggregationRanLast) }
-              : {}),
-            ...(readBoolean(verificationBody.retryPolicyRespected) !== undefined
-              ? { retryPolicyRespected: readBoolean(verificationBody.retryPolicyRespected) }
-              : {}),
-            ...(readBoolean(verificationBody.budgetPolicyRespected) !== undefined
-              ? { budgetPolicyRespected: readBoolean(verificationBody.budgetPolicyRespected) }
-              : {}),
-            ...(readBoolean(verificationBody.loopDetected) !== undefined
-              ? { loopDetected: readBoolean(verificationBody.loopDetected) }
-              : {}),
-          }
+          verification: pickDagVerificationSummary(verificationBody)
         }
       : {}),
     ...(lineage
       ? {
-          lineage: {
-            ...(Array.isArray(lineage.lineage) ? { total: lineage.lineage.length } : {}),
-            ...(readBoolean(lineage.loopDetected) !== undefined ? { loopDetected: readBoolean(lineage.loopDetected) } : {}),
-          }
+          lineage: pickDagLineageSummary(lineage)
         }
       : {}),
     ...(errors
       ? {
-          errors: {
-            ...(Array.isArray(errors.errors) ? { total: errors.errors.length } : {}),
-          }
+          errors: pickDagErrorsSummary(errors)
         }
       : {}),
     ...(sections !== undefined ? { sections } : {}),

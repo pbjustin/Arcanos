@@ -1514,6 +1514,28 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       resolvedMcpDispatchIntent.dispatchMode === "automatic"
         ? `mcp.auto.${dispatcherAction === "mcp.invoke" ? "invoke" : "list_tools"}`
         : dispatcherAction;
+    const buildMcpDispatchErrorResponse = (error: { code: string; message: string; details?: unknown }) => {
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'mcp-dispatcher',
+        outcome: 'error',
+      });
+      return {
+        ok: false as const,
+        error,
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: dispatcherRouteAction,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null
+        }
+      };
+    };
 
     if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
       if (resolvedMcpDispatchIntent.action === 'mcp.invoke') {
@@ -1574,26 +1596,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
       const mcpToolError = extractMcpToolError(mcpResult);
       if (mcpToolError) {
-        recordDispatcherRoute({
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          route: activeEntry.route,
-          handler: 'mcp-dispatcher',
-          outcome: 'error',
-        });
-        return {
-          ok: false,
-          error: mcpToolError,
-          _route: {
-            ...baseRoute,
-            module: activeEntry.module,
-            action: dispatcherRouteAction,
-            matchMethod,
-            route: activeEntry.route,
-            availableActions,
-            moduleVersion: (moduleMetadata as any)?.version ?? null
-          }
-        };
+        return buildMcpDispatchErrorResponse(mcpToolError);
       }
 
       let finalMcpResult = mcpResult;
@@ -1628,26 +1631,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
           const traceToolError = extractMcpToolError(traceResult);
           if (traceToolError) {
-            recordDispatcherRoute({
-              gptId: trimmedGptId,
-              module: activeEntry.module,
-              route: activeEntry.route,
-              handler: 'mcp-dispatcher',
-              outcome: 'error',
-            });
-            return {
-              ok: false,
-              error: traceToolError,
-              _route: {
-                ...baseRoute,
-                module: activeEntry.module,
-                action: dispatcherRouteAction,
-                matchMethod,
-                route: activeEntry.route,
-                availableActions,
-                moduleVersion: (moduleMetadata as any)?.version ?? null
-              }
-            };
+            return buildMcpDispatchErrorResponse(traceToolError);
           }
 
           if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
