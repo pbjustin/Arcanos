@@ -2,42 +2,110 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
-  requestSelfHealingLoopEvaluation: async () => undefined,
-  startSelfHealingControlLoop: () => undefined,
-  getSelfHealingControlLoopStatus: () => ({
+jest.unstable_mockModule('@services/selfImprove/selfHealingLoop.js', () => ({
+  getSelfHealingLoopStatus: () => ({
     active: true,
     loopRunning: true,
-    internalExecutionAvailable: true,
-    repoToolingAvailable: true,
-    railwayCliAvailable: false,
-    lastDiagnosis: 'timeout_cluster count=3 stage=intake tiers=complex',
-    lastAction: 'enable_degraded_mode',
-    attempts: 2,
-    lastResult: 'improved',
-    errorRate: 0.03,
-    avgLatencyMs: 812,
-    operationalRequests: 24,
-    lastObservedAt: '2026-03-24T00:00:00.000Z',
+    startedAt: '2026-03-24T00:00:00.000Z',
+    lastTick: '2026-03-24T00:00:10.000Z',
+    tickCount: 12,
+    lastError: null,
+    intervalMs: 30_000,
+    lastDiagnosis: 'pipeline timeout cluster detected',
+    lastAction: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
     lastActionAt: '2026-03-24T00:00:05.000Z',
-    lastVerifiedAt: '2026-03-24T00:00:10.000Z',
-    incidentActive: false,
-    incidentId: null,
-    executionId: 'exec-self-heal',
-    executionStatus: 'completed',
-    mitigation: {
-      activeAction: null,
-      tiers: [],
-      stage: null,
-      reason: null,
-      activeSinceMs: null,
-      expiresAtMs: null
+    lastControllerDecision: null,
+    lastControllerRunAt: null,
+    lastWorkerHealth: 'healthy',
+    lastTrinityMitigation: 'reasoning:enable_degraded_mode',
+    lastEvidence: {
+      timeoutCount: 4,
+      pipelineTimeoutCount: 3
     },
-    latestObservation: null,
-    trinity: {
-      enabled: true,
-      config: {},
-      snapshot: {}
+    lastVerificationResult: {
+      verifiedAt: '2026-03-24T00:00:30.000Z',
+      action: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
+      diagnosis: 'pipeline timeout cluster detected',
+      outcome: 'improved',
+      summary: 'max latency improved',
+      baseline: {
+        errorRate: 0.2,
+        timeoutRate: 0.2,
+        timeoutCount: 4,
+        p95LatencyMs: 6200,
+        avgLatencyMs: 3100,
+        maxLatencyMs: 8200,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        workerHealth: 'healthy',
+        activeMitigation: null,
+        promptRoute: null
+      },
+      current: {
+        errorRate: 0.1,
+        timeoutRate: 0.05,
+        timeoutCount: 1,
+        p95LatencyMs: 2400,
+        avgLatencyMs: 1200,
+        maxLatencyMs: 3100,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        workerHealth: 'healthy',
+        activeMitigation: 'reasoning:enable_degraded_mode',
+        promptRoute: null
+      }
+    },
+    activeMitigation: 'reasoning:enable_degraded_mode',
+    lastLatencySnapshot: {
+      requestCount: 24,
+      avgLatencyMs: 812,
+      p95LatencyMs: 2400,
+      maxLatencyMs: 3100,
+      promptRoute: null,
+      pipelineTimeoutCount: 3
+    },
+    recentTimeoutCounts: {
+      windowMs: 300_000,
+      total: 4,
+      promptRoute: 0,
+      coreRoute: 3
+    },
+    bypassedSubsystems: ['trinity_reasoning'],
+    ineffectiveActions: {},
+    attemptsByDiagnosis: {
+      pipeline_timeout_cluster: 1
+    },
+    cooldowns: {},
+    lastHealthyObservedAt: '2026-03-24T00:00:30.000Z',
+    degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback'
+  })
+}));
+
+jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
+  getPromptRouteMitigationState: () => ({
+    active: false,
+    route: '/api/openai/prompt',
+    mode: null,
+    reason: null,
+    activatedAt: null,
+    updatedAt: null,
+    pipelineTimeoutMs: null,
+    providerTimeoutMs: null,
+    fallbackModel: false,
+    maxRetries: null,
+    maxTokens: null,
+    bypassedSubsystems: []
+  })
+}));
+
+jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
+  getTrinitySelfHealingStatus: () => ({
+    enabled: true,
+    config: {},
+    snapshot: {
+      intake: {},
+      reasoning: {},
+      final: {}
     }
   })
 }));
@@ -64,13 +132,20 @@ describe('/status/safety/self-heal', () => {
         status: 'ok',
         active: true,
         loopRunning: true,
-        lastDiagnosis: 'timeout_cluster count=3 stage=intake tiers=complex',
-        lastAction: 'enable_degraded_mode',
-        attempts: 2,
-        lastResult: 'improved',
-        errorRate: 0.03,
-        executionId: 'exec-self-heal',
-        executionStatus: 'completed'
+        lastDiagnosis: 'pipeline timeout cluster detected',
+        lastAction: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
+        activeMitigation: 'reasoning:enable_degraded_mode',
+        degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback',
+        recentTimeoutCounts: expect.objectContaining({
+          total: 4,
+          coreRoute: 3
+        }),
+        lastVerificationResult: expect.objectContaining({
+          outcome: 'improved'
+        }),
+        trinity: expect.objectContaining({
+          enabled: true
+        })
       })
     );
     expect(typeof response.body.timestamp).toBe('string');

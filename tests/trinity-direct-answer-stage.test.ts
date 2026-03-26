@@ -94,7 +94,7 @@ describe('runDirectAnswerStage', () => {
     );
   });
 
-  it('fails after the bounded retry path when both direct-answer attempts exceed the stage timeout', async () => {
+  it('fails fast when the direct-answer stage exceeds the bounded stage timeout', async () => {
     process.env.TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS = '25';
     jest.useFakeTimers();
 
@@ -112,7 +112,7 @@ describe('runDirectAnswerStage', () => {
       'trinity_req_timeout'
     );
     const rejectionExpectation = expect(resultPromise).rejects.toThrow(
-      'Trinity direct-answer stage timed out after 25ms using gpt-4.1-mini.'
+      'Trinity direct-answer stage timed out after 25ms using gpt-4.1.'
     );
 
     await jest.advanceTimersByTimeAsync(60);
@@ -124,22 +124,6 @@ describe('runDirectAnswerStage', () => {
         requestId: 'trinity_req_timeout',
         model: 'gpt-4.1',
         timeoutMs: 25
-      })
-    );
-    expect(loggerWarnMock).toHaveBeenCalledWith(
-      'trinity.direct_answer.retry',
-      expect.objectContaining({
-        requestId: 'trinity_req_timeout',
-        retryModel: 'gpt-4.1-mini',
-        retryTimeoutMs: 25
-      })
-    );
-    expect(loggerWarnMock).toHaveBeenCalledWith(
-      'trinity.direct_answer.retry_failed',
-      expect.objectContaining({
-        requestId: 'trinity_req_timeout',
-        retryModel: 'gpt-4.1-mini',
-        retryTimeoutMs: 25
       })
     );
   });
