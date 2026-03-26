@@ -21,6 +21,7 @@ import {
   healWorkerRuntime,
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
+import { getEnvNumber } from '@platform/runtime/env.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
 
 export type PredictiveHealingActionType =
@@ -183,6 +184,34 @@ export interface PredictiveHealingAuditEntry {
   execution: PredictiveHealingExecutionResult;
 }
 
+export interface PredictiveHealingExecutionLogEntry {
+  timestamp: string;
+  source: string;
+  action: PredictiveHealingActionType;
+  target: string | null;
+  confidence: number;
+  matchedRule: string | null;
+  mode: PredictiveHealingExecutionResult['mode'];
+  result: PredictiveHealingExecutionStatus;
+  reason: string;
+  outcome: string;
+  recoveryStatus: PredictiveHealingRecoveryOutcome['status'];
+}
+
+export interface PredictiveHealingAutomationStatus {
+  active: boolean;
+  autoExecuteReady: boolean;
+  pollIntervalMs: number;
+  minConfidence: number;
+  cooldownMs: number;
+  lastLoopDecisionAt: string | null;
+  lastLoopAction: PredictiveHealingActionType | null;
+  lastLoopResult: PredictiveHealingExecutionStatus | null;
+  lastAutoExecutionAt: string | null;
+  lastAutoExecutionAction: PredictiveHealingActionType | null;
+  lastAutoExecutionResult: PredictiveHealingExecutionStatus | null;
+}
+
 export interface PredictiveHealingStatusSnapshot {
   enabled: boolean;
   dryRun: boolean;
@@ -196,6 +225,8 @@ export interface PredictiveHealingStatusSnapshot {
   recentAudits: PredictiveHealingAuditEntry[];
   recentObservations: PredictiveHealingObservation[];
   cooldowns: Record<string, string>;
+  automation: PredictiveHealingAutomationStatus;
+  recentExecutionLog: PredictiveHealingExecutionLogEntry[];
   detailsPath: '/api/self-heal/decide';
   advisors: string[];
 }
@@ -204,10 +235,13 @@ export interface PredictiveHealingCompactSummary {
   enabled: boolean;
   dryRun: boolean;
   autoExecute: boolean;
+  autoExecuteReady: boolean;
   lastObservedAt: string | null;
   lastDecisionAt: string | null;
   lastAction: PredictiveHealingActionType | null;
   lastResult: PredictiveHealingExecutionStatus | null;
+  lastAutoExecutionAt: string | null;
+  lastAutoExecutionResult: PredictiveHealingExecutionStatus | null;
   recentAuditCount: number;
   detailsPath: '/api/self-heal/decide';
 }
@@ -283,7 +317,10 @@ const DEFAULT_QUEUE_VELOCITY_THRESHOLD = 2;
 const DEFAULT_ACTION_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_OBSERVATION_HISTORY_LIMIT = 12;
 const DEFAULT_AUDIT_HISTORY_LIMIT = 25;
+const DEFAULT_LOOP_INTERVAL_MS = 30_000;
+const DEFAULT_EXECUTION_LOG_LIMIT = 10;
 const DEFAULT_SCALE_UP_STEP = 1;
+const PREDICTIVE_LOOP_SOURCE = 'predictive_self_heal_loop';
 
 type PredictiveHealingGlobal = typeof globalThis & {
   [GLOBAL_KEY]?: PredictiveHealingState;
@@ -1261,6 +1298,136 @@ function cloneAuditEntry(entry: PredictiveHealingAuditEntry): PredictiveHealingA
   };
 }
 
+function buildExecutionLogEntry(entry: PredictiveHealingAuditEntry): PredictiveHealingExecutionLogEntry {
+  return {
+    timestamp: entry.timestamp,
+    source: entry.source,
+    action: entry.decision.action,
+    target: entry.decision.target,
+    confidence: entry.decision.confidence,
+    matchedRule: entry.decision.matchedRule,
+    mode: entry.execution.mode,
+    result: entry.execution.status,
+    reason: entry.decision.reason,
+    outcome: entry.execution.recoveryOutcome.summary,
+    recoveryStatus: entry.execution.recoveryOutcome.status
+  };
+}
+
+function findLastAudit(
+  entries: PredictiveHealingAuditEntry[],
+  predicate: (entry: PredictiveHealingAuditEntry) => boolean
+): PredictiveHealingAuditEntry | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (predicate(entries[index])) {
+      return entries[index];
+    }
+  }
+
+  return null;
+}
+
+function buildAutomationStatus(
+  state: PredictiveHealingState,
+  config: ReturnType<typeof getConfig>
+): PredictiveHealingAutomationStatus {
+  const lastLoopAudit = findLastAudit(state.recentAudits, (entry) => entry.source === PREDICTIVE_LOOP_SOURCE);
+  const lastAutoExecutionAudit = findLastAudit(
+    state.recentAudits,
+    (entry) => entry.execution.mode === 'auto_execute' && entry.execution.status === 'executed'
+  );
+
+  return {
+    active: config.predictiveHealingEnabled ?? false,
+    autoExecuteReady: Boolean(
+      (config.predictiveHealingEnabled ?? false) &&
+      (config.autoExecuteHealing ?? false) &&
+      !(config.predictiveHealingDryRun ?? true)
+    ),
+    pollIntervalMs: Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS)),
+    minConfidence: config.predictiveHealingMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
+    cooldownMs: Math.max(10_000, config.predictiveHealingActionCooldownMs ?? DEFAULT_ACTION_COOLDOWN_MS),
+    lastLoopDecisionAt: lastLoopAudit?.timestamp ?? null,
+    lastLoopAction: lastLoopAudit?.decision.action ?? null,
+    lastLoopResult: lastLoopAudit?.execution.status ?? null,
+    lastAutoExecutionAt: lastAutoExecutionAudit?.timestamp ?? null,
+    lastAutoExecutionAction: lastAutoExecutionAudit?.decision.action ?? null,
+    lastAutoExecutionResult: lastAutoExecutionAudit?.execution.status ?? null
+  };
+}
+
+function maybeLogPredictiveHealingAudit(entry: PredictiveHealingAuditEntry): void {
+  if (entry.decision.action === 'none' && entry.execution.status === 'skipped') {
+    return;
+  }
+
+  console.log(
+    `[PREDICTIVE-HEAL] source=${entry.source} decision=${entry.decision.action} confidence=${entry.decision.confidence} ` +
+      `mode=${entry.execution.mode} result=${entry.execution.status} outcome=${entry.execution.recoveryOutcome.status} ` +
+      `rule=${entry.decision.matchedRule ?? 'none'}`
+  );
+}
+
+function buildLoopDisabledDecisionResult(params: {
+  source: string;
+  observation: PredictiveHealingObservation;
+}): PredictiveHealingDecisionResult {
+  const config = getConfig();
+  const decision: PredictiveHealingDecision = {
+    advisor: 'rules_v1',
+    decidedAt: params.observation.collectedAt,
+    action: 'none',
+    target: null,
+    reason: 'Predictive healing automation is disabled by feature flag.',
+    confidence: 0,
+    matchedRule: null,
+    safeToExecute: false,
+    staleData: false,
+    suggestedMode: 'recommend_only',
+    details: {
+      enabled: false
+    }
+  };
+  const execution: PredictiveHealingExecutionResult = {
+    attempted: false,
+    status: 'skipped',
+    mode: 'recommend_only',
+    action: 'none',
+    target: null,
+    message: decision.reason,
+    cooldownRemainingMs: null,
+    actuatorResult: null,
+    recoveryOutcome: {
+      status: 'not_executed',
+      summary: 'Predictive loop skipped because predictive healing is disabled.'
+    }
+  };
+  const auditEntry: PredictiveHealingAuditEntry = {
+    id: 'predictive_heal_audit_disabled',
+    timestamp: params.observation.collectedAt,
+    source: params.source,
+    featureFlags: {
+      enabled: config.predictiveHealingEnabled ?? false,
+      dryRun: config.predictiveHealingDryRun ?? true,
+      autoExecute: config.autoExecuteHealing ?? false
+    },
+    observation: cloneObservation(params.observation),
+    trends: buildTrends([params.observation], getRulesConfig()),
+    decision: cloneDecision(decision),
+    execution: cloneExecution(execution)
+  };
+
+  return {
+    source: params.source,
+    featureFlags: { ...auditEntry.featureFlags },
+    observation: cloneObservation(params.observation),
+    trends: cloneTrends(auditEntry.trends),
+    decision: cloneDecision(decision),
+    execution: cloneExecution(execution),
+    auditEntry: cloneAuditEntry(auditEntry)
+  };
+}
+
 async function collectLiveObservation(source: string): Promise<PredictiveHealingObservation> {
   const config = getConfig();
   let workerHealth: WorkerControlHealthResponse | null = null;
@@ -1351,6 +1518,7 @@ export async function runPredictiveHealingDecision(params: {
   if (state.recentAudits.length > auditHistoryLimit) {
     state.recentAudits.splice(0, state.recentAudits.length - auditHistoryLimit);
   }
+  maybeLogPredictiveHealingAudit(auditEntry);
 
   return {
     source: params.source,
@@ -1382,6 +1550,13 @@ export async function runPredictiveHealingFromLoop(params: {
     workerHealthError: params.observation.workerHealthError ?? null
   });
 
+  if (!(getConfig().predictiveHealingEnabled ?? false)) {
+    return buildLoopDisabledDecisionResult({
+      source: params.source,
+      observation: loopObservation
+    });
+  }
+
   return runPredictiveHealingDecision({
     source: params.source,
     observation: loopObservation,
@@ -1396,6 +1571,10 @@ export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusS
   const lastObservation = state.recentObservations.length > 0
     ? state.recentObservations[state.recentObservations.length - 1]
     : null;
+  const automation = buildAutomationStatus(state, config);
+  const recentExecutionLog = state.recentAudits
+    .slice(-DEFAULT_EXECUTION_LOG_LIMIT)
+    .map((entry) => buildExecutionLogEntry(entry));
 
   return {
     enabled: config.predictiveHealingEnabled ?? false,
@@ -1410,6 +1589,8 @@ export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusS
     recentAudits: state.recentAudits.map((entry) => cloneAuditEntry(entry)),
     recentObservations: state.recentObservations.map((entry) => cloneObservation(entry)),
     cooldowns: snapshotCooldowns(),
+    automation,
+    recentExecutionLog,
     detailsPath: '/api/self-heal/decide',
     advisors: [...DEFAULT_ADVISORS]
   };
@@ -1422,10 +1603,13 @@ export function buildPredictiveHealingCompactSummary(
     enabled: snapshot.enabled,
     dryRun: snapshot.dryRun,
     autoExecute: snapshot.autoExecute,
+    autoExecuteReady: snapshot.automation.autoExecuteReady,
     lastObservedAt: snapshot.lastObservedAt,
     lastDecisionAt: snapshot.lastDecisionAt,
     lastAction: snapshot.lastAction,
     lastResult: snapshot.lastResult,
+    lastAutoExecutionAt: snapshot.automation.lastAutoExecutionAt,
+    lastAutoExecutionResult: snapshot.automation.lastAutoExecutionResult,
     recentAuditCount: snapshot.recentAuditCount,
     detailsPath: snapshot.detailsPath
   };

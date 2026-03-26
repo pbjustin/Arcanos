@@ -146,6 +146,37 @@ function parseSelfImproveActuatorMode(raw: string | undefined): AppConfig['selfI
   return 'pr_bot';
 }
 
+function parseBooleanValue(raw: string | undefined, defaultValue: boolean): boolean {
+  if (!raw || raw.trim().length === 0) {
+    return defaultValue;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function getEnvBooleanWithFallbacks(
+  key: string,
+  defaultValue: boolean,
+  fallbacks: string[] = []
+): boolean {
+  return parseBooleanValue(getEnvVar(key, fallbacks), defaultValue);
+}
+
+function getEnvNumberWithFallbacks(
+  key: string,
+  defaultValue: number,
+  fallbacks: string[] = []
+): number {
+  const raw = getEnvVar(key, fallbacks);
+  if (!raw || raw.trim().length === 0) {
+    return defaultValue;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
 /**
  * Resolves environment variable with Railway fallbacks
  * 
@@ -382,12 +413,14 @@ export function getConfig(): AppConfig {
 
     // Predictive Self-Healing Configuration
     predictiveHealingEnabled: getEnvBoolean('PREDICTIVE_HEALING_ENABLED', false),
-    predictiveHealingDryRun: getEnvBoolean('PREDICTIVE_HEALING_DRY_RUN', true),
-    autoExecuteHealing: getEnvBoolean('AUTO_EXECUTE_HEALING', false),
+    predictiveHealingDryRun: getEnvBooleanWithFallbacks('PREDICTIVE_HEALING_DRY_RUN', true, ['PREDICTIVE_DRY_RUN']),
+    autoExecuteHealing: getEnvBooleanWithFallbacks('AUTO_EXECUTE_HEALING', false, ['PREDICTIVE_AUTO_EXECUTE']),
     predictiveHealingWindowMs: getEnvNumber('PREDICTIVE_HEALING_WINDOW_MS', 5 * 60_000),
     predictiveHealingMinObservations: getEnvNumber('PREDICTIVE_HEALING_MIN_OBSERVATIONS', 3),
     predictiveHealingStaleAfterMs: getEnvNumber('PREDICTIVE_HEALING_STALE_AFTER_MS', 2 * 60_000),
-    predictiveHealingMinConfidence: getEnvNumber('PREDICTIVE_HEALING_MIN_CONFIDENCE', 0.65),
+    predictiveHealingMinConfidence: getEnvNumberWithFallbacks('PREDICTIVE_HEALING_MIN_CONFIDENCE', 0.65, [
+      'PREDICTIVE_AUTO_EXECUTE_CONFIDENCE_THRESHOLD'
+    ]),
     predictiveHealingActionCooldownMs: getEnvNumber('PREDICTIVE_HEALING_ACTION_COOLDOWN_MS', 5 * 60_000),
     predictiveHealingObservationHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_OBSERVATION_HISTORY_LIMIT', 12),
     predictiveHealingAuditHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_AUDIT_HISTORY_LIMIT', 25),

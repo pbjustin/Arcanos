@@ -4,6 +4,12 @@
 
 Predictive self-healing adds a rules-first layer on top of the existing reactive self-heal loop.
 
+- Background loop:
+  - reuses the existing self-heal loop cadence instead of introducing a second scheduler
+  - polls metrics every `SELF_HEAL_LOOP_INTERVAL_MS` tick
+  - runs predictive decisions only when `PREDICTIVE_HEALING_ENABLED=true`
+  - auto-executes only when confidence clears the configured threshold and `AUTO_EXECUTE_HEALING=true`
+
 - Metrics source:
   - rolling request window from `runtimeDiagnosticsService`
   - queue and worker health from `workerControlService`
@@ -31,10 +37,16 @@ The predictive layer is off by default and should be rolled out in dry-run first
 - `PREDICTIVE_HEALING_ENABLED`
 - `PREDICTIVE_HEALING_DRY_RUN`
 - `AUTO_EXECUTE_HEALING`
+- `PREDICTIVE_DRY_RUN`
+  - alias for `PREDICTIVE_HEALING_DRY_RUN`
+- `PREDICTIVE_AUTO_EXECUTE`
+  - alias for `AUTO_EXECUTE_HEALING`
 - `PREDICTIVE_HEALING_WINDOW_MS`
 - `PREDICTIVE_HEALING_MIN_OBSERVATIONS`
 - `PREDICTIVE_HEALING_STALE_AFTER_MS`
 - `PREDICTIVE_HEALING_MIN_CONFIDENCE`
+- `PREDICTIVE_AUTO_EXECUTE_CONFIDENCE_THRESHOLD`
+  - alias for `PREDICTIVE_HEALING_MIN_CONFIDENCE`
 - `PREDICTIVE_HEALING_ACTION_COOLDOWN_MS`
 - `PREDICTIVE_HEALING_OBSERVATION_HISTORY_LIMIT`
 - `PREDICTIVE_HEALING_AUDIT_HISTORY_LIMIT`
@@ -77,6 +89,7 @@ Every predictive evaluation stores:
 - execution mode
 - execution result
 - recovery outcome summary
+- compact execution log entries in `/status/safety/self-heal` under `predictiveHealing.recentExecutionLog`
 
 Actionable predictive decisions are also mirrored into the existing self-heal telemetry event stream.
 
