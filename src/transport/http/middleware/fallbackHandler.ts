@@ -17,6 +17,7 @@ import {
 } from "@platform/runtime/fallbackMessages.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
+import { applyAIDegradedResponseHeaders } from '@shared/http/aiDegradedHeaders.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -118,6 +119,10 @@ export function createFallbackMiddleware() {
     logFallbackEvent('degraded', endpoint, errorMessage || FALLBACK_LOG_REASON.unknown);
 
     const degradedResponse = generateDegradedResponse(prompt, endpoint);
+    applyAIDegradedResponseHeaders(res, {
+      degradedModeReason: 'fallback_handler_degraded',
+      bypassedSubsystems: ['openai_primary']
+    });
 
     // Set appropriate HTTP status for degraded mode
     sendTimestampedStatus(res, 503, degradedResponse);
@@ -198,6 +203,10 @@ export function createHealthCheckMiddleware() {
       });
 
       const degradedResponse = generateDegradedResponse(prompt, endpoint);
+      applyAIDegradedResponseHeaders(res, {
+        degradedModeReason: 'fallback_handler_preemptive',
+        bypassedSubsystems: ['openai_primary']
+      });
       sendTimestampedStatus(res, 503, degradedResponse);
       return;
     }
@@ -215,6 +224,10 @@ export function createFallbackTestRoute() {
       FALLBACK_RESPONSE_MESSAGES.fallbackTestPrompt,
       'test'
     );
+    applyAIDegradedResponseHeaders(res, {
+      degradedModeReason: 'fallback_handler_test',
+      bypassedSubsystems: ['openai_primary']
+    });
     
     res.json({
       ...testResponse,

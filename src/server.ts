@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { app } from './app.js';
 import { performStartup } from './core/startup.js';
 import { startSelfHealingLoop } from '@services/selfImprove/selfHealingLoop.js';
+import { primeSelfHealTelemetryPersistence } from '@services/selfImprove/selfHealTelemetry.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -50,6 +51,7 @@ function resolveStartupDeploymentSummary(): StartupDeploymentSummary {
  */
 async function startServer(): Promise<void> {
   await performStartup();
+  await primeSelfHealTelemetryPersistence();
 
   app.listen(PORT, () => {
     const selfHealLoopStatus = startSelfHealingLoop();

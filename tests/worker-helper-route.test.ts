@@ -11,6 +11,7 @@ const startWorkersMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const getDatabaseStatusMock = jest.fn();
 const getWorkerControlHealthMock = jest.fn();
+const recordSelfHealEventMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
@@ -32,6 +33,14 @@ jest.unstable_mockModule('@dispatcher/detectCognitiveDomain.js', () => ({
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
   getStatus: getDatabaseStatusMock
+}));
+
+jest.unstable_mockModule('@services/selfImprove/selfHealTelemetry.js', () => ({
+  recordSelfHealEvent: recordSelfHealEventMock,
+  inferSelfHealComponentFromAction: jest.fn(() => 'worker_runtime'),
+  inferSelfHealComponentFromRequest: jest.fn(() => 'worker_runtime'),
+  buildSelfHealTelemetrySnapshot: jest.fn(),
+  buildCompactSelfHealSummary: jest.fn()
 }));
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
@@ -151,6 +160,7 @@ describe('/worker-helper routes', () => {
       startedAt: '2026-03-06T10:05:00.000Z',
       message: 'Workers started successfully.'
     });
+    recordSelfHealEventMock.mockReset();
   });
 
   it('returns combined status without helper auth', async () => {
@@ -373,5 +383,27 @@ describe('/worker-helper routes', () => {
         }
       })
     );
+  });
+
+  it('returns a bounded noop plan for worker-helper heal when mode=plan is requested', async () => {
+    const response = await request(buildApp()).post('/worker-helper/heal?mode=plan');
+
+    expect(response.status).toBe(200);
+    expect(startWorkersMock).not.toHaveBeenCalled();
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'noop',
+      source: 'worker-helper',
+      actionTaken: 'worker-helper/heal',
+      healedComponent: 'worker_runtime'
+    }));
+    expect(response.body).toEqual(expect.objectContaining({
+      mode: 'plan',
+      execution: null,
+      requestedForce: true,
+      runtime: expect.objectContaining({
+        started: true,
+        activeListeners: 2
+      })
+    }));
   });
 });

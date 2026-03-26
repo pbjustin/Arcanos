@@ -433,7 +433,7 @@ async function executeWorkerTool(
     }
     case 'heal_worker_runtime': {
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, healWorkerRuntimeArgsSchema, 'workerTools.heal_worker_runtime');
-      const output = await healWorkerRuntime(parsedArgs.force);
+      const output = await healWorkerRuntime(parsedArgs.force, 'ask_tool');
       return {
         output: output as unknown as Record<string, unknown>,
         summary: summarizeToolExecution(toolName, output as unknown as Record<string, unknown>)

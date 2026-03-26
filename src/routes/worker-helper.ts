@@ -18,14 +18,18 @@ import express from 'express';
 import { z } from 'zod';
 import {
   asyncHandler,
+  sendBadRequestPayload,
   sendInternalErrorPayload,
   sendNotFound,
   validateBody,
   validateParams,
   validateQuery
 } from '@shared/http/index.js';
+import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import { parseWorkerHealRequest } from '@shared/http/workerHealRequest.js';
 import { clientContextSchema } from '@shared/types/dto.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
 import {
   dispatchWorkerInput,
   getWorkerControlHealth,
@@ -66,10 +70,6 @@ const dispatchRequestSchema = z.object({
   attempts: z.number().int().min(1).max(10).optional(),
   backoffMs: z.number().int().min(0).max(60000).optional(),
   sourceEndpoint: z.string().trim().min(1).max(64).optional()
-});
-
-const healRequestSchema = z.object({
-  force: z.boolean().optional()
 });
 
 /**
@@ -300,22 +300,52 @@ router.post(
  * POST /worker-helper/heal
  *
  * Purpose:
- * - Restart or bootstrap the in-process worker runtime from an operator command.
+ * - Restart or plan a restart of the in-process worker runtime from an operator command.
  *
  * Inputs/outputs:
- * - Input: optional `force` flag.
- * - Output: restart summary plus the latest runtime snapshot.
+ * - Input: optional `force`, `execute`, `mode`, or `dryRun` flags via JSON body or query string.
+ * - Output: restart summary plus the latest runtime snapshot, or a bounded noop plan response.
  *
  * Edge case behavior:
- * - Defaults to `force: true` so heal requests behave like an operator restart.
+ * - Defaults to `force: true` so execute requests behave like an operator restart.
  */
 router.post(
   '/worker-helper/heal',
-  validateBody(healRequestSchema),
   asyncHandler(async (req, res) => {
     try {
-      const body = req.validated!.body as z.infer<typeof healRequestSchema>;
-      res.json(await healWorkerRuntime(body.force));
+      const healRequest = parseWorkerHealRequest(req.body, req.query);
+      if (!healRequest.success) {
+        sendBadRequestPayload(res, {
+          error: 'INVALID_WORKER_HEAL_REQUEST',
+          details: healRequest.issues
+        });
+        return;
+      }
+
+      if (healRequest.data.planOnlyRequested) {
+        recordSelfHealEvent({
+          kind: 'noop',
+          source: 'worker-helper',
+          trigger: 'manual',
+          reason: 'worker runtime heal plan requested without execution',
+          actionTaken: 'worker-helper/heal',
+          healedComponent: 'worker_runtime',
+          details: {
+            requestedForce: healRequest.data.force ?? true
+          }
+        });
+
+        res.json({
+          timestamp: new Date().toISOString(),
+          mode: 'plan',
+          execution: null,
+          requestedForce: healRequest.data.force ?? true,
+          runtime: getWorkerRuntimeStatus()
+        });
+        return;
+      }
+
+      res.json(await healWorkerRuntime(healRequest.data.force, 'worker-helper'));
     } catch (error: unknown) {
       sendInternalErrorPayload(res, {
         error: 'WORKER_HELPER_HEAL_FAILED',

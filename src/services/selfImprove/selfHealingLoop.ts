@@ -31,6 +31,11 @@ import {
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
 import { getWorkerAutonomySettings } from '@services/workerAutonomyService.js';
+import {
+  inferSelfHealComponentFromAction,
+  recordSelfHealEvent,
+  resetSelfHealTelemetryForTests
+} from '@services/selfImprove/selfHealTelemetry.js';
 import type { WorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -343,6 +348,25 @@ type SelfHealingActionExecution = {
   pendingVerification: PendingVerification | null;
 };
 
+function getSelfHealingActionTarget(actionPlan: SelfHealingActionPlan): string {
+  if (actionPlan.kind === 'recover_stale_jobs') {
+    return 'worker_queue';
+  }
+
+  if (actionPlan.kind === 'heal_worker_runtime') {
+    return 'worker_runtime';
+  }
+
+  if (
+    actionPlan.kind === 'activate_prompt_route_reduced_latency_mode' ||
+    actionPlan.kind === 'activate_prompt_route_degraded_mode'
+  ) {
+    return 'prompt_route';
+  }
+
+  return `trinity.${actionPlan.stage}`;
+}
+
 type SelfHealingLoopGlobal = typeof globalThis & {
   [SELF_HEAL_RUNTIME_KEY]?: SelfHealingLoopRuntime;
 };
@@ -493,6 +517,14 @@ function recordLoopError(error: unknown): string {
   const runtime = getRuntime();
   const message = resolveErrorMessage(error);
   runtime.status.lastError = message;
+  recordSelfHealEvent({
+    kind: 'failure',
+    source: 'self_heal_loop',
+    trigger: 'loop_error',
+    reason: message,
+    actionTaken: runtime.status.lastAction,
+    healedComponent: inferSelfHealComponentFromAction(runtime.status.lastAction)
+  });
   console.error(`[SELF-HEAL] loop error ${message}`);
   return message;
 }
@@ -1772,6 +1804,18 @@ function maybeVerifyPendingAction(
     console.log(
       `[SELF-HEAL] verify deferred action=${pending.action} reason=awaiting_prompt_route_samples observed=${verificationSnapshot.promptRoute?.requestCount ?? 0} required=${resolvePromptRouteVerificationMinRequests()}`
     );
+    recordSelfHealEvent({
+      kind: 'noop',
+      source: 'self_heal_loop',
+      trigger: 'verification',
+      reason: 'awaiting prompt-route samples before verification',
+      actionTaken: pending.action,
+      healedComponent: inferSelfHealComponentFromAction(pending.action),
+      details: {
+        observedSamples: verificationSnapshot.promptRoute?.requestCount ?? 0,
+        requiredSamples: resolvePromptRouteVerificationMinRequests()
+      }
+    });
     return {
       verificationResult: null,
       followUpAction: null
@@ -1786,6 +1830,18 @@ function maybeVerifyPendingAction(
   );
 
   if (verificationResult.outcome === 'improved') {
+    recordSelfHealEvent({
+      kind: 'success',
+      source: 'self_heal_loop',
+      trigger: 'verification',
+      reason: verificationResult.summary,
+      actionTaken: pending.action,
+      healedComponent: inferSelfHealComponentFromAction(pending.action),
+      details: {
+        diagnosis: pending.diagnosisSummary,
+        verifiedAt: verificationResult.verifiedAt
+      }
+    });
     if (pending.action === 'activatePromptRouteMitigation:reduced_latency') {
       recordCooldown(
         runtime.actionCooldowns,
@@ -1844,6 +1900,19 @@ function maybeVerifyPendingAction(
   runtime.status.activePromptMitigation = getActivePromptRouteMitigation();
   runtime.status.lastPromptMitigationReason = getPromptRouteMitigationState().reason;
   runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
+  recordSelfHealEvent({
+    kind: 'failure',
+    source: 'self_heal_loop',
+    trigger: 'verification',
+    reason: verificationResult.summary,
+    actionTaken: pending.action,
+    healedComponent: inferSelfHealComponentFromAction(pending.action),
+    details: {
+      diagnosis: pending.diagnosisSummary,
+      followUpAction,
+      outcome: verificationResult.outcome
+    }
+  });
   console.log(`[SELF-HEAL] action ${followUpAction}`);
 
   return {
@@ -1859,6 +1928,14 @@ async function executeActionPlan(
 ): Promise<SelfHealingActionExecution> {
   if (runtime.pendingVerification) {
     console.log('[SELF-HEAL] action skipped reason=pending-verification');
+    recordSelfHealEvent({
+      kind: 'noop',
+      source: 'self_heal_loop',
+      trigger: 'action',
+      reason: 'pending verification for a previous self-heal action',
+      actionTaken: runtime.status.lastAction,
+      healedComponent: inferSelfHealComponentFromAction(runtime.status.lastAction)
+    });
     return {
       executed: false,
       action: null,
@@ -1875,6 +1952,7 @@ async function executeActionPlan(
   }
 
   const actionPlan = diagnosis.actionPlan;
+  const actionTarget = getSelfHealingActionTarget(actionPlan);
 
   const resolveActionTrackingKey = (): string => {
     if (actionPlan.kind === 'recover_stale_jobs') {
@@ -1896,9 +1974,18 @@ async function executeActionPlan(
     return `activateTrinityMitigation:${actionPlan.stage}:${actionPlan.trinityAction}`;
   };
 
-  const ineffectiveKey = `${diagnosis.type}:${resolveActionTrackingKey()}`;
+  const actionTrackingKey = resolveActionTrackingKey();
+  const ineffectiveKey = `${diagnosis.type}:${actionTrackingKey}`;
   if (!canAttemptDiagnosis(runtime, diagnosis.type)) {
     console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=attempt-budget`);
+    recordSelfHealEvent({
+      kind: 'noop',
+      source: 'self_heal_loop',
+      trigger: 'action',
+      reason: `${diagnosis.summary} (attempt budget exhausted)`,
+      actionTaken: actionTrackingKey,
+      healedComponent: actionTarget
+    });
     return {
       executed: false,
       action: null,
@@ -1908,6 +1995,14 @@ async function executeActionPlan(
 
   if (isCooldownActive(runtime.actionCooldowns, actionPlan.cooldownKey)) {
     console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=cooldown`);
+    recordSelfHealEvent({
+      kind: 'noop',
+      source: 'self_heal_loop',
+      trigger: 'action',
+      reason: `${diagnosis.summary} (action cooldown active)`,
+      actionTaken: actionTrackingKey,
+      healedComponent: actionTarget
+    });
     return {
       executed: false,
       action: null,
@@ -1917,6 +2012,14 @@ async function executeActionPlan(
 
   if (isCooldownActive(runtime.ineffectiveActionCooldowns, ineffectiveKey)) {
     console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=recently-ineffective`);
+    recordSelfHealEvent({
+      kind: 'noop',
+      source: 'self_heal_loop',
+      trigger: 'action',
+      reason: `${diagnosis.summary} (recently ineffective)`,
+      actionTaken: actionTrackingKey,
+      healedComponent: actionTarget
+    });
     return {
       executed: false,
       action: null,
@@ -1926,6 +2029,17 @@ async function executeActionPlan(
 
   if (diagnosis.confidence < 0.7) {
     console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=low-confidence`);
+    recordSelfHealEvent({
+      kind: 'noop',
+      source: 'self_heal_loop',
+      trigger: 'action',
+      reason: `${diagnosis.summary} (confidence below execution threshold)`,
+      actionTaken: actionTrackingKey,
+      healedComponent: actionTarget,
+      details: {
+        confidence: diagnosis.confidence
+      }
+    });
     return {
       executed: false,
       action: null,
@@ -1934,6 +2048,16 @@ async function executeActionPlan(
   }
 
   try {
+    recordSelfHealEvent({
+      kind: 'attempt',
+      source: 'self_heal_loop',
+      trigger: 'action',
+      reason: diagnosis.summary,
+      actionTaken: actionTrackingKey,
+      healedComponent: actionTarget,
+      details: diagnosis.evidence
+    });
+
     if (actionPlan.kind === 'recover_stale_jobs') {
       const settings = getWorkerAutonomySettings();
       const recoverResult = await recoverStaleJobs({
@@ -1943,6 +2067,18 @@ async function executeActionPlan(
       const action = `recoverStaleJobs:recovered=${recoverResult.recoveredJobs.length}:failed=${recoverResult.failedJobs.length}`;
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordSelfHealEvent({
+        kind: 'success',
+        source: 'self_heal_loop',
+        trigger: 'action',
+        reason: diagnosis.summary,
+        actionTaken: action,
+        healedComponent: actionTarget,
+        details: {
+          failedJobs: recoverResult.failedJobs.length,
+          recoveredJobs: recoverResult.recoveredJobs.length
+        }
+      });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
         executed: true,
@@ -1952,7 +2088,7 @@ async function executeActionPlan(
     }
 
     if (actionPlan.kind === 'heal_worker_runtime') {
-      const healResult = await healWorkerRuntime(true);
+      const healResult = await healWorkerRuntime(true, 'self_heal_loop');
       const action = `healWorkerRuntime:${healResult.runtime.started ? 'started' : 'pending'}`;
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
@@ -1975,6 +2111,14 @@ async function executeActionPlan(
         console.log(
           `[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`
         );
+        recordSelfHealEvent({
+          kind: 'noop',
+          source: 'self_heal_loop',
+          trigger: 'action',
+          reason: `${diagnosis.summary} (${mitigationResult.reason})`,
+          actionTaken: actionTrackingKey,
+          healedComponent: actionTarget
+        });
         return {
           executed: false,
           action: null,
@@ -1985,6 +2129,17 @@ async function executeActionPlan(
       const action = `activateTrinityMitigation:${actionPlan.stage}:${actionPlan.trinityAction}`;
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordSelfHealEvent({
+        kind: 'success',
+        source: 'self_heal_loop',
+        trigger: 'action',
+        reason: diagnosis.summary,
+        actionTaken: action,
+        healedComponent: actionTarget,
+        details: {
+          mitigationReason: mitigationResult.reason
+        }
+      });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
         executed: true,
@@ -2003,6 +2158,14 @@ async function executeActionPlan(
       const mitigationResult = activatePromptRouteReducedLatencyMode(diagnosis.summary, defaultTokenLimit);
       if (!mitigationResult.applied) {
         console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
+        recordSelfHealEvent({
+          kind: 'noop',
+          source: 'self_heal_loop',
+          trigger: 'action',
+          reason: `${diagnosis.summary} (${mitigationResult.reason})`,
+          actionTaken: actionTrackingKey,
+          healedComponent: actionTarget
+        });
         return {
           executed: false,
           action: null,
@@ -2010,9 +2173,20 @@ async function executeActionPlan(
         };
       }
 
-      const action = resolveActionTrackingKey();
+      const action = actionTrackingKey;
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordSelfHealEvent({
+        kind: 'success',
+        source: 'self_heal_loop',
+        trigger: 'action',
+        reason: diagnosis.summary,
+        actionTaken: action,
+        healedComponent: actionTarget,
+        details: {
+          mitigationReason: mitigationResult.reason
+        }
+      });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
         executed: true,
@@ -2028,6 +2202,14 @@ async function executeActionPlan(
       const mitigationResult = activatePromptRouteDegradedMode(diagnosis.summary);
       if (!mitigationResult.applied) {
         console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
+        recordSelfHealEvent({
+          kind: 'noop',
+          source: 'self_heal_loop',
+          trigger: 'action',
+          reason: `${diagnosis.summary} (${mitigationResult.reason})`,
+          actionTaken: actionTrackingKey,
+          healedComponent: actionTarget
+        });
         return {
           executed: false,
           action: null,
@@ -2035,9 +2217,20 @@ async function executeActionPlan(
         };
       }
 
-      const action = resolveActionTrackingKey();
+      const action = actionTrackingKey;
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordSelfHealEvent({
+        kind: 'success',
+        source: 'self_heal_loop',
+        trigger: 'action',
+        reason: diagnosis.summary,
+        actionTaken: action,
+        healedComponent: actionTarget,
+        details: {
+          mitigationReason: mitigationResult.reason
+        }
+      });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
         executed: true,
@@ -2050,6 +2243,14 @@ async function executeActionPlan(
     }
   } catch (error) {
     runtime.status.lastError = resolveErrorMessage(error);
+    recordSelfHealEvent({
+      kind: 'failure',
+      source: 'self_heal_loop',
+      trigger: 'action',
+      reason: runtime.status.lastError,
+      actionTaken: actionTrackingKey,
+      healedComponent: actionTarget
+    });
     console.error(`[SELF-HEAL] action error ${runtime.status.lastError}`);
   }
 
@@ -2121,6 +2322,16 @@ export async function runSelfHealingLoop(options: {
 
   if (runtime.inFlight) {
     console.log(`[SELF-HEAL] tick skipped ${tickAt} trigger=${trigger} reason=in-flight`);
+    if (trigger === 'manual') {
+      recordSelfHealEvent({
+        kind: 'noop',
+        source: 'self_heal_loop',
+        trigger,
+        reason: 'manual self-heal tick skipped because another loop iteration is still running',
+        actionTaken: runtime.status.lastAction,
+        healedComponent: inferSelfHealComponentFromAction(runtime.status.lastAction)
+      });
+    }
     return {
       trigger,
       tickAt,
@@ -2173,6 +2384,17 @@ export async function runSelfHealingLoop(options: {
       runtime.status.lastHealthyObservedAt = tickAt;
     }
 
+    if (trigger === 'manual' || diagnosis.actionPlan !== null || diagnosis.controllerInput !== null) {
+      recordSelfHealEvent({
+        kind: 'trigger',
+        source: 'self_heal_loop',
+        trigger,
+        reason: diagnosis.summary,
+        healedComponent: diagnosis.actionPlan ? getSelfHealingActionTarget(diagnosis.actionPlan) : null,
+        details: diagnosis.evidence
+      });
+    }
+
     console.log(`[SELF-HEAL] diagnosis ${diagnosis.summary}`);
 
     let action: string | null = verification.followUpAction;
@@ -2200,6 +2422,14 @@ export async function runSelfHealingLoop(options: {
       const controllerKey = diagnosis.incidentKey ?? diagnosis.controllerInput.trigger;
       if (trigger !== 'manual' && isCooldownActive(runtime.controllerCooldowns, controllerKey)) {
         console.log(`[SELF-HEAL] controller skipped key=${controllerKey} reason=cooldown`);
+        recordSelfHealEvent({
+          kind: 'noop',
+          source: 'self_heal_loop',
+          trigger: 'controller',
+          reason: `${diagnosis.summary} (controller cooldown active)`,
+          actionTaken: 'runSelfImproveCycle',
+          healedComponent: diagnosis.controllerInput.component ?? null
+        });
       } else {
         try {
           const decision = await runSelfImproveCycle(diagnosis.controllerInput);
@@ -2213,6 +2443,14 @@ export async function runSelfHealingLoop(options: {
           runtime.status.lastControllerDecision = 'ERROR';
           runtime.status.lastControllerRunAt = new Date().toISOString();
           runtime.status.lastError = resolveErrorMessage(error);
+          recordSelfHealEvent({
+            kind: 'failure',
+            source: 'self_heal_loop',
+            trigger: 'controller',
+            reason: runtime.status.lastError,
+            actionTaken: 'runSelfImproveCycle',
+            healedComponent: diagnosis.controllerInput.component ?? null
+          });
           console.error(`[SELF-HEAL] controller error ${runtime.status.lastError}`);
         }
       }
@@ -2301,4 +2539,5 @@ export function resetSelfHealingLoopStateForTests(): void {
   runtime.pendingVerification = null;
   runtime.status = createInitialStatus();
   resetPromptRouteMitigationStateForTests();
+  resetSelfHealTelemetryForTests();
 }

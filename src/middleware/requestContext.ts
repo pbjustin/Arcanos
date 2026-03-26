@@ -5,6 +5,10 @@ import { redactSensitive } from '@shared/redaction.js';
 import { readAIDegradedResponseHeaders } from '@shared/http/aiDegradedHeaders.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import {
+  inferSelfHealComponentFromRequest,
+  recordSelfHealEvent
+} from '@services/selfImprove/selfHealTelemetry.js';
+import {
   recordHttpRequestCompletion,
   recordHttpRequestEnd,
   recordHttpRequestStart,
@@ -154,17 +158,43 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
     const statusCode = res.statusCode;
     const route = resolveMetricRouteLabel(req);
     const degradedMetadata = readAIDegradedResponseHeaders(res);
+    const bypassedSubsystems = degradedMetadata.bypassedSubsystems ?? [];
     const completionData = {
       statusCode,
       contentLength: res.getHeader('content-length') ?? null,
       ...(degradedMetadata.timeoutKind ? { timeoutKind: degradedMetadata.timeoutKind } : {}),
       ...(degradedMetadata.degradedModeReason ? { degradedModeReason: degradedMetadata.degradedModeReason } : {}),
-      ...((degradedMetadata.bypassedSubsystems?.length ?? 0) > 0
-        ? { bypassedSubsystems: degradedMetadata.bypassedSubsystems }
+      ...(bypassedSubsystems.length > 0
+        ? { bypassedSubsystems }
         : {})
     };
 
     runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs, route, degradedMetadata);
+
+    if (
+      degradedMetadata.timeoutKind !== null ||
+      degradedMetadata.degradedModeReason !== null ||
+      bypassedSubsystems.length > 0
+    ) {
+      recordSelfHealEvent({
+        kind: 'fallback',
+        source: 'request_context',
+        trigger: 'request.completed',
+        reason: degradedMetadata.degradedModeReason ?? degradedMetadata.timeoutKind ?? 'degraded_response',
+        actionTaken: degradedMetadata.degradedModeReason ? 'serve_degraded_response' : 'abort_request',
+        healedComponent: inferSelfHealComponentFromRequest({
+          route,
+          degradedModeReason: degradedMetadata.degradedModeReason
+        }),
+        details: {
+          route,
+          statusCode,
+          timeoutKind: degradedMetadata.timeoutKind,
+          latencyMs,
+          bypassedSubsystems
+        }
+      });
+    }
 
     let level: RequestLogLevel = 'info';
     if (statusCode >= 500) {

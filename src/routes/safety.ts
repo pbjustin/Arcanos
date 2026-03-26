@@ -13,6 +13,11 @@ import { resolveHeader } from '@transport/http/requestHeaders.js';
 import { getTrinitySelfHealingStatus } from '@services/selfImprove/selfHealingV2.js';
 import { getSelfHealingLoopStatus } from '@services/selfImprove/selfHealingLoop.js';
 import { getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
+import {
+  buildCompactSelfHealSummary,
+  buildSelfHealTelemetrySnapshot,
+  inferSelfHealComponentFromAction
+} from '@services/selfImprove/selfHealTelemetry.js';
 
 const router = express.Router();
 
@@ -43,16 +48,22 @@ router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
  */
 router.get('/status/safety', (_req: Request, res: Response) => {
   const snapshot = getSafetyRuntimeSnapshot();
+  const loopStatus = getSelfHealingLoopStatus();
+  const trinityStatus = getTrinitySelfHealingStatus();
+  const promptRouteMitigation = getPromptRouteMitigationState();
+  const selfHealTelemetry = buildSelfHealTelemetrySnapshot({
+    enabled: loopStatus.loopRunning || trinityStatus.enabled,
+    active: Boolean(loopStatus.activeMitigation || promptRouteMitigation.active),
+    currentActionTaken: loopStatus.lastAction,
+    currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)
+  });
   res.json({
     status: hasUnsafeBlockingConditions() ? 'unsafe' : 'safe',
     timestamp: new Date().toISOString(),
     activeConditions: getActiveUnsafeConditions(),
     activeQuarantines: getActiveQuarantines(),
     counters: snapshot.counters,
-    selfHealing: {
-      loop: getSelfHealingLoopStatus(),
-      trinity: getTrinitySelfHealingStatus()
-    }
+    selfHealing: buildCompactSelfHealSummary(selfHealTelemetry)
   });
 });
 
@@ -62,12 +73,33 @@ router.get('/status/safety', (_req: Request, res: Response) => {
  */
 router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
   const loopStatus = getSelfHealingLoopStatus();
+  const trinityStatus = getTrinitySelfHealingStatus();
+  const promptRouteMitigation = getPromptRouteMitigationState();
+  const selfHealTelemetry = buildSelfHealTelemetrySnapshot({
+    enabled: loopStatus.loopRunning || trinityStatus.enabled,
+    active: Boolean(loopStatus.activeMitigation || promptRouteMitigation.active),
+    currentActionTaken: loopStatus.lastAction,
+    currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)
+  });
+
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    ...loopStatus,
-    promptRouteMitigation: getPromptRouteMitigationState(),
-    trinity: getTrinitySelfHealingStatus()
+    enabled: selfHealTelemetry.enabled,
+    active: selfHealTelemetry.active,
+    lastTrigger: selfHealTelemetry.lastTrigger,
+    lastAttempt: selfHealTelemetry.lastAttempt,
+    lastSuccess: selfHealTelemetry.lastSuccess,
+    lastFailure: selfHealTelemetry.lastFailure,
+    lastFallback: selfHealTelemetry.lastFallback,
+    triggerReason: selfHealTelemetry.triggerReason,
+    actionTaken: selfHealTelemetry.actionTaken,
+    healedComponent: selfHealTelemetry.healedComponent,
+    recentEvents: selfHealTelemetry.recentEvents,
+    persistence: selfHealTelemetry.persistence,
+    loop: loopStatus,
+    promptRouteMitigation,
+    trinity: trinityStatus
   });
 });
 

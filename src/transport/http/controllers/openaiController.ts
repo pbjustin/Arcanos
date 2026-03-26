@@ -22,6 +22,7 @@ import {
   getPromptRouteMitigationState,
   recordPromptRouteTimeoutIncident
 } from '@services/openai/promptRouteMitigation.js';
+import { applyAIDegradedResponseHeaders } from '@shared/http/aiDegradedHeaders.js';
 import { generateDegradedResponse } from '@transport/http/middleware/fallbackHandler.js';
 import {
   classifyBudgetAbortKind,
@@ -106,6 +107,13 @@ export async function handlePrompt(
       mitigationMode: promptRouteMitigation.mode,
       mitigationReason: promptRouteMitigation.reason,
       fallbackMode: degradedResponse.fallbackMode
+    });
+    applyAIDegradedResponseHeaders(res, {
+      degradedModeReason: promptRouteMitigation.reason ?? 'prompt_route_degraded_mode',
+      bypassedSubsystems:
+        promptRoutePolicy.bypassedSubsystems.length > 0
+          ? promptRoutePolicy.bypassedSubsystems
+          : promptRouteMitigation.bypassedSubsystems
     });
 
     res.json({

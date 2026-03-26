@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getStatus as getDatabaseStatus } from '@core/db/index.js';
 import type { JobData } from '@core/db/schema.js';
+import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   createJob,
   getJobById,
@@ -26,6 +27,7 @@ import {
 import type { ClientContextDTO } from '@shared/types/dto.js';
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
+import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
 import {
   getWorkerAutonomyHealthReport,
   getWorkerAutonomySettings,
@@ -674,16 +676,60 @@ export async function dispatchWorkerInput(
  * Edge case behavior:
  * - Defaults to `force: true` when omitted.
  */
-export async function healWorkerRuntime(force?: boolean): Promise<HealWorkerRuntimeResponse> {
+export async function healWorkerRuntime(
+  force?: boolean,
+  source = 'worker_control_service'
+): Promise<HealWorkerRuntimeResponse> {
   const forceRestart = force ?? true;
 
   //audit Assumption: helper-driven heal commands are deliberate operator actions; failure risk: no-op restart when callers omit the force flag; expected invariant: heal defaults to a real restart; handling strategy: coerce undefined to `true`.
-  const restartSummary = await startWorkers(forceRestart);
+  recordSelfHealEvent({
+    kind: 'attempt',
+    source,
+    trigger: 'manual',
+    reason: forceRestart ? 'worker runtime restart requested' : 'worker runtime bootstrap requested',
+    actionTaken: 'healWorkerRuntime',
+    healedComponent: 'worker_runtime',
+    details: {
+      requestedForce: forceRestart
+    }
+  });
 
-  return {
-    timestamp: new Date().toISOString(),
-    requestedForce: forceRestart,
-    restart: restartSummary,
-    runtime: getWorkerRuntimeStatus()
-  };
+  try {
+    const restartSummary = await startWorkers(forceRestart);
+    const response = {
+      timestamp: new Date().toISOString(),
+      requestedForce: forceRestart,
+      restart: restartSummary,
+      runtime: getWorkerRuntimeStatus()
+    };
+
+    recordSelfHealEvent({
+      kind: 'success',
+      source,
+      trigger: 'manual',
+      reason: restartSummary.message ?? 'worker runtime restart completed',
+      actionTaken: `healWorkerRuntime:${restartSummary.started ? 'started' : 'pending'}`,
+      healedComponent: 'worker_runtime',
+      details: {
+        requestedForce: forceRestart,
+        restart: restartSummary
+      }
+    });
+
+    return response;
+  } catch (error) {
+    recordSelfHealEvent({
+      kind: 'failure',
+      source,
+      trigger: 'manual',
+      reason: resolveErrorMessage(error),
+      actionTaken: 'healWorkerRuntime',
+      healedComponent: 'worker_runtime',
+      details: {
+        requestedForce: forceRestart
+      }
+    });
+    throw error;
+  }
 }

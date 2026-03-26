@@ -1,4 +1,4 @@
-import { sendInternalErrorPayload } from '@shared/http/index.js';
+import { sendBadRequestPayload, sendInternalErrorPayload } from '@shared/http/index.js';
 /**
  * Workers Route - Simplified worker management
  * Provides endpoints for running and monitoring workers
@@ -9,7 +9,7 @@ import path from 'path';
 import { Router, Request, Response } from 'express';
 import { createWorkerContext } from "@platform/runtime/workerContext.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
-import { dispatchArcanosTask, getWorkerRuntimeStatus, startWorkers } from "@platform/runtime/workerConfig.js";
+import { dispatchArcanosTask, getWorkerRuntimeStatus } from "@platform/runtime/workerConfig.js";
 import type {
   WorkerInfoDTO,
   WorkerRunResponseDTO,
@@ -18,8 +18,11 @@ import type {
 import { resolveWorkersDirectory } from "@platform/runtime/workerPaths.js";
 import { buildAutoHealPlan, summarizeAutoHeal } from "@services/autoHealService.js";
 import { loadState, updateState } from "@services/stateManager.js";
+import { parseWorkerHealRequest } from '@shared/http/workerHealRequest.js';
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
+import { healWorkerRuntime } from '@services/workerControlService.js';
 
 const router = Router();
 
@@ -111,22 +114,32 @@ router.get(
 
 router.post('/workers/heal', confirmGate, async (req: Request, res: Response) => {
   try {
+    const healRequest = parseWorkerHealRequest(req.body, req.query);
+    if (!healRequest.success) {
+      sendBadRequestPayload(res, {
+        error: 'INVALID_WORKER_HEAL_REQUEST',
+        details: healRequest.issues
+      });
+      return;
+    }
+
     const payload = await buildStatusPayload();
     const plan = await buildAutoHealPlan(payload);
-    const planOnlyRequested = req.body?.execute === false || req.body?.mode === 'plan';
+    const planOnlyRequested = healRequest.data.planOnlyRequested;
     const trustedAutomation = Boolean(
       req.confirmationContext?.isTrustedGpt || req.confirmationContext?.automationSecretApproved,
     );
     const autoExecutionAllowed = trustedAutomation && !planOnlyRequested;
-    const requestedExecution = req.body?.execute === true || req.body?.mode === 'execute';
+    const requestedExecution = healRequest.data.requestedExecution;
     const shouldExecute = !planOnlyRequested && (requestedExecution || autoExecutionAllowed);
 
     let execution: Record<string, unknown> | undefined;
     if (shouldExecute) {
-      const restartSummary = await startWorkers(true);
+      const healResult = await healWorkerRuntime(healRequest.data.force, 'workers_route');
       execution = {
-        restart: restartSummary,
+        restart: healResult.restart,
         autoExecuted: autoExecutionAllowed && !requestedExecution,
+        requestedForce: healResult.requestedForce,
         confirmation: {
           status: req.confirmationContext?.confirmationStatus,
           gptId: req.confirmationContext?.gptId,
@@ -148,13 +161,31 @@ router.post('/workers/heal', confirmGate, async (req: Request, res: Response) =>
           }
         }
       });
+    } else {
+      recordSelfHealEvent({
+        kind: 'noop',
+        source: 'workers_route',
+        trigger: 'manual',
+        reason: planOnlyRequested ? 'worker heal plan requested without execution' : 'worker heal execution not requested',
+        actionTaken: 'workers/heal',
+        healedComponent: 'worker_runtime',
+        details: {
+          autoExecutionAllowed,
+          planOnlyRequested,
+          requestedExecution,
+          requestedForce: healRequest.data.force ?? true,
+          recommendedAction: plan.recommendedAction
+        }
+      });
     }
 
     res.json({
       timestamp: new Date().toISOString(),
+      mode: healRequest.data.mode ?? (shouldExecute ? 'execute' : 'plan'),
       plan,
       autoHeal: payload.autoHeal,
       execution,
+      requestedForce: healRequest.data.force ?? true,
       runtime: getWorkerRuntimeStatus()
     });
   } catch (error) {
